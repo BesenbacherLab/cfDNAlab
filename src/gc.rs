@@ -1,6 +1,13 @@
 use crate::{
     cli_common::*,
-    utils::{bed::load_windows_from_bed, blacklist::load_blacklists},
+    counters::GCCounters,
+    utils::{
+        bed::load_windows_from_bed,
+        blacklist::load_blacklists,
+        fragment::{MinimalReadInfo, collect_fragment},
+        gc::{GCCounts, get_gc_fraction_in_window},
+        overlaps::find_overlapping_windows,
+    },
 };
 use anyhow::{Context, Result};
 use ndarray::{Array3, s};
@@ -67,14 +74,14 @@ struct GCConfig {
     /// Minimum fragment length to include (default: 20) [integer]
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "20", value_parser = value_parser!(u16).range(1..), help_heading="Filtering"))]
-    pub min_fragment_length: u16,
+        clap(long, default_value = "20", value_parser = value_parser!(u32).range(1..), help_heading="Filtering"))]
+    pub min_fragment_length: u32,
 
     /// Maximum fragment length to include (default: 600) [integer]
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "600", value_parser = value_parser!(u16).range(1..), help_heading="Filtering"))]
-    pub max_fragment_length: u16,
+        clap(long, default_value = "600", value_parser = value_parser!(u32).range(1..), help_heading="Filtering"))]
+    pub max_fragment_length: u32,
 
     /// Minimum GC % to consider [integer]
     ///
@@ -113,6 +120,15 @@ struct GCConfig {
         clap(long, default_value = "0", group = "min_acgt", 
              value_parser = value_parser!(u8).range(0..), help_heading="Minimum ACGT (select 0-2 args)"))]
     pub min_acgt_count: u8,
+
+    /// Count a fragment in all windows where any of the bases overlap [flag]
+    ///
+    /// Default: Only count a fragment in bins its midpoint overlaps.
+    #[cfg_attr(feature = "cli", clap(long))]
+    pub count_in_all_windows: bool,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    window_assignment: AssignToWindowArgs,
 }
 
 /// Whether to include the read or continue
@@ -167,7 +183,7 @@ fn run(opt: GCConfig) -> Result<()> {
     // Prepare per-bin counts and metadata
     let mut all_bins = Vec::new();
     let mut bin_info = Vec::new();
-    let mut global_counter = ConsensusDepthCounters::default();
+    let mut global_counter = GCCounters::default();
 
     // Main loop: process each autosome
     println!("Start: Counting per chromosome");
@@ -177,7 +193,7 @@ fn run(opt: GCConfig) -> Result<()> {
     let results: Vec<(
         Vec<FxHashMap<Kmer, BigCount>>,
         Option<Vec<(String, u64, u64, u64, f64)>>,
-        ConsensusDepthCounters,
+        GCCounters,
     )> = chromosomes
         .par_iter()
         .map(|chr| -> Result<(_, _, _)> {
@@ -266,11 +282,11 @@ fn run(opt: GCConfig) -> Result<()> {
     let elapsed = start_time.elapsed();
     println!("  Total reads: {}", global_counter.total);
     println!(
-        "  Accepted reads: {} ({:.2}%) | Left reads: {} | Right mates: {}",
+        "  Accepted reads: {} ({:.2}%) | Forward reads: {} | Reverse reads: {}",
         global_counter.accepted,
         global_counter.accepted as f64 / global_counter.total as f64 * 100.0,
-        global_counter.left,
-        global_counter.right_mate
+        global_counter.forward,
+        global_counter.reverse
     );
     // if opt.gc.bin_by_gc {
     //     println!("GC-excluded reads: {}", global_counter.gc_excl);
@@ -293,9 +309,9 @@ fn process_chrom(
     // gc_bins: usize,
     blacklist_intervals: &[(u64, u64)],
 ) -> anyhow::Result<(
-    Vec<FxHashMap<Kmer, BigCount>>,
+    Vec<GCCounts>,
     Option<Vec<(String, u64, u64, u64, f64)>>,
-    ConsensusDepthCounters,
+    GCCounters,
 )> {
     // Open a fresh BAM reader for this thread
     let (mut reader, tid, chrom_len) = create_chromosome_reader(&opt.ioc.bam, chr)?;
@@ -303,28 +319,20 @@ fn process_chrom(
     let mut seq_bytes = read_seq(&opt.ref_2bit, chr)?;
     apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals);
 
-    let positional_codes_by_k: HashMap<u8, KmerCodes> = build_codes_per_k(&seq_bytes, kmer_specs);
-
-    // Not needed yet
-    // let gc_prefix = build_gc_prefix(&seq_bytes);
+    let gc_prefix = build_gc_prefixes(seq_bytes);
 
     // Initialize counters (default -> 0s)
-    let mut counter = ConsensusDepthCounters::default();
+    let mut counter = GCCounters::default();
 
-    let num_bins = if let Some(sz) = opt.by_size {
-        // by-size
-        ((chrom_len + sz - 1) / sz) as usize
-    } else if opt.by_bed.is_some() {
-        // by-bed
-        windows.unwrap().len()
-    } else {
-        // global
-        1
+    let num_bins = match window_opt {
+        WindowSpec::Bed(_) => windows.unwrap().len(),
+        WindowSpec::Size(s) => ((chrom_len + s - 1) / s) as usize,
+        WindowSpec::Global => 1,
     };
 
-    let mut counts_by_bin = vec![FxHashMap::<Kmer, BigCount>::default(); num_bins];
+    let mut counts_by_bin = vec![GCCounts; num_bins];
 
-    let mut stash: HashMap<Vec<u8>, ReadInfo> = HashMap::new();
+    let mut stash: HashMap<Vec<u8>, MinimalReadInfo> = HashMap::new();
 
     // Streaming pointers and single fetch for this chr
     let mut wd_ptr = 0; // genomic window
@@ -335,28 +343,92 @@ fn process_chrom(
 
     for res in reader.records() {
         let rec = res.context("reading bam record")?;
-        counter.total += 1;
-        if rec.tid() != tid as i32 || filter_read(&rec, &opt.read_filters).is_none() {
+        counter.total_reads += 1;
+
+        if rec.tid() != tid as i32 || !include_read(&rec, opt).is_none() {
             continue;
         }
-        counter.accepted += 1;
 
-        let ascii = rec.seq().as_bytes();
-        let qname = rec.qname().to_vec();
-        let base_qualities = rec.qual().to_owned();
+        match rec.is_reverse() {
+            true => counter.accepted_reverse += 1,
+            false => counter.accepted_forward += 1,
+        }
 
-        // Check the number of mismatches (NM tag)
-        // We use this to check whether to parse the MD tag
-        let nm_opt = read_nm_tag(&rec);
-        let nm_tag = match nm_opt {
-            Some(nm) if opt.read_filters.min_nm <= nm && nm <= opt.read_filters.max_nm => nm,
-            _ => continue,
-        };
+        if let Some(mate) = stash.remove(rec.qname()) {
+            // Extract fragment
+            let fragment = if let Some(f) = collect_fragment(&MinimalReadInfo::from(&rec), &mate) {
+                f
+            } else {
+                continue;
+            };
 
-        // TODO: cfDNA-PRO talks about these reverse fragments where
-        // perhaps the right read starts before the left read somehow?
-        // Does that affect whether "insert_size() > 0" is always the
-        // most-left read and/or do we skip this subset of fragments?
+            counter.collected_fragments += 1;
+
+            // Check length is within allowed range
+            let fragment_length = fragment.len();
+            if fragment_length < opt.min_fragment_length
+                || fragment_length > opt.max_fragment_length
+            {
+                continue;
+            }
+
+            // Extract GC fraction in the interval
+            let gc = get_gc_fraction_in_window(
+                &gc_prefix,
+                fragment.start as usize,
+                fragment.end as usize,
+                min_acgt,
+            );
+
+            // Unpack GC fraction (or continue)
+            let gc = match gc {
+                Some(v) => v,
+                None => continue,
+            };
+
+            assert!(gc.is_finite(), "GC non-finite: {}", gc);
+            assert!(
+                (0.0..=1.0).contains(&gc),
+                "GC fraction out of [0,1]: {}",
+                gc
+            );
+
+            // Get GC in [0,100] as usize
+            let gc_bin = (gc * 100.0).round() as usize;
+
+            // Find all overlapping windows
+            let (interval_start, interval_end) = match opt.assign_by {
+                WindowAssigner::Midpoint => {
+                    let mid = fragment.start + (fragment_length / 2);
+                    (mid, mid + 1)
+                }
+                WindowAssigner::Overlap => (fragment.start, fragment.end),
+            };
+            let overlapping_windows = find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                windows,
+                opt.by_size,
+                interval_start,
+                interval_end,
+                opt.max_fragment_length,
+            );
+            let overlapping_windows = if let Some(overlaps) = overlapping_windows {
+                overlaps
+            } else {
+                continue;
+            };
+
+            // Increment counter for each window / bin
+            for overlapped_window in overlapping_windows.windows.iter() {
+                debug_assert!(win.idx < counts_by_bin.len(), "window idx OOB: {}", win.idx);
+                counts_by_bin[overlapped_window.idx].incr(fragment_length, gc_bin);
+            }
+
+        } else {
+            // Stash read if new qname
+            stash.insert(rec.qname().to_vec(), MinimalReadInfo::from(&rec));
+        }
 
         if rec.insert_size() > 0 {
             // Left-most read
@@ -413,41 +485,6 @@ fn process_chrom(
                 overlaps
             } else {
                 continue;
-            };
-
-            // Get MD tag
-            let md = if nm_tag > 0 {
-                // Only try to parse MD when nm_tag indicates there could be mismatches
-                match read_md_tag(&rec) {
-                    Some(s) => s,
-                    None => {
-                        counter.missing_md += 1;
-                        continue; // diverges, so this arm never needs to return a String
-                    }
-                }
-            } else {
-                // No mismatches by NM → we can use an empty MD string (or skip entirely later)
-                String::new()
-            };
-
-            let mismatch_coordinates = if !md.is_empty() && !left.md_tag.is_empty() {
-                // Parse both MD tags (after read filtering)
-                let (mismatch_starts, mismatch_ends) = parse_md_tag(&md, rec.pos() as u32);
-                let (left_mismatch_starts, left_mismatch_ends) =
-                    parse_md_tag(&left.md_tag, left.pos as u32);
-
-                let mismatch_coordinates: Vec<(u32, u32)> = intersect_mismatch_runs(
-                    &left_mismatch_starts,
-                    &left_mismatch_ends,
-                    &mismatch_starts,
-                    &mismatch_ends,
-                )
-                .into_iter()
-                .filter(|&(s, e)| e - s <= 2)
-                .collect();
-                Some(mismatch_coordinates)
-            } else {
-                None
             };
 
             counter.counted += 1;

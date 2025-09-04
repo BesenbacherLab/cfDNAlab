@@ -102,6 +102,41 @@ impl WindowsArgs {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+/// How to assign a fragment to windows.
+pub enum WindowAssigner {
+    /// Assign to windows overlapping the fragment midpoint.
+    #[default]
+    Midpoint,
+    /// Assign to windows overlapping any bases of the fragment.
+    Overlap,
+}
+
+
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Debug, Clone, Default)]
+pub struct AssignToWindowArgs {
+    /// How to assign fragments to windows (default: midpoint).
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_enum,
+            default_value_t = WindowAssigner::Midpoint,
+            ignore_case = true,
+            value_name = "MODE",
+            help = "What to assign fragments to windows by.",
+            long_help = "What to assign fragments to windows by:\n\
+                         - midpoint: assign to windows overlapping the fragment midpoint.\n\
+                         - overlap: assign to windows overlapping any bases in the fragment.",
+            help_heading = "Window Assignment"
+        )
+    )]
+    pub assign_by: WindowAssigner,
+
+}
+
 
 /* Chromosome selection */
 

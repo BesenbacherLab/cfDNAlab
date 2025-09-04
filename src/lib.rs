@@ -1,7 +1,8 @@
-pub mod lengths;
+pub mod cli_common;
+mod counters;
 pub mod ends;
 pub mod gc;
-pub mod cli_common;
+pub mod lengths;
 mod utils;
 
 // Curate the top-level API:

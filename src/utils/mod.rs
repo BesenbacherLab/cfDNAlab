@@ -6,3 +6,4 @@ pub mod read;
 pub mod reference;
 pub mod base;
 pub mod fragment;
+pub mod overlaps;
