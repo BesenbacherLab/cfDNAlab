@@ -1,0 +1,30 @@
+[package]
+name = "cfdnalab"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+cli = ["clap"]
+
+[dependencies]
+anyhow = "1.0.98"
+clap = { version = "4.5.37", features = ["derive"], optional = true }
+fxhash = "0.2.1"
+indicatif = { version = "0.17.11", default-features = false, features = ["rayon", "unicode-width"] }
+ndarray = "0.16.1"
+ndarray-npy = "0.9.1"
+needletail = { version = "0.6.3", default-features = false, features = ["flate2", "zstd"] }
+num-traits = "0.2.19"
+rand = "0.9.1"
+rayon = "1.10.0"
+rust-htslib = "0.50.0"
+smallvec = "1.15.1"
+tempfile = "3.20.0"
+twobit = "0.2.1"
+zip = "2.6.1"
+
+[[bin]]
+name = "cfdna"
+path = "src/bin/cfdna.rs"
+required-features = ["cli"]

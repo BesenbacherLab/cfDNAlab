@@ -1,2 +1,7 @@
 # cfDNAlab
-Software tools for analysing cfDNA data.
+
+Toolkit for cfDNA analysis written in rust for *speed*.
+
+## TODO
+
+    - Bin chromosomes for higher parallelization where meaningful.
