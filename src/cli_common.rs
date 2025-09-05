@@ -1,7 +1,7 @@
 
 /// Args for In-/output and core (threads).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug, Args)]
+#[derive(Debug)]
 pub struct IOCArgs {
     /// Indexed, coordinate-sorted BAM input file [path]
     #[cfg_attr(
@@ -43,6 +43,8 @@ pub struct IOCArgs {
 
 use std::path::PathBuf;
 
+use anyhow::Context;
+
 // Windows option ENUM
 #[derive(Debug, Clone)]
 pub enum WindowSpec {
@@ -74,7 +76,7 @@ pub struct WindowsArgs {
             help_heading = "Windows (select max. one arg.)"
         )
     )]
-    by_size: Option<u64>,
+    pub by_size: Option<u64>,
 
     /// Window definition: a BED file of windows [path]
     #[cfg_attr(
@@ -86,7 +88,7 @@ pub struct WindowsArgs {
             help_heading = "Windows (select max. one arg.)"
         )
     )]
-    by_bed: Option<PathBuf>,
+    pub by_bed: Option<PathBuf>,
 }
 
 impl WindowsArgs {
