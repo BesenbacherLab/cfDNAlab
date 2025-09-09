@@ -1,5 +1,5 @@
 use rust_htslib::bam::ext::BamRecordExtensions; // reference_end()
-use rust_htslib::bam::record::{Cigar, Record};
+use rust_htslib::bam::record::Record;
 
 /// Basic fragment on the reference (0-based, end-exclusive).
 #[derive(Debug, Clone, Copy)]

@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use cfdna_utils::cfdna_utils::base::*;
+    use cfdnalab::utils::base::*;
 
     /// Reference implementation: the original `match` + `to_ascii_uppercase`.
     #[inline(always)]

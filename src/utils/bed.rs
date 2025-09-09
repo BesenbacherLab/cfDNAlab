@@ -14,6 +14,10 @@ use std::{
 ///  - bed: Path to BED file.
 ///  - chromosomes: Names of chromosomes to include in output,
 ///    even when not present in the BED file.
+///  - filter_fn: Function for deciding whether to include
+///    an interval. Should take in the chr,start,end values
+///    and return `true` (keep) or `false` (discard).
+///    
 ///
 /// Returns
 /// -------
@@ -21,24 +25,24 @@ use std::{
 pub fn load_windows_from_bed(
     bed: impl AsRef<Path>,
     chromosomes: &Vec<String>,
+    filter_fn: Option<&dyn Fn(&str, u64, u64) -> bool>,
 ) -> Result<HashMap<String, Windows>> {
     let f = File::open(bed.as_ref()).context("Opening BED file with windows/intervals")?; // Works with &Path, PathBuf, &str
     let mut reader = BufReader::with_capacity(1 << 20, f);
 
     // Pre-seed output map with requested chromosomes.
-    // let mut vec_mapping: HashMap<String, Vec<(u64, u64, u64)>> =
-    //     HashMap::with_capacity(chromosomes.len());
     let mut vec_mapping: FxHashMap<&str, Vec<(u64, u64, u64)>> =
         FxHashMap::with_capacity_and_hasher(chromosomes.len(), Default::default());
-
     for chr in chromosomes {
         vec_mapping.entry(chr.as_str()).or_default();
     }
 
-    // O(1) membership checks without per-line allocation.
-    let allowed_chromosomes: FxHashSet<&str> =
+    // Quick-hashing set of chromosomes to include
+    let mut allowed_chromosomes: FxHashSet<&str> =
         FxHashSet::with_capacity_and_hasher(chromosomes.len(), Default::default());
-    // let allowed_chromosomes: HashSet<&str> = chromosomes.iter().map(String::as_str).collect();
+    for chr in chromosomes {
+        allowed_chromosomes.insert(chr.as_str());
+    }
 
     // Reuse a single buffer for all lines.
     let mut buf = String::new();
@@ -60,6 +64,12 @@ pub fn load_windows_from_bed(
         let line = buf.trim_end_matches(['\n', '\r']);
 
         if line.is_empty() {
+            continue;
+        }
+
+        // Skip UCSC header directives in BED files
+        let ls = line.trim_start();
+        if ls.starts_with("track") || ls.starts_with("browser") {
             continue;
         }
 
@@ -101,6 +111,13 @@ pub fn load_windows_from_bed(
             end,
             start
         );
+
+        // Apply passed filtering function
+        if let Some(filterer) = filter_fn {
+            if !filterer(chr, start, end) {
+                continue;
+            }
+        }
 
         vec_mapping
             .get_mut(chr)

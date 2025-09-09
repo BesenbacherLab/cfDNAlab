@@ -1,4 +1,4 @@
-use cfdnalab::{ends::EndsConfig, gc::GCConfig, lengths::LengthsConfig};
+use cfdnalab::lengths::LengthsConfig; // ends::EndsConfig, gc::GCConfig,
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -10,18 +10,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    GC(GCConfig),
+    // GC(GCConfig),
+    // RefGC(RefGCConfig), // Extract reference GC counts
     Lengths(LengthsConfig),
-    Ends(EndsConfig),
+    // Ends(EndsConfig),
 }
 
 fn main() {
     // Catch and handle errors
     // Ensures that tempfile has time to remove the tmp dir
     if let Err(e) = match Cli::parse().cmd {
-        Cmd::GC(cfg) => cfdnalab::gc::run(cfg)?,
+        // Cmd::GC(cfg) => cfdnalab::gc::run(cfg)?,
         Cmd::Lengths(cfg) => cfdnalab::lengths::run(cfg)?,
-        Cmd::Ends(cfg) => cfdnalab::ends::run(cfg)?,
+        // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg)?,
     } {
         eprintln!("{:?}", e);
         std::process::exit(1);
