@@ -37,7 +37,7 @@ use crate::{
             .args(&["by_size", "by_bed"])
     )
 )]
-struct LengthsConfig {
+pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     ioc: IOCArgs,
 
