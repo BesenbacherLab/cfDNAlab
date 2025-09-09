@@ -66,6 +66,8 @@ pub enum WindowSpec {
 #[derive(Debug, Clone, Default)]
 pub struct WindowsArgs {
     /// Window definition: a fixed window size [integer]
+    /// 
+    /// Default is one global window.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -129,9 +131,6 @@ pub struct AssignToWindowArgs {
             ignore_case = true,
             value_name = "MODE",
             help = "What to assign fragments to windows by.",
-            long_help = "What to assign fragments to windows by:\n\
-                         - midpoint: assign to windows overlapping the fragment midpoint.\n\
-                         - overlap: assign to windows overlapping any bases in the fragment.",
             help_heading = "Window Assignment"
         )
     )]

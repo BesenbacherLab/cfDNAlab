@@ -50,26 +50,26 @@ pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     chromosomes: ChromosomeArgs,
 
-    /// Minimum fragment length to include (default: 20) [integer]
+    /// Minimum fragment length to include [integer]
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "20", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
     pub min_fragment_length: u32,
 
-    /// Maximum fragment length to include (default: 600) [integer]
+    /// Maximum fragment length to include [integer]
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "600", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
     pub max_fragment_length: u32,
 
-    /// Minimum mapping quality to include (default: 30) [integer]
+    /// Minimum mapping quality to include [integer]
     #[cfg_attr(
         feature = "cli",
         clap(long, alias = "mq", default_value = "30", value_parser = clap::value_parser!(u8).range(0..), help_heading="Filtering"))]
     pub min_mapq: u8,
 
     /// Only count properly paired reads [flag]
-    #[cfg_attr(feature = "cli", clap(long))]
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
     /// Optional BED file(s) with blacklisted regions [path]
