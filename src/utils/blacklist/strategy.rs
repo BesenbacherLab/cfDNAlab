@@ -1,11 +1,20 @@
 use std::str::FromStr;
 
 /// Blacklist strategy for fragment/read/interval filtering
-#[derive(Debug, Clone)]
+/// Blacklist strategy: "any", "full", "midpoint", or "proportion=<threshold>" [string]
+///
+/// Example of proportion: `--blacklist_strategy proportion=0.2` (no space around `=`)
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum BlackStrategy {
+    /// All positions overlap with blacklisted regions.
     Full,
+    /// Any positions overlap with blacklisted regions.
+    #[default]
     Any,
+    /// Midpoint position overlaps with blacklisted regions.
     Midpoint,
+    /// A given proportion of positions overlap with blacklisted regions (e.g. `proportion=0.2`).
     Proportion(f64),
 }
 
