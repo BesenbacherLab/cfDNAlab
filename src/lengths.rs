@@ -90,7 +90,7 @@ pub struct LengthsConfig {
     )]
     pub blacklist_min_size: u64,
 
-    /// The required overlap of a fragment and blacklisted regions for it to be excluded [string]
+    /// The required overlap of a fragment with blacklisted regions for it to be excluded [string]
     ///
     /// Possible values:
     ///     "any", "full", "midpoint", or "proportion=<threshold>" [string]
@@ -400,6 +400,8 @@ fn process_chrom(
             } else {
                 continue;
             };
+
+            counter.counted_fragments += 1;
 
             // Increment counter for each window / bin
             for overlapped_window in overlapping_windows.windows.iter() {
