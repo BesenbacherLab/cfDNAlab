@@ -71,7 +71,7 @@ pub struct WindowsArgs {
         clap(
             long = "by-size",
             alias = "by",
-            clap::value_parser,
+            value_parser,
             group = "windows",
             help_heading = "Windows (select max. one arg.)"
         )
@@ -83,7 +83,7 @@ pub struct WindowsArgs {
         feature = "cli",
         clap(
             long = "by-bed",
-            clap::value_parser,
+            value_parser,
             group = "windows",
             help_heading = "Windows (select max. one arg.)"
         )
@@ -158,7 +158,7 @@ pub struct ChromosomeArgs {
     #[cfg_attr(
         feature = "cli", clap(
             long, num_args = 1..,
-            clap::value_parser, 
+            value_parser, 
             value_delimiter = ',', 
             group = "chrom_select", 
             help_heading="Chromosome Selection (select max. one arg.)"))]
@@ -169,7 +169,7 @@ pub struct ChromosomeArgs {
         feature = "cli",
         clap(
             long,
-            clap::value_parser,
+            value_parser,
             group = "chrom_select",
             help_heading = "Chromosome Selection (select max. one arg.)"
         )

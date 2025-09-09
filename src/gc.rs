@@ -70,7 +70,7 @@
 //     /// Minimum mapping quality to include [integer]
 //     #[cfg_attr(
 //         feature = "cli",
-//         clap(long, alias = "mq", default_value = "60", value_parser = value_parser!(u8).range(0..), help_heading="Filtering"))]
+//         clap(long, alias = "mq", default_value = "60", value_parser = clap::value_parser!(u8).range(0..), help_heading="Filtering"))]
 //     pub min_mapq: u8,
 
 //     /// Only count properly paired reads [flag]
@@ -80,13 +80,13 @@
 //     /// Minimum fragment length to include (default: 20) [integer]
 //     #[cfg_attr(
 //         feature = "cli",
-//         clap(long, default_value = "20", value_parser = value_parser!(u32).range(1..), help_heading="Filtering"))]
+//         clap(long, default_value = "20", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
 //     pub min_fragment_length: u32,
 
 //     /// Maximum fragment length to include (default: 600) [integer]
 //     #[cfg_attr(
 //         feature = "cli",
-//         clap(long, default_value = "600", value_parser = value_parser!(u32).range(1..), help_heading="Filtering"))]
+//         clap(long, default_value = "600", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
 //     pub max_fragment_length: u32,
 
 //     /// Minimum GC % to consider [integer]
@@ -95,7 +95,7 @@
 //     #[cfg_attr(
 //         feature = "cli",
 //         clap(long, default_value = "0", 
-//              value_parser = value_parser!(u8).range(0..100), help_heading="Filtering"))]
+//              value_parser = clap::value_parser!(u8).range(0..100), help_heading="Filtering"))]
 //     pub gc_min_pct: u8,
 
 //     /// Maximum GC % to consider [integer]
@@ -104,7 +104,7 @@
 //     #[cfg_attr(
 //         feature = "cli",
 //         clap(long, default_value = "100", 
-//              value_parser = value_parser!(u8).range(0..101), help_heading="Filtering"))]
+//              value_parser = clap::value_parser!(u8).range(0..101), help_heading="Filtering"))]
 //     pub gc_max_pct: u8,
 
 //     /// Minimum **percentage** of ACGT bases in a fragment after blacklist exclusion [integer]
@@ -117,7 +117,7 @@
 //     #[cfg_attr(
 //         feature = "cli",
 //         clap(long, default_value = "0", group = "min_acgt", 
-//              value_parser = value_parser!(u8).range(0..101), help_heading="Minimum ACGT (select 0-2 args)"))]
+//              value_parser = clap::value_parser!(u8).range(0..101), help_heading="Minimum ACGT (select 0-2 args)"))]
 //     pub min_acgt_pct: u8,
 
 //     /// Minimum **count** of ACGT bases in a fragment after blacklist exclusion [integer]
@@ -126,7 +126,7 @@
 //     #[cfg_attr(
 //         feature = "cli",
 //         clap(long, default_value = "0", group = "min_acgt", 
-//              value_parser = value_parser!(u8).range(0..), help_heading="Minimum ACGT (select 0-2 args)"))]
+//              value_parser = clap::value_parser!(u8).range(0..), help_heading="Minimum ACGT (select 0-2 args)"))]
 //     pub min_acgt_count: u8,
 // }
 

@@ -53,19 +53,19 @@ struct LengthsConfig {
     /// Minimum fragment length to include (default: 20) [integer]
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "20", value_parser = value_parser!(u32).range(1..), help_heading="Filtering"))]
+        clap(long, default_value = "20", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
     pub min_fragment_length: u32,
 
     /// Maximum fragment length to include (default: 600) [integer]
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "600", value_parser = value_parser!(u32).range(1..), help_heading="Filtering"))]
+        clap(long, default_value = "600", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
     pub max_fragment_length: u32,
 
     /// Minimum mapping quality to include (default: 30) [integer]
     #[cfg_attr(
         feature = "cli",
-        clap(long, alias = "mq", default_value = "30", value_parser = value_parser!(u8).range(0..), help_heading="Filtering"))]
+        clap(long, alias = "mq", default_value = "30", value_parser = clap::value_parser!(u8).range(0..), help_heading="Filtering"))]
     pub min_mapq: u8,
 
     /// Only count properly paired reads [flag]
@@ -74,7 +74,7 @@ struct LengthsConfig {
 
     /// Optional BED file(s) with blacklisted regions [path]
     #[cfg_attr(
-        feature = "cli",clap(short = 'b', long, value_parser, num_args = 1.., action = ArgAction::Append, help_heading = "Filtering"))]
+        feature = "cli",clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading = "Filtering"))]
     pub blacklist: Option<Vec<PathBuf>>,
 
     /// Minimum size of blacklist intervals to load (bp) [integer]
@@ -96,7 +96,7 @@ struct LengthsConfig {
         feature = "cli",clap(
         long,
         alias = "bl-strategy",
-        value_parser = value_parser!(BlackStrategy),
+        value_parser = clap::value_parser!(BlackStrategy),
         default_value = "any", help_heading = "Filtering"
     ))]
     pub blacklist_strategy: BlackStrategy,
