@@ -6,7 +6,7 @@ use std::str::FromStr;
 /// Example of proportion: `--blacklist_strategy proportion=0.2` (no space around `=`)
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
-pub enum BlackStrategy {
+pub enum BlacklistStrategy {
     /// All positions overlap with blacklisted regions.
     Full,
     /// Any positions overlap with blacklisted regions.
@@ -18,15 +18,15 @@ pub enum BlackStrategy {
     Proportion(f64),
 }
 
-impl FromStr for BlackStrategy {
+impl FromStr for BlacklistStrategy {
     type Err = String;
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         if s == "full" {
-            Ok(BlackStrategy::Full)
+            Ok(BlacklistStrategy::Full)
         } else if s == "any" {
-            Ok(BlackStrategy::Any)
+            Ok(BlacklistStrategy::Any)
         } else if s == "midpoint" {
-            Ok(BlackStrategy::Midpoint)
+            Ok(BlacklistStrategy::Midpoint)
         } else if let Some(v) = s.strip_prefix("proportion=") {
             let thr: f64 = v
                 .parse()
@@ -34,7 +34,7 @@ impl FromStr for BlackStrategy {
             if !(0.0..=1.0).contains(&thr) {
                 Err("Proportion must be between 0.0 and 1.0".into())
             } else {
-                Ok(BlackStrategy::Proportion(thr))
+                Ok(BlacklistStrategy::Proportion(thr))
             }
         } else {
             Err("Use 'full', 'midpoint', or 'proportion=<0.0–1.0>'".into())

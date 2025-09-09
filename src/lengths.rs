@@ -21,7 +21,7 @@ use crate::{
     utils::{
         bam::create_chromosome_reader,
         bed::load_windows_from_bed,
-        blacklist::{BlackStrategy, compute_blacklist_overlap, is_blacklisted, load_blacklists},
+        blacklist::{BlacklistStrategy, compute_blacklist_overlap, is_blacklisted, load_blacklists},
         fragment::{MinimalReadInfo, collect_fragment},
         lengths::counting::{LengthCounts, stack_length_counts},
         overlaps::find_overlapping_windows,
@@ -101,7 +101,7 @@ pub struct LengthsConfig {
             help_heading = "Filtering"
         )
     )]
-    pub blacklist_strategy: BlackStrategy,
+    pub blacklist_strategy: BlacklistStrategy,
     // #[cfg_attr(feature = "cli", clap(flatten))]
     // gc: GCArgs,
 

@@ -1,8 +1,8 @@
-use crate::utils::blacklist::strategy::BlackStrategy;
+use crate::utils::blacklist::strategy::BlacklistStrategy;
 
 pub fn is_blacklisted(
     blacklist_intervals: &[(u64, u64)],
-    blacklist_strategy: BlackStrategy,
+    blacklist_strategy: BlacklistStrategy,
     start: u64,
     end: u64,
     look_back: u64,
@@ -10,10 +10,12 @@ pub fn is_blacklisted(
 ) -> bool {
     // Determine blacklist status
     let in_blacklist = match blacklist_strategy {
-        BlackStrategy::Full => is_full(&blacklist_intervals, start, end, look_back, ptr),
-        BlackStrategy::Any => is_any(&blacklist_intervals, start, end, look_back, ptr),
-        BlackStrategy::Midpoint => is_midpoint(&blacklist_intervals, start, end, look_back, ptr),
-        BlackStrategy::Proportion(th) => {
+        BlacklistStrategy::Full => is_full(&blacklist_intervals, start, end, look_back, ptr),
+        BlacklistStrategy::Any => is_any(&blacklist_intervals, start, end, look_back, ptr),
+        BlacklistStrategy::Midpoint => {
+            is_midpoint(&blacklist_intervals, start, end, look_back, ptr)
+        }
+        BlacklistStrategy::Proportion(th) => {
             is_proportion(&blacklist_intervals, start, end, look_back, ptr, th)
         }
     };
