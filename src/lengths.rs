@@ -92,18 +92,20 @@ pub struct LengthsConfig {
     pub blacklist_min_size: u64,
 
     /// Blacklist strategy for determining if a fragment should be excluded [string]
-    /// 
-    /// Possible values: 
+    ///
+    /// Possible values:
     ///     "any", "full", "midpoint", or "proportion=<threshold>" [string]
     ///
     /// Example of proportion: `--blacklist_strategy proportion=0.2` (no space around `=`)
     #[cfg_attr(
-        feature = "cli", clap(
-        long,
-        alias = "bl-strategy",
-        value_parser = value_parser!(BlackStrategy),
-        default_value = "any", help_heading = "Filtering"
-    ))]
+        feature = "cli",
+        clap(
+            long,
+            alias = "bl-strategy",
+            default_value = "any",
+            help_heading = "Filtering"
+        )
+    )]
     pub blacklist_strategy: BlacklistStrategy,
     // #[cfg_attr(feature = "cli", clap(flatten))]
     // gc: GCArgs,
