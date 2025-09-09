@@ -35,7 +35,6 @@ use crate::{
     feature = "cli",
     clap(
         group = clap::ArgGroup::new("windows")
-            .required(true)
             .args(&["by_size", "by_bed"])
     )
 )]
@@ -91,7 +90,7 @@ pub struct LengthsConfig {
     )]
     pub blacklist_min_size: u64,
 
-    /// Blacklist strategy for determining if a fragment should be excluded [string]
+    /// The required overlap of a fragment and blacklisted regions for it to be excluded [string]
     ///
     /// Possible values:
     ///     "any", "full", "midpoint", or "proportion=<threshold>" [string]
