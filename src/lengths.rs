@@ -96,8 +96,10 @@ pub struct LengthsConfig {
         feature = "cli",
         clap(
             long,
+            value_enum,
             alias = "bl-strategy",
             default_value_t = BlacklistStrategy::Any,
+            ignore_case = true,
             help_heading = "Filtering"
         )
     )]
