@@ -93,12 +93,14 @@ pub struct LengthsConfig {
     ///
     /// Example of proportion: `--blacklist_strategy proportion=0.2` (no space around `=`)
     #[cfg_attr(
-        feature = "cli",clap(
-        long,
-        alias = "bl-strategy",
-        value_parser = clap::value_parser!(BlackStrategy),
-        default_value = "any", help_heading = "Filtering"
-    ))]
+        feature = "cli",
+        clap(
+            long,
+            alias = "bl-strategy",
+            default_value = "any",
+            help_heading = "Filtering"
+        )
+    )]
     pub blacklist_strategy: BlackStrategy,
     // #[cfg_attr(feature = "cli", clap(flatten))]
     // gc: GCArgs,

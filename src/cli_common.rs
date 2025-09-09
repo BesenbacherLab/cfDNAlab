@@ -117,6 +117,7 @@ pub enum WindowAssigner {
     Overlap,
 }
 
+// TODO: Standardize AssignToWindowArgs and BlacklistStrategy!
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
@@ -129,7 +130,6 @@ pub struct AssignToWindowArgs {
             value_enum,
             default_value_t = WindowAssigner::Midpoint,
             ignore_case = true,
-            value_name = "MODE",
             help = "What to assign fragments to windows by.",
             help_heading = "Window Assignment"
         )
@@ -137,7 +137,6 @@ pub struct AssignToWindowArgs {
     pub assign_by: WindowAssigner,
 
 }
-
 
 /* Chromosome selection */
 
