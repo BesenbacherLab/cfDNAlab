@@ -17,15 +17,17 @@ enum Cmd {
 }
 
 fn main() {
-    // Catch and handle errors
-    // Ensures that tempfile has time to remove the tmp dir
-    if let Err(e) = match Cli::parse().cmd {
-        // Cmd::GC(cfg) => cfdnalab::gc::run(cfg)?,
-        Cmd::Lengths(cfg) => cfdnalab::lengths::run(cfg)?,
-        // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg)?,
-    } {
-        eprintln!("{:?}", e);
+    // Run selected subcommand and capture its Result (no `?` in main).
+    let res: anyhow::Result<()> = match Cli::parse().cmd {
+        // Cmd::GC(cfg) => cfdnalab::gc::run(cfg),
+        Cmd::Lengths(cfg) => cfdnalab::lengths::run(cfg),
+        // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg),
+    };
+
+    if let Err(e) = res {
+        eprintln!("{:#}", e);
         std::process::exit(1);
     }
+
     std::process::exit(0);
 }
