@@ -41,7 +41,7 @@ pub struct GCConfig {
     pub ioc: IOCArgs,
 
     /// 2bit reference file [path]
-    /// 
+    ///
     /// E.g., "hg38.2bit"
     #[cfg_attr(
         feature = "cli",
@@ -452,6 +452,8 @@ fn process_chrom(
             } else {
                 continue;
             };
+
+            counter.counted_fragments += 1;
 
             // Increment counter for each window / bin
             for overlapped_window in overlapping_windows.windows.iter() {
