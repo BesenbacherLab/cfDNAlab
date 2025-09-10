@@ -1,3 +1,5 @@
+use ndarray::Array3;
+
 /// Prefix sums (cumsum) to compute GC and AT fractions while excluding Ns.
 /// `gc[i]`   = # of G/C in seq[0..i)
 /// `acgt[i]`= # of A/T/G/C in seq[0..i)
@@ -66,7 +68,7 @@ pub fn get_gc_fraction_in_window(
 /// - Columns correspond to GC fraction bins (0–100).
 #[derive(Debug, Clone)]
 pub struct GCCounts {
-    pub counts: Vec<Vec<u32>>,
+    pub counts: Vec<Vec<u64>>,
     pub gc_min: usize,
     pub gc_max: usize,
     pub length_min: usize,
@@ -94,7 +96,7 @@ impl GCCounts {
     pub fn new(gc_min: usize, gc_max: usize, length_min: usize, length_max: usize) -> Self {
         let num_gc_bins = gc_max - gc_min + 1;
         let num_lengths = length_max - length_min + 1;
-        let counts = vec![vec![0u32; num_gc_bins]; num_lengths];
+        let counts = vec![vec![0u64; num_gc_bins]; num_lengths];
         Self {
             counts,
             gc_min,
@@ -172,7 +174,7 @@ impl GCCounts {
     /// -------
     /// count: Option<u32>
     ///     The count if indices are in range, otherwise `None`.
-    pub fn get(&self, length: usize, gc: usize) -> Option<u32> {
+    pub fn get(&self, length: usize, gc: usize) -> Option<u64> {
         self.index_of(length, gc).map(|(r, c)| self.counts[r][c])
     }
 
@@ -209,7 +211,7 @@ impl GCCounts {
         let n_len = self.n_lengths();
         let n_gc = self.n_gc_bins();
         Self {
-            counts: vec![vec![0u32; n_gc]; n_len],
+            counts: vec![vec![0u64; n_gc]; n_len],
             gc_min: self.gc_min,
             gc_max: self.gc_max,
             length_min: self.length_min,
@@ -323,4 +325,26 @@ impl std::fmt::Display for GCCounts {
             self.n_gc_bins()
         )
     }
+}
+
+/// Stack counts from vector of `GCCounts` to a single 3d array.
+pub fn stack_gc_counts(all_counts: &Vec<GCCounts>) -> Array3<u64> {
+    // Assume all GCCounts.counts have the same dimensions
+    let n = all_counts.len();
+    let l = all_counts[0].n_lengths();
+    let g = all_counts[0].n_gc_bins();
+
+    let mut arr = Array3::<u64>::zeros((n, l, g));
+    for (i, gcc) in all_counts.iter().enumerate() {
+        assert_eq!(gcc.n_lengths(), l, "mismatched length bins at {}", i);
+        assert_eq!(gcc.n_gc_bins(), g, "mismatched GC bins at {}", i);
+        for (li, row) in gcc.counts.iter().enumerate() {
+            // row: Vec<u64> over GC bins
+            for (gi, &val) in row.iter().enumerate() {
+                arr[(i, li, gi)] = val;
+            }
+        }
+    }
+
+    arr
 }

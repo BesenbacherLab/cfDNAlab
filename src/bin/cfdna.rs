@@ -1,4 +1,5 @@
-use cfdnalab::lengths::LengthsConfig; // ends::EndsConfig, gc::GCConfig,
+use cfdnalab::gc::GCConfig;
+use cfdnalab::lengths::LengthsConfig; // ends::EndsConfig
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -10,7 +11,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    // GC(GCConfig),
+    GC(GCConfig),
     // RefGC(RefGCConfig), // Extract reference GC counts
     Lengths(LengthsConfig),
     // Ends(EndsConfig),
@@ -19,7 +20,7 @@ enum Cmd {
 fn main() {
     // Run selected subcommand and capture its Result (no `?` in main).
     let res: anyhow::Result<()> = match Cli::parse().cmd {
-        // Cmd::GC(cfg) => cfdnalab::gc::run(cfg),
+        Cmd::GC(cfg) => cfdnalab::gc::run(cfg),
         Cmd::Lengths(cfg) => cfdnalab::lengths::run(cfg),
         // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg),
     };
