@@ -26,6 +26,9 @@ use std::{
     time::Instant,
 };
 
+/// Count fragments per GC fraction and fragment length in a BAM-file.
+///
+/// Fragment length is defined as `end(reverse) - start(forward)`.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[cfg_attr(
     feature = "cli",
@@ -60,7 +63,11 @@ pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub chromosomes: ChromosomeArgs,
 
-    /// Optional BED files of blacklisted regions [path]
+    /// Optional BED file(s) with blacklisted regions [path]
+    ///
+    /// Blacklisted positions are set to 'N' in the reference sequence that
+    /// the GC fraction is calculated from. See the `Minimum ACGT` options
+    /// for when to ignore a fragment with too few ACGT (non-'N' / non-blacklisted) bases.
     #[cfg_attr(
         feature = "cli",
         clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading="Filtering"))]
@@ -112,10 +119,10 @@ pub struct GCConfig {
     ///
     /// When both `min_acgt_*` arguments are specified, both thresholds must be met. E.g.,
     /// you may want at least 50% ACGT remaining but also at least 20 bases for a proper
-    /// calculation of GC %. For reads of size 30bp, 50% is only 15bp why the 20bp threshold kicks in.
+    /// calculation of GC %. For fragments of size 30bp, 50% is only 15bp why the 20bp threshold kicks in.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "0", group = "min_acgt", 
+        clap(long, default_value = "90", group = "min_acgt", 
              value_parser = clap::value_parser!(u8).range(0..101), help_heading="Minimum ACGT (select 0-2 args)"))]
     pub min_acgt_pct: u8,
 
@@ -124,7 +131,7 @@ pub struct GCConfig {
     /// Fragments where fewer bases are ACGT (not blacklisted or 'N') are ignored.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "0", group = "min_acgt", 
+        clap(long, default_value = "20", group = "min_acgt", 
              value_parser = clap::value_parser!(u8).range(0..), help_heading="Minimum ACGT (select 0-2 args)"))]
     pub min_acgt_count: u8,
 }

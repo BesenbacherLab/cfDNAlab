@@ -31,10 +31,11 @@ pub struct IOCArgs {
 
     /// Number of threads to use (increases RAM usage) [integer]
     ///
-    /// Defaults to the total number of available CPU cores.
+    /// Defaults to the minimum of 22 (one thread per chromosome) and 
+    /// the number of available CPU cores.
     #[cfg_attr(
         feature = "cli",
-        clap(short = 't', long, default_value_t = num_cpus::get(), help_heading = "Core")
+        clap(short = 't', long, default_value_t = num_cpus::get().min(22), help_heading = "Core")
     )]
     pub n_threads: usize,
 }
@@ -153,13 +154,13 @@ impl FromStr for WindowAssigner {
 #[derive(Debug, Clone, Default)]
 pub struct AssignToWindowArgs {
     /// The fragment positions that should overlap a window for it to be counted in that window [string]
-    /// 
-    /// NOTE: Ignored when no windows are specified.
     ///
     /// Possible values:
     ///     "any", "all", "midpoint", or "proportion=<threshold>" [string]
     ///
     /// Example of proportion: `--assign-by proportion=0.2` (no space around `=`)
+    /// 
+    /// NOTE: Ignored when no windows are specified.
     #[cfg_attr(
         feature = "cli",
         clap(
