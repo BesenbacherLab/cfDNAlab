@@ -66,7 +66,7 @@ pub struct GCConfig {
 
     /// Optional BED file(s) with blacklisted regions [path]
     ///
-    /// Masking: Blacklisted positions are set to 'N' in the reference sequence that
+    /// Masking: Blacklisted positions are set to 'N' in the reference sequence
     /// the GC fraction is calculated from. See the `Minimum ACGT` options
     /// for when to ignore a fragment with too few ACGT (non-'N' and non-blacklisted) bases.
     #[cfg_attr(

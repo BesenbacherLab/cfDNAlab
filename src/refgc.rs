@@ -4,7 +4,8 @@ use crate::{
         bed::load_windows_from_bed,
         blacklist::{apply_blacklist_mask_to_seq, compute_blacklist_overlap, load_blacklists},
         gc::counting::{
-            GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window, stack_gc_counts,
+            GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window,
+            count_reference_gc_and_length_by_window_2, stack_gc_counts,
         },
         reference::read_seq,
     },
@@ -78,7 +79,7 @@ pub struct RefGCConfig {
 
     /// Optional BED file(s) with blacklisted regions [path]
     ///
-    /// Masking: Blacklisted positions are set to 'N' in the reference sequence that
+    /// Masking: Blacklisted positions are set to 'N' in the reference sequence
     /// the GC fraction is calculated from. See the `Minimum ACGT` options
     /// for when to ignore a kmer with too few ACGT (non-'N' and non-blacklisted) bases.
     #[cfg_attr(
@@ -284,7 +285,7 @@ fn process_chrom(
         num_bins
     ];
 
-    count_reference_gc_and_length_by_window(
+    count_reference_gc_and_length_by_window_2(
         &mut counts_by_bin,
         &gc_prefixes,
         (

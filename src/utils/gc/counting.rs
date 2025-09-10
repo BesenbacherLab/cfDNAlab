@@ -383,3 +383,67 @@ pub fn count_reference_gc_and_length_by_window(
         }
     }
 }
+
+/// Count reference GC per fragment length for every window on one chromosome
+///
+/// * `windows`    – (start, end, _original_idx) for every window
+/// * `chrom_len`  – chromosome length (used to cap end)
+///
+/// Optimized: iterate by fragment length first, slide across the chromosome,
+/// avoid per-window floats and function calls, and precompute ACGT thresholds.
+pub fn count_reference_gc_and_length_by_window_2(
+    counts_by_bin: &mut Vec<GCCounts>,
+    gc_prefixes: &GCPrefixes,
+    length_range: (u64, u64), // [min_len, max_len) in bp
+    windows: &[(u64, u64, u64)],
+    chrom_len: u64,
+    min_acgt_fraction: f32, // e.g., 0.8
+    min_acgt_count: u32,
+) {
+    let gc_prefix = &gc_prefixes.gc; // prefix sums of GC counts
+    let acgt_prefix = &gc_prefixes.acgt; // prefix sums of A/C/G/T (non-N/non-blacklist)
+    let min_len = length_range.0 as usize;
+    let max_len = length_range.1 as usize; // exclusive
+
+    // Precompute required ACGT counts per length: max(ceil(frac * len), min_count)
+    let mut required_acgt_per_len = vec![0u32; max_len + 1];
+    for len in min_len..max_len {
+        let req_by_frac = (min_acgt_fraction * (len as f32)).ceil() as u32;
+        required_acgt_per_len[len] = req_by_frac.max(min_acgt_count).max(1);
+    }
+
+    for (win_idx, &(window_start, mut window_end, _)) in windows.iter().enumerate() {
+        window_end = window_end.min(chrom_len);
+        let window_len = (window_end - window_start) as usize;
+        if window_len == 0 {
+            continue;
+        }
+
+        let window_base = window_start as usize; // Convert once
+
+        // Sweep by fragment length, then slide the start position across the window.
+        for len in min_len..max_len.min(window_len) {
+            let required_acgt = required_acgt_per_len[len];
+            let max_start = window_len - len;
+
+            for start in 0..=max_start {
+                let pos_0 = window_base + start;
+                let pos_1 = pos_0 + len;
+
+                let acgt_count = acgt_prefix[pos_1] - acgt_prefix[pos_0];
+                if acgt_count < required_acgt {
+                    continue;
+                }
+
+                let gc_count = gc_prefix[pos_1] - gc_prefix[pos_0];
+
+                // Rounded percent without floats: round(100 * gc/acgt)
+                let gc_percent_bin = ((gc_count as u64 * 100 + (acgt_count as u64 / 2))
+                    / acgt_count as u64)
+                    .min(100) as usize;
+
+                counts_by_bin[win_idx].incr(len, gc_percent_bin);
+            }
+        }
+    }
+}
