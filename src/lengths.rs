@@ -75,7 +75,7 @@ pub struct LengthsConfig {
 
     /// Optional BED file(s) with blacklisted regions [path]
     #[cfg_attr(
-        feature = "cli",clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading = "Filtering"))]
+        feature = "cli", clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading = "Filtering"))]
     pub blacklist: Option<Vec<PathBuf>>,
 
     /// Minimum size of blacklist intervals to load (bp) [integer]
@@ -93,7 +93,7 @@ pub struct LengthsConfig {
     /// The required overlap of a fragment with blacklisted regions for it to be excluded [string]
     ///
     /// Possible values:
-    ///     "any", "full", "midpoint", or "proportion=<threshold>" [string]
+    ///     "any", "all", "midpoint", or "proportion=<threshold>" [string]
     ///
     /// Example of proportion: `--blacklist_strategy proportion=0.2` (no space around `=`)
     #[cfg_attr(

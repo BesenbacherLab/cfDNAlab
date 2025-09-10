@@ -3,16 +3,16 @@ use std::str::FromStr;
 /// Blacklist strategy for fragment/read/interval filtering
 ///
 /// Possible values:
-///     "any", "full", "midpoint", or "proportion=<threshold>" [string]
+///     "any", "all", "midpoint", or "proportion=<threshold>" [string]
 ///
 /// Example of proportion: `--blacklist_strategy proportion=0.2` (no space around `=`)
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum BlacklistStrategy {
-    /// All positions overlap with blacklisted regions.
-    Full,
     /// Any positions overlap with blacklisted regions.
     #[default]
     Any,
+    /// All positions overlap with blacklisted regions.
+    All,
     /// Midpoint position overlaps with blacklisted regions.
     Midpoint,
     /// A given proportion of positions overlap with blacklisted regions (e.g. `proportion=0.2`).
@@ -22,8 +22,8 @@ pub enum BlacklistStrategy {
 impl FromStr for BlacklistStrategy {
     type Err = String;
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        if s == "full" {
-            Ok(BlacklistStrategy::Full)
+        if s == "all" {
+            Ok(BlacklistStrategy::All)
         } else if s == "any" {
             Ok(BlacklistStrategy::Any)
         } else if s == "midpoint" {
@@ -38,7 +38,7 @@ impl FromStr for BlacklistStrategy {
                 Ok(BlacklistStrategy::Proportion(thr))
             }
         } else {
-            Err("Use 'full', 'midpoint', or 'proportion=<0.0–1.0>'".into())
+            Err("Use 'any', 'all', 'midpoint', or 'proportion=<0.0–1.0>'".into())
         }
     }
 }

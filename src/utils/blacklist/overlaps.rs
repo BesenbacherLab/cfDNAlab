@@ -10,7 +10,7 @@ pub fn is_blacklisted(
 ) -> bool {
     // Determine blacklist status
     let in_blacklist = match blacklist_strategy {
-        BlacklistStrategy::Full => is_full(&blacklist_intervals, start, end, look_back, ptr),
+        BlacklistStrategy::All => is_all(&blacklist_intervals, start, end, look_back, ptr),
         BlacklistStrategy::Any => is_any(&blacklist_intervals, start, end, look_back, ptr),
         BlacklistStrategy::Midpoint => {
             is_midpoint(&blacklist_intervals, start, end, look_back, ptr)
@@ -50,7 +50,7 @@ pub fn compute_blacklist_overlap(
 }
 
 /// Check if the full fragment lies within an interval
-pub fn is_full(
+pub fn is_all(
     intervals: &[(u64, u64)],
     start: u64,
     end: u64,
