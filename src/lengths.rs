@@ -30,7 +30,9 @@ use crate::{
     },
 };
 
-/// Count fragment lengths from a BAM-file.
+/// Count fragment lengths in a BAM-file.
+///
+/// Fragment length is defined as `reverse.end - forward.start`.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[cfg_attr(
     feature = "cli",
@@ -91,7 +93,7 @@ pub struct LengthsConfig {
     )]
     pub blacklist_min_size: u64,
 
-    /// The required overlap of a fragment with blacklisted regions for it to be excluded [string]
+    /// The fragment positions that should overlap blacklisted regions for it to be excluded [string]
     ///
     /// Possible values:
     ///     "any", "all", "midpoint", or "proportion=<threshold>" [string]
