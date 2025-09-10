@@ -41,6 +41,7 @@ pub struct GCConfig {
     pub ioc: IOCArgs,
 
     /// 2bit reference file [path]
+    /// 
     /// E.g., "hg38.2bit"
     #[cfg_attr(
         feature = "cli",
@@ -67,7 +68,7 @@ pub struct GCConfig {
     ///
     /// Blacklisted positions are set to 'N' in the reference sequence that
     /// the GC fraction is calculated from. See the `Minimum ACGT` options
-    /// for when to ignore a fragment with too few ACGT (non-'N' / non-blacklisted) bases.
+    /// for when to ignore a fragment with too few ACGT (non-'N' and non-blacklisted) bases.
     #[cfg_attr(
         feature = "cli",
         clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading="Filtering"))]
@@ -76,11 +77,11 @@ pub struct GCConfig {
     /// Minimum mapping quality to include [integer]
     #[cfg_attr(
         feature = "cli",
-        clap(long, alias = "mq", default_value = "60", value_parser = clap::value_parser!(u8).range(0..), help_heading="Filtering"))]
+        clap(long, alias = "mq", default_value = "30", value_parser = clap::value_parser!(u8).range(0..), help_heading="Filtering"))]
     pub min_mapq: u8,
 
     /// Only count properly paired reads [flag]
-    #[cfg_attr(feature = "cli", clap(long))]
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
     /// Minimum fragment length to include [integer]
