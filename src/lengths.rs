@@ -30,6 +30,7 @@ use crate::{
     },
 };
 
+/// Count fragment lengths from a BAM-file.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[cfg_attr(
     feature = "cli",

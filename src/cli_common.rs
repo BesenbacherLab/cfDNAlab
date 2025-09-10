@@ -1,5 +1,5 @@
 
-/// Args for In-/output and core (threads).
+/// Args for in-/output and core (threads).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug)]
 pub struct IOCArgs {
