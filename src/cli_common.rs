@@ -153,6 +153,8 @@ impl FromStr for WindowAssigner {
 #[derive(Debug, Clone, Default)]
 pub struct AssignToWindowArgs {
     /// The fragment positions that should overlap a window for it to be counted in that window [string]
+    /// 
+    /// NOTE: Ignored when no windows are specified.
     ///
     /// Possible values:
     ///     "any", "all", "midpoint", or "proportion=<threshold>" [string]

@@ -34,13 +34,6 @@ use crate::{
 ///
 /// Fragment length is defined as `end(reverse) - start(forward)`.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[cfg_attr(
-    feature = "cli",
-    clap(
-        group = clap::ArgGroup::new("windows")
-            .args(&["by_size", "by_bed"])
-    )
-)]
 pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     ioc: IOCArgs,
@@ -233,7 +226,7 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
 
     // Write final counts to output_dir
     write_npy(
-        &opt.ioc.output_dir.join("all_counts.npy"),
+        &opt.ioc.output_dir.join("all_length_counts.npy"),
         &stack_length_counts(&all_bins),
     )
     .context("Write final fail")?;

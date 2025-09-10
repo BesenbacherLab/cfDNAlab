@@ -37,7 +37,7 @@ The following commands are currently available:
 
 | Command         | Description                                                             | Output                                                            |
 | --------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `cfdna lengths` | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)` | `all_counts.npy`: Count array<br />`bins.bed`: Window coordinates |
+| `cfdna lengths` | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)` | `all_length_counts.npy`: Count array<br />`bins.bed`: Window coordinates |
  
 
 ### Common options
