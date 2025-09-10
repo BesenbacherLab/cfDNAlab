@@ -1,8 +1,10 @@
 # cfDNAlab
 
-Incredibly fast tools for analysis of cell-free DNA.
+Incredibly fast command-line tools for analysis of cell-free DNA.
 
 Written in rust for *speed*.
+
+Suggest a tool or feature [here](https://github.com/LudvigOlsen/cfDNAlab/issues/new/choose)!
 
 ---
 
