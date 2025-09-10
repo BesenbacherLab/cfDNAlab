@@ -33,9 +33,9 @@ use std::{
         group = clap::ArgGroup::new("min_acgt")
             .args(&["min_acgt_pct", "min_acgt_count"])
             .multiple(true)))]
-struct GCConfig {
+pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
-    ioc: IOCArgs,
+    pub ioc: IOCArgs,
 
     /// 2bit reference file [path]
     /// E.g., "hg38.2bit"
@@ -44,7 +44,7 @@ struct GCConfig {
         clap(
             short = 'r',
             long,
-            clap::value_parser,
+            value_parser,
             required = true,
             help_heading = "Core"
         )
@@ -52,13 +52,13 @@ struct GCConfig {
     pub ref_2bit: PathBuf,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    windows: WindowsArgs,
+    pub windows: WindowsArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    window_assignment: AssignToWindowArgs,
+    pub window_assignment: AssignToWindowArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    chromosomes: ChromosomeArgs,
+    pub chromosomes: ChromosomeArgs,
 
     /// Optional BED files of blacklisted regions [path]
     #[cfg_attr(
@@ -142,7 +142,7 @@ fn include_read(rec: &Record, opt: &GCConfig) -> bool {
         || rec.mapq() < opt.min_mapq) as bool
 }
 
-fn run(opt: GCConfig) -> Result<()> {
+pub fn run(opt: GCConfig) -> Result<()> {
     let start_time = Instant::now();
     let chromosomes = opt.chromosomes.resolve_chromosomes()?;
     let window_opt = opt.windows.resolve_windows();
