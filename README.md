@@ -1,6 +1,8 @@
 # cfDNAlab
 
-Toolkit for cfDNA analysis written in rust for *speed*.
+Incredibly fast tools for analysis of cell-free DNA.
+
+Written in rust for *speed*.
 
 ---
 
@@ -31,15 +33,15 @@ $ target/release/cfdna --help
 ## Commands
 The following commands are currently available:
 
-| Command         | Description                                                         | Output                                                          |
-| --------------- | ------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `cfdna lengths` | Count fragment lengths<br />(Defined as `end(reverse) - start(forward)`) | `all_counts.npy`: Count array<br />`bins.bed`: Window coordinates |
+| Command         | Description                                                             | Output                                                            |
+| --------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `cfdna lengths` | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)` | `all_counts.npy`: Count array<br />`bins.bed`: Window coordinates |
  
 
 ### Common options
 
- - **Windowing**: Perform the command in windows. Either a single global window (usually default), the windows in a BED given file, or via a window size. Assign fragments/reads/... to windows by how they overlap.
- - **Blacklist filtering**: Supply BED files with regions to blacklist. The implementation is specific to each tool (filtering of full fragments or just the overlapping positions).
+ - **Windowing**: Perform the command in genomic windows. Either a single global window (default), windows specified in a BED file, or via a fixed window size. Assign fragments to windows by how they overlap.
+ - **Blacklist filtering**: Supply BED files with regions to exclude. The implementation is specific to each tool (filtering of full fragments or just the overlapping positions).
 
 ---
 
