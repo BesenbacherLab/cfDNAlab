@@ -152,7 +152,7 @@ impl FromStr for WindowAssigner {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
 pub struct AssignToWindowArgs {
-    /// How to assign fragments to windows (default: any).
+    /// How to assign fragments to windows.
     ///
     /// Possible values:
     ///     "any", "all", "midpoint", or "proportion=<threshold>" [string]
