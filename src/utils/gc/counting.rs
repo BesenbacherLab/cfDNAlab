@@ -356,44 +356,6 @@ pub fn stack_gc_counts(all_counts: &Vec<GCCounts>) -> Array3<u64> {
 pub fn count_reference_gc_and_length_by_window(
     counts_by_bin: &mut Vec<GCCounts>,
     gc_prefixes: &GCPrefixes,
-    length_range: (u64, u64),
-    windows: &[(u64, u64, u64)],
-    chrom_len: u64,
-    min_acgt_fraction: f32,
-    min_acgt_count: u32,
-) {
-    for (win_idx, &(win_start, mut win_end, _)) in windows.iter().enumerate() {
-        win_end = win_end.min(chrom_len as u64);
-
-        for ref_pos in win_start..win_end {
-            let remaining = win_end - ref_pos; // bp left in the window
-            for frag_length in length_range.0..length_range.1.min(remaining) {
-                let gc = get_gc_fraction_in_window(
-                    gc_prefixes,
-                    ref_pos as usize,
-                    (ref_pos + frag_length) as usize,
-                    min_acgt_fraction,
-                    min_acgt_count,
-                );
-                if let Some(gc_fraction) = gc {
-                    let gc_bin = (gc_fraction * 100.0).round() as usize;
-                    counts_by_bin[win_idx].incr(frag_length as usize, gc_bin);
-                }
-            }
-        }
-    }
-}
-
-/// Count reference GC per fragment length for every window on one chromosome
-///
-/// * `windows`    – (start, end, _original_idx) for every window
-/// * `chrom_len`  – chromosome length (used to cap end)
-///
-/// Optimized: iterate by fragment length first, slide across the chromosome,
-/// avoid per-window floats and function calls, and precompute ACGT thresholds.
-pub fn count_reference_gc_and_length_by_window_2(
-    counts_by_bin: &mut Vec<GCCounts>,
-    gc_prefixes: &GCPrefixes,
     length_range: (u64, u64), // [min_len, max_len) in bp
     windows: &[(u64, u64, u64)],
     chrom_len: u64,
@@ -422,27 +384,27 @@ pub fn count_reference_gc_and_length_by_window_2(
         let window_base = window_start as usize; // Convert once
 
         // Sweep by fragment length, then slide the start position across the window.
-        for len in min_len..max_len.min(window_len) {
-            let required_acgt = required_acgt_per_len[len];
-            let max_start = window_len - len;
+        for fragment_length in min_len..max_len.min(window_len) {
+            let required_acgt = required_acgt_per_len[fragment_length];
+            let max_start = window_len - fragment_length;
 
             for start in 0..=max_start {
-                let pos_0 = window_base + start;
-                let pos_1 = pos_0 + len;
+                let start_idx = window_base + start;
+                let end_idx = start_idx + fragment_length;
 
-                let acgt_count = acgt_prefix[pos_1] - acgt_prefix[pos_0];
+                let acgt_count = acgt_prefix[end_idx] - acgt_prefix[start_idx];
                 if acgt_count < required_acgt {
                     continue;
                 }
 
-                let gc_count = gc_prefix[pos_1] - gc_prefix[pos_0];
+                let gc_count = gc_prefix[end_idx] - gc_prefix[start_idx];
 
                 // Rounded percent without floats: round(100 * gc/acgt)
                 let gc_percent_bin = ((gc_count as u64 * 100 + (acgt_count as u64 / 2))
                     / acgt_count as u64)
                     .min(100) as usize;
 
-                counts_by_bin[win_idx].incr(len, gc_percent_bin);
+                counts_by_bin[win_idx].incr(fragment_length, gc_percent_bin);
             }
         }
     }

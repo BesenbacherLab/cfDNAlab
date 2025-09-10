@@ -4,8 +4,7 @@ use crate::{
         bed::load_windows_from_bed,
         blacklist::{apply_blacklist_mask_to_seq, compute_blacklist_overlap, load_blacklists},
         gc::counting::{
-            GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window,
-            count_reference_gc_and_length_by_window_2, stack_gc_counts,
+            GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window, stack_gc_counts,
         },
         reference::read_seq,
     },
@@ -285,7 +284,7 @@ fn process_chrom(
         num_bins
     ];
 
-    count_reference_gc_and_length_by_window_2(
+    count_reference_gc_and_length_by_window(
         &mut counts_by_bin,
         &gc_prefixes,
         (
