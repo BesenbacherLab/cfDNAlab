@@ -31,9 +31,9 @@ $ target/release/cfdna --help
 ## Commands
 The following commands are currently available:
 
-| Command         | Description                                                         | Output                                           |
-| --------------- | ------------------------------------------------------------------- | --------------------------------------------------------- |
-| `cfdna lengths` | Count fragment lengths (defined as `end(reverse) - start(forward)`) | Count array (`all_counts.npy`) and window coordinates (`bins.bed`) |
+| Command         | Description                                                         | Output                                                          |
+| --------------- | ------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `cfdna lengths` | Count fragment lengths (defined as `end(reverse) - start(forward)`) | `all_counts.npy`: Count array <br /> `bins.bed`: Window coordinates |
  
 
 ### Common options
