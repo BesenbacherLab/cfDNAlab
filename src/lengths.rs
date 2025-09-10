@@ -32,7 +32,7 @@ use crate::{
 
 /// Count fragment lengths in a BAM-file.
 ///
-/// Fragment length is defined as `reverse.end - forward.start`.
+/// Fragment length is defined as `end(reverse) - start(forward)`.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[cfg_attr(
     feature = "cli",
