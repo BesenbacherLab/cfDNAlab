@@ -2,6 +2,7 @@ pub mod cli_common;
 mod counters;
 pub mod ends;
 pub mod gc;
+pub mod refgc;
 pub mod lengths;
 mod utils;
 

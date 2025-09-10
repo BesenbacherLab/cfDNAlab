@@ -348,3 +348,38 @@ pub fn stack_gc_counts(all_counts: &Vec<GCCounts>) -> Array3<u64> {
 
     arr
 }
+
+/// Count reference GC per fragment length for every window on one chromosome
+///
+/// * `windows`    – (start, end, _original_idx) for every window
+/// * `chrom_len`  – chromosome length (used to cap end)
+pub fn count_reference_gc_and_length_by_window(
+    counts_by_bin: &mut Vec<GCCounts>,
+    gc_prefixes: &GCPrefixes,
+    length_range: (u64, u64),
+    windows: &[(u64, u64, u64)],
+    chrom_len: u64,
+    min_acgt_fraction: f32,
+    min_acgt_count: u32,
+) {
+    for (win_idx, &(win_start, mut win_end, _)) in windows.iter().enumerate() {
+        win_end = win_end.min(chrom_len as u64);
+
+        for ref_pos in win_start..win_end {
+            let remaining = win_end - ref_pos; // bp left in the window
+            for frag_length in length_range.0..length_range.1.min(remaining) {
+                let gc = get_gc_fraction_in_window(
+                    gc_prefixes,
+                    ref_pos as usize,
+                    (ref_pos + frag_length) as usize,
+                    min_acgt_fraction,
+                    min_acgt_count,
+                );
+                if let Some(gc_fraction) = gc {
+                    let gc_bin = (gc_fraction * 100.0).round() as usize;
+                    counts_by_bin[win_idx].incr(frag_length as usize, gc_bin);
+                }
+            }
+        }
+    }
+}

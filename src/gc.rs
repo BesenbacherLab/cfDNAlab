@@ -66,7 +66,7 @@ pub struct GCConfig {
 
     /// Optional BED file(s) with blacklisted regions [path]
     ///
-    /// Blacklisted positions are set to 'N' in the reference sequence that
+    /// Masking: Blacklisted positions are set to 'N' in the reference sequence that
     /// the GC fraction is calculated from. See the `Minimum ACGT` options
     /// for when to ignore a fragment with too few ACGT (non-'N' and non-blacklisted) bases.
     #[cfg_attr(
@@ -114,7 +114,7 @@ pub struct GCConfig {
              value_parser = clap::value_parser!(u8).range(0..101), help_heading="Filtering"))]
     pub gc_max_pct: u8,
 
-    /// Minimum **percentage** of ACGT bases in a fragment after blacklist exclusion [integer]
+    /// Minimum **percentage** of ACGT bases in a fragment after blacklist masking [integer]
     ///
     /// Fragments where a lower percentage of bases are ACGT (not blacklisted or 'N') are ignored.
     ///
@@ -127,7 +127,7 @@ pub struct GCConfig {
              value_parser = clap::value_parser!(u8).range(0..101), help_heading="Minimum ACGT (select 0-2 args)"))]
     pub min_acgt_pct: u8,
 
-    /// Minimum **count** of ACGT bases in a fragment after blacklist exclusion [integer]
+    /// Minimum **count** of ACGT bases in a fragment after blacklist masking [integer]
     ///
     /// Fragments where fewer bases are ACGT (not blacklisted or 'N') are ignored.
     #[cfg_attr(
