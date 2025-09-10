@@ -106,15 +106,20 @@ impl WindowsArgs {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+
+// TODO: Consider allowing counting up the proportion?
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 /// How to assign a fragment to windows.
 pub enum WindowAssigner {
+    /// Assign to windows overlapping any of the fragment bases.
+    Any,
+    /// Assign to windows overlapping all of the fragment bases.
+    All,
     /// Assign to windows overlapping the fragment midpoint.
     #[default]
     Midpoint,
-    /// Assign to windows overlapping any bases of the fragment.
-    Overlap,
+    /// Assign to windows overlapping a given percentage of the fragment bases.
+    Proportion(f64),
 }
 
 // TODO: Standardize AssignToWindowArgs and BlacklistStrategy!
@@ -122,13 +127,17 @@ pub enum WindowAssigner {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
 pub struct AssignToWindowArgs {
-    /// How to assign fragments to windows (default: midpoint).
+    /// How to assign fragments to windows (default: any).
+    ///
+    /// Possible values:
+    ///     "any", "all", "midpoint", or "proportion=<threshold>" [string]
+    ///
+    /// Example of proportion: `--assign-by proportion=0.2` (no space around `=`)
     #[cfg_attr(
         feature = "cli",
         clap(
             long,
-            value_enum,
-            default_value_t = WindowAssigner::Midpoint,
+            default_value = "any",
             ignore_case = true,
             help = "What to assign fragments to windows by.",
             help_heading = "Window Assignment"

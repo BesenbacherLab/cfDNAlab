@@ -1,3 +1,5 @@
+use crate::cli_common::WindowAssigner;
+
 /// Window index and bounds for a single overlap.
 #[derive(Debug)]
 pub struct OverlappedWindow {
@@ -99,6 +101,7 @@ pub fn find_overlapping_windows(
     by_size: Option<u64>,                // bin size for size‑mode
     interval_start: u64,
     interval_end: u64,
+    min_overlap_fraction: f64,
     look_back: u64,
 ) -> Option<OverlappingWindows> {
     // Build window list according to mode
@@ -111,11 +114,16 @@ pub fn find_overlapping_windows(
     // Size‑mode bins
     if let Some(bin_size) = by_size {
         for bin_idx in create_overlapping_bins_by_size(interval_start, interval_end, bin_size) {
-            overlaps.windows.push(OverlappedWindow {
+            let ow = OverlappedWindow {
                 idx: bin_idx as usize,
                 win_start: bin_idx * bin_size,
                 win_end: bin_idx * bin_size + bin_size,
-            });
+            };
+            let overlap_proportion =
+                fraction_overlap_of_a(interval_start, interval_end, ow.win_start, ow.win_end);
+            if overlap_proportion >= min_overlap_fraction {
+                overlaps.windows.push(ow);
+            }
         }
 
     // BED‑mode windows
@@ -131,11 +139,16 @@ pub fn find_overlapping_windows(
         while bin_idx < window_list.len() && window_list[bin_idx].0 < interval_end {
             let (win_start, win_end, _) = window_list[bin_idx];
             if half_open_intervals_overlap(interval_start, interval_end, win_start, win_end) {
-                overlaps.windows.push(OverlappedWindow {
+                let ow = OverlappedWindow {
                     idx: bin_idx,
                     win_start,
                     win_end,
-                });
+                };
+                let overlap_proportion =
+                    fraction_overlap_of_a(interval_start, interval_end, ow.win_start, ow.win_end);
+                if overlap_proportion >= min_overlap_fraction {
+                    overlaps.windows.push(ow);
+                }
             }
             bin_idx += 1;
         }
@@ -154,4 +167,22 @@ pub fn find_overlapping_windows(
     }
 
     Some(overlaps)
+}
+
+/// The fraction of an interval 'a' that overlaps an interval 'b'.
+///
+/// Definition:
+///     `overlap_fraction_a = len(overlap) / len(a)`
+#[inline]
+pub fn fraction_overlap_of_a(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> f64 {
+    let ov = overlap_len(a_start, a_end, b_start, b_end) as f64;
+    let a_len = (a_end - a_start) as f64;
+    if a_len > 0.0 { ov / a_len } else { 0.0 }
+}
+
+#[inline]
+pub fn overlap_len(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> u64 {
+    let start = a_start.max(b_start);
+    let end = a_end.min(b_end);
+    end.saturating_sub(start) // 0 if no overlap
 }

@@ -95,13 +95,14 @@ pub struct LengthsConfig {
     /// Possible values:
     ///     "any", "all", "midpoint", or "proportion=<threshold>" [string]
     ///
-    /// Example of proportion: `--blacklist_strategy proportion=0.2` (no space around `=`)
+    /// Example of proportion: `--blacklist-strategy proportion=0.2` (no space around `=`)
     #[cfg_attr(
         feature = "cli",
         clap(
             long,
             alias = "bl-strategy",
             default_value = "any",
+            ignore_case = true,
             help_heading = "Filtering"
         )
     )]
@@ -310,6 +311,15 @@ fn process_chrom(
         num_bins
     ];
 
+    // Fraction of a fragment that must overlap with a window to assign to that window
+    let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
+        WindowAssigner::Any => 1. / (opt.max_fragment_length as f64 + 1.0), // +1 to avoid rounding error issues
+        WindowAssigner::All | WindowAssigner::Midpoint => {
+            1.0 - (1. / (opt.max_fragment_length as f64 + 1.0))
+        } // 1.0 but just below to avoid rounding errors
+        WindowAssigner::Proportion(p) => p,
+    };
+
     // Streaming pointers and single fetch for this chr
     let mut bl_ptr = 0; // Blacklist interval
     let mut wd_ptr = 0; // Genomic window
@@ -384,7 +394,9 @@ fn process_chrom(
                     let mid = fragment.start + (fragment_length / 2);
                     (mid, mid + 1)
                 }
-                WindowAssigner::Overlap => (fragment.start, fragment.end),
+                WindowAssigner::Any | WindowAssigner::All | WindowAssigner::Proportion(_) => {
+                    (fragment.start, fragment.end)
+                }
             };
             let overlapping_windows = find_overlapping_windows(
                 chrom_len,
@@ -393,6 +405,7 @@ fn process_chrom(
                 opt.windows.by_size,
                 interval_start.into(),
                 interval_end.into(),
+                min_overlap_fraction,
                 opt.max_fragment_length.into(),
             );
             let overlapping_windows = if let Some(overlaps) = overlapping_windows {
