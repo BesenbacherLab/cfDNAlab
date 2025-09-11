@@ -2,11 +2,11 @@ use rust_htslib::bam::Record;
 use rust_htslib::bam::record::Aux;
 
 /// Extract 'NM' aux tag from read as u16
-/// 
+///
 /// Parameters
 /// ----------
 ///  - `rec`: Record from the BAM file.
-/// 
+///
 /// Returns
 /// -------
 ///  - NM tag.

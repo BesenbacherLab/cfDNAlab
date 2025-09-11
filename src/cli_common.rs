@@ -1,3 +1,7 @@
+use crate::utils::bam::bam_header_contigs;
+use anyhow::Context;
+use anyhow::bail;
+use std::{path::PathBuf, str::FromStr};
 
 /// Args for in-/output and core (threads).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
@@ -31,20 +35,16 @@ pub struct IOCArgs {
 
     /// Number of threads to use (increases RAM usage) [integer]
     ///
-    /// Defaults to the minimum of 22 (one thread per chromosome) and 
-    /// the number of available CPU cores.
+    /// Defaults to the minimum of 22 (one thread per chromosome) and
+    /// the number of available CPU cores (-1).
     #[cfg_attr(
         feature = "cli",
-        clap(short = 't', long, default_value_t = num_cpus::get().min(22), help_heading = "Core")
+        clap(short = 't', long, default_value_t = (num_cpus::get()-1).max(1).min(22), help_heading = "Core")
     )]
     pub n_threads: usize,
 }
 
 /* Window selection */
-
-use std::{path::PathBuf, str::FromStr};
-
-use anyhow::Context;
 
 // Windows option ENUM
 #[derive(Debug, Clone)]
@@ -67,7 +67,7 @@ pub enum WindowSpec {
 #[derive(Debug, Clone, Default)]
 pub struct WindowsArgs {
     /// Window definition: a fixed window size [integer]
-    /// 
+    ///
     /// Default is one global window.
     #[cfg_attr(
         feature = "cli",
@@ -106,7 +106,6 @@ impl WindowsArgs {
         }
     }
 }
-
 
 // TODO: Consider allowing counting up the proportion?
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -147,7 +146,6 @@ impl FromStr for WindowAssigner {
     }
 }
 
-
 // TODO: Standardize AssignToWindowArgs and BlacklistStrategy!
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
@@ -159,7 +157,7 @@ pub struct AssignToWindowArgs {
     ///     "any", "all", "midpoint", or "proportion=<threshold>" [string]
     ///
     /// Example of proportion: `--assign-by proportion=0.2` (no space around `=`)
-    /// 
+    ///
     /// NOTE: Ignored when no windows are specified.
     #[cfg_attr(
         feature = "cli",
@@ -172,7 +170,6 @@ pub struct AssignToWindowArgs {
         )
     )]
     pub assign_by: WindowAssigner,
-
 }
 
 /* Chromosome selection */
@@ -186,15 +183,17 @@ pub struct AssignToWindowArgs {
             .multiple(false)))]
 #[derive(Debug, Clone, Default)]
 pub struct ChromosomeArgs {
-
     /// Names of chromosomes to process (comma-separated or repeated). E.g. 'chr1,chr2,chr3'.
     ///
     /// When no chromosomes are specified, it defaults to chr1..chr22.
+    ///
+    /// Specify `"all"` *as the only string* to use all present chromosomes.
+    /// Only works for tools where a BAM path is passed.
     #[cfg_attr(
         feature = "cli", clap(
             long, num_args = 1..,
-            value_parser, 
-            value_delimiter = ',', 
+            value_parser,
+            value_delimiter = ',',
             group = "chrom_select", 
             help_heading="Chromosome Selection (select max. one arg.)"))]
     pub chromosomes: Option<Vec<String>>,
@@ -210,7 +209,6 @@ pub struct ChromosomeArgs {
         )
     )]
     pub chromosomes_file: Option<PathBuf>,
-
 }
 
 impl ChromosomeArgs {
@@ -218,7 +216,10 @@ impl ChromosomeArgs {
     /// 1) from `--chromosomes-file`
     /// 2) from `--chromosomes`
     /// 3) default `chr1`..`chr22`
-    pub fn resolve_chromosomes(&self) -> anyhow::Result<Vec<String>> {
+    pub fn resolve_chromosomes(
+        &self,
+        bam_path: Option<&std::path::Path>,
+    ) -> anyhow::Result<Vec<String>> {
         if let Some(file) = &self.chromosomes_file {
             let text: String = std::fs::read_to_string(file)
                 .context(format!("reading chromosome file {:?}", file))?;
@@ -230,6 +231,14 @@ impl ChromosomeArgs {
                 .collect();
             Ok(list)
         } else if let Some(chrs) = &self.chromosomes {
+            if chrs.len() == 1 && chrs[0].eq_ignore_ascii_case("all") {
+                let Some(bam) = bam_path else {
+                    bail!(
+                        "`--chromosomes all` requires `--bam <file>` to read contigs from the BAM header"
+                    );
+                };
+                return bam_header_contigs(bam);
+            }
             Ok(chrs.clone())
         } else {
             Ok((1..=22).map(|i| format!("chr{}", i)).collect())

@@ -63,10 +63,10 @@ pub struct RefGCConfig {
     /// Number of threads to use (increases RAM usage) [integer]
     ///
     /// Defaults to the minimum of 22 (one thread per chromosome) and
-    /// the number of available CPU cores.
+    /// the number of available CPU cores (-1).
     #[cfg_attr(
         feature = "cli",
-        clap(short = 't', long, default_value_t = num_cpus::get().min(22), help_heading = "Core")
+        clap(short = 't', long, default_value_t = (num_cpus::get()-1).max(1).min(22), help_heading = "Core")
     )]
     pub n_threads: usize,
 
@@ -123,7 +123,7 @@ pub struct RefGCConfig {
 
 pub fn run(opt: RefGCConfig) -> Result<()> {
     let start_time = Instant::now();
-    let chromosomes = opt.chromosomes.resolve_chromosomes()?;
+    let chromosomes = opt.chromosomes.resolve_chromosomes(None)?;
     let window_opt = opt.windows.resolve_windows();
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
     pb.set_style(

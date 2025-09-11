@@ -1,10 +1,10 @@
 pub mod bam;
+pub mod base;
 pub mod bed;
 pub mod blacklist;
+pub mod fragment;
 pub mod gc;
+pub mod lengths;
+pub mod overlaps;
 pub mod read;
 pub mod reference;
-pub mod base;
-pub mod fragment;
-pub mod overlaps;
-pub mod lengths;

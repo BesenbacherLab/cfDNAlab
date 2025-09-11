@@ -125,7 +125,9 @@ fn include_read(rec: &Record, opt: &LengthsConfig) -> bool {
 
 pub fn run(opt: LengthsConfig) -> Result<()> {
     let start_time = Instant::now();
-    let chromosomes = opt.chromosomes.resolve_chromosomes()?;
+    let chromosomes = opt
+        .chromosomes
+        .resolve_chromosomes(Some(&opt.ioc.bam.as_path()))?;
     let window_opt = opt.windows.resolve_windows();
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
     pb.set_style(

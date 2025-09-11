@@ -73,7 +73,7 @@ mod tests_merge_intervals {
 
 #[cfg(test)]
 mod tests_seq_blacklisting {
-    use cfdna_utils::cfdna_utils::blacklist::{apply_blacklist_mask_to_seq, BLACKLIST_BYTE};
+    use cfdna_utils::cfdna_utils::blacklist::{BLACKLIST_BYTE, apply_blacklist_mask_to_seq};
 
     #[test]
     fn mask_simple() {
