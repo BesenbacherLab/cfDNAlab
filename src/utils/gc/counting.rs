@@ -349,21 +349,73 @@ pub fn stack_gc_counts(all_counts: &Vec<GCCounts>) -> Array3<u64> {
     arr
 }
 
-/// Count reference GC per fragment length for every window on one chromosome
+/// Count reference GC per fragment length for every window on one chromosome.
 ///
-/// * `windows`    – (start, end, _original_idx) for every window
-/// * `chrom_len`  – chromosome length (used to cap end)
+/// For each window `[start, end)` and each given start position `s` within that
+/// window (`start <= s < end`), this function considers all fragment lengths
+/// `L` in `[min_len, max_len)` such that `s + L <= end`. It uses prefix arrays to
+/// compute, in O(1), both:
+/// - the number of A/C/G/T bases (excluding Ns/blacklist) in `[s, s+L)`, and
+/// - the number of G or C bases in `[s, s+L)`.
+///
+/// A window/length is **counted** only if it meets both ACGT requirements:
+/// - `acgt_count >= min_acgt_count`, and
+/// - `acgt_count / L >= min_acgt_fraction`.
+///
+/// When counted, the GC fraction is binned to a **percent** in `[0, 100]` using
+/// **half-up rounding** *without floats*, via:
+/// `round(100 * gc / acgt) = (100*gc + acgt/2) / acgt`.
+/// This avoids the systematic low bias of floor‐division.
+///
+/// The sampled `start_positions` must be **sorted, unique**, and refer to the same
+/// chromosome as `gc_prefixes`. Windows are assumed **sorted by start** (they may
+/// overlap). The function advances a pointer through `start_positions` as windows
+/// progress to avoid re-scanning earlier starts.
+///
+/// Parameters
+/// ----------
+/// counts_by_bin: &mut Vec<GCCounts>
+///     Per-window accumulator. For window index `i`, `counts_by_bin[i]` is updated
+///     by calling `incr(fragment_length, gc_percent_bin)`.
+/// gc_prefixes: &GCPrefixes
+///     Prefix arrays with one extra sentinel element: `gc[k]` and `acgt[k]` give
+///     cumulative counts in `[0, k)`. Requires `gc.len() == acgt.len() >= chrom_len + 1`.
+/// length_range: (u64, u64)
+///     Half-open `[min_len, max_len)` in base pairs for fragment lengths.
+/// windows: &[(u64, u64, u64)]
+///     Start-sorted windows as `(start, end, original_idx)`. Each window is clamped
+///     to `chrom_len`.
+/// start_positions: &[usize]
+///     Sorted, unique genomic start indices for this chromosome.
+/// chrom_len: u64
+///     Chromosome length; used to cap window ends.
+/// min_acgt_fraction: f32
+///     Minimum fraction of A/C/G/T within the fragment (after masking Ns/blacklist).
+/// min_acgt_count: u32
+///     Minimum absolute count of A/C/G/T within the fragment.
+///
+/// Returns
+/// -------
+/// None
+///     Updates `counts_by_bin` in place.
 pub fn count_reference_gc_and_length_by_window(
     counts_by_bin: &mut Vec<GCCounts>,
     gc_prefixes: &GCPrefixes,
     length_range: (u64, u64), // [min_len, max_len) in bp
     windows: &[(u64, u64, u64)],
+    start_positions: &[usize], // sorted unique genomic starts for this chromosome
     chrom_len: u64,
     min_acgt_fraction: f32, // e.g., 0.8
     min_acgt_count: u32,
 ) {
     let gc_prefix = &gc_prefixes.gc; // prefix sums of GC counts
     let acgt_prefix = &gc_prefixes.acgt; // prefix sums of A/C/G/T (non-N/non-blacklist)
+    debug_assert_eq!(gc_prefix.len(), acgt_prefix.len());
+    debug_assert!(
+        gc_prefix.len() >= chrom_len as usize + 1,
+        "prefix arrays should be chrom_len+1"
+    );
+
     let min_len = length_range.0 as usize;
     let max_len = length_range.1 as usize; // exclusive
 
@@ -374,38 +426,66 @@ pub fn count_reference_gc_and_length_by_window(
         required_acgt_per_len[len] = req_by_frac.max(min_acgt_count).max(1);
     }
 
+    // Pointer into `start_positions`, advanced monotonically as windows progress
+    let mut start_ptr = 0usize;
+
     for (win_idx, &(window_start, mut window_end, _)) in windows.iter().enumerate() {
         window_end = window_end.min(chrom_len);
-        let window_len = (window_end - window_start) as usize;
+        let window_end_usize = window_end as usize;
+        let window_start_usize = window_start as usize;
+        let window_len = window_end_usize - window_start_usize;
         if window_len == 0 {
             continue;
         }
 
-        let window_base = window_start as usize; // Convert once
+        // Advance the start pointer to the first start >= window_start.
+        while start_ptr < start_positions.len() && start_positions[start_ptr] < window_start_usize {
+            start_ptr += 1;
+        }
 
-        // Sweep by fragment length, then slide the start position across the window.
-        for fragment_length in min_len..max_len.min(window_len) {
-            let required_acgt = required_acgt_per_len[fragment_length];
-            let max_start = window_len - fragment_length;
-
-            for start in 0..=max_start {
-                let start_idx = window_base + start;
-                let end_idx = start_idx + fragment_length;
-
-                let acgt_count = acgt_prefix[end_idx] - acgt_prefix[start_idx];
-                if acgt_count < required_acgt {
-                    continue;
-                }
-
-                let gc_count = gc_prefix[end_idx] - gc_prefix[start_idx];
-
-                // Rounded percent without floats: round(100 * gc/acgt)
-                let gc_percent_bin = ((gc_count as u64 * 100 + (acgt_count as u64 / 2))
-                    / acgt_count as u64)
-                    .min(100) as usize;
-
-                counts_by_bin[win_idx].incr(fragment_length, gc_percent_bin);
+        // Iterate all sampled starts that fall inside [window_start, window_end).
+        let mut j = start_ptr;
+        while j < start_positions.len() {
+            let start_pos = start_positions[j];
+            if start_pos >= window_end_usize {
+                break; // Past the window
             }
+
+            // Remaining room to the right edge of the window (inclusive end condition)
+            // Valid fragment lengths satisfy: min_len <= frag_len <= (window_end - start_pos)
+            let remaining = window_end_usize - start_pos;
+            if remaining >= min_len {
+                let frag_max_excl = max_len.min(remaining as usize + 1);
+
+                for frag_len in min_len..frag_max_excl {
+                    let end_idx = start_pos + frag_len;
+
+                    // Prefix lookups
+                    let acgt_count = acgt_prefix[end_idx] - acgt_prefix[start_pos];
+                    if acgt_count < required_acgt_per_len[frag_len] {
+                        continue;
+                    }
+
+                    let gc_count = gc_prefix[end_idx] - gc_prefix[start_pos];
+
+                    // Round to the nearest percent (**half-up**) using integer math.
+                    // Integer division floors: (100*gc)/acgt would always round down (bias!).
+                    // Trick: add half the denominator before dividing -> values with fractional part ≥ 0.5 round up.
+                    // Formula: round(x/y) = (x + y/2) / y, for y > 0.
+                    // Here: x = 100 * gc_count, y = acgt_count.
+                    // Examples:
+                    //  - gc=1, acgt=3 -> exact 33.33…% -> (100 + 1)/3 = 33
+                    //  - gc=2, acgt=3 -> exact 66.66…% -> (200 + 1)/3 = 67
+                    //  - gc=3, acgt=3 -> exact 100%     -> (300 + 1)/3 = 100 (then clamped to ≤100 below)
+                    let gc_percent_bin = ((gc_count as u64 * 100 + (acgt_count as u64 / 2))
+                        / acgt_count as u64)
+                        .min(100) as usize;
+
+                    counts_by_bin[win_idx].incr(frag_len, gc_percent_bin);
+                }
+            }
+
+            j += 1;
         }
     }
 }

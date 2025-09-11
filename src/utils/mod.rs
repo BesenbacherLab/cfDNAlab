@@ -8,3 +8,4 @@ pub mod lengths;
 pub mod overlaps;
 pub mod read;
 pub mod reference;
+pub mod sampling;

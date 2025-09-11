@@ -6,7 +6,8 @@ use crate::{
         gc::counting::{
             GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window, stack_gc_counts,
         },
-        reference::read_seq,
+        reference::{read_seq, twobit_contig_lengths},
+        sampling::sample_starts_per_chrom,
     },
 };
 use anyhow::{Context, Result};
@@ -69,6 +70,21 @@ pub struct RefGCConfig {
         clap(short = 't', long, default_value_t = (num_cpus::get()-1).max(1).min(22), help_heading = "Core")
     )]
     pub n_threads: usize,
+
+    /// Number of genomic starting positions to sample [integer]
+    ///
+    /// The positions are uniformly sampled across the chromosomes
+    /// with the GC of each fragment length being counted from
+    /// those same starting positions.
+    ///
+    /// NOTE: Sampling is independent of windowing and blacklisting!
+    /// The per-length-sum of the output counts may thus be significantly
+    /// lower than the specified `n_positions` and different between lengths.
+    #[cfg_attr(
+        feature = "cli",
+        clap(short = 't', long, default_value = "10_000_000", help_heading = "Core")
+    )]
+    pub n_positions: usize,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub windows: WindowsArgs,
@@ -152,6 +168,16 @@ pub fn run(opt: RefGCConfig) -> Result<()> {
         _ => None,
     };
 
+    let starts_per_chrom = {
+        let mut rng1 = rand::rng();
+        sample_starts_per_chrom(
+            &mut rng1,
+            &twobit_contig_lengths(opt.ref_2bit.clone(), &chromosomes)?,
+            opt.n_positions,
+            opt.max_fragment_length as usize,
+        )?
+    };
+
     // Configure global thread‐pool size
     rayon::ThreadPoolBuilder::new()
         .num_threads(opt.n_threads as usize)
@@ -178,6 +204,7 @@ pub fn run(opt: RefGCConfig) -> Result<()> {
                     .and_then(|m| m.get(chr).map(|v| v.as_slice())),
                 &window_opt,
                 blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
+                &starts_per_chrom.get(chr).unwrap_or(&vec![]),
             )?;
             pb.inc(1);
             Ok(out)
@@ -250,6 +277,7 @@ fn process_chrom(
     window_opt: &WindowSpec,
     // gc_bins: usize,
     blacklist_intervals: &[(u64, u64)],
+    start_positions: &[usize],
 ) -> anyhow::Result<(Vec<GCCounts>, Option<Vec<(String, u64, u64, u64, f64)>>)> {
     let mut seq_bytes = read_seq(&opt.ref_2bit, chr)?;
     apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals);
@@ -289,9 +317,10 @@ fn process_chrom(
         &gc_prefixes,
         (
             opt.min_fragment_length as u64,
-            opt.max_fragment_length as u64,
+            opt.max_fragment_length as u64 + 1, // make exclusive
         ),
         &windows,
+        start_positions,
         chrom_len,
         opt.min_acgt_pct as f32 / 100f32,
         opt.min_acgt_count as u32,
