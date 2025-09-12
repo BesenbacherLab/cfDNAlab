@@ -31,14 +31,16 @@ use crate::{
 ///
 /// Outputs scaling factors per stride to allow other methods to apply the normalization (by weighting fragment counts).
 ///
-/// Smoothing is performed as a triangular moving average, where we calculate
-/// a weighted average of coverages from all bins overlapping a stride.
+/// ## Smoothing
 ///
-/// ## Triangular weighting scheme visualization
+/// Smoothing is performed as a triangular moving average, calculating
+/// a weighted average of coverages from all bins overlapping a stride.  
+/// 
+/// ### Example
 ///
 /// Assuming a bin-size of 6 and stride size of 2 (normally defaults to 5Mb and 0.5Mb respectively).
 ///
-/// **Stride bins** (fixed along genome, each have an average coverage value):
+/// **Stride bins** (fixed along genome, each with an average coverage):
 ///
 /// `[A] [B] [C] [D] [E] [F] [G] ...`
 ///
