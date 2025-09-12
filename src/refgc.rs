@@ -23,8 +23,13 @@ use std::{
     time::Instant,
 };
 
-/// Count all possible combinations of (GC fraction x fragment length) in the reference genome.
-/// This 2D distribution can serve as the expected GC bias.
+/// Count GC fraction per fragment length at a sampled number of starting positions in the reference genome.
+/// This 2D count distribution can serve as the expected GC bias.
+///
+/// How: A number (default: 100M) of starting positions are randomly sampled uniformly across the reference
+/// genome. For each position, we count the GC fraction for every possible fragment length (default: 20-1000bp).
+/// Intervals (the possible fragments) with too few ACGT bases after blacklist masking are discarded
+/// (so increase `--n-positions` accordingly).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[cfg_attr(
     feature = "cli",
@@ -82,7 +87,7 @@ pub struct RefGCConfig {
     /// lower than the specified `n_positions` and different between lengths.
     #[cfg_attr(
         feature = "cli",
-        clap(short = 't', long, default_value = "10000000", help_heading = "Core")
+        clap(short = 't', long, default_value = "100000000", help_heading = "Core")
     )]
     pub n_positions: usize,
 
