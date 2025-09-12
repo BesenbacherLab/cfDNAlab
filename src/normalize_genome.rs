@@ -49,7 +49,7 @@ use crate::{
 /// **Overlapping megabins** (`MB*`) (each covers 3 stride-bins). **`W_D`**, the number of overlapping megabins,
 /// is the (unnormalized) weight of each stride-bin in the weighted-average coverage for stride-bin `D`:
 ///
-/// ```
+/// ```text
 ///
 /// MB1: [A][B][C]
 ///

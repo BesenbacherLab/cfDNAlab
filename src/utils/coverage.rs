@@ -24,6 +24,9 @@ enum BlStage {
 /// Example
 /// -------
 /// ```rust
+/// use cfdnalab::utils::coverage::CoveragePrefix;
+/// use cfdnalab::utils::fragment::Fragment;
+/// 
 /// let length: u32 = 1_000_000; // e.g., chrom_len
 /// let mut cp = CoveragePrefix::initialize_coverage_prefix(length);
 ///
