@@ -4,6 +4,7 @@
 mod tests {
     use anyhow::Result;
     use cfdnalab::utils::{coverage::CoveragePrefix, fragment::Fragment};
+    use std::panic::{AssertUnwindSafe, catch_unwind};
 
     // Simple approx helpers
     fn feq(a: f32, b: f32, eps: f32) -> bool {
@@ -315,13 +316,6 @@ mod tests {
 
         Ok(())
     }
-
-    // Append these to your existing `#[cfg(test)] mod tests`
-    //
-    // Note: These tests assume the current API semantics in your snippet,
-    // including that `finalize_coverage()` is infallible and will panic if the prefix was dropped.
-
-    use std::panic::{AssertUnwindSafe, catch_unwind};
 
     #[test]
     fn empty_sequence_finalize_and_query() -> Result<()> {
