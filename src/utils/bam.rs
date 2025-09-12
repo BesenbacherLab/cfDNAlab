@@ -31,3 +31,22 @@ pub fn bam_header_contigs<P: AsRef<std::path::Path>>(bam_path: P) -> Result<Vec<
         .collect::<Result<Vec<_>>>()?;
     Ok(names)
 }
+
+// pub fn bam_header_contigs_with_len<P: AsRef<std::path::Path>>(
+//     bam_path: P,
+// ) -> Result<Vec<(String, u64)>> {
+//     let reader = Reader::from_path(bam_path)?;
+//     let header = reader.header();
+
+//     let mut result = Vec::new();
+//     for (tid, name_bytes) in header.target_names().iter().enumerate() {
+//         let name = std::str::from_utf8(name_bytes)
+//             .context("non-UTF8 contig name in BAM header")?
+//             .to_owned();
+//         let len = header
+//             .target_len(tid as u32)
+//             .context("missing contig length in BAM header")?;
+//         result.push((name, len as u64));
+//     }
+//     Ok(result)
+// }
