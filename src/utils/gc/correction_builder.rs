@@ -105,7 +105,7 @@ impl CorrectionBuilder {
                 for r in 0..n_len {
                     let row_sum: f32 = gccounts.counts[r].iter().map(|&x| x as f32).sum();
                     if row_sum == 0.0 {
-                        // neutral row → expected equals counts (weights→1 later)
+                        // neutral row -> expected equals counts (weights->1 later)
                         for c in 0..n_gc {
                             e[(r, c)] = 1.0;
                         }
@@ -253,7 +253,7 @@ pub struct Correction {
 // /// Build a GC-only correction whose weights depend **only on GC bin** (shared across lengths).
 // ///
 // /// Let C_g be the total counts in GC bin g and p_g = (C_g + pseudocount) / (sum C + pseudocount * n_gc).
-// /// Given a target distribution q_g (will be renormalized to sum=1; if None → uniform),
+// /// Given a target distribution q_g (will be renormalized to sum=1; if None -> uniform),
 // /// define w_g = (q_g / p_g), clamp to [clamp_min, clamp_max], and apply a single
 // /// global scale so the grand total is preserved exactly:
 // ///     s = (sum_{l,g} c_{l,g}) / (sum_{l,g} w_g * c_{l,g})

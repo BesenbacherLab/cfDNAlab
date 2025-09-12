@@ -40,7 +40,7 @@ impl GCSmoother1D {
 }
 
 /// NaN-aware boxcar smoothing along columns, applied to each row independently.
-/// Uses prefix sums of (values with NaNs→0) and counts of finite values to get O(1) window means.
+/// Uses prefix sums of (values with NaNs->0) and counts of finite values to get O(1) window means.
 fn boxcar_rows_nan_aware(mut w: ArrayViewMut2<f32>, radius: usize) {
     let (n_len, n_gc) = (w.nrows(), w.ncols());
     let win = 2 * radius + 1;

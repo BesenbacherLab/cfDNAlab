@@ -26,7 +26,7 @@ pub fn save_correction_npz(path: impl AsRef<Path>, corr: &Correction) -> Result<
                 .windows
                 .as_ref()
                 .expect("windows must be set for ByBed");
-            // Flatten Vec<(u64,u64)> → Array2<u64> (N,2)
+            // Flatten Vec<(u64,u64)> -> Array2<u64> (N,2)
             let mut flat = Vec::with_capacity(wins.len() * 2);
             for (s, e) in wins {
                 flat.push(*s);

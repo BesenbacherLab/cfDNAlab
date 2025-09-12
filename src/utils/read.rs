@@ -55,8 +55,8 @@ pub fn read_md_tag(rec: &Record) -> Option<String> {
 /// The MD tag string has a structure like:
 ///   <match><ref_base><match>^<del_bases><match><ref_base>...
 /// examples:
-/// - "10A5" → 10 matches, A mismatch, 5 matches
-/// - "8^AC2T3" → 8 matches, deletion of AC, 2 matches, T mismatch, 3 matches
+/// - "10A5" -> 10 matches, A mismatch, 5 matches
+/// - "8^AC2T3" -> 8 matches, deletion of AC, 2 matches, T mismatch, 3 matches
 ///
 /// Interpretation rules:
 /// 1. A number advances the reference cursor by that many matches
@@ -90,7 +90,7 @@ pub fn parse_md_tag(md_tag: &str, offset: u32) -> (Vec<u32>, Vec<u32>) {
         // Digit?  (a run of matching bases)
         // ───────────────────────────────────────────────
         if b.is_ascii_digit() {
-            // We’ll build up the full number (e.g. “123” → 123) in `num`
+            // We’ll build up the full number (e.g. “123” -> 123) in `num`
             let mut num: u32 = 0;
 
             // As long as the next byte is also a digit, keep consuming
@@ -146,7 +146,7 @@ pub fn parse_md_tag(md_tag: &str, offset: u32) -> (Vec<u32>, Vec<u32>) {
                 starts.push(pos);
                 in_run = true;
             }
-            // Consumed one mismatch base → advance cursor by 1
+            // Consumed one mismatch base -> advance cursor by 1
             pos += 1;
             i += 1;
 
