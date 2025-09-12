@@ -321,21 +321,20 @@ impl CoveragePrefix {
     /// - _:
     ///     Err if coverage has not been finalized.
     pub fn build_query_index(&mut self) -> Result<()> {
-        // Number of positions
+        // Prefer high-precision path if prefix exists
         let n = self.length as usize;
-
-        // Allocate prefix arrays of length n+1
-        let mut psum_all = Vec::with_capacity(n + 1);
-        let mut psum_allowed = Vec::with_capacity(n + 1);
-        let mut psum_allowed_count = Vec::with_capacity(n + 1);
-
-        // Prefix base case at index 0
-        psum_all.push(0.0_f64);
-        psum_allowed.push(0.0_f64);
-        psum_allowed_count.push(0u32);
-
         if !self.delta.is_empty() && self.delta.len() >= n + 1 {
-            // High-precision path: integrate delta -> coverage (run) in f64 on the fly
+            // Allocate prefix arrays of length n+1
+            let mut psum_all = Vec::with_capacity(n + 1);
+            let mut psum_allowed = Vec::with_capacity(n + 1);
+            let mut psum_allowed_count = Vec::with_capacity(n + 1);
+
+            // Empty-prefix base
+            psum_all.push(0.0_f64);
+            psum_allowed.push(0.0_f64);
+            psum_allowed_count.push(0u32);
+
+            // Integrate the +w/-w prefix in f64 to avoid per-base f32 quantization
             let mut run = 0.0_f64;
             match self.bl_mask.as_ref() {
                 Some(mask) => {
@@ -361,40 +360,53 @@ impl CoveragePrefix {
                     }
                 }
             }
-        } else {
-            // Fallback: use the stored f32 coverage if prefix was dropped
-            let cov = match self.coverage.as_ref() {
-                Some(c) => c,
-                None => anyhow::bail!("coverage not finalized, call finalize_coverage() first"),
-            };
-            let n = cov.len();
-            match self.bl_mask.as_ref() {
-                Some(mask) => {
-                    for i in 0..n {
-                        let c = cov[i] as f64;
-                        let allowed = mask[i] == 0;
-                        let prev_all = *psum_all.last().unwrap();
-                        let prev_allow = *psum_allowed.last().unwrap();
-                        let prev_cnt = *psum_allowed_count.last().unwrap();
 
-                        psum_all.push(prev_all + c);
-                        psum_allowed.push(prev_allow + if allowed { c } else { 0.0 });
-                        psum_allowed_count.push(prev_cnt + if allowed { 1 } else { 0 });
-                    }
+            self.psum_all = Some(psum_all);
+            self.psum_allowed = Some(psum_allowed);
+            self.psum_allowed_count = Some(psum_allowed_count);
+            self.cov_stage = Stage::Indexed;
+            return Ok(());
+        }
+
+        // Fallback: build from stored f32 coverage slice if prefix was dropped
+        let cov = self.coverage.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("coverage not finalized, call finalize_coverage() first")
+        })?;
+
+        let n = cov.len();
+        let mut psum_all = Vec::with_capacity(n + 1);
+        let mut psum_allowed = Vec::with_capacity(n + 1);
+        let mut psum_allowed_count = Vec::with_capacity(n + 1);
+
+        psum_all.push(0.0_f64);
+        psum_allowed.push(0.0_f64);
+        psum_allowed_count.push(0u32);
+
+        match self.bl_mask.as_ref() {
+            Some(mask) => {
+                for i in 0..n {
+                    let c = cov[i] as f64;
+                    let allowed = mask[i] == 0;
+                    let prev_all = *psum_all.last().unwrap();
+                    let prev_allow = *psum_allowed.last().unwrap();
+                    let prev_cnt = *psum_allowed_count.last().unwrap();
+
+                    psum_all.push(prev_all + c); // include coverage everywhere
+                    psum_allowed.push(prev_allow + if allowed { c } else { 0.0 });
+                    psum_allowed_count.push(prev_cnt + if allowed { 1 } else { 0 });
                 }
-                None => {
-                    for i in 0..n {
-                        let c = cov[i] as f64;
-                        let prev_all = *psum_all.last().unwrap();
-                        psum_all.push(prev_all + c);
-                        psum_allowed.push(*psum_all.last().unwrap());
-                        psum_allowed_count.push((i as u32) + 1);
-                    }
+            }
+            None => {
+                for i in 0..n {
+                    let c = cov[i] as f64;
+                    let prev_all = *psum_all.last().unwrap();
+                    psum_all.push(prev_all + c);
+                    psum_allowed.push(*psum_all.last().unwrap());
+                    psum_allowed_count.push((i as u32) + 1);
                 }
             }
         }
 
-        // Store results
         self.psum_all = Some(psum_all);
         self.psum_allowed = Some(psum_allowed);
         self.psum_allowed_count = Some(psum_allowed_count);
