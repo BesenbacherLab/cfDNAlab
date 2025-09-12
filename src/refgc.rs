@@ -82,7 +82,7 @@ pub struct RefGCConfig {
     /// lower than the specified `n_positions` and different between lengths.
     #[cfg_attr(
         feature = "cli",
-        clap(short = 't', long, default_value = "10_000_000", help_heading = "Core")
+        clap(short = 't', long, default_value = "10000000", help_heading = "Core")
     )]
     pub n_positions: usize,
 
