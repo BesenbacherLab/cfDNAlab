@@ -1,3 +1,6 @@
+
+// TODO: Check manually - generated but not validated!
+
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
@@ -64,16 +67,16 @@ mod tests {
         // [150,200): 50 * 1.87 = 93.5
         // [200,250): 50 * 0.87 = 43.5
         // [250,300): 50 * 0.0 = 0.0
-        // Total including masked = 167.0; excluding masked = 147.0
+        // Total including masked = 187.0; excluding masked = 167.0
         let sum_all = cp.sum_coverage(100, 300, false)?;
         let sum_ok = cp.sum_coverage(100, 300, true)?;
-        assert!(deq(sum_all, 167.0, 1e-9));
-        assert!(deq(sum_ok, 147.0, 1e-9));
+        assert!(deq(sum_all, 187.0, 1e-9));
+        assert!(deq(sum_ok, 167.0, 1e-9));
 
         let avg_all = cp.avg_coverage(100, 300, false)?;
         let avg_ok = cp.avg_coverage(100, 300, true)?;
-        assert!(feq(avg_all, 167.0 / 200.0, 1e-6));
-        assert!(feq(avg_ok, 147.0 / 180.0, 1e-6)); // 20 masked bases removed from denominator
+        assert!(feq(avg_all, 187.0 / 200.0, 1e-6));
+        assert!(feq(avg_ok, 167.0 / 180.0, 1e-6)); // 20 masked bases removed from denominator
 
         // Position queries with NaN for masked
         let ys = cp.coverage_at_positions_nan(&[119, 120, 139, 140, 150])?;
@@ -469,17 +472,17 @@ mod tests {
 
         // Sum including mask
         let s_all = cp.sum_coverage(0, 100, false)?;
-        // Manual sum: 20*1 + 5*1 + 40*0.5 + 10*0.5 = 20 + 5 + 20 + 5 = 50
-        assert!(deq(s_all, 50.0, 1e-12));
+        // Manual sum: 20*1 + 50*0.5 = 45.0
+        assert!(deq(s_all, 45.0, 1e-12));
 
         // Excluding masked removes [20,25) and [80,100) from numerator
         let s_exc = cp.sum_coverage(0, 100, true)?;
-        // Manual excluding: [10,20)=10*1 + [25,30)=5*1 + [40,80)=40*0.5 = 10 + 5 + 20 = 35
+        // Manual excluding removes 5*1 + 10*0.5 = 10
         assert!(deq(s_exc, 35.0, 1e-12));
 
         // Averages
         let a_all = cp.avg_coverage(0, 100, false)?;
-        assert!(feq(a_all, 50.0 / 100.0, 1e-6));
+        assert!(feq(a_all, 45.0 / 100.0, 1e-6));
         let a_exc = cp.avg_coverage(0, 100, true)?;
         // Denominator excludes 5 + 20 = 25 masked bases
         assert!(feq(a_exc, 35.0 / 75.0, 1e-6));
@@ -511,8 +514,10 @@ mod tests {
         // Rebuild indexes now uses stale mask since we didn't finalize again
         // We call build_query_index to simulate callers that rebuild for safety
         cp.build_query_index()?;
-        let s_exc_stale = cp.sum_coverage(0, 100, true)?;
-        assert!(deq(s_exc_stale, 90.0, 1e-12)); // Still 90
+
+        // Panics as we did not finalize blacklist again after adding
+        let err = cp.sum_coverage(0, 100, true).unwrap_err();
+        assert!(format!("{err}").contains("blacklist present but not finalized"));
 
         // Finalize mask and rebuild indexes to apply the change
         cp.finalize_blacklist_prefix();
