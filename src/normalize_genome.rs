@@ -37,7 +37,8 @@ use crate::{
 ///
 /// Assuming a bin-size of 6 and stride size of 2 (normally defaults to 5Mb and 0.5Mb respectively):
 ///
-/// --------------------------
+/// <hr />
+/// 
 /// Stride bins (fixed along genome, each have an average coverage value):
 ///
 /// `[A] [B] [C] [D] [E] [F] [G] ...`
