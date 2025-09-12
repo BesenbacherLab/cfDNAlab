@@ -167,11 +167,11 @@ impl CoveragePrefix {
         cov.resize(self.length as usize, 0.0);
 
         // Cumulative sum over delta
-        let mut run = 0.0_f32;
+        let mut run = 0.0_f64;
         for i in 0..=self.length as usize {
-            run += self.delta[i];
+            run += self.delta[i] as f64; // f64 to reduce rounding error accumulation
             if i < self.length as usize {
-                cov[i] = run;
+                cov[i] = run as f32;
             }
         }
 
