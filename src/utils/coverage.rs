@@ -23,10 +23,12 @@ enum BlStage {
 ///
 /// Example
 /// -------
-/// ```rust,no_run
+/// ```rust
 /// use cfdnalab::utils::coverage::CoveragePrefix;
 /// use cfdnalab::utils::fragment::Fragment;
-/// 
+///
+/// # use anyhow::Result;
+/// # fn demo() -> Result<()> {
 /// let length: u32 = 1_000_000; // e.g., chrom_len
 /// let mut cp = CoveragePrefix::initialize_coverage_prefix(length);
 ///
@@ -52,6 +54,8 @@ enum BlStage {
 /// // Raw positional coverage if needed
 /// let cov = cp.coverage().unwrap();
 /// assert_eq!(cov.len() as u32, length);
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct CoveragePrefix {
