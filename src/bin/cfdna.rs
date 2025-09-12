@@ -1,5 +1,6 @@
 use cfdnalab::gc::GCConfig;
-use cfdnalab::lengths::LengthsConfig; // ends::EndsConfig
+use cfdnalab::lengths::LengthsConfig;
+use cfdnalab::normalize_genome::NormalizeGenomeConfig;
 use cfdnalab::refgc::RefGCConfig;
 use clap::{Parser, Subcommand};
 
@@ -14,6 +15,7 @@ struct Cli {
 enum Cmd {
     GC(GCConfig),
     RefGC(RefGCConfig), // Extract reference GC counts
+    NormalizeGenome(NormalizeGenomeConfig),
     Lengths(LengthsConfig),
     // Ends(EndsConfig),
 }
@@ -23,6 +25,7 @@ fn main() {
     let res: anyhow::Result<()> = match Cli::parse().cmd {
         Cmd::GC(cfg) => cfdnalab::gc::run(cfg),
         Cmd::RefGC(cfg) => cfdnalab::refgc::run(cfg),
+        Cmd::NormalizeGenome(cfg) => cfdnalab::normalize_genome::run(cfg),
         Cmd::Lengths(cfg) => cfdnalab::lengths::run(cfg),
         // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg),
     };
