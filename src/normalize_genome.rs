@@ -26,11 +26,12 @@ use crate::{
     },
 };
 
-/// Extract the fragment coverage in large genomic bins ("megabins") with a rolling
-/// window approach and calculate a smoothed set of normalizing scaling factors.
+/// Extract fragment coverage in large genomic bins ("megabins") with a rolling
+/// window and calculate normalizing scaling factors for smoothing the
+/// genome.
 ///
-/// Smoothing is performed with a form of "triangular moving average", where we
-/// calculate the stride-sized centralization-weighted average of all overlapping bins.
+/// Smoothing is performed as a triangular moving average, where we calculate
+/// a weighted average of coverages from all bins overlapping a stride.
 ///
 /// ## Triangular weighting scheme visualization
 ///
@@ -47,12 +48,19 @@ use crate::{
 /// in the weighted-average coverage for stride-bin `D`:
 ///
 /// ```
+/// 
 /// MB1: [A][B][C]
+/// 
 /// MB2:    [B][C][D]
+/// 
 /// MB3:       [C][D][E]
+/// 
 /// MB4:          [D][E][F]
+/// 
 /// MB5:             [E][F][G]
+/// 
 /// W_D: [0][1][2][3][2][1][0]
+/// 
 /// ```
 ///
 /// At chromosome edges, the weights are truncated (e.g., `W_D: [2][3][2][1][0]`).
