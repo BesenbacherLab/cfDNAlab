@@ -26,8 +26,9 @@ use std::{
 /// Count GC fraction per fragment length at a sampled number of starting positions in the reference genome.
 /// This 2D count distribution can serve as the expected GC bias.
 ///
-/// How: A number (default: 100M) of starting positions are randomly sampled uniformly across the reference
+/// How: A number (default: 100M) of starting positions are uniformly sampled across the reference
 /// genome. For each position, we count the GC fraction for every possible fragment length (default: 20-1000bp).
+/// 
 /// Intervals (the possible fragments) with too few ACGT bases after blacklist masking are discarded
 /// (so increase `--n-positions` accordingly).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
