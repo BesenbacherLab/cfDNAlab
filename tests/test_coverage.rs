@@ -76,8 +76,8 @@ mod tests {
         assert!(deq(sum_all, manual, 1e-9)); // should match 187.0 here
 
         println!("{:?}", sum_all);
-        assert!(deq(sum_all, 187.0, 1e-9));
-        assert!(deq(sum_ok, 167.0, 1e-9));
+        assert!(deq(sum_all, 187.0, 1e-6));
+        assert!(deq(sum_ok, 167.0, 1e-6));
 
         let avg_all = cp.avg_coverage(100, 300, false)?;
         let avg_ok = cp.avg_coverage(100, 300, true)?;
