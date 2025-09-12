@@ -35,33 +35,29 @@ use crate::{
 ///
 /// ## Triangular weighting scheme visualization
 ///
-/// Assuming a bin-size of 6 and stride size of 2 (normally defaults to 5Mb and 0.5Mb respectively):
+/// Assuming a bin-size of 6 and stride size of 2 (normally defaults to 5Mb and 0.5Mb respectively).
 ///
-/// <hr />
-/// 
-/// Stride bins (fixed along genome, each have an average coverage value):
+/// **Stride bins** (fixed along genome, each have an average coverage value):
 ///
 /// `[A] [B] [C] [D] [E] [F] [G] ...`
 ///
-/// Overlapping megabins (`MB*`) (each covers 3 stride-bins).
-///
-/// `W_D`, the number of overlapping megabins, is the (unnormalized) weight of each stride-bin
-/// in the weighted-average coverage for stride-bin `D`:
+/// **Overlapping megabins** (`MB*`) (each covers 3 stride-bins). **`W_D`**, the number of overlapping megabins, 
+/// is the (unnormalized) weight of each stride-bin in the weighted-average coverage for stride-bin `D`:
 ///
 /// ```
-/// 
+///
 /// MB1: [A][B][C]
-/// 
+///
 /// MB2:    [B][C][D]
-/// 
+///
 /// MB3:       [C][D][E]
-/// 
+///
 /// MB4:          [D][E][F]
-/// 
+///
 /// MB5:             [E][F][G]
-/// 
+///
 /// W_D: [0][1][2][3][2][1][0]
-/// 
+///
 /// ```
 ///
 /// At chromosome edges, the weights are truncated (e.g., `W_D: [2][3][2][1][0]`).
