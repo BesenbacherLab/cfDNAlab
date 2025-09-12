@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod parse_md_tag_tests {
-    use cfdna_utils::cfdna_utils::read::parse_md_tag;
+    use cfdnalab::utils::read::parse_md_tag;
 
     fn check(md: &str, offset: u32, exp_starts: Vec<u32>, exp_ends: Vec<u32>, exp_total: u32) {
         let (starts, ends) = parse_md_tag(md, offset);

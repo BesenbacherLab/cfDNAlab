@@ -84,17 +84,8 @@ pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
-    /// Minimum fragment length to include [integer]
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "20", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
-    pub min_fragment_length: u32,
-
-    /// Maximum fragment length to include [integer]
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "1000", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
-    pub max_fragment_length: u32,
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    fragment_lengths: FragmentLengthArgs,
 
     /// Minimum GC % to consider [integer]
     ///
@@ -194,7 +185,6 @@ pub fn run(opt: GCConfig) -> Result<()> {
     let mut bin_info = Vec::new();
     let mut global_counter = GCCounters::default();
 
-    // Main loop: process each autosome
     println!("Start: Counting per chromosome");
 
     pb.set_position(0);
@@ -336,17 +326,17 @@ fn process_chrom(
         GCCounts::new(
             opt.gc_min_pct as usize,
             opt.gc_max_pct as usize,
-            opt.min_fragment_length as usize,
-            opt.max_fragment_length as usize
+            opt.fragment_lengths.min_fragment_length as usize,
+            opt.fragment_lengths.max_fragment_length as usize
         );
         num_bins
     ];
 
     // Fraction of a fragment that must overlap with a window to assign to that window
     let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
-        WindowAssigner::Any => 1. / (opt.max_fragment_length as f64 + 1.0), // +1 to avoid rounding error issues
+        WindowAssigner::Any => 1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // +1 to avoid rounding error issues
         WindowAssigner::All | WindowAssigner::Midpoint => {
-            1.0 - (1. / (opt.max_fragment_length as f64 + 1.0))
+            1.0 - (1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0))
         } // 1.0 but just below to avoid rounding errors
         WindowAssigner::Proportion(p) => p,
     };
@@ -398,8 +388,8 @@ fn process_chrom(
 
             // Check length is within allowed range
             let fragment_length = fragment.len();
-            if fragment_length < opt.min_fragment_length
-                || fragment_length > opt.max_fragment_length
+            if fragment_length < opt.fragment_lengths.min_fragment_length
+                || fragment_length > opt.fragment_lengths.max_fragment_length
             {
                 continue;
             }
@@ -447,7 +437,7 @@ fn process_chrom(
                 interval_start.into(),
                 interval_end.into(),
                 min_overlap_fraction,
-                opt.max_fragment_length.into(),
+                opt.fragment_lengths.max_fragment_length.into(),
             );
             let overlapping_windows = if let Some(overlaps) = overlapping_windows {
                 overlaps

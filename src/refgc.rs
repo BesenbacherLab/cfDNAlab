@@ -28,7 +28,7 @@ use std::{
 ///
 /// How: A number (default: 100M) of starting positions are uniformly sampled across the reference
 /// genome. For each position, we count the GC fraction for every possible fragment length (default: 20-1000bp).
-/// 
+///
 /// Intervals (the possible fragments) with too few ACGT bases after blacklist masking are discarded
 /// (so increase `--n-positions` accordingly).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
@@ -108,17 +108,8 @@ pub struct RefGCConfig {
         clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading="Filtering"))]
     pub blacklist: Option<Vec<PathBuf>>,
 
-    /// Minimum fragment length to include [integer]
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "20", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
-    pub min_fragment_length: u32,
-
-    /// Maximum fragment length to include [integer]
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "1000", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
-    pub max_fragment_length: u32,
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    fragment_lengths: FragmentLengthArgs,
 
     /// Minimum **percentage** of ACGT bases in a kmer after blacklist masking [integer]
     ///
@@ -180,7 +171,7 @@ pub fn run(opt: RefGCConfig) -> Result<()> {
             &mut rng1,
             &twobit_contig_lengths(opt.ref_2bit.clone(), &chromosomes)?,
             opt.n_positions,
-            opt.max_fragment_length as usize,
+            opt.fragment_lengths.max_fragment_length as usize,
         )?
     };
 
@@ -194,7 +185,6 @@ pub fn run(opt: RefGCConfig) -> Result<()> {
     let mut all_bins = Vec::new();
     let mut bin_info = Vec::new();
 
-    // Main loop: process each autosome
     println!("Start: Counting per chromosome");
 
     pb.set_position(0);
@@ -312,8 +302,8 @@ fn process_chrom(
         GCCounts::new(
             0usize,
             100usize,
-            opt.min_fragment_length as usize,
-            opt.max_fragment_length as usize
+            opt.fragment_lengths.min_fragment_length as usize,
+            opt.fragment_lengths.max_fragment_length as usize
         );
         num_bins
     ];
@@ -322,8 +312,8 @@ fn process_chrom(
         &mut counts_by_bin,
         &gc_prefixes,
         (
-            opt.min_fragment_length as u64,
-            opt.max_fragment_length as u64 + 1, // make exclusive
+            opt.fragment_lengths.min_fragment_length as u64,
+            opt.fragment_lengths.max_fragment_length as u64 + 1, // make exclusive
         ),
         &windows,
         start_positions,

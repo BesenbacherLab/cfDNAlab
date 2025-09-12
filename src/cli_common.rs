@@ -44,6 +44,25 @@ pub struct IOCArgs {
     pub n_threads: usize,
 }
 
+/* Min/Max fragment lengths */
+
+/// Args for setting minimum and maximum fragment length.
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Debug)]
+pub struct FragmentLengthArgs {
+    /// Minimum fragment length to include [integer]
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "20", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
+    pub min_fragment_length: u32,
+
+    /// Maximum fragment length to include [integer]
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "1000", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
+    pub max_fragment_length: u32,
+}
+
 /* Window selection */
 
 // Windows option ENUM

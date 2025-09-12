@@ -9,3 +9,5 @@ pub mod overlaps;
 pub mod read;
 pub mod reference;
 pub mod sampling;
+pub mod normalize_genome;
+pub mod coverage;

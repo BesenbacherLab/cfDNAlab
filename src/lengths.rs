@@ -15,7 +15,8 @@ use std::{
 
 use crate::{
     cli_common::{
-        AssignToWindowArgs, ChromosomeArgs, IOCArgs, WindowAssigner, WindowSpec, WindowsArgs,
+        AssignToWindowArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs, WindowAssigner,
+        WindowSpec, WindowsArgs,
     },
     counters::LengthsCounters,
     utils::{
@@ -47,17 +48,8 @@ pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     chromosomes: ChromosomeArgs,
 
-    /// Minimum fragment length to include [integer]
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "20", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
-    pub min_fragment_length: u32,
-
-    /// Maximum fragment length to include [integer]
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "600", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
-    pub max_fragment_length: u32,
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    fragment_lengths: FragmentLengthArgs,
 
     /// Minimum mapping quality to include [integer]
     #[cfg_attr(
@@ -167,7 +159,6 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
     let mut bin_info = Vec::new();
     let mut global_counter = LengthsCounters::default();
 
-    // Main loop: process each autosome
     println!("Start: Counting per chromosome");
 
     pb.set_position(0);
@@ -303,17 +294,17 @@ fn process_chrom(
     // Initialize count arrays
     let mut counts_by_bin = vec![
         LengthCounts::new(
-            opt.min_fragment_length as usize,
-            opt.max_fragment_length as usize
+            opt.fragment_lengths.min_fragment_length as usize,
+            opt.fragment_lengths.max_fragment_length as usize
         );
         num_bins
     ];
 
     // Fraction of a fragment that must overlap with a window to assign to that window
     let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
-        WindowAssigner::Any => 1. / (opt.max_fragment_length as f64 + 1.0), // +1 to avoid rounding error issues
+        WindowAssigner::Any => 1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // +1 to avoid rounding error issues
         WindowAssigner::All | WindowAssigner::Midpoint => {
-            1.0 - (1. / (opt.max_fragment_length as f64 + 1.0))
+            1.0 - (1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0))
         } // 1.0 but just below to avoid rounding errors
         WindowAssigner::Proportion(p) => p,
     };
@@ -370,7 +361,7 @@ fn process_chrom(
                 opt.blacklist_strategy.clone(),
                 fragment.start.into(),
                 fragment.end.into(),
-                opt.max_fragment_length as u64,
+                opt.fragment_lengths.max_fragment_length as u64,
                 &mut bl_ptr,
             );
             if in_blacklist {
@@ -379,8 +370,8 @@ fn process_chrom(
 
             // Check length is within allowed range
             let fragment_length = fragment.len();
-            if fragment_length < opt.min_fragment_length
-                || fragment_length > opt.max_fragment_length
+            if fragment_length < opt.fragment_lengths.min_fragment_length
+                || fragment_length > opt.fragment_lengths.max_fragment_length
             {
                 counter.illegal_length_fragments += 1;
                 continue;
@@ -404,7 +395,7 @@ fn process_chrom(
                 interval_start.into(),
                 interval_end.into(),
                 min_overlap_fraction,
-                opt.max_fragment_length.into(),
+                opt.fragment_lengths.max_fragment_length.into(),
             );
             let overlapping_windows = if let Some(overlaps) = overlapping_windows {
                 overlaps
