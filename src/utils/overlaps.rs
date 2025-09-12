@@ -1,5 +1,3 @@
-use crate::cli_common::WindowAssigner;
-
 /// Window index and bounds for a single overlap.
 #[derive(Debug)]
 pub struct OverlappedWindow {

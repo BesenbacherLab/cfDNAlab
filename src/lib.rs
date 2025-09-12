@@ -4,7 +4,7 @@ pub mod ends;
 pub mod gc;
 pub mod lengths;
 pub mod normalize_genome;
-pub mod profile_groups;
+//pub mod profile_groups;
 pub mod refgc;
 pub mod utils;
 

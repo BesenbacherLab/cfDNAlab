@@ -183,7 +183,7 @@ pub fn run(opt: NormalizeGenomeConfig) -> Result<()> {
     let chromosomes = opt
         .chromosomes
         .resolve_chromosomes(Some(&opt.ioc.bam.as_path()))?;
-    opt.check_bin_sizes();
+    opt.check_bin_sizes()?;
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
     pb.set_style(
         ProgressStyle::default_bar()
