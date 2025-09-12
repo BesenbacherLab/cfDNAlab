@@ -26,6 +26,8 @@ use crate::{
     },
 };
 
+// TODO: Improve docstring - hard to understand
+
 /// Extract fragment coverage in large genomic bins ("megabins") with a rolling
 /// window and calculate normalizing scaling factors for smoothing the genome.
 ///

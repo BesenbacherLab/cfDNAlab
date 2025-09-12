@@ -197,7 +197,7 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
 /// Calculate the `StrideBin::scaling_factor` by dividing `StrideBin::avg_overlap_coverage`
 /// across all chromosomes.
 ///
-/// Computes a global mean of `avg_overlap_coverage` across all bins in `bins_by_chr`
+/// Computes a global mean of `avg_overlap_coverage` across all non-zero bins in `bins_by_chr`
 /// and divides every bin’s `avg_overlap_coverage` by that mean so the new global mean is ~1.0.
 /// Optionally weight the mean by bin length to better approximate a base-weighted genome mean.
 ///
@@ -223,8 +223,8 @@ pub fn normalize_avg_overlap_by_global_mean(
     for bins in bins_by_chr.values() {
         for b in bins {
             let v = b.avg_overlap_coverage as f64;
-            if !v.is_finite() {
-                continue; // Skip NaN/inf
+            if !v.is_finite() || v == 0.0 {
+                continue; // Skip NaN/inf and zero-coverage
             }
             let w = if length_weighted {
                 b.size() as f64
