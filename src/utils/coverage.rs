@@ -321,6 +321,7 @@ impl CoveragePrefix {
     /// - _:
     ///     Err if coverage has not been finalized.
     pub fn build_query_index(&mut self) -> Result<()> {
+        // Ensure per-base coverage is available
         let cov = match self.coverage.as_ref() {
             Some(c) => c,
             None => {
@@ -328,44 +329,67 @@ impl CoveragePrefix {
             }
         };
 
+        // Number of positions
         let n = cov.len();
+
+        // Allocate prefix arrays of length n+1
+        // Index 0 stores the empty prefix so sums over [a, b) are psum[b] - psum[a]
         let mut psum_all = Vec::with_capacity(n + 1);
         let mut psum_allowed = Vec::with_capacity(n + 1);
         let mut psum_allowed_count = Vec::with_capacity(n + 1);
 
+        // Prefix base case at index 0
         psum_all.push(0.0_f64);
         psum_allowed.push(0.0_f64);
         psum_allowed_count.push(0u32);
 
         match self.bl_mask.as_ref() {
             Some(mask) => {
+                // Mask present -> build two parallel prefix sums
+                // psum_all accumulates coverage at every base
+                // psum_allowed accumulates coverage only at unmasked bases
+                // psum_allowed_count counts unmasked bases for use as the average denominator
                 for i in 0..n {
                     let c = cov[i] as f64;
                     let allowed = mask[i] == 0;
+
+                    // Read previous prefix values
                     let prev_all = *psum_all.last().unwrap();
                     let prev_allow = *psum_allowed.last().unwrap();
                     let prev_cnt = *psum_allowed_count.last().unwrap();
 
+                    // Always include coverage in psum_all
                     psum_all.push(prev_all + c);
+
+                    // Include coverage and count only if allowed
                     psum_allowed.push(prev_allow + if allowed { c } else { 0.0 });
                     psum_allowed_count.push(prev_cnt + if allowed { 1 } else { 0 });
                 }
             }
             None => {
+                // No mask -> allowed sums equal all sums and the count is simply i+1
                 for i in 0..n {
                     let c = cov[i] as f64;
                     let prev_all = *psum_all.last().unwrap();
+
+                    // Update all-bases prefix sum
                     psum_all.push(prev_all + c);
+
+                    // Reuse the newest psum_all value for psum_allowed
                     psum_allowed.push(*psum_all.last().unwrap());
+
+                    // Every base is allowed so count increases by one
                     psum_allowed_count.push((i as u32) + 1);
                 }
             }
         }
 
+        // Store results on the struct
         self.psum_all = Some(psum_all);
         self.psum_allowed = Some(psum_allowed);
         self.psum_allowed_count = Some(psum_allowed_count);
 
+        // Mark coverage stage as Indexed
         self.cov_stage = Stage::Indexed;
 
         Ok(())

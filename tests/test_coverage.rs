@@ -1,4 +1,3 @@
-
 // TODO: Check manually - generated but not validated!
 
 #[cfg(test)]
@@ -70,6 +69,13 @@ mod tests {
         // Total including masked = 187.0; excluding masked = 167.0
         let sum_all = cp.sum_coverage(100, 300, false)?;
         let sum_ok = cp.sum_coverage(100, 300, true)?;
+
+        {
+            let cov_vec = cp.coverage().unwrap().to_vec(); // clones, borrow ends here
+            let manual = cov_vec[100..300].iter().map(|&x| x as f64).sum::<f64>();
+            assert!(deq(sum_all, manual, 1e-9)); // should match 187.0 here
+        }
+
         assert!(deq(sum_all, 187.0, 1e-9));
         assert!(deq(sum_ok, 167.0, 1e-9));
 
