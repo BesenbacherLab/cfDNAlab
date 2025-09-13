@@ -25,6 +25,16 @@ fn main() {
     let cmd0 = Cli::command();
 
     // Optionally set styles/template here on cmd0 before sanitizing
+    use clap::builder::{Styler, Styles};
+    cmd = cmd
+        .help_template("{name} {version}\n{about}\n\n{usage-heading} {usage}\n\n{all-args}\n")
+        .styles(
+            clap::builder::Styles::styled()
+                .header(clap::builder::Styler::new().bold())
+                .literal(clap::builder::Styler::new().bold())
+                .usage(clap::builder::Styler::new().bold())
+                .placeholder(clap::builder::Styler::new()),
+        );
 
     // Sanitize help/long_help pulled from your doc comments
     let mut cmd = sanitize_command(cmd0);
