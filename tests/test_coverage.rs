@@ -3,7 +3,13 @@
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use cfdnalab::utils::{coverage::CoveragePrefix, fragment::minimal_fragment::Fragment};
+    use cfdnalab::utils::{
+        coverage::CoveragePrefix,
+        fragment::{
+            minimal_fragment::Fragment,
+            segment_fragment::{SegmentedReadInfo, collect_fragment_with_segments},
+        },
+    };
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     // Simple approx helpers
@@ -12,6 +18,31 @@ mod tests {
     }
     fn deq(a: f64, b: f64, eps: f64) -> bool {
         (a - b).abs() <= eps
+    }
+
+    // SegmentedReadInfo creator
+    fn sri(
+        tid: i32,
+        pos: u32,
+        end: u32,
+        is_reverse: bool,
+        has_ref_gap: bool,
+        max_ref_gap: u32,
+        segs: &[(u32, u32)],
+    ) -> SegmentedReadInfo {
+        SegmentedReadInfo {
+            tid,
+            pos,
+            end,
+            is_reverse,
+            has_ref_gap,
+            max_ref_gap,
+            ref_mapped_segments: segs.to_vec(),
+        }
+    }
+
+    fn new_cp(len: u32) -> CoveragePrefix {
+        CoveragePrefix::initialize_coverage_prefix(len)
     }
 
     #[test]
@@ -708,6 +739,91 @@ mod tests {
         cp.build_query_index()?;
         let s2 = cp.sum_coverage(0, 100, false)?;
         assert!(deq(s2, 20.0, 1e-12));
+        Ok(())
+    }
+
+    // Segmented fragments (handles deletions and gaps)
+
+    #[test]
+    fn coverage_no_gaps_exclude_inter_mate_gap() -> Result<()> {
+        // Two non-overlapping mates; exclude inter-mate gap
+        let fwd = sri(0, 10, 20, false, false, 0, &[]);
+        let rev = sri(0, 40, 50, true, false, 0, &[]);
+
+        let fws = collect_fragment_with_segments(&fwd, &rev, 1, false).unwrap();
+
+        let mut cp = new_cp(100);
+        cp.add_fragment_with_segments(fws, 1.0)?;
+        cp.finalize_coverage();
+        cp.build_query_index()?;
+
+        // Only read spans counted: 10..20 (10 bp) and 40..50 (10 bp) => 20
+        let s = cp.sum_coverage(10, 50, false)?;
+        assert!(deq(s, 20.0, 1e-9));
+
+        // Gap 20..40 should be zero
+        let gap = cp.sum_coverage(20, 40, false)?;
+        assert!(deq(gap, 0.0, 1e-9));
+        Ok(())
+    }
+
+    #[test]
+    fn coverage_no_gaps_include_inter_mate_gap() -> Result<()> {
+        // Include the inter-mate gap -> full fragment 10..50 (40 bp)
+        let fwd = sri(0, 10, 20, false, false, 0, &[]);
+        let rev = sri(0, 40, 50, true, false, 0, &[]);
+
+        let fws = collect_fragment_with_segments(&fwd, &rev, 1, true).unwrap();
+
+        let mut cp = new_cp(100);
+        cp.add_fragment_with_segments(fws, 1.0)?;
+        cp.finalize_coverage();
+        cp.build_query_index()?;
+
+        let s = cp.sum_coverage(10, 50, false)?;
+        assert!(deq(s, 40.0, 1e-9));
+        Ok(())
+    }
+
+    #[test]
+    fn coverage_with_ref_gap_include_inter_mate_gap() -> Result<()> {
+        // forward with internal deletion: [10..20], [25..30]
+        // reverse [40..50]; include inter-mate gap -> becomes [10..20], [25..50]
+        let fwd = sri(0, 10, 30, false, true, 5, &[(0, 10), (15, 5)]);
+        let rev = sri(0, 40, 50, true, false, 0, &[]);
+
+        let fws = collect_fragment_with_segments(&fwd, &rev, 1, true).unwrap();
+
+        let mut cp = new_cp(100);
+        cp.add_fragment_with_segments(fws, 1.0)?;
+        cp.finalize_coverage();
+        cp.build_query_index()?;
+
+        // 10..20 (10) + 25..50 (25) = 35
+        let s = cp.sum_coverage(10, 50, false)?;
+        assert!(deq(s, 35.0, 1e-9));
+
+        // The deletion hole 20..25 is zero
+        let hole = cp.sum_coverage(20, 25, false)?;
+        assert!(deq(hole, 0.0, 1e-9));
+        Ok(())
+    }
+
+    #[test]
+    fn coverage_with_ref_gap_exclude_inter_mate_gap() -> Result<()> {
+        let fwd = sri(0, 10, 30, false, true, 5, &[(0, 10), (15, 5)]);
+        let rev = sri(0, 40, 50, true, false, 0, &[]);
+
+        let fws = collect_fragment_with_segments(&fwd, &rev, 1, false).unwrap();
+
+        let mut cp = new_cp(100);
+        cp.add_fragment_with_segments(fws, 1.0)?;
+        cp.finalize_coverage();
+        cp.build_query_index()?;
+
+        // 10..20 (10) + 25..30 (5) + 40..50 (10) = 25
+        let s = cp.sum_coverage(10, 50, false)?;
+        assert!(deq(s, 25.0, 1e-9));
         Ok(())
     }
 }
