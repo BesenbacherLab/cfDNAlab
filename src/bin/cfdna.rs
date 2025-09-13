@@ -52,7 +52,7 @@ fn main() {
     std::process::exit(1);
 }
 
-#[cfg(all(feature = "cli", feature = "pretty-help"))]
+#[cfg(all(feature = "cli"))]
 mod pretty {
     use clap::CommandFactory;
     use clap::builder::styling::{AnsiColor, Style, Styles};
@@ -260,13 +260,5 @@ mod pretty {
             });
         }
         cmd
-    }
-}
-
-#[cfg(all(feature = "cli", not(feature = "pretty-help")))]
-mod pretty {
-    use clap::CommandFactory;
-    pub fn build_cmd() -> clap::Command {
-        crate::Cli::command() // plain, no prettification
     }
 }

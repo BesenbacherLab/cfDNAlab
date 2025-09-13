@@ -6,7 +6,6 @@ edition = "2024"
 [features]
 default = []
 cli = ["clap"]
-pretty-help = ["cli", "clap/color"]
 
 [dependencies]
 anyhow = "1.0.98"
