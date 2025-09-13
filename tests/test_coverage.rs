@@ -923,7 +923,7 @@ mod tests_window_results {
             &mut cp,
             Some(&windows),
             CoverageWindowAction::Average,
-            /*nan_blacklisted*/ false,
+            false,
         )?;
 
         match out {
@@ -954,12 +954,8 @@ mod tests_window_results {
 
         // Totals should be window length since coverage is 1.0 in-block
         let windows = vec![(10_u64, 20_u64, 0_u64), (30, 40, 1)];
-        let out = compute_window_outputs(
-            &mut cp,
-            Some(&windows),
-            CoverageWindowAction::Total,
-            /*nan_blacklisted*/ false,
-        )?;
+        let out =
+            compute_window_outputs(&mut cp, Some(&windows), CoverageWindowAction::Total, false)?;
 
         match out {
             CoverageOutput::PerWindow { action, results } => {
@@ -1002,7 +998,7 @@ mod tests_window_results {
             &mut cp,
             Some(&windows),
             CoverageWindowAction::OnlyIncludeThesePositions,
-            /*nan_blacklisted*/ true,
+            true,
         )?;
 
         match out {
@@ -1035,7 +1031,7 @@ mod tests_window_results {
             &mut cp,
             None,
             CoverageWindowAction::OnlyIncludeThesePositions,
-            /*nan_blacklisted*/ false,
+            false,
         )?;
 
         match out {
@@ -1044,10 +1040,10 @@ mod tests_window_results {
                 assert_eq!(end, 50);
                 assert_eq!(values.len(), 50);
                 // Spot check
-                assert!(deq_f32(values[9], 1.0, 1e-6));
-                assert!(deq_f32(values[10], 1.0, 1e-6));
-                assert!(deq_f32(values[20], 0.0, 1e-6));
-                assert!(deq_f32(values[30], 1.0, 1e-6));
+                assert!(deq_f32(values[9], 0.0, 1e-6)); // Just before first fragment
+                assert!(deq_f32(values[10], 1.0, 1e-6)); // Start of first fragment
+                assert!(deq_f32(values[20], 0.0, 1e-6)); // Just after first fragment
+                assert!(deq_f32(values[30], 1.0, 1e-6)); // Start of second fragment
             }
             _ => return Err(anyhow!("expected WholePositional output")),
         }
@@ -1068,7 +1064,7 @@ mod tests_window_results {
             &mut cp,
             Some(&windows),
             CoverageWindowAction::Average,
-            /*nan_blacklisted*/ true, // require finalized mask
+            true, // require finalized mask
         );
 
         assert!(res.is_err());
@@ -1080,26 +1076,18 @@ mod tests_window_results {
         let mut cp = CoveragePrefix::initialize_coverage_prefix(30);
         // Do not finalize_coverage here
         let windows = vec![(0_u64, 10_u64, 0_u64)];
-        let res = compute_window_outputs(
-            &mut cp,
-            Some(&windows),
-            CoverageWindowAction::Total,
-            /*nan_blacklisted*/ false,
-        );
+        let res =
+            compute_window_outputs(&mut cp, Some(&windows), CoverageWindowAction::Total, false);
         assert!(res.is_err());
         Ok(())
     }
 
     #[test]
     fn compute_windows_errors_on_out_of_bounds() -> Result<()> {
-        let mut cp = make_cp_with_simple_fragments(25)?;
-        let windows = vec![(0_u64, 26_u64, 0_u64)]; // end > length
-        let res = compute_window_outputs(
-            &mut cp,
-            Some(&windows),
-            CoverageWindowAction::Total,
-            /*nan_blacklisted*/ false,
-        );
+        let mut cp = make_cp_with_simple_fragments(50)?;
+        let windows = vec![(0_u64, 51_u64, 0_u64)]; // end > length
+        let res =
+            compute_window_outputs(&mut cp, Some(&windows), CoverageWindowAction::Total, false);
         assert!(res.is_err());
         Ok(())
     }
