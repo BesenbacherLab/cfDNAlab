@@ -24,7 +24,7 @@ enum BlStage {
 /// Example
 /// -------
 /// ```rust
-/// use cfdnalab::utils::coverage::CoveragePrefix;
+/// use cfdnalab::utils::coverage::coverage_prefix::CoveragePrefix;
 /// use cfdnalab::utils::fragment::minimal_fragment::Fragment;
 ///
 /// # use anyhow::Result;
