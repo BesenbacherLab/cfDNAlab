@@ -31,12 +31,20 @@ use crate::{
 ///
 /// When specifying windows (`--by-bed` or `--by-size`), one of the following outputs
 /// is possible:
+///
 ///  - Get the average coverage per window (default).
+///
 ///  - Get the total coverage per window.
+///
 ///  - Get the positional coverage for the included windows only. I.e.,
 ///    exclude all positions that do not overlap a window from the output.
 ///
+/// Without windowing, positional coverage for the entire genome (selected chromosomes) are outputted.
+///
+/// ## Blacklisting
+///
 /// Positions in blacklisted regions are set to `f32::NaN` (and thus not included in sums or averages).
+/// Set `--nan-policy` to change how these positions are handled in the output (positional coverage outputs only).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 pub struct FCoverageConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
@@ -48,8 +56,11 @@ pub struct FCoverageConfig {
     /// What to return per window `[string]`
     ///
     /// Possible values:
+    ///
     ///     - "average": Get the average coverage per window (default).
+    ///
     ///     - "total": Get the total coverage per window.
+    ///
     ///     - "positions": Get the positional coverage for the included windows only. I.e.,
     ///                    exclude all positions that do not overlap a window from the output.
     ///
@@ -69,8 +80,11 @@ pub struct FCoverageConfig {
     /// How to write coverage in blacklisted positions in position-coverage outputs `[string]`
     ///
     /// Possible values:
+    ///
     ///     - "drop": Drop the row from the output (default).
+    ///
     ///     - "nan": Write an literal NaN string.
+    ///
     ///     - "empty": Leave the cell empty.
     ///
     /// NOTE: Ignored when no blacklist(s) are specified or the output is window-aggregates.
@@ -86,15 +100,15 @@ pub struct FCoverageConfig {
     )]
     pub nan_policy: NanPolicy,
 
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    chromosomes: ChromosomeArgs,
-
     /// Ignore inter-mate gap `[flag]`
     ///
     /// Disable counting of the gap between reads (i.e., `[forward.end, reverse.start)`)
     /// when the two reads do not overlap.
-    #[cfg_attr(feature = "cli", clap(long, help_heading = "Counting"))]
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub ignore_gap: bool,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    chromosomes: ChromosomeArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     fragment_lengths: FragmentLengthArgs,
@@ -109,6 +123,7 @@ pub struct FCoverageConfig {
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
+    // TODO: Consider whether blacklist is "filtering" in tools like this?
     /// Optional BED file(s) with blacklisted regions `[path]`
     #[cfg_attr(
         feature = "cli", clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading = "Filtering"))]
