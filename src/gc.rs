@@ -5,7 +5,7 @@ use crate::{
         bam::create_chromosome_reader,
         bed::load_windows_from_bed,
         blacklist::{apply_blacklist_mask_to_seq, compute_blacklist_overlap, load_blacklists},
-        fragment::{MinimalReadInfo, collect_fragment},
+        fragment::minimal_fragment::{MinimalReadInfo, collect_fragment},
         gc::counting::{GCCounts, build_gc_prefixes, get_gc_fraction_in_window, stack_gc_counts},
         overlaps::find_overlapping_windows,
         reference::read_seq,

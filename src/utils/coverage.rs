@@ -1,4 +1,4 @@
-use crate::utils::fragment::Fragment;
+use crate::utils::fragment::{minimal_fragment::Fragment, segment_fragment::FragmentWithSegments};
 use anyhow::Result;
 use rayon::prelude::*;
 
@@ -160,6 +160,76 @@ impl CoveragePrefix {
         // Invalidate indexes because the underlying data changed
         self.invalidate_indexes();
         Ok(())
+    }
+
+    /// add_fragment_with_segments: add a fragment using either its full span or explicit segments
+    ///
+    /// Summary
+    /// -------
+    /// Accepts a `FragmentWithSegments` that already encodes any desired behavior:
+    /// - If `segments` is `None`, we add the plain fragment span `[start, end)`
+    /// - If `segments` is `Some`, we add those `[start, end)` segments (already unioned and
+    ///   optionally including the inter-mate gap if requested upstream)
+    ///
+    /// Notes
+    /// -----
+    /// Inter-mate gap handling and ref-gap segmentation are decided upstream in
+    /// `collect_fragment_with_segments`, so this method only applies what it is given.
+    pub fn add_fragment_with_segments(
+        &mut self,
+        frag: FragmentWithSegments,
+        weight: f32,
+    ) -> anyhow::Result<()> {
+        if !self.prefix_available() {
+            anyhow::bail!(
+                "prefix was dropped; cannot add fragments. Rebuild or create a new CoveragePrefix"
+            );
+        }
+        if !weight.is_finite() || weight < 0.0 {
+            anyhow::bail!("invalid weight {}", weight);
+        }
+        // If coverage/indexes exist, invalidate and go back to Building
+        if matches!(self.cov_stage, Stage::Covered | Stage::Indexed) {
+            self.coverage = None;
+            self.invalidate_indexes();
+            self.cov_stage = Stage::Building;
+        }
+
+        match frag.segments {
+            None => {
+                // Plain span
+                let base = Fragment {
+                    tid: frag.tid,
+                    start: frag.start,
+                    end: frag.end,
+                };
+                self.add_fragment_to_prefix_weighted(base, weight)
+            }
+            Some(segs) => {
+                // Apply +w/-w per segment
+                let n = self.delta.len();
+                let len = self.length as usize;
+                for (s, e) in segs {
+                    if s >= e {
+                        continue;
+                    }
+                    let a = s as usize;
+                    let b = e as usize;
+                    if b > len || a >= n {
+                        anyhow::bail!(
+                            "segment [{}..{}) out of bounds for sequence length {}",
+                            s,
+                            e,
+                            self.length
+                        );
+                    }
+                    self.delta[a] += weight;
+                    self.delta[b] -= weight;
+                }
+                self.invalidate_indexes();
+                Ok(())
+            }
+        }
     }
 
     /// finalize_coverage: build per-base coverage from the +w/-w prefix.

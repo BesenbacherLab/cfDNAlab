@@ -40,6 +40,17 @@ impl From<&Record> for MinimalReadInfo {
     }
 }
 
+impl PairOrientable for MinimalReadInfo {
+    #[inline]
+    fn tid(&self) -> i32 {
+        self.tid
+    }
+    #[inline]
+    fn is_reverse(&self) -> bool {
+        self.is_reverse
+    }
+}
+
 /// Compute the cfDNA fragment coordinates (forward.left -> reverse.right).
 ///
 /// Parameters
@@ -73,34 +84,40 @@ pub fn collect_fragment(a: &MinimalReadInfo, b: &MinimalReadInfo) -> Option<Frag
 
 /* --- Helpers --- */
 
-/// Identify forward/reverse reads (return (forward, reverse)) if both are inward.
-///
-/// Parameters
-/// ----------
-/// a: &Record
-///     One read.
-/// b: &Record
-///     Mate read.
-///
-/// Returns
-/// -------
-/// pair: Option<(&Record, &Record)>
-///     `(forward, reverse)` or `None` if invalid (different contigs, same strand).
-fn oriented_pair_from_records<'a>(
-    a: &'a Record,
-    b: &'a Record,
-) -> Option<(&'a Record, &'a Record)> {
-    if a.tid() != b.tid() {
-        return None;
-    }
-    match (a.is_reverse(), b.is_reverse()) {
-        (false, true) => Some((a, b)),
-        (true, false) => Some((b, a)),
-        _ => None,
-    }
+/// Pair-orientation trait so we can write a single generic function for orienting pairs
+pub trait PairOrientable {
+    fn tid(&self) -> i32;
+    fn is_reverse(&self) -> bool;
 }
 
-/// Identify forward/reverse reads (represented by MinimalReadInfo)
+// /// Identify forward/reverse reads (return (forward, reverse)) if both are inward.
+// ///
+// /// Parameters
+// /// ----------
+// /// a: &Record
+// ///     One read.
+// /// b: &Record
+// ///     Mate read.
+// ///
+// /// Returns
+// /// -------
+// /// pair: Option<(&Record, &Record)>
+// ///     `(forward, reverse)` or `None` if invalid (different contigs, same strand).
+// fn oriented_pair_from_records<'a>(
+//     a: &'a Record,
+//     b: &'a Record,
+// ) -> Option<(&'a Record, &'a Record)> {
+//     if a.tid() != b.tid() {
+//         return None;
+//     }
+//     match (a.is_reverse(), b.is_reverse()) {
+//         (false, true) => Some((a, b)),
+//         (true, false) => Some((b, a)),
+//         _ => None,
+//     }
+// }
+
+/// Identify forward/reverse reads (generic to PairOrientable)
 /// (return (forward, reverse)) if both are inward.
 ///
 /// Parameters
@@ -114,17 +131,18 @@ fn oriented_pair_from_records<'a>(
 /// -------
 /// pair: Option<(&MinimalReadInfo, &MinimalReadInfo)>
 ///     `(forward, reverse)` or `None` if invalid (different contigs, same strand).
-fn oriented_pair_from_read_info<'a>(
-    a: &'a MinimalReadInfo,
-    b: &'a MinimalReadInfo,
-) -> Option<(&'a MinimalReadInfo, &'a MinimalReadInfo)> {
-    if a.tid != b.tid {
+#[inline]
+pub fn oriented_pair_from_read_info<'a, T: PairOrientable>(
+    a: &'a T,
+    b: &'a T,
+) -> Option<(&'a T, &'a T)> {
+    if a.tid() != b.tid() {
         return None;
     }
-    match (a.is_reverse, b.is_reverse) {
-        (false, true) => Some((a, b)),
-        (true, false) => Some((b, a)),
-        _ => None,
+    match (a.is_reverse(), b.is_reverse()) {
+        (false, true) => Some((a, b)), // a forward, b reverse
+        (true, false) => Some((b, a)), // b forward, a reverse
+        _ => None,                     // same orientation or ambiguous
     }
 }
 

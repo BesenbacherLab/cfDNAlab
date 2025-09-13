@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use cfdnalab::utils::{coverage::CoveragePrefix, fragment::Fragment};
+    use cfdnalab::utils::{coverage::CoveragePrefix, fragment::minimal_fragment::Fragment};
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
     // Simple approx helpers

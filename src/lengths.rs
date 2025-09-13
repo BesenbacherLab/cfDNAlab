@@ -25,7 +25,7 @@ use crate::{
         blacklist::{
             BlacklistStrategy, compute_blacklist_overlap, is_blacklisted, load_blacklists,
         },
-        fragment::{MinimalReadInfo, collect_fragment},
+        fragment::minimal_fragment::{MinimalReadInfo, collect_fragment},
         lengths::counting::{LengthCounts, stack_length_counts},
         overlaps::find_overlapping_windows,
     },

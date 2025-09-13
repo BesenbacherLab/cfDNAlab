@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use cfdnalab::utils::fragment::*;
+    use cfdnalab::utils::fragment::minimal_fragment::*;
     use rust_htslib::bam::record::{Cigar, CigarString, Record};
 
     // Helpers

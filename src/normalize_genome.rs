@@ -19,7 +19,7 @@ use crate::{
         bam::create_chromosome_reader,
         blacklist::{BlacklistStrategy, load_blacklists},
         coverage::CoveragePrefix,
-        fragment::{MinimalReadInfo, collect_fragment},
+        fragment::minimal_fragment::{MinimalReadInfo, collect_fragment},
         normalize_genome::{
             StrideBin, fill_triangular_overlap, normalize_avg_overlap_by_global_mean,
         },
@@ -33,11 +33,16 @@ use crate::{
 ///
 /// Outputs scaling factors per stride to allow other methods to apply the normalization (by weighting fragment counts).
 ///
+/// ## Coverage
+///
+/// The full fragment span `[forward.pos, reverse.end)` is counted without consideration of deletions and gaps.
+/// This is fine for genome-scale normalization that reduces relative changes in coverage across the genome.
+///
 /// ## Smoothing
 ///
 /// Smoothing is performed as a triangular moving average, calculating
 /// a weighted average of coverages from all bins overlapping a stride.  
-/// 
+///
 /// ### Example
 ///
 /// Assuming a bin-size of 6 and stride size of 2 (normally defaults to 5Mb and 0.5Mb respectively).
