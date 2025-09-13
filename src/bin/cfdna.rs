@@ -231,10 +231,11 @@ mod pretty {
 
         // A simple horizontal rule + title
         let title = "cfDNAlab";
-        let bar = "_".repeat(48); // or just "-".repeat(60) for pure ASCII
+        let bar1 = "_".repeat(48); // or just "-".repeat(60) for pure ASCII
+        let bar2 = "─".repeat(48); // or just "-".repeat(60) for pure ASCII
 
         // Start style, content, then reset
-        format!("\n{accent}{bar}\n\n  {title}\n\n{bar}{accent:#}\n")
+        format!("\n{accent}{bar1}\n\n  {title}\n\n{bar2}{accent:#}\n")
     }
 
     /// Apply the signature to a Command and all its subcommands.
