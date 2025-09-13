@@ -7,7 +7,7 @@ use std::{path::PathBuf, str::FromStr};
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug)]
 pub struct IOCArgs {
-    /// Indexed, coordinate-sorted BAM input file [path]
+    /// Indexed, coordinate-sorted BAM input file `[path]`
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -20,7 +20,7 @@ pub struct IOCArgs {
     )]
     pub bam: PathBuf,
 
-    /// Output directory for results [path]
+    /// Output directory for results `[path]`
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -33,7 +33,7 @@ pub struct IOCArgs {
     )]
     pub output_dir: PathBuf,
 
-    /// Number of threads to use (increases RAM usage) [integer]
+    /// Number of threads to use (increases RAM usage) `[integer]`
     ///
     /// Defaults to the minimum of 22 (one thread per chromosome) and
     /// the number of available CPU cores (-1).
@@ -50,13 +50,13 @@ pub struct IOCArgs {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug)]
 pub struct FragmentLengthArgs {
-    /// Minimum fragment length to include [integer]
+    /// Minimum fragment length to include `[integer]`
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "20", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
     pub min_fragment_length: u32,
 
-    /// Maximum fragment length to include [integer]
+    /// Maximum fragment length to include `[integer]`
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "1000", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
@@ -85,7 +85,7 @@ pub enum WindowSpec {
 )]
 #[derive(Debug, Clone, Default)]
 pub struct WindowsArgs {
-    /// Window definition: a fixed window size [integer]
+    /// Window definition: a fixed window size `[integer]`
     ///
     /// Default is one global window.
     #[cfg_attr(
@@ -100,7 +100,7 @@ pub struct WindowsArgs {
     )]
     pub by_size: Option<u64>,
 
-    /// Window definition: a BED file of windows [path]
+    /// Window definition: a BED file of windows `[path]`
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -165,15 +165,13 @@ impl FromStr for WindowAssigner {
     }
 }
 
-// TODO: Standardize AssignToWindowArgs and BlacklistStrategy!
-
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
 pub struct AssignToWindowArgs {
-    /// The fragment positions that should overlap a window for it to be counted in that window [string]
+    /// The fragment positions that should overlap a window for it to be counted in that window `[string]`
     ///
     /// Possible values:
-    ///     "any", "all", "midpoint", or "proportion=<threshold>" [string]
+    ///     "any", "all", "midpoint", or "proportion=<threshold>"
     ///
     /// Example of proportion: `--assign-by proportion=0.2` (no space around `=`)
     ///
@@ -202,9 +200,9 @@ pub struct AssignToWindowArgs {
             .multiple(false)))]
 #[derive(Debug, Clone, Default)]
 pub struct ChromosomeArgs {
-    /// Names of chromosomes to process (comma-separated or repeated). E.g. 'chr1,chr2,chr3'.
+    /// Names of chromosomes to process (comma-separated or repeated). E.g. `'chr1,chr2,chr3'`.
     ///
-    /// When no chromosomes are specified, it defaults to chr1..chr22.
+    /// When no chromosomes are specified, it defaults to `chr1..chr22`.
     ///
     /// Specify `"all"` *as the only string* to use all present chromosomes.
     /// Only works for tools where a BAM path is passed.

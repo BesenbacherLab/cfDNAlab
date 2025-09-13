@@ -792,6 +792,55 @@ impl CoveragePrefix {
         Ok(out)
     }
 
+    /// Return positional coverage for `[start, end)`
+    ///
+    /// Parameters
+    /// ----------
+    /// - start:
+    ///     Start of interval, inclusive
+    /// - end:
+    ///     End of interval, exclusive
+    /// - nan_blacklisted:
+    ///     Set positions overlapped by the blacklist to `f32::NAN`
+    ///
+    /// Returns
+    /// -------
+    /// - values:
+    ///     Coverage values for each position in `[start, end)`, with optional `f32::NAN`s for blacklisted
+    pub fn coverage_in_window(
+        &self,
+        start: u32,
+        end: u32,
+        nan_blacklisted: bool,
+    ) -> anyhow::Result<Vec<f32>> {
+        // Ensure coverage is finalized
+        if self.coverage.is_none() {
+            anyhow::bail!("coverage not finalized; call finalize_coverage() first");
+        }
+        // Bounds check
+        self.check_bounds(start, end)?;
+
+        let cov = self.coverage.as_ref().unwrap();
+        let a = start as usize;
+        let b = end as usize;
+
+        if !nan_blacklisted {
+            return Ok(cov[a..b].to_vec());
+        }
+
+        // Apply NaN to blacklisted positions if mask exists
+        match self.bl_mask.as_ref() {
+            Some(mask) => {
+                let mut out = Vec::with_capacity(b - a);
+                for i in a..b {
+                    out.push(if mask[i] == 1 { f32::NAN } else { cov[i] });
+                }
+                Ok(out)
+            }
+            None => Ok(cov[a..b].to_vec()),
+        }
+    }
+
     /// coverage: borrowed per-base coverage slice if finalized
     ///
     /// Returns
@@ -867,6 +916,11 @@ impl CoveragePrefix {
     #[inline]
     fn prefix_available(&self) -> bool {
         !self.delta.is_empty()
+    }
+
+    /// True if there is no blacklist or the blacklist mask has been finalized
+    pub fn is_blacklist_finalized(&self) -> bool {
+        self.bl_delta.is_none() || self.bl_mask.is_some()
     }
 
     #[inline]

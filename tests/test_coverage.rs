@@ -1,10 +1,10 @@
 // TODO: Check manually - generated but not validated!
 
 #[cfg(test)]
-mod tests {
+mod tests_coverage_prefix {
     use anyhow::Result;
     use cfdnalab::utils::{
-        coverage::CoveragePrefix,
+        coverage::coverage_prefix::CoveragePrefix,
         fragment::{
             minimal_fragment::Fragment,
             segment_fragment::{SegmentedReadInfo, collect_fragment_with_segments},
@@ -824,6 +824,283 @@ mod tests {
         // 10..20 (10) + 25..30 (5) + 40..50 (10) = 25
         let s = cp.sum_coverage(10, 50, false)?;
         assert!(deq(s, 25.0, 1e-9));
+        Ok(())
+    }
+
+    #[test]
+    fn is_blacklist_finalized_no_blacklist_is_true() -> Result<()> {
+        let mut cp = CoveragePrefix::initialize_coverage_prefix(100);
+
+        // Add a simple fragment so we can finalize coverage
+        cp.add_fragment_to_prefix(Fragment {
+            tid: 0,
+            start: 10,
+            end: 20,
+        })?;
+        cp.finalize_coverage();
+
+        // No blacklist configured at all -> should be considered finalized
+        assert!(cp.is_blacklist_finalized());
+        Ok(())
+    }
+
+    #[test]
+    fn is_blacklist_finalized_after_adding_intervals_is_false_until_finalized() -> Result<()> {
+        let mut cp = CoveragePrefix::initialize_coverage_prefix(100);
+
+        cp.add_fragment_to_prefix(Fragment {
+            tid: 0,
+            start: 10,
+            end: 20,
+        })?;
+        cp.finalize_coverage();
+
+        // Initialize and add intervals but do not finalize
+        cp.initialize_blacklist_prefix();
+        cp.add_blacklist_to_prefix(12, 15)?;
+
+        // Mask present but not finalized -> should report not finalized
+        assert!(!cp.is_blacklist_finalized());
+
+        // Now finalize mask
+        cp.finalize_blacklist_prefix();
+        assert!(cp.is_blacklist_finalized());
+
+        // Sanity check: masked sum excludes 12..15
+        cp.build_query_index()?;
+        let sum_all = cp.sum_coverage(10, 20, false)?;
+        let sum_ok = cp.sum_coverage(10, 20, true)?;
+        assert!(deq(sum_all, 10.0, 1e-9));
+        assert!(deq(sum_ok, 7.0, 1e-9)); // 3 bp masked
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests_window_results {
+    use anyhow::{Result, anyhow};
+    use cfdnalab::utils::{
+        coverage::{
+            coverage_prefix::CoveragePrefix,
+            window_results::{
+                CoverageOutput, CoverageWindowAction, WindowValue, compute_window_outputs,
+            },
+        },
+        fragment::minimal_fragment::Fragment,
+    };
+
+    fn deq_f32(a: f32, b: f32, tol: f32) -> bool {
+        (a - b).abs() <= tol
+    }
+    fn deq_f64(a: f64, b: f64, tol: f64) -> bool {
+        (a - b).abs() <= tol
+    }
+
+    fn make_cp_with_simple_fragments(len: u32) -> Result<CoveragePrefix> {
+        let mut cp = CoveragePrefix::initialize_coverage_prefix(len);
+        // Two 10-bp blocks: [10,20) and [30,40)
+        cp.add_fragment_to_prefix(Fragment {
+            tid: 0,
+            start: 10,
+            end: 20,
+        })?;
+        cp.add_fragment_to_prefix(Fragment {
+            tid: 0,
+            start: 30,
+            end: 40,
+        })?;
+        cp.finalize_coverage();
+        Ok(cp)
+    }
+
+    #[test]
+    fn compute_windows_average() -> Result<()> {
+        let mut cp = make_cp_with_simple_fragments(100)?;
+
+        // Average across [10,20) and [30,40) should both be 1.0
+        let windows = vec![(10_u64, 20_u64, 0_u64), (30, 40, 1)];
+        let out = compute_window_outputs(
+            &mut cp,
+            Some(&windows),
+            CoverageWindowAction::Average,
+            /*nan_blacklisted*/ false,
+        )?;
+
+        match out {
+            CoverageOutput::PerWindow { action, results } => {
+                assert_eq!(action, CoverageWindowAction::Average);
+                assert_eq!(results.len(), 2);
+                assert_eq!(results[0].start, 10);
+                assert_eq!(results[0].end, 20);
+                assert_eq!(results[0].original_idx, 0);
+                match results[0].value {
+                    WindowValue::Average(v) => assert!(deq_f32(v, 1.0, 1e-6)),
+                    _ => return Err(anyhow!("unexpected payload for Average")),
+                }
+                match results[1].value {
+                    WindowValue::Average(v) => assert!(deq_f32(v, 1.0, 1e-6)),
+                    _ => return Err(anyhow!("unexpected payload for Average")),
+                }
+            }
+            _ => return Err(anyhow!("expected PerWindow output")),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn compute_windows_total() -> Result<()> {
+        let mut cp = make_cp_with_simple_fragments(100)?;
+
+        // Totals should be window length since coverage is 1.0 in-block
+        let windows = vec![(10_u64, 20_u64, 0_u64), (30, 40, 1)];
+        let out = compute_window_outputs(
+            &mut cp,
+            Some(&windows),
+            CoverageWindowAction::Total,
+            /*nan_blacklisted*/ false,
+        )?;
+
+        match out {
+            CoverageOutput::PerWindow { action, results } => {
+                assert_eq!(action, CoverageWindowAction::Total);
+                assert_eq!(results.len(), 2);
+                match results[0].value {
+                    WindowValue::Total(v) => assert!(deq_f64(v, 10.0, 1e-9)),
+                    _ => return Err(anyhow!("unexpected payload for Total")),
+                }
+                match results[1].value {
+                    WindowValue::Total(v) => assert!(deq_f64(v, 10.0, 1e-9)),
+                    _ => return Err(anyhow!("unexpected payload for Total")),
+                }
+            }
+            _ => return Err(anyhow!("expected PerWindow output")),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn compute_windows_positions_with_nan_blacklist() -> Result<()> {
+        let mut cp = CoveragePrefix::initialize_coverage_prefix(60);
+        // One fragment spanning [5, 15)
+        cp.add_fragment_to_prefix(Fragment {
+            tid: 0,
+            start: 5,
+            end: 15,
+        })?;
+        cp.finalize_coverage();
+
+        // Blacklist [9, 12) so indices 9,10,11 are masked
+        cp.initialize_blacklist_prefix();
+        cp.add_blacklist_to_prefix(9, 12)?;
+        cp.finalize_blacklist_prefix();
+
+        // Window [8, 13) -> positions 8,9,10,11,12
+        let windows = vec![(8_u64, 13_u64, 0_u64)];
+        let out = compute_window_outputs(
+            &mut cp,
+            Some(&windows),
+            CoverageWindowAction::OnlyIncludeThesePositions,
+            /*nan_blacklisted*/ true,
+        )?;
+
+        match out {
+            CoverageOutput::PerWindow { action, results } => {
+                assert_eq!(action, CoverageWindowAction::OnlyIncludeThesePositions);
+                assert_eq!(results.len(), 1);
+                let vals = match &results[0].value {
+                    WindowValue::Positions(v) => v.clone(),
+                    _ => return Err(anyhow!("unexpected payload for Positions")),
+                };
+                assert_eq!(vals.len(), 5);
+
+                // Expected: [1.0, NaN, NaN, NaN, 1.0]
+                assert!(deq_f32(vals[0], 1.0, 1e-6));
+                assert!(vals[1].is_nan());
+                assert!(vals[2].is_nan());
+                assert!(vals[3].is_nan());
+                assert!(deq_f32(vals[4], 1.0, 1e-6));
+            }
+            _ => return Err(anyhow!("expected PerWindow output")),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn compute_windows_whole_positional_when_none() -> Result<()> {
+        let mut cp = make_cp_with_simple_fragments(50)?;
+        let out = compute_window_outputs(
+            &mut cp,
+            None,
+            CoverageWindowAction::OnlyIncludeThesePositions,
+            /*nan_blacklisted*/ false,
+        )?;
+
+        match out {
+            CoverageOutput::WholePositional { start, end, values } => {
+                assert_eq!(start, 0);
+                assert_eq!(end, 50);
+                assert_eq!(values.len(), 50);
+                // Spot check
+                assert!(deq_f32(values[9], 1.0, 1e-6));
+                assert!(deq_f32(values[10], 1.0, 1e-6));
+                assert!(deq_f32(values[20], 0.0, 1e-6));
+                assert!(deq_f32(values[30], 1.0, 1e-6));
+            }
+            _ => return Err(anyhow!("expected WholePositional output")),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn compute_windows_errors_if_blacklist_needed_but_not_finalized() -> Result<()> {
+        let mut cp = make_cp_with_simple_fragments(100)?;
+
+        // Prepare an un-finalized blacklist
+        cp.initialize_blacklist_prefix();
+        cp.add_blacklist_to_prefix(12, 15)?;
+
+        let windows = vec![(10_u64, 20_u64, 0_u64)];
+        let res = compute_window_outputs(
+            &mut cp,
+            Some(&windows),
+            CoverageWindowAction::Average,
+            /*nan_blacklisted*/ true, // require finalized mask
+        );
+
+        assert!(res.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn compute_windows_errors_if_coverage_not_finalized() -> Result<()> {
+        let mut cp = CoveragePrefix::initialize_coverage_prefix(30);
+        // Do not finalize_coverage here
+        let windows = vec![(0_u64, 10_u64, 0_u64)];
+        let res = compute_window_outputs(
+            &mut cp,
+            Some(&windows),
+            CoverageWindowAction::Total,
+            /*nan_blacklisted*/ false,
+        );
+        assert!(res.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn compute_windows_errors_on_out_of_bounds() -> Result<()> {
+        let mut cp = make_cp_with_simple_fragments(25)?;
+        let windows = vec![(0_u64, 26_u64, 0_u64)]; // end > length
+        let res = compute_window_outputs(
+            &mut cp,
+            Some(&windows),
+            CoverageWindowAction::Total,
+            /*nan_blacklisted*/ false,
+        );
+        assert!(res.is_err());
         Ok(())
     }
 }

@@ -1,3 +1,4 @@
+use cfdnalab::fcoverage::FCoverageConfig;
 use cfdnalab::gc::GCConfig;
 use cfdnalab::lengths::LengthsConfig;
 use cfdnalab::normalize_genome::NormalizeGenomeConfig;
@@ -18,6 +19,7 @@ enum Cmd {
     RefGC(RefGCConfig), // Extract reference GC counts
     NormalizeGenome(NormalizeGenomeConfig),
     Lengths(LengthsConfig),
+    Fcoverage(FCoverageConfig),
     // Ends(EndsConfig),
 }
 
@@ -43,6 +45,7 @@ fn main() {
         Cmd::RefGC(cfg) => cfdnalab::refgc::run(cfg),
         Cmd::NormalizeGenome(cfg) => cfdnalab::normalize_genome::run(cfg),
         Cmd::Lengths(cfg) => cfdnalab::lengths::run(cfg),
+        Cmd::Fcoverage(cfg) => cfdnalab::fcoverage::run(cfg),
         // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg),
     };
 

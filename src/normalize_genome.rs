@@ -18,7 +18,7 @@ use crate::{
     utils::{
         bam::create_chromosome_reader,
         blacklist::{BlacklistStrategy, load_blacklists},
-        coverage::CoveragePrefix,
+        coverage::coverage_prefix::CoveragePrefix,
         fragment::minimal_fragment::{MinimalReadInfo, collect_fragment},
         normalize_genome::{
             StrideBin, fill_triangular_overlap, normalize_avg_overlap_by_global_mean,
@@ -217,13 +217,13 @@ pub fn run(opt: NormalizeGenomeConfig) -> Result<()> {
         HashMap::new()
     };
 
-    // Cconfigure global thread‐pool size
+    // Configure global thread‐pool size
     rayon::ThreadPoolBuilder::new()
         .num_threads(opt.ioc.n_threads as usize)
         .build_global()
         .context("building Rayon thread pool")?;
 
-    // Prepare per-bin counts and metadata
+    // Prepare output containers
     let mut bins_by_chr =
         FxHashMap::with_capacity_and_hasher(chromosomes.len(), Default::default());
     let mut global_counter = NormalizeGenomeCounters::default();

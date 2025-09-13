@@ -18,6 +18,13 @@ pub struct FragmentWithSegments {
     pub segments: Option<SmallVec<[(u32, u32); 12]>>,
 }
 
+impl FragmentWithSegments {
+    /// Length of the fragment (end - start).
+    pub fn len(&self) -> u32 {
+        (self.end - self.start) as u32
+    }
+}
+
 impl From<Fragment> for FragmentWithSegments {
     fn from(f: Fragment) -> Self {
         FragmentWithSegments {
