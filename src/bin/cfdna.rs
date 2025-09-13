@@ -2,7 +2,7 @@ use cfdnalab::gc::GCConfig;
 use cfdnalab::lengths::LengthsConfig;
 use cfdnalab::normalize_genome::NormalizeGenomeConfig;
 use cfdnalab::refgc::RefGCConfig;
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "cfdna", version)]
@@ -48,44 +48,6 @@ fn main() {
     std::process::exit(0);
 }
 
-/// Minimal Markdown -> terminal text sanitizer for CLI help
-fn sanitize_cli_text(md: &str) -> String {
-    let mut out = String::with_capacity(md.len());
-    let mut in_code = false;
-
-    for line in md.lines() {
-        let trimmed = line.trim_start();
-
-        // Toggle code fences ```lang
-        if trimmed.starts_with("```") {
-            in_code = !in_code;
-            continue;
-        }
-
-        let mut s = line.to_string();
-
-        if !in_code {
-            // Drop inline backticks
-            s = s.replace('`', "");
-            // Replace fancy arrows with ->
-            s = s.replace('→', "->");
-            // Normalize curly quotes
-            s = s.replace('’', "'").replace('“', "\"").replace('”', "\"");
-        }
-
-        if in_code {
-            out.push_str("  "); // Indent code lines a bit
-        }
-        out.push_str(&s);
-        out.push('\n');
-    }
-
-    if out.ends_with('\n') {
-        out.pop();
-    }
-    out
-}
-
 /// Recursively apply sanitizer to a clap::Command tree
 fn sanitize_command_help(cmd: &mut clap::Command) {
     if let Some(a) = cmd.get_about().map(|s| s.to_string()) {
@@ -104,5 +66,52 @@ fn sanitize_command_help(cmd: &mut clap::Command) {
     }
     for sub in cmd.get_subcommands_mut() {
         sanitize_command_help(sub);
+    }
+}
+
+fn sanitize_cli_text(md: &str) -> String {
+    let mut out = String::with_capacity(md.len());
+    let mut in_code = false;
+    for line in md.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_code = !in_code;
+            continue;
+        }
+
+        let mut s = line.to_string();
+        if !in_code {
+            s = s.replace('`', "");
+            s = s.replace('→', "->");
+            s = s.replace('’', "'").replace('“', "\"").replace('”', "\"");
+        }
+        if in_code {
+            out.push_str("  ");
+        }
+        out.push_str(&s);
+        out.push('\n');
+    }
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+fn sanitize_command_args(cmd: &mut clap::Command) {
+    // Sanitize all arg helps via mut_arg
+    let ids: Vec<_> = cmd.get_arguments().map(|a| a.get_id().clone()).collect();
+    for id in ids {
+        cmd.mut_arg(id, |a| {
+            if let Some(h) = a.get_help() {
+                a.help(sanitize_cli_text(&h.to_string()));
+            }
+            if let Some(h) = a.get_long_help() {
+                a.long_help(sanitize_cli_text(&h.to_string()));
+            }
+        });
+    }
+    // Recurse into subcommands
+    for sub in cmd.get_subcommands_mut() {
+        sanitize_command_args(sub);
     }
 }
