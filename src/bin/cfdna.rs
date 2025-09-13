@@ -38,7 +38,11 @@ fn main() {
         .styles(styles);
 
     // Sanitize help/long_help pulled from your doc comments
-    let cmd = sanitize_command(cmd0);
+    let mut cmd = sanitize_command(cmd0);
+
+    // Prepend a signature line everywhere
+    let sig = make_signature();
+    cmd = add_signature(cmd, &sig);
 
     // Parse using the sanitized command
     let matches = cmd.clone().get_matches();
@@ -209,4 +213,42 @@ pub fn sanitize_cli_text(md: &str) -> String {
         out.pop();
     }
     out
+}
+
+/// Build a styled first-line signature (logo or horizontal rule)
+fn make_signature() -> String {
+    // Choose a style; italic isn’t universal, bold is safe
+    let accent = Style::new().bold();
+
+    // A simple horizontal rule + title
+    let title = "cfDNAlab";
+    let bar = "─".repeat(48); // or just "-".repeat(60) for pure ASCII
+
+    // Start style, content, then reset
+    format!("\n{accent}{title} {bar}{accent:#}\n")
+}
+
+/// Apply the signature to a Command and all its subcommands.
+/// Uses before_help / before_long_help so it prints at the very top.
+fn add_signature(mut cmd: clap::Command, sig: &str) -> clap::Command {
+    cmd = cmd
+        .before_help(sig.to_string())
+        .before_long_help(sig.to_string());
+
+    // Recurse into subcommands
+    let sub_names: Vec<String> = cmd
+        .get_subcommands()
+        .map(|sc| sc.get_name().to_string())
+        .collect();
+
+    for name in sub_names {
+        cmd = cmd.mut_subcommand(&name, |sub| {
+            add_signature(
+                sub.before_help(sig.to_string())
+                    .before_long_help(sig.to_string()),
+                sig,
+            )
+        });
+    }
+    cmd
 }
