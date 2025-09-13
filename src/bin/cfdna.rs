@@ -25,7 +25,7 @@ fn main() {
     let mut cmd = Cli::command();
 
     // Sanitize help/long_help pulled from your doc comments
-    sanitize_command_help(&mut cmd);
+    sanitize_command(&mut cmd);
 
     // Parse using the sanitized command
     let matches = cmd.clone().get_matches();
