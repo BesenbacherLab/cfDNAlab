@@ -2,7 +2,7 @@ use cfdnalab::gc::GCConfig;
 use cfdnalab::lengths::LengthsConfig;
 use cfdnalab::normalize_genome::NormalizeGenomeConfig;
 use cfdnalab::refgc::RefGCConfig;
-use clap::builder::styling::{AnsiColor, Styles};
+use clap::builder::styling::{AnsiColor, Style, Styles};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 #[derive(Parser)]
