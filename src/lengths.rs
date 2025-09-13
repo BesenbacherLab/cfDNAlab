@@ -51,22 +51,22 @@ pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     fragment_lengths: FragmentLengthArgs,
 
-    /// Minimum mapping quality to include [integer]
+    /// Minimum mapping quality to include `[integer]`
     #[cfg_attr(
         feature = "cli",
         clap(long, alias = "mq", default_value = "30", value_parser = clap::value_parser!(u8).range(0..), help_heading="Filtering"))]
     pub min_mapq: u8,
 
-    /// Only count properly paired reads [flag]
+    /// Only count properly paired reads `[flag]`
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
-    /// Optional BED file(s) with blacklisted regions [path]
+    /// Optional BED file(s) with blacklisted regions `[path]`
     #[cfg_attr(
         feature = "cli", clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading = "Filtering"))]
     pub blacklist: Option<Vec<PathBuf>>,
 
-    /// Minimum size of blacklist intervals to load (bp) [integer]
+    /// Minimum size of blacklist intervals to load (bp) `[integer]`
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -78,10 +78,10 @@ pub struct LengthsConfig {
     )]
     pub blacklist_min_size: u64,
 
-    /// The fragment positions that should overlap blacklisted regions for it to be excluded [string]
+    /// The fragment positions that should overlap blacklisted regions for it to be excluded `[string]`
     ///
     /// Possible values:
-    ///     "any", "all", "midpoint", or "proportion=<threshold>" [string]
+    ///     "any", "all", "midpoint", or "proportion=<threshold>"
     ///
     /// Example of proportion: `--blacklist-strategy proportion=0.2` (no space around `=`)
     #[cfg_attr(
@@ -148,7 +148,7 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
         _ => None,
     };
 
-    // Cconfigure global thread‐pool size
+    // Configure global thread‐pool size
     rayon::ThreadPoolBuilder::new()
         .num_threads(opt.ioc.n_threads as usize)
         .build_global()
@@ -322,7 +322,10 @@ fn process_chrom(
             let wn = windows.unwrap();
             let fetch_start = wn[0].0 as i64;
             let fetch_end = wn.iter().map(|w| w.1).max().unwrap() as i64;
-            (fetch_start.max(0i64), fetch_end.min(chrom_len as i64))
+            (
+                (fetch_start - opt.fragment_lengths.max_fragment_length as i64).max(0i64),
+                (fetch_end + opt.fragment_lengths.max_fragment_length as i64).min(chrom_len as i64),
+            )
         }
         _ => (0i64, chrom_len as i64),
     };

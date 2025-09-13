@@ -40,7 +40,7 @@ pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
 
-    /// 2bit reference file [path]
+    /// 2bit reference file `[path]`
     ///
     /// E.g., "hg38.2bit"
     #[cfg_attr(
@@ -64,7 +64,7 @@ pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub chromosomes: ChromosomeArgs,
 
-    /// Optional BED file(s) with blacklisted regions [path]
+    /// Optional BED file(s) with blacklisted regions `[path]`
     ///
     /// Masking: Blacklisted positions are set to 'N' in the reference sequence
     /// the GC fraction is calculated from. See the `Minimum ACGT` options
@@ -74,20 +74,20 @@ pub struct GCConfig {
         clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading="Filtering"))]
     pub blacklist: Option<Vec<PathBuf>>,
 
-    /// Minimum mapping quality to include [integer]
+    /// Minimum mapping quality to include `[integer]`
     #[cfg_attr(
         feature = "cli",
         clap(long, alias = "mq", default_value = "30", value_parser = clap::value_parser!(u8).range(0..), help_heading="Filtering"))]
     pub min_mapq: u8,
 
-    /// Only count properly paired reads [flag]
+    /// Only count properly paired reads `[flag]`
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     fragment_lengths: FragmentLengthArgs,
 
-    /// Minimum GC % to consider [integer]
+    /// Minimum GC % to consider `[integer]`
     ///
     /// Fragments with lower GC % are ignored.
     #[cfg_attr(
@@ -96,7 +96,7 @@ pub struct GCConfig {
              value_parser = clap::value_parser!(u8).range(0..100), help_heading="Filtering"))]
     pub gc_min_pct: u8,
 
-    /// Maximum GC % to consider [integer]
+    /// Maximum GC % to consider `[integer]`
     ///
     /// Fragments with higher GC % are ignored.
     #[cfg_attr(
@@ -105,7 +105,7 @@ pub struct GCConfig {
              value_parser = clap::value_parser!(u8).range(0..101), help_heading="Filtering"))]
     pub gc_max_pct: u8,
 
-    /// Minimum **percentage** of ACGT bases in a fragment after blacklist masking [integer]
+    /// Minimum **percentage** of ACGT bases in a fragment after blacklist masking `[integer]`
     ///
     /// Fragments where a lower percentage of bases are ACGT (not blacklisted or 'N') are ignored.
     ///
@@ -118,7 +118,7 @@ pub struct GCConfig {
              value_parser = clap::value_parser!(u8).range(0..101), help_heading="Minimum ACGT (select 0-2 args)"))]
     pub min_acgt_pct: u8,
 
-    /// Minimum **count** of ACGT bases in a fragment after blacklist masking [integer]
+    /// Minimum **count** of ACGT bases in a fragment after blacklist masking `[integer]`
     ///
     /// Fragments where fewer bases are ACGT (not blacklisted or 'N') are ignored.
     #[cfg_attr(
@@ -353,7 +353,10 @@ fn process_chrom(
             let wn = windows.unwrap();
             let fetch_start = wn[0].0 as i64;
             let fetch_end = wn.iter().map(|w| w.1).max().unwrap() as i64;
-            (fetch_start.max(0i64), fetch_end.min(chrom_len as i64))
+            (
+                (fetch_start - opt.fragment_lengths.max_fragment_length as i64).max(0i64),
+                (fetch_end + opt.fragment_lengths.max_fragment_length as i64).min(chrom_len as i64),
+            )
         }
         _ => (0i64, chrom_len as i64),
     };

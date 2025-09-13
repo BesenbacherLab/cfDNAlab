@@ -148,7 +148,7 @@
 //         _ => None,
 //     };
 
-//     // Cconfigure global thread‐pool size
+//     // Configure global thread‐pool size
 //     rayon::ThreadPoolBuilder::new()
 //         .num_threads(opt.ioc.n_threads as usize)
 //         .build_global()
@@ -322,7 +322,10 @@
 //             let wn = windows.unwrap();
 //             let fetch_start = wn[0].0 as i64;
 //             let fetch_end = wn.iter().map(|w| w.1).max().unwrap() as i64;
-//             (fetch_start.max(0i64), fetch_end.min(chrom_len as i64))
+//             (
+//                 (fetch_start - opt.fragment_lengths.max_fragment_length as i64).max(0i64),
+//                 (fetch_end + opt.fragment_lengths.max_fragment_length as i64).min(chrom_len as i64),
+//             )
 //         }
 //         _ => (0i64, chrom_len as i64),
 //     };
