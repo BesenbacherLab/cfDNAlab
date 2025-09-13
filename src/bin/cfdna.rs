@@ -2,6 +2,7 @@ use cfdnalab::gc::GCConfig;
 use cfdnalab::lengths::LengthsConfig;
 use cfdnalab::normalize_genome::NormalizeGenomeConfig;
 use cfdnalab::refgc::RefGCConfig;
+use clap::builder::{Style, Styles};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 #[derive(Parser)]
@@ -25,16 +26,16 @@ fn main() {
     let cmd0 = Cli::command();
 
     // Optionally set styles/template here on cmd0 before sanitizing
-    use clap::builder::Styles;
+
+    let styles = Styles::styled()
+        .header(Style::new().bold())
+        .literal(Style::new().bold())
+        .usage(Style::new().bold())
+        .placeholder(Style::new());
+
     cmd0 = cmd0
         .help_template("{name} {version}\n{about}\n\n{usage-heading} {usage}\n\n{all-args}\n")
-        .styles(
-            clap::builder::Styles::styled()
-                .header(clap::builder::Styles::new().bold())
-                .literal(clap::builder::Styles::new().bold())
-                .usage(clap::builder::Styles::new().bold())
-                .placeholder(clap::builder::Styles::new()),
-        );
+        .styles(styles);
 
     // Sanitize help/long_help pulled from your doc comments
     let mut cmd = sanitize_command(cmd0);
