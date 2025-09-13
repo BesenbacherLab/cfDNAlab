@@ -48,7 +48,7 @@ fn main() {
     std::process::exit(0);
 }
 
-// Minimal Markdown -> terminal cleanup for CLI help
+/// Minimal Markdown -> terminal cleanup for CLI help
 fn sanitize_cli_text(md: &str) -> String {
     let mut out = String::with_capacity(md.len());
     let mut in_code = false;
@@ -58,7 +58,6 @@ fn sanitize_cli_text(md: &str) -> String {
             in_code = !in_code;
             continue;
         }
-
         let mut s = line.to_string();
         if !in_code {
             s = s.replace('`', "");
@@ -67,7 +66,7 @@ fn sanitize_cli_text(md: &str) -> String {
         }
         if in_code {
             out.push_str("  ");
-        } // indent code
+        } // indent code lines a bit
         out.push_str(&s);
         out.push('\n');
     }
@@ -77,31 +76,55 @@ fn sanitize_cli_text(md: &str) -> String {
     out
 }
 
-// Walk the clap::Command tree and sanitize help/long_help everywhere
-fn sanitize_command_help(cmd: &mut clap::Command) {
-    if let Some(a) = cmd.get_about() {
-        cmd.about(sanitize_cli_text(&a.to_string()));
+/// Sanitize help/long_help for a Command, its args, and all subcommands.
+/// NOTE: Takes and RETURNS ownership to avoid borrow/move errors with clap's builder API.
+fn sanitize_command(mut cmd: clap::Command) -> clap::Command {
+    // Sanitize about / long_about (extract first to break borrows)
+    if let Some(a) = cmd.get_about().map(|s| s.to_string()) {
+        cmd = cmd.about(sanitize_cli_text(&a));
     }
-    if let Some(a) = cmd.get_long_about() {
-        cmd.long_about(sanitize_cli_text(&a.to_string()));
-    }
-
-    // mutate args via IDs
-    let arg_ids: Vec<_> = cmd.get_arguments().map(|a| a.get_id().clone()).collect();
-    for id in arg_ids {
-        cmd.mut_arg(id, |a| {
-            if let Some(h) = a.get_help() {
-                a.help(sanitize_cli_text(&h.to_string()));
-            }
-            if let Some(h) = a.get_long_help() {
-                a.long_help(sanitize_cli_text(&h.to_string()));
-            }
-            a // IMPORTANT: return the Arg
-        });
+    if let Some(a) = cmd.get_long_about().map(|s| s.to_string()) {
+        cmd = cmd.long_about(sanitize_cli_text(&a));
     }
 
-    // recurse into subcommands
-    for sub in cmd.get_subcommands_mut() {
-        sanitize_command_help(sub);
+    // Collect arg IDs and their help strings up front (read-only pass)
+    let arg_infos: Vec<(clap::Id, Option<String>, Option<String>)> = cmd
+        .get_arguments()
+        .map(|a| {
+            let id = a.get_id().clone();
+            let h = a.get_help().map(|s| s.to_string());
+            let lh = a.get_long_help().map(|s| s.to_string());
+            (id, h, lh)
+        })
+        .collect();
+
+    // Rebuild args using mut_arg (consumes and returns Command)
+    for (id, h, lh) in arg_infos {
+        if let Some(hs) = h {
+            let cleaned = sanitize_cli_text(&hs);
+            cmd = cmd.mut_arg(&id, |a| {
+                a.help(cleaned);
+                a
+            });
+        }
+        if let Some(lhs) = lh {
+            let cleaned = sanitize_cli_text(&lhs);
+            cmd = cmd.mut_arg(&id, |a| {
+                a.long_help(cleaned);
+                a
+            });
+        }
     }
+
+    // Recurse into subcommands using mut_subcommand (also consumes self)
+    let sub_names: Vec<String> = cmd
+        .get_subcommands()
+        .map(|sc| sc.get_name().to_string())
+        .collect();
+
+    for name in sub_names {
+        cmd = cmd.mut_subcommand(&name, |sub| sanitize_command(sub));
+    }
+
+    cmd
 }
