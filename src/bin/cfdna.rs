@@ -23,7 +23,7 @@ enum Cmd {
 
 fn main() {
     // Build Command from derive
-    let cmd0 = Cli::command();
+    let mut cmd0 = Cli::command();
 
     // Optionally set styles/template here on cmd0 before sanitizing
 
@@ -38,7 +38,7 @@ fn main() {
         .styles(styles);
 
     // Sanitize help/long_help pulled from your doc comments
-    let mut cmd = sanitize_command(cmd0);
+    let cmd = sanitize_command(cmd0);
 
     // Parse using the sanitized command
     let matches = cmd.clone().get_matches();
