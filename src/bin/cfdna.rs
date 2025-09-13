@@ -225,7 +225,7 @@ fn make_signature() -> String {
     let bar = "─".repeat(48); // or just "-".repeat(60) for pure ASCII
 
     // Start style, content, then reset
-    format!("\n{accent}{title} {bar}{accent:#}\n")
+    format!("{accent}{bar}\n{title}\n{bar}{accent:#}\n")
 }
 
 /// Apply the signature to a Command and all its subcommands.
