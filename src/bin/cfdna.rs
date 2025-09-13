@@ -2,16 +2,17 @@ use cfdnalab::gc::GCConfig;
 use cfdnalab::lengths::LengthsConfig;
 use cfdnalab::normalize_genome::NormalizeGenomeConfig;
 use cfdnalab::refgc::RefGCConfig;
-use clap::{FromArgMatches, Parser, Subcommand};
 
-#[derive(Parser)]
+#[cfg(feature = "cli")]
+#[cfg_attr(feature = "cli", derive(clap::Parser))]
 #[command(name = "cfdna", version)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
 }
 
-#[derive(Subcommand)]
+#[cfg(feature = "cli")]
+#[cfg_attr(feature = "cli", derive(clap::Subcommand))]
 enum Cmd {
     GC(GCConfig),
     RefGC(RefGCConfig), // Extract reference GC counts
@@ -20,8 +21,16 @@ enum Cmd {
     // Ends(EndsConfig),
 }
 
+#[cfg(not(feature = "cli"))]
+fn main() {
+    // Library-only builds (no binary) — keep this minimal
+    eprintln!("This binary requires --features cli");
+    std::process::exit(1);
+}
+
 #[cfg(feature = "cli")]
 fn main() {
+    use clap::FromArgMatches;
     let cmd = pretty::build_cmd();
 
     // Parse using the sanitized command
@@ -43,13 +52,6 @@ fn main() {
     }
 
     std::process::exit(0);
-}
-
-#[cfg(not(feature = "cli"))]
-fn main() {
-    // Library-only builds (no binary) — keep this minimal
-    eprintln!("This binary requires --features cli");
-    std::process::exit(1);
 }
 
 #[cfg(all(feature = "cli"))]
