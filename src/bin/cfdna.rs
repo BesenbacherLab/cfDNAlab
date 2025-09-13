@@ -61,34 +61,6 @@ fn main() {
     std::process::exit(0);
 }
 
-/// Minimal Markdown -> terminal cleanup for CLI help
-fn sanitize_cli_text(md: &str) -> String {
-    let mut out = String::with_capacity(md.len());
-    let mut in_code = false;
-    for line in md.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
-            in_code = !in_code;
-            continue;
-        }
-        let mut s = line.to_string();
-        if !in_code {
-            s = s.replace('`', "");
-            s = s.replace('→', "->");
-            s = s.replace('’', "'").replace('“', "\"").replace('”', "\"");
-        }
-        if in_code {
-            out.push_str("  ");
-        } // indent code lines a bit
-        out.push_str(&s);
-        out.push('\n');
-    }
-    if out.ends_with('\n') {
-        out.pop();
-    }
-    out
-}
-
 /// Sanitize help/long_help for a Command, its args, and all subcommands.
 /// NOTE: Takes and RETURNS ownership to avoid borrow/move errors with clap's builder API.
 fn sanitize_command(mut cmd: clap::Command) -> clap::Command {
@@ -134,4 +106,107 @@ fn sanitize_command(mut cmd: clap::Command) -> clap::Command {
     }
 
     cmd
+}
+
+/// Turn **bold** and `inline code` markers into styled ANSI text (not Markdown)
+fn stylize_inline(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+
+    // choose your styles
+    let bold = Style::new().bold();
+    let code = Style::new().dimmed().underline();
+
+    let bold_on = format!("{bold}");
+    let bold_off = format!("{bold:#}");
+    let code_on = format!("{code}");
+    let code_off = format!("{code:#}");
+
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    let mut in_bold = false;
+    let mut in_code = false;
+
+    while i < bytes.len() {
+        // **bold**
+        if !in_code && i + 1 < bytes.len() && bytes[i] == b'*' && bytes[i + 1] == b'*' {
+            if in_bold {
+                out.push_str(&bold_off);
+            } else {
+                out.push_str(&bold_on);
+            }
+            in_bold = !in_bold;
+            i += 2;
+            continue;
+        }
+        // `code`
+        if bytes[i] == b'`' {
+            if in_code {
+                out.push_str(&code_off);
+            } else {
+                out.push_str(&code_on);
+            }
+            in_code = !in_code;
+            i += 1;
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+
+    // close any unclosed spans
+    if in_code {
+        out.push_str(&code_off);
+    }
+    if in_bold {
+        out.push_str(&bold_off);
+    }
+    out
+}
+
+/// Sanitize Markdown-ish help for terminals:
+/// - Treat ``` fences as block code (no inline styling inside)
+/// - Apply inline **bold** and `code` elsewhere
+/// - Normalize arrows/quotes
+pub fn sanitize_cli_text(md: &str) -> String {
+    let mut out = String::with_capacity(md.len());
+    let mut in_block = false;
+
+    // style used for code blocks (distinct from inline code)
+    let block = Style::new().dimmed();
+    let block_on = format!("{block}");
+    let block_off = format!("{block:#}");
+
+    for line in md.lines() {
+        let trimmed = line.trim_start();
+
+        // toggle code-block mode on lines that start with ``` (any language tag)
+        if trimmed.starts_with("```") {
+            in_block = !in_block;
+            continue; // drop the fence line itself
+        }
+
+        // normalize a few typography chars for terminals
+        let line = line
+            .replace('→', "->")
+            .replace('’', "'")
+            .replace('“', "\"")
+            .replace('”', "\"");
+
+        if in_block {
+            // in a fenced block: don't parse inline markers; optionally style/indent
+            out.push_str("  "); // simple indent
+            out.push_str(&block_on);
+            out.push_str(&line);
+            out.push_str(&block_off);
+        } else {
+            // outside a block: apply inline styling (**bold**, `code`)
+            out.push_str(&stylize_inline(&line));
+        }
+        out.push('\n');
+    }
+
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
 }
