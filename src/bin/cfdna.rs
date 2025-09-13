@@ -234,7 +234,7 @@ mod pretty {
         let bar = "─".repeat(48); // or just "-".repeat(60) for pure ASCII
 
         // Start style, content, then reset
-        format!("{accent}{bar}\n\n  {title}\n\n{bar}{accent:#}\n")
+        format!("\t\n{accent}{bar}\n\n  {title}\n\n{bar}{accent:#}\n")
     }
 
     /// Apply the signature to a Command and all its subcommands.
