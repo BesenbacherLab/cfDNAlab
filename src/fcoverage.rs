@@ -3,8 +3,12 @@ use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
+use std::io::Write;
 use std::{collections::HashMap, fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
 
+use crate::utils::coverage::tiled_run::{
+    build_tiles, merge_positional_tiles, reduce_aggregates_for_chr,
+};
 use crate::{
     cli_common::{ChromosomeArgs, FragmentLengthArgs, IOCArgs, WindowSpec, WindowsArgs},
     counters::FCoverageCounters,
@@ -14,8 +18,9 @@ use crate::{
         blacklist::load_blacklists,
         coverage::{
             coverage_prefix::CoveragePrefix,
-            window_results::{CoverageOutput, CoverageWindowAction, compute_window_outputs},
-            writers::{NanPolicy, write_outputs_auto_with_prefix},
+            tiled_run::{Tile, TileMode, add_fragment_clipped_to_core, windows_overlapping_core},
+            window_results::CoverageWindowAction,
+            writers::NanPolicy,
         },
         fragment::segment_fragment::{SegmentedReadInfo, collect_fragment_with_segments},
     },
@@ -39,7 +44,7 @@ use crate::{
 ///  - Get the positional coverage for the included windows only. I.e.,
 ///    exclude all positions that do not overlap a window from the output.
 ///
-/// Without windowing, positional coverage for the entire genome (selected chromosomes) are outputted.
+/// Without windowing, positional coverage for the selected chromosomes are outputted.
 ///
 /// ## Blacklisting
 ///
@@ -50,8 +55,13 @@ pub struct FCoverageConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     ioc: IOCArgs,
 
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    windows: WindowsArgs,
+    /// Size of tiles to parallelize over `[integer]`
+    ///
+    /// Chromosomes are processed in tiles of this size to reduce memory.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
+    pub tile_size: u32,
 
     /// What to return per window `[string]`
     ///
@@ -108,6 +118,9 @@ pub struct FCoverageConfig {
     pub ignore_gap: bool,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
+    windows: WindowsArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
     chromosomes: ChromosomeArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
@@ -154,12 +167,6 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
         .chromosomes
         .resolve_chromosomes(Some(&opt.ioc.bam.as_path()))?;
     let window_opt = opt.windows.resolve_windows();
-    let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .unwrap(),
-    );
 
     // Create output directory
     create_dir_all(&opt.ioc.output_dir).context("Cannot create output_dir")?;
@@ -181,15 +188,33 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
         _ => None,
     };
 
+    let halo_bp: u32 = opt.fragment_lengths.max_fragment_length; // safe halo for pairing/segments
+
+    let tiles = build_tiles(&opt.ioc.bam, &chromosomes, opt.tile_size, halo_bp)?;
+
+    // Where per-tile files go
+    let positional_prefix = "coverage.pos";
+    let partials_prefix = "coverage.part";
+
+    // Decide mode once
+    let windowed = matches!(window_opt, WindowSpec::Bed(_));
+    let masked = opt.blacklist.is_some();
+
+    let total_tiles = tiles.len();
+
+    // Create progress bar
+    let pb = Arc::new(ProgressBar::new(total_tiles as u64));
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
+            .unwrap(),
+    );
+
     // Configure global thread‐pool size
     rayon::ThreadPoolBuilder::new()
         .num_threads(opt.ioc.n_threads as usize)
         .build_global()
         .context("building Rayon thread pool")?;
-
-    // Prepare output containers
-    let mut out_by_chrom =
-        FxHashMap::with_capacity_and_hasher(chromosomes.len(), Default::default());
 
     let mut global_counter = FCoverageCounters::default();
 
@@ -197,37 +222,137 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
 
     pb.set_position(0);
 
-    let results: Vec<(String, CoverageOutput, FCoverageCounters)> = chromosomes
+    let tile_results: Vec<FCoverageCounters> = tiles
         .par_iter()
-        .map(|chr| -> Result<(_, _, _)> {
-            let out = process_chrom(
-                &chr,
-                &opt,
-                windows_map
-                    .as_ref()
-                    .and_then(|m| m.get(chr).map(|v| v.as_slice())),
-                &window_opt,
-                blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
-            )?;
+        .map(|tile| -> Result<FCoverageCounters> {
+            // Per-chrom projections
+            let windows_chr: Option<&[(u64, u64, u64)]> = windows_map
+                .as_ref()
+                .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
+            let blacklist_chr: &[(u64, u64)] = blacklist_map
+                .get(&tile.chr)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+
+            // Decide tile mode and file name
+            let action_prefix = if windowed {
+                match opt.per_window {
+                    CoverageWindowAction::OnlyIncludeThesePositions => positional_prefix,
+                    CoverageWindowAction::Average | CoverageWindowAction::Total => partials_prefix,
+                }
+            } else {
+                // Whole positional coverage
+                positional_prefix
+            };
+
+            let out_path = opt.ioc.output_dir.join(format!(
+                "{prefix}.{chr}.{idx}.tsv",
+                prefix = action_prefix,
+                chr = tile.chr,
+                idx = tile.index
+            ));
+
+            let mode = if !windowed {
+                TileMode::Positional {
+                    windows: None,
+                    out_path,
+                }
+            } else {
+                match opt.per_window {
+                    CoverageWindowAction::OnlyIncludeThesePositions => TileMode::Positional {
+                        windows: windows_chr,
+                        out_path,
+                    },
+                    CoverageWindowAction::Average | CoverageWindowAction::Total => {
+                        let wchr = windows_chr.expect("windows required for aggregates");
+                        TileMode::Aggregates {
+                            windows: wchr,
+                            masked,
+                            out_path,
+                        }
+                    }
+                }
+            };
+
+            let ctr = process_tile(&opt, tile, blacklist_chr, mode)?;
             pb.inc(1);
-            Ok(out)
+            Ok(ctr)
         })
-        .collect::<Result<_>>()?; // short-circuits on the first Err
+        .collect::<anyhow::Result<_>>()?;
 
     pb.finish_with_message("| Finished counting");
 
-    // Collect results (in chromosome order) back into the global vectors
-    for (chr, coverage_output, counter) in results {
-        out_by_chrom.insert(chr, coverage_output);
+    // Collect counters
+    for counter in tile_results {
         global_counter += counter;
     }
 
-    // Write outputs
-    // decide output filename however you like
-    let out_path = opt.ioc.output_dir.join("coverage");
+    // Merge temporary output files and
+    // reduce windows present in multiple tiles
 
-    // Default to dropping masked rows for positional writers
-    write_outputs_auto_with_prefix(&out_path, &out_by_chrom, opt.nan_policy)?;
+    let final_out_path = if !windowed {
+        // Whole-genome positional coverage
+        merge_positional_tiles(
+            &opt.ioc.output_dir,
+            &chromosomes,
+            positional_prefix,
+            "coverage.per_positions.tsv",
+        )?
+    } else {
+        match opt.per_window {
+            CoverageWindowAction::OnlyIncludeThesePositions => {
+                // Windowed positional with orig_idx column
+                merge_positional_tiles(
+                    &opt.ioc.output_dir,
+                    &chromosomes,
+                    positional_prefix,
+                    "coverage.per_positions.tsv",
+                )?
+            }
+            CoverageWindowAction::Average | CoverageWindowAction::Total => {
+                // Per-chrom reduce of partials into final aggregates
+                let final_path = opt.ioc.output_dir.join(match opt.per_window {
+                    CoverageWindowAction::Average => "coverage.avg.tsv",
+                    CoverageWindowAction::Total => "coverage.total.tsv",
+                    _ => unreachable!(),
+                });
+                let mut w = std::io::BufWriter::new(std::fs::File::create(&final_path)?);
+                // Header
+
+                let value_col = match opt.per_window {
+                    CoverageWindowAction::Average => "avg_coverage",
+                    CoverageWindowAction::Total => "total_coverage",
+                    _ => unreachable!(),
+                };
+                writeln!(
+                    w,
+                    "chromosome\tstart\tend\t{}\tblacklisted_positions",
+                    value_col
+                )?;
+
+                if let Some(win_map) = &windows_map {
+                    for chr in &chromosomes {
+                        if let Some(wchr) = win_map.get(chr) {
+                            reduce_aggregates_for_chr(
+                                chr,
+                                &opt.ioc.output_dir,
+                                partials_prefix,
+                                wchr.as_slice(),
+                                masked,
+                                &mut w,
+                            )?;
+                        }
+                    }
+                } else {
+                    anyhow::bail!("Windows required for aggregates")
+                }
+                w.flush()?;
+                final_path
+            }
+        }
+    };
+
+    println!("Saved output to: {:?}", final_out_path);
 
     // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
@@ -256,49 +381,45 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     Ok(())
 }
 
-fn process_chrom(
-    chr: &str,
+/// Process one tile: pair reads, build coverage, and write outputs for this tile
+fn process_tile(
     opt: &FCoverageConfig,
-    windows: Option<&[(u64, u64, u64)]>,
-    window_opt: &WindowSpec,
-    blacklist_intervals: &[(u64, u64)],
-) -> anyhow::Result<(String, CoverageOutput, FCoverageCounters)> {
+    tile: &Tile,
+    blacklist_chr: &[(u64, u64)],
+    mode: TileMode,
+) -> Result<FCoverageCounters> {
     // Open a fresh BAM reader for this thread
-    let (mut reader, tid, chrom_len) = create_chromosome_reader(&opt.ioc.bam, chr)?;
-
-    // Initialize counters (default -> 0s)
-    let mut counter = FCoverageCounters::default();
-
-    // Stash for keeping reads until mates arrive
-    let mut stash = FxHashMap::<Vec<u8>, SegmentedReadInfo>::default();
-
-    // Get coordinates to fetch reads from and to
-    let (fetch_from, fetch_to) = match (window_opt, opt.per_window) {
-        (WindowSpec::Bed(_), CoverageWindowAction::OnlyIncludeThesePositions) => {
-            let wn = windows.unwrap();
-            let fetch_start = wn[0].0 as i64;
-            let fetch_end = wn.iter().map(|w| w.1).max().unwrap() as i64;
-            (
-                (fetch_start - opt.fragment_lengths.max_fragment_length as i64).max(0i64),
-                (fetch_end + opt.fragment_lengths.max_fragment_length as i64).min(chrom_len as i64),
-            )
-        }
-        _ => (0i64, chrom_len as i64),
-    };
+    let (mut reader, _tid_check, _len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
+    debug_assert!(_tid_check == tile.tid as u32);
 
     reader
-        .fetch((tid, fetch_from, fetch_to))
-        .context(format!("fetch {}", chr))?;
+        .fetch((
+            tile.tid as i32,
+            tile.fetch_start as i64,
+            tile.fetch_end as i64,
+        ))
+        .context(format!(
+            "fetch {} {}-{}",
+            &tile.chr, tile.fetch_start, tile.fetch_end
+        ))?;
 
-    // Initialize coverage counter
-    let mut cp = CoveragePrefix::initialize_coverage_prefix(chrom_len as u32);
+    // Prepare CP for tile core length
+    let core_len = tile.core_end - tile.core_start;
+    let mut cp = CoveragePrefix::initialize_coverage_prefix(core_len);
 
-    // Loop over records and count
+    // Mate-pair stash keyed by qname
+    let mut stash: FxHashMap<Vec<u8>, SegmentedReadInfo> = FxHashMap::default();
+
+    // Counters
+    let mut counter = FCoverageCounters::default();
+
+    // Iterate BAM records limited to fetch
     for res in reader.records() {
         let rec = res.context("reading bam record")?;
         counter.total_reads += 1;
 
-        if rec.tid() != tid as i32 || !include_read(&rec, opt) {
+        // Filter read using your existing policy
+        if !include_read(&rec, opt) {
             continue;
         }
 
@@ -307,22 +428,22 @@ fn process_chrom(
             false => counter.accepted_forward += 1,
         }
 
+        // Pair with mate if present in the stash
         if let Some(mate) = stash.remove(rec.qname()) {
-            // Combine reads to a fragment
-            let fragment = if let Some(f) = collect_fragment_with_segments(
+            // Build a fragment with or without inter-mate gap
+            let maybe_frag = collect_fragment_with_segments(
                 &SegmentedReadInfo::from(&rec),
                 &mate,
-                1,
+                1, // trigger_min_gap_bp (you can surface this in config)
                 !opt.ignore_gap,
-            ) {
-                f
-            } else {
+            );
+            let Some(fragment) = maybe_frag else {
                 continue;
             };
 
             counter.collected_fragments += 1;
 
-            // Check length is within allowed range
+            // Length filter on the final fragment span
             let fragment_length = fragment.len();
             if fragment_length < opt.fragment_lengths.min_fragment_length
                 || fragment_length > opt.fragment_lengths.max_fragment_length
@@ -333,29 +454,226 @@ fn process_chrom(
 
             counter.counted_fragments += 1;
 
-            // Add to coverage prefix
-            // TODO: Update weight with GC etc. later!
-            cp.add_fragment_with_segments(fragment, 1.0)?;
+            // Clip and add to tile core coverage (segments respected)
+            add_fragment_clipped_to_core(&mut cp, &fragment, 1.0, tile.core_start, tile.core_end)?;
         } else {
-            // Stash read if new qname
+            // Stash for later pairing
             stash.insert(rec.qname().to_vec(), SegmentedReadInfo::from(&rec));
         }
     }
 
-    // Add blacklist
-    if !blacklist_intervals.is_empty() {
-        cp.initialize_blacklist_prefix();
-        cp.add_blacklist_many_to_prefix(blacklist_intervals)?;
-        cp.finalize_blacklist_prefix();
+    // Finalize coverage
+    cp.finalize_coverage();
+
+    match mode {
+        TileMode::Positional { windows, out_path } => {
+            // We need a mask whenever there are blacklist intervals for this chromosome
+            let need_mask = !blacklist_chr.is_empty();
+            if need_mask && !blacklist_chr.is_empty() {
+                // Clip and add blacklists late to minimize memory
+                let mut clipped: Vec<(u64, u64)> = Vec::new();
+                for &(bs, be) in blacklist_chr {
+                    if be <= tile.core_start as u64 || bs >= tile.core_end as u64 {
+                        continue;
+                    }
+                    let s = (bs as u32).max(tile.core_start) - tile.core_start;
+                    let e = (be as u32).min(tile.core_end) - tile.core_start;
+                    if s < e {
+                        clipped.push((s as u64, e as u64));
+                    }
+                }
+                if !clipped.is_empty() {
+                    cp.initialize_blacklist_prefix();
+                    cp.add_blacklist_many_to_prefix(&clipped)?;
+                    cp.finalize_blacklist_prefix();
+                }
+            }
+
+            let mut w = std::io::BufWriter::new(std::fs::File::create(out_path)?);
+            let cov = cp.coverage().expect("coverage present");
+            let mask = cp.blacklist_mask();
+
+            // Write tile data to disk
+
+            match windows {
+                None => {
+                    // Whole positional coverage for the tile core
+
+                    for i in 0..(core_len as usize) {
+                        let pos = tile.core_start as u64 + i as u64;
+
+                        if let Some(m) = mask {
+                            if m[i] == 1 {
+                                // Blacklisted site -> act per policy
+                                match opt.nan_policy {
+                                    NanPolicy::DropRow => continue,
+                                    NanPolicy::WriteLiteralNaN => {
+                                        writeln!(w, "{}\t{}\t{}\tNaN", tile.chr, pos, pos + 1)?;
+                                        continue;
+                                    }
+                                    NanPolicy::WriteEmptyCell => {
+                                        writeln!(w, "{}\t{}\t{}\t", tile.chr, pos, pos + 1)?;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Not masked
+                        writeln!(w, "{}\t{}\t{}\t{}", tile.chr, pos, pos + 1, cov[i])?;
+                    }
+                }
+                Some(win_chr) => {
+                    // Only include windows that overlap the tile core
+                    for &(window_start, window_end, original_idx) in
+                        windows_overlapping_core(win_chr, tile.core_start, tile.core_end)
+                    {
+                        let s = (window_start as u32).max(tile.core_start);
+                        let e = (window_end as u32).min(tile.core_end);
+                        let a = (s - tile.core_start) as usize;
+                        let b = (e - tile.core_start) as usize;
+
+                        for i in a..b {
+                            let pos = tile.core_start as u64 + i as u64;
+
+                            if let Some(m) = mask {
+                                if m[i] == 1 {
+                                    match opt.nan_policy {
+                                        NanPolicy::DropRow => continue,
+                                        NanPolicy::WriteLiteralNaN => {
+                                            writeln!(
+                                                w,
+                                                "{}\t{}\t{}\tNaN\t{}",
+                                                tile.chr,
+                                                pos,
+                                                pos + 1,
+                                                original_idx
+                                            )?;
+                                            continue;
+                                        }
+                                        NanPolicy::WriteEmptyCell => {
+                                            writeln!(
+                                                w,
+                                                "{}\t{}\t{}\t\t{}",
+                                                tile.chr,
+                                                pos,
+                                                pos + 1,
+                                                original_idx
+                                            )?;
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // If no NaNs, write coverage
+                            writeln!(
+                                w,
+                                "{}\t{}\t{}\t{}\t{}",
+                                tile.chr,
+                                pos,
+                                pos + 1,
+                                cov[i],
+                                original_idx
+                            )?;
+                        }
+                    }
+                }
+            }
+
+            w.flush()?;
+        }
+
+        TileMode::Aggregates {
+            windows,
+            masked,
+            out_path,
+        } => {
+            // Build indexes once for this tile
+            if masked && !blacklist_chr.is_empty() {
+                // Same late-mask approach
+                let mut clipped: Vec<(u64, u64)> = Vec::new();
+                for &(bs, be) in blacklist_chr {
+                    if be <= tile.core_start as u64 || bs >= tile.core_end as u64 {
+                        continue;
+                    }
+                    let s = (bs as u32).max(tile.core_start) - tile.core_start;
+                    let e = (be as u32).min(tile.core_end) - tile.core_start;
+                    if s < e {
+                        clipped.push((s as u64, e as u64));
+                    }
+                }
+                if !clipped.is_empty() {
+                    cp.initialize_blacklist_prefix();
+                    cp.add_blacklist_many_to_prefix(&clipped)?;
+                    cp.finalize_blacklist_prefix();
+                }
+            }
+            cp.build_query_index()?;
+
+            // Own everything we need so we don't hold borrows on `cp`
+            let psum_all_owned = cp.get_psum_all().ok_or_else(|| {
+                anyhow::anyhow!("psum_all missing; build_query_index() should have populated it")
+            })?;
+            let psum_allowed_owned = cp.get_psum_allowed();
+            let cnt_allowed_ps_owned = cp.get_psum_allowed_count();
+            let mask_owned: Option<Vec<u8>> = cp.blacklist_mask().map(|m| m.to_vec());
+
+            // Use slices for indexing
+            let psum_all: &[f64] = &psum_all_owned;
+            let psum_allowed: Option<&[f64]> = psum_allowed_owned.as_deref();
+            let cnt_allowed_ps: Option<&[u32]> = cnt_allowed_ps_owned.as_deref();
+            let mask: Option<&[u8]> = mask_owned.as_deref();
+
+            // Write per-tile partials: idx, sum, allowed_count, blacklisted_count
+            let mut w = std::io::BufWriter::new(std::fs::File::create(out_path)?);
+
+            for &(window_start, window_end, original_idx) in
+                windows_overlapping_core(windows, tile.core_start, tile.core_end)
+            {
+                let s = (window_start as u32).max(tile.core_start);
+                let e = (window_end as u32).min(tile.core_end);
+                let a_us = (s - tile.core_start) as usize;
+                let b_us = (e - tile.core_start) as usize;
+
+                // Sum coverage via prefix sums (avoid calling cp.sum_coverage here)
+                let sum = if masked {
+                    if let Some(pa) = psum_allowed {
+                        pa[b_us] - pa[a_us]
+                    } else {
+                        // No blacklist present -> allowed == all
+                        psum_all[b_us] - psum_all[a_us]
+                    }
+                } else {
+                    psum_all[b_us] - psum_all[a_us]
+                };
+
+                // Allowed positions count
+                let allowed: u64 = if masked {
+                    if let Some(cnt) = cnt_allowed_ps {
+                        (cnt[b_us] - cnt[a_us]) as u64
+                    } else if let Some(m) = mask {
+                        let mut ok = 0u64;
+                        for i in a_us..b_us {
+                            if m[i] == 0 {
+                                ok += 1;
+                            }
+                        }
+                        ok
+                    } else {
+                        (b_us - a_us) as u64
+                    }
+                } else {
+                    (b_us - a_us) as u64
+                };
+
+                let blacklisted = (b_us - a_us) as u64 - allowed;
+
+                writeln!(w, "{}\t{}\t{}\t{}", original_idx, sum, allowed, blacklisted)?;
+            }
+            w.flush()?;
+        }
     }
 
-    // Get ready to extract average coverage per stride-bin
-    cp.finalize_coverage();
-    cp.build_query_index()?;
-
-    // Extract outputs
-    let window_outputs =
-        compute_window_outputs(&mut cp, windows, opt.per_window, opt.blacklist.is_some())?;
-
-    Ok((chr.to_string(), window_outputs, counter))
+    Ok(counter)
 }

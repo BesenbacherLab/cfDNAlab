@@ -40,6 +40,26 @@ impl FromStr for NanPolicy {
     }
 }
 
+impl NanPolicy {
+    #[inline]
+    pub fn drop_row(&self) -> bool {
+        matches!(self, NanPolicy::DropRow)
+    }
+
+    /// Render the coverage cell for a blacklisted site
+    /// - DropRow -> None (caller should skip the row)
+    /// - WriteLiteralNaN -> Some("NaN")
+    /// - WriteEmptyCell -> Some("")
+    #[inline]
+    pub fn render_masked_cell(&self) -> Option<&'static str> {
+        match self {
+            NanPolicy::DropRow => None,
+            NanPolicy::WriteLiteralNaN => Some("NaN"),
+            NanPolicy::WriteEmptyCell => Some(""),
+        }
+    }
+}
+
 /// Write per-window aggregates (Average or Total) to TSV
 ///
 /// Parameters

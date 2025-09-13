@@ -877,6 +877,18 @@ impl CoveragePrefix {
         self.bl_delta.clone()
     }
 
+    pub fn get_psum_all(&self) -> Option<Vec<f64>> {
+        self.psum_all.clone()
+    }
+
+    pub fn get_psum_allowed(&self) -> Option<Vec<f64>> {
+        self.psum_allowed.clone()
+    }
+
+    pub fn get_psum_allowed_count(&self) -> Option<Vec<u32>> {
+        self.psum_allowed_count.clone()
+    }
+
     // Private helpers
 
     fn ensure_indexes(&mut self) -> Result<()> {
