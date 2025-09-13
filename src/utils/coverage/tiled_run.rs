@@ -259,3 +259,97 @@ pub fn reduce_aggregates_for_chr(
 
     Ok(())
 }
+
+pub fn adapt_fetch_to_extreme_windows(
+    tile: &Tile,
+    mode: &TileMode<'_>,
+    chrom_len: u32,
+) -> Option<(i64, i64)> {
+    // Decide the fetch interval based on mode/windows.
+    // For whole-genome positional: use the full tile fetch band.
+    // For windowed runs: restrict to [min_overlapping_window, max_overlapping_window] ± halo,
+    // intersected with the tile’s existing fetch band.
+    let (fetch_from, fetch_to): (i64, i64) = match mode {
+        // Whole positional coverage (no windows): keep the original tile fetch band
+        TileMode::Positional { windows: None, .. } => {
+            (tile.fetch_start as i64, tile.fetch_end as i64)
+        }
+
+        // Windowed positional coverage
+        TileMode::Positional {
+            windows: Some(wchr),
+            ..
+        } => {
+            // Find the span of windows that overlap the tile core
+            let mut found = false;
+            let mut min_ws: u64 = u64::MAX;
+            let mut max_we: u64 = 0;
+            for &(ws, we, _) in windows_overlapping_core(wchr, tile.core_start, tile.core_end) {
+                found = true;
+                if ws < min_ws {
+                    min_ws = ws;
+                }
+                if we > max_we {
+                    max_we = we;
+                }
+            }
+            // If nothing overlaps this core, skip this tile entirely
+            if !found {
+                return None;
+            }
+
+            // Use the tile's *actual* left/right halo (already edge-clamped)
+            let left_halo = tile.core_start.saturating_sub(tile.fetch_start);
+            let right_halo = tile.fetch_end.saturating_sub(tile.core_end);
+
+            // Proposed narrower fetch band from window span ± halo
+            let narrowed_start = (min_ws as u32).saturating_sub(left_halo);
+            let narrowed_end = (max_we as u32).saturating_add(right_halo);
+
+            // Intersect with the tile’s original fetch band, and clamp to chrom length
+            let start_u32 = narrowed_start.max(tile.fetch_start);
+            let end_u32 = narrowed_end.min(tile.fetch_end).min(chrom_len as u32);
+
+            // It’s possible (though unlikely) numerical clamping collapses the band
+            if start_u32 >= end_u32 {
+                return None;
+            }
+            (start_u32 as i64, end_u32 as i64)
+        }
+
+        // Aggregates: same narrowing as windowed positional
+        TileMode::Aggregates { windows: wchr, .. } => {
+            let mut found = false;
+            let mut min_ws: u64 = u64::MAX;
+            let mut max_we: u64 = 0;
+            for &(ws, we, _) in windows_overlapping_core(wchr, tile.core_start, tile.core_end) {
+                found = true;
+                if ws < min_ws {
+                    min_ws = ws;
+                }
+                if we > max_we {
+                    max_we = we;
+                }
+            }
+            if !found {
+                return None;
+            }
+
+            let left_halo = tile.core_start.saturating_sub(tile.fetch_start);
+            let right_halo = tile.fetch_end.saturating_sub(tile.core_end);
+
+            let narrowed_start = (min_ws as u32).saturating_sub(left_halo);
+            let narrowed_end = (max_we as u32).saturating_add(right_halo);
+
+            let start_u32 = narrowed_start.max(tile.fetch_start);
+            let end_u32 = narrowed_end.min(tile.fetch_end).min(chrom_len as u32);
+
+            if start_u32 >= end_u32 {
+                return None;
+            }
+            (start_u32 as i64, end_u32 as i64)
+        }
+    };
+
+    Some((fetch_from, fetch_to))
+}

@@ -7,7 +7,7 @@ use std::io::Write;
 use std::{collections::HashMap, fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
 
 use crate::utils::coverage::tiled_run::{
-    build_tiles, merge_positional_tiles, reduce_aggregates_for_chr,
+    adapt_fetch_to_extreme_windows, build_tiles, merge_positional_tiles, reduce_aggregates_for_chr,
 };
 use crate::{
     cli_common::{ChromosomeArgs, FragmentLengthArgs, IOCArgs, WindowSpec, WindowsArgs},
@@ -57,7 +57,7 @@ pub struct FCoverageConfig {
 
     /// Size of tiles to parallelize over `[integer]`
     ///
-    /// Chromosomes are processed in tiles of this size to reduce memory.
+    /// Chromosomes are processed in tiles of this size to reduce memory usage.
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
@@ -392,16 +392,19 @@ fn process_tile(
     let (mut reader, _tid_check, _len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
     debug_assert!(_tid_check == tile.tid as u32);
 
+    // Counters
+    let mut counter = FCoverageCounters::default();
+
+    // Adapt the fetch coordinates to the present windows (*in windowed mode!*)
+    // When no windows are present, skip this tile
+    let Some((fetch_from, fetch_to)) = adapt_fetch_to_extreme_windows(&tile, &mode, _len as u32)
+    else {
+        return Ok(counter);
+    };
+
     reader
-        .fetch((
-            tile.tid as i32,
-            tile.fetch_start as i64,
-            tile.fetch_end as i64,
-        ))
-        .context(format!(
-            "fetch {} {}-{}",
-            &tile.chr, tile.fetch_start, tile.fetch_end
-        ))?;
+        .fetch((tile.tid as i32, fetch_from as i64, fetch_to as i64))
+        .context(format!("fetch {} {}-{}", &tile.chr, fetch_from, fetch_to))?;
 
     // Prepare CP for tile core length
     let core_len = tile.core_end - tile.core_start;
@@ -409,9 +412,6 @@ fn process_tile(
 
     // Mate-pair stash keyed by qname
     let mut stash: FxHashMap<Vec<u8>, SegmentedReadInfo> = FxHashMap::default();
-
-    // Counters
-    let mut counter = FCoverageCounters::default();
 
     // Iterate BAM records limited to fetch
     for res in reader.records() {
