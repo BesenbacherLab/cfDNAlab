@@ -59,13 +59,14 @@ mod pretty {
 
     /// Sanitize Markdown-ish help for terminals:
     /// - Treat ``` fences as block code (no inline styling inside)
+    /// - Apply header styling (#, ##, ###, ####) outside fences
     /// - Apply inline **bold** and `code` elsewhere
     /// - Normalize arrows/quotes
     pub fn sanitize_cli_text(md: &str) -> String {
         let mut out = String::with_capacity(md.len());
         let mut in_block = false;
 
-        // style used for code blocks (distinct from inline code)
+        // Style used for code blocks (distinct from inline code)
         let block = Style::new().dimmed();
         let block_on = format!("{block}");
         let block_off = format!("{block:#}");
@@ -73,13 +74,13 @@ mod pretty {
         for line in md.lines() {
             let trimmed = line.trim_start();
 
-            // toggle code-block mode on lines that start with ``` (any language tag)
+            // Toggle code-block mode on lines that start with ``` (any language tag)
             if trimmed.starts_with("```") {
                 in_block = !in_block;
                 continue; // drop the fence line itself
             }
 
-            // normalize a few typography chars for terminals
+            // Normalize a few typography chars for terminals
             let line = line
                 .replace('→', "->")
                 .replace('’', "'")
@@ -87,13 +88,16 @@ mod pretty {
                 .replace('”', "\"");
 
             if in_block {
-                // in a fenced block: don't parse inline markers; optionally style/indent
+                // In a fenced block: don't parse inline markers; optionally style/indent
                 out.push_str("  "); // simple indent
                 out.push_str(&block_on);
                 out.push_str(&line);
                 out.push_str(&block_off);
+            } else if let Some(hdr) = try_render_header(&line) {
+                // Header line outside fences
+                out.push_str(&hdr);
             } else {
-                // outside a block: apply inline styling (**bold**, `code`)
+                // Outside a block and not a header: apply inline styling (**bold**, `code`)
                 out.push_str(&stylize_inline(&line));
             }
             out.push('\n');
@@ -158,6 +162,50 @@ mod pretty {
             out.push_str(&bold_off);
         }
         out
+    }
+
+    /// Render Markdown-like headers (#, ##, ###, ####) on non-fenced lines
+    fn try_render_header(line: &str) -> Option<String> {
+        let t = line.trim_start();
+        let mut hashes = 0usize;
+        for b in t.as_bytes() {
+            if *b == b'#' {
+                hashes += 1;
+            } else {
+                break;
+            }
+        }
+        if hashes == 0 {
+            return None;
+        }
+        let rest = &t[hashes..];
+        if !rest.starts_with(' ') {
+            return None;
+        } // require a space after #'s
+        let text = rest.trim_start();
+
+        // Choose styles per header level
+        let (sty, underline): (Style, bool) = match hashes {
+            1 => (Style::new().fg_color(AnsiColor::Yellow).bold(), true), // H1
+            2 => (Style::new().bold(), false),                            // H2
+            3 => (Style::new().underline(), false),                       // H3
+            _ => (Style::new().dimmed(), false),                          // H4+
+        };
+
+        let on = format!("{sty}");
+        let off = format!("{sty:#}");
+
+        let mut out = String::with_capacity(line.len() + 32);
+        out.push_str(&on);
+        out.push_str(text);
+        out.push_str(&off);
+        out.push('\n');
+
+        if underline {
+            let bar_len = text.chars().count().min(64);
+            out.push_str(&"─".repeat(bar_len));
+        }
+        Some(out)
     }
 
     /// Sanitize help/long_help for a Command, its args, and all subcommands.
