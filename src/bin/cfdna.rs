@@ -104,17 +104,11 @@ fn sanitize_command(mut cmd: clap::Command) -> clap::Command {
     for (id, h, lh) in arg_infos {
         if let Some(hs) = h {
             let cleaned = sanitize_cli_text(&hs);
-            cmd = cmd.mut_arg(&id, |a| {
-                a.help(cleaned);
-                a
-            });
+            cmd = cmd.mut_arg(&id, |a| a.help(cleaned));
         }
         if let Some(lhs) = lh {
             let cleaned = sanitize_cli_text(&lhs);
-            cmd = cmd.mut_arg(&id, |a| {
-                a.long_help(cleaned);
-                a
-            });
+            cmd = cmd.mut_arg(&id, |a| a.long_help(cleaned));
         }
     }
 
