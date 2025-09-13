@@ -2,7 +2,7 @@ use cfdnalab::gc::GCConfig;
 use cfdnalab::lengths::LengthsConfig;
 use cfdnalab::normalize_genome::NormalizeGenomeConfig;
 use cfdnalab::refgc::RefGCConfig;
-use clap::builder::{Style, Styles};
+use clap::builder::styling::{AnsiColor, Styles};
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 #[derive(Parser)]
@@ -28,10 +28,10 @@ fn main() {
     // Optionally set styles/template here on cmd0 before sanitizing
 
     let styles = Styles::styled()
-        .header(Style::new().bold())
-        .literal(Style::new().bold())
-        .usage(Style::new().bold())
-        .placeholder(Style::new());
+        .header(AnsiColor::Yellow.on_default().bold())
+        .usage(AnsiColor::Green.on_default().bold())
+        .literal(AnsiColor::Blue.on_default().bold())
+        .placeholder(AnsiColor::Cyan.on_default());
 
     cmd0 = cmd0
         .help_template("{name} {version}\n{about}\n\n{usage-heading} {usage}\n\n{all-args}\n")
