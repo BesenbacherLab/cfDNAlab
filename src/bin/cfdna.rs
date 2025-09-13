@@ -186,10 +186,13 @@ mod pretty {
 
         // Choose styles per header level
         let (sty, underline): (Style, bool) = match hashes {
-            1 => (Style::new().fg_color(AnsiColor::Yellow).bold(), true), // H1
-            2 => (Style::new().bold(), false),                            // H2
-            3 => (Style::new().underline(), false),                       // H3
-            _ => (Style::new().dimmed(), false),                          // H4+
+            1 => (
+                Style::new().fg_color(Some(AnsiColor::Yellow.into())).bold(),
+                true,
+            ), // H1
+            2 => (Style::new().bold(), false),      // H2
+            3 => (Style::new().underline(), false), // H3
+            _ => (Style::new().dimmed(), false),    // H4+
         };
 
         let on = format!("{sty}");
