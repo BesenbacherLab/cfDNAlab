@@ -514,6 +514,7 @@ pub fn emit_bedgraph_runs<W: Write>(
 
         // Skip zero-runs unless specified otherwise
         if v0 == 0.0 && !keep_zero_runs {
+            i = j;
             continue;
         }
 
@@ -586,6 +587,7 @@ pub fn emit_windowed_runs_with_index<W: Write>(
 
         // Skip zero-runs unless specified otherwise
         if v0 == 0.0 && !keep_zero_runs {
+            i = j;
             continue;
         }
 
