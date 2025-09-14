@@ -258,6 +258,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     // Decide mode once
     let windowed = matches!(window_opt, WindowSpec::Bed(_));
     let masked = opt.blacklist.is_some();
+    let has_scaling = opt.scale_genome.scaling_factors.is_some();
 
     // Build temporary directory
     let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
@@ -283,13 +284,18 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     // Get decimals to use
     let decimals_to_use: i32 = if windowed {
         match opt.per_window {
-            CoverageWindowAction::OnlyIncludeThesePositionsUnique
-            | CoverageWindowAction::OnlyIncludeThesePositionsIndexed => 0, // TODO: Change when corrections are implemented and enabled
             CoverageWindowAction::Average | CoverageWindowAction::Total => opt.decimals as i32,
+            CoverageWindowAction::OnlyIncludeThesePositionsUnique
+            | CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
+                if has_scaling {
+                    opt.decimals as i32
+                } else {
+                    0
+                }
+            }
         }
     } else {
-        // Whole positional coverage
-        0 // TODO: Change when corrections are implemented and enabled
+        if has_scaling { opt.decimals as i32 } else { 0 }
     };
 
     let total_tiles = tiles.len();
