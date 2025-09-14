@@ -560,7 +560,7 @@ fn process_tile(
             let mut enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
 
             {
-                let mut w = std::io::BufWriter::new(enc.get_mut());
+                let mut w = std::io::BufWriter::new(&mut enc);
                 let cov = cp.coverage().expect("coverage present");
                 let mask = cp.blacklist_mask();
 
@@ -658,7 +658,7 @@ fn process_tile(
             let mut enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
 
             {
-                let mut w = std::io::BufWriter::new(enc.get_mut());
+                let mut w = std::io::BufWriter::new(&mut enc);
                 for &(window_start, window_end, original_idx) in
                     windows_overlapping_core(windows, tile.core_start, tile.core_end)
                 {
