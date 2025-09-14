@@ -40,21 +40,21 @@ pub fn apply_scaling_in_place(cov: &mut [f32], core_start: u32, bins: &[(u64, u6
         if bs >= end_abs {
             break;
         }
-        let s = bs.max(start_abs);
-        let e = be.min(end_abs);
+        let s = bs.max(start_abs); // Overlap start
+        let e = be.min(end_abs); // Overlap end
         if e > s {
-            let a = (s - start_abs) as usize;
-            let b = (e - start_abs) as usize;
+            let a = (s - start_abs) as usize; // Slice start in cov
+            let b = (e - start_abs) as usize; // Slice end in cov
             for v in &mut cov[a..b] {
                 if sf == 0.0 {
-                    *v = 0.0;
+                    *v = 0.0; // No usable normalization -> zero out
                 } else {
-                    *v /= sf;
+                    *v /= sf; // Divide by scaling factor
                 }
             }
         }
         if be >= end_abs {
-            break;
+            break; // Finished the tile
         }
         i += 1;
     }
