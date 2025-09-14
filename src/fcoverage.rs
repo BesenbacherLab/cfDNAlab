@@ -202,12 +202,6 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     let prefix = opt.output_prefix.trim();
     let contigs = bam_contigs_info(&opt.ioc.bam, &chromosomes)?;
 
-    // Right after you build `contigs` and `tiles`, compute per-chrom window offsets if --by-size is used.
-    let by_size_bp: Option<u64> = match &window_opt {
-        WindowSpec::Size(bp) => Some(*bp as u64),
-        _ => None,
-    };
-
     // Create output directory
     create_dir_all(&opt.ioc.output_dir).context("Cannot create output_dir")?;
 
