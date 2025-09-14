@@ -1,10 +1,10 @@
-use crate::utils::bam::create_chromosome_reader;
 use crate::utils::coverage::coverage_prefix::CoveragePrefix;
 use crate::utils::fragment::minimal_fragment::Fragment;
 use crate::utils::fragment::segment_fragment::FragmentWithSegments;
-use anyhow::Result;
+use crate::utils::{bam::create_chromosome_reader, coverage::nan_policy::NanPolicy};
+use anyhow::{Context, Result};
 use rand::{Rng, distr::Alphanumeric};
-use std::io::Write;
+use std::io::{BufWriter, Write};
 
 /// A processing tile for one chromosome
 #[derive(Debug, Clone)]
@@ -136,63 +136,87 @@ pub fn windows_overlapping_core<'a>(
         .filter(move |&&(ws, we, _idx)| we > cs && ws < ce)
 }
 
-// Get the tile index from the filename
+/// Get the tile index from the filename
 fn parse_tile_index(file_name: &str) -> Option<u32> {
-    // expect ... .{idx}.tsv  -> take penultimate suffix
-    let mut parts = file_name.rsplit('.');
-    let ext = parts.next()?; // "tsv"
-    if ext != "tsv" {
-        return None;
+    // Scan segments from right to left, pick the first purely-numeric one.
+    // Works for: prefix.chr.000123.bedgraph.zst, prefix.chr.000123.part.tsv.zst, ...
+    for seg in file_name.rsplit('.') {
+        if !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()) {
+            return seg.parse().ok();
+        }
     }
-    let idx_str = parts.next()?; // "000012"
-    idx_str.parse().ok()
+    None
 }
 
-/// Merge positional per-tile files in (chr, index) order into one TSV
+/// Merge compressed per-tile BedGraph chunks by *pure concatenation*
+/// into a single `{final_name}` (also compressed).
+///
+/// Each tile file must be named `{per_tile_prefix}.{chr}.{index}.bedgraph.zst`.
+
+/// Merge positional per-tile files (created in `temp_dir`) into one TSV.
+/// Files must be named like: `{per_tile_prefix}.{chr}.{tile_index}.tsv`.
 pub fn merge_positional_tiles(
     temp_dir: &std::path::Path,
     out_dir: &std::path::Path,
     chromosomes: &[String],
-    per_tile_prefix: &str, // e.g. "coverage.pos"
+    per_tile_prefix: &str, // e.g. "coverage.pos" (whole-genome) or "coverage.pos.win" (windowed)
     final_name: &str,      // e.g. "coverage.per_position.tsv"
-) -> anyhow::Result<std::path::PathBuf> {
-    use std::io::{BufRead, BufReader, Write};
-
-    let final_path = out_dir.join(final_name);
-    let mut out = std::io::BufWriter::new(std::fs::File::create(&final_path)?);
-
-    for chr in chromosomes {
-        // List files for this chr and sort by index suffix
-        let mut chr_files: Vec<(u32, std::path::PathBuf)> = Vec::new();
-        for entry in std::fs::read_dir(temp_dir)? {
-            let p = entry?.path();
-            if !p.is_file() {
-                continue;
-            }
-            let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
-            // Strict shape: starts with prefix, contains .{chr}.
-            if !fname.starts_with(per_tile_prefix) || !fname.contains(&format!(".{chr}.")) {
-                continue;
-            }
-            if let Some(idx) = parse_tile_index(fname) {
-                chr_files.push((idx, p));
+) -> Result<std::path::PathBuf> {
+    fn parse_index_from_filename(name: &str) -> Option<u32> {
+        // Accept the last numeric token in the filename (before extension).
+        // E.g. "coverage.pos.chr1.12.tsv" -> 12
+        let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+        for part in stem.rsplit('.') {
+            if let Ok(i) = part.parse::<u32>() {
+                return Some(i);
             }
         }
+        None
+    }
+
+    let final_path = out_dir.join(final_name);
+    let mut out = BufWriter::new(
+        std::fs::File::create(&final_path)
+            .with_context(|| format!("Creating merged output: {}", final_path.display()))?,
+    );
+
+    for chr in chromosomes {
+        // Collect tile files for this chromosome from temp_dir
+        let mut chr_files: Vec<(u32, std::path::PathBuf)> = Vec::new();
+        for entry in std::fs::read_dir(temp_dir)
+            .with_context(|| format!("Listing temp_dir: {}", temp_dir.display()))?
+        {
+            let path = entry?.path();
+            if !path.is_file() {
+                continue;
+            }
+            let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            // Expect "{per_tile_prefix}.{chr}.{index}.tsv"
+            if fname.starts_with(per_tile_prefix) && fname.contains(&format!(".{chr}.")) {
+                if let Some(idx) = parse_index_from_filename(fname) {
+                    chr_files.push((idx, path));
+                }
+            }
+        }
+
+        // Sort by tile index to preserve genomic order within chr
         chr_files.sort_by_key(|(i, _)| *i);
 
-        // Stream copy in order
-        for (_, path) in chr_files {
-            let f = std::fs::File::open(&path)?;
-            let mut r = BufReader::new(f);
-            let mut line = String::new();
-            while r.read_line(&mut line)? != 0 {
-                out.write_all(line.as_bytes())?;
-                line.clear();
-            }
+        // Stream copy each tile into the final file
+        for (_idx, path) in chr_files {
+            let mut f = std::fs::File::open(&path)
+                .with_context(|| format!("Opening tile file: {}", path.display()))?;
+            std::io::copy(&mut f, &mut out).with_context(|| {
+                format!(
+                    "Copying from {} into {}",
+                    path.display(),
+                    final_path.display()
+                )
+            })?;
         }
     }
 
-    out.flush()?;
+    out.flush().context("Flushing merged output")?;
     Ok(final_path)
 }
 
@@ -391,4 +415,224 @@ pub fn make_temp_dir(
     let p = base_out.join(format!("tmp.{prefix}.{ts}"));
     std::fs::create_dir_all(&p)?;
     Ok(p)
+}
+
+/// Emit BedGraph segments for cov[a..b), honoring NanPolicy for masked bases.
+/// - DropRow: skip masked bases entirely (no rows)
+/// - WriteLiteralNaN: write contiguous masked blocks as rows with value "NaN"
+/// - WriteEmptyCell: write contiguous masked blocks as rows with an empty value (trailing tab)
+///
+/// NOTE: BedGraph traditionally expects a numeric value. Writing "NaN" or an empty
+/// value may not be accepted by some tools. If compatibility is critical, prefer DropRow.
+pub fn emit_bedgraph_runs<W: Write>(
+    chr: &str,
+    cov: &[f32],
+    mask: Option<&[u8]>, // 1 = blacklisted(masked), 0 = allowed
+    a: usize,            // local start (inclusive)
+    b: usize,            // local end (exclusive)
+    start_abs: u64,      // absolute position of index 0 in `cov` (tile.core_start)
+    nan_policy: NanPolicy,
+    out: &mut W,
+) -> anyhow::Result<()> {
+    if a >= b {
+        return Ok(());
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    enum RunKind {
+        Unmasked,
+        Masked,
+    }
+
+    // Current open run
+    let mut run_kind: Option<RunKind> = None;
+    let mut run_start: usize = 0; // local index
+    let mut run_val: f32 = 0.0; // for unmasked runs
+
+    // Flush helpers
+    let flush_unmasked = |rs: usize, re: usize, v: f32, out: &mut W| -> anyhow::Result<()> {
+        if rs < re {
+            let s_abs = start_abs + rs as u64;
+            let e_abs = start_abs + re as u64;
+            writeln!(out, "{chr}\t{s_abs}\t{e_abs}\t{v}")?;
+        }
+        Ok(())
+    };
+
+    let flush_masked = |rs: usize, re: usize, out: &mut W| -> anyhow::Result<()> {
+        if rs < re {
+            let s_abs = start_abs + rs as u64;
+            let e_abs = start_abs + re as u64;
+            match nan_policy {
+                NanPolicy::DropRow => { /* emit nothing */ }
+                NanPolicy::WriteLiteralNaN => {
+                    writeln!(out, "{chr}\t{s_abs}\t{e_abs}\tNaN")?;
+                }
+                NanPolicy::WriteEmptyCell => {
+                    // trailing tab; value intentionally empty
+                    writeln!(out, "{chr}\t{s_abs}\t{e_abs}\t")?;
+                }
+            }
+        }
+        Ok(())
+    };
+
+    for i in a..b {
+        let is_masked = mask.map(|m| m[i] == 1).unwrap_or(false);
+
+        match (run_kind, is_masked) {
+            (None, false) => {
+                // start unmasked
+                run_kind = Some(RunKind::Unmasked);
+                run_start = i;
+                run_val = cov[i];
+            }
+            (None, true) => {
+                // start masked
+                run_kind = Some(RunKind::Masked);
+                run_start = i;
+            }
+
+            (Some(RunKind::Unmasked), false) => {
+                // continue unmasked; extend if same value else flush & start new
+                let v = cov[i];
+                if v.to_bits() != run_val.to_bits() {
+                    flush_unmasked(run_start, i, run_val, out)?;
+                    run_start = i;
+                    run_val = v;
+                }
+            }
+            (Some(RunKind::Unmasked), true) => {
+                // switch to masked
+                flush_unmasked(run_start, i, run_val, out)?;
+                run_kind = Some(RunKind::Masked);
+                run_start = i;
+            }
+
+            (Some(RunKind::Masked), true) => {
+                // continue masked (no action)
+            }
+            (Some(RunKind::Masked), false) => {
+                // switch to unmasked
+                flush_masked(run_start, i, out)?;
+                run_kind = Some(RunKind::Unmasked);
+                run_start = i;
+                run_val = cov[i];
+            }
+        }
+    }
+
+    // flush tail
+    match run_kind {
+        Some(RunKind::Unmasked) => flush_unmasked(run_start, b, run_val, out)?,
+        Some(RunKind::Masked) => flush_masked(run_start, b, out)?,
+        None => {}
+    }
+
+    Ok(())
+}
+
+/// Emit run-length compressed rows for cov[a..b) WITH an `orig_idx` column.
+/// Columns: chrom, start, end, value, orig_idx
+/// Respects `NanPolicy` for masked bases.
+pub fn emit_windowed_runs_with_index<W: Write>(
+    chr: &str,
+    cov: &[f32],
+    mask: Option<&[u8]>, // 1 = masked, 0 = allowed
+    a: usize,            // local start (inclusive)
+    b: usize,            // local end (exclusive)
+    start_abs: u64,      // absolute position of index 0 in `cov`
+    orig_idx: u64,       // window id to preserve
+    nan_policy: NanPolicy,
+    out: &mut W,
+) -> anyhow::Result<()> {
+    if a >= b {
+        return Ok(());
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq)]
+    enum RunKind {
+        Unmasked(f32),
+        Masked,
+    }
+
+    let mut run_kind: Option<RunKind> = None;
+    let mut run_start: usize = a;
+
+    // Flush helpers
+    let flush_unmasked = |rs: usize, re: usize, v: f32, out: &mut W| -> anyhow::Result<()> {
+        if rs < re {
+            let s_abs = start_abs + rs as u64;
+            let e_abs = start_abs + re as u64;
+            writeln!(out, "{chr}\t{s_abs}\t{e_abs}\t{v}\t{orig_idx}")?;
+        }
+        Ok(())
+    };
+
+    let flush_masked = |rs: usize, re: usize, out: &mut W| -> anyhow::Result<()> {
+        if rs < re {
+            let s_abs = start_abs + rs as u64;
+            let e_abs = start_abs + re as u64;
+            match nan_policy {
+                NanPolicy::DropRow => { /* emit nothing */ }
+                NanPolicy::WriteLiteralNaN => {
+                    writeln!(out, "{chr}\t{s_abs}\t{e_abs}\tNaN\t{orig_idx}")?;
+                }
+                NanPolicy::WriteEmptyCell => {
+                    // trailing tab; value intentionally empty
+                    writeln!(out, "{chr}\t{s_abs}\t{e_abs}\t\t{orig_idx}")?;
+                }
+            }
+        }
+        Ok(())
+    };
+
+    for i in a..b {
+        let is_masked = mask.map(|m| m[i] == 1).unwrap_or(false);
+        if !is_masked {
+            let v = cov[i];
+            match run_kind {
+                None => {
+                    run_kind = Some(RunKind::Unmasked(v));
+                    run_start = i;
+                }
+                Some(RunKind::Unmasked(cur)) => {
+                    if v.to_bits() != cur.to_bits() {
+                        flush_unmasked(run_start, i, cur, out)?;
+                        run_kind = Some(RunKind::Unmasked(v));
+                        run_start = i;
+                    }
+                }
+                Some(RunKind::Masked) => {
+                    // close masked then start unmasked
+                    flush_masked(run_start, i, out)?;
+                    run_kind = Some(RunKind::Unmasked(v));
+                    run_start = i;
+                }
+            }
+        } else {
+            match run_kind {
+                None => {
+                    run_kind = Some(RunKind::Masked);
+                    run_start = i;
+                }
+                Some(RunKind::Masked) => { /* extend */ }
+                Some(RunKind::Unmasked(cur)) => {
+                    // close unmasked then start masked
+                    flush_unmasked(run_start, i, cur, out)?;
+                    run_kind = Some(RunKind::Masked);
+                    run_start = i;
+                }
+            }
+        }
+    }
+
+    // flush tail
+    match run_kind {
+        Some(RunKind::Unmasked(v)) => flush_unmasked(run_start, b, v, out)?,
+        Some(RunKind::Masked) => flush_masked(run_start, b, out)?,
+        None => {}
+    }
+
+    Ok(())
 }

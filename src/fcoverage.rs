@@ -7,8 +7,8 @@ use std::io::Write;
 use std::{collections::HashMap, fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
 
 use crate::utils::coverage::tiled_run::{
-    adapt_fetch_to_extreme_windows, build_tiles, make_temp_dir, merge_positional_tiles,
-    reduce_aggregates_for_chr,
+    adapt_fetch_to_extreme_windows, build_tiles, emit_bedgraph_runs, emit_windowed_runs_with_index,
+    make_temp_dir, merge_positional_tiles, reduce_aggregates_for_chr,
 };
 use crate::{
     cli_common::{ChromosomeArgs, FragmentLengthArgs, IOCArgs, WindowSpec, WindowsArgs},
@@ -19,13 +19,17 @@ use crate::{
         blacklist::load_blacklists,
         coverage::{
             coverage_prefix::CoveragePrefix,
+            nan_policy::NanPolicy,
             tiled_run::{Tile, TileMode, add_fragment_clipped_to_core, windows_overlapping_core},
             window_results::CoverageWindowAction,
-            writers::NanPolicy,
         },
         fragment::segment_fragment::{SegmentedReadInfo, collect_fragment_with_segments},
     },
 };
+
+// Support:
+//  - bigwig
+//  - quantization (decimals)
 
 /// Count positional **fragment** coverage across the genome.
 ///
@@ -56,7 +60,7 @@ use crate::{
 ///
 /// We write temporary files to a `<output-dir>/tmp.<output-prefix>.<random>` directory to reduce memory.
 /// This directory is deleted at the end of the run. If the software is disrupted, the directory
-/// is left behind.
+/// may be left behind.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 pub struct FCoverageConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
@@ -67,9 +71,9 @@ pub struct FCoverageConfig {
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
     /// Examples produce files like:
-    ///   <prefix>.per_position.tsv
-    ///   <prefix>.avg.tsv
-    ///   <prefix>.total.tsv
+    ///   <prefix>.per_position.bedgraph.zst
+    ///   <prefix>.avg.bedgraph.zst
+    ///   <prefix>.total.bedgraph.zst
     #[cfg_attr(
         feature = "cli",
         clap(long, short = 'x', default_value = "coverage", help_heading = "Core")
@@ -226,9 +230,10 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     let partials_prefix = partials_prefix.as_str();
 
     // Create filenames of final outputs
-    let final_pos_name = format!("{prefix}.per_position.tsv");
-    let final_avg_name = format!("{prefix}.avg.tsv");
-    let final_total_name = format!("{prefix}.total.tsv");
+    let final_whole_pos_name = format!("{prefix}.per_position.bedgraph.zst");
+    let final_window_pos_name = format!("{prefix}.per_position.tsv.zst");
+    let final_avg_name = format!("{prefix}.avg.tsv.zst");
+    let final_total_name = format!("{prefix}.total.tsv.zst");
 
     // Decide mode once
     let windowed = matches!(window_opt, WindowSpec::Bed(_));
@@ -252,7 +257,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
 
     let mut global_counter = FCoverageCounters::default();
 
-    println!("Start: Counting per chromosome");
+    println!("Start: Counting per tile");
 
     pb.set_position(0);
 
@@ -269,18 +274,22 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                 .unwrap_or(&[]);
 
             // Decide tile mode and file name
-            let action_prefix = if windowed {
+            let (action_prefix, extensions) = if windowed {
                 match opt.per_window {
-                    CoverageWindowAction::OnlyIncludeThesePositions => positional_prefix,
-                    CoverageWindowAction::Average | CoverageWindowAction::Total => partials_prefix,
+                    CoverageWindowAction::OnlyIncludeThesePositions => {
+                        (positional_prefix, "tsv.zst")
+                    }
+                    CoverageWindowAction::Average | CoverageWindowAction::Total => {
+                        (partials_prefix, "tsv.zst")
+                    }
                 }
             } else {
                 // Whole positional coverage
-                positional_prefix
+                (positional_prefix, "bedgraph.zst")
             };
 
             let out_path = temp_dir.join(format!(
-                "{prefix}.{chr}.{idx}.tsv",
+                "{prefix}.{chr}.{idx}.{extensions}",
                 prefix = action_prefix,
                 chr = tile.chr,
                 idx = tile.index
@@ -331,7 +340,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
             &opt.ioc.output_dir,
             &chromosomes,
             positional_prefix,
-            final_pos_name.as_str(),
+            final_whole_pos_name.as_str(),
         )?
     } else {
         match opt.per_window {
@@ -342,7 +351,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                     &opt.ioc.output_dir,
                     &chromosomes,
                     positional_prefix,
-                    final_pos_name.as_str(),
+                    final_window_pos_name.as_str(),
                 )?
             }
             CoverageWindowAction::Average | CoverageWindowAction::Total => {
@@ -538,7 +547,12 @@ fn process_tile(
                 }
             }
 
-            let mut w = std::io::BufWriter::new(std::fs::File::create(out_path)?);
+            // Prepare compressed writer (zstd) for this tile
+            let file = std::fs::File::create(out_path)?;
+            let mut enc = zstd::Encoder::new(file, 3)?; // level 3 ~ fast
+            enc.multithread(num_cpus::get() as u32).ok(); // try MT
+            let mut w = std::io::BufWriter::new(enc.auto_finish()); // auto_finish() -> impl Write
+
             let cov = cp.coverage().expect("coverage present");
             let mask = cp.blacklist_mask();
 
@@ -547,30 +561,16 @@ fn process_tile(
             match windows {
                 None => {
                     // Whole positional coverage for the tile core
-
-                    for i in 0..(core_len as usize) {
-                        let pos = tile.core_start as u64 + i as u64;
-
-                        if let Some(m) = mask {
-                            if m[i] == 1 {
-                                // Blacklisted site -> act per policy
-                                match opt.nan_policy {
-                                    NanPolicy::DropRow => continue,
-                                    NanPolicy::WriteLiteralNaN => {
-                                        writeln!(w, "{}\t{}\t{}\tNaN", tile.chr, pos, pos + 1)?;
-                                        continue;
-                                    }
-                                    NanPolicy::WriteEmptyCell => {
-                                        writeln!(w, "{}\t{}\t{}\t", tile.chr, pos, pos + 1)?;
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-
-                        // Not masked
-                        writeln!(w, "{}\t{}\t{}\t{}", tile.chr, pos, pos + 1, cov[i])?;
-                    }
+                    emit_bedgraph_runs(
+                        &tile.chr,
+                        cov,
+                        mask,
+                        0,
+                        cov.len(),
+                        tile.core_start as u64,
+                        opt.nan_policy,
+                        &mut w,
+                    )?;
                 }
                 Some(win_chr) => {
                     // Only include windows that overlap the tile core
@@ -582,50 +582,17 @@ fn process_tile(
                         let a = (s - tile.core_start) as usize;
                         let b = (e - tile.core_start) as usize;
 
-                        for i in a..b {
-                            let pos = tile.core_start as u64 + i as u64;
-
-                            if let Some(m) = mask {
-                                if m[i] == 1 {
-                                    match opt.nan_policy {
-                                        NanPolicy::DropRow => continue,
-                                        NanPolicy::WriteLiteralNaN => {
-                                            writeln!(
-                                                w,
-                                                "{}\t{}\t{}\tNaN\t{}",
-                                                tile.chr,
-                                                pos,
-                                                pos + 1,
-                                                original_idx
-                                            )?;
-                                            continue;
-                                        }
-                                        NanPolicy::WriteEmptyCell => {
-                                            writeln!(
-                                                w,
-                                                "{}\t{}\t{}\t\t{}",
-                                                tile.chr,
-                                                pos,
-                                                pos + 1,
-                                                original_idx
-                                            )?;
-                                            continue;
-                                        }
-                                    }
-                                }
-                            }
-
-                            // If no NaNs, write coverage
-                            writeln!(
-                                w,
-                                "{}\t{}\t{}\t{}\t{}",
-                                tile.chr,
-                                pos,
-                                pos + 1,
-                                cov[i],
-                                original_idx
-                            )?;
-                        }
+                        emit_windowed_runs_with_index(
+                            &tile.chr,
+                            cov,
+                            mask,
+                            a,
+                            b,
+                            tile.core_start as u64,
+                            original_idx,
+                            opt.nan_policy,
+                            &mut w,
+                        )?;
                     }
                 }
             }
