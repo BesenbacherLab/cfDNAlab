@@ -268,17 +268,32 @@ impl ChromosomeArgs {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
 pub struct ScaleGenomeArgs {
-    /// Optional scaling factors for normalizing/smoothing the genome `[path]`
+    /// Path to optional non-negative scaling factors for normalizing/smoothing the genome `[path]`
     ///
-    /// Coverage values are divided by the scaling factors of their bin.
-    /// Scaling factors must thus be strictly positive.
+    /// `.tsv` file as produced by `cfdna normalize-genome`.
     ///
-    /// `.tsv` file with a header and the columns (names must match):
-    ///     `chromosome, start, end, scaling_factor`.
-    /// As produced by `cfdna normalize-genome`.
+    /// **Positive** scaling factors: Coverage values are divided by the scaling factors of their overlapping bin.
     ///
-    /// Intervals are half-open `[start, end)` and must be non-overlapping per chromosome.
-    /// We scale the coverage per position with `cov[i] / scaling_factor[bins[i]]` inside each bin.
+    /// **Zero-valued** scaling factors: Coverage values are set to `0` as we do not have a proper scaling factor.
+    /// It was likely calculated from a non-covered or blacklisted region and so the coverage value is likely already 0.
+    ///
+    /// File Requirements
+    /// -----------------
+    ///
+    /// The TSV file **must** have a header. Column names are matched **case-insensitively**.
+    ///
+    /// Required columns: `chromosome`, `start`, `end`, `scaling_factor`.
+    ///
+    /// Coordinates are 0-based, half-open `[start, end)`.
+    ///
+    /// `scaling_factor` must be finite and strictly >= 0.
+    ///
+    /// Bins are filtered to the provided `chromosomes`.
+    ///
+    /// For every chromosome in `chromosomes`, bins must:
+    ///   * start at 0,
+    ///   * be perfectly contiguous (no gaps, no overlaps),
+    ///   * end exactly at that chromosome’s length (from `contigs`).
     #[cfg_attr(
         feature = "cli",
         clap(

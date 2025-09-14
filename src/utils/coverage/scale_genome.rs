@@ -6,6 +6,8 @@ use std::io::{BufRead, BufReader};
 /// Apply per-bin scaling to the tile coverage in-place.
 /// Assumes bins are sorted, non-overlapping, and fully cover the chromosome.
 ///
+/// NOTE: Zero-valued scaling factors lead to zero-coverage.
+///
 /// Parameters
 /// ----------
 /// - cov:
@@ -44,7 +46,11 @@ pub fn apply_scaling_in_place(cov: &mut [f32], core_start: u32, bins: &[(u64, u6
             let a = (s - start_abs) as usize;
             let b = (e - start_abs) as usize;
             for v in &mut cov[a..b] {
-                *v /= sf;
+                if sf == 0.0 {
+                    *v = 0.0;
+                } else {
+                    *v /= sf;
+                }
             }
         }
         if be >= end_abs {
@@ -63,7 +69,7 @@ pub fn apply_scaling_in_place(cov: &mut [f32], core_start: u32, bins: &[(u64, u6
 /// - The TSV **must** have a header. Column names are matched **case-insensitively**.
 /// - Required columns: `chromosome`, `start`, `end`, `scaling_factor`.
 /// - Coordinates are 0-based, half-open `[start, end)`.
-/// - `scaling_factor` must be finite and strictly > 0.
+/// - `scaling_factor` must be finite and strictly >= 0.
 /// - Bins are filtered to the provided `chromosomes`.
 /// - For every chromosome in `chromosomes`, bins must:
 ///   * start at 0,
@@ -184,9 +190,9 @@ pub fn load_scaling_factors_tsv(
                 fields[sf_i]
             )
         })?;
-        if !sf.is_finite() || sf <= 0.0 {
+        if !sf.is_finite() || sf < 0.0 {
             anyhow::bail!(
-                "{}:{}: scaling_factor must be finite and > 0 (got {})",
+                "{}:{}: scaling_factor must be finite and >= 0 (got {})",
                 path.display(),
                 lineno,
                 sf
