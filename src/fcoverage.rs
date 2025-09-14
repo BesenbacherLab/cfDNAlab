@@ -413,6 +413,8 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
         global_counter += counter;
     }
 
+    println!("Start: Merging temporary tile files to final output");
+
     // Merge temporary output files and
     // reduce windows present in multiple tiles
 
@@ -510,6 +512,9 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     } else {
         eprintln!("kept temp tiles in {}", temp_dir.display());
     }
+    println!("");
+    println!("Statistics");
+    println!("----------");
 
     // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
@@ -524,7 +529,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
         global_counter.accepted_reverse
     );
     println!(
-        "Out-of-length-range-excluded fragments: {}",
+        "  Out-of-length-range-excluded fragments: {}",
         global_counter.illegal_length_fragments
     );
     // if opt.gc.bin_by_gc {
