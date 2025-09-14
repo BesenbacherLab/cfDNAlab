@@ -136,10 +136,13 @@ pub fn windows_overlapping_core<'a>(
         .filter(move |&&(ws, we, _idx)| we > cs && ws < ce)
 }
 
-/// Get the tile index from the filename
-fn parse_tile_index(file_name: &str) -> Option<u32> {
-    // Scan segments from right to left, pick the first purely-numeric one.
-    // Works for: prefix.chr.000123.bedgraph.zst, prefix.chr.000123.part.tsv.zst, ...
+/// Get the tile index from the filename by scanning segments from right to left
+/// and picking the first purely-numeric token (before extensions).
+/// Works for:
+///   coverage.pos.chr1.000123.bedgraph.zst
+///   coverage.pos.chr1.000123.pos.tsv.zst
+///   coverage.part.chr1.000123.part.tsv.zst
+pub fn parse_tile_index(file_name: &str) -> Option<u32> {
     for seg in file_name.rsplit('.') {
         if !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()) {
             return seg.parse().ok();
@@ -162,18 +165,6 @@ pub fn merge_positional_tiles(
     per_tile_prefix: &str, // e.g. "coverage.pos" (whole-genome) or "coverage.pos.win" (windowed)
     final_name: &str,      // e.g. "coverage.per_position.tsv"
 ) -> Result<std::path::PathBuf> {
-    fn parse_index_from_filename(name: &str) -> Option<u32> {
-        // Accept the last numeric token in the filename (before extension).
-        // E.g. "coverage.pos.chr1.12.tsv" -> 12
-        let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
-        for part in stem.rsplit('.') {
-            if let Ok(i) = part.parse::<u32>() {
-                return Some(i);
-            }
-        }
-        None
-    }
-
     let final_path = out_dir.join(final_name);
     let mut out = BufWriter::new(
         std::fs::File::create(&final_path)
@@ -193,7 +184,7 @@ pub fn merge_positional_tiles(
             let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
             // Expect "{per_tile_prefix}.{chr}.{index}.tsv"
             if fname.starts_with(per_tile_prefix) && fname.contains(&format!(".{chr}.")) {
-                if let Some(idx) = parse_index_from_filename(fname) {
+                if let Some(idx) = parse_tile_index(fname) {
                     chr_files.push((idx, path));
                 }
             }
