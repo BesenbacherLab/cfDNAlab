@@ -226,6 +226,97 @@ impl Windows {
     pub fn span(&self) -> (i64, i64) {
         (self.span_start, self.span_end)
     }
+
+    /// Merge/flatten touching or overlapping windows and reindex them sequentially **in-place**.
+    ///
+    /// Summary
+    /// -------
+    /// Consumes `self`, merges `[start, end)` windows that overlap or touch, and reassigns
+    /// new indices starting at `start_idx`. Reuses the original allocation to avoid
+    /// peak-memory spikes when window lists are huge.
+    ///
+    /// Parameters
+    /// ----------
+    /// - start_idx:
+    ///     First index to assign to the merged interval series.
+    ///
+    /// Returns
+    /// -------
+    /// - (merged, next_start_idx):
+    ///     - `merged`: New `Windows` with merged, start-sorted `(start, end, new_idx)` tuples.
+    ///     - `next_start_idx`: `start_idx + merged.len()`; pass this to the next chromosome.
+    pub fn into_flattened_reindexed(self, start_idx: u64) -> (Windows, u64) {
+        let mut v = self.windows; // Take ownership; reuse allocation
+        if v.is_empty() {
+            return (
+                Windows {
+                    windows: v,
+                    span_start: 0,
+                    span_end: 0,
+                },
+                start_idx,
+            );
+        }
+
+        debug_assert!(is_sorted_by_start(&v), "windows must be start-sorted");
+
+        // In-place compaction with two indices: read cursor (i) and write cursor (w)
+        let mut w: usize = 0;
+        let mut cur_s = v[0].0;
+        let mut cur_e = v[0].1;
+
+        for i in 1..v.len() {
+            let (s, e, _) = v[i];
+            if s <= cur_e {
+                if e > cur_e {
+                    cur_e = e;
+                }
+            } else {
+                // Write merged block at position w with new index
+                v[w] = (cur_s, cur_e, start_idx + w as u64);
+                w += 1;
+                cur_s = s;
+                cur_e = e;
+            }
+        }
+        // Write the final block
+        v[w] = (cur_s, cur_e, start_idx + w as u64);
+        w += 1;
+
+        // Shrink to the number of merged intervals
+        v.truncate(w);
+
+        // Since v is start-sorted and merged, first/last bound the span
+        let span_start = v.first().map(|t| t.0 as i64).unwrap_or(0);
+        let span_end = v.last().map(|t| t.1 as i64).unwrap_or(0);
+
+        let next_idx = start_idx + w as u64;
+
+        (
+            Windows {
+                windows: v,
+                span_start,
+                span_end,
+            },
+            next_idx,
+        )
+    }
+
+    /// Borrowing variant: leaves `self` intact and returns a flattened copy.
+    ///
+    /// Parameters
+    /// ----------
+    /// - start_idx:
+    ///     Starting index for the first merged interval.
+    ///
+    /// Returns
+    /// -------
+    /// - (merged, next_start_idx):
+    ///     See `into_flattened_reindexed`.
+    pub fn flattened_reindexed(&self, start_idx: u64) -> (Windows, u64) {
+        // Clone once, then consume in the main routine to avoid duplicating logic.
+        self.clone().into_flattened_reindexed(start_idx)
+    }
 }
 
 #[inline]

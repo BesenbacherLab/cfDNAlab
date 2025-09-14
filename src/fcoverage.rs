@@ -44,7 +44,7 @@ use crate::{
 ///
 ///  - Get the total coverage per window.
 ///
-///  - Get the positional coverage for the included windows only.
+///  - Get the positional coverage for the included windows only (`--by-bed` *only*).
 ///    Excludes all positions that do not overlap a window from the output.
 ///    Choose between:
 ///     1) Indexed: Adds the original window index as an output column and keeps duplicate positions.
@@ -74,8 +74,9 @@ pub struct FCoverageConfig {
     ///
     /// Examples produce files like:
     ///   <prefix>.per_position.bedgraph.zst
-    ///   <prefix>.avg.bedgraph.zst
-    ///   <prefix>.total.bedgraph.zst
+    ///   <prefix>.per_position_per_window.tsv.zst
+    ///   <prefix>.avg.tsv.zst
+    ///   <prefix>.total.tsv.zst
     #[cfg_attr(
         feature = "cli",
         clap(long, short = 'x', default_value = "coverage", help_heading = "Core")
@@ -208,10 +209,38 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             println!("Start: Loading window coordinates");
-            Some(load_windows_from_bed(bed, &chromosomes, None)?)
+            let wds = load_windows_from_bed(bed, &chromosomes, None)?;
+            if matches!(
+                opt.per_window,
+                CoverageWindowAction::OnlyIncludeThesePositionsUnique
+            ) {
+                println!("Start: Merging overlapping/touching windows");
+                // Take ownership so we can remove entries by chromosome
+                let mut wds_owned: HashMap<String, crate::utils::bed::Windows> = wds;
+                let mut out: HashMap<String, crate::utils::bed::Windows> =
+                    HashMap::with_capacity(wds_owned.len());
+                let mut next_idx: u64 = 0;
+
+                // Use the user-provided `chromosomes` order to assign indices deterministically
+                for chr in &chromosomes {
+                    if let Some(ws) = wds_owned.remove(chr) {
+                        // Flatten in-place
+                        let (flat, next) = ws.into_flattened_reindexed(next_idx);
+                        next_idx = next;
+                        out.insert(chr.clone(), flat);
+                    }
+                }
+                Some(out)
+            } else {
+                Some(wds)
+            }
         }
         _ => None,
     };
+
+    // Decide mode once
+    let windowed = matches!(window_opt, WindowSpec::Bed(_));
+    let masked = opt.blacklist.is_some();
 
     // Build temporary directory
     let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
@@ -233,10 +262,6 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     let final_tsv_pos_name = format!("{prefix}.per_position_per_window.tsv.zst");
     let final_avg_name = format!("{prefix}.avg.tsv.zst");
     let final_total_name = format!("{prefix}.total.tsv.zst");
-
-    // Decide mode once
-    let windowed = matches!(window_opt, WindowSpec::Bed(_));
-    let masked = opt.blacklist.is_some();
 
     // Get decimals to use
     let decimals_to_use: i32 = if windowed {
