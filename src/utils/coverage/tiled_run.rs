@@ -454,17 +454,15 @@ fn round_to(x: f64, decimals: i32) -> f64 {
 
 // Format as compactly as possible
 fn format_number_simplify(v: f64, decimals: i32) -> String {
-    // Compact formatting without trailing zeros
-    let s = if decimals <= 0 {
-        format!("{:.0}", v)
-    } else {
-        format!("{:.*}", decimals as usize, v)
-    };
-    let mut s = s.trim_end_matches('0').trim_end_matches('.').to_string();
-    if s == "-0" {
-        s = "0".to_string();
+    // For integer formatting, don't trim trailing zeros from values like "30"
+    if decimals <= 0 {
+        let s = format!("{:.0}", v);
+        return if s == "-0" { "0".to_string() } else { s };
     }
-    s
+    // For decimal formatting, trim trailing zeros and a trailing dot
+    let s = format!("{:.*}", decimals as usize, v);
+    let s = s.trim_end_matches('0').trim_end_matches('.').to_string();
+    if s == "-0" { "0".to_string() } else { s }
 }
 
 /// Emit BedGraph runs for cov[a..b), skipping masked bases.
