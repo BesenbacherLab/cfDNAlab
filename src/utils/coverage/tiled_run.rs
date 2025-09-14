@@ -125,6 +125,12 @@ pub enum TileMode<'w> {
         masked: bool,                   // Use masked counts/sums
         out_path: std::path::PathBuf,   // Per-tile partials
     },
+    AggregatesBySize {
+        window_bp: u64, // Fixed window size in bases
+        // chrom_len: u64,  // Chromosome length
+        masked: bool, // Use masked counts/sums
+        out_path: std::path::PathBuf,
+    },
 }
 
 /// Restrict windows to those overlapping the tile core
@@ -222,7 +228,7 @@ pub fn merge_positional_tiles(
 /// - `masked`: if true, averages divide by *allowed*; otherwise by full span
 /// - `mode`: Average or Total
 /// - `decimals`: rounding applied to the emitted value (avg or total)
-pub fn reduce_aggregates_for_chr<W: Write>(
+pub fn reduce_aggregates_by_intervals_for_chr<W: Write>(
     chr: &str,
     temp_dir: &std::path::Path,
     partial_prefix: &str, // e.g. "coverage.part"
@@ -303,10 +309,7 @@ pub fn reduce_aggregates_for_chr<W: Write>(
                     if span == 0.0 { 0.0 } else { sum[i] / span }
                 }
             }
-            CoverageWindowAction::Total => {
-                // Already the sum over (masked?allowed-only : all) positions
-                sum[i]
-            }
+            CoverageWindowAction::Total => sum[i],
             _ => unreachable!(),
         };
 
@@ -317,6 +320,107 @@ pub fn reduce_aggregates_for_chr<W: Write>(
             chr,
             window_start,
             window_end,
+            format_number_simplify(value, decimals),
+            blacklisted[i],
+        )?;
+    }
+
+    Ok(())
+}
+
+// Reducer for fixed-size windows that does not materialize window vectors.
+pub fn reduce_aggregates_by_size_for_chr<W: Write>(
+    chr: &str,
+    temp_dir: &std::path::Path,
+    partial_prefix: &str,
+    chrom_len: u64,
+    window_bp: u64,
+    masked: bool,
+    mode: CoverageWindowAction,
+    decimals: i32,
+    final_writer: &mut W,
+) -> Result<()> {
+    // Number of windows for this chromosome
+    let n = ((chrom_len + window_bp - 1) / window_bp) as usize;
+
+    // Accumulators per window
+    let mut sum = vec![0.0_f64; n];
+    let mut allowed = vec![0u64; n];
+    let mut blacklisted = vec![0u64; n];
+
+    // Collect partials for this chromosome in tile order
+    let mut chr_files: Vec<(u32, std::path::PathBuf)> = Vec::new();
+    for entry in std::fs::read_dir(temp_dir)? {
+        let p = entry?.path();
+        if !p.is_file() {
+            continue;
+        }
+        let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        if !fname.starts_with(partial_prefix) || !fname.contains(&format!(".{chr}.")) {
+            continue;
+        }
+        if let Some(idx) = parse_tile_index(fname) {
+            chr_files.push((idx, p));
+        }
+    }
+    chr_files.sort_by_key(|(i, _)| *i);
+
+    // Accumulate by window start
+    for (_, path) in chr_files {
+        let f = std::fs::File::open(&path)?;
+        let dec = zstd::Decoder::new(f)?;
+        let r = std::io::BufReader::new(dec);
+        for line in r.lines() {
+            let line = line?;
+            let mut it = line.split('\t');
+
+            // start  end  sum  allowed  blacklisted
+            let ws: u64 = it.next().unwrap().parse()?;
+            let we: u64 = it.next().unwrap().parse()?;
+            let s: f64 = it.next().unwrap().parse()?;
+            let a: u64 = it.next().unwrap().parse()?;
+            let b: u64 = it.next().unwrap().parse()?;
+
+            // Map by window index computed from start
+            let idx = (ws / window_bp) as usize;
+
+            // Optional sanity checks
+            debug_assert!(ws < we);
+            debug_assert!(we == (ws + window_bp).min(chrom_len));
+            debug_assert!(idx < n);
+
+            sum[idx] += s;
+            allowed[idx] += a;
+            blacklisted[idx] += b;
+        }
+    }
+
+    // Emit in window order
+    for i in 0..n {
+        let ws = (i as u64) * window_bp;
+        let we = ((i as u64 + 1) * window_bp).min(chrom_len);
+        let span = (we - ws) as f64;
+
+        let value = match mode {
+            CoverageWindowAction::Average => {
+                if masked {
+                    let a = allowed[i] as f64;
+                    if a == 0.0 { 0.0 } else { sum[i] / a }
+                } else {
+                    if span == 0.0 { 0.0 } else { sum[i] / span }
+                }
+            }
+            CoverageWindowAction::Total => sum[i],
+            _ => unreachable!(),
+        };
+
+        let value = round_to(value, decimals);
+        writeln!(
+            final_writer,
+            "{}\t{}\t{}\t{}\t{}",
+            chr,
+            ws,
+            we,
             format_number_simplify(value, decimals),
             blacklisted[i],
         )?;
@@ -412,6 +516,39 @@ pub fn adapt_fetch_to_extreme_windows(
             if start_u32 >= end_u32 {
                 return None;
             }
+
+            (start_u32 as i64, end_u32 as i64)
+        }
+
+        TileMode::AggregatesBySize { window_bp, .. } => {
+            // Compute the extreme span of windows overlapping the tile core.
+            let cs = tile.core_start as u64;
+            let ce = tile.core_end as u64;
+            let owned_window_bp = *window_bp;
+            if cs >= chrom_len as u64 {
+                return None;
+            }
+
+            // First window index that touches core_start, last that touches core_end-1.
+            let k_lo = cs / owned_window_bp;
+            let k_hi = (ce.saturating_sub(1)) / owned_window_bp;
+
+            let min_ws = k_lo * owned_window_bp;
+            let max_we = ((k_hi + 1) * owned_window_bp).min(chrom_len as u64);
+
+            let left_halo = tile.core_start.saturating_sub(tile.fetch_start);
+            let right_halo = tile.fetch_end.saturating_sub(tile.core_end);
+
+            let narrowed_start = (min_ws as u32).saturating_sub(left_halo);
+            let narrowed_end = (max_we as u32).saturating_add(right_halo);
+
+            let start_u32 = narrowed_start.max(tile.fetch_start);
+            let end_u32 = narrowed_end.min(tile.fetch_end).min(chrom_len as u32);
+
+            if start_u32 >= end_u32 {
+                return None;
+            }
+
             (start_u32 as i64, end_u32 as i64)
         }
     };
