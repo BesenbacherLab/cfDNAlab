@@ -557,59 +557,56 @@ fn process_tile(
 
             // Prepare compressed writer (zstd) for this tile
             let file = std::fs::File::create(out_path)?;
-            let mut enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
+            let enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
+            let mut w = std::io::BufWriter::new(enc.auto_finish());
 
-            {
-                let mut w = std::io::BufWriter::new(&mut enc);
-                let cov = cp.coverage().expect("coverage present");
-                let mask = cp.blacklist_mask();
+            let cov = cp.coverage().expect("coverage present");
+            let mask = cp.blacklist_mask();
 
-                // Write tile data to disk
+            // Write tile data to disk
 
-                match windows {
-                    None => {
-                        // Whole positional coverage for the tile core
-                        emit_bedgraph_runs(
+            match windows {
+                None => {
+                    // Whole positional coverage for the tile core
+                    emit_bedgraph_runs(
+                        &tile.chr,
+                        cov,
+                        mask,
+                        0,
+                        cov.len(),
+                        tile.core_start as u64,
+                        decimals,
+                        opt.keep_zero_runs,
+                        &mut w,
+                    )?;
+                }
+                Some(win_chr) => {
+                    // Only include windows that overlap the tile core
+                    for &(window_start, window_end, original_idx) in
+                        windows_overlapping_core(win_chr, tile.core_start, tile.core_end)
+                    {
+                        let s = (window_start as u32).max(tile.core_start);
+                        let e = (window_end as u32).min(tile.core_end);
+                        let a = (s - tile.core_start) as usize;
+                        let b = (e - tile.core_start) as usize;
+
+                        emit_windowed_runs_with_index(
                             &tile.chr,
                             cov,
                             mask,
-                            0,
-                            cov.len(),
+                            a,
+                            b,
                             tile.core_start as u64,
+                            original_idx,
                             decimals,
                             opt.keep_zero_runs,
                             &mut w,
                         )?;
                     }
-                    Some(win_chr) => {
-                        // Only include windows that overlap the tile core
-                        for &(window_start, window_end, original_idx) in
-                            windows_overlapping_core(win_chr, tile.core_start, tile.core_end)
-                        {
-                            let s = (window_start as u32).max(tile.core_start);
-                            let e = (window_end as u32).min(tile.core_end);
-                            let a = (s - tile.core_start) as usize;
-                            let b = (e - tile.core_start) as usize;
-
-                            emit_windowed_runs_with_index(
-                                &tile.chr,
-                                cov,
-                                mask,
-                                a,
-                                b,
-                                tile.core_start as u64,
-                                original_idx,
-                                decimals,
-                                opt.keep_zero_runs,
-                                &mut w,
-                            )?;
-                        }
-                    }
                 }
-
-                w.flush()?;
             }
-            enc.finish()?;
+
+            w.flush()?;
         }
 
         TileMode::Aggregates {
@@ -655,56 +652,53 @@ fn process_tile(
 
             // Write per-tile partials: idx, sum, allowed_count, blacklisted_count
             let file = std::fs::File::create(out_path)?;
-            let mut enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
+            let enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
+            let mut w = std::io::BufWriter::new(enc.auto_finish());
 
+            for &(window_start, window_end, original_idx) in
+                windows_overlapping_core(windows, tile.core_start, tile.core_end)
             {
-                let mut w = std::io::BufWriter::new(&mut enc);
-                for &(window_start, window_end, original_idx) in
-                    windows_overlapping_core(windows, tile.core_start, tile.core_end)
-                {
-                    let s = (window_start as u32).max(tile.core_start);
-                    let e = (window_end as u32).min(tile.core_end);
-                    let a_us = (s - tile.core_start) as usize;
-                    let b_us = (e - tile.core_start) as usize;
+                let s = (window_start as u32).max(tile.core_start);
+                let e = (window_end as u32).min(tile.core_end);
+                let a_us = (s - tile.core_start) as usize;
+                let b_us = (e - tile.core_start) as usize;
 
-                    // Sum coverage via prefix sums (avoid calling cp.sum_coverage here)
-                    let sum = if masked {
-                        if let Some(pa) = psum_allowed {
-                            pa[b_us] - pa[a_us]
-                        } else {
-                            // No blacklist present -> allowed == all
-                            psum_all[b_us] - psum_all[a_us]
-                        }
+                // Sum coverage via prefix sums (avoid calling cp.sum_coverage here)
+                let sum = if masked {
+                    if let Some(pa) = psum_allowed {
+                        pa[b_us] - pa[a_us]
                     } else {
+                        // No blacklist present -> allowed == all
                         psum_all[b_us] - psum_all[a_us]
-                    };
+                    }
+                } else {
+                    psum_all[b_us] - psum_all[a_us]
+                };
 
-                    // Allowed positions count
-                    let allowed: u64 = if masked {
-                        if let Some(cnt) = cnt_allowed_ps {
-                            (cnt[b_us] - cnt[a_us]) as u64
-                        } else if let Some(m) = mask {
-                            let mut ok = 0u64;
-                            for i in a_us..b_us {
-                                if m[i] == 0 {
-                                    ok += 1;
-                                }
+                // Allowed positions count
+                let allowed: u64 = if masked {
+                    if let Some(cnt) = cnt_allowed_ps {
+                        (cnt[b_us] - cnt[a_us]) as u64
+                    } else if let Some(m) = mask {
+                        let mut ok = 0u64;
+                        for i in a_us..b_us {
+                            if m[i] == 0 {
+                                ok += 1;
                             }
-                            ok
-                        } else {
-                            (b_us - a_us) as u64
                         }
+                        ok
                     } else {
                         (b_us - a_us) as u64
-                    };
+                    }
+                } else {
+                    (b_us - a_us) as u64
+                };
 
-                    let blacklisted = (b_us - a_us) as u64 - allowed;
+                let blacklisted = (b_us - a_us) as u64 - allowed;
 
-                    writeln!(w, "{}\t{}\t{}\t{}", original_idx, sum, allowed, blacklisted)?;
-                }
-                w.flush()?;
+                writeln!(w, "{}\t{}\t{}\t{}", original_idx, sum, allowed, blacklisted)?;
             }
-            enc.finish()?;
+            w.flush()?;
         }
     }
 
