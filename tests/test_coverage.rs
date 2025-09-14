@@ -997,13 +997,13 @@ mod tests_window_results {
         let out = compute_window_outputs(
             &mut cp,
             Some(&windows),
-            CoverageWindowAction::OnlyIncludeThesePositions,
+            CoverageWindowAction::OnlyIncludeThesePositionsIndexed,
             true,
         )?;
 
         match out {
             CoverageOutput::PerWindow { action, results } => {
-                assert_eq!(action, CoverageWindowAction::OnlyIncludeThesePositions);
+                assert_eq!(action, CoverageWindowAction::OnlyIncludeThesePositionsIndexed);
                 assert_eq!(results.len(), 1);
                 let vals = match &results[0].value {
                     WindowValue::Positions(v) => v.clone(),
@@ -1030,7 +1030,7 @@ mod tests_window_results {
         let out = compute_window_outputs(
             &mut cp,
             None,
-            CoverageWindowAction::OnlyIncludeThesePositions,
+            CoverageWindowAction::OnlyIncludeThesePositionsIndexed,
             false,
         )?;
 

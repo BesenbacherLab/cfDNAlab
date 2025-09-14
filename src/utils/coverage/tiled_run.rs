@@ -110,16 +110,18 @@ pub fn add_fragment_clipped_to_core(
 
 /// What the tile should write
 pub enum TileMode<'w> {
-    /// Whole positional coverage for the core, or windowed positional coverage
+    /// Whole positional coverage for the core,
+    /// or windowed positional coverage without index (unique positions)
     Positional {
-        windows: Option<&'w [(u64, u64, u64)]>, // per-chr windows if provided
-        out_path: std::path::PathBuf,           // per-tile file path
+        windows: Option<&'w [(u64, u64, u64)]>, // Per-chr windows if provided
+        out_path: std::path::PathBuf,           // Per-tile file path
+        indexed: bool,                          // Whether to save index
     },
     /// Aggregate windows: write per-tile partials for later reduce
     Aggregates {
-        windows: &'w [(u64, u64, u64)], // per-chr windows
-        masked: bool,                   // use masked counts/sums
-        out_path: std::path::PathBuf,   // per-tile partials
+        windows: &'w [(u64, u64, u64)], // Per-chr windows
+        masked: bool,                   // Use masked counts/sums
+        out_path: std::path::PathBuf,   // Per-tile partials
     },
 }
 
@@ -534,23 +536,23 @@ pub fn emit_bedgraph_runs<W: Write>(
     Ok(())
 }
 
-/// Emit **TSV runs** for a single window cov[a..b):
-/// chrom  start  end  value  orig_idx
+/// Emit either bedgraph or TSV runs for a single window cov[a..b):
+/// chrom  start  end  value  (optional: orig_idx)
 ///
 /// - Skips masked bases (creates gaps).
 /// - Run-length encodes equal values inside the window to reduce size.
 /// - Keeps `orig_idx` for downstream grouping.
-/// - Use this for **windowed positional** outputs (not BedGraph).
-pub fn emit_windowed_runs_with_index<W: Write>(
+/// - Use this for **windowed positional** outputs.
+pub fn emit_windowed_runs<W: Write>(
     chr: &str,
     cov: &[f32],
-    mask: Option<&[u8]>,  // 1 = blacklisted(masked), 0 = allowed
-    a: usize,             // Local start (inclusive)
-    b: usize,             // Local end (exclusive)
-    start_abs: u64,       // Absolute position of index 0 in `cov` (tile.core_start)
-    orig_idx: u64,        // Window’s original index
-    decimals: i32,        // Decimals to round coverage
-    keep_zero_runs: bool, // Whether to write zero-runs
+    mask: Option<&[u8]>,   // 1 = blacklisted(masked), 0 = allowed
+    a: usize,              // Local start (inclusive)
+    b: usize,              // Local end (exclusive)
+    start_abs: u64,        // Absolute position of index 0 in `cov` (tile.core_start)
+    orig_idx: Option<u64>, // Window’s original index
+    decimals: i32,         // Decimals to round coverage
+    keep_zero_runs: bool,  // Whether to write zero-runs
     out: &mut W,
 ) -> Result<()> {
     if a >= b {
@@ -592,15 +594,27 @@ pub fn emit_windowed_runs_with_index<W: Write>(
         // emit: chr  start  end  value  orig_idx
         let s_abs = start_abs + run_start as u64;
         let e_abs = start_abs + j as u64;
-        writeln!(
-            out,
-            "{}\t{}\t{}\t{}\t{}",
-            chr,
-            s_abs,
-            e_abs,
-            format_number_simplify(v0, decimals),
-            orig_idx
-        )?;
+
+        if let Some(idx) = orig_idx {
+            writeln!(
+                out,
+                "{}\t{}\t{}\t{}\t{}",
+                chr,
+                s_abs,
+                e_abs,
+                format_number_simplify(v0, decimals),
+                idx
+            )?;
+        } else {
+            writeln!(
+                out,
+                "{}\t{}\t{}\t{}",
+                chr,
+                s_abs,
+                e_abs,
+                format_number_simplify(v0, decimals)
+            )?;
+        }
 
         i = j;
     }

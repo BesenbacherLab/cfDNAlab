@@ -7,7 +7,7 @@ use std::io::Write;
 use std::{collections::HashMap, fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
 
 use crate::utils::coverage::tiled_run::{
-    adapt_fetch_to_extreme_windows, build_tiles, emit_bedgraph_runs, emit_windowed_runs_with_index,
+    adapt_fetch_to_extreme_windows, build_tiles, emit_bedgraph_runs, emit_windowed_runs,
     make_temp_dir, merge_positional_tiles, reduce_aggregates_for_chr,
 };
 use crate::{
@@ -44,8 +44,12 @@ use crate::{
 ///
 ///  - Get the total coverage per window.
 ///
-///  - Get the positional coverage for the included windows only. I.e.,
-///    exclude all positions that do not overlap a window from the output.
+///  - Get the positional coverage for the included windows only.
+///    Excludes all positions that do not overlap a window from the output.
+///    Choose between:
+///     1) Indexed: Adds the original window index as an output column and keeps duplicate positions.
+///     2) Unique: Overlapping windows are merged to reduce duplicate positions.
+///         
 ///
 /// Without windowing, positional coverage for the selected chromosomes are outputted.
 ///
@@ -109,8 +113,13 @@ pub struct FCoverageConfig {
     ///
     ///     - "total": Get the total coverage per window.
     ///
-    ///     - "positions": Get the positional coverage for the included windows only. I.e.,
-    ///                    exclude all positions that do not overlap a window from the output.
+    ///     - "unique-positions": Get the positional coverage for the included windows only.
+    ///         Overlapping windows are merged to reduce duplicate positions.
+    ///         Excludes all positions that do not overlap a window from the output.
+    ///
+    ///     - "indexed-positions": Get the positional coverage for the included windows only.
+    ///         Adds the original window index as an output column and keeps duplicate positions.
+    ///         Excludes all positions that do not overlap a window from the output.
     ///
     /// **NOTE**: Ignored when no windows are specified.
     #[cfg_attr(
@@ -220,8 +229,8 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     let partials_prefix = partials_prefix.as_str();
 
     // Create filenames of final outputs
-    let final_whole_pos_name = format!("{prefix}.per_position.bedgraph.zst");
-    let final_window_pos_name = format!("{prefix}.per_position.tsv.zst");
+    let final_bedgraph_pos_name = format!("{prefix}.per_position.bedgraph.zst");
+    let final_tsv_pos_name = format!("{prefix}.per_position_per_window.tsv.zst");
     let final_avg_name = format!("{prefix}.avg.tsv.zst");
     let final_total_name = format!("{prefix}.total.tsv.zst");
 
@@ -232,7 +241,8 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     // Get decimals to use
     let decimals_to_use: i32 = if windowed {
         match opt.per_window {
-            CoverageWindowAction::OnlyIncludeThesePositions => 0, // TODO: Change when corrections are implemented and enabled
+            CoverageWindowAction::OnlyIncludeThesePositionsUnique
+            | CoverageWindowAction::OnlyIncludeThesePositionsIndexed => 0, // TODO: Change when corrections are implemented and enabled
             CoverageWindowAction::Average | CoverageWindowAction::Total => opt.decimals as i32,
         }
     } else {
@@ -277,8 +287,12 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
             // Decide tile mode and file name
             let (action_prefix, extensions) = if windowed {
                 match opt.per_window {
-                    CoverageWindowAction::OnlyIncludeThesePositions => {
+                    // We need
+                    CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
                         (positional_prefix, "tsv.zst")
+                    }
+                    CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
+                        (positional_prefix, "bedgraph.zst")
                     }
                     CoverageWindowAction::Average | CoverageWindowAction::Total => {
                         (partials_prefix, "tsv.zst")
@@ -300,13 +314,22 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                 TileMode::Positional {
                     windows: None,
                     out_path,
+                    indexed: false,
                 }
             } else {
                 match opt.per_window {
-                    CoverageWindowAction::OnlyIncludeThesePositions => TileMode::Positional {
+                    CoverageWindowAction::OnlyIncludeThesePositionsUnique => TileMode::Positional {
                         windows: windows_chr,
                         out_path,
+                        indexed: false,
                     },
+                    CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
+                        TileMode::Positional {
+                            windows: windows_chr,
+                            out_path,
+                            indexed: true,
+                        }
+                    }
                     CoverageWindowAction::Average | CoverageWindowAction::Total => {
                         let wchr = windows_chr.expect("windows required for aggregates");
                         TileMode::Aggregates {
@@ -341,18 +364,28 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
             &opt.ioc.output_dir,
             &chromosomes,
             positional_prefix,
-            final_whole_pos_name.as_str(),
+            final_bedgraph_pos_name.as_str(),
         )?
     } else {
         match opt.per_window {
-            CoverageWindowAction::OnlyIncludeThesePositions => {
+            CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
+                // Windowed positional (unique and non-indexed)
+                merge_positional_tiles(
+                    &temp_dir,
+                    &opt.ioc.output_dir,
+                    &chromosomes,
+                    positional_prefix,
+                    final_bedgraph_pos_name.as_str(),
+                )?
+            }
+            CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
                 // Windowed positional with orig_idx column
                 merge_positional_tiles(
                     &temp_dir,
                     &opt.ioc.output_dir,
                     &chromosomes,
                     positional_prefix,
-                    final_window_pos_name.as_str(),
+                    final_tsv_pos_name.as_str(),
                 )?
             }
             CoverageWindowAction::Average | CoverageWindowAction::Total => {
@@ -532,7 +565,11 @@ fn process_tile(
     cp.finalize_coverage();
 
     match mode {
-        TileMode::Positional { windows, out_path } => {
+        TileMode::Positional {
+            windows,
+            out_path,
+            indexed,
+        } => {
             // We need a mask whenever there are blacklist intervals for this chromosome
             let need_mask = !blacklist_chr.is_empty();
             if need_mask && !blacklist_chr.is_empty() {
@@ -590,18 +627,33 @@ fn process_tile(
                         let a = (s - tile.core_start) as usize;
                         let b = (e - tile.core_start) as usize;
 
-                        emit_windowed_runs_with_index(
-                            &tile.chr,
-                            cov,
-                            mask,
-                            a,
-                            b,
-                            tile.core_start as u64,
-                            original_idx,
-                            decimals,
-                            opt.keep_zero_runs,
-                            &mut w,
-                        )?;
+                        if indexed {
+                            emit_windowed_runs(
+                                &tile.chr,
+                                cov,
+                                mask,
+                                a,
+                                b,
+                                tile.core_start as u64,
+                                Some(original_idx),
+                                decimals,
+                                opt.keep_zero_runs,
+                                &mut w,
+                            )?;
+                        } else {
+                            emit_windowed_runs(
+                                &tile.chr,
+                                cov,
+                                mask,
+                                a,
+                                b,
+                                tile.core_start as u64,
+                                None,
+                                decimals,
+                                opt.keep_zero_runs,
+                                &mut w,
+                            )?;
+                        }
                     }
                 }
             }

@@ -10,7 +10,8 @@ pub enum CoverageWindowAction {
     #[default]
     Average,
     Total,
-    OnlyIncludeThesePositions,
+    OnlyIncludeThesePositionsUnique,
+    OnlyIncludeThesePositionsIndexed,
 }
 
 // For the CLI
@@ -21,10 +22,12 @@ impl FromStr for CoverageWindowAction {
             Ok(CoverageWindowAction::Average)
         } else if s == "total" {
             Ok(CoverageWindowAction::Total)
-        } else if s == "positions" {
-            Ok(CoverageWindowAction::OnlyIncludeThesePositions)
+        } else if s == "unique-positions" {
+            Ok(CoverageWindowAction::OnlyIncludeThesePositionsUnique)
+        } else if s == "indexed-positions" {
+            Ok(CoverageWindowAction::OnlyIncludeThesePositionsIndexed)
         } else {
-            Err("Use 'average', 'total', or 'positions'".into())
+            Err("Use 'average', 'total', 'indexed-positions', or 'unique-positions'".into())
         }
     }
 }
@@ -177,7 +180,8 @@ pub fn compute_window_outputs(
 
             Ok(CoverageOutput::PerWindow { action, results })
         }
-        CoverageWindowAction::OnlyIncludeThesePositions => {
+        CoverageWindowAction::OnlyIncludeThesePositionsUnique
+        | CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
             // Positional coverage per window, with optional NaNs for blacklisted sites
             let cov = cp.coverage_in_window(0, cp.length(), nan_blacklisted)?;
 
