@@ -28,7 +28,6 @@ use crate::{
 
 // Support:
 //  - bigwig
-//  - quantization (decimals)
 
 /// Count positional **fragment** coverage across the genome.
 ///

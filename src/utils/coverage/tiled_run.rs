@@ -234,6 +234,13 @@ pub fn reduce_aggregates_for_chr(
     let mut allowed = vec![0u64; n];
     let mut blacklisted = vec![0u64; n];
 
+    // Map global original_idx -> local index [0..n)
+    let idx_to_local: std::collections::HashMap<usize, usize> = windows_chr
+        .iter()
+        .enumerate()
+        .map(|(i, &(_s, _e, orig_idx))| (orig_idx as usize, i))
+        .collect();
+
     // Collect partial files for this chr
     let mut chr_files: Vec<(u32, std::path::PathBuf)> = Vec::new();
     for entry in std::fs::read_dir(temp_dir)? {
@@ -259,13 +266,22 @@ pub fn reduce_aggregates_for_chr(
             let line = line?;
             // idx  sum  allowed  blacklisted
             let mut it = line.split('\t');
-            let idx: usize = it.next().unwrap().parse()?;
+            let global_idx: usize = it.next().unwrap().parse()?;
             let s: f64 = it.next().unwrap().parse()?;
             let a: u64 = it.next().unwrap().parse()?;
             let b: u64 = it.next().unwrap().parse()?;
-            sum[idx] += s;
-            allowed[idx] += a;
-            blacklisted[idx] += b;
+
+            // Translate global -> local per-chrom index
+            let local_idx = *idx_to_local.get(&global_idx).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Partial references unknown original_idx {} for chromosome {}",
+                    global_idx,
+                    chr
+                )
+            })?;
+            sum[local_idx] += s;
+            allowed[local_idx] += a;
+            blacklisted[local_idx] += b;
         }
     }
 
