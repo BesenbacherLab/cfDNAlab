@@ -1,7 +1,8 @@
+use crate::utils::bam::Contigs;
 use crate::utils::coverage::coverage_prefix::CoveragePrefix;
+use crate::utils::coverage::window_results::CoverageWindowAction;
 use crate::utils::fragment::minimal_fragment::Fragment;
 use crate::utils::fragment::segment_fragment::FragmentWithSegments;
-use crate::utils::{bam::create_chromosome_reader, coverage::window_results::CoverageWindowAction};
 use anyhow::{Context, Result};
 use rand::{Rng, distr::Alphanumeric};
 use std::io::BufRead;
@@ -24,17 +25,18 @@ pub struct Tile {
 /// - tile_bp: target core size in bases (e.g. 20_000_000)
 /// - halo_bp: fetch extension on both sides (e.g. max_fragment_length)
 pub fn build_tiles(
-    bam_path: &std::path::Path,
     chromosomes: &[String],
+    contigs: &Contigs,
     tile_bp: u32,
     halo_bp: u32,
-) -> Result<Vec<Tile>> {
+) -> anyhow::Result<Vec<Tile>> {
     let mut tiles = Vec::new();
 
     for chr in chromosomes {
-        // Reuse your helper to get tid and length once per chromosome
-        let (_rdr, tid, chrom_len_u64) = create_chromosome_reader(bam_path, chr)?;
-        let chrom_len = chrom_len_u64 as u32;
+        let &(tid, chrom_len) = contigs
+            .contigs
+            .get(chr)
+            .ok_or_else(|| anyhow::anyhow!("missing contig info for '{}'", chr))?;
 
         let mut start = 0u32;
         let mut idx = 0u32;
@@ -46,7 +48,7 @@ pub fn build_tiles(
 
             tiles.push(Tile {
                 chr: chr.clone(),
-                tid: tid as i32,
+                tid,
                 index: idx,
                 core_start: start,
                 core_end,

@@ -262,3 +262,32 @@ impl ChromosomeArgs {
         }
     }
 }
+
+/* Genomic scaling (applying normalize_genome) */
+
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Debug, Clone, Default)]
+pub struct ScaleGenomeArgs {
+    /// Optional scaling factors for normalizing/smoothing the genome `[path]`
+    ///
+    /// Coverage values are divided by the scaling factors of their bin.
+    /// Scaling factors must thus be strictly positive.
+    ///
+    /// `.tsv` file with a header and the columns (names must match):
+    ///     `chromosome, start, end, scaling_factor`.
+    /// As produced by `cfdna normalize-genome`.
+    ///
+    /// Intervals are half-open `[start, end)` and must be non-overlapping per chromosome.
+    /// We scale the coverage per position with `cov[i] / scaling_factor[bins[i]]` inside each bin.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            short = 'i',
+            long,
+            value_parser,
+            required = true,
+            help_heading = "Normalization"
+        )
+    )]
+    pub scaling_factors: Option<PathBuf>,
+}

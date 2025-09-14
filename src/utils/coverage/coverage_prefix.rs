@@ -845,9 +845,19 @@ impl CoveragePrefix {
     /// Returns
     /// -------
     /// - coverage:
-    ///     Per-base coverage of length `length` if available.
+    ///     Per-base coverage of length `length`, if available.
     pub fn coverage(&self) -> Option<&[f32]> {
         self.coverage.as_deref()
+    }
+
+    // coverage: mutable borrowed per-base coverage slice if finalized
+    ///
+    /// Returns
+    /// -------
+    /// - coverage:
+    ///     Mutable per-base coverage of length `length`, if available.
+    pub fn coverage_mut(&mut self) -> Option<&mut [f32]> {
+        self.coverage.as_deref_mut()
     }
 
     /// blacklist_mask: borrowed per-base mask slice if finalized

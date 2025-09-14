@@ -6,6 +6,9 @@ use rust_htslib::bam::{Read, Record};
 use std::io::Write;
 use std::{collections::HashMap, fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
 
+use crate::cli_common::ScaleGenomeArgs;
+use crate::utils::bam::bam_contigs_info;
+use crate::utils::coverage::scale_genome::{apply_scaling_in_place, load_scaling_factors_tsv};
 use crate::utils::coverage::tiled_run::{
     adapt_fetch_to_extreme_windows, build_tiles, emit_bedgraph_runs, emit_windowed_runs,
     make_temp_dir, merge_positional_tiles, reduce_aggregates_for_chr,
@@ -149,6 +152,9 @@ pub struct FCoverageConfig {
     chromosomes: ChromosomeArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
+    scale_genome: ScaleGenomeArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
     fragment_lengths: FragmentLengthArgs,
 
     /// Minimum mapping quality to include `[integer]`
@@ -193,6 +199,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
         .resolve_chromosomes(Some(&opt.ioc.bam.as_path()))?;
     let window_opt = opt.windows.resolve_windows();
     let prefix = opt.output_prefix.trim();
+    let contigs = bam_contigs_info(&opt.ioc.bam, &chromosomes)?;
 
     // Create output directory
     create_dir_all(&opt.ioc.output_dir).context("Cannot create output_dir")?;
@@ -214,6 +221,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                 opt.per_window,
                 CoverageWindowAction::OnlyIncludeThesePositionsUnique
             ) {
+                // Merge in-place to avoid double memory-usage
                 println!("Start: Merging overlapping/touching windows");
                 // Take ownership so we can remove entries by chromosome
                 let mut wds_owned: HashMap<String, crate::utils::bed::Windows> = wds;
@@ -238,6 +246,15 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
         _ => None,
     };
 
+    // Load genomic scaling factors
+    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
+        if let Some(path) = &opt.scale_genome.scaling_factors {
+            println!("Start: Loading scaling factors");
+            load_scaling_factors_tsv(path, &chromosomes, &contigs)?
+        } else {
+            FxHashMap::with_hasher(Default::default())
+        };
+
     // Decide mode once
     let windowed = matches!(window_opt, WindowSpec::Bed(_));
     let masked = opt.blacklist.is_some();
@@ -247,7 +264,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
 
     let halo_bp: u32 = opt.fragment_lengths.max_fragment_length; // safe halo for pairing/segments
 
-    let tiles = build_tiles(&opt.ioc.bam, &chromosomes, opt.tile_size, halo_bp)?;
+    let tiles = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp)?;
 
     // Where per-tile files go
     let positional_prefix = format!("{prefix}.pos");
@@ -305,6 +322,10 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                 .as_ref()
                 .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
             let blacklist_chr: &[(u64, u64)] = blacklist_map
+                .get(&tile.chr)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+            let scaling_chr: &[(u64, u64, f32)] = scaling_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
@@ -366,7 +387,14 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                 }
             };
 
-            let ctr = process_tile(&opt, tile, blacklist_chr, mode, decimals_to_use)?;
+            let ctr = process_tile(
+                &opt,
+                tile,
+                blacklist_chr,
+                scaling_chr,
+                mode,
+                decimals_to_use,
+            )?;
             pb.inc(1);
             Ok(ctr)
         })
@@ -509,6 +537,7 @@ fn process_tile(
     opt: &FCoverageConfig,
     tile: &Tile,
     blacklist_chr: &[(u64, u64)],
+    scaling_chr: &[(u64, u64, f32)],
     mode: TileMode,
     decimals: i32,
 ) -> Result<FCoverageCounters> {
@@ -588,6 +617,13 @@ fn process_tile(
 
     // Finalize coverage
     cp.finalize_coverage();
+
+    // Apply per-bin scaling (in-place)
+    if !scaling_chr.is_empty() {
+        if let Some(cov_mut) = cp.coverage_mut() {
+            apply_scaling_in_place(cov_mut, tile.core_start, scaling_chr);
+        }
+    }
 
     match mode {
         TileMode::Positional {
