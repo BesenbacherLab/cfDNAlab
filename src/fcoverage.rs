@@ -539,6 +539,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
         "  Fragments counted one or more times: {}",
         global_counter.counted_fragments
     );
+    println!("----------");
     println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
 }
