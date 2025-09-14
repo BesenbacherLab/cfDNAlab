@@ -300,7 +300,6 @@ pub struct ScaleGenomeArgs {
             short = 'i',
             long,
             value_parser,
-            required = true,
             help_heading = "Normalization"
         )
     )]
