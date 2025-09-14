@@ -550,7 +550,7 @@ fn process_tile(
             // Prepare compressed writer (zstd) for this tile
             let file = std::fs::File::create(out_path)?;
             let mut enc = zstd::Encoder::new(file, 3)?; // level 3 ~ fast
-            enc.multithread(num_cpus::get() as u32).ok(); // try MT
+            enc.multithread(opt.ioc.n_threads as u32).ok();
             let mut w = std::io::BufWriter::new(enc.auto_finish()); // auto_finish() -> impl Write
 
             let cov = cp.coverage().expect("coverage present");
