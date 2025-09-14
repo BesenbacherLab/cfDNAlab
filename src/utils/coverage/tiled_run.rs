@@ -3,6 +3,7 @@ use crate::utils::coverage::coverage_prefix::CoveragePrefix;
 use crate::utils::fragment::minimal_fragment::Fragment;
 use crate::utils::fragment::segment_fragment::FragmentWithSegments;
 use anyhow::Result;
+use rand::{Rng, distr::Alphanumeric};
 use std::io::Write;
 
 /// A processing tile for one chromosome
@@ -135,12 +136,25 @@ pub fn windows_overlapping_core<'a>(
         .filter(move |&&(ws, we, _idx)| we > cs && ws < ce)
 }
 
+// Get the tile index from the filename
+fn parse_tile_index(file_name: &str) -> Option<u32> {
+    // expect ... .{idx}.tsv  -> take penultimate suffix
+    let mut parts = file_name.rsplit('.');
+    let ext = parts.next()?; // "tsv"
+    if ext != "tsv" {
+        return None;
+    }
+    let idx_str = parts.next()?; // "000012"
+    idx_str.parse().ok()
+}
+
 /// Merge positional per-tile files in (chr, index) order into one TSV
 pub fn merge_positional_tiles(
+    temp_dir: &std::path::Path,
     out_dir: &std::path::Path,
     chromosomes: &[String],
     per_tile_prefix: &str, // e.g. "coverage.pos"
-    final_name: &str,      // e.g. "coverage.per_positions.tsv"
+    final_name: &str,      // e.g. "coverage.per_position.tsv"
 ) -> anyhow::Result<std::path::PathBuf> {
     use std::io::{BufRead, BufReader, Write};
 
@@ -150,19 +164,18 @@ pub fn merge_positional_tiles(
     for chr in chromosomes {
         // List files for this chr and sort by index suffix
         let mut chr_files: Vec<(u32, std::path::PathBuf)> = Vec::new();
-        for entry in std::fs::read_dir(out_dir)? {
+        for entry in std::fs::read_dir(temp_dir)? {
             let p = entry?.path();
             if !p.is_file() {
                 continue;
             }
             let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
-            // Expect "{per_tile_prefix}.{chr}.{index}.tsv"
-            if fname.starts_with(per_tile_prefix) && fname.contains(&format!(".{chr}.")) {
-                if let Some(idx_str) = fname.rsplit('.').nth(2) {
-                    if let Ok(idx) = idx_str.parse::<u32>() {
-                        chr_files.push((idx, p));
-                    }
-                }
+            // Strict shape: starts with prefix, contains .{chr}.
+            if !fname.starts_with(per_tile_prefix) || !fname.contains(&format!(".{chr}.")) {
+                continue;
+            }
+            if let Some(idx) = parse_tile_index(fname) {
+                chr_files.push((idx, p));
             }
         }
         chr_files.sort_by_key(|(i, _)| *i);
@@ -189,7 +202,7 @@ pub fn merge_positional_tiles(
 /// - masked: if true, output averages will use allowed_count; otherwise span length
 pub fn reduce_aggregates_for_chr(
     chr: &str,
-    out_dir: &std::path::Path,
+    temp_dir: &std::path::Path,
     partial_prefix: &str, // e.g. "coverage.part"
     windows_chr: &[(u64, u64, u64)],
     masked: bool,
@@ -205,19 +218,17 @@ pub fn reduce_aggregates_for_chr(
 
     // Collect & sort all partial files for this chr
     let mut chr_files: Vec<(u32, std::path::PathBuf)> = Vec::new();
-    for entry in std::fs::read_dir(out_dir)? {
+    for entry in std::fs::read_dir(temp_dir)? {
         let p = entry?.path();
         if !p.is_file() {
             continue;
         }
         let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        // "{partial_prefix}.{chr}.{index}.tsv"
-        if fname.starts_with(partial_prefix) && fname.contains(&format!(".{chr}.")) {
-            if let Some(idx_str) = fname.rsplit('.').nth(2) {
-                if let Ok(idx) = idx_str.parse::<u32>() {
-                    chr_files.push((idx, p));
-                }
-            }
+        if !fname.starts_with(partial_prefix) || !fname.contains(&format!(".{chr}.")) {
+            continue;
+        }
+        if let Some(idx) = parse_tile_index(fname) {
+            chr_files.push((idx, p));
         }
     }
     chr_files.sort_by_key(|(i, _)| *i);
@@ -352,4 +363,32 @@ pub fn adapt_fetch_to_extreme_windows(
     };
 
     Some((fetch_from, fetch_to))
+}
+
+fn random_suffix(n: usize) -> String {
+    rand::rng()
+        .sample_iter(&Alphanumeric)
+        .take(n)
+        .map(char::from)
+        .collect()
+}
+
+pub fn make_temp_dir(
+    base_out: &std::path::Path,
+    prefix: &str,
+) -> anyhow::Result<std::path::PathBuf> {
+    // Try a few times just in case
+    for _ in 0..8 {
+        let suffix = random_suffix(10);
+        let p = base_out.join(format!("tmp.{prefix}.{suffix}"));
+        if !p.exists() {
+            std::fs::create_dir_all(&p)?;
+            return Ok(p);
+        }
+    }
+    // Fallback: timestamped
+    let ts = chrono::Utc::now().timestamp_millis();
+    let p = base_out.join(format!("tmp.{prefix}.{ts}"));
+    std::fs::create_dir_all(&p)?;
+    Ok(p)
 }

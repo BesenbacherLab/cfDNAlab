@@ -7,7 +7,8 @@ use std::io::Write;
 use std::{collections::HashMap, fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
 
 use crate::utils::coverage::tiled_run::{
-    adapt_fetch_to_extreme_windows, build_tiles, merge_positional_tiles, reduce_aggregates_for_chr,
+    adapt_fetch_to_extreme_windows, build_tiles, make_temp_dir, merge_positional_tiles,
+    reduce_aggregates_for_chr,
 };
 use crate::{
     cli_common::{ChromosomeArgs, FragmentLengthArgs, IOCArgs, WindowSpec, WindowsArgs},
@@ -50,10 +51,30 @@ use crate::{
 ///
 /// Positions in blacklisted regions are set to `f32::NaN` (and thus not included in sums or averages).
 /// Set `--nan-policy` to change how these positions are handled in the output (positional coverage outputs only).
+///
+/// ## Temporary files
+///
+/// We write temporary files to a `<output-dir>/tmp.<output-prefix>.<random>` directory to reduce memory.
+/// This directory is deleted at the end of the run. If the software is disrupted, the directory
+/// is left behind.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 pub struct FCoverageConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     ioc: IOCArgs,
+
+    /// Prefix for output files (e.g., a sample name) `[string]`
+    ///
+    /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
+    ///
+    /// Examples produce files like:
+    ///   <prefix>.per_position.tsv
+    ///   <prefix>.avg.tsv
+    ///   <prefix>.total.tsv
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, short = 'x', default_value = "coverage", help_heading = "Core")
+    )]
+    pub output_prefix: String,
 
     /// Size of tiles to parallelize over `[integer]`
     ///
@@ -167,6 +188,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
         .chromosomes
         .resolve_chromosomes(Some(&opt.ioc.bam.as_path()))?;
     let window_opt = opt.windows.resolve_windows();
+    let prefix = opt.output_prefix.trim();
 
     // Create output directory
     create_dir_all(&opt.ioc.output_dir).context("Cannot create output_dir")?;
@@ -188,13 +210,25 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
         _ => None,
     };
 
+    // Build temporary directory
+    let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
+
     let halo_bp: u32 = opt.fragment_lengths.max_fragment_length; // safe halo for pairing/segments
 
     let tiles = build_tiles(&opt.ioc.bam, &chromosomes, opt.tile_size, halo_bp)?;
 
     // Where per-tile files go
-    let positional_prefix = "coverage.pos";
-    let partials_prefix = "coverage.part";
+    let positional_prefix = format!("{prefix}.pos");
+    let partials_prefix = format!("{prefix}.part");
+
+    // Faster to convert to &str once
+    let positional_prefix = positional_prefix.as_str();
+    let partials_prefix = partials_prefix.as_str();
+
+    // Create filenames of final outputs
+    let final_pos_name = format!("{prefix}.per_position.tsv");
+    let final_avg_name = format!("{prefix}.avg.tsv");
+    let final_total_name = format!("{prefix}.total.tsv");
 
     // Decide mode once
     let windowed = matches!(window_opt, WindowSpec::Bed(_));
@@ -245,7 +279,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                 positional_prefix
             };
 
-            let out_path = opt.ioc.output_dir.join(format!(
+            let out_path = temp_dir.join(format!(
                 "{prefix}.{chr}.{idx}.tsv",
                 prefix = action_prefix,
                 chr = tile.chr,
@@ -293,27 +327,29 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     let final_out_path = if !windowed {
         // Whole-genome positional coverage
         merge_positional_tiles(
+            &temp_dir,
             &opt.ioc.output_dir,
             &chromosomes,
             positional_prefix,
-            "coverage.per_positions.tsv",
+            final_pos_name.as_str(),
         )?
     } else {
         match opt.per_window {
             CoverageWindowAction::OnlyIncludeThesePositions => {
                 // Windowed positional with orig_idx column
                 merge_positional_tiles(
+                    &temp_dir,
                     &opt.ioc.output_dir,
                     &chromosomes,
                     positional_prefix,
-                    "coverage.per_positions.tsv",
+                    final_pos_name.as_str(),
                 )?
             }
             CoverageWindowAction::Average | CoverageWindowAction::Total => {
                 // Per-chrom reduce of partials into final aggregates
                 let final_path = opt.ioc.output_dir.join(match opt.per_window {
-                    CoverageWindowAction::Average => "coverage.avg.tsv",
-                    CoverageWindowAction::Total => "coverage.total.tsv",
+                    CoverageWindowAction::Average => final_avg_name.as_str(),
+                    CoverageWindowAction::Total => final_total_name.as_str(),
                     _ => unreachable!(),
                 });
                 let mut w = std::io::BufWriter::new(std::fs::File::create(&final_path)?);
@@ -335,7 +371,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                         if let Some(wchr) = win_map.get(chr) {
                             reduce_aggregates_for_chr(
                                 chr,
-                                &opt.ioc.output_dir,
+                                &temp_dir,
                                 partials_prefix,
                                 wchr.as_slice(),
                                 masked,
@@ -353,6 +389,19 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     };
 
     println!("Saved output to: {:?}", final_out_path);
+
+    let keep_temp = false; // TODO: Make cli arg behind a feature for dev purposes?
+    if !keep_temp {
+        if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
+            eprintln!(
+                "warning: failed to remove temp dir {}: {}",
+                temp_dir.display(),
+                e
+            );
+        }
+    } else {
+        eprintln!("kept temp tiles in {}", temp_dir.display());
+    }
 
     // Print summary statistics and execution time
     let elapsed = start_time.elapsed();

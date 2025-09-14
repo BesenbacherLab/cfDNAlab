@@ -407,7 +407,7 @@ fn output_suffix(kind: OutputKind) -> &'static str {
         OutputKind::AggregateAverage => ".avg.tsv",
         OutputKind::AggregateTotal => ".total.tsv",
         OutputKind::PosWhole => ".per_position.tsv", // Whole-genome positional
-        OutputKind::PosWindowed => ".per_positions.tsv", // Windowed positional
+        OutputKind::PosWindowed => ".per_position.tsv", // Windowed positional
     }
 }
 
