@@ -366,7 +366,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                 let mut enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
                 enc.multithread(opt.ioc.n_threads as u32).ok();
                 let mut w = std::io::BufWriter::new(enc.auto_finish());
-                
+
                 // Header
 
                 let value_col = match opt.per_window {
@@ -557,8 +557,7 @@ fn process_tile(
 
             // Prepare compressed writer (zstd) for this tile
             let file = std::fs::File::create(out_path)?;
-            let mut enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
-            enc.multithread(opt.ioc.n_threads as u32).ok();
+            let enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
             let mut w = std::io::BufWriter::new(enc.auto_finish()); // auto_finish() -> impl Write
 
             let cov = cp.coverage().expect("coverage present");
@@ -653,8 +652,7 @@ fn process_tile(
 
             // Write per-tile partials: idx, sum, allowed_count, blacklisted_count
             let file = std::fs::File::create(out_path)?;
-            let mut enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
-            enc.multithread(opt.ioc.n_threads as u32).ok();
+            let enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
             let mut w = std::io::BufWriter::new(enc.auto_finish());
 
             for &(window_start, window_end, original_idx) in
