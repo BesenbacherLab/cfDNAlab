@@ -218,7 +218,7 @@ pub fn merge_positional_tiles(
 /// - `masked`: if true, averages divide by *allowed*; otherwise by full span
 /// - `mode`: Average or Total
 /// - `decimals`: rounding applied to the emitted value (avg or total)
-pub fn reduce_aggregates_for_chr(
+pub fn reduce_aggregates_for_chr<W: Write>(
     chr: &str,
     temp_dir: &std::path::Path,
     partial_prefix: &str, // e.g. "coverage.part"
@@ -226,7 +226,7 @@ pub fn reduce_aggregates_for_chr(
     masked: bool,
     mode: CoverageWindowAction,
     decimals: i32,
-    final_writer: &mut std::io::BufWriter<std::fs::File>,
+    final_writer: &mut W,
 ) -> Result<()> {
     // Accumulators per window
     let n = windows_chr.len();
@@ -261,7 +261,8 @@ pub fn reduce_aggregates_for_chr(
     // Accumulate
     for (_, path) in chr_files {
         let f = std::fs::File::open(&path)?;
-        let r = BufReader::new(f);
+        let dec = zstd::Decoder::new(f)?;
+        let r = BufReader::new(dec);
         for line in r.lines() {
             let line = line?;
             // idx  sum  allowed  blacklisted
@@ -473,11 +474,12 @@ fn format_number_simplify(v: f64, decimals: i32) -> String {
 pub fn emit_bedgraph_runs<W: Write>(
     chr: &str,
     cov: &[f32],
-    mask: Option<&[u8]>, // 1 = blacklisted(masked), 0 = allowed
-    a: usize,            // Local start (inclusive)
-    b: usize,            // Local end (exclusive)
-    start_abs: u64,      // Absolute position of index 0 in `cov` (tile.core_start)
-    decimals: i32,       // Decimals to round coverage
+    mask: Option<&[u8]>,  // 1 = blacklisted(masked), 0 = allowed
+    a: usize,             // Local start (inclusive)
+    b: usize,             // Local end (exclusive)
+    start_abs: u64,       // Absolute position of index 0 in `cov` (tile.core_start)
+    decimals: i32,        // Decimals to round coverage
+    keep_zero_runs: bool, // Whether to write zero-runs
     out: &mut W,
 ) -> Result<()> {
     if a >= b {
@@ -488,13 +490,13 @@ pub fn emit_bedgraph_runs<W: Write>(
     let mut i = a;
 
     while i < b {
-        // skip masked stretch
+        // Skip masked stretch
         if !m.is_empty() && m[i] == 1 {
             i += 1;
             continue;
         }
 
-        // start unmasked run
+        // Start unmasked run
         let run_start = i;
         let v0 = round_to(cov[i] as f64, decimals);
 
@@ -510,7 +512,12 @@ pub fn emit_bedgraph_runs<W: Write>(
             j += 1;
         }
 
-        // emit [run_start, j)
+        // Skip zero-runs unless specified otherwise
+        if v0 == 0.0 && !keep_zero_runs {
+            continue;
+        }
+
+        // Emit [run_start, j)
         let s_abs = start_abs + run_start as u64;
         let e_abs = start_abs + j as u64;
         writeln!(
@@ -538,12 +545,13 @@ pub fn emit_bedgraph_runs<W: Write>(
 pub fn emit_windowed_runs_with_index<W: Write>(
     chr: &str,
     cov: &[f32],
-    mask: Option<&[u8]>, // 1 = blacklisted(masked), 0 = allowed
-    a: usize,            // Local start (inclusive)
-    b: usize,            // Local end (exclusive)
-    start_abs: u64,      // Absolute position of index 0 in `cov` (tile.core_start)
-    orig_idx: u64,       // Window’s original index
-    decimals: i32,       // Decimals to round coverage
+    mask: Option<&[u8]>,  // 1 = blacklisted(masked), 0 = allowed
+    a: usize,             // Local start (inclusive)
+    b: usize,             // Local end (exclusive)
+    start_abs: u64,       // Absolute position of index 0 in `cov` (tile.core_start)
+    orig_idx: u64,        // Window’s original index
+    decimals: i32,        // Decimals to round coverage
+    keep_zero_runs: bool, // Whether to write zero-runs
     out: &mut W,
 ) -> Result<()> {
     if a >= b {
@@ -574,6 +582,11 @@ pub fn emit_windowed_runs_with_index<W: Write>(
                 break;
             }
             j += 1;
+        }
+
+        // Skip zero-runs unless specified otherwise
+        if v0 == 0.0 && !keep_zero_runs {
+            continue;
         }
 
         // emit: chr  start  end  value  orig_idx

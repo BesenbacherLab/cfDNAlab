@@ -241,7 +241,6 @@ impl CoveragePrefix {
     pub fn finalize_coverage(&mut self) -> &[f32] {
         // Build coverage from the +w/-w prefix without destroying delta
         let mut cov = vec![0.0_f32; self.length as usize];
-        cov.resize(self.length as usize, 0.0);
 
         // Cumulative sum over delta
         let mut run = 0.0_f64;

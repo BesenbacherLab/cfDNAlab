@@ -87,6 +87,12 @@ pub struct FCoverageConfig {
         clap(long, default_value = "2", value_parser = clap::value_parser!(u8).range(0..), help_heading="Core"))]
     pub decimals: u8,
 
+    /// Output zero-coverage runs in positional coverage outputs `[flag]`
+    ///
+    /// By default, only covered positions are written to the output.
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
+    pub keep_zero_runs: bool,
+
     /// Size of tiles to parallelize over `[integer]`
     ///
     /// Chromosomes are processed in tiles of this size to reduce memory usage.
@@ -356,7 +362,11 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                     CoverageWindowAction::Total => final_total_name.as_str(),
                     _ => unreachable!(),
                 });
-                let mut w = std::io::BufWriter::new(std::fs::File::create(&final_path)?);
+                let file = std::fs::File::create(&final_path)?;
+                let mut enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
+                enc.multithread(opt.ioc.n_threads as u32).ok();
+                let mut w = std::io::BufWriter::new(enc.auto_finish());
+                
                 // Header
 
                 let value_col = match opt.per_window {
@@ -547,7 +557,7 @@ fn process_tile(
 
             // Prepare compressed writer (zstd) for this tile
             let file = std::fs::File::create(out_path)?;
-            let mut enc = zstd::Encoder::new(file, 3)?; // level 3 ~ fast
+            let mut enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
             enc.multithread(opt.ioc.n_threads as u32).ok();
             let mut w = std::io::BufWriter::new(enc.auto_finish()); // auto_finish() -> impl Write
 
@@ -567,6 +577,7 @@ fn process_tile(
                         cov.len(),
                         tile.core_start as u64,
                         decimals,
+                        opt.keep_zero_runs,
                         &mut w,
                     )?;
                 }
@@ -589,6 +600,7 @@ fn process_tile(
                             tile.core_start as u64,
                             original_idx,
                             decimals,
+                            opt.keep_zero_runs,
                             &mut w,
                         )?;
                     }
@@ -640,7 +652,10 @@ fn process_tile(
             let mask: Option<&[u8]> = mask_owned.as_deref();
 
             // Write per-tile partials: idx, sum, allowed_count, blacklisted_count
-            let mut w = std::io::BufWriter::new(std::fs::File::create(out_path)?);
+            let file = std::fs::File::create(out_path)?;
+            let mut enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
+            enc.multithread(opt.ioc.n_threads as u32).ok();
+            let mut w = std::io::BufWriter::new(enc.auto_finish());
 
             for &(window_start, window_end, original_idx) in
                 windows_overlapping_core(windows, tile.core_start, tile.core_end)
