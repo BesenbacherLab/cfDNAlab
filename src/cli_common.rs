@@ -175,7 +175,7 @@ pub struct AssignToWindowArgs {
     ///
     /// Example of proportion: `--assign-by proportion=0.2` (no space around `=`)
     ///
-    /// NOTE: Ignored when no windows are specified.
+    /// **NOTE**: Ignored when no windows are specified.
     #[cfg_attr(
         feature = "cli",
         clap(

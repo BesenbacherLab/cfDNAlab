@@ -1,10 +1,11 @@
 use crate::utils::coverage::coverage_prefix::CoveragePrefix;
 use crate::utils::fragment::minimal_fragment::Fragment;
 use crate::utils::fragment::segment_fragment::FragmentWithSegments;
-use crate::utils::{bam::create_chromosome_reader, coverage::nan_policy::NanPolicy};
+use crate::utils::{bam::create_chromosome_reader, coverage::window_results::CoverageWindowAction};
 use anyhow::{Context, Result};
 use rand::{Rng, distr::Alphanumeric};
-use std::io::{BufWriter, Write};
+use std::io::BufRead;
+use std::io::{BufReader, BufWriter, Write};
 
 /// A processing tile for one chromosome
 #[derive(Debug, Clone)]
@@ -211,27 +212,29 @@ pub fn merge_positional_tiles(
     Ok(final_path)
 }
 
-/// Reduce aggregate partials for a chromosome to final windows in order
+/// Reduce aggregate partials for a chromosome to final windows in order.
 ///
-/// - windows_chr: same ordering used to assign original_idx
-/// - masked: if true, output averages will use allowed_count; otherwise span length
+/// - `windows_chr`: same ordering used to assign `original_idx`
+/// - `masked`: if true, averages divide by *allowed*; otherwise by full span
+/// - `mode`: Average or Total
+/// - `decimals`: rounding applied to the emitted value (avg or total)
 pub fn reduce_aggregates_for_chr(
     chr: &str,
     temp_dir: &std::path::Path,
     partial_prefix: &str, // e.g. "coverage.part"
     windows_chr: &[(u64, u64, u64)],
     masked: bool,
+    mode: CoverageWindowAction,
+    decimals: i32,
     final_writer: &mut std::io::BufWriter<std::fs::File>,
-) -> anyhow::Result<()> {
-    use std::io::{BufRead, BufReader};
-
-    // Prepare accumulators sized by number of windows in this chr
+) -> Result<()> {
+    // Accumulators per window
     let n = windows_chr.len();
     let mut sum = vec![0.0_f64; n];
     let mut allowed = vec![0u64; n];
     let mut blacklisted = vec![0u64; n];
 
-    // Collect & sort all partial files for this chr
+    // Collect partial files for this chr
     let mut chr_files: Vec<(u32, std::path::PathBuf)> = Vec::new();
     for entry in std::fs::read_dir(temp_dir)? {
         let p = entry?.path();
@@ -266,20 +269,35 @@ pub fn reduce_aggregates_for_chr(
         }
     }
 
-    // Emit final rows in window order for this chromosome
-    for (i, &(window_start, window_end, _orig_idx)) in windows_chr.iter().enumerate() {
+    // Emit rows in window order
+    for (i, &(window_start, window_end, _)) in windows_chr.iter().enumerate() {
         let span = (window_end - window_start) as f64;
-        let a = allowed[i] as f64;
-        let avg = if masked {
-            if a == 0.0 { 0.0 } else { sum[i] / a }
-        } else {
-            if span == 0.0 { 0.0 } else { sum[i] / span }
+
+        let value = match mode {
+            CoverageWindowAction::Average => {
+                if masked {
+                    let a = allowed[i] as f64;
+                    if a == 0.0 { 0.0 } else { sum[i] / a }
+                } else {
+                    if span == 0.0 { 0.0 } else { sum[i] / span }
+                }
+            }
+            CoverageWindowAction::Total => {
+                // Already the sum over (masked?allowed-only : all) positions
+                sum[i]
+            }
+            _ => unreachable!(),
         };
-        // chr  start  end  avg  bl_pos
+
+        let value = round_to(value, decimals);
         writeln!(
             final_writer,
             "{}\t{}\t{}\t{}\t{}",
-            chr, window_start, window_end, avg, blacklisted[i],
+            chr,
+            window_start,
+            window_end,
+            format_number_simplify(value, decimals),
+            blacklisted[i],
         )?;
     }
 
@@ -408,221 +426,154 @@ pub fn make_temp_dir(
     Ok(p)
 }
 
-/// Emit BedGraph segments for cov[a..b), honoring NanPolicy for masked bases.
-/// - DropRow: skip masked bases entirely (no rows)
-/// - WriteLiteralNaN: write contiguous masked blocks as rows with value "NaN"
-/// - WriteEmptyCell: write contiguous masked blocks as rows with an empty value (trailing tab)
-///
-/// NOTE: BedGraph traditionally expects a numeric value. Writing "NaN" or an empty
-/// value may not be accepted by some tools. If compatibility is critical, prefer DropRow.
+// Round to number of decimals
+fn round_to(x: f64, decimals: i32) -> f64 {
+    if decimals <= 0 {
+        return x.round();
+    }
+    let f = 10f64.powi(decimals);
+    (x * f).round() / f
+}
+
+// Format as compactly as possible
+fn format_number_simplify(v: f64, decimals: i32) -> String {
+    // Compact formatting without trailing zeros
+    let s = if decimals <= 0 {
+        format!("{:.0}", v)
+    } else {
+        format!("{:.*}", decimals as usize, v)
+    };
+    let mut s = s.trim_end_matches('0').trim_end_matches('.').to_string();
+    if s == "-0" {
+        s = "0".to_string();
+    }
+    s
+}
+
+/// Emit BedGraph runs for cov[a..b), skipping masked bases.
+/// - Standard 4-column BedGraph: chrom, start, end, value
+/// - Masked bases (mask==1) are **not written** → gaps in the track.
+/// - Values are rounded to `decimals` before comparing/printing to avoid run explosion.
 pub fn emit_bedgraph_runs<W: Write>(
     chr: &str,
     cov: &[f32],
     mask: Option<&[u8]>, // 1 = blacklisted(masked), 0 = allowed
-    a: usize,            // local start (inclusive)
-    b: usize,            // local end (exclusive)
-    start_abs: u64,      // absolute position of index 0 in `cov` (tile.core_start)
-    nan_policy: NanPolicy,
+    a: usize,            // Local start (inclusive)
+    b: usize,            // Local end (exclusive)
+    start_abs: u64,      // Absolute position of index 0 in `cov` (tile.core_start)
+    decimals: i32,       // Decimals to round coverage
     out: &mut W,
-) -> anyhow::Result<()> {
+) -> Result<()> {
     if a >= b {
         return Ok(());
     }
 
-    #[derive(Copy, Clone, Debug, PartialEq)]
-    enum RunKind {
-        Unmasked,
-        Masked,
-    }
+    let m = mask.unwrap_or(&[]);
+    let mut i = a;
 
-    // Current open run
-    let mut run_kind: Option<RunKind> = None;
-    let mut run_start: usize = 0; // local index
-    let mut run_val: f32 = 0.0; // for unmasked runs
-
-    // Flush helpers
-    let flush_unmasked = |rs: usize, re: usize, v: f32, out: &mut W| -> anyhow::Result<()> {
-        if rs < re {
-            let s_abs = start_abs + rs as u64;
-            let e_abs = start_abs + re as u64;
-            writeln!(out, "{chr}\t{s_abs}\t{e_abs}\t{v}")?;
+    while i < b {
+        // skip masked stretch
+        if !m.is_empty() && m[i] == 1 {
+            i += 1;
+            continue;
         }
-        Ok(())
-    };
 
-    let flush_masked = |rs: usize, re: usize, out: &mut W| -> anyhow::Result<()> {
-        if rs < re {
-            let s_abs = start_abs + rs as u64;
-            let e_abs = start_abs + re as u64;
-            match nan_policy {
-                NanPolicy::DropRow => { /* emit nothing */ }
-                NanPolicy::WriteLiteralNaN => {
-                    writeln!(out, "{chr}\t{s_abs}\t{e_abs}\tNaN")?;
-                }
-                NanPolicy::WriteEmptyCell => {
-                    // trailing tab; value intentionally empty
-                    writeln!(out, "{chr}\t{s_abs}\t{e_abs}\t")?;
-                }
+        // start unmasked run
+        let run_start = i;
+        let v0 = round_to(cov[i] as f64, decimals);
+
+        let mut j = i + 1;
+        while j < b {
+            if !m.is_empty() && m[j] == 1 {
+                break;
             }
+            let vj = round_to(cov[j] as f64, decimals);
+            if vj != v0 {
+                break;
+            }
+            j += 1;
         }
-        Ok(())
-    };
 
-    for i in a..b {
-        let is_masked = mask.map(|m| m[i] == 1).unwrap_or(false);
+        // emit [run_start, j)
+        let s_abs = start_abs + run_start as u64;
+        let e_abs = start_abs + j as u64;
+        writeln!(
+            out,
+            "{}\t{}\t{}\t{}",
+            chr,
+            s_abs,
+            e_abs,
+            format_number_simplify(v0, decimals)
+        )?;
 
-        match (run_kind, is_masked) {
-            (None, false) => {
-                // start unmasked
-                run_kind = Some(RunKind::Unmasked);
-                run_start = i;
-                run_val = cov[i];
-            }
-            (None, true) => {
-                // start masked
-                run_kind = Some(RunKind::Masked);
-                run_start = i;
-            }
-
-            (Some(RunKind::Unmasked), false) => {
-                // continue unmasked; extend if same value else flush & start new
-                let v = cov[i];
-                if v.to_bits() != run_val.to_bits() {
-                    flush_unmasked(run_start, i, run_val, out)?;
-                    run_start = i;
-                    run_val = v;
-                }
-            }
-            (Some(RunKind::Unmasked), true) => {
-                // switch to masked
-                flush_unmasked(run_start, i, run_val, out)?;
-                run_kind = Some(RunKind::Masked);
-                run_start = i;
-            }
-
-            (Some(RunKind::Masked), true) => {
-                // continue masked (no action)
-            }
-            (Some(RunKind::Masked), false) => {
-                // switch to unmasked
-                flush_masked(run_start, i, out)?;
-                run_kind = Some(RunKind::Unmasked);
-                run_start = i;
-                run_val = cov[i];
-            }
-        }
-    }
-
-    // flush tail
-    match run_kind {
-        Some(RunKind::Unmasked) => flush_unmasked(run_start, b, run_val, out)?,
-        Some(RunKind::Masked) => flush_masked(run_start, b, out)?,
-        None => {}
+        i = j;
     }
 
     Ok(())
 }
 
-/// Emit run-length compressed rows for cov[a..b) WITH an `orig_idx` column.
-/// Columns: chrom, start, end, value, orig_idx
-/// Respects `NanPolicy` for masked bases.
+/// Emit **TSV runs** for a single window cov[a..b):
+/// chrom  start  end  value  orig_idx
+///
+/// - Skips masked bases (creates gaps).
+/// - Run-length encodes equal values inside the window to reduce size.
+/// - Keeps `orig_idx` for downstream grouping.
+/// - Use this for **windowed positional** outputs (not BedGraph).
 pub fn emit_windowed_runs_with_index<W: Write>(
     chr: &str,
     cov: &[f32],
-    mask: Option<&[u8]>, // 1 = masked, 0 = allowed
-    a: usize,            // local start (inclusive)
-    b: usize,            // local end (exclusive)
-    start_abs: u64,      // absolute position of index 0 in `cov`
-    orig_idx: u64,       // window id to preserve
-    nan_policy: NanPolicy,
+    mask: Option<&[u8]>, // 1 = blacklisted(masked), 0 = allowed
+    a: usize,            // Local start (inclusive)
+    b: usize,            // Local end (exclusive)
+    start_abs: u64,      // Absolute position of index 0 in `cov` (tile.core_start)
+    orig_idx: u64,       // Window’s original index
+    decimals: i32,       // Decimals to round coverage
     out: &mut W,
-) -> anyhow::Result<()> {
+) -> Result<()> {
     if a >= b {
         return Ok(());
     }
 
-    #[derive(Copy, Clone, Debug, PartialEq)]
-    enum RunKind {
-        Unmasked(f32),
-        Masked,
-    }
+    let m = mask.unwrap_or(&[]);
+    let mut i = a;
 
-    let mut run_kind: Option<RunKind> = None;
-    let mut run_start: usize = a;
-
-    // Flush helpers
-    let flush_unmasked = |rs: usize, re: usize, v: f32, out: &mut W| -> anyhow::Result<()> {
-        if rs < re {
-            let s_abs = start_abs + rs as u64;
-            let e_abs = start_abs + re as u64;
-            writeln!(out, "{chr}\t{s_abs}\t{e_abs}\t{v}\t{orig_idx}")?;
+    while i < b {
+        // skip masked
+        if !m.is_empty() && m[i] == 1 {
+            i += 1;
+            continue;
         }
-        Ok(())
-    };
 
-    let flush_masked = |rs: usize, re: usize, out: &mut W| -> anyhow::Result<()> {
-        if rs < re {
-            let s_abs = start_abs + rs as u64;
-            let e_abs = start_abs + re as u64;
-            match nan_policy {
-                NanPolicy::DropRow => { /* emit nothing */ }
-                NanPolicy::WriteLiteralNaN => {
-                    writeln!(out, "{chr}\t{s_abs}\t{e_abs}\tNaN\t{orig_idx}")?;
-                }
-                NanPolicy::WriteEmptyCell => {
-                    // trailing tab; value intentionally empty
-                    writeln!(out, "{chr}\t{s_abs}\t{e_abs}\t\t{orig_idx}")?;
-                }
+        // start run
+        let run_start = i;
+        let v0 = round_to(cov[i] as f64, decimals);
+
+        let mut j = i + 1;
+        while j < b {
+            if !m.is_empty() && m[j] == 1 {
+                break;
             }
+            let vj = round_to(cov[j] as f64, decimals);
+            if vj != v0 {
+                break;
+            }
+            j += 1;
         }
-        Ok(())
-    };
 
-    for i in a..b {
-        let is_masked = mask.map(|m| m[i] == 1).unwrap_or(false);
-        if !is_masked {
-            let v = cov[i];
-            match run_kind {
-                None => {
-                    run_kind = Some(RunKind::Unmasked(v));
-                    run_start = i;
-                }
-                Some(RunKind::Unmasked(cur)) => {
-                    if v.to_bits() != cur.to_bits() {
-                        flush_unmasked(run_start, i, cur, out)?;
-                        run_kind = Some(RunKind::Unmasked(v));
-                        run_start = i;
-                    }
-                }
-                Some(RunKind::Masked) => {
-                    // close masked then start unmasked
-                    flush_masked(run_start, i, out)?;
-                    run_kind = Some(RunKind::Unmasked(v));
-                    run_start = i;
-                }
-            }
-        } else {
-            match run_kind {
-                None => {
-                    run_kind = Some(RunKind::Masked);
-                    run_start = i;
-                }
-                Some(RunKind::Masked) => { /* extend */ }
-                Some(RunKind::Unmasked(cur)) => {
-                    // close unmasked then start masked
-                    flush_unmasked(run_start, i, cur, out)?;
-                    run_kind = Some(RunKind::Masked);
-                    run_start = i;
-                }
-            }
-        }
-    }
+        // emit: chr  start  end  value  orig_idx
+        let s_abs = start_abs + run_start as u64;
+        let e_abs = start_abs + j as u64;
+        writeln!(
+            out,
+            "{}\t{}\t{}\t{}\t{}",
+            chr,
+            s_abs,
+            e_abs,
+            format_number_simplify(v0, decimals),
+            orig_idx
+        )?;
 
-    // flush tail
-    match run_kind {
-        Some(RunKind::Unmasked(v)) => flush_unmasked(run_start, b, v, out)?,
-        Some(RunKind::Masked) => flush_masked(run_start, b, out)?,
-        None => {}
+        i = j;
     }
 
     Ok(())

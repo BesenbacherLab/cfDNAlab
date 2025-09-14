@@ -217,7 +217,7 @@ mod pretty {
     }
 
     /// Sanitize help/long_help for a Command, its args, and all subcommands.
-    /// NOTE: Takes and RETURNS ownership to avoid borrow/move errors with clap's builder API.
+    /// **NOTE**: Takes and RETURNS ownership to avoid borrow/move errors with clap's builder API.
     fn sanitize_command(mut cmd: clap::Command) -> clap::Command {
         // Sanitize about / long_about (extract first to break borrows)
         if let Some(a) = cmd.get_about().map(|s| s.to_string()) {

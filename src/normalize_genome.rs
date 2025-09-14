@@ -82,7 +82,7 @@ pub struct NormalizeGenomeConfig {
     ///
     /// Larger values lead to a more smooth coverage across the genome.
     ///
-    /// NOTE: The normalizing scaling factors are calculated per stride-sized overlap
+    /// **NOTE**: The normalizing scaling factors are calculated per stride-sized overlap
     /// of these bins. Technically, we only count the coverage per stride-sized bin
     /// and then calculate the overlap with a triangular weighting scheme.
     #[cfg_attr(
@@ -92,7 +92,7 @@ pub struct NormalizeGenomeConfig {
 
     /// Size (bp) of stride [integer]
     ///
-    /// NOTE: `--bin_size` must be divisible by `stride`. I.e., `bin_size % stride` == 0`.
+    /// **NOTE**: `--bin_size` must be divisible by `stride`. I.e., `bin_size % stride` == 0`.
     ///
     /// A normalizing scaling factor is calculated per stride as the weighted average coverage of the overlapping large-scale bins.
     ///

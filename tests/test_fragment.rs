@@ -25,7 +25,7 @@ mod test_minimal_fragment {
     }
 
     /// Build a minimal BAM record with given fields.
-    /// NOTE: Depending on your rust-htslib version, you may need to tweak the `set` calls.
+    /// **NOTE**: Depending on your rust-htslib version, you may need to tweak the `set` calls.
     fn mk_rec(
         tid: i32,
         pos: i64,

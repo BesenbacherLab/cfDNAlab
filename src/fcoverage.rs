@@ -19,7 +19,6 @@ use crate::{
         blacklist::load_blacklists,
         coverage::{
             coverage_prefix::CoveragePrefix,
-            nan_policy::NanPolicy,
             tiled_run::{Tile, TileMode, add_fragment_clipped_to_core, windows_overlapping_core},
             window_results::CoverageWindowAction,
         },
@@ -80,6 +79,15 @@ pub struct FCoverageConfig {
     )]
     pub output_prefix: String,
 
+    /// Decimals to round coverage to when writing `[integer]`
+    ///
+    /// **NOTE**: When floating point precision is not needed,
+    /// all coverages are integers, we remove all decimal points!
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "2", value_parser = clap::value_parser!(u8).range(0..), help_heading="Core"))]
+    pub decimals: u8,
+
     /// Size of tiles to parallelize over `[integer]`
     ///
     /// Chromosomes are processed in tiles of this size to reduce memory usage.
@@ -99,7 +107,7 @@ pub struct FCoverageConfig {
     ///     - "positions": Get the positional coverage for the included windows only. I.e.,
     ///                    exclude all positions that do not overlap a window from the output.
     ///
-    /// NOTE: Ignored when no windows are specified.
+    /// **NOTE**: Ignored when no windows are specified.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -111,29 +119,6 @@ pub struct FCoverageConfig {
         )
     )]
     pub per_window: CoverageWindowAction,
-
-    /// How to write coverage in blacklisted positions in position-coverage outputs `[string]`
-    ///
-    /// Possible values:
-    ///
-    ///     - "drop": Drop the row from the output (default).
-    ///
-    ///     - "nan": Write an literal NaN string.
-    ///
-    ///     - "empty": Leave the cell empty.
-    ///
-    /// NOTE: Ignored when no blacklist(s) are specified or the output is window-aggregates.
-    #[cfg_attr(
-        feature = "cli",
-        clap(
-            long,
-            default_value = "drop",
-            value_parser,
-            ignore_case = true,
-            help_heading = "Core"
-        )
-    )]
-    pub nan_policy: NanPolicy,
 
     /// Ignore inter-mate gap `[flag]`
     ///
@@ -239,6 +224,17 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     let windowed = matches!(window_opt, WindowSpec::Bed(_));
     let masked = opt.blacklist.is_some();
 
+    // Get decimals to use
+    let decimals_to_use: i32 = if windowed {
+        match opt.per_window {
+            CoverageWindowAction::OnlyIncludeThesePositions => 0, // TODO: Change when corrections are implemented and enabled
+            CoverageWindowAction::Average | CoverageWindowAction::Total => opt.decimals as i32,
+        }
+    } else {
+        // Whole positional coverage
+        0 // TODO: Change when corrections are implemented and enabled
+    };
+
     let total_tiles = tiles.len();
 
     // Create progress bar
@@ -317,7 +313,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                 }
             };
 
-            let ctr = process_tile(&opt, tile, blacklist_chr, mode)?;
+            let ctr = process_tile(&opt, tile, blacklist_chr, mode, decimals_to_use)?;
             pb.inc(1);
             Ok(ctr)
         })
@@ -384,6 +380,8 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                                 partials_prefix,
                                 wchr.as_slice(),
                                 masked,
+                                opt.per_window,
+                                decimals_to_use,
                                 &mut w,
                             )?;
                         }
@@ -445,6 +443,7 @@ fn process_tile(
     tile: &Tile,
     blacklist_chr: &[(u64, u64)],
     mode: TileMode,
+    decimals: i32,
 ) -> Result<FCoverageCounters> {
     // Open a fresh BAM reader for this thread
     let (mut reader, _tid_check, _len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
@@ -568,7 +567,7 @@ fn process_tile(
                         0,
                         cov.len(),
                         tile.core_start as u64,
-                        opt.nan_policy,
+                        decimals,
                         &mut w,
                     )?;
                 }
@@ -590,7 +589,7 @@ fn process_tile(
                             b,
                             tile.core_start as u64,
                             original_idx,
-                            opt.nan_policy,
+                            decimals,
                             &mut w,
                         )?;
                     }
