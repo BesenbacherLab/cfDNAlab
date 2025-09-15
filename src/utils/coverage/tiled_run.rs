@@ -1,12 +1,10 @@
-use crate::utils::bam::Contigs;
 use crate::utils::coverage::coverage_prefix::CoveragePrefix;
-use crate::utils::coverage::window_results::CoverageWindowAction;
 use crate::utils::fragment::minimal_fragment::Fragment;
 use crate::utils::fragment::segment_fragment::FragmentWithSegments;
+use crate::utils::{bam::Contigs, coverage::window_results::CoverageWindowAction};
 use anyhow::{Context, Result};
 use rand::{Rng, distr::Alphanumeric};
-use std::io::BufRead;
-use std::io::{BufReader, BufWriter, Write};
+use std::io::{BufWriter, Write};
 
 /// A processing tile for one chromosome
 #[derive(Debug, Clone)]
@@ -20,35 +18,71 @@ pub struct Tile {
     pub fetch_end: u32,   // exclusive
 }
 
-/// Build non-overlapping core tiles with a fetch halo on each side
+/// Build non-overlapping core tiles with a fetch halo on each side.
+/// Optionally align cores to multiples of `align_bp` (e.g. --by-size).
 ///
+/// Alignment rule:
+/// - If `align_bp.is_some()` and `tile_bp / align_bp >= 10`, we round the tile size
+///   **down** to the nearest multiple of `align_bp`. This ensures tile core boundaries
+///   land exactly on bin boundaries, eliminating cross-boundary bins for most of the genome.
+/// - Otherwise, we keep `tile_bp` as-is.
+///
+/// Parameters
+/// ----------
 /// - tile_bp: target core size in bases (e.g. 20_000_000)
 /// - halo_bp: fetch extension on both sides (e.g. max_fragment_length)
+/// - align_bp: a fixed window size that tiles should align to
+///
+/// Returns
+/// -------
+///  - tiles:
+///     Vec of `Tile`s
+///
+///  - guaranteed_aligned:
+///     Whether the window edges are guaranteed to line up with the tile edges
 pub fn build_tiles(
     chromosomes: &[String],
     contigs: &Contigs,
     tile_bp: u32,
     halo_bp: u32,
-) -> anyhow::Result<Vec<Tile>> {
+    align_bp: Option<u64>,
+) -> anyhow::Result<(Vec<Tile>, bool)> {
     let mut tiles = Vec::new();
 
+    // Decide the effective core size in bases (possibly aligned)
+    let (effective_tile_bp, guaranteed_aligned) = match align_bp {
+        Some(bin_size) if bin_size > 0 && bin_size <= tile_bp as u64 => {
+            if (tile_bp as u64) % bin_size == 0 {
+                (tile_bp, true)
+            } else if (tile_bp as u64) / bin_size >= 10 {
+                let k = (tile_bp as u64) / bin_size;
+                ((k * bin_size) as u32, true) // Never drop below one bin
+            } else {
+                (tile_bp as u32, false)
+            }
+        }
+        _ => (tile_bp as u32, false),
+    };
+
     for chr in chromosomes {
-        let &(tid, chrom_len) = contigs
+        let &(tid, chrom_len_u32) = contigs
             .contigs
             .get(chr)
-            .ok_or_else(|| anyhow::anyhow!("missing contig info for '{}'", chr))?;
+            .ok_or_else(|| anyhow::anyhow!("missing contig for '{}'", chr))?;
+        let chrom_len = chrom_len_u32 as u32;
 
         let mut start = 0u32;
         let mut idx = 0u32;
         while start < chrom_len {
-            let core_end = (start.saturating_add(tile_bp)).min(chrom_len);
+            let core_end = (start.saturating_add(effective_tile_bp)).min(chrom_len);
 
+            // Halos do not need to be aligned; they are just fetch guards.
             let fetch_start = start.saturating_sub(halo_bp);
             let fetch_end = (core_end.saturating_add(halo_bp)).min(chrom_len);
 
             tiles.push(Tile {
                 chr: chr.clone(),
-                tid,
+                tid: tid as i32,
                 index: idx,
                 core_start: start,
                 core_end,
@@ -61,7 +95,19 @@ pub fn build_tiles(
         }
     }
 
-    Ok(tiles)
+    // Just in case we decide to move start of cores in the future
+    // We'll have an extensive debug test
+    #[cfg(debug_assertions)]
+    if let Some(bs) = align_bp {
+        if guaranteed_aligned {
+            for t in &tiles {
+                // Starts/ends of *cores* (not final chromosome end) line up on the grid
+                debug_assert_eq!((t.core_start as u64) % bs, 0);
+            }
+        }
+    }
+
+    Ok((tiles, guaranteed_aligned))
 }
 
 /// Add a possibly segmented fragment into a tile-local CoveragePrefix
@@ -119,17 +165,19 @@ pub enum TileMode<'w> {
         out_path: std::path::PathBuf,           // Per-tile file path
         indexed: bool,                          // Whether to save index
     },
-    /// Aggregate windows: write per-tile partials for later reduce
-    Aggregates {
-        windows: &'w [(u64, u64, u64)], // Per-chr windows
-        masked: bool,                   // Use masked counts/sums
-        out_path: std::path::PathBuf,   // Per-tile partials
+    AggregatesByBed {
+        windows: &'w [(u64, u64, u64)],    // Per-chr windows
+        masked: bool,                      // Use masked counts/sums
+        partials_out: std::path::PathBuf, // Cross-boundary windows (idx, sum, allowed, blacklisted)
+        cross_idx_out: std::path::PathBuf, // Sidecar listing crossers
     },
     AggregatesBySize {
-        window_bp: u64, // Fixed window size in bases
-        // chrom_len: u64,  // Chromosome length
-        masked: bool, // Use masked counts/sums
-        out_path: std::path::PathBuf,
+        window_bp: u64,                    // Fixed window size in bases
+        masked: bool,                      // Use masked counts/sums
+        finals_out: std::path::PathBuf,    // Final windows that do not need reducing
+        partials_out: std::path::PathBuf, // Cross-boundary windows (idx, sum, allowed, blacklisted)
+        cross_idx_out: std::path::PathBuf, // Sidecar listing crossers
+        guaranteed_aligned: bool, // Tiles and window_bp align, so write per-tile FINALS (no reducer needed)
     },
 }
 
@@ -222,211 +270,62 @@ pub fn merge_positional_tiles(
     Ok(final_path)
 }
 
-/// Reduce aggregate partials for a chromosome to final windows in order.
-///
-/// - `windows_chr`: same ordering used to assign `original_idx`
-/// - `masked`: if true, averages divide by *allowed*; otherwise by full span
-/// - `mode`: Average or Total
-/// - `decimals`: rounding applied to the emitted value (avg or total)
-pub fn reduce_aggregates_by_intervals_for_chr<W: Write>(
-    chr: &str,
+/// Concatenate compressed per-tile FINALS in chromosome/tile order.
+/// A small compressed header frame is written first, then we stream-copy the tile frames.
+/// This preserves full "concatenate zstd frames" behavior end-to-end.
+pub fn concat_aligned_size_tile_finals(
     temp_dir: &std::path::Path,
-    partial_prefix: &str, // e.g. "coverage.part"
-    windows_chr: &[(u64, u64, u64)],
-    masked: bool,
-    mode: CoverageWindowAction,
-    decimals: i32,
-    final_writer: &mut W,
-) -> Result<()> {
-    // Accumulators per window
-    let n = windows_chr.len();
-    let mut sum = vec![0.0_f64; n];
-    let mut allowed = vec![0u64; n];
-    let mut blacklisted = vec![0u64; n];
+    out_dir: &std::path::Path,
+    chromosomes: &[String],
+    per_tile_prefix: &str, // e.g., "<prefix>.fin"
+    final_name: &str,      // e.g., "<prefix>.avg.tsv.zst"
+    header_line: &str,     // single header line without trailing newline
+) -> Result<std::path::PathBuf> {
+    let final_path = out_dir.join(final_name);
+    let mut out = BufWriter::new(
+        std::fs::File::create(&final_path)
+            .with_context(|| format!("Creating {}", final_path.display()))?,
+    );
 
-    // Map global original_idx -> local index [0..n)
-    let idx_to_local: std::collections::HashMap<usize, usize> = windows_chr
-        .iter()
-        .enumerate()
-        .map(|(i, &(_s, _e, orig_idx))| (orig_idx as usize, i))
-        .collect();
+    // Write a compressed header frame first (so we never touch tile frames).
+    let mut header_bytes = header_line.as_bytes().to_vec();
+    header_bytes.push(b'\n');
+    let header_frame =
+        zstd::encode_all(&header_bytes[..], 3).context("Compressing header frame")?;
+    out.write_all(&header_frame)?;
 
-    // Collect partial files for this chr
-    let mut chr_files: Vec<(u32, std::path::PathBuf)> = Vec::new();
-    for entry in std::fs::read_dir(temp_dir)? {
-        let p = entry?.path();
-        if !p.is_file() {
-            continue;
+    // Then append each tile's compressed frame in genomic order
+    for chr in chromosomes {
+        // Collect tile files for this chromosome
+        let mut chr_files: Vec<(u32, std::path::PathBuf)> = Vec::new();
+        for entry in std::fs::read_dir(temp_dir)
+            .with_context(|| format!("Listing {}", temp_dir.display()))?
+        {
+            let path = entry?.path();
+            if !path.is_file() {
+                continue;
+            }
+            let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if fname.starts_with(per_tile_prefix) && fname.contains(&format!(".{chr}.")) {
+                if let Some(idx) = parse_tile_index(fname) {
+                    chr_files.push((idx, path));
+                }
+            }
         }
-        let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if !fname.starts_with(partial_prefix) || !fname.contains(&format!(".{chr}.")) {
-            continue;
-        }
-        if let Some(idx) = parse_tile_index(fname) {
-            chr_files.push((idx, p));
-        }
-    }
-    chr_files.sort_by_key(|(i, _)| *i);
+        chr_files.sort_by_key(|(i, _)| *i);
 
-    // Accumulate
-    for (_, path) in chr_files {
-        let f = std::fs::File::open(&path)?;
-        let dec = zstd::Decoder::new(f)?;
-        let r = BufReader::new(dec);
-        for line in r.lines() {
-            let line = line?;
-            // idx  sum  allowed  blacklisted
-            let mut it = line.split('\t');
-            let global_idx: usize = it.next().unwrap().parse()?;
-            let s: f64 = it.next().unwrap().parse()?;
-            let a: u64 = it.next().unwrap().parse()?;
-            let b: u64 = it.next().unwrap().parse()?;
-
-            // Translate global -> local per-chrom index
-            let local_idx = *idx_to_local.get(&global_idx).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Partial references unknown original_idx {} for chromosome {}",
-                    global_idx,
-                    chr
-                )
+        // Copy bytes verbatim (frame concatenation)
+        for (_i, p) in chr_files {
+            let mut f =
+                std::fs::File::open(&p).with_context(|| format!("Opening {}", p.display()))?;
+            std::io::copy(&mut f, &mut out).with_context(|| {
+                format!("Copying {} into {}", p.display(), final_path.display())
             })?;
-            sum[local_idx] += s;
-            allowed[local_idx] += a;
-            blacklisted[local_idx] += b;
         }
     }
 
-    // Emit rows in window order
-    for (i, &(window_start, window_end, _)) in windows_chr.iter().enumerate() {
-        let span = (window_end - window_start) as f64;
-
-        let value = match mode {
-            CoverageWindowAction::Average => {
-                if masked {
-                    let a = allowed[i] as f64;
-                    if a == 0.0 { 0.0 } else { sum[i] / a }
-                } else {
-                    if span == 0.0 { 0.0 } else { sum[i] / span }
-                }
-            }
-            CoverageWindowAction::Total => sum[i],
-            _ => unreachable!(),
-        };
-
-        let value = round_to(value, decimals);
-        writeln!(
-            final_writer,
-            "{}\t{}\t{}\t{}\t{}",
-            chr,
-            window_start,
-            window_end,
-            format_number_simplify(value, decimals),
-            blacklisted[i],
-        )?;
-    }
-
-    Ok(())
-}
-
-// Reducer for fixed-size windows that does not materialize window vectors.
-pub fn reduce_aggregates_by_size_for_chr<W: Write>(
-    chr: &str,
-    temp_dir: &std::path::Path,
-    partial_prefix: &str,
-    chrom_len: u64,
-    window_bp: u64,
-    masked: bool,
-    mode: CoverageWindowAction,
-    decimals: i32,
-    final_writer: &mut W,
-) -> Result<()> {
-    // Number of windows for this chromosome
-    let n = ((chrom_len + window_bp - 1) / window_bp) as usize;
-
-    // Accumulators per window
-    let mut sum = vec![0.0_f64; n];
-    let mut allowed = vec![0u64; n];
-    let mut blacklisted = vec![0u64; n];
-
-    // Collect partials for this chromosome in tile order
-    let mut chr_files: Vec<(u32, std::path::PathBuf)> = Vec::new();
-    for entry in std::fs::read_dir(temp_dir)? {
-        let p = entry?.path();
-        if !p.is_file() {
-            continue;
-        }
-        let fname = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if !fname.starts_with(partial_prefix) || !fname.contains(&format!(".{chr}.")) {
-            continue;
-        }
-        if let Some(idx) = parse_tile_index(fname) {
-            chr_files.push((idx, p));
-        }
-    }
-    chr_files.sort_by_key(|(i, _)| *i);
-
-    // Accumulate by window start
-    for (_, path) in chr_files {
-        let f = std::fs::File::open(&path)?;
-        let dec = zstd::Decoder::new(f)?;
-        let r = std::io::BufReader::new(dec);
-        for line in r.lines() {
-            let line = line?;
-            let mut it = line.split('\t');
-
-            // start  end  sum  allowed  blacklisted
-            let ws: u64 = it.next().unwrap().parse()?;
-            let we: u64 = it.next().unwrap().parse()?;
-            let s: f64 = it.next().unwrap().parse()?;
-            let a: u64 = it.next().unwrap().parse()?;
-            let b: u64 = it.next().unwrap().parse()?;
-
-            // Map by window index computed from start
-            let idx = (ws / window_bp) as usize;
-
-            // Optional sanity checks
-            debug_assert!(ws < we);
-            debug_assert!(we == (ws + window_bp).min(chrom_len));
-            debug_assert!(idx < n);
-
-            sum[idx] += s;
-            allowed[idx] += a;
-            blacklisted[idx] += b;
-        }
-    }
-
-    // Emit in window order
-    for i in 0..n {
-        let ws = (i as u64) * window_bp;
-        let we = ((i as u64 + 1) * window_bp).min(chrom_len);
-        let span = (we - ws) as f64;
-
-        let value = match mode {
-            CoverageWindowAction::Average => {
-                if masked {
-                    let a = allowed[i] as f64;
-                    if a == 0.0 { 0.0 } else { sum[i] / a }
-                } else {
-                    if span == 0.0 { 0.0 } else { sum[i] / span }
-                }
-            }
-            CoverageWindowAction::Total => sum[i],
-            _ => unreachable!(),
-        };
-
-        let value = round_to(value, decimals);
-        writeln!(
-            final_writer,
-            "{}\t{}\t{}\t{}\t{}",
-            chr,
-            ws,
-            we,
-            format_number_simplify(value, decimals),
-            blacklisted[i],
-        )?;
-    }
-
-    Ok(())
+    out.flush()?;
+    Ok(final_path)
 }
 
 pub fn adapt_fetch_to_extreme_windows(
@@ -487,7 +386,7 @@ pub fn adapt_fetch_to_extreme_windows(
         }
 
         // Aggregates: same narrowing as windowed positional
-        TileMode::Aggregates { windows: wchr, .. } => {
+        TileMode::AggregatesByBed { windows: wchr, .. } => {
             let mut found = false;
             let mut min_ws: u64 = u64::MAX;
             let mut max_we: u64 = 0;
@@ -585,7 +484,7 @@ pub fn make_temp_dir(
 }
 
 // Round to number of decimals
-fn round_to(x: f64, decimals: i32) -> f64 {
+pub fn round_to(x: f64, decimals: i32) -> f64 {
     if decimals <= 0 {
         return x.round();
     }
@@ -594,7 +493,7 @@ fn round_to(x: f64, decimals: i32) -> f64 {
 }
 
 // Format as compactly as possible
-fn format_number_simplify(v: f64, decimals: i32) -> String {
+pub fn format_number_simplify(v: f64, decimals: i32) -> String {
     // For integer formatting, don't trim trailing zeros from values like "30"
     if decimals <= 0 {
         let s = format!("{:.0}", v);
@@ -759,4 +658,79 @@ pub fn emit_windowed_runs<W: Write>(
     }
 
     Ok(())
+}
+
+/// Sum coverage, respecting masked mode
+#[inline]
+pub fn tile_sum_and_counts(
+    a: usize,
+    b: usize,
+    masked: bool,
+    ps_all: &[f64],
+    ps_allow: Option<&[f64]>,
+    cnt_allow: Option<&[u32]>,
+    mask: Option<&[u8]>,
+) -> (f64, u64, u64) {
+    let sum = if masked {
+        if let Some(pa) = ps_allow {
+            pa[b] - pa[a]
+        } else {
+            ps_all[b] - ps_all[a]
+        }
+    } else {
+        ps_all[b] - ps_all[a]
+    };
+
+    let span = (b - a) as u64;
+
+    let allowed = if masked {
+        if let Some(cnt) = cnt_allow {
+            (cnt[b] - cnt[a]) as u64
+        } else if let Some(m) = mask {
+            // Fall back to a tiny scan if count psum is absent
+            let mut ok = 0u64;
+            for i in a..b {
+                if m[i] == 0 {
+                    ok += 1;
+                }
+            }
+            ok
+        } else {
+            span
+        }
+    } else {
+        span
+    };
+
+    let blacklisted = span - allowed;
+    (sum, allowed, blacklisted)
+}
+
+#[inline]
+pub fn finalize_value(
+    sum: f64,
+    allowed_positions: u64,
+    unmasked_span_bp: u64, // end-start when unmasked mode; ignored when masked mode
+    masked: bool,
+    mode: &CoverageWindowAction,
+) -> f64 {
+    match mode {
+        CoverageWindowAction::Average => {
+            if masked {
+                if allowed_positions == 0 {
+                    0.0
+                } else {
+                    sum / allowed_positions as f64
+                }
+            } else {
+                if unmasked_span_bp == 0 {
+                    0.0
+                } else {
+                    sum / unmasked_span_bp as f64
+                }
+            }
+        }
+        CoverageWindowAction::Total => sum,
+        _ => unreachable!(),
+    }
 }

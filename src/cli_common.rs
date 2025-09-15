@@ -5,7 +5,7 @@ use std::{path::PathBuf, str::FromStr};
 
 /// Args for in-/output and core (threads).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IOCArgs {
     /// Indexed, coordinate-sorted BAM input file `[path]`
     #[cfg_attr(
@@ -48,7 +48,7 @@ pub struct IOCArgs {
 
 /// Args for setting minimum and maximum fragment length.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FragmentLengthArgs {
     /// Minimum fragment length to include `[integer]`
     #[cfg_attr(

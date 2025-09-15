@@ -4,16 +4,21 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::io::Write;
-use std::{collections::HashMap, fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
+use std::{fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
 
 use crate::cli_common::ScaleGenomeArgs;
 use crate::utils::bam::bam_contigs_info;
+use crate::utils::coverage::reducer::{
+    reduce_aggregates_by_size_with_cross_index_for_chr, reduce_bed_with_cross_index_for_chr,
+};
 use crate::utils::coverage::scale_genome::{apply_scaling_in_place, load_scaling_factors_tsv};
 use crate::utils::coverage::tiled_run::{
-    adapt_fetch_to_extreme_windows, build_tiles, emit_bedgraph_runs, emit_windowed_runs,
-    make_temp_dir, merge_positional_tiles, reduce_aggregates_by_intervals_for_chr,
-    reduce_aggregates_by_size_for_chr,
+    adapt_fetch_to_extreme_windows, build_tiles, concat_aligned_size_tile_finals,
+    emit_bedgraph_runs, emit_windowed_runs, finalize_value, format_number_simplify, make_temp_dir,
+    merge_positional_tiles, round_to, tile_sum_and_counts,
 };
+use crate::utils::fragment::segment_fragment::FragmentWithSegments;
+use crate::utils::fragment_iterator::fragments_with_segments_from_bam;
 use crate::{
     cli_common::{ChromosomeArgs, FragmentLengthArgs, IOCArgs, WindowSpec, WindowsArgs},
     counters::FCoverageCounters,
@@ -26,7 +31,6 @@ use crate::{
             tiled_run::{Tile, TileMode, add_fragment_clipped_to_core, windows_overlapping_core},
             window_results::CoverageWindowAction,
         },
-        fragment::segment_fragment::{SegmentedReadInfo, collect_fragment_with_segments},
     },
 };
 
@@ -68,6 +72,7 @@ use crate::{
 /// This directory is deleted at the end of the run. If the software is disrupted, the directory
 /// may be left behind.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Clone)]
 pub struct FCoverageConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     ioc: IOCArgs,
@@ -210,7 +215,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
         println!("Start: Loading blacklists");
         load_blacklists(beds, 1, &chromosomes)?
     } else {
-        HashMap::new()
+        FxHashMap::default()
     };
 
     // Load windows from BED file
@@ -225,9 +230,9 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                 // Merge in-place to avoid double memory-usage
                 println!("Start: Merging overlapping/touching windows");
                 // Take ownership so we can remove entries by chromosome
-                let mut wds_owned: HashMap<String, crate::utils::bed::Windows> = wds;
-                let mut out: HashMap<String, crate::utils::bed::Windows> =
-                    HashMap::with_capacity(wds_owned.len());
+                let mut wds_owned: FxHashMap<String, crate::utils::bed::Windows> = wds;
+                let mut out: FxHashMap<String, crate::utils::bed::Windows> =
+                    FxHashMap::with_capacity_and_hasher(wds_owned.len(), Default::default());
                 let mut next_idx: u64 = 0;
 
                 // Use the user-provided `chromosomes` order to assign indices deterministically
@@ -263,7 +268,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
 
     // Some actions cannot be used with `--by-size`
     if matches!(window_opt, WindowSpec::Size(_))
-        & matches!(
+        && matches!(
             opt.per_window,
             CoverageWindowAction::OnlyIncludeThesePositionsUnique
                 | CoverageWindowAction::OnlyIncludeThesePositionsIndexed
@@ -275,17 +280,26 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     // Build temporary directory
     let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
 
-    let halo_bp: u32 = opt.fragment_lengths.max_fragment_length; // safe halo for pairing/segments
+    // Window size when --by-size (otherwise None)
+    let by_size_bp: Option<u64> = match &window_opt {
+        WindowSpec::Size(bp) => Some(*bp as u64),
+        _ => None,
+    };
 
-    let tiles = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp)?;
+    // Build tiles
+    let halo_bp: u32 = opt.fragment_lengths.max_fragment_length; // safe halo for pairing/segments
+    let (tiles, tile_and_window_boundaries_align) =
+        build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, by_size_bp)?;
 
     // Where per-tile files go
     let positional_prefix = format!("{prefix}.pos");
     let partials_prefix = format!("{prefix}.part");
+    let finals_prefix = format!("{prefix}.fin");
 
     // Faster to convert to &str once
     let positional_prefix = positional_prefix.as_str();
     let partials_prefix = partials_prefix.as_str();
+    let finals_prefix = finals_prefix.as_str();
 
     // Create filenames of final outputs
     let final_bedgraph_pos_name = format!("{prefix}.per_position.bedgraph.zst");
@@ -374,6 +388,26 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                 idx = tile.index
             ));
 
+            // Windowed tmp outputs for faster reducer later on
+            let partials_out = temp_dir.join(format!(
+                "{prefix}.{chr}.{idx}.{extensions}",
+                prefix = partials_prefix,
+                chr = tile.chr,
+                idx = tile.index
+            ));
+            let cross_idx_out = temp_dir.join(format!(
+                "{prefix}.cross.{chr}.{idx}.cross.zst", // Needs this extension!
+                prefix = partials_prefix,
+                chr = tile.chr,
+                idx = tile.index
+            ));
+            let finals_out = temp_dir.join(format!(
+                "{prefix}.{chr}.{idx}.{extensions}",
+                prefix = finals_prefix,
+                chr = tile.chr,
+                idx = tile.index
+            ));
+
             let mode = if !windowed {
                 TileMode::Positional {
                     windows: None,
@@ -402,10 +436,11 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                         CoverageWindowAction::Average | CoverageWindowAction::Total,
                     ) => {
                         let wchr = windows_chr.expect("windows required for aggregates");
-                        TileMode::Aggregates {
+                        TileMode::AggregatesByBed {
                             windows: wchr,
                             masked,
-                            out_path,
+                            partials_out,
+                            cross_idx_out,
                         }
                     }
                     (
@@ -414,7 +449,10 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                     ) => TileMode::AggregatesBySize {
                         window_bp: *size,
                         masked,
-                        out_path,
+                        finals_out,
+                        partials_out,
+                        cross_idx_out,
+                        guaranteed_aligned: tile_and_window_boundaries_align,
                     },
                     _ => {
                         anyhow::bail!(
@@ -487,33 +525,36 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                     CoverageWindowAction::Total => final_total_name.as_str(),
                     _ => unreachable!(),
                 });
-                let file = std::fs::File::create(&final_path)?;
-                let mut enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
-                enc.multithread(opt.ioc.n_threads as u32).ok();
-                let mut w = std::io::BufWriter::new(enc.auto_finish());
 
-                // Header
-
+                // Header value-column name
                 let value_col = match opt.per_window {
                     CoverageWindowAction::Average => "avg_coverage",
                     CoverageWindowAction::Total => "total_coverage",
                     _ => unreachable!(),
                 };
-                writeln!(
-                    w,
+
+                let header = format!(
                     "chromosome\tstart\tend\t{}\tblacklisted_positions",
                     value_col
-                )?;
+                );
 
                 // Reduce by window source
                 match &window_opt {
                     WindowSpec::Bed(_) => {
+                        let file = std::fs::File::create(&final_path)?;
+                        let mut enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
+                        enc.multithread(opt.ioc.n_threads as u32).ok();
+                        let mut w = std::io::BufWriter::new(enc.auto_finish());
+
+                        // Write header
+                        writeln!(w, "{}", header)?;
+
                         let win_map = windows_map
                             .as_ref()
                             .expect("windows_map present for --by-bed");
                         for chr in &chromosomes {
                             if let Some(wchr) = win_map.get(chr) {
-                                reduce_aggregates_by_intervals_for_chr(
+                                reduce_bed_with_cross_index_for_chr(
                                     chr,
                                     &temp_dir,
                                     partials_prefix,
@@ -525,29 +566,48 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                                 )?;
                             }
                         }
+                        w.flush()?;
                     }
-                    WindowSpec::Size(size_bp) => {
-                        let wbp = *size_bp as u64;
-                        for chr in &chromosomes {
-                            // TODO: Improve data structure so we can get_length(), get_tid() directly on outer Contigs
-                            let chrom_len = contigs.contigs.get(chr).unwrap().1 as u64;
-                            reduce_aggregates_by_size_for_chr(
-                                chr,
+                    WindowSpec::Size(_) => {
+                        if tile_and_window_boundaries_align {
+                            let _ = concat_aligned_size_tile_finals(
                                 &temp_dir,
-                                partials_prefix,
-                                chrom_len,
-                                wbp,
-                                masked,
-                                opt.per_window,
-                                decimals_to_use,
-                                &mut w,
+                                &opt.ioc.output_dir,
+                                &chromosomes,
+                                finals_prefix,
+                                match opt.per_window {
+                                    CoverageWindowAction::Average => final_avg_name.as_str(),
+                                    CoverageWindowAction::Total => final_total_name.as_str(),
+                                    _ => unreachable!(),
+                                },
+                                &header,
                             )?;
+                        } else {
+                            let file = std::fs::File::create(&final_path)?;
+                            let mut enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
+                            enc.multithread(opt.ioc.n_threads as u32).ok();
+                            let mut w = std::io::BufWriter::new(enc.auto_finish());
+
+                            // Write header
+                            writeln!(w, "{}", header)?;
+
+                            for chr in &chromosomes {
+                                reduce_aggregates_by_size_with_cross_index_for_chr(
+                                    chr,
+                                    &temp_dir,
+                                    partials_prefix,
+                                    masked,
+                                    opt.per_window,
+                                    decimals_to_use,
+                                    &mut w,
+                                )?;
+                            }
+                            w.flush()?;
                         }
                     }
                     _ => unreachable!(),
                 }
 
-                w.flush()?;
                 final_path
             }
         }
@@ -582,10 +642,6 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
             * 100.0,
         global_counter.accepted_forward,
         global_counter.accepted_reverse
-    );
-    println!(
-        "  Out-of-length-range-excluded fragments: {}",
-        global_counter.illegal_length_fragments
     );
     // if opt.gc.bin_by_gc {
     //     println!("GC-excluded reads: {}", global_counter.gc_excl);
@@ -631,56 +687,39 @@ fn process_tile(
     let core_len = tile.core_end - tile.core_start;
     let mut cp = CoveragePrefix::initialize_coverage_prefix(core_len);
 
-    // Mate-pair stash keyed by qname
-    let mut stash: FxHashMap<Vec<u8>, SegmentedReadInfo> = FxHashMap::default();
-
-    // Iterate BAM records limited to fetch
-    for res in reader.records() {
-        let rec = res.context("reading bam record")?;
-        counter.total_reads += 1;
-
-        // Filter read using your existing policy
-        if !include_read(&rec, opt) {
-            continue;
+    // Function for filtering fragments after pairing
+    // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
+    let fragment_filter = {
+        let min_len = opt.fragment_lengths.min_fragment_length;
+        let max_len = opt.fragment_lengths.max_fragment_length;
+        move |f: &FragmentWithSegments| {
+            let len = f.len();
+            len >= min_len && len <= max_len
         }
+    };
 
-        match rec.is_reverse() {
-            true => counter.accepted_reverse += 1,
-            false => counter.accepted_forward += 1,
-        }
+    // Wrap to use opt
+    let include_read_fn = {
+        let opt = (*opt).clone();
+        move |r: &Record| include_read(r, &opt)
+    };
 
-        // Pair with mate if present in the stash
-        if let Some(mate) = stash.remove(rec.qname()) {
-            // Build a fragment with or without inter-mate gap
-            let maybe_frag = collect_fragment_with_segments(
-                &SegmentedReadInfo::from(&rec),
-                &mate,
-                1, // trigger_min_gap_bp (you can surface this in config)
-                !opt.ignore_gap,
-            );
-            let Some(fragment) = maybe_frag else {
-                continue;
-            };
+    let mut iter = fragments_with_segments_from_bam(
+        reader.records().map(|r| r.map_err(anyhow::Error::from)),
+        include_read_fn,
+        1,
+        !opt.ignore_gap,
+        fragment_filter,
+    )
+    .with_local_counters();
 
-            counter.collected_fragments += 1;
+    // Iterate fragments and add coverage
+    for fragment_res in iter.by_ref() {
+        let fragment = fragment_res.context("reading fragment")?;
+        counter.counted_fragments += 1;
 
-            // Length filter on the final fragment span
-            let fragment_length = fragment.len();
-            if fragment_length < opt.fragment_lengths.min_fragment_length
-                || fragment_length > opt.fragment_lengths.max_fragment_length
-            {
-                counter.illegal_length_fragments += 1;
-                continue;
-            }
-
-            counter.counted_fragments += 1;
-
-            // Clip and add to tile core coverage (segments respected)
-            add_fragment_clipped_to_core(&mut cp, &fragment, 1.0, tile.core_start, tile.core_end)?;
-        } else {
-            // Stash for later pairing
-            stash.insert(rec.qname().to_vec(), SegmentedReadInfo::from(&rec));
-        }
+        // Clip and add to tile core coverage (segments respected)
+        add_fragment_clipped_to_core(&mut cp, &fragment, 1.0, tile.core_start, tile.core_end)?;
     }
 
     // Finalize coverage
@@ -692,6 +731,9 @@ fn process_tile(
             apply_scaling_in_place(cov_mut, tile.core_start, scaling_chr);
         }
     }
+
+    // Get counters from iterator
+    counter.add_from_snapshot(iter.counters_snapshot());
 
     match mode {
         TileMode::Positional {
@@ -772,87 +814,84 @@ fn process_tile(
             w.flush()?;
         }
 
-        TileMode::Aggregates {
+        TileMode::AggregatesByBed {
             windows,
             masked,
-            out_path,
+            partials_out,
+            cross_idx_out,
         } => {
-            // Add blacklist late and clipped to the tile core to minimize memory
-            // Use binary search to jump to the first overlapping interval
+            // Add blacklist (clipped) and build indexes once
             add_clipped_blacklist_to_cp(&mut cp, &tile, masked, blacklist_chr)?;
-
-            // Build prefix-sum indexes for fast per-window queries
             cp.build_query_index()?;
 
-            // Own everything we need so we don't hold borrows on `cp`
-            let psum_all_owned = cp.get_psum_all().ok_or_else(|| {
-                anyhow::anyhow!("psum_all missing; build_query_index() should have populated it")
-            })?;
+            // Borrow indexes and mask once
+            let psum_all_owned = cp
+                .get_psum_all()
+                .ok_or_else(|| anyhow::anyhow!("psum_all missing"))?;
             let psum_allowed_owned = cp.get_psum_allowed();
             let cnt_allowed_ps_owned = cp.get_psum_allowed_count();
             let mask_owned: Option<Vec<u8>> = cp.blacklist_mask().map(|m| m.to_vec());
 
-            // Use slices for indexing
-            let psum_all: &[f64] = &psum_all_owned;
-            let psum_allowed: Option<&[f64]> = psum_allowed_owned.as_deref();
-            let cnt_allowed_ps: Option<&[u32]> = cnt_allowed_ps_owned.as_deref();
+            let ps_all: &[f64] = &psum_all_owned;
+            let ps_allow: Option<&[f64]> = psum_allowed_owned.as_deref();
+            let cnt_allow: Option<&[u32]> = cnt_allowed_ps_owned.as_deref();
             let mask: Option<&[u8]> = mask_owned.as_deref();
 
-            // Write per-tile partials: idx, sum, allowed_count, blacklisted_count
-            let file = std::fs::File::create(out_path)?;
-            let enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
-            let mut w = std::io::BufWriter::new(enc.auto_finish());
+            // Writers: compressed partials and cross sidecar
+            let mut w_part = {
+                let file = std::fs::File::create(partials_out)?;
+                let enc = zstd::Encoder::new(file, 3)?;
+                std::io::BufWriter::new(enc.auto_finish())
+            };
 
-            for &(window_start, window_end, original_idx) in
-                windows_overlapping_core(windows, tile.core_start, tile.core_end)
+            let mut w_cross = {
+                let file = std::fs::File::create(cross_idx_out)?;
+                let enc = zstd::Encoder::new(file, 3)?;
+                std::io::BufWriter::new(enc.auto_finish())
+            };
+
+            let cs = tile.core_start as u64;
+            let ce = tile.core_end as u64;
+
+            // Walk only windows overlapping the core (already start-sorted)
+            for &(ws, we, idx) in windows_overlapping_core(windows, tile.core_start, tile.core_end)
             {
-                let s = (window_start as u32).max(tile.core_start);
-                let e = (window_end as u32).min(tile.core_end);
-                let a_us = (s - tile.core_start) as usize;
-                let b_us = (e - tile.core_start) as usize;
+                let s = (ws as u32).max(tile.core_start);
+                let e = (we as u32).min(tile.core_end);
+                let a = (s - tile.core_start) as usize;
+                let b = (e - tile.core_start) as usize;
+                if b <= a {
+                    continue;
+                }
 
-                // Sum coverage via prefix sums (avoid calling cp.sum_coverage here)
-                let sum = if masked {
-                    if let Some(pa) = psum_allowed {
-                        pa[b_us] - pa[a_us]
-                    } else {
-                        // No blacklist present -> allowed == all
-                        psum_all[b_us] - psum_all[a_us]
-                    }
-                } else {
-                    psum_all[b_us] - psum_all[a_us]
-                };
+                // Classify as internal (fully inside core) vs boundary (crosses tile core boundary)
+                let crosses_boundary = !(ws >= cs && we <= ce);
 
-                // Allowed positions count
-                let allowed: u64 = if masked {
-                    if let Some(cnt) = cnt_allowed_ps {
-                        (cnt[b_us] - cnt[a_us]) as u64
-                    } else if let Some(m) = mask {
-                        let mut ok = 0u64;
-                        for i in a_us..b_us {
-                            if m[i] == 0 {
-                                ok += 1;
-                            }
-                        }
-                        ok
-                    } else {
-                        (b_us - a_us) as u64
-                    }
-                } else {
-                    (b_us - a_us) as u64
-                };
+                // Sum coverage, respecting masked mode
+                let (sum, allowed, blacklisted) =
+                    tile_sum_and_counts(a, b, masked, ps_all, ps_allow, cnt_allow, mask);
 
-                let blacklisted = (b_us - a_us) as u64 - allowed;
-
-                writeln!(w, "{}\t{}\t{}\t{}", original_idx, sum, allowed, blacklisted)?;
+                // Always write a partial row; reducer will emit in orig_idx order
+                // Internal windows won’t appear in the cross-index -> reducer expects 1 contribution
+                // Boundary windows will appear in each crossed tile’s cross-index -> reducer expects N
+                writeln!(w_part, "{}\t{}\t{}\t{}", idx, sum, allowed, blacklisted)?;
+                if crosses_boundary {
+                    // Cross-index lists the window’s orig_idx for the reducer
+                    writeln!(w_cross, "{}", idx)?;
+                }
             }
-            w.flush()?;
+
+            w_part.flush()?;
+            w_cross.flush()?;
         }
 
         TileMode::AggregatesBySize {
             window_bp,
             masked,
-            out_path,
+            finals_out,
+            partials_out,
+            cross_idx_out,
+            guaranteed_aligned,
         } => {
             // Add blacklist late and clipped to the tile core to minimize memory
             // Use binary search to jump to the first overlapping interval
@@ -861,7 +900,7 @@ fn process_tile(
             // Build prefix-sum indexes for fast per-window queries
             cp.build_query_index()?;
 
-            // Own copies of the prefix arrays and optional mask to avoid long-lived borrows.
+            // Own copies of the prefix arrays and optional mask to avoid long-lived borrows
             let psum_all_owned = cp.get_psum_all().ok_or_else(|| {
                 anyhow::anyhow!("psum_all missing; build_query_index() should have populated it")
             })?;
@@ -874,68 +913,105 @@ fn process_tile(
             let cnt_allow: Option<&[u32]> = cnt_allowed_ps_owned.as_deref();
             let mask: Option<&[u8]> = mask_owned.as_deref();
 
-            // Prepare zstd-compressed per-tile partials writer
-            let file = std::fs::File::create(out_path)?;
-            let enc = zstd::Encoder::new(file, 3)?; // Level 3 fast
-            let mut w = std::io::BufWriter::new(enc.auto_finish());
-
             // Determine the fixed-size windows that overlap the tile core
             let cs = tile.core_start as u64;
             let ce = tile.core_end as u64;
             let k_lo = cs / window_bp;
             let k_hi = (ce.saturating_sub(1)) / window_bp;
 
-            for k in k_lo..=k_hi {
-                let ws = k * window_bp;
-                let we = ((k + 1) * window_bp).min(chrom_len);
+            if guaranteed_aligned {
+                // FAST PATH: Every bin that touches the core is fully contained in this core
+                // We compute the FINAL value here and write it once. No reducer later
 
-                // Intersect window with the tile core
-                let s_abs = ws.max(cs) as u32;
-                let e_abs = we.min(ce) as u32;
-                if e_abs <= s_abs {
-                    continue;
+                let mut w_fin = {
+                    let file = std::fs::File::create(finals_out)?;
+                    let enc = zstd::Encoder::new(file, 3)?;
+                    std::io::BufWriter::new(enc.auto_finish())
+                };
+
+                for k in k_lo..=k_hi {
+                    let bin_start = k * window_bp;
+                    let bin_end = (k + 1) * window_bp;
+
+                    // Intersect with core (alignment ensures this equals the bin for non-terminal tiles).
+                    let s_abs = (bin_start).max(cs) as u32;
+                    let e_abs = (bin_end).min(ce) as u32;
+                    if e_abs <= s_abs {
+                        continue;
+                    }
+
+                    let a = (s_abs - tile.core_start) as usize;
+                    let b = (e_abs - tile.core_start) as usize;
+
+                    // Sum coverage, respecting masked mode
+                    let (sum, allowed, blacklisted) =
+                        tile_sum_and_counts(a, b, masked, ps_all, ps_allow, cnt_allow, mask);
+
+                    // Compute final value now
+                    let unmasked_span_bp = (e_abs - s_abs) as u64;
+                    let value =
+                        finalize_value(sum, allowed, unmasked_span_bp, masked, &opt.per_window);
+                    let value = round_to(value, decimals);
+
+                    // Emit FINAL row: chromosome  start  end  value  blacklisted_positions
+                    writeln!(
+                        w_fin,
+                        "{}\t{}\t{}\t{}\t{}",
+                        tile.chr,
+                        bin_start,
+                        bin_end.min(ce), // Clamp last bin to chrom end
+                        format_number_simplify(value, decimals),
+                        blacklisted
+                    )?;
                 }
-                let a_us = (s_abs - tile.core_start) as usize;
-                let b_us = (e_abs - tile.core_start) as usize;
 
-                // Sum coverage via prefix sums, honoring masked mode when requested
-                let sum = if masked {
-                    if let Some(pa) = ps_allow {
-                        pa[b_us] - pa[a_us]
-                    } else {
-                        ps_all[b_us] - ps_all[a_us]
-                    }
-                } else {
-                    ps_all[b_us] - ps_all[a_us]
+                w_fin.flush()?;
+            } else {
+                let mut w_part = {
+                    let file = std::fs::File::create(&partials_out)?;
+                    let enc = zstd::Encoder::new(file, 3)?;
+                    std::io::BufWriter::new(enc.auto_finish())
                 };
 
-                // Count allowed positions for averages
-                let allowed: u64 = if masked {
-                    if let Some(cnt) = cnt_allow {
-                        (cnt[b_us] - cnt[a_us]) as u64
-                    } else if let Some(m) = mask {
-                        let mut ok = 0u64;
-                        for i in a_us..b_us {
-                            if m[i] == 0 {
-                                ok += 1;
-                            }
-                        }
-                        ok
-                    } else {
-                        (b_us - a_us) as u64
-                    }
-                } else {
-                    (b_us - a_us) as u64
+                let mut w_cross = {
+                    let file = std::fs::File::create(&cross_idx_out)?;
+                    let enc = zstd::Encoder::new(file, 3)?;
+                    std::io::BufWriter::new(enc.auto_finish())
                 };
 
-                let blacklisted = (b_us - a_us) as u64 - allowed;
+                for k in k_lo..=k_hi {
+                    let bin_start = k * window_bp;
+                    let bin_end = (k + 1) * window_bp;
 
-                // Write partials keyed by coordinates so the reducer can merge by (chr, start)
-                // Columns: start  end  sum  allowed  blacklisted
-                writeln!(w, "{}\t{}\t{}\t{}\t{}", ws, we, sum, allowed, blacklisted)?;
+                    let s_abs = (bin_start).max(cs) as u32;
+                    let e_abs = (bin_end).min(ce) as u32;
+                    if e_abs <= s_abs {
+                        continue;
+                    }
+
+                    let a = (s_abs - tile.core_start) as usize;
+                    let b = (e_abs - tile.core_start) as usize;
+
+                    // Sum coverage, respecting masked mode
+                    let (sum, allowed, blacklisted) =
+                        tile_sum_and_counts(a, b, masked, ps_all, ps_allow, cnt_allow, mask);
+
+                    // PARTIAL row: start  end  sum  allowed  blacklisted
+                    writeln!(
+                        w_part,
+                        "{}\t{}\t{}\t{}\t{}",
+                        bin_start, bin_end, sum, allowed, blacklisted
+                    )?;
+
+                    // Mark cross-boundary bins (not fully inside the core) so reducer expects >1 contributions
+                    let fully_inside = (bin_start >= cs) && (bin_end <= ce);
+                    if !fully_inside {
+                        writeln!(w_cross, "{}", bin_start)?;
+                    }
+                }
+                w_part.flush()?;
+                w_cross.flush()?;
             }
-
-            w.flush()?;
         }
     }
 
