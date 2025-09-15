@@ -1,6 +1,7 @@
 use crate::utils::bed::load_windows_from_bed;
 use anyhow::Result;
-use std::{collections::HashMap, path::Path};
+use fxhash::FxHashMap;
+use std::path::Path;
 
 // TODO: Test properly loaded, concatenated and sorted
 
@@ -18,8 +19,8 @@ pub fn load_blacklists<P: AsRef<Path>>(
     beds: &[P],
     min_size: u64,
     chromosomes: &Vec<String>,
-) -> Result<HashMap<String, Vec<(u64, u64)>>> {
-    let mut merged: HashMap<String, Vec<(u64, u64)>> = HashMap::new();
+) -> Result<FxHashMap<String, Vec<(u64, u64)>>> {
+    let mut merged: FxHashMap<String, Vec<(u64, u64)>> = FxHashMap::default();
     let filter_fn = move |_chr: &str, s: u64, e: u64| (e - s) >= min_size;
 
     // Load each BED file

@@ -2,7 +2,6 @@ use anyhow::{Context, Result, ensure};
 use fxhash::{FxHashMap, FxHashSet};
 use std::fs::File;
 use std::{
-    collections::HashMap,
     io::{BufRead, BufReader},
     path::Path,
 };
@@ -26,7 +25,7 @@ pub fn load_windows_from_bed(
     bed: impl AsRef<Path>,
     chromosomes: &Vec<String>,
     filter_fn: Option<&dyn Fn(&str, u64, u64) -> bool>,
-) -> Result<HashMap<String, Windows>> {
+) -> Result<FxHashMap<String, Windows>> {
     let f = File::open(bed.as_ref()).context("Opening BED file with windows/intervals")?; // Works with &Path, PathBuf, &str
     let mut reader = BufReader::with_capacity(1 << 20, f);
 
@@ -127,7 +126,7 @@ pub fn load_windows_from_bed(
     }
 
     // Convert to Windows collections (Windows::new sorts internally).
-    let windows_mapping: HashMap<String, Windows> = vec_mapping
+    let windows_mapping: FxHashMap<String, Windows> = vec_mapping
         .into_iter()
         .map(|(chr, v)| (chr.to_string(), Windows::new(v)))
         .collect();

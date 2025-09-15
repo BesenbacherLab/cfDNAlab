@@ -18,7 +18,6 @@ use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{
-    collections::HashMap,
     fs::{File, create_dir_all},
     io::{BufWriter, Write},
     path::PathBuf,
@@ -162,7 +161,7 @@ pub fn run(opt: GCConfig) -> Result<()> {
         println!("Start: Loading blacklists");
         load_blacklists(beds, 1, &chromosomes)?
     } else {
-        HashMap::new()
+        FxHashMap::default()
     };
 
     // Load windows from BED file
