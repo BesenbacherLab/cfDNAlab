@@ -214,9 +214,6 @@ pub fn parse_tile_index(file_name: &str) -> Option<u32> {
 /// into a single `{final_name}` (also compressed).
 ///
 /// Each tile file must be named `{per_tile_prefix}.{chr}.{index}.bedgraph.zst`.
-
-/// Merge positional per-tile files (created in `temp_dir`) into one TSV.
-/// Files must be named like: `{per_tile_prefix}.{chr}.{tile_index}.tsv`.
 pub fn merge_positional_tiles(
     temp_dir: &std::path::Path,
     out_dir: &std::path::Path,

@@ -244,7 +244,7 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
         let value = round_to(value, decimals);
         write_final_row(
             final_writer,
-            &chr,
+            chr,
             start,
             end,
             value,
@@ -484,7 +484,7 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
         let value = round_to(value, decimals);
         write_final_row(
             out,
-            &chr,
+            chr,
             start,
             end,
             value,
