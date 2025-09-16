@@ -9,12 +9,6 @@ enum Stage {
     Indexed,  // coverage present, indexes built
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum BlStage {
-    Absent,    // No blacklist present
-    Finalized, // bl_mask present
-}
-
 /// Prefix-based fragment coverage for a single linear sequence with optional blacklist.
 ///
 /// This collects fragments into a +w/-w delta array, converts the delta to per-base coverage,
@@ -41,8 +35,8 @@ enum BlStage {
 /// cp.set_blacklist_mask_from_intervals(&vec![(120, 140), (150, 153)])?;
 ///
 /// // Build per-base coverage and query indexes
-/// cp.finalize_coverage();
-/// cp.build_query_index()?;
+/// cp.finalize_coverage(true);  // free delta after building coverage
+/// cp.build_query_index(true)?; // build psums and free coverage
 ///
 /// // Query averages
 /// let avg_all = cp.avg_coverage(100, 300, false)?;   // Includes blacklisted bases
@@ -66,8 +60,7 @@ pub struct CoveragePrefix {
     psum_allowed: Option<Vec<f64>>,       // Σ coverage over non-blacklisted positions
     psum_allowed_count: Option<Vec<u32>>, // Σ 1 over non-blacklisted positions
 
-    cov_stage: Stage,  // Lifecycle for coverage
-    bl_stage: BlStage, // Lifecycle for blacklist
+    cov_stage: Stage, // Lifecycle for coverage
 }
 
 impl CoveragePrefix {
@@ -92,7 +85,6 @@ impl CoveragePrefix {
             psum_allowed: None,
             psum_allowed_count: None,
             cov_stage: Stage::Building,
-            bl_stage: BlStage::Absent,
         }
     }
 
@@ -275,7 +267,6 @@ impl CoveragePrefix {
         if intervals.is_empty() {
             // No blacklist → drop mask to avoid allocating an all-zero vector.
             self.bl_mask = None;
-            self.bl_stage = BlStage::Absent;
             self.invalidate_indexes();
             return Ok(());
         }
@@ -302,7 +293,6 @@ impl CoveragePrefix {
         }
 
         self.bl_mask = Some(mask);
-        self.bl_stage = BlStage::Finalized;
         self.invalidate_indexes(); // sums depend on mask
         Ok(())
     }
@@ -385,7 +375,6 @@ impl CoveragePrefix {
     /// - sum:
     ///     Coverage sum over the interval, masked if requested.
     pub fn sum_coverage(&mut self, start: u32, end: u32, exclude_blacklisted: bool) -> Result<f64> {
-        self.ensure_coverage()?;
         self.ensure_indexes()?;
         self.check_bounds(start, end)?;
 
@@ -418,7 +407,6 @@ impl CoveragePrefix {
     /// - avg:
     ///     Coverage average over the interval, masked if requested.
     pub fn avg_coverage(&mut self, start: u32, end: u32, exclude_blacklisted: bool) -> Result<f32> {
-        self.ensure_coverage()?;
         self.ensure_indexes()?;
         self.check_bounds(start, end)?;
 
@@ -466,7 +454,6 @@ impl CoveragePrefix {
         exclude_blacklisted: bool,
         parallelize: bool,
     ) -> Result<Vec<f64>> {
-        self.ensure_coverage()?;
         self.ensure_indexes()?;
         for &(a, b) in intervals {
             self.check_bounds(a, b)?;
@@ -520,7 +507,6 @@ impl CoveragePrefix {
         exclude_blacklisted: bool,
         parallelize: bool,
     ) -> Result<Vec<f32>> {
-        self.ensure_coverage()?;
         self.ensure_indexes()?;
         for &(a, b) in intervals {
             self.check_bounds(a, b)?;
@@ -706,10 +692,8 @@ impl CoveragePrefix {
         end: u32,
         nan_blacklisted: bool,
     ) -> anyhow::Result<Vec<f32>> {
-        // Ensure coverage is finalized
-        if self.coverage.is_none() {
-            anyhow::bail!("coverage not finalized; call finalize_coverage() first");
-        }
+        self.ensure_coverage()?;
+
         // Bounds check
         self.check_bounds(start, end)?;
 
@@ -775,12 +759,18 @@ impl CoveragePrefix {
         self.delta.shrink_to_fit();
     }
 
-    // Drop the coverage vector to free memory. The various coverage getters will error.
+    /// Drop the coverage vector to free memory. The various coverage getters will error.
     pub fn drop_coverage(&mut self) {
         if let Some(mut v) = self.coverage.take() {
             v.clear();
             v.shrink_to_fit();
         }
+    }
+
+    // Remove the current blacklist if it exists
+    pub fn clear_blacklist(&mut self) {
+        self.bl_mask = None;
+        self.invalidate_indexes();
     }
 
     #[inline]
@@ -799,11 +789,19 @@ impl CoveragePrefix {
     // Private helpers
 
     fn ensure_indexes(&mut self) -> Result<()> {
-        if self.psum_all.is_none()
-            || (self.has_blacklist()
-                && (self.psum_allowed.is_none() || self.psum_allowed_count.is_none()))
-        {
-            self.build_query_index(false)?; // Not the place to make that choice!
+        let need_allowed = self.has_blacklist();
+        let have_all = self.psum_all.is_some();
+        let have_allowed = self.psum_allowed.is_some() && self.psum_allowed_count.is_some();
+
+        if !have_all || (need_allowed && !have_allowed) {
+            if self.coverage.is_none() {
+                bail!(
+                    "query indexes not built and coverage was dropped; \
+                   rebuild indexes earlier with build_query_index(false), \
+                   or avoid dropping coverage before queries"
+                );
+            }
+            self.build_query_index(false)?;
         }
         Ok(())
     }
@@ -839,6 +837,6 @@ impl CoveragePrefix {
 
     // True if a blacklist is present
     pub fn has_blacklist(&self) -> bool {
-        (matches!(self.bl_stage, BlStage::Finalized) && self.bl_mask.is_some())
+        self.bl_mask.is_some()
     }
 }
