@@ -380,6 +380,7 @@ impl CoveragePrefix {
     /// -------
     /// - sum:
     ///     Coverage sum over the interval, masked if requested.
+    #[inline]
     pub fn sum_coverage(&mut self, start: u32, end: u32, exclude_blacklisted: bool) -> Result<f64> {
         self.ensure_indexes()?;
         self.check_bounds(start, end)?;
@@ -412,6 +413,7 @@ impl CoveragePrefix {
     /// -------
     /// - avg:
     ///     Coverage average over the interval, masked if requested.
+    #[inline]
     pub fn avg_coverage(&mut self, start: u32, end: u32, exclude_blacklisted: bool) -> Result<f32> {
         self.ensure_indexes()?;
         self.check_bounds(start, end)?;
@@ -454,6 +456,7 @@ impl CoveragePrefix {
     /// -------
     /// - sums:
     ///     A coverage sum per interval.
+    #[inline]
     pub fn bulk_sum_coverage(
         &mut self,
         intervals: &[(u32, u32)],
@@ -507,6 +510,7 @@ impl CoveragePrefix {
     /// -------
     /// - avgs:
     ///     An average coverage per interval.
+    #[inline]
     pub fn bulk_avg_coverage(
         &mut self,
         intervals: &[(u32, u32)],
