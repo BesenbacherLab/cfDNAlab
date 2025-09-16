@@ -318,6 +318,12 @@ impl CoveragePrefix {
         psum_all.push(0.0_f64);
 
         if let Some(mask) = self.bl_mask.as_ref() {
+            anyhow::ensure!(
+                mask.len() == n,
+                "mask length {} != coverage length {}",
+                mask.len(),
+                n
+            );
             // Mask present → also build allowed sums & counts
             let mut psum_allowed = Vec::with_capacity(n + 1);
             let mut psum_allowed_count = Vec::with_capacity(n + 1);
@@ -761,10 +767,7 @@ impl CoveragePrefix {
 
     /// Drop the coverage vector to free memory. The various coverage getters will error.
     pub fn drop_coverage(&mut self) {
-        if let Some(mut v) = self.coverage.take() {
-            v.clear();
-            v.shrink_to_fit();
-        }
+        self.coverage = None;
     }
 
     // Remove the current blacklist if it exists
