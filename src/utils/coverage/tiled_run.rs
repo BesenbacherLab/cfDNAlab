@@ -509,9 +509,18 @@ impl fmt::Display for CompactNumber {
     // No string-allocation formatting of numeric value
     // For making the string representation as compact as possibles
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Normalize negative zero (can apparently happen after rounding tiny negatives)
+        // After this, values will be non-zero
+        if self.v == 0.0 {
+            return f.write_str("0");
+        }
         if self.decimals <= 0 {
             // Integer path: Avoid float fmt; Round then print int
             let r = self.v.round();
+            // After integer rounding, also normalize -0 just in case
+            if r == 0.0 {
+                return f.write_str("0");
+            }
             // Write directly; no heap
             return write!(f, "{:.0}", r);
         }
@@ -528,10 +537,6 @@ impl fmt::Display for CompactNumber {
         }
         if buf.as_bytes().last() == Some(&b'.') {
             buf.pop();
-        }
-        if buf.as_str() == "-0" {
-            buf.clear();
-            buf.push_str("0");
         }
         f.write_str(buf.as_str())
     }
@@ -651,11 +656,86 @@ fn visit_runs_in_window(
     local_end_idx: usize,
     decimals: i32,
     keep_zero_runs: bool,
-    mut on_run: impl FnMut(usize, usize, f64),
+    on_run: impl FnMut(usize, usize, f64),
 ) {
     let m = mask.unwrap_or(&[]);
-    let mut i = local_start_idx;
     let m_has_elements = !m.is_empty();
+    if m_has_elements {
+        visit_runs_masked(
+            cov,
+            m,
+            local_start_idx,
+            local_end_idx,
+            decimals,
+            keep_zero_runs,
+            on_run,
+        )
+    } else {
+        visit_runs_unmasked(
+            cov,
+            local_start_idx,
+            local_end_idx,
+            decimals,
+            keep_zero_runs,
+            on_run,
+        )
+    }
+}
+
+#[inline]
+fn visit_runs_unmasked(
+    cov: &[f32],
+    local_start_idx: usize,
+    local_end_idx: usize,
+    decimals: i32,
+    keep_zero_runs: bool,
+    mut on_run: impl FnMut(usize, usize, f64),
+) {
+    let mut i = local_start_idx;
+    let rounding_factor = if decimals <= 0 {
+        1.0
+    } else {
+        10f64.powi(decimals)
+    };
+
+    while i < local_end_idx {
+        // Start run
+        let run_start_idx = i;
+
+        let value0 = round_to_with_precomputed_factor(cov[i] as f64, rounding_factor);
+
+        // Extend run
+        let mut j = i + 1;
+        while j < local_end_idx {
+            let vj = round_to_with_precomputed_factor(cov[j] as f64, rounding_factor);
+            if vj != value0 {
+                break;
+            }
+            j += 1;
+        }
+
+        // Optionally drop zero runs
+        if value0 == 0.0 && !keep_zero_runs {
+            i = j;
+            continue;
+        }
+
+        on_run(run_start_idx, j, value0);
+        i = j;
+    }
+}
+
+#[inline]
+fn visit_runs_masked(
+    cov: &[f32],
+    m: &[u8],
+    local_start_idx: usize,
+    local_end_idx: usize,
+    decimals: i32,
+    keep_zero_runs: bool,
+    mut on_run: impl FnMut(usize, usize, f64),
+) {
+    let mut i = local_start_idx;
     let rounding_factor = if decimals <= 0 {
         1.0
     } else {
@@ -664,7 +744,7 @@ fn visit_runs_in_window(
 
     while i < local_end_idx {
         // Skip masked base
-        if m_has_elements && m[i] == 1 {
+        if m[i] == 1 {
             i += 1;
             continue;
         }
@@ -677,7 +757,7 @@ fn visit_runs_in_window(
         // Extend run
         let mut j = i + 1;
         while j < local_end_idx {
-            if m_has_elements && m[j] == 1 {
+            if m[j] == 1 {
                 break;
             }
             let vj = round_to_with_precomputed_factor(cov[j] as f64, rounding_factor);
