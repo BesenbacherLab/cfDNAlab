@@ -592,12 +592,18 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                             writeln!(w, "{}", header)?;
 
                             for chr in &chromosomes {
+                                let chrom_len = contigs
+                                    .contigs
+                                    .get(chr)
+                                    .map(|&(_, len)| len as u64)
+                                    .expect("missing contig length");
                                 reduce_aggregates_by_size_with_cross_index_for_chr(
                                     chr,
                                     &temp_dir,
                                     partials_prefix,
                                     masked,
                                     opt.per_window,
+                                    chrom_len,
                                     decimals_to_use,
                                     &mut w,
                                 )?;

@@ -400,6 +400,7 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
     partials_prefix: &str,
     masked: bool,
     mode: CoverageWindowAction, // Average | Total
+    chrom_len: u64,
     decimals: i32,
     out: &mut W,
 ) -> Result<()> {
@@ -510,7 +511,8 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
         if entry.seen_contributions == expected_for(row.start) {
             let done = accum_by_start.remove(&row.start).unwrap();
             // Use the end from the last seen row (all rows for a bin share the same [start,end) by construction)
-            emit_bin(row.start, done, row.end)?;
+            // Ensure last row is clipped at the chromosome end
+            emit_bin(row.start, done, row.end.min(chrom_len))?;
         }
 
         // Advance this stream and push next row if present
