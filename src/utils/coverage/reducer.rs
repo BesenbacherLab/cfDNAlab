@@ -394,6 +394,8 @@ struct BinAccum {
 /// The cross-index counts how many tiles contribute to each bin start:
 /// - If a bin is not listed in any cross-index file, we expect exactly 1 contribution.
 /// - If it appears N times, we expect N contributions before emitting that bin.
+///
+/// The final bin is truncated to the chromosome end; it may be shorter than window_bp.
 pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
     chr: &str,
     temp_dir: &std::path::Path,
@@ -475,6 +477,7 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
     // Emit helper for one completed bin
     let mut emit_bin = |start: u64, acc: BinAccum, end: u64| -> Result<()> {
         let unmasked_span_bp = (end - start) as u64;
+        debug_assert!(unmasked_span_bp >= 1);
         let value = finalize_value(
             acc.sum,
             acc.allowed_positions,
