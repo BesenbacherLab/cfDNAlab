@@ -258,13 +258,19 @@ impl CoveragePrefix {
         self.coverage.as_ref().unwrap()
     }
 
-    /// Set/replace the blacklist mask from **tile-local** half-open intervals `[start, end)`.
+    /// Set or replace the blacklist mask from half-open intervals `[start, end)`,
+    /// expressed in the **same coordinate space as this `CoveragePrefix`**
+    /// (i.e., prefix-local `0..self.length`).
     ///
     /// Contract
     /// - `start < end`
-    /// - `end <= self.length`
-    /// - Intervals may overlap; overlaps are fine.
-    /// - If `intervals` is empty, the mask is **removed** (memory-friendly None).
+    /// - `0 <= start` and `end <= self.length`
+    /// - Intervals may overlap; overlaps are allowed and merged.
+    /// - If `intervals` is empty, the blacklist mask is removed (`None`) to avoid
+    ///   allocating an all-zero vector.
+    ///
+    /// Errors
+    /// - Returns an error if any interval violates the contract (out of bounds or empty).
     pub fn set_blacklist_mask_from_intervals(&mut self, intervals: &[(u64, u64)]) -> Result<()> {
         if intervals.is_empty() {
             // No blacklist → drop mask to avoid allocating an all-zero vector.
@@ -794,8 +800,8 @@ impl CoveragePrefix {
 
     fn ensure_indexes(&mut self) -> Result<()> {
         if self.psum_all.is_none()
-            || self.psum_allowed.is_none()
-            || self.psum_allowed_count.is_none()
+            || (self.has_blacklist()
+                && (self.psum_allowed.is_none() || self.psum_allowed_count.is_none()))
         {
             self.build_query_index(false)?; // Not the place to make that choice!
         }
