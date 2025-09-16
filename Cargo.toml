@@ -9,6 +9,7 @@ cli = ["clap"]
 
 [dependencies]
 anyhow = "1.0.98"
+arrayvec = "0.7.6"
 chrono = { version = "0.4.42", features = ["clock"] }
 clap = { version = "4.5.37", features = ["derive"], optional = true }
 fxhash = "0.2.1"

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-use crate::utils::coverage::tiled_run::format_number_simplify;
+use crate::utils::coverage::tiled_run::CompactNumber;
 
 /// Open a zstd-compressed buffered writer once per file
 ///
@@ -44,7 +44,7 @@ pub fn write_final_row<W: Write>(
         chr,
         start,
         end,
-        format_number_simplify(value, decimals),
+        CompactNumber { v: value, decimals },
         blacklisted_positions
     )?;
     Ok(())

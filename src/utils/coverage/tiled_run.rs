@@ -4,6 +4,7 @@ use crate::utils::fragment::segment_fragment::FragmentWithSegments;
 use crate::utils::{bam::Contigs, coverage::window_results::CoverageWindowAction};
 use anyhow::{Context, Result};
 use rand::{Rng, distr::Alphanumeric};
+use std::fmt;
 use std::io::{BufWriter, Write};
 
 /// A processing tile for one chromosome
@@ -499,17 +500,41 @@ pub fn round_to_with_precomputed_factor(x: f64, factor: f64) -> f64 {
     (x * factor).round() / factor
 }
 
-// Format as compactly as possible
-pub fn format_number_simplify(v: f64, decimals: i32) -> String {
-    // For integer formatting, don't trim trailing zeros from values like "30"
-    if decimals <= 0 {
-        let s = format!("{:.0}", v);
-        return if s == "-0" { "0".to_string() } else { s };
+pub struct CompactNumber {
+    pub v: f64,
+    pub decimals: i32,
+}
+
+impl fmt::Display for CompactNumber {
+    // No string-allocation formatting of numeric value
+    // For making the string representation as compact as possibles
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.decimals <= 0 {
+            // Integer path: Avoid float fmt; Round then print int
+            let r = self.v.round();
+            // Write directly; no heap
+            return write!(f, "{:.0}", r);
+        }
+        // Stack buffer; Write fixed decimals
+        let mut buf = arrayvec::ArrayString::<64>::new();
+        // Write with N decimals
+        let _ = fmt::write(
+            &mut buf,
+            format_args!("{:.*}", self.decimals as usize, self.v),
+        );
+        // Trim zeros and trailing dot
+        while buf.as_bytes().last() == Some(&b'0') {
+            buf.pop();
+        }
+        if buf.as_bytes().last() == Some(&b'.') {
+            buf.pop();
+        }
+        if buf.as_str() == "-0" {
+            buf.clear();
+            buf.push_str("0");
+        }
+        f.write_str(buf.as_str())
     }
-    // For decimal formatting, trim trailing zeros and a trailing dot
-    let s = format!("{:.*}", decimals as usize, v);
-    let s = s.trim_end_matches('0').trim_end_matches('.').to_string();
-    if s == "-0" { "0".to_string() } else { s }
 }
 
 /// Emit BedGraph runs for cov[a..b), skipping masked bases.
@@ -548,7 +573,7 @@ pub fn emit_bedgraph_runs<W: Write>(
                 chr,
                 s_abs,
                 e_abs,
-                format_number_simplify(value, decimals)
+                CompactNumber { v: value, decimals },
             );
         },
     );
@@ -595,7 +620,7 @@ pub fn emit_windowed_runs<W: Write>(
                     chr,
                     s_abs,
                     e_abs,
-                    format_number_simplify(value, decimals),
+                    CompactNumber { v: value, decimals },
                     idx
                 )
             } else {
@@ -605,7 +630,7 @@ pub fn emit_windowed_runs<W: Write>(
                     chr,
                     s_abs,
                     e_abs,
-                    format_number_simplify(value, decimals)
+                    CompactNumber { v: value, decimals },
                 )
             };
         },
