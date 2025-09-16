@@ -1,5 +1,6 @@
-use crate::utils::coverage::tiled_run::{finalize_value, format_number_simplify, round_to};
+use crate::utils::coverage::tiled_run::{finalize_value, round_to};
 use crate::utils::coverage::window_results::CoverageWindowAction;
+use crate::utils::coverage::writer::write_final_row;
 use anyhow::{Context, Result};
 use fxhash::{FxBuildHasher, FxHashMap};
 use std::cmp::Reverse;
@@ -241,14 +242,14 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
             &mode,
         );
         let value = round_to(value, decimals);
-        writeln!(
+        write_final_row(
             final_writer,
-            "{}\t{}\t{}\t{}\t{}",
-            chr,
+            &chr,
             start,
             end,
-            format_number_simplify(value, decimals),
-            acc.blacklisted_positions
+            value,
+            acc.blacklisted_positions,
+            decimals,
         )?;
         Ok(())
     };
@@ -481,14 +482,14 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
             &mode,
         );
         let value = round_to(value, decimals);
-        writeln!(
+        write_final_row(
             out,
-            "{}\t{}\t{}\t{}\t{}",
-            chr,
+            &chr,
             start,
             end,
-            format_number_simplify(value, decimals),
-            acc.blacklisted_positions
+            value,
+            acc.blacklisted_positions,
+            decimals,
         )?;
         Ok(())
     };
@@ -530,12 +531,23 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
     Ok(())
 }
 
+/// Sidecar type information for one tile
 #[derive(Default, Clone)]
 struct TileFiles {
     pub partials_path: Option<std::path::PathBuf>,
     pub cross_index_path: Option<std::path::PathBuf>,
 }
 
+/// Find per-tile files for a chromosome
+///
+/// Definitions
+/// - **Partials**: the per-tile contributions for windows/bins (tsv or tsv.zst)
+/// - **Cross-index**: a side list that marks which windows/bins cross tile core boundaries
+///   The reducer uses it to know how many tile contributions to expect for each window/bin
+///
+/// Filenames
+/// - Must start with `per_tile_prefix` and contain `.{chr}.`
+/// - We detect `.cross.` in the name to classify the sidecar
 fn discover_tile_files_for_chr(
     temp_dir: &std::path::Path,
     chr: &str,

@@ -14,9 +14,10 @@ use crate::utils::coverage::reducer::{
 use crate::utils::coverage::scale_genome::{apply_scaling_in_place, load_scaling_factors_tsv};
 use crate::utils::coverage::tiled_run::{
     adapt_fetch_to_extreme_windows, build_tiles, concat_aligned_size_tile_finals,
-    emit_bedgraph_runs, emit_windowed_runs, finalize_value, format_number_simplify, make_temp_dir,
-    merge_positional_tiles, round_to, tile_sum_and_counts,
+    coverage_sum_and_counts, emit_bedgraph_runs, emit_windowed_runs, finalize_value,
+    intersect_abs_with_core_to_local, make_temp_dir, merge_positional_tiles, round_to,
 };
+use crate::utils::coverage::writer::{open_zstd_auto_writer, write_final_row};
 use crate::utils::fragment::segment_fragment::FragmentWithSegments;
 use crate::utils::fragment_iterator::fragments_with_segments_from_bam;
 use crate::{
@@ -541,10 +542,8 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                 // Reduce by window source
                 match &window_opt {
                     WindowSpec::Bed(_) => {
-                        let file = std::fs::File::create(&final_path)?;
-                        let mut enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
-                        enc.multithread(opt.ioc.n_threads as u32).ok();
-                        let mut w = std::io::BufWriter::new(enc.auto_finish());
+                        let mut w =
+                            open_zstd_auto_writer(&final_path, 3, Some(opt.ioc.n_threads as u32))?;
 
                         // Write header
                         writeln!(w, "{}", header)?;
@@ -583,10 +582,11 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                                 &header,
                             )?;
                         } else {
-                            let file = std::fs::File::create(&final_path)?;
-                            let mut enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
-                            enc.multithread(opt.ioc.n_threads as u32).ok();
-                            let mut w = std::io::BufWriter::new(enc.auto_finish());
+                            let mut w = open_zstd_auto_writer(
+                                &final_path,
+                                3,
+                                Some(opt.ioc.n_threads as u32),
+                            )?;
 
                             // Write header
                             writeln!(w, "{}", header)?;
@@ -746,9 +746,7 @@ fn process_tile(
             add_clipped_blacklist_to_cp(&mut cp, &tile, !blacklist_chr.is_empty(), blacklist_chr)?;
 
             // Prepare compressed writer (zstd) for this tile
-            let file = std::fs::File::create(out_path)?;
-            let enc = zstd::Encoder::new(file, 3)?; // Level 3 ~ fast
-            let mut w = std::io::BufWriter::new(enc.auto_finish());
+            let mut w = open_zstd_auto_writer(&out_path, 3, None)?;
 
             let cov = cp.coverage().expect("coverage present");
             let mask = cp.blacklist_mask();
@@ -775,18 +773,27 @@ fn process_tile(
                     for &(window_start, window_end, original_idx) in
                         windows_overlapping_core(win_chr, tile.core_start, tile.core_end)
                     {
-                        let s = (window_start as u32).max(tile.core_start);
-                        let e = (window_end as u32).min(tile.core_end);
-                        let a = (s - tile.core_start) as usize;
-                        let b = (e - tile.core_start) as usize;
+                        let (local_start_idx, local_end_idx) =
+                            if let Some((local_start_idx, local_end_idx, _, _)) =
+                                intersect_abs_with_core_to_local(
+                                    window_start,
+                                    window_end,
+                                    tile.core_start,
+                                    tile.core_end,
+                                )
+                            {
+                                (local_start_idx, local_end_idx)
+                            } else {
+                                continue;
+                            };
 
                         if indexed {
                             emit_windowed_runs(
                                 &tile.chr,
                                 cov,
                                 mask,
-                                a,
-                                b,
+                                local_start_idx,
+                                local_end_idx,
                                 tile.core_start as u64,
                                 Some(original_idx),
                                 decimals,
@@ -798,8 +805,8 @@ fn process_tile(
                                 &tile.chr,
                                 cov,
                                 mask,
-                                a,
-                                b,
+                                local_start_idx,
+                                local_end_idx,
                                 tile.core_start as u64,
                                 None,
                                 decimals,
@@ -838,17 +845,8 @@ fn process_tile(
             let mask: Option<&[u8]> = mask_owned.as_deref();
 
             // Writers: compressed partials and cross sidecar
-            let mut w_part = {
-                let file = std::fs::File::create(partials_out)?;
-                let enc = zstd::Encoder::new(file, 3)?;
-                std::io::BufWriter::new(enc.auto_finish())
-            };
-
-            let mut w_cross = {
-                let file = std::fs::File::create(cross_idx_out)?;
-                let enc = zstd::Encoder::new(file, 3)?;
-                std::io::BufWriter::new(enc.auto_finish())
-            };
+            let mut w_part = open_zstd_auto_writer(&partials_out, 3, None)?;
+            let mut w_cross = open_zstd_auto_writer(&cross_idx_out, 3, None)?;
 
             let cs = tile.core_start as u64;
             let ce = tile.core_end as u64;
@@ -856,20 +854,28 @@ fn process_tile(
             // Walk only windows overlapping the core (already start-sorted)
             for &(ws, we, idx) in windows_overlapping_core(windows, tile.core_start, tile.core_end)
             {
-                let s = (ws as u32).max(tile.core_start);
-                let e = (we as u32).min(tile.core_end);
-                let a = (s - tile.core_start) as usize;
-                let b = (e - tile.core_start) as usize;
-                if b <= a {
-                    continue;
-                }
+                let (local_start_idx, local_end_idx) =
+                    if let Some((local_start_idx, local_end_idx, _, _)) =
+                        intersect_abs_with_core_to_local(ws, we, tile.core_start, tile.core_end)
+                    {
+                        (local_start_idx, local_end_idx)
+                    } else {
+                        continue;
+                    };
 
                 // Classify as internal (fully inside core) vs boundary (crosses tile core boundary)
                 let crosses_boundary = !(ws >= cs && we <= ce);
 
                 // Sum coverage, respecting masked mode
-                let (sum, allowed, blacklisted) =
-                    tile_sum_and_counts(a, b, masked, ps_all, ps_allow, cnt_allow, mask);
+                let (sum, allowed, blacklisted) = coverage_sum_and_counts(
+                    local_start_idx,
+                    local_end_idx,
+                    masked,
+                    ps_all,
+                    ps_allow,
+                    cnt_allow,
+                    mask,
+                );
 
                 // Always write a partial row; reducer will emit in orig_idx order
                 // Internal windows won’t appear in the cross-index -> reducer expects 1 contribution
@@ -923,29 +929,37 @@ fn process_tile(
                 // FAST PATH: Every bin that touches the core is fully contained in this core
                 // We compute the FINAL value here and write it once. No reducer later
 
-                let mut w_fin = {
-                    let file = std::fs::File::create(finals_out)?;
-                    let enc = zstd::Encoder::new(file, 3)?;
-                    std::io::BufWriter::new(enc.auto_finish())
-                };
+                let mut w_fin = open_zstd_auto_writer(&finals_out, 3, None)?;
 
                 for k in k_lo..=k_hi {
                     let bin_start = k * window_bp;
                     let bin_end = (k + 1) * window_bp;
 
                     // Intersect with core (alignment ensures this equals the bin for non-terminal tiles).
-                    let s_abs = (bin_start).max(cs) as u32;
-                    let e_abs = (bin_end).min(ce) as u32;
-                    if e_abs <= s_abs {
-                        continue;
-                    }
-
-                    let a = (s_abs - tile.core_start) as usize;
-                    let b = (e_abs - tile.core_start) as usize;
+                    let (local_start_idx, local_end_idx, s_abs, e_abs) =
+                        if let Some((local_start_idx, local_end_idx, s_abs, e_abs)) =
+                            intersect_abs_with_core_to_local(
+                                bin_start,
+                                bin_end,
+                                tile.core_start,
+                                tile.core_end,
+                            )
+                        {
+                            (local_start_idx, local_end_idx, s_abs, e_abs)
+                        } else {
+                            continue;
+                        };
 
                     // Sum coverage, respecting masked mode
-                    let (sum, allowed, blacklisted) =
-                        tile_sum_and_counts(a, b, masked, ps_all, ps_allow, cnt_allow, mask);
+                    let (sum, allowed, blacklisted) = coverage_sum_and_counts(
+                        local_start_idx,
+                        local_end_idx,
+                        masked,
+                        ps_all,
+                        ps_allow,
+                        cnt_allow,
+                        mask,
+                    );
 
                     // Compute final value now
                     let unmasked_span_bp = (e_abs - s_abs) as u64;
@@ -954,47 +968,51 @@ fn process_tile(
                     let value = round_to(value, decimals);
 
                     // Emit FINAL row: chromosome  start  end  value  blacklisted_positions
-                    writeln!(
-                        w_fin,
-                        "{}\t{}\t{}\t{}\t{}",
-                        tile.chr,
+                    write_final_row(
+                        &mut w_fin,
+                        &tile.chr,
                         bin_start,
-                        bin_end.min(ce), // Clamp last bin to chrom end
-                        format_number_simplify(value, decimals),
-                        blacklisted
+                        bin_end.min(ce),
+                        value,
+                        blacklisted,
+                        decimals,
                     )?;
                 }
 
                 w_fin.flush()?;
             } else {
-                let mut w_part = {
-                    let file = std::fs::File::create(&partials_out)?;
-                    let enc = zstd::Encoder::new(file, 3)?;
-                    std::io::BufWriter::new(enc.auto_finish())
-                };
-
-                let mut w_cross = {
-                    let file = std::fs::File::create(&cross_idx_out)?;
-                    let enc = zstd::Encoder::new(file, 3)?;
-                    std::io::BufWriter::new(enc.auto_finish())
-                };
+                let mut w_part = open_zstd_auto_writer(&partials_out, 3, None)?;
+                let mut w_cross = open_zstd_auto_writer(&cross_idx_out, 3, None)?;
 
                 for k in k_lo..=k_hi {
                     let bin_start = k * window_bp;
                     let bin_end = (k + 1) * window_bp;
 
-                    let s_abs = (bin_start).max(cs) as u32;
-                    let e_abs = (bin_end).min(ce) as u32;
-                    if e_abs <= s_abs {
-                        continue;
-                    }
-
-                    let a = (s_abs - tile.core_start) as usize;
-                    let b = (e_abs - tile.core_start) as usize;
+                    // Intersect with core (alignment ensures this equals the bin for non-terminal tiles).
+                    let (local_start_idx, local_end_idx) =
+                        if let Some((local_start_idx, local_end_idx, _, _)) =
+                            intersect_abs_with_core_to_local(
+                                bin_start,
+                                bin_end,
+                                tile.core_start,
+                                tile.core_end,
+                            )
+                        {
+                            (local_start_idx, local_end_idx)
+                        } else {
+                            continue;
+                        };
 
                     // Sum coverage, respecting masked mode
-                    let (sum, allowed, blacklisted) =
-                        tile_sum_and_counts(a, b, masked, ps_all, ps_allow, cnt_allow, mask);
+                    let (sum, allowed, blacklisted) = coverage_sum_and_counts(
+                        local_start_idx,
+                        local_end_idx,
+                        masked,
+                        ps_all,
+                        ps_allow,
+                        cnt_allow,
+                        mask,
+                    );
 
                     // PARTIAL row: start  end  sum  allowed  blacklisted
                     writeln!(

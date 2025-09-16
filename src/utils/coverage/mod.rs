@@ -3,3 +3,4 @@ pub mod window_results;
 pub mod tiled_run;
 pub mod scale_genome;
 pub mod reducer;
+pub mod writer;

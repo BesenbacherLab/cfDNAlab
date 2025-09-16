@@ -512,64 +512,39 @@ pub fn format_number_simplify(v: f64, decimals: i32) -> String {
 pub fn emit_bedgraph_runs<W: Write>(
     chr: &str,
     cov: &[f32],
-    mask: Option<&[u8]>,  // 1 = blacklisted(masked), 0 = allowed
-    a: usize,             // Local start (inclusive)
-    b: usize,             // Local end (exclusive)
-    start_abs: u64,       // Absolute position of index 0 in `cov` (tile.core_start)
-    decimals: i32,        // Decimals to round coverage
-    keep_zero_runs: bool, // Whether to write zero-runs
+    mask: Option<&[u8]>,    // 1 = blacklisted(masked), 0 = allowed
+    local_start_idx: usize, // Local start (inclusive)
+    local_end_idx: usize,   // Local end (exclusive)
+    tile_abs_start: u64,    // Absolute position of index 0 in `cov` (tile.core_start)
+    decimals: i32,          // Decimals to round coverage
+    keep_zero_runs: bool,   // Whether to write zero-runs
     out: &mut W,
 ) -> Result<()> {
-    if a >= b {
+    if local_start_idx >= local_end_idx {
         return Ok(());
     }
 
-    let m = mask.unwrap_or(&[]);
-    let mut i = a;
-
-    while i < b {
-        // Skip masked stretch
-        if !m.is_empty() && m[i] == 1 {
-            i += 1;
-            continue;
-        }
-
-        // Start unmasked run
-        let run_start = i;
-        let v0 = round_to(cov[i] as f64, decimals);
-
-        let mut j = i + 1;
-        while j < b {
-            if !m.is_empty() && m[j] == 1 {
-                break;
-            }
-            let vj = round_to(cov[j] as f64, decimals);
-            if vj != v0 {
-                break;
-            }
-            j += 1;
-        }
-
-        // Skip zero-runs unless specified otherwise
-        if v0 == 0.0 && !keep_zero_runs {
-            i = j;
-            continue;
-        }
-
-        // Emit [run_start, j)
-        let s_abs = start_abs + run_start as u64;
-        let e_abs = start_abs + j as u64;
-        writeln!(
-            out,
-            "{}\t{}\t{}\t{}",
-            chr,
-            s_abs,
-            e_abs,
-            format_number_simplify(v0, decimals)
-        )?;
-
-        i = j;
-    }
+    visit_runs_in_window(
+        cov,
+        mask,
+        local_start_idx,
+        local_end_idx,
+        decimals,
+        keep_zero_runs,
+        |run_lo, run_hi, value| {
+            let s_abs = tile_abs_start + run_lo as u64;
+            let e_abs = tile_abs_start + run_hi as u64;
+            // Ignore write errors here; bubbled up by caller on flush
+            let _ = writeln!(
+                out,
+                "{}\t{}\t{}\t{}",
+                chr,
+                s_abs,
+                e_abs,
+                format_number_simplify(value, decimals)
+            );
+        },
+    );
 
     Ok(())
 }
@@ -584,87 +559,127 @@ pub fn emit_bedgraph_runs<W: Write>(
 pub fn emit_windowed_runs<W: Write>(
     chr: &str,
     cov: &[f32],
-    mask: Option<&[u8]>,   // 1 = blacklisted(masked), 0 = allowed
-    a: usize,              // Local start (inclusive)
-    b: usize,              // Local end (exclusive)
-    start_abs: u64,        // Absolute position of index 0 in `cov` (tile.core_start)
-    orig_idx: Option<u64>, // Window’s original index
-    decimals: i32,         // Decimals to round coverage
-    keep_zero_runs: bool,  // Whether to write zero-runs
+    mask: Option<&[u8]>,    // 1 = blacklisted(masked), 0 = allowed
+    local_start_idx: usize, // Local start (inclusive)
+    local_end_idx: usize,   // Local end (exclusive)
+    tile_abs_start: u64,    // Absolute position of index 0 in `cov` (tile.core_start)
+    orig_idx: Option<u64>,  // Window’s original index
+    decimals: i32,          // Decimals to round coverage
+    keep_zero_runs: bool,   // Whether to write zero-runs
     out: &mut W,
 ) -> Result<()> {
-    if a >= b {
+    if local_start_idx >= local_end_idx {
         return Ok(());
     }
+    visit_runs_in_window(
+        cov,
+        mask,
+        local_start_idx,
+        local_end_idx,
+        decimals,
+        keep_zero_runs,
+        |run_lo, run_hi, value| {
+            let s_abs = tile_abs_start + run_lo as u64;
+            let e_abs = tile_abs_start + run_hi as u64;
+            let _ = if let Some(idx) = orig_idx {
+                writeln!(
+                    out,
+                    "{}\t{}\t{}\t{}\t{}",
+                    chr,
+                    s_abs,
+                    e_abs,
+                    format_number_simplify(value, decimals),
+                    idx
+                )
+            } else {
+                writeln!(
+                    out,
+                    "{}\t{}\t{}\t{}",
+                    chr,
+                    s_abs,
+                    e_abs,
+                    format_number_simplify(value, decimals)
+                )
+            };
+        },
+    );
 
+    Ok(())
+}
+
+/// Visit contiguous runs of equal rounded coverage inside `[local_start_idx, local_end_idx)`
+///
+/// Skips masked indices where `mask[i] == 1` which creates gaps in the stream
+/// Calls `on_run(local_run_start_idx, local_run_end_idx, rounded_value)` for each run
+#[inline]
+fn visit_runs_in_window(
+    cov: &[f32],
+    mask: Option<&[u8]>,
+    local_start_idx: usize,
+    local_end_idx: usize,
+    decimals: i32,
+    keep_zero_runs: bool,
+    mut on_run: impl FnMut(usize, usize, f64),
+) {
     let m = mask.unwrap_or(&[]);
-    let mut i = a;
+    let mut i = local_start_idx;
 
-    while i < b {
-        // skip masked
+    while i < local_end_idx {
+        // Skip masked base
         if !m.is_empty() && m[i] == 1 {
             i += 1;
             continue;
         }
 
-        // start run
-        let run_start = i;
-        let v0 = round_to(cov[i] as f64, decimals);
+        // Start run
+        let run_start_idx = i;
+        let value0 = round_to(cov[i] as f64, decimals);
 
+        // Extend run
         let mut j = i + 1;
-        while j < b {
+        while j < local_end_idx {
             if !m.is_empty() && m[j] == 1 {
                 break;
             }
             let vj = round_to(cov[j] as f64, decimals);
-            if vj != v0 {
+            if vj != value0 {
                 break;
             }
             j += 1;
         }
 
-        // Skip zero-runs unless specified otherwise
-        if v0 == 0.0 && !keep_zero_runs {
+        // Optionally drop zero runs
+        if value0 == 0.0 && !keep_zero_runs {
             i = j;
             continue;
         }
 
-        // emit: chr  start  end  value  orig_idx
-        let s_abs = start_abs + run_start as u64;
-        let e_abs = start_abs + j as u64;
-
-        if let Some(idx) = orig_idx {
-            writeln!(
-                out,
-                "{}\t{}\t{}\t{}\t{}",
-                chr,
-                s_abs,
-                e_abs,
-                format_number_simplify(v0, decimals),
-                idx
-            )?;
-        } else {
-            writeln!(
-                out,
-                "{}\t{}\t{}\t{}",
-                chr,
-                s_abs,
-                e_abs,
-                format_number_simplify(v0, decimals)
-            )?;
-        }
-
+        on_run(run_start_idx, j, value0);
         i = j;
     }
-
-    Ok(())
 }
 
-/// Sum coverage, respecting masked mode
+/// Compute `sum`, `allowed_positions`, and `blacklisted_positions` over a local slice
+///
+/// Inputs
+/// - `local_start_idx`, `local_end_idx`: Half-open range in **tile-local** coordinates
+/// - `masked`: Whether masked mode is active
+/// - `ps_all`: Prefix sums over all bases
+/// - `ps_allow`: Prefix sums over allowed (non-blacklisted) bases if precomputed
+/// - `cnt_allow`: Prefix sums of allowed-base counts if precomputed
+/// - `mask`: Optional mask 1=blacklisted 0=allowed used only if `cnt_allow` is absent
+///
+/// Notes
+/// - O(1) when count prefix sums are present
+/// - Falls back to a small O(n) scan only when `masked==true` and `cnt_allow.is_none()`
+/// - Returns `(sum, allowed, blacklisted)`
+///
+/// Safety
+/// - Caller guarantees `local_start_idx < local_end_idx <= ps_all.len()`
 #[inline]
-pub fn tile_sum_and_counts(
-    a: usize,
-    b: usize,
+pub fn coverage_sum_and_counts(
+    local_start_idx: usize,
+    local_end_idx: usize,
     masked: bool,
     ps_all: &[f64],
     ps_allow: Option<&[f64]>,
@@ -673,23 +688,22 @@ pub fn tile_sum_and_counts(
 ) -> (f64, u64, u64) {
     let sum = if masked {
         if let Some(pa) = ps_allow {
-            pa[b] - pa[a]
+            pa[local_end_idx] - pa[local_start_idx]
         } else {
-            ps_all[b] - ps_all[a]
+            ps_all[local_end_idx] - ps_all[local_start_idx]
         }
     } else {
-        ps_all[b] - ps_all[a]
+        ps_all[local_end_idx] - ps_all[local_start_idx]
     };
 
-    let span = (b - a) as u64;
+    let span = (local_end_idx - local_start_idx) as u64;
 
     let allowed = if masked {
         if let Some(cnt) = cnt_allow {
-            (cnt[b] - cnt[a]) as u64
+            (cnt[local_end_idx] - cnt[local_start_idx]) as u64
         } else if let Some(m) = mask {
-            // Fall back to a tiny scan if count psum is absent
             let mut ok = 0u64;
-            for i in a..b {
+            for i in local_start_idx..local_end_idx {
                 if m[i] == 0 {
                     ok += 1;
                 }
@@ -706,6 +720,15 @@ pub fn tile_sum_and_counts(
     (sum, allowed, blacklisted)
 }
 
+/// Turn an accumulated `(sum, allowed)` into the final window value
+///
+/// Behavior
+/// - `Average`
+///   - Masked mode: average over `allowed_positions` within the window
+///   - Unmasked mode: average over the full unmasked span in base pairs
+/// - `Total`: return `sum` as is
+///
+/// Zeros are returned when the denominator is zero
 #[inline]
 pub fn finalize_value(
     sum: f64,
@@ -733,4 +756,30 @@ pub fn finalize_value(
         CoverageWindowAction::Total => sum,
         _ => unreachable!(),
     }
+}
+
+/// Intersect an absolute interval with the tile core and convert to core-local indices
+///
+/// Inputs
+/// - `abs_start`, `abs_end`: Half-open absolute coordinates of the window or bin
+/// - `core_start`, `core_end`: Tile core half-open absolute coordinates
+///
+/// Returns
+/// - `Some((local_start_idx, local_end_idx, clipped_abs_start, clipped_abs_end))` when overlap exists
+/// - `None` when there is no overlap
+#[inline]
+pub fn intersect_abs_with_core_to_local(
+    abs_start: u64,
+    abs_end: u64,
+    core_start: u32,
+    core_end: u32,
+) -> Option<(usize, usize, u32, u32)> {
+    let s_abs = (abs_start as u32).max(core_start);
+    let e_abs = (abs_end as u32).min(core_end);
+    if e_abs <= s_abs {
+        return None;
+    }
+    let local_start_idx = (s_abs - core_start) as usize;
+    let local_end_idx = (e_abs - core_start) as usize;
+    Some((local_start_idx, local_end_idx, s_abs, e_abs))
 }
