@@ -1,5 +1,5 @@
 use crate::utils::fragment::{minimal_fragment::Fragment, segment_fragment::FragmentWithSegments};
-use anyhow::Result;
+use anyhow::{bail, Result};
 use rayon::prelude::*;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -11,9 +11,8 @@ enum Stage {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum BlStage {
-    Absent,    // No blacklist delta present
-    Building,  // Accepting +1/-1 edits in bl_delta
-    Finalized, // bl_mask present (derived from bl_delta)
+    Absent,    // No blacklist present
+    Finalized, // bl_mask present
 }
 
 /// Prefix-based fragment coverage for a single linear sequence with optional blacklist.
@@ -39,9 +38,7 @@ enum BlStage {
 /// cp.add_fragment_to_prefix_weighted(Fragment { tid: 0, start: 150, end: 250 }, 0.87)?;
 ///
 /// // Optional blacklist
-/// cp.initialize_blacklist_prefix();
-/// cp.add_blacklist_to_prefix(120, 140)?;
-/// cp.finalize_blacklist_prefix();
+/// cp.set_blacklist_mask_from_intervals(&vec![(120, 140), (150, 153)])?;
 ///
 /// // Build per-base coverage and query indexes
 /// cp.finalize_coverage();
@@ -61,7 +58,6 @@ enum BlStage {
 pub struct CoveragePrefix {
     length: u32,                // Total sequence length in bases (e.g., chrom_len)
     delta: Vec<f32>,            // +w at start, -w at end, length = length + 1 (last is sentinel)
-    bl_delta: Option<Vec<i32>>, // Optional +1/-1 delta for blacklist intervals
     coverage: Option<Vec<f32>>, // Per-base coverage after finalize_coverage, length = length
     bl_mask: Option<Vec<u8>>, // Per-base blacklist mask after finalize_blacklist_prefix, 1 = blacklisted
 
@@ -90,7 +86,6 @@ impl CoveragePrefix {
         Self {
             length,
             delta: vec![0.0; length as usize + 1],
-            bl_delta: None,
             coverage: None,
             bl_mask: None,
             psum_all: None,
@@ -234,11 +229,13 @@ impl CoveragePrefix {
 
     /// finalize_coverage: build per-base coverage from the +w/-w prefix.
     ///
+    /// If `drop_delta` is true, the +w/-w `delta` is freed at the end.
+    ///
     /// Returns
     /// -------
     /// - coverage:
     ///     Borrowed slice of per-base coverage with length = `length`.
-    pub fn finalize_coverage(&mut self) -> &[f32] {
+    pub fn finalize_coverage(&mut self, drop_delta: bool) -> &[f32] {
         // Build coverage from the +w/-w prefix without destroying delta
         let mut cov = vec![0.0_f32; self.length as usize];
 
@@ -255,219 +252,114 @@ impl CoveragePrefix {
         self.invalidate_indexes();
         self.cov_stage = Stage::Covered;
 
+        if drop_delta {
+            self.drop_prefix();
+        }
         self.coverage.as_ref().unwrap()
     }
 
-    /// initialize_blacklist_prefix: enable optional blacklist delta (+1/-1)
-    pub fn initialize_blacklist_prefix(&mut self) {
-        if self.bl_delta.is_none() {
-            self.bl_delta = Some(vec![0; self.length as usize + 1]);
-        }
-        self.bl_stage = BlStage::Building;
-    }
-
-    /// add_blacklist_to_prefix: add a blacklist interval `[start, end)`
+    /// Set/replace the blacklist mask from **tile-local** half-open intervals `[start, end)`.
     ///
-    /// Parameters
-    /// ----------
-    /// - start:
-    ///     Start of interval, inclusive.
-    /// - end:
-    ///     End of interval, exclusive.
-    pub fn add_blacklist_to_prefix(&mut self, start: u64, end: u64) -> Result<()> {
-        self.initialize_blacklist_prefix();
+    /// Contract
+    /// - `start < end`
+    /// - `end <= self.length`
+    /// - Intervals may overlap; overlaps are fine.
+    /// - If `intervals` is empty, the mask is **removed** (memory-friendly None).
+    pub fn set_blacklist_mask_from_intervals(&mut self, intervals: &[(u64, u64)]) -> Result<()> {
+        if intervals.is_empty() {
+            // No blacklist → drop mask to avoid allocating an all-zero vector.
+            self.bl_mask = None;
+            self.bl_stage = BlStage::Absent;
+            self.invalidate_indexes();
+            return Ok(());
+        }
 
-        {
-            // Limit the mutable borrow of bl_delta to this block
-            let bl = self
-                .bl_delta
-                .as_mut()
-                .expect("blacklist delta must be initialized");
-            let n = bl.len();
-            let s = start as usize;
-            let e = end as usize;
+        let n = self.length as usize;
+        let mut mask = vec![0u8; n];
 
-            if s >= e {
-                anyhow::bail!("blacklist start {} >= end {}", start, end);
+        for &(s64, e64) in intervals {
+            if s64 >= e64 {
+                bail!("blacklist interval start {} >= end {}", s64, e64);
             }
-            if e > self.length as usize || e >= n {
-                anyhow::bail!(
-                    "blacklist end {} out of bounds for sequence length {}",
-                    end,
+            if e64 > self.length as u64 {
+                bail!(
+                    "out of bounds: blacklist interval end {} exceeds sequence length {}",
+                    e64,
                     self.length
                 );
             }
-
-            bl[s] = bl[s].saturating_add(1);
-            bl[e] = bl[e].saturating_sub(1);
-        } // bl borrow ends here
-
-        // Editing the prefix invalidates any finalized mask and indexes
-        self.bl_mask = None;
-        self.bl_stage = BlStage::Building;
-        self.invalidate_indexes();
-
-        Ok(())
-    }
-
-    /// add_blacklist_many_to_prefix: add multiple blacklist intervals `[start, end)` in one pass
-    ///
-    /// Parameters
-    /// ----------
-    /// - intervals:
-    ///     Intervals as pairs in `[start, end)`; `start < end` and `end <= length`
-    pub fn add_blacklist_many_to_prefix(&mut self, intervals: &[(u64, u64)]) -> Result<()> {
-        self.initialize_blacklist_prefix();
-
-        {
-            // Limit mutable borrow of bl_delta to this block
-            let bl = self
-                .bl_delta
-                .as_mut()
-                .expect("blacklist delta must be initialized");
-
-            let n = bl.len();
-            let len_u64 = self.length as u64;
-
-            for &(s64, e64) in intervals {
-                if s64 >= e64 {
-                    anyhow::bail!("blacklist start {} >= end {}", s64, e64);
-                }
-                if e64 > len_u64 {
-                    anyhow::bail!(
-                        "blacklist end {} out of bounds for sequence length {}",
-                        e64,
-                        self.length
-                    );
-                }
-
-                let s = s64 as usize;
-                let e = e64 as usize;
-
-                if e >= n {
-                    anyhow::bail!(
-                        "blacklist end {} out of bounds for internal prefix length {}",
-                        e,
-                        n
-                    );
-                }
-
-                bl[s] = bl[s].saturating_add(1);
-                bl[e] = bl[e].saturating_sub(1);
-            }
+            // Safe after the checks above
+            let a = s64 as usize;
+            let b = e64 as usize;
+            debug_assert!(b <= n);
+            mask[a..b].fill(1);
         }
 
-        // Edits invalidate any finalized mask and indexes
-        self.bl_mask = None;
-        self.bl_stage = BlStage::Building;
-        self.invalidate_indexes();
-        Ok(())
-    }
-
-    /// finalize_blacklist_prefix: convert +1/-1 delta -> per-base mask where 1 = blacklisted, 0 = allowed
-    pub fn finalize_blacklist_prefix(&mut self) {
-        let Some(bl) = self.bl_delta.as_ref() else {
-            // CHANGED: as_ref()
-            self.bl_mask = None;
-            self.invalidate_indexes();
-            self.bl_stage = BlStage::Absent; // NEW
-            return;
-        };
-
-        // Cumulative sum over blacklist delta
-        let mut run = 0i32;
-        let mut mask = vec![0u8; self.length as usize];
-        // Walk bl_delta non-destructively
-        for i in 0..=self.length as usize {
-            run += bl[i];
-            if i < mask.len() {
-                mask[i] = if run > 0 { 1 } else { 0 };
-            }
-        }
         self.bl_mask = Some(mask);
-        // Invalidate indexes to rebuild masked aggregates
-        self.invalidate_indexes();
         self.bl_stage = BlStage::Finalized;
+        self.invalidate_indexes(); // sums depend on mask
+        Ok(())
     }
 
     /// build_query_index: prepare prefix sums for fast interval queries
     ///
-    /// Returns
-    /// -------
-    /// - _:
-    ///     Err if coverage has not been finalized.
-    pub fn build_query_index(&mut self) -> Result<()> {
-        // Ensure per-base coverage is available
-        let cov = match self.coverage.as_ref() {
-            Some(c) => c,
-            None => {
-                anyhow::bail!("coverage not finalized, call finalize_coverage() first")
-            }
-        };
-
-        // Number of positions
+    /// What gets built
+    /// ---------------
+    /// - Always builds `psum_all`  (Σ coverage over all bases) with length = n+1
+    /// - Only builds `psum_allowed` and `psum_allowed_count` when a blacklist mask exists
+    ///
+    /// Safety
+    /// ------
+    /// - Requires `finalize_coverage()` to have been called
+    pub fn build_query_index(&mut self, drop_coverage: bool) -> anyhow::Result<()> {
+        let cov = self.coverage.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("coverage not finalized, call finalize_coverage() first")
+        })?;
         let n = cov.len();
 
-        // Allocate prefix arrays of length n+1
-        // Index 0 stores the empty prefix so sums over [a, b) are psum[b] - psum[a]
+        // Always build psum_all (n+1 with empty prefix at index 0)
         let mut psum_all = Vec::with_capacity(n + 1);
-        let mut psum_allowed = Vec::with_capacity(n + 1);
-        let mut psum_allowed_count = Vec::with_capacity(n + 1);
-
-        // Prefix base case at index 0
         psum_all.push(0.0_f64);
-        psum_allowed.push(0.0_f64);
-        psum_allowed_count.push(0u32);
 
-        match self.bl_mask.as_ref() {
-            Some(mask) => {
-                // Mask present -> build two parallel prefix sums
-                // psum_all accumulates coverage at every base
-                // psum_allowed accumulates coverage only at unmasked bases
-                // psum_allowed_count counts unmasked bases for use as the average denominator
-                for i in 0..n {
-                    let c = cov[i] as f64;
-                    let allowed = mask[i] == 0;
+        if let Some(mask) = self.bl_mask.as_ref() {
+            // Mask present → also build allowed sums & counts
+            let mut psum_allowed = Vec::with_capacity(n + 1);
+            let mut psum_allowed_count = Vec::with_capacity(n + 1);
+            psum_allowed.push(0.0_f64);
+            psum_allowed_count.push(0u32);
 
-                    // Read previous prefix values
-                    let prev_all = *psum_all.last().unwrap();
-                    let prev_allow = *psum_allowed.last().unwrap();
-                    let prev_cnt = *psum_allowed_count.last().unwrap();
+            let (mut all, mut allow, mut cnt) = (0.0_f64, 0.0_f64, 0u32);
+            for i in 0..n {
+                let c = cov[i] as f64;
+                all += c;
+                psum_all.push(all);
 
-                    // Always include coverage in psum_all
-                    psum_all.push(prev_all + c);
-
-                    // Include coverage and count only if allowed
-                    psum_allowed.push(prev_allow + if allowed { c } else { 0.0 });
-                    psum_allowed_count.push(prev_cnt + if allowed { 1 } else { 0 });
+                if mask[i] == 0 {
+                    allow += c;
+                    cnt = cnt.saturating_add(1);
                 }
+                psum_allowed.push(allow);
+                psum_allowed_count.push(cnt);
             }
-            None => {
-                // No mask -> allowed sums equal all sums and the count is simply i+1
-                for i in 0..n {
-                    let c = cov[i] as f64;
-                    let prev_all = *psum_all.last().unwrap();
 
-                    // Update all-bases prefix sum
-                    psum_all.push(prev_all + c);
-
-                    // Reuse the newest psum_all value for psum_allowed
-                    psum_allowed.push(*psum_all.last().unwrap());
-
-                    // Every base is allowed so count increases by one
-                    psum_allowed_count.push((i as u32) + 1);
-                }
+            self.psum_allowed = Some(psum_allowed);
+            self.psum_allowed_count = Some(psum_allowed_count);
+        } else {
+            // No mask → only psum_all; keep allowed structures None to save RAM
+            let mut all = 0.0_f64;
+            for i in 0..n {
+                all += cov[i] as f64;
+                psum_all.push(all);
             }
+            self.psum_allowed = None;
+            self.psum_allowed_count = None;
         }
 
-        // Store results on the struct
         self.psum_all = Some(psum_all);
-        self.psum_allowed = Some(psum_allowed);
-        self.psum_allowed_count = Some(psum_allowed_count);
-
-        // Mark coverage stage as Indexed
         self.cov_stage = Stage::Indexed;
-
+        if drop_coverage {
+            self.drop_coverage();
+        }
         Ok(())
     }
 
@@ -480,7 +372,7 @@ impl CoveragePrefix {
     /// - end:
     ///     End of interval, exclusive.
     /// - exclude_blacklisted:
-    ///     Exclude blacklisted positions from the sum.
+    ///     Exclude blacklisted positions from the sum, if a blacklist is available.
     ///
     /// Returns
     /// -------
@@ -489,13 +381,12 @@ impl CoveragePrefix {
     pub fn sum_coverage(&mut self, start: u32, end: u32, exclude_blacklisted: bool) -> Result<f64> {
         self.ensure_coverage()?;
         self.ensure_indexes()?;
-        self.ensure_mask_if_excluding(exclude_blacklisted)?;
         self.check_bounds(start, end)?;
 
         let a = start as usize;
         let b = end as usize;
 
-        let sum = if exclude_blacklisted {
+        let sum = if exclude_blacklisted && self.has_blacklist() {
             let pa = self.psum_allowed.as_ref().unwrap();
             pa[b] - pa[a]
         } else {
@@ -514,7 +405,7 @@ impl CoveragePrefix {
     /// - end:
     ///     End of interval, exclusive.
     /// - exclude_blacklisted:
-    ///     Exclude blacklisted positions from the average.
+    ///     Exclude blacklisted positions from the average, if a blacklist is available.
     ///
     /// Returns
     /// -------
@@ -523,13 +414,12 @@ impl CoveragePrefix {
     pub fn avg_coverage(&mut self, start: u32, end: u32, exclude_blacklisted: bool) -> Result<f32> {
         self.ensure_coverage()?;
         self.ensure_indexes()?;
-        self.ensure_mask_if_excluding(exclude_blacklisted)?;
         self.check_bounds(start, end)?;
 
         let a = start as usize;
         let b = end as usize;
 
-        if exclude_blacklisted {
+        if exclude_blacklisted && self.has_blacklist() {
             let pa = self.psum_allowed.as_ref().unwrap();
             let cnt = self.psum_allowed_count.as_ref().unwrap();
             let sum = pa[b] - pa[a];
@@ -556,7 +446,7 @@ impl CoveragePrefix {
     /// - intervals:
     ///     Half-open intervals `[start, end)`.
     /// - exclude_blacklisted:
-    ///     Exclude blacklisted positions from the sum.
+    ///     Exclude blacklisted positions from the sum, if a blacklist is available.
     /// - parallelize:
     ///     Process intervals with rayon parallel iterators.
     ///
@@ -572,12 +462,11 @@ impl CoveragePrefix {
     ) -> Result<Vec<f64>> {
         self.ensure_coverage()?;
         self.ensure_indexes()?;
-        self.ensure_mask_if_excluding(exclude_blacklisted)?;
         for &(a, b) in intervals {
             self.check_bounds(a, b)?;
         }
 
-        if exclude_blacklisted {
+        if exclude_blacklisted && self.has_blacklist() {
             let pa = self.psum_allowed.as_ref().unwrap();
             let f = |&(a, b): &(u32, u32)| -> f64 {
                 let a = a as usize;
@@ -611,7 +500,7 @@ impl CoveragePrefix {
     /// - intervals:
     ///     Half-open intervals `[start, end)`.
     /// - exclude_blacklisted:
-    ///     Exclude blacklisted positions from the averages.
+    ///     Exclude blacklisted positions from the averages, if a blacklist is available.
     /// - parallelize:
     ///     Process intervals with rayon parallel iterators.
     ///
@@ -627,12 +516,11 @@ impl CoveragePrefix {
     ) -> Result<Vec<f32>> {
         self.ensure_coverage()?;
         self.ensure_indexes()?;
-        self.ensure_mask_if_excluding(exclude_blacklisted)?;
         for &(a, b) in intervals {
             self.check_bounds(a, b)?;
         }
 
-        if exclude_blacklisted {
+        if exclude_blacklisted && self.has_blacklist() {
             let pa = self.psum_allowed.as_ref().unwrap();
             let cnt = self.psum_allowed_count.as_ref().unwrap();
             let f = |&(a, b): &(u32, u32)| -> f32 {
@@ -881,11 +769,15 @@ impl CoveragePrefix {
         self.delta.shrink_to_fit();
     }
 
-    // Helper for testing
-    pub fn _get_bl_delta(&self) -> Option<Vec<i32>> {
-        self.bl_delta.clone()
+    // Drop the coverage vector to free memory. The various coverage getters will error.
+    pub fn drop_coverage(&mut self) {
+        if let Some(mut v) = self.coverage.take() {
+            v.clear();
+            v.shrink_to_fit();
+        }
     }
 
+    // Helper for testing
     pub fn get_psum_all(&self) -> Option<Vec<f64>> {
         self.psum_all.clone()
     }
@@ -905,7 +797,7 @@ impl CoveragePrefix {
             || self.psum_allowed.is_none()
             || self.psum_allowed_count.is_none()
         {
-            self.build_query_index()?;
+            self.build_query_index(false)?; // Not the place to make that choice!
         }
         Ok(())
     }
@@ -939,21 +831,8 @@ impl CoveragePrefix {
         !self.delta.is_empty()
     }
 
-    /// True if there is no blacklist or the blacklist mask has been finalized
-    pub fn is_blacklist_finalized(&self) -> bool {
-        self.bl_delta.is_none() || self.bl_mask.is_some()
-    }
-
-    #[inline]
-    fn ensure_mask_if_excluding(&self, exclude_blacklisted: bool) -> Result<()> {
-        if exclude_blacklisted {
-            if matches!(self.bl_stage, BlStage::Building) {
-                anyhow::bail!(
-                    "blacklist present but not finalized; call finalize_blacklist_prefix()"
-                );
-            }
-            // If `Absent`, we allow excluding (no mask means nothing to exclude).
-        }
-        Ok(())
+    // True if a blacklist is present
+    pub fn has_blacklist(&self) -> bool {
+        (matches!(self.bl_stage, BlStage::Finalized) && self.bl_mask.is_some())
     }
 }

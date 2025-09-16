@@ -66,13 +66,11 @@ mod tests_coverage_prefix {
         )?;
 
         // Optional blacklist
-        cp.initialize_blacklist_prefix();
-        cp.add_blacklist_to_prefix(120, 140)?;
-        cp.finalize_blacklist_prefix();
+        cp.set_blacklist_mask_from_intervals(&vec![(120, 140)])?;
 
         // Build per-base coverage and indexes
-        cp.finalize_coverage();
-        cp.build_query_index()?;
+        cp.finalize_coverage(true);
+        cp.build_query_index(false)?;
 
         // Coverage length matches sequence length
         let cov = cp.coverage().unwrap();
@@ -131,35 +129,6 @@ mod tests_coverage_prefix {
     }
 
     #[test]
-    fn errors_before_finalize_and_mask_requirements() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(1000);
-
-        // Using averages before finalize_coverage should error
-        let err = cp.avg_coverage(0, 10, false).unwrap_err();
-        assert!(format!("{err}").contains("coverage not finalized"));
-
-        // Add coverage and finalize
-        cp.add_fragment_to_prefix(Fragment {
-            tid: 0,
-            start: 0,
-            end: 10,
-        })?;
-        cp.finalize_coverage();
-
-        // Excluding blacklisted requires finalized mask if a blacklist exists
-        cp.initialize_blacklist_prefix();
-        cp.add_blacklist_to_prefix(2, 5)?;
-        let err = cp.avg_coverage(0, 10, true).unwrap_err();
-        assert!(format!("{err}").contains("blacklist present but not finalized"));
-
-        // Finalize mask and now it should work
-        cp.finalize_blacklist_prefix();
-        let _ = cp.avg_coverage(0, 10, true)?; // no panic
-
-        Ok(())
-    }
-
-    #[test]
     fn add_fragment_after_finalize_requires_refinalize() -> Result<()> {
         let mut cp = CoveragePrefix::initialize_coverage_prefix(100);
         cp.add_fragment_to_prefix(Fragment {
@@ -167,8 +136,8 @@ mod tests_coverage_prefix {
             start: 10,
             end: 20,
         })?;
-        cp.finalize_coverage();
-        cp.build_query_index()?;
+        cp.finalize_coverage(false);
+        cp.build_query_index(false)?;
 
         // Add another fragment; coverage should be invalidated
         cp.add_fragment_to_prefix(Fragment {
@@ -181,8 +150,8 @@ mod tests_coverage_prefix {
         assert!(format!("{err}").contains("coverage not finalized"));
 
         // Re-finalize and query again
-        cp.finalize_coverage();
-        cp.build_query_index()?;
+        cp.finalize_coverage(false);
+        cp.build_query_index(false)?;
         let sum = cp.sum_coverage(0, 40, false)?;
         // Expected sum = 10 + 10 = 20
         assert!(deq(sum, 20.0, 1e-9));
@@ -221,9 +190,9 @@ mod tests_coverage_prefix {
             },
             0.5,
         )?;
-        cp.finalize_coverage();
+        cp.finalize_coverage(true);
         // No blacklist
-        cp.build_query_index()?;
+        cp.build_query_index(true)?;
 
         let intervals = vec![(0, 10), (10, 110), (100, 300), (350, 450), (900, 1000)];
         let sums_ser = cp.bulk_sum_coverage(&intervals, false, false)?;
@@ -246,36 +215,6 @@ mod tests_coverage_prefix {
     }
 
     #[test]
-    fn blacklist_finalize_is_non_destructive_and_affects_queries() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(100);
-        cp.add_fragment_to_prefix(Fragment {
-            tid: 0,
-            start: 10,
-            end: 20,
-        })?;
-        cp.finalize_coverage();
-
-        // Build a blacklist delta and clone it
-        cp.initialize_blacklist_prefix();
-        cp.add_blacklist_to_prefix(12, 18)?;
-        let bl_before = cp._get_bl_delta().clone(); // Access is allowed in submodule tests
-
-        // Finalize mask; delta should remain unchanged
-        cp.finalize_blacklist_prefix();
-        let bl_after = cp._get_bl_delta().clone();
-        assert_eq!(bl_before, bl_after);
-
-        // Build indexes and check effect on queries
-        cp.build_query_index()?;
-        let sum_all = cp.sum_coverage(10, 20, false)?;
-        let sum_ok = cp.sum_coverage(10, 20, true)?;
-        // Sum without excluding is 10 * 1.0 = 10. Excluding removes [12,18) length 6
-        assert!(deq(sum_all, 10.0, 1e-9));
-        assert!(deq(sum_ok, 4.0, 1e-9));
-        Ok(())
-    }
-
-    #[test]
     fn coverage_at_positions_and_mask() -> Result<()> {
         let mut cp = CoveragePrefix::initialize_coverage_prefix(60);
         cp.add_fragment_to_prefix(Fragment {
@@ -283,11 +222,9 @@ mod tests_coverage_prefix {
             start: 10,
             end: 20,
         })?;
-        cp.finalize_coverage();
+        cp.finalize_coverage(true);
 
-        cp.initialize_blacklist_prefix();
-        cp.add_blacklist_to_prefix(12, 15)?;
-        cp.finalize_blacklist_prefix();
+        cp.set_blacklist_mask_from_intervals(&vec![(12, 15)])?;
 
         let vals = cp.coverage_at_positions(&[9, 10, 12, 14, 15, 19, 20])?;
         assert_eq!(vals, vec![0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0]);
@@ -331,8 +268,9 @@ mod tests_coverage_prefix {
         assert!(format!("{err}").contains("start 10 >= end 10"));
 
         // Out-of-bounds blacklist
-        cp.initialize_blacklist_prefix();
-        let err = cp.add_blacklist_to_prefix(45, 60).unwrap_err();
+        let err = cp
+            .set_blacklist_mask_from_intervals(&vec![(45, 60)])
+            .unwrap_err();
         assert!(format!("{err}").contains("out of bounds"));
 
         // Bounds check in queries
@@ -341,7 +279,7 @@ mod tests_coverage_prefix {
             start: 0,
             end: 10,
         })?;
-        cp.finalize_coverage();
+        cp.finalize_coverage(true);
         let err = cp.sum_coverage(10, 60, false).unwrap_err();
         assert!(format!("{err}").contains("exceeds sequence length"));
 
@@ -352,9 +290,9 @@ mod tests_coverage_prefix {
     fn empty_sequence_finalize_and_query() -> Result<()> {
         let mut cp = CoveragePrefix::initialize_coverage_prefix(0);
         // Finalize and build indexes on empty sequence
-        let cov = cp.finalize_coverage();
+        let cov = cp.finalize_coverage(true);
         assert_eq!(cov.len(), 0);
-        cp.build_query_index()?;
+        cp.build_query_index(true)?;
         // Bulk queries on empty set of intervals
         let sums = cp.bulk_sum_coverage(&[], false, false)?;
         let avgs = cp.bulk_avg_coverage(&[], false, false)?;
@@ -371,9 +309,9 @@ mod tests_coverage_prefix {
             start: 0,
             end: 1,
         })?;
-        let cov = cp.finalize_coverage();
+        let cov = cp.finalize_coverage(true);
         assert_eq!(cov, &[1.0]);
-        cp.build_query_index()?;
+        cp.build_query_index(true)?;
         assert!(deq(cp.sum_coverage(0, 1, false)?, 1.0, 1e-12));
         assert!(feq(cp.avg_coverage(0, 1, false)?, 1.0, 1e-6));
         // Zero-width interval average
@@ -389,8 +327,8 @@ mod tests_coverage_prefix {
             start: 10,
             end: 20,
         })?;
-        cp.finalize_coverage();
-        cp.build_query_index()?;
+        cp.finalize_coverage(true);
+        cp.build_query_index(true)?;
         // No blacklist present, excluding should equal including
         let a = cp.sum_coverage(0, 200, false)?;
         let b = cp.sum_coverage(0, 200, true)?;
@@ -402,24 +340,6 @@ mod tests_coverage_prefix {
     }
 
     #[test]
-    fn finalize_blacklist_without_intervals_is_noop() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(100);
-        cp.add_fragment_to_prefix(Fragment {
-            tid: 0,
-            start: 0,
-            end: 10,
-        })?;
-        cp.finalize_coverage();
-        cp.initialize_blacklist_prefix();
-        cp.finalize_blacklist_prefix(); // no intervals added
-        cp.build_query_index()?;
-        let inc = cp.sum_coverage(0, 100, false)?;
-        let exc = cp.sum_coverage(0, 100, true)?;
-        assert!(deq(inc, exc, 1e-12));
-        Ok(())
-    }
-
-    #[test]
     fn idempotent_build_query_index() -> Result<()> {
         let mut cp = CoveragePrefix::initialize_coverage_prefix(50);
         cp.add_fragment_to_prefix(Fragment {
@@ -427,12 +347,12 @@ mod tests_coverage_prefix {
             start: 5,
             end: 15,
         })?;
-        cp.finalize_coverage();
-        cp.build_query_index()?;
+        cp.finalize_coverage(true);
+        cp.build_query_index(false)?;
         let s1 = cp.sum_coverage(0, 50, false)?;
         let a1 = cp.avg_coverage(0, 50, false)?;
         // Rebuild indexes again
-        cp.build_query_index()?;
+        cp.build_query_index(true)?;
         let s2 = cp.sum_coverage(0, 50, false)?;
         let a2 = cp.avg_coverage(0, 50, false)?;
         assert!(deq(s1, s2, 1e-12));
@@ -448,8 +368,8 @@ mod tests_coverage_prefix {
             start: 2,
             end: 5,
         })?;
-        cp.finalize_coverage();
-        cp.build_query_index()?;
+        cp.finalize_coverage(true);
+        cp.build_query_index(true)?;
         let sums = cp.bulk_sum_coverage(&[], false, false)?;
         let avgs = cp.bulk_avg_coverage(&[], false, false)?;
         assert!(sums.is_empty());
@@ -465,7 +385,7 @@ mod tests_coverage_prefix {
             start: 1,
             end: 4,
         })?;
-        cp.finalize_coverage();
+        cp.finalize_coverage(true);
         // In-bounds positions
         let vals = cp.coverage_at_positions(&[0, 1, 3, 4])?;
         assert_eq!(vals, vec![0.0, 1.0, 1.0, 0.0]);
@@ -492,13 +412,10 @@ mod tests_coverage_prefix {
             },
             0.5,
         )?;
-        cp.finalize_coverage();
+        cp.finalize_coverage(true);
         // Blacklist [20,25) and [80,100)
-        cp.initialize_blacklist_prefix();
-        cp.add_blacklist_to_prefix(20, 25)?;
-        cp.add_blacklist_to_prefix(80, 100)?;
-        cp.finalize_blacklist_prefix();
-        cp.build_query_index()?;
+        cp.set_blacklist_mask_from_intervals(&vec![(20, 25), (80, 100)])?;
+        cp.build_query_index(true)?;
 
         // Sum including mask
         let s_all = cp.sum_coverage(0, 100, false)?;
@@ -521,43 +438,6 @@ mod tests_coverage_prefix {
     }
 
     #[test]
-    fn updating_blacklist_requires_refinalize_to_affect_results() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(100);
-        cp.add_fragment_to_prefix(Fragment {
-            tid: 0,
-            start: 0,
-            end: 100,
-        })?;
-        cp.finalize_coverage();
-
-        // First mask [10,20)
-        cp.initialize_blacklist_prefix();
-        cp.add_blacklist_to_prefix(10, 20)?;
-        cp.finalize_blacklist_prefix();
-        cp.build_query_index()?;
-
-        let s_exc1 = cp.sum_coverage(0, 100, true)?;
-        assert!(deq(s_exc1, 90.0, 1e-12));
-
-        // Edit blacklist to also include [30,40) but do not finalize yet
-        cp.add_blacklist_to_prefix(30, 40)?;
-        // Rebuild indexes now uses stale mask since we didn't finalize again
-        // We call build_query_index to simulate callers that rebuild for safety
-        cp.build_query_index()?;
-
-        // Panics as we did not finalize blacklist again after adding
-        let err = cp.sum_coverage(0, 100, true).unwrap_err();
-        assert!(format!("{err}").contains("blacklist present but not finalized"));
-
-        // Finalize mask and rebuild indexes to apply the change
-        cp.finalize_blacklist_prefix();
-        cp.build_query_index()?;
-        let s_exc2 = cp.sum_coverage(0, 100, true)?;
-        assert!(deq(s_exc2, 80.0, 1e-12));
-        Ok(())
-    }
-
-    #[test]
     fn finalize_twice_is_stable() -> Result<()> {
         let mut cp = CoveragePrefix::initialize_coverage_prefix(30);
         cp.add_fragment_to_prefix(Fragment {
@@ -565,8 +445,9 @@ mod tests_coverage_prefix {
             start: 10,
             end: 20,
         })?;
-        let c1 = cp.finalize_coverage().to_vec();
-        let c2 = cp.finalize_coverage().to_vec();
+        // Assumes delta is NOT dropped!
+        let c1 = cp.finalize_coverage(false).to_vec();
+        let c2 = cp.finalize_coverage(false).to_vec();
         assert_eq!(c1, c2);
         Ok(())
     }
@@ -587,14 +468,10 @@ mod tests_coverage_prefix {
             },
             0.5,
         )?;
-        cp.finalize_coverage();
+        cp.finalize_coverage(true);
+        cp.set_blacklist_mask_from_intervals(&vec![(400, 450), (700, 900)])?;
 
-        cp.initialize_blacklist_prefix();
-        cp.add_blacklist_to_prefix(400, 450)?;
-        cp.add_blacklist_to_prefix(700, 900)?;
-        cp.finalize_blacklist_prefix();
-
-        cp.build_query_index()?;
+        cp.build_query_index(true)?;
 
         let intervals: Vec<(u32, u32)> = vec![
             (0, 0),
@@ -626,7 +503,7 @@ mod tests_coverage_prefix {
         cp.drop_prefix();
         // finalize_coverage currently assumes the prefix exists and will panic
         let panicked = catch_unwind(AssertUnwindSafe(|| {
-            let _ = cp.finalize_coverage();
+            let _ = cp.finalize_coverage(false);
         }))
         .is_err();
         assert!(panicked);
@@ -640,8 +517,8 @@ mod tests_coverage_prefix {
             start: 0,
             end: 10,
         })?;
-        cp.finalize_coverage();
-        cp.build_query_index()?;
+        cp.finalize_coverage(true);
+        cp.build_query_index(true)?;
         // Full range
         assert!(deq(cp.sum_coverage(0, 10, false)?, 10.0, 1e-12));
         // Left edge zero-width
@@ -670,8 +547,8 @@ mod tests_coverage_prefix {
             },
             0.5,
         )?;
-        let cov = cp.finalize_coverage().to_vec();
-        cp.build_query_index()?;
+        let cov = cp.finalize_coverage(true).to_vec();
+        cp.build_query_index(true)?;
 
         let intervals = vec![(0, 200), (0, 20), (20, 60), (50, 120), (140, 160)];
         for &(a, b) in &intervals {
@@ -690,7 +567,7 @@ mod tests_coverage_prefix {
             start: 10,
             end: 20,
         })?;
-        cp.finalize_coverage();
+        cp.finalize_coverage(true);
 
         // No blacklist yields no NaNs
         let v = cp.coverage_at_positions_nan(&[9, 10, 19, 20])?;
@@ -699,9 +576,8 @@ mod tests_coverage_prefix {
         }
 
         // With blacklist, NaNs appear inside masked region
-        cp.initialize_blacklist_prefix();
-        cp.add_blacklist_to_prefix(12, 15)?;
-        cp.finalize_blacklist_prefix();
+        cp.set_blacklist_mask_from_intervals(&vec![(12, 15)])?;
+
         let v = cp.coverage_at_positions_nan(&[11, 12, 13, 14, 15])?;
         assert!(!v[0].is_nan());
         assert!(v[1].is_nan());
@@ -719,8 +595,8 @@ mod tests_coverage_prefix {
             start: 10,
             end: 20,
         })?;
-        cp.finalize_coverage();
-        cp.build_query_index()?;
+        cp.finalize_coverage(false); // Cannot refinalize if delta is dropped
+        cp.build_query_index(false)?;
         let s1 = cp.sum_coverage(0, 100, false)?;
         assert!(deq(s1, 10.0, 1e-12));
 
@@ -735,8 +611,8 @@ mod tests_coverage_prefix {
         assert!(format!("{err}").contains("coverage not finalized"));
 
         // Finalize again and rebuild
-        cp.finalize_coverage();
-        cp.build_query_index()?;
+        cp.finalize_coverage(true);
+        cp.build_query_index(true)?;
         let s2 = cp.sum_coverage(0, 100, false)?;
         assert!(deq(s2, 20.0, 1e-12));
         Ok(())
@@ -754,8 +630,8 @@ mod tests_coverage_prefix {
 
         let mut cp = new_cp(100);
         cp.add_fragment_with_segments(fws, 1.0)?;
-        cp.finalize_coverage();
-        cp.build_query_index()?;
+        cp.finalize_coverage(true);
+        cp.build_query_index(true)?;
 
         // Only read spans counted: 10..20 (10 bp) and 40..50 (10 bp) => 20
         let s = cp.sum_coverage(10, 50, false)?;
@@ -777,8 +653,8 @@ mod tests_coverage_prefix {
 
         let mut cp = new_cp(100);
         cp.add_fragment_with_segments(fws, 1.0)?;
-        cp.finalize_coverage();
-        cp.build_query_index()?;
+        cp.finalize_coverage(true);
+        cp.build_query_index(true)?;
 
         let s = cp.sum_coverage(10, 50, false)?;
         assert!(deq(s, 40.0, 1e-9));
@@ -796,8 +672,8 @@ mod tests_coverage_prefix {
 
         let mut cp = new_cp(100);
         cp.add_fragment_with_segments(fws, 1.0)?;
-        cp.finalize_coverage();
-        cp.build_query_index()?;
+        cp.finalize_coverage(true);
+        cp.build_query_index(true)?;
 
         // 10..20 (10) + 25..50 (25) = 35
         let s = cp.sum_coverage(10, 50, false)?;
@@ -818,8 +694,8 @@ mod tests_coverage_prefix {
 
         let mut cp = new_cp(100);
         cp.add_fragment_with_segments(fws, 1.0)?;
-        cp.finalize_coverage();
-        cp.build_query_index()?;
+        cp.finalize_coverage(true);
+        cp.build_query_index(true)?;
 
         // 10..20 (10) + 25..30 (5) + 40..50 (10) = 25
         let s = cp.sum_coverage(10, 50, false)?;
@@ -828,7 +704,7 @@ mod tests_coverage_prefix {
     }
 
     #[test]
-    fn is_blacklist_finalized_no_blacklist_is_true() -> Result<()> {
+    fn has_blacklist_false_when_no_blacklist() -> Result<()> {
         let mut cp = CoveragePrefix::initialize_coverage_prefix(100);
 
         // Add a simple fragment so we can finalize coverage
@@ -837,41 +713,10 @@ mod tests_coverage_prefix {
             start: 10,
             end: 20,
         })?;
-        cp.finalize_coverage();
+        cp.finalize_coverage(true);
 
-        // No blacklist configured at all -> should be considered finalized
-        assert!(cp.is_blacklist_finalized());
-        Ok(())
-    }
-
-    #[test]
-    fn is_blacklist_finalized_after_adding_intervals_is_false_until_finalized() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(100);
-
-        cp.add_fragment_to_prefix(Fragment {
-            tid: 0,
-            start: 10,
-            end: 20,
-        })?;
-        cp.finalize_coverage();
-
-        // Initialize and add intervals but do not finalize
-        cp.initialize_blacklist_prefix();
-        cp.add_blacklist_to_prefix(12, 15)?;
-
-        // Mask present but not finalized -> should report not finalized
-        assert!(!cp.is_blacklist_finalized());
-
-        // Now finalize mask
-        cp.finalize_blacklist_prefix();
-        assert!(cp.is_blacklist_finalized());
-
-        // Sanity check: masked sum excludes 12..15
-        cp.build_query_index()?;
-        let sum_all = cp.sum_coverage(10, 20, false)?;
-        let sum_ok = cp.sum_coverage(10, 20, true)?;
-        assert!(deq(sum_all, 10.0, 1e-9));
-        assert!(deq(sum_ok, 7.0, 1e-9)); // 3 bp masked
+        // No blacklist configured at all
+        assert!(!cp.has_blacklist());
         Ok(())
     }
 }
@@ -909,7 +754,7 @@ mod tests_window_results {
             start: 30,
             end: 40,
         })?;
-        cp.finalize_coverage();
+        cp.finalize_coverage(false);
         Ok(cp)
     }
 
@@ -985,12 +830,10 @@ mod tests_window_results {
             start: 5,
             end: 15,
         })?;
-        cp.finalize_coverage();
+        cp.finalize_coverage(true);
 
         // Blacklist [9, 12) so indices 9,10,11 are masked
-        cp.initialize_blacklist_prefix();
-        cp.add_blacklist_to_prefix(9, 12)?;
-        cp.finalize_blacklist_prefix();
+        cp.set_blacklist_mask_from_intervals(&vec![(9, 12)])?;
 
         // Window [8, 13) -> positions 8,9,10,11,12
         let windows = vec![(8_u64, 13_u64, 0_u64)];
@@ -1003,7 +846,10 @@ mod tests_window_results {
 
         match out {
             CoverageOutput::PerWindow { action, results } => {
-                assert_eq!(action, CoverageWindowAction::OnlyIncludeThesePositionsIndexed);
+                assert_eq!(
+                    action,
+                    CoverageWindowAction::OnlyIncludeThesePositionsIndexed
+                );
                 assert_eq!(results.len(), 1);
                 let vals = match &results[0].value {
                     WindowValue::Positions(v) => v.clone(),
@@ -1048,26 +894,6 @@ mod tests_window_results {
             _ => return Err(anyhow!("expected WholePositional output")),
         }
 
-        Ok(())
-    }
-
-    #[test]
-    fn compute_windows_errors_if_blacklist_needed_but_not_finalized() -> Result<()> {
-        let mut cp = make_cp_with_simple_fragments(100)?;
-
-        // Prepare an un-finalized blacklist
-        cp.initialize_blacklist_prefix();
-        cp.add_blacklist_to_prefix(12, 15)?;
-
-        let windows = vec![(10_u64, 20_u64, 0_u64)];
-        let res = compute_window_outputs(
-            &mut cp,
-            Some(&windows),
-            CoverageWindowAction::Average,
-            true, // require finalized mask
-        );
-
-        assert!(res.is_err());
         Ok(())
     }
 

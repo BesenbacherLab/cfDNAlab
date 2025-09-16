@@ -402,14 +402,12 @@ fn process_chrom(
 
     // Add blacklist
     if !blacklist_intervals.is_empty() {
-        cp.initialize_blacklist_prefix();
-        cp.add_blacklist_many_to_prefix(blacklist_intervals)?;
-        cp.finalize_blacklist_prefix();
+        cp.set_blacklist_mask_from_intervals(blacklist_intervals)?;
     }
 
     // Get ready to extract average coverage per stride-bin
-    cp.finalize_coverage();
-    cp.build_query_index()?;
+    cp.finalize_coverage(true);
+    cp.build_query_index(true)?;
 
     // Decide once whether to exclude blacklisted bases
     let exclude_blacklisted = cp.blacklist_mask().is_some();

@@ -729,7 +729,7 @@ fn process_tile(
     }
 
     // Finalize coverage
-    cp.finalize_coverage();
+    cp.finalize_coverage(true);
 
     // Apply per-bin scaling (in-place)
     if !scaling_chr.is_empty() {
@@ -835,7 +835,7 @@ fn process_tile(
         } => {
             // Add blacklist (clipped) and build indexes once
             add_clipped_blacklist_to_cp(&mut cp, &tile, masked, blacklist_chr)?;
-            cp.build_query_index()?;
+            cp.build_query_index(true)?;
 
             // Borrow indexes and mask once
             let psum_all_owned = cp
@@ -910,7 +910,7 @@ fn process_tile(
             add_clipped_blacklist_to_cp(&mut cp, &tile, masked, blacklist_chr)?;
 
             // Build prefix-sum indexes for fast per-window queries
-            cp.build_query_index()?;
+            cp.build_query_index(true)?;
 
             // Own copies of the prefix arrays and optional mask to avoid long-lived borrows
             let psum_all_owned = cp.get_psum_all().ok_or_else(|| {
@@ -1080,9 +1080,7 @@ fn add_clipped_blacklist_to_cp(
             }
 
             if !clipped.is_empty() {
-                cp.initialize_blacklist_prefix();
-                cp.add_blacklist_many_to_prefix(&clipped)?;
-                cp.finalize_blacklist_prefix();
+                cp.set_blacklist_mask_from_intervals(&clipped)?;
             }
         }
     }

@@ -97,13 +97,6 @@ pub fn compute_window_outputs(
         )
     }
 
-    // If we intend to treat blacklisted sites specially, require a finalized mask
-    if nan_blacklisted && !cp.is_blacklist_finalized() {
-        anyhow::bail!(
-            "blacklist present but not finalized; call finalize_blacklist_prefix() before compute_window_outputs"
-        )
-    }
-
     // No windows (None or empty) -> positional coverage for entire sequence
     if windows.map_or(true, |w| w.is_empty()) {
         let cov = cp.coverage_in_window(0, cp.length(), nan_blacklisted)?;
@@ -128,7 +121,7 @@ pub fn compute_window_outputs(
     match action {
         CoverageWindowAction::Average => {
             // Build (or reuse) indexes explicitly for clarity
-            cp.build_query_index()?;
+            cp.build_query_index(true)?;
 
             let spans: Vec<(u32, u32)> = windows
                 .iter()
@@ -155,7 +148,7 @@ pub fn compute_window_outputs(
             Ok(CoverageOutput::PerWindow { action, results })
         }
         CoverageWindowAction::Total => {
-            cp.build_query_index()?;
+            cp.build_query_index(true)?;
             let spans: Vec<(u32, u32)> = windows
                 .iter()
                 .map(|&(s, e, _)| (s as u32, e as u32))
