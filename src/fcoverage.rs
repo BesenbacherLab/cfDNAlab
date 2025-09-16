@@ -838,17 +838,12 @@ fn process_tile(
             cp.build_query_index(true)?;
 
             // Borrow indexes and mask once
-            let psum_all_owned = cp
-                .get_psum_all()
+            let psum_all = cp
+                .psum_all_ref()
                 .ok_or_else(|| anyhow::anyhow!("psum_all missing"))?;
-            let psum_allowed_owned = cp.get_psum_allowed();
-            let cnt_allowed_ps_owned = cp.get_psum_allowed_count();
-            let mask_owned: Option<Vec<u8>> = cp.blacklist_mask().map(|m| m.to_vec());
-
-            let ps_all: &[f64] = &psum_all_owned;
-            let ps_allow: Option<&[f64]> = psum_allowed_owned.as_deref();
-            let cnt_allow: Option<&[u32]> = cnt_allowed_ps_owned.as_deref();
-            let mask: Option<&[u8]> = mask_owned.as_deref();
+            let psum_allowed = cp.psum_allowed_ref();
+            let psum_cnt_allowed = cp.psum_allowed_count_ref();
+            let mask: Option<&[u8]> = cp.blacklist_mask();
 
             // Writers: compressed partials and cross sidecar
             let mut w_part = open_zstd_auto_writer(&partials_out, 3, None)?;
@@ -877,9 +872,9 @@ fn process_tile(
                     local_start_idx,
                     local_end_idx,
                     masked,
-                    ps_all,
-                    ps_allow,
-                    cnt_allow,
+                    psum_all,
+                    psum_allowed,
+                    psum_cnt_allowed,
                     mask,
                 );
 
@@ -913,17 +908,12 @@ fn process_tile(
             cp.build_query_index(true)?;
 
             // Own copies of the prefix arrays and optional mask to avoid long-lived borrows
-            let psum_all_owned = cp.get_psum_all().ok_or_else(|| {
-                anyhow::anyhow!("psum_all missing; build_query_index() should have populated it")
-            })?;
-            let psum_allowed_owned = cp.get_psum_allowed();
-            let cnt_allowed_ps_owned = cp.get_psum_allowed_count();
-            let mask_owned: Option<Vec<u8>> = cp.blacklist_mask().map(|m| m.to_vec());
-
-            let ps_all: &[f64] = &psum_all_owned;
-            let ps_allow: Option<&[f64]> = psum_allowed_owned.as_deref();
-            let cnt_allow: Option<&[u32]> = cnt_allowed_ps_owned.as_deref();
-            let mask: Option<&[u8]> = mask_owned.as_deref();
+            let psum_all = cp
+                .psum_all_ref()
+                .ok_or_else(|| anyhow::anyhow!("psum_all missing"))?;
+            let psum_allowed = cp.psum_allowed_ref();
+            let psum_cnt_allowed = cp.psum_allowed_count_ref();
+            let mask: Option<&[u8]> = cp.blacklist_mask();
 
             // Determine the fixed-size windows that overlap the tile core
             let cs = tile.core_start as u64;
@@ -961,9 +951,9 @@ fn process_tile(
                         local_start_idx,
                         local_end_idx,
                         masked,
-                        ps_all,
-                        ps_allow,
-                        cnt_allow,
+                        psum_all,
+                        psum_allowed,
+                        psum_cnt_allowed,
                         mask,
                     );
 
@@ -1014,9 +1004,9 @@ fn process_tile(
                         local_start_idx,
                         local_end_idx,
                         masked,
-                        ps_all,
-                        ps_allow,
-                        cnt_allow,
+                        psum_all,
+                        psum_allowed,
+                        psum_cnt_allowed,
                         mask,
                     );
 

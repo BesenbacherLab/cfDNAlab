@@ -1,5 +1,5 @@
 use crate::utils::fragment::{minimal_fragment::Fragment, segment_fragment::FragmentWithSegments};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use rayon::prelude::*;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -777,17 +777,17 @@ impl CoveragePrefix {
         }
     }
 
-    // Helper for testing
-    pub fn get_psum_all(&self) -> Option<Vec<f64>> {
-        self.psum_all.clone()
+    #[inline]
+    pub fn psum_all_ref(&self) -> Option<&[f64]> {
+        self.psum_all.as_deref()
     }
-
-    pub fn get_psum_allowed(&self) -> Option<Vec<f64>> {
-        self.psum_allowed.clone()
+    #[inline]
+    pub fn psum_allowed_ref(&self) -> Option<&[f64]> {
+        self.psum_allowed.as_deref()
     }
-
-    pub fn get_psum_allowed_count(&self) -> Option<Vec<u32>> {
-        self.psum_allowed_count.clone()
+    #[inline]
+    pub fn psum_allowed_count_ref(&self) -> Option<&[u32]> {
+        self.psum_allowed_count.as_deref()
     }
 
     // Private helpers
