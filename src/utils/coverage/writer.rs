@@ -24,7 +24,7 @@ pub fn open_zstd_auto_writer<P: AsRef<Path>>(
         enc.multithread(num_threads).ok();
     }
     let sink: Box<dyn Write> = Box::new(enc.auto_finish()); // Auto-finishing wrapper
-    Ok(BufWriter::with_capacity(256 * 1024, sink))
+    Ok(BufWriter::with_capacity(512 * 1024, sink))
 }
 
 /// Write a final aggregate row: `chromosome  start  end  value  blacklisted_positions`

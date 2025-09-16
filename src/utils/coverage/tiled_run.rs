@@ -480,13 +480,23 @@ pub fn make_temp_dir(
     Ok(p)
 }
 
-// Round to number of decimals
+/// Round to number of decimals
 pub fn round_to(x: f64, decimals: i32) -> f64 {
     if decimals <= 0 {
         return x.round();
     }
     let f = 10f64.powi(decimals);
     (x * f).round() / f
+}
+
+/// Round to number of decimals with precomputed factor
+///
+/// - `factor`: precomputed `10f64.powi(decimals)`
+pub fn round_to_with_precomputed_factor(x: f64, factor: f64) -> f64 {
+    if factor == 1.0 {
+        return x.round();
+    }
+    (x * factor).round() / factor
 }
 
 // Format as compactly as possible
@@ -620,25 +630,32 @@ fn visit_runs_in_window(
 ) {
     let m = mask.unwrap_or(&[]);
     let mut i = local_start_idx;
+    let m_has_elements = !m.is_empty();
+    let rounding_factor = if decimals <= 0 {
+        1.0
+    } else {
+        10f64.powi(decimals)
+    };
 
     while i < local_end_idx {
         // Skip masked base
-        if !m.is_empty() && m[i] == 1 {
+        if m_has_elements && m[i] == 1 {
             i += 1;
             continue;
         }
 
         // Start run
         let run_start_idx = i;
-        let value0 = round_to(cov[i] as f64, decimals);
+
+        let value0 = round_to_with_precomputed_factor(cov[i] as f64, rounding_factor);
 
         // Extend run
         let mut j = i + 1;
         while j < local_end_idx {
-            if !m.is_empty() && m[j] == 1 {
+            if m_has_elements && m[j] == 1 {
                 break;
             }
-            let vj = round_to(cov[j] as f64, decimals);
+            let vj = round_to_with_precomputed_factor(cov[j] as f64, rounding_factor);
             if vj != value0 {
                 break;
             }
