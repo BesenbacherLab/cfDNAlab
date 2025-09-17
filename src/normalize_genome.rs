@@ -33,6 +33,9 @@ use crate::{
 ///
 /// Outputs scaling factors per stride to allow other methods to apply the normalization (by weighting fragment counts).
 ///
+/// The scaling factors are *inverted*, so normalization becomes multiplication.
+/// Zero-valued coverages lead to zero-valued scaling factors. Non-zero factors have `mean == 1.0`.
+///
 /// ## Coverage
 ///
 /// The full fragment span `[forward.pos, reverse.end)` is counted without consideration of deletions and gaps.
@@ -95,10 +98,10 @@ pub struct NormalizeGenomeConfig {
     ///
     /// **NOTE**: `--bin_size` must be divisible by `stride`. I.e., `bin_size % stride` == 0`.
     ///
-    /// A normalizing scaling factor is calculated per stride as the weighted average coverage of the overlapping large-scale bins.
+    /// A normalizing scaling factor is calculated per stride as the (inverse) weighted average coverage of the overlapping large-scale bins.
     ///
     /// Smaller values lead to a higher precision in the downstream normalization
-    /// but also requires saving a larger BED file in the end (one line per stride-bin)
+    /// but also require saving a larger BED file in the end (one line per stride-bin)
     /// and take longer to compute.
     #[cfg_attr(
         feature = "cli",
@@ -254,7 +257,9 @@ pub fn run(opt: NormalizeGenomeConfig) -> Result<()> {
         global_counter += counter;
     }
 
-    let global_avg_overlap_coverage = normalize_avg_overlap_by_global_mean(&mut bins_by_chr, true)?;
+    // Normalize by global mean and invert to scaling factors (keeping 0s intact)
+    let global_avg_overlap_coverage =
+        normalize_avg_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
 
     println!(
         "Calculated the global average overlapping position-coverage: {}",

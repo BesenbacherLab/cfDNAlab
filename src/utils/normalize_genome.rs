@@ -207,6 +207,9 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
 ///     Map from chromosome to its stride bins
 /// - length_weighted:
 ///     If true, weight each bin by its length; if false, weight all bins equally
+/// - invert:
+///     Invert the final scaling factor (1/x).
+///     **NOTE**: Zero-values remain zero.
 ///
 /// Returns
 /// -------
@@ -215,6 +218,7 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
 pub fn normalize_avg_overlap_by_global_mean(
     bins_by_chr: &mut FxHashMap<String, Vec<StrideBin>>,
     length_weighted: bool,
+    invert: bool,
 ) -> Result<f32> {
     let mut sum = 0.0_f64;
     let mut wsum = 0.0_f64;
@@ -251,10 +255,18 @@ pub fn normalize_avg_overlap_by_global_mean(
 
     // Calculate the scaling factors
     let inv_mean = 1.0_f64 / mean;
+    let inverter = if invert {
+        |x: f64| match x {
+            0.0 => 0.0,
+            _ => 1. / x,
+        }
+    } else {
+        |x: f64| x
+    };
     for bins in bins_by_chr.values_mut() {
         for b in bins.iter_mut() {
             let v = b.avg_overlap_coverage as f64;
-            b.scaling_factor = (v * inv_mean) as f32;
+            b.scaling_factor = inverter(v * inv_mean) as f32;
         }
     }
 

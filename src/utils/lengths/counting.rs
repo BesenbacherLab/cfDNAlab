@@ -3,7 +3,7 @@ use ndarray::Array2;
 /// Count array for fragment coverage across fragment lengths.
 #[derive(Debug, Clone)]
 pub struct LengthCounts {
-    pub counts: Vec<u64>,
+    pub counts: Vec<f64>,
     pub length_min: usize,
     pub length_max: usize,
 }
@@ -24,7 +24,7 @@ impl LengthCounts {
     ///     A `LengthCounts` object with all counts initialized to zero.
     pub fn new(length_min: usize, length_max: usize) -> Self {
         let num_lengths = length_max - length_min + 1;
-        let counts = vec![0u64; num_lengths];
+        let counts = vec![0f64; num_lengths];
         Self {
             counts,
             length_min,
@@ -68,7 +68,7 @@ impl LengthCounts {
         }
     }
 
-    /// Increment the counter for a given fragment length and GC bin.
+    /// Increment the counter by `1.0` for a given fragment length and GC bin.
     ///
     /// Parameters
     /// ----------
@@ -76,7 +76,19 @@ impl LengthCounts {
     ///     Fragment length (absolute).
     pub fn incr(&mut self, length: usize) {
         if let Some(i) = self.index_of(length) {
-            self.counts[i] = self.counts[i].saturating_add(1);
+            self.counts[i] += 1.;
+        }
+    }
+
+    /// Increment the counter by a weight for a given fragment length and GC bin.
+    ///
+    /// Parameters
+    /// ----------
+    /// length: usize
+    ///     Fragment length (absolute).
+    pub fn incr_weighted(&mut self, length: usize, weight: f64) {
+        if let Some(i) = self.index_of(length) {
+            self.counts[i] += weight;
         }
     }
 
@@ -91,7 +103,7 @@ impl LengthCounts {
     /// -------
     /// count: Option<u64>
     ///     The count if index is in range, otherwise `None`.
-    pub fn get(&self, length: usize) -> Option<u64> {
+    pub fn get(&self, length: usize) -> Option<f64> {
         self.index_of(length).map(|i| self.counts[i])
     }
 
@@ -116,7 +128,7 @@ impl LengthCounts {
     pub fn zeroed_like(&self) -> Self {
         let n_len = self.n_lengths();
         Self {
-            counts: vec![0u64; n_len],
+            counts: vec![0f64; n_len],
             length_min: self.length_min,
             length_max: self.length_max,
         }
@@ -158,7 +170,7 @@ impl LengthCounts {
             ));
         }
         for (i, count_other) in other.counts.iter().enumerate() {
-            self.counts[i] = self.counts[i].saturating_add(*count_other);
+            self.counts[i] += *count_other;
         }
         Ok(())
     }
@@ -220,13 +232,13 @@ impl std::fmt::Display for LengthCounts {
 }
 
 /// Stack counts from vector of `LengthCounts` to a single 2d array.
-pub fn stack_length_counts(all_counts: &Vec<LengthCounts>) -> Array2<u64> {
+pub fn stack_length_counts(all_counts: &Vec<LengthCounts>) -> Array2<f64> {
     // Assume all LengthCounts.counts are the same length
     let n = all_counts.len();
     let m = all_counts[0].counts.len();
 
     // Allocate a 2D array
-    let mut arr = Array2::<u64>::zeros((n, m));
+    let mut arr = Array2::<f64>::zeros((n, m));
 
     // Fill the array
     for (i, lc) in all_counts.iter().enumerate() {

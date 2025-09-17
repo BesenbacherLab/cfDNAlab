@@ -435,7 +435,6 @@ fn process_chrom(
             opt.windows.by_size,
             interval_start.into(),
             interval_end.into(),
-            min_overlap_fraction,
             opt.fragment_lengths.max_fragment_length.into(),
         );
         let overlapping_windows = if let Some(overlaps) = overlapping_windows {

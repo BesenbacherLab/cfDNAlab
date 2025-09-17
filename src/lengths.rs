@@ -14,16 +14,16 @@ use std::{
 
 use crate::{
     cli_common::{
-        AssignToWindowArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs, WindowAssigner,
-        WindowSpec, WindowsArgs,
+        ChromosomeArgs, FragmentLengthArgs, IOCArgs, ScaleGenomeArgs, WindowSpec, WindowsArgs,
     },
     counters::LengthsCounters,
     utils::{
-        bam::create_chromosome_reader,
+        bam::{bam_contigs_info, create_chromosome_reader},
         bed::load_windows_from_bed,
         blacklist::{
             BlacklistStrategy, compute_blacklist_overlap, is_blacklisted, load_blacklists,
         },
+        coverage::scale_genome::{compute_scaled_window_weights, load_scaling_factors_tsv},
         fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
         lengths::counting::{LengthCounts, stack_length_counts},
@@ -34,6 +34,13 @@ use crate::{
 /// Count fragment lengths in a BAM-file.
 ///
 /// Fragment length is defined as `end(reverse) - start(forward)`.
+///
+/// For windows, we count fragments by their overlap fraction. That is, most
+/// fragments are counted as `1.0`, while fragments overlapping the edge of a window are counted
+/// as the fraction (`< 1.0`). For consequtive non-overlapping windows, this conserves the total mass,
+/// as an edge-overlapping fragment will count `f` in one window and `1-f` in the other window.
+/// To get base-weighted counts (i.e. coverage in the window), you can multiply the output counts
+/// by their lengths (`C'[L] = L * C[L]`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct LengthsConfig {
@@ -44,10 +51,10 @@ pub struct LengthsConfig {
     windows: WindowsArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    window_assignment: AssignToWindowArgs,
+    chromosomes: ChromosomeArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    chromosomes: ChromosomeArgs,
+    scale_genome: ScaleGenomeArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     fragment_lengths: FragmentLengthArgs,
@@ -122,6 +129,7 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
         .chromosomes
         .resolve_chromosomes(Some(&opt.ioc.bam.as_path()))?;
     let window_opt = opt.windows.resolve_windows();
+    let contigs = bam_contigs_info(&opt.ioc.bam, &chromosomes)?;
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
     pb.set_style(
         ProgressStyle::default_bar()
@@ -148,6 +156,15 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
         }
         _ => None,
     };
+
+    // Load genomic scaling factors
+    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
+        if let Some(path) = &opt.scale_genome.scaling_factors {
+            println!("Start: Loading scaling factors");
+            load_scaling_factors_tsv(path, &chromosomes, &contigs)?
+        } else {
+            FxHashMap::with_hasher(Default::default())
+        };
 
     // Configure global thread‐pool size
     rayon::ThreadPoolBuilder::new()
@@ -179,6 +196,7 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
                     .and_then(|m| m.get(chr).map(|v| v.as_slice())),
                 &window_opt,
                 blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
+                scaling_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
             )?;
             pb.inc(1);
             Ok(out)
@@ -271,6 +289,7 @@ fn process_chrom(
     windows: Option<&[(u64, u64, u64)]>,
     window_opt: &WindowSpec,
     blacklist_intervals: &[(u64, u64)],
+    scaling_chr: &[(u64, u64, f32)],
 ) -> anyhow::Result<(
     Vec<LengthCounts>,
     Option<Vec<(String, u64, u64, u64, f64)>>,
@@ -297,18 +316,10 @@ fn process_chrom(
         num_bins
     ];
 
-    // Fraction of a fragment that must overlap with a window to assign to that window
-    let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
-        WindowAssigner::Any => 1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // +1 to avoid rounding error issues
-        WindowAssigner::All | WindowAssigner::Midpoint => {
-            1.0 - (1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0))
-        } // 1.0 but just below to avoid rounding errors
-        WindowAssigner::Proportion(p) => p,
-    };
-
     // Streaming pointers and single fetch for this chr
     let mut bl_ptr = 0; // Blacklist interval
     let mut wd_ptr = 0; // Genomic window
+    let mut sf_ptr = 0; // Scaling factor bin
 
     // Get coordinates to fetch reads from and to
     let (fetch_from, fetch_to) = match window_opt {
@@ -369,28 +380,17 @@ fn process_chrom(
         );
         if in_blacklist {
             counter.blacklisted_fragments += 1;
+            continue;
         }
 
-        
-
-        // Find all overlapping windows
-        let (interval_start, interval_end) = match opt.window_assignment.assign_by {
-            WindowAssigner::Midpoint => {
-                let mid = fragment.start + (fragment_length / 2);
-                (mid, mid + 1)
-            }
-            WindowAssigner::Any | WindowAssigner::All | WindowAssigner::Proportion(_) => {
-                (fragment.start, fragment.end)
-            }
-        };
+        // Find all overlapping count-windows
         let overlapping_windows = find_overlapping_windows(
             chrom_len,
             &mut wd_ptr,
             windows,
             opt.windows.by_size,
-            interval_start.into(),
-            interval_end.into(),
-            min_overlap_fraction,
+            fragment.start.into(),
+            fragment.end.into(),
             opt.fragment_lengths.max_fragment_length.into(),
         );
         let overlapping_windows = if let Some(overlaps) = overlapping_windows {
@@ -401,9 +401,52 @@ fn process_chrom(
 
         counter.counted_fragments += 1;
 
-        // Increment counter for each window / bin
-        for overlapped_window in overlapping_windows.windows.iter() {
-            counts_by_bin[overlapped_window.idx].incr(fragment_length as usize);
+        // Find all overlapping scaling-factor bins
+        // And count up the weight
+        if !scaling_chr.is_empty() {
+            // Replace scaling factor with unused index
+            let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
+                scaling_chr.iter().map(|(s, e, _)| (*s, *e, 0u64)).collect();
+
+            // Find overlapping scaling-bins
+            let overlapping_scaling_bins = find_overlapping_windows(
+                chrom_len,
+                &mut sf_ptr,
+                Some(&scaling_with_bin_idx),
+                None,
+                fragment.start.into(),
+                fragment.end.into(),
+                opt.fragment_lengths.max_fragment_length.into(),
+            )
+            .context("unwrapping overlapping scaling bins")?; // Should always find >= 1 bin
+
+            // Extract the indices of the overlapping bins
+            let overlapping_scaling_bin_indices: Vec<usize> = overlapping_scaling_bins
+                .windows
+                .iter()
+                .map(|w| w.idx)
+                .collect();
+
+            // Calculate the weight per overlapping count-window
+            let overlap_weights = compute_scaled_window_weights(
+                &overlapping_windows,
+                &overlapping_scaling_bin_indices,
+                scaling_chr,
+            )?;
+
+            // Count up the weight per overlapping count-window
+            for (overlapped_window_idx, count_weight) in overlap_weights.iter() {
+                counts_by_bin[*overlapped_window_idx]
+                    .incr_weighted(fragment_length as usize, *count_weight);
+            }
+        } else {
+            // When no scaling, increment counter by the overlap fraction for each window / bin
+            for overlapped_window in overlapping_windows.windows.iter() {
+                counts_by_bin[overlapped_window.idx].incr_weighted(
+                    fragment_length as usize,
+                    overlapped_window.overlap_fraction as f64,
+                );
+            }
         }
     }
 

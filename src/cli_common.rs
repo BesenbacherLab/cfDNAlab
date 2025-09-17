@@ -268,14 +268,11 @@ impl ChromosomeArgs {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
 pub struct ScaleGenomeArgs {
-    /// Path to optional non-negative scaling factors for normalizing/smoothing the genome `[path]`
+    /// Optional path to *non-negative* scaling factors for normalizing/smoothing the genome `[path]`
     ///
-    /// `.tsv` file as produced by `cfdna normalize-genome`.
+    /// `.tsv` file as produced by `cfdna normalize-genome` containing a scaling factor to *multipy* by per **scaling-bin**.
     ///
-    /// **Positive** scaling factors: Coverage values are divided by the scaling factors of their overlapping bin.
-    ///
-    /// **Zero-valued** scaling factors: Coverage values are set to `0` as we do not have a proper scaling factor.
-    /// It was likely calculated from a non-covered or blacklisted region and so the coverage value is likely already 0.
+    /// The scaling-bin-overlapping parts of the fragments are counted as the scaling factor of the bin (`w=sf`).
     ///
     /// File Requirements
     /// -----------------
@@ -296,12 +293,7 @@ pub struct ScaleGenomeArgs {
     ///   * end exactly at that chromosome’s length (from `contigs`).
     #[cfg_attr(
         feature = "cli",
-        clap(
-            short = 'i',
-            long,
-            value_parser,
-            help_heading = "Normalization"
-        )
+        clap(short = 'i', long, value_parser, help_heading = "Normalization")
     )]
     pub scaling_factors: Option<PathBuf>,
 }

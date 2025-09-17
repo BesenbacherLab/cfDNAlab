@@ -7,6 +7,19 @@ pub struct OverlappedWindow {
     pub win_start: u64,
     /// Window end (exclusive).
     pub win_end: u64,
+    /// Overlap fraction (overlap_bp / fragment_length_bp)
+    pub overlap_fraction: f32,
+}
+
+impl OverlappedWindow {
+    /// Assign a new overlap fraction (in `[0.0, 1.0]`).
+    pub fn set_overlap_fraction(&mut self, new_fraction: f32) -> anyhow::Result<()> {
+        if new_fraction < 0.0 || new_fraction > 1.0 {
+            anyhow::bail!("new_fraction was out of bounds (0.0-1.0): {}", new_fraction);
+        }
+        self.overlap_fraction = new_fraction;
+        Ok(())
+    }
 }
 
 /// Collection of windows that overlap a given interval.
@@ -74,12 +87,10 @@ pub fn half_open_intervals_overlap(a_start: u64, a_end: u64, b_start: u64, b_end
 /// - The moving pointer `wd_ptr` is advanced past windows whose end is
 ///   left of `interval_start - look_back`, enabling streaming even when later
 ///   intervals may start left of the current one.
-/// - In fixed-size mode (`by_size = Some(bin_size)`), bins are not clamped to
-///   `chrom_len` (clamp downstream if required).
 ///
 /// Parameters
 /// ----------
-/// - `chrom_len`: Chromosome length (used only for the global window case).
+/// - `chrom_len`: Chromosome length. Window ends are clamped to this coordinate.
 /// - `wd_ptr`:    Moving pointer into `windows` (BED-mode) for streaming scans.
 /// - `windows`:   Optional BED-like windows as `(start, end, original_idx)`.
 ///                Returned `OverlappedWindow.idx` is the **scan index (`bin_idx`)**, not `original_idx`.
@@ -99,7 +110,6 @@ pub fn find_overlapping_windows(
     by_size: Option<u64>,                // bin size for size‑mode
     interval_start: u64,
     interval_end: u64,
-    min_overlap_fraction: f64,
     look_back: u64,
 ) -> Option<OverlappingWindows> {
     // Build window list according to mode
@@ -112,16 +122,16 @@ pub fn find_overlapping_windows(
     // Size‑mode bins
     if let Some(bin_size) = by_size {
         for bin_idx in create_overlapping_bins_by_size(interval_start, interval_end, bin_size) {
-            let ow = OverlappedWindow {
+            let mut ow = OverlappedWindow {
                 idx: bin_idx as usize,
                 win_start: bin_idx * bin_size,
-                win_end: bin_idx * bin_size + bin_size,
+                win_end: (bin_idx * bin_size + bin_size).min(chrom_len),
+                overlap_fraction: 0.0, // Placeholder
             };
             let overlap_proportion =
                 fraction_overlap_of_a(interval_start, interval_end, ow.win_start, ow.win_end);
-            if overlap_proportion >= min_overlap_fraction {
-                overlaps.windows.push(ow);
-            }
+            ow.set_overlap_fraction(overlap_proportion);
+            overlaps.windows.push(ow);
         }
 
     // BED‑mode windows
@@ -135,18 +145,19 @@ pub fn find_overlapping_windows(
         }
         let mut bin_idx = *wd_ptr;
         while bin_idx < window_list.len() && window_list[bin_idx].0 < interval_end {
-            let (win_start, win_end, _) = window_list[bin_idx];
+            let (win_start, mut win_end, _) = window_list[bin_idx];
+            win_end = win_end.min(chrom_len);
             if half_open_intervals_overlap(interval_start, interval_end, win_start, win_end) {
-                let ow = OverlappedWindow {
+                let mut ow = OverlappedWindow {
                     idx: bin_idx,
                     win_start,
                     win_end,
+                    overlap_fraction: 0.0, // Placeholder
                 };
                 let overlap_proportion =
                     fraction_overlap_of_a(interval_start, interval_end, ow.win_start, ow.win_end);
-                if overlap_proportion >= min_overlap_fraction {
-                    overlaps.windows.push(ow);
-                }
+                ow.set_overlap_fraction(overlap_proportion);
+                overlaps.windows.push(ow);
             }
             bin_idx += 1;
         }
@@ -157,6 +168,7 @@ pub fn find_overlapping_windows(
             idx: 0,
             win_start: 0,
             win_end: chrom_len,
+            overlap_fraction: 1.0,
         });
     }
 
@@ -172,10 +184,11 @@ pub fn find_overlapping_windows(
 /// Definition:
 ///     `overlap_fraction_a = len(overlap) / len(a)`
 #[inline]
-pub fn fraction_overlap_of_a(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> f64 {
+pub fn fraction_overlap_of_a(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> f32 {
     let ov = overlap_len(a_start, a_end, b_start, b_end) as f64;
     let a_len = (a_end - a_start) as f64;
-    if a_len > 0.0 { ov / a_len } else { 0.0 }
+    let out = if a_len > 0.0 { ov / a_len } else { 0.0 };
+    out as f32
 }
 
 #[inline]

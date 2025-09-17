@@ -11,7 +11,9 @@ use crate::utils::bam::bam_contigs_info;
 use crate::utils::coverage::reducer::{
     reduce_aggregates_by_size_with_cross_index_for_chr, reduce_bed_with_cross_index_for_chr,
 };
-use crate::utils::coverage::scale_genome::{apply_scaling_in_place, load_scaling_factors_tsv};
+use crate::utils::coverage::scale_genome::{
+    apply_scaling_to_coverage_in_place, load_scaling_factors_tsv,
+};
 use crate::utils::coverage::tiled_run::{
     adapt_fetch_to_extreme_windows, build_tiles, concat_aligned_size_tile_finals,
     coverage_sum_and_counts, emit_bedgraph_runs, emit_windowed_runs, finalize_value,
@@ -735,7 +737,7 @@ fn process_tile(
     // Apply per-bin scaling (in-place)
     if !scaling_chr.is_empty() {
         if let Some(cov_mut) = cp.coverage_mut() {
-            apply_scaling_in_place(cov_mut, tile.core_start, scaling_chr);
+            apply_scaling_to_coverage_in_place(cov_mut, tile.core_start, scaling_chr);
         }
     }
 
