@@ -111,7 +111,7 @@ pub fn find_overlapping_windows(
     interval_start: u64,
     interval_end: u64,
     look_back: u64,
-) -> Option<OverlappingWindows> {
+) -> anyhow::Result<Option<OverlappingWindows>> {
     // Build window list according to mode
     let mut overlaps = OverlappingWindows {
         windows: Vec::new(),
@@ -130,7 +130,7 @@ pub fn find_overlapping_windows(
             };
             let overlap_proportion =
                 fraction_overlap_of_a(interval_start, interval_end, ow.win_start, ow.win_end);
-            ow.set_overlap_fraction(overlap_proportion);
+            ow.set_overlap_fraction(overlap_proportion)?;
             overlaps.windows.push(ow);
         }
 
@@ -156,7 +156,7 @@ pub fn find_overlapping_windows(
                 };
                 let overlap_proportion =
                     fraction_overlap_of_a(interval_start, interval_end, ow.win_start, ow.win_end);
-                ow.set_overlap_fraction(overlap_proportion);
+                ow.set_overlap_fraction(overlap_proportion)?;
                 overlaps.windows.push(ow);
             }
             bin_idx += 1;
@@ -173,10 +173,10 @@ pub fn find_overlapping_windows(
     }
 
     if overlaps.windows.is_empty() {
-        return None;
+        return Ok(None);
     }
 
-    Some(overlaps)
+    Ok(Some(overlaps))
 }
 
 /// The fraction of an interval 'a' that overlaps an interval 'b'.

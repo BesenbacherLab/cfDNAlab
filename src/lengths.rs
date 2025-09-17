@@ -392,7 +392,7 @@ fn process_chrom(
             fragment.start.into(),
             fragment.end.into(),
             opt.fragment_lengths.max_fragment_length.into(),
-        );
+        )?;
         let overlapping_windows = if let Some(overlaps) = overlapping_windows {
             overlaps
         } else {
@@ -417,7 +417,7 @@ fn process_chrom(
                 fragment.start.into(),
                 fragment.end.into(),
                 opt.fragment_lengths.max_fragment_length.into(),
-            )
+            )?
             .context("unwrapping overlapping scaling bins")?; // Should always find >= 1 bin
 
             // Extract the indices of the overlapping bins

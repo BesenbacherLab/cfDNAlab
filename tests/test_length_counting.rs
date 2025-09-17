@@ -40,7 +40,7 @@ mod tests {
             frag_start,
             frag_end,
             1_000, // look_back (large enough)
-        )
+        )?
         .context("expected >=1 overlapping scaling bin")?;
 
         Ok(overlaps.windows.iter().map(|w| w.idx as usize).collect())
@@ -65,7 +65,7 @@ mod tests {
             frag_start,
             frag_end,
             1000,
-        )
+        )?
         .context("count overlaps")?;
 
         let scaling_chr: Vec<(u64, u64, f32)> = vec![(0, 100, 1.25)];
@@ -96,7 +96,7 @@ mod tests {
             frag_start,
             frag_end,
             1000,
-        )
+        )?
         .context("count overlaps")?;
 
         let scaling_chr = vec![(0, 5, 2.0), (5, 10, 1.0)];
@@ -128,7 +128,7 @@ mod tests {
             frag_start,
             frag_end,
             1000,
-        )
+        )?
         .context("count overlaps")?;
 
         let scaling_chr = vec![(0, 5, 2.0), (5, 10, 1.0)];
@@ -168,7 +168,7 @@ mod tests {
             frag_start,
             frag_end,
             1000,
-        )
+        )?
         .context("count overlaps")?;
 
         let scaling_chr = vec![(0, 3, 1.0), (3, 6, 2.0), (6, 9, 0.5)];
@@ -181,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn error_on_empty_scaling_indices() {
+    fn error_on_empty_scaling_indices() -> Result<()> {
         // Build a minimal valid count overlap, but pass empty sf indices
         let chrom_len = 100;
         let count_wins = bed_windows(&[(0, 10)]);
@@ -197,7 +197,7 @@ mod tests {
             frag_start,
             frag_end,
             1000,
-        )
+        )?
         .expect("count overlaps must be Some");
 
         let scaling_chr = vec![(0, 10, 1.0)];
@@ -209,6 +209,7 @@ mod tests {
             msg.contains("scaling_bin_indices is empty"),
             "unexpected error: {msg}"
         );
+        Ok(())
     }
 
     #[test]
@@ -228,7 +229,7 @@ mod tests {
             frag_start,
             frag_end,
             1000,
-        )
+        )?
         .context("count overlaps")?;
 
         // No-scaling branch uses the overlap_fraction directly
@@ -256,7 +257,7 @@ mod tests {
             frag_start,
             frag_end,
             1000,
-        )
+        )?
         .context("count overlaps")?;
 
         assert_eq!(overlaps.windows.len(), 2);
