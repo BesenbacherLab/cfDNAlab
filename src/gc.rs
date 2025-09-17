@@ -5,7 +5,8 @@ use crate::{
         bam::create_chromosome_reader,
         bed::load_windows_from_bed,
         blacklist::{apply_blacklist_mask_to_seq, compute_blacklist_overlap, load_blacklists},
-        fragment::minimal_fragment::{MinimalReadInfo, collect_fragment},
+        fragment::minimal_fragment::Fragment,
+        fragment_iterator::fragments_from_bam,
         gc::counting::{GCCounts, build_gc_prefixes, get_gc_fraction_in_window, stack_gc_counts},
         overlaps::find_overlapping_windows,
         reference::read_seq,
@@ -35,6 +36,7 @@ use std::{
         group = clap::ArgGroup::new("min_acgt")
             .args(&["min_acgt_pct", "min_acgt_count"])
             .multiple(true)))]
+#[derive(Clone)]
 pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
@@ -343,9 +345,6 @@ fn process_chrom(
     // Streaming pointers and single fetch for this chr
     let mut wd_ptr = 0; // Genomic window
 
-    // Stash for keeping reads until mates arrive
-    let mut stash = FxHashMap::<Vec<u8>, MinimalReadInfo>::default();
-
     // Get coordinates to fetch reads from and to
     let (fetch_from, fetch_to) = match window_opt {
         WindowSpec::Bed(_) => {
@@ -364,100 +363,97 @@ fn process_chrom(
         .fetch((tid, fetch_from, fetch_to))
         .context(format!("fetch {}", chr))?;
 
-    // Loop over records and count
-    for res in reader.records() {
-        let rec = res.context("reading bam record")?;
-        counter.total_reads += 1;
-
-        if rec.tid() != tid as i32 || !include_read(&rec, opt) {
-            continue;
+    // Function for filtering fragments after pairing
+    // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
+    let fragment_filter = {
+        let min_len = opt.fragment_lengths.min_fragment_length;
+        let max_len = opt.fragment_lengths.max_fragment_length;
+        move |f: &Fragment| {
+            let len = f.len();
+            len >= min_len && len <= max_len
         }
+    };
 
-        match rec.is_reverse() {
-            true => counter.accepted_reverse += 1,
-            false => counter.accepted_forward += 1,
-        }
+    // Wrap to use opt
+    let include_read_fn = {
+        let opt = (*opt).clone();
+        move |r: &Record| include_read(r, &opt)
+    };
 
-        if let Some(mate) = stash.remove(rec.qname()) {
-            // Combine reads to a fragment
-            let fragment = if let Some(f) = collect_fragment(&MinimalReadInfo::from(&rec), &mate) {
-                f
-            } else {
-                continue;
-            };
+    // Create fragment iterator
+    let mut iter = fragments_from_bam(
+        reader.records().map(|r| r.map_err(anyhow::Error::from)),
+        include_read_fn,
+        fragment_filter,
+    )
+    .with_local_counters();
 
-            counter.collected_fragments += 1;
+    // Iterate fragments and add coverage
+    for fragment_res in iter.by_ref() {
+        let fragment = fragment_res.context("reading fragment")?;
+        let fragment_length = fragment.len();
 
-            // Check length is within allowed range
-            let fragment_length = fragment.len();
-            if fragment_length < opt.fragment_lengths.min_fragment_length
-                || fragment_length > opt.fragment_lengths.max_fragment_length
-            {
-                continue;
+        // Extract GC fraction in the interval
+        let gc = get_gc_fraction_in_window(
+            &gc_prefixes,
+            fragment.start as usize,
+            fragment.end as usize,
+            opt.min_acgt_pct as f32 / 100f32,
+            opt.min_acgt_count as u32,
+        );
+
+        // Unpack GC fraction (or continue)
+        let gc = match gc {
+            Some(v) => v,
+            None => continue,
+        };
+
+        assert!(gc.is_finite(), "GC non-finite: {}", gc);
+        assert!(
+            (0.0..=1.0).contains(&gc),
+            "GC fraction out of [0,1]: {}",
+            gc
+        );
+
+        // Get GC in [0,100] as usize
+        let gc_bin = (gc * 100.0).round() as usize;
+
+        // Find all overlapping windows
+        let (interval_start, interval_end) = match opt.window_assignment.assign_by {
+            WindowAssigner::Midpoint => {
+                let mid = fragment.start + (fragment_length / 2);
+                (mid, mid + 1)
             }
-
-            // Extract GC fraction in the interval
-            let gc = get_gc_fraction_in_window(
-                &gc_prefixes,
-                fragment.start as usize,
-                fragment.end as usize,
-                opt.min_acgt_pct as f32 / 100f32,
-                opt.min_acgt_count as u32,
-            );
-
-            // Unpack GC fraction (or continue)
-            let gc = match gc {
-                Some(v) => v,
-                None => continue,
-            };
-
-            assert!(gc.is_finite(), "GC non-finite: {}", gc);
-            assert!(
-                (0.0..=1.0).contains(&gc),
-                "GC fraction out of [0,1]: {}",
-                gc
-            );
-
-            // Get GC in [0,100] as usize
-            let gc_bin = (gc * 100.0).round() as usize;
-
-            // Find all overlapping windows
-            let (interval_start, interval_end) = match opt.window_assignment.assign_by {
-                WindowAssigner::Midpoint => {
-                    let mid = fragment.start + (fragment_length / 2);
-                    (mid, mid + 1)
-                }
-                WindowAssigner::Any | WindowAssigner::All | WindowAssigner::Proportion(_) => {
-                    (fragment.start, fragment.end)
-                }
-            };
-            let overlapping_windows = find_overlapping_windows(
-                chrom_len,
-                &mut wd_ptr,
-                windows,
-                opt.windows.by_size,
-                interval_start.into(),
-                interval_end.into(),
-                min_overlap_fraction,
-                opt.fragment_lengths.max_fragment_length.into(),
-            );
-            let overlapping_windows = if let Some(overlaps) = overlapping_windows {
-                overlaps
-            } else {
-                continue;
-            };
-
-            counter.counted_fragments += 1;
-
-            // Increment counter for each window / bin
-            for overlapped_window in overlapping_windows.windows.iter() {
-                counts_by_bin[overlapped_window.idx].incr(fragment_length as usize, gc_bin);
+            WindowAssigner::Any | WindowAssigner::All | WindowAssigner::Proportion(_) => {
+                (fragment.start, fragment.end)
             }
+        };
+        let overlapping_windows = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            windows,
+            opt.windows.by_size,
+            interval_start.into(),
+            interval_end.into(),
+            min_overlap_fraction,
+            opt.fragment_lengths.max_fragment_length.into(),
+        );
+        let overlapping_windows = if let Some(overlaps) = overlapping_windows {
+            overlaps
         } else {
-            // Stash read if new qname
-            stash.insert(rec.qname().to_vec(), MinimalReadInfo::from(&rec));
+            continue;
+        };
+
+        counter.counted_fragments += 1;
+
+        // Increment counter for each window / bin
+        for overlapped_window in overlapping_windows.windows.iter() {
+            counts_by_bin[overlapped_window.idx].incr(fragment_length as usize, gc_bin);
         }
     }
+
+    // Get counters from iterator
+    counter.add_from_snapshot(iter.counters_snapshot());
 
     let bin_info = if let Some(size) = opt.windows.by_size {
         // Build bin information for chromosome

@@ -10,6 +10,8 @@ pub struct GCCounters {
     pub accepted_forward: u64,
     /// Reverse reads accepted by first filters
     pub accepted_reverse: u64,
+    /// Fragments yielded from iterator
+    pub yielded_fragments: u64,
     /// *Fragments* counted
     pub counted_fragments: u64,
 }
@@ -21,6 +23,17 @@ impl std::ops::AddAssign for GCCounters {
         self.accepted_forward += other.accepted_forward;
         self.accepted_reverse += other.accepted_reverse;
         self.counted_fragments += other.counted_fragments;
+    }
+}
+
+impl GCCounters {
+    /// Add counts from snapshot
+    pub fn add_from_snapshot(&mut self, other: FragmentCounterSnapshot) {
+        self.total_reads += other.incoming_reads;
+        self.collected_fragments += other.produced_fragments;
+        self.accepted_forward += other.accepted_forward_reads;
+        self.accepted_reverse += other.accepted_reverse_reads;
+        self.yielded_fragments += other.yielded_fragments;
     }
 }
 

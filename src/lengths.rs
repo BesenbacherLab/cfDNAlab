@@ -356,7 +356,6 @@ fn process_chrom(
     // Iterate fragments and add coverage
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
-        counter.counted_fragments += 1;
 
         // Determine blacklist status
         let in_blacklist = is_blacklisted(
