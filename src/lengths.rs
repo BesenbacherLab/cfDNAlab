@@ -24,7 +24,8 @@ use crate::{
         blacklist::{
             BlacklistStrategy, compute_blacklist_overlap, is_blacklisted, load_blacklists,
         },
-        fragment::minimal_fragment::{MinimalReadInfo, collect_fragment},
+        fragment::minimal_fragment::Fragment,
+        fragment_iterator::fragments_from_bam,
         lengths::counting::{LengthCounts, stack_length_counts},
         overlaps::find_overlapping_windows,
     },
@@ -34,6 +35,7 @@ use crate::{
 ///
 /// Fragment length is defined as `end(reverse) - start(forward)`.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Clone)]
 pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     ioc: IOCArgs,
@@ -252,10 +254,6 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
         "Blacklist-excluded fragments: {}",
         global_counter.blacklisted_fragments
     );
-    println!(
-        "Out-of-length-range-excluded fragments: {}",
-        global_counter.illegal_length_fragments
-    );
     // if opt.gc.bin_by_gc {
     //     println!("GC-excluded reads: {}", global_counter.gc_excl);
     // }
@@ -312,9 +310,6 @@ fn process_chrom(
     let mut bl_ptr = 0; // Blacklist interval
     let mut wd_ptr = 0; // Genomic window
 
-    // Stash for keeping reads until mates arrive
-    let mut stash = FxHashMap::<Vec<u8>, MinimalReadInfo>::default();
-
     // Get coordinates to fetch reads from and to
     let (fetch_from, fetch_to) = match window_opt {
         WindowSpec::Bed(_) => {
@@ -333,93 +328,92 @@ fn process_chrom(
         .fetch((tid, fetch_from, fetch_to))
         .context(format!("fetch {}", chr))?;
 
-    // Loop over records and count
-    for res in reader.records() {
-        let rec = res.context("reading bam record")?;
-        counter.total_reads += 1;
+    // Function for filtering fragments after pairing
+    // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
+    let fragment_filter = {
+        let min_len = opt.fragment_lengths.min_fragment_length;
+        let max_len = opt.fragment_lengths.max_fragment_length;
+        move |f: &Fragment| {
+            let len = f.len();
+            len >= min_len && len <= max_len
+        }
+    };
 
-        if rec.tid() != tid as i32 || !include_read(&rec, opt) {
-            continue;
+    // Wrap to use opt
+    let include_read_fn = {
+        let opt = (*opt).clone();
+        move |r: &Record| include_read(r, &opt)
+    };
+
+    // Create fragment iterator
+    let mut iter = fragments_from_bam(
+        reader.records().map(|r| r.map_err(anyhow::Error::from)),
+        include_read_fn,
+        fragment_filter,
+    )
+    .with_local_counters();
+
+    // Iterate fragments and add coverage
+    for fragment_res in iter.by_ref() {
+        let fragment = fragment_res.context("reading fragment")?;
+        counter.counted_fragments += 1;
+
+        // Determine blacklist status
+        let in_blacklist = is_blacklisted(
+            blacklist_intervals,
+            opt.blacklist_strategy.clone(),
+            fragment.start.into(),
+            fragment.end.into(),
+            opt.fragment_lengths.max_fragment_length as u64,
+            &mut bl_ptr,
+        );
+        if in_blacklist {
+            counter.blacklisted_fragments += 1;
         }
 
-        match rec.is_reverse() {
-            true => counter.accepted_reverse += 1,
-            false => counter.accepted_forward += 1,
-        }
+        // Extract once
+        let fragment_length = fragment.len();
 
-        if let Some(mate) = stash.remove(rec.qname()) {
-            // Combine reads to a fragment
-            let fragment = if let Some(f) = collect_fragment(&MinimalReadInfo::from(&rec), &mate) {
-                f
-            } else {
-                continue;
-            };
-
-            counter.collected_fragments += 1;
-
-            // Determine blacklist status
-            let in_blacklist = is_blacklisted(
-                blacklist_intervals,
-                opt.blacklist_strategy.clone(),
-                fragment.start.into(),
-                fragment.end.into(),
-                opt.fragment_lengths.max_fragment_length as u64,
-                &mut bl_ptr,
-            );
-            if in_blacklist {
-                counter.blacklisted_fragments += 1;
+        // Find all overlapping windows
+        let (interval_start, interval_end) = match opt.window_assignment.assign_by {
+            WindowAssigner::Midpoint => {
+                let mid = fragment.start + (fragment_length / 2);
+                (mid, mid + 1)
             }
-
-            // Check length is within allowed range
-            let fragment_length = fragment.len();
-            if fragment_length < opt.fragment_lengths.min_fragment_length
-                || fragment_length > opt.fragment_lengths.max_fragment_length
-            {
-                counter.illegal_length_fragments += 1;
-                continue;
+            WindowAssigner::Any | WindowAssigner::All | WindowAssigner::Proportion(_) => {
+                (fragment.start, fragment.end)
             }
-
-            // Find all overlapping windows
-            let (interval_start, interval_end) = match opt.window_assignment.assign_by {
-                WindowAssigner::Midpoint => {
-                    let mid = fragment.start + (fragment_length / 2);
-                    (mid, mid + 1)
-                }
-                WindowAssigner::Any | WindowAssigner::All | WindowAssigner::Proportion(_) => {
-                    (fragment.start, fragment.end)
-                }
-            };
-            let overlapping_windows = find_overlapping_windows(
-                chrom_len,
-                &mut wd_ptr,
-                windows,
-                opt.windows.by_size,
-                interval_start.into(),
-                interval_end.into(),
-                min_overlap_fraction,
-                opt.fragment_lengths.max_fragment_length.into(),
-            );
-            let overlapping_windows = if let Some(overlaps) = overlapping_windows {
-                overlaps
-            } else {
-                continue;
-            };
-
-            counter.counted_fragments += 1;
-
-            // Increment counter for each window / bin
-            for overlapped_window in overlapping_windows.windows.iter() {
-                counts_by_bin[overlapped_window.idx].incr(fragment_length as usize);
-            }
+        };
+        let overlapping_windows = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            windows,
+            opt.windows.by_size,
+            interval_start.into(),
+            interval_end.into(),
+            min_overlap_fraction,
+            opt.fragment_lengths.max_fragment_length.into(),
+        );
+        let overlapping_windows = if let Some(overlaps) = overlapping_windows {
+            overlaps
         } else {
-            // Stash read if new qname
-            stash.insert(rec.qname().to_vec(), MinimalReadInfo::from(&rec));
+            continue;
+        };
+
+        counter.counted_fragments += 1;
+
+        // Increment counter for each window / bin
+        for overlapped_window in overlapping_windows.windows.iter() {
+            counts_by_bin[overlapped_window.idx].incr(fragment_length as usize);
         }
     }
 
+    // Get counters from iterator
+    counter.add_from_snapshot(iter.counters_snapshot());
+
     let bin_info = if let Some(size) = opt.windows.by_size {
         // Build bin information for chromosome
-        // chrom,start,end,total_count,blacklist_overlap
+        // chrom,start,end,blacklist_overlap
         let mut bl_ptr = 0;
         let mut bin_info = Vec::with_capacity(num_bins);
         for b in 0..num_bins {

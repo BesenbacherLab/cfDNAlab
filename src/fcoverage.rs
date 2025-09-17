@@ -710,6 +710,7 @@ fn process_tile(
         move |r: &Record| include_read(r, &opt)
     };
 
+    // Create fragment iterator
     let mut iter = fragments_with_segments_from_bam(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
         include_read_fn,
