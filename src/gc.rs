@@ -388,7 +388,7 @@ fn process_chrom(
     )
     .with_local_counters();
 
-    // Iterate fragments and add coverage
+    // Iterate fragments and count GC
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
         let fragment_length = fragment.len();

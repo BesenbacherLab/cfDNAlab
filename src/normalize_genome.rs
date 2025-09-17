@@ -18,7 +18,8 @@ use crate::{
         bam::create_chromosome_reader,
         blacklist::{BlacklistStrategy, load_blacklists},
         coverage::coverage_prefix::Coverage,
-        fragment::minimal_fragment::{MinimalReadInfo, collect_fragment},
+        fragment::minimal_fragment::Fragment,
+        fragment_iterator::fragments_from_bam,
         normalize_genome::{
             StrideBin, fill_triangular_overlap, normalize_avg_overlap_by_global_mean,
         },
@@ -73,6 +74,7 @@ use crate::{
 ///
 /// The weights are normalized by their sum (after potential truncation at edges).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Clone)]
 pub struct NormalizeGenomeConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     ioc: IOCArgs,
@@ -305,10 +307,6 @@ pub fn run(opt: NormalizeGenomeConfig) -> Result<()> {
         global_counter.accepted_forward,
         global_counter.accepted_reverse
     );
-    println!(
-        "Out-of-length-range-excluded fragments: {}",
-        global_counter.illegal_length_fragments
-    );
     // if opt.gc.bin_by_gc {
     //     println!("GC-excluded reads: {}", global_counter.gc_excl);
     // }
@@ -347,9 +345,6 @@ fn process_chrom(
         v
     };
 
-    // Stash for keeping reads until mates arrive
-    let mut stash = FxHashMap::<Vec<u8>, MinimalReadInfo>::default();
-
     reader
         .fetch((tid, 0, chrom_len))
         .context(format!("fetch {}", chr))?;
@@ -357,48 +352,43 @@ fn process_chrom(
     // Initialize coverage counter
     let mut cp = Coverage::new(chrom_len as u32);
 
-    // Loop over records and count
-    for res in reader.records() {
-        let rec = res.context("reading bam record")?;
-        counter.total_reads += 1;
-
-        if rec.tid() != tid as i32 || !include_read(&rec, opt) {
-            continue;
+    // Function for filtering fragments after pairing
+    // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
+    let fragment_filter = {
+        let min_len = opt.fragment_lengths.min_fragment_length;
+        let max_len = opt.fragment_lengths.max_fragment_length;
+        move |f: &Fragment| {
+            let len = f.len();
+            len >= min_len && len <= max_len
         }
+    };
 
-        match rec.is_reverse() {
-            true => counter.accepted_reverse += 1,
-            false => counter.accepted_forward += 1,
-        }
+    // Wrap to use opt
+    let include_read_fn = {
+        let opt = (*opt).clone();
+        move |r: &Record| include_read(r, &opt)
+    };
 
-        if let Some(mate) = stash.remove(rec.qname()) {
-            // Combine reads to a fragment
-            let fragment = if let Some(f) = collect_fragment(&MinimalReadInfo::from(&rec), &mate) {
-                f
-            } else {
-                continue;
-            };
+    // Create fragment iterator
+    let mut iter = fragments_from_bam(
+        reader.records().map(|r| r.map_err(anyhow::Error::from)),
+        include_read_fn,
+        fragment_filter,
+    )
+    .with_local_counters();
 
-            counter.collected_fragments += 1;
+    // Iterate fragments and add fragment to coverage
+    for fragment_res in iter.by_ref() {
+        let fragment = fragment_res.context("reading fragment")?;
 
-            // Check length is within allowed range
-            let fragment_length = fragment.len();
-            if fragment_length < opt.fragment_lengths.min_fragment_length
-                || fragment_length > opt.fragment_lengths.max_fragment_length
-            {
-                counter.illegal_length_fragments += 1;
-                continue;
-            }
+        counter.counted_fragments += 1;
 
-            counter.counted_fragments += 1;
-
-            // Add to coverage prefix
-            cp.add_fragment(fragment)?;
-        } else {
-            // Stash read if new qname
-            stash.insert(rec.qname().to_vec(), MinimalReadInfo::from(&rec));
-        }
+        // Add to coverage prefix
+        cp.add_fragment(fragment)?;
     }
+
+    // Get counters from iterator
+    counter.add_from_snapshot(iter.counters_snapshot());
 
     // Add blacklist
     if !blacklist_intervals.is_empty() {

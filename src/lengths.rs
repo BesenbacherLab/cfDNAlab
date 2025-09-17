@@ -356,6 +356,7 @@ fn process_chrom(
     // Iterate fragments and add coverage
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
+        let fragment_length = fragment.len();
 
         // Determine blacklist status
         let in_blacklist = is_blacklisted(
@@ -370,8 +371,7 @@ fn process_chrom(
             counter.blacklisted_fragments += 1;
         }
 
-        // Extract once
-        let fragment_length = fragment.len();
+        
 
         // Find all overlapping windows
         let (interval_start, interval_end) = match opt.window_assignment.assign_by {
