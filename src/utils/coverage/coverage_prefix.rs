@@ -9,7 +9,7 @@ enum Stage {
     Indexed,  // coverage present, indexes built
 }
 
-/// Prefix-based fragment coverage for a single linear sequence with optional blacklist.
+/// Dense per-base coverage with optional blacklist and O(1) interval queries via prefix sums.
 ///
 /// This collects fragments into a +w/-w delta array, converts the delta to per-base coverage,
 /// and builds prefix-sum indexes so you can query sums and averages over any interval.
@@ -758,9 +758,14 @@ impl Coverage {
         self.bl_mask.as_deref()
     }
 
-    /// length accessor
+    /// Length accessor
     pub fn length(&self) -> u32 {
         self.length
+    }
+
+    /// Length acessor (alias for length)
+    pub fn len(&self) -> u32 {
+        self.length()
     }
 
     /// Drop the +w/-w delta to free memory. Further add_* calls will error.
