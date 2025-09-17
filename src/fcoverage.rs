@@ -28,7 +28,7 @@ use crate::{
         bed::load_windows_from_bed,
         blacklist::load_blacklists,
         coverage::{
-            coverage_prefix::CoveragePrefix,
+            coverage_prefix::Coverage,
             tiled_run::{Tile, TileMode, add_fragment_clipped_to_core, windows_overlapping_core},
             window_results::CoverageWindowAction,
         },
@@ -691,7 +691,7 @@ fn process_tile(
 
     // Prepare CP for tile core length
     let core_len = tile.core_end - tile.core_start;
-    let mut cp = CoveragePrefix::initialize_coverage_prefix(core_len);
+    let mut cp = Coverage::new(core_len);
 
     // Function for filtering fragments after pairing
     // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
@@ -835,7 +835,7 @@ fn process_tile(
         } => {
             // Add blacklist (clipped) and build indexes once
             add_clipped_blacklist_to_cp(&mut cp, &tile, masked, blacklist_chr)?;
-            cp.build_query_index(true)?;
+            cp.build_indexes(true)?;
 
             // Borrow indexes and mask once
             let psum_all = cp
@@ -905,7 +905,7 @@ fn process_tile(
             add_clipped_blacklist_to_cp(&mut cp, &tile, masked, blacklist_chr)?;
 
             // Build prefix-sum indexes for fast per-window queries
-            cp.build_query_index(true)?;
+            cp.build_indexes(true)?;
 
             // Own copies of the prefix arrays and optional mask to avoid long-lived borrows
             let psum_all = cp
@@ -1034,7 +1034,7 @@ fn process_tile(
 
 /// Add blacklist clipped to tile coordinates to the coverage prefix object
 fn add_clipped_blacklist_to_cp(
-    cp: &mut CoveragePrefix,
+    cp: &mut Coverage,
     tile: &Tile,
     masked: bool,
     blacklist_chr: &[(u64, u64)],
@@ -1070,7 +1070,7 @@ fn add_clipped_blacklist_to_cp(
             }
 
             if !clipped.is_empty() {
-                cp.set_blacklist_mask_from_intervals(&clipped)?;
+                cp.set_blacklist_mask(&clipped)?;
             }
         }
     }

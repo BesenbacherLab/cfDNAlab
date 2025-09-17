@@ -17,26 +17,26 @@ enum Stage {
 /// Example
 /// -------
 /// ```rust
-/// use cfdnalab::utils::coverage::coverage_prefix::CoveragePrefix;
+/// use cfdnalab::utils::coverage::coverage_prefix::Coverage;
 /// use cfdnalab::utils::fragment::minimal_fragment::Fragment;
 ///
 /// # use anyhow::Result;
 /// # fn demo() -> Result<()> {
 /// let length: u32 = 1_000_000; // e.g., chrom_len
-/// let mut cp = CoveragePrefix::initialize_coverage_prefix(length);
+/// let mut cp = Coverage::new(length);
 ///
 /// // Unweighted fragment
-/// cp.add_fragment_to_prefix(Fragment { tid: 0, start: 100, end: 200 })?;
+/// cp.add_fragment(Fragment { tid: 0, start: 100, end: 200 })?;
 ///
 /// // GC-weighted fragment
-/// cp.add_fragment_to_prefix_weighted(Fragment { tid: 0, start: 150, end: 250 }, 0.87)?;
+/// cp.add_fragment_weighted(Fragment { tid: 0, start: 150, end: 250 }, 0.87)?;
 ///
 /// // Optional blacklist
-/// cp.set_blacklist_mask_from_intervals(&vec![(120, 140), (150, 153)])?;
+/// cp.set_blacklist_mask(&vec![(120, 140), (150, 153)])?;
 ///
 /// // Build per-base coverage and query indexes
 /// cp.finalize_coverage(true);  // free delta after building coverage
-/// cp.build_query_index(true)?; // build psums and free coverage
+/// cp.build_indexes(true)?; // build psums and free coverage
 ///
 /// // Query averages
 /// let avg_all = cp.avg_coverage(100, 300, false)?;   // Includes blacklisted bases
@@ -49,7 +49,7 @@ enum Stage {
 /// # }
 /// ```
 #[derive(Debug, Clone)]
-pub struct CoveragePrefix {
+pub struct Coverage {
     length: u32,                // Total sequence length in bases (e.g., chrom_len)
     delta: Vec<f32>,            // +w at start, -w at end, length = length + 1 (last is sentinel)
     coverage: Option<Vec<f32>>, // Per-base coverage after finalize_coverage, length = length
@@ -63,8 +63,8 @@ pub struct CoveragePrefix {
     cov_stage: Stage, // Lifecycle for coverage
 }
 
-impl CoveragePrefix {
-    /// initialize_coverage_prefix
+impl Coverage {
+    /// Create new `Coverage` instance.
     ///
     /// Parameters
     /// ----------
@@ -75,7 +75,7 @@ impl CoveragePrefix {
     /// -------
     /// - self:
     ///     New empty prefix.
-    pub fn initialize_coverage_prefix(length: u32) -> Self {
+    pub fn new(length: u32) -> Self {
         Self {
             length,
             delta: vec![0.0; length as usize + 1],
@@ -88,18 +88,18 @@ impl CoveragePrefix {
         }
     }
 
-    /// add_fragment_to_prefix: +1 at start, -1 at end
+    /// add_fragment: +1 at start, -1 at end
     ///
     /// Parameters
     /// ----------
     /// - frag:
     ///     Fragment on the reference `[start, end)`, 0-based, end-exclusive.
     #[inline]
-    pub fn add_fragment_to_prefix(&mut self, frag: Fragment) -> Result<()> {
-        self.add_fragment_to_prefix_weighted(frag, 1.0)
+    pub fn add_fragment(&mut self, frag: Fragment) -> Result<()> {
+        self.add_fragment_weighted(frag, 1.0)
     }
 
-    /// add_fragment_to_prefix with floating weight w: +w at start, -w at end
+    /// add_fragment with floating weight w: +w at start, -w at end
     ///
     /// Parameters
     /// ----------
@@ -108,10 +108,10 @@ impl CoveragePrefix {
     /// - weight:
     ///     Weight to add, must be finite and >= 0.
     #[inline]
-    pub fn add_fragment_to_prefix_weighted(&mut self, frag: Fragment, weight: f32) -> Result<()> {
+    pub fn add_fragment_weighted(&mut self, frag: Fragment, weight: f32) -> Result<()> {
         if !self.prefix_available() {
             anyhow::bail!(
-                "prefix was dropped; cannot add fragments. Rebuild or create a new CoveragePrefix"
+                "prefix was dropped; cannot add fragments. Rebuild or create a new Coverage"
             );
         }
         if !weight.is_finite() || weight < 0.0 {
@@ -169,7 +169,7 @@ impl CoveragePrefix {
     ) -> anyhow::Result<()> {
         if !self.prefix_available() {
             anyhow::bail!(
-                "prefix was dropped; cannot add fragments. Rebuild or create a new CoveragePrefix"
+                "prefix was dropped; cannot add fragments. Rebuild or create a new Coverage"
             );
         }
         if !weight.is_finite() || weight < 0.0 {
@@ -190,7 +190,7 @@ impl CoveragePrefix {
                     start: frag.start,
                     end: frag.end,
                 };
-                self.add_fragment_to_prefix_weighted(base, weight)
+                self.add_fragment_weighted(base, weight)
             }
             Some(segs) => {
                 // Apply +w/-w per segment
@@ -245,13 +245,13 @@ impl CoveragePrefix {
         self.cov_stage = Stage::Covered;
 
         if drop_delta {
-            self.drop_prefix();
+            self.drop_deltas();
         }
         self.coverage.as_ref().unwrap()
     }
 
     /// Set or replace the blacklist mask from half-open intervals `[start, end)`,
-    /// expressed in the **same coordinate space as this `CoveragePrefix`**
+    /// expressed in the **same coordinate space as this `Coverage`**
     /// (i.e., prefix-local `0..self.length`).
     ///
     /// Contract
@@ -263,7 +263,7 @@ impl CoveragePrefix {
     ///
     /// Errors
     /// - Returns an error if any interval violates the contract (out of bounds or empty).
-    pub fn set_blacklist_mask_from_intervals(&mut self, intervals: &[(u64, u64)]) -> Result<()> {
+    pub fn set_blacklist_mask(&mut self, intervals: &[(u64, u64)]) -> Result<()> {
         if intervals.is_empty() {
             // No blacklist → drop mask to avoid allocating an all-zero vector.
             self.bl_mask = None;
@@ -297,7 +297,7 @@ impl CoveragePrefix {
         Ok(())
     }
 
-    /// build_query_index: prepare prefix sums for fast interval queries
+    /// build_indexes: prepare prefix sums for fast interval queries
     ///
     /// What gets built
     /// ---------------
@@ -307,7 +307,7 @@ impl CoveragePrefix {
     /// Safety
     /// ------
     /// - Requires `finalize_coverage()` to have been called
-    pub fn build_query_index(&mut self, drop_coverage: bool) -> anyhow::Result<()> {
+    pub fn build_indexes(&mut self, drop_coverage: bool) -> anyhow::Result<()> {
         let cov = self.coverage.as_ref().ok_or_else(|| {
             anyhow::anyhow!("coverage not finalized, call finalize_coverage() first")
         })?;
@@ -764,7 +764,7 @@ impl CoveragePrefix {
     }
 
     /// Drop the +w/-w delta to free memory. Further add_* calls will error.
-    pub fn drop_prefix(&mut self) {
+    pub fn drop_deltas(&mut self) {
         self.delta.clear();
         self.delta.shrink_to_fit();
     }
@@ -804,11 +804,11 @@ impl CoveragePrefix {
             if self.coverage.is_none() {
                 bail!(
                     "query indexes not built and coverage was dropped; \
-                   rebuild indexes earlier with build_query_index(false), \
+                   rebuild indexes earlier with build_indexes(false), \
                    or avoid dropping coverage before queries"
                 );
             }
-            self.build_query_index(false)?;
+            self.build_indexes(false)?;
         }
         Ok(())
     }

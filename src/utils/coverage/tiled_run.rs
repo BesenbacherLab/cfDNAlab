@@ -1,4 +1,4 @@
-use crate::utils::coverage::coverage_prefix::CoveragePrefix;
+use crate::utils::coverage::coverage_prefix::Coverage;
 use crate::utils::fragment::minimal_fragment::Fragment;
 use crate::utils::fragment::segment_fragment::FragmentWithSegments;
 use crate::utils::{bam::Contigs, coverage::window_results::CoverageWindowAction};
@@ -111,13 +111,13 @@ pub fn build_tiles(
     Ok((tiles, guaranteed_aligned))
 }
 
-/// Add a possibly segmented fragment into a tile-local CoveragePrefix
+/// Add a possibly segmented fragment into a tile-local Coverage
 ///
-/// CoveragePrefix must be initialized to length = core_end - core_start
+/// Coverage must be initialized to length = core_end - core_start
 /// This clips each segment (or full span) to the [core_start, core_end) interval
 #[inline]
 pub fn add_fragment_clipped_to_core(
-    cp: &mut CoveragePrefix,
+    cp: &mut Coverage,
     fragment: &FragmentWithSegments,
     weight: f32,
     core_start: u32,
@@ -136,7 +136,7 @@ pub fn add_fragment_clipped_to_core(
                     start: s - core_start,
                     end: e - core_start,
                 };
-                cp.add_fragment_to_prefix_weighted(local, weight)?;
+                cp.add_fragment_weighted(local, weight)?;
             }
         }
     } else {
@@ -151,7 +151,7 @@ pub fn add_fragment_clipped_to_core(
                 start: s - core_start,
                 end: e - core_start,
             };
-            cp.add_fragment_to_prefix_weighted(local, weight)?;
+            cp.add_fragment_weighted(local, weight)?;
         }
     }
     Ok(())

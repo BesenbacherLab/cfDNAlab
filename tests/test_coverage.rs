@@ -4,7 +4,7 @@
 mod tests_coverage_prefix {
     use anyhow::Result;
     use cfdnalab::utils::{
-        coverage::coverage_prefix::CoveragePrefix,
+        coverage::coverage_prefix::Coverage,
         fragment::{
             minimal_fragment::Fragment,
             segment_fragment::{SegmentedReadInfo, collect_fragment_with_segments},
@@ -41,22 +41,22 @@ mod tests_coverage_prefix {
         }
     }
 
-    fn new_cp(len: u32) -> CoveragePrefix {
-        CoveragePrefix::initialize_coverage_prefix(len)
+    fn new_cp(len: u32) -> Coverage {
+        Coverage::new(len)
     }
 
     #[test]
     fn doc_example_pipeline() -> Result<()> {
         let length: u32 = 300;
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(length);
+        let mut cp = Coverage::new(length);
 
         // Unweighted and weighted fragments
-        cp.add_fragment_to_prefix(Fragment {
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 100,
             end: 200,
         })?;
-        cp.add_fragment_to_prefix_weighted(
+        cp.add_fragment_weighted(
             Fragment {
                 tid: 0,
                 start: 150,
@@ -66,11 +66,11 @@ mod tests_coverage_prefix {
         )?;
 
         // Optional blacklist
-        cp.set_blacklist_mask_from_intervals(&vec![(120, 140)])?;
+        cp.set_blacklist_mask(&vec![(120, 140)])?;
 
         // Build per-base coverage and indexes
         cp.finalize_coverage(true);
-        cp.build_query_index(false)?;
+        cp.build_indexes(false)?;
 
         // Coverage length matches sequence length
         let cov = cp.coverage().unwrap();
@@ -130,17 +130,17 @@ mod tests_coverage_prefix {
 
     #[test]
     fn add_fragment_after_finalize_requires_refinalize() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(100);
-        cp.add_fragment_to_prefix(Fragment {
+        let mut cp = Coverage::new(100);
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 10,
             end: 20,
         })?;
         cp.finalize_coverage(false);
-        cp.build_query_index(false)?;
+        cp.build_indexes(false)?;
 
         // Add another fragment; coverage should be invalidated
-        cp.add_fragment_to_prefix(Fragment {
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 20,
             end: 30,
@@ -151,7 +151,7 @@ mod tests_coverage_prefix {
 
         // Re-finalize and query again
         cp.finalize_coverage(false);
-        cp.build_query_index(false)?;
+        cp.build_indexes(false)?;
         let sum = cp.sum_coverage(0, 40, false)?;
         // Expected sum = 10 + 10 = 20
         assert!(deq(sum, 20.0, 1e-9));
@@ -159,11 +159,11 @@ mod tests_coverage_prefix {
     }
 
     #[test]
-    fn drop_prefix_blocks_additions() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(50);
-        cp.drop_prefix();
+    fn drop_deltas_blocks_additions() -> Result<()> {
+        let mut cp = Coverage::new(50);
+        cp.drop_deltas();
         let err = cp
-            .add_fragment_to_prefix(Fragment {
+            .add_fragment(Fragment {
                 tid: 0,
                 start: 0,
                 end: 1,
@@ -175,14 +175,14 @@ mod tests_coverage_prefix {
 
     #[test]
     fn bulk_queries_parallel_and_serial_match() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(1000);
+        let mut cp = Coverage::new(1000);
         // Create a few simple fragments
-        cp.add_fragment_to_prefix(Fragment {
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 10,
             end: 110,
         })?;
-        cp.add_fragment_to_prefix_weighted(
+        cp.add_fragment_weighted(
             Fragment {
                 tid: 0,
                 start: 200,
@@ -192,7 +192,7 @@ mod tests_coverage_prefix {
         )?;
         cp.finalize_coverage(true);
         // No blacklist
-        cp.build_query_index(true)?;
+        cp.build_indexes(true)?;
 
         let intervals = vec![(0, 10), (10, 110), (100, 300), (350, 450), (900, 1000)];
         let sums_ser = cp.bulk_sum_coverage(&intervals, false, false)?;
@@ -216,15 +216,15 @@ mod tests_coverage_prefix {
 
     #[test]
     fn coverage_at_positions_and_mask() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(60);
-        cp.add_fragment_to_prefix(Fragment {
+        let mut cp = Coverage::new(60);
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 10,
             end: 20,
         })?;
         cp.finalize_coverage(true);
 
-        cp.set_blacklist_mask_from_intervals(&vec![(12, 15)])?;
+        cp.set_blacklist_mask(&vec![(12, 15)])?;
 
         let vals = cp.coverage_at_positions(&[9, 10, 12, 14, 15, 19, 20])?;
         assert_eq!(vals, vec![0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0]);
@@ -242,11 +242,11 @@ mod tests_coverage_prefix {
 
     #[test]
     fn invalid_inputs_are_rejected() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(50);
+        let mut cp = Coverage::new(50);
 
         // Negative weight
         let err = cp
-            .add_fragment_to_prefix_weighted(
+            .add_fragment_weighted(
                 Fragment {
                     tid: 0,
                     start: 0,
@@ -259,7 +259,7 @@ mod tests_coverage_prefix {
 
         // Start >= end for fragment
         let err = cp
-            .add_fragment_to_prefix(Fragment {
+            .add_fragment(Fragment {
                 tid: 0,
                 start: 10,
                 end: 10,
@@ -269,12 +269,12 @@ mod tests_coverage_prefix {
 
         // Out-of-bounds blacklist
         let err = cp
-            .set_blacklist_mask_from_intervals(&vec![(45, 60)])
+            .set_blacklist_mask(&vec![(45, 60)])
             .unwrap_err();
         assert!(format!("{err}").contains("out of bounds"));
 
         // Bounds check in queries
-        cp.add_fragment_to_prefix(Fragment {
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 0,
             end: 10,
@@ -288,11 +288,11 @@ mod tests_coverage_prefix {
 
     #[test]
     fn empty_sequence_finalize_and_query() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(0);
+        let mut cp = Coverage::new(0);
         // Finalize and build indexes on empty sequence
         let cov = cp.finalize_coverage(true);
         assert_eq!(cov.len(), 0);
-        cp.build_query_index(true)?;
+        cp.build_indexes(true)?;
         // Bulk queries on empty set of intervals
         let sums = cp.bulk_sum_coverage(&[], false, false)?;
         let avgs = cp.bulk_avg_coverage(&[], false, false)?;
@@ -303,15 +303,15 @@ mod tests_coverage_prefix {
 
     #[test]
     fn single_base_coverage_and_queries() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(1);
-        cp.add_fragment_to_prefix(Fragment {
+        let mut cp = Coverage::new(1);
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 0,
             end: 1,
         })?;
         let cov = cp.finalize_coverage(true);
         assert_eq!(cov, &[1.0]);
-        cp.build_query_index(true)?;
+        cp.build_indexes(true)?;
         assert!(deq(cp.sum_coverage(0, 1, false)?, 1.0, 1e-12));
         assert!(feq(cp.avg_coverage(0, 1, false)?, 1.0, 1e-6));
         // Zero-width interval average
@@ -321,14 +321,14 @@ mod tests_coverage_prefix {
 
     #[test]
     fn exclude_without_blacklist_equals_include() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(200);
-        cp.add_fragment_to_prefix(Fragment {
+        let mut cp = Coverage::new(200);
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 10,
             end: 20,
         })?;
         cp.finalize_coverage(true);
-        cp.build_query_index(true)?;
+        cp.build_indexes(true)?;
         // No blacklist present, excluding should equal including
         let a = cp.sum_coverage(0, 200, false)?;
         let b = cp.sum_coverage(0, 200, true)?;
@@ -340,19 +340,19 @@ mod tests_coverage_prefix {
     }
 
     #[test]
-    fn idempotent_build_query_index() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(50);
-        cp.add_fragment_to_prefix(Fragment {
+    fn idempotent_build_indexes() -> Result<()> {
+        let mut cp = Coverage::new(50);
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 5,
             end: 15,
         })?;
         cp.finalize_coverage(true);
-        cp.build_query_index(false)?;
+        cp.build_indexes(false)?;
         let s1 = cp.sum_coverage(0, 50, false)?;
         let a1 = cp.avg_coverage(0, 50, false)?;
         // Rebuild indexes again
-        cp.build_query_index(true)?;
+        cp.build_indexes(true)?;
         let s2 = cp.sum_coverage(0, 50, false)?;
         let a2 = cp.avg_coverage(0, 50, false)?;
         assert!(deq(s1, s2, 1e-12));
@@ -362,14 +362,14 @@ mod tests_coverage_prefix {
 
     #[test]
     fn bulk_empty_intervals() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(10);
-        cp.add_fragment_to_prefix(Fragment {
+        let mut cp = Coverage::new(10);
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 2,
             end: 5,
         })?;
         cp.finalize_coverage(true);
-        cp.build_query_index(true)?;
+        cp.build_indexes(true)?;
         let sums = cp.bulk_sum_coverage(&[], false, false)?;
         let avgs = cp.bulk_avg_coverage(&[], false, false)?;
         assert!(sums.is_empty());
@@ -379,8 +379,8 @@ mod tests_coverage_prefix {
 
     #[test]
     fn position_bounds_and_errors() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(5);
-        cp.add_fragment_to_prefix(Fragment {
+        let mut cp = Coverage::new(5);
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 1,
             end: 4,
@@ -397,14 +397,14 @@ mod tests_coverage_prefix {
 
     #[test]
     fn blacklist_affects_queries_as_expected() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(100);
+        let mut cp = Coverage::new(100);
         // Coverage segments: [10,30)=1.0 and [40,90)=0.5
-        cp.add_fragment_to_prefix(Fragment {
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 10,
             end: 30,
         })?;
-        cp.add_fragment_to_prefix_weighted(
+        cp.add_fragment_weighted(
             Fragment {
                 tid: 0,
                 start: 40,
@@ -414,8 +414,8 @@ mod tests_coverage_prefix {
         )?;
         cp.finalize_coverage(true);
         // Blacklist [20,25) and [80,100)
-        cp.set_blacklist_mask_from_intervals(&vec![(20, 25), (80, 100)])?;
-        cp.build_query_index(true)?;
+        cp.set_blacklist_mask(&vec![(20, 25), (80, 100)])?;
+        cp.build_indexes(true)?;
 
         // Sum including mask
         let s_all = cp.sum_coverage(0, 100, false)?;
@@ -439,8 +439,8 @@ mod tests_coverage_prefix {
 
     #[test]
     fn finalize_twice_is_stable() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(30);
-        cp.add_fragment_to_prefix(Fragment {
+        let mut cp = Coverage::new(30);
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 10,
             end: 20,
@@ -454,13 +454,13 @@ mod tests_coverage_prefix {
 
     #[test]
     fn bulk_parallel_vs_serial_equivalence_with_mask() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(1000);
-        cp.add_fragment_to_prefix(Fragment {
+        let mut cp = Coverage::new(1000);
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 0,
             end: 500,
         })?;
-        cp.add_fragment_to_prefix_weighted(
+        cp.add_fragment_weighted(
             Fragment {
                 tid: 0,
                 start: 250,
@@ -469,9 +469,9 @@ mod tests_coverage_prefix {
             0.5,
         )?;
         cp.finalize_coverage(true);
-        cp.set_blacklist_mask_from_intervals(&vec![(400, 450), (700, 900)])?;
+        cp.set_blacklist_mask(&vec![(400, 450), (700, 900)])?;
 
-        cp.build_query_index(true)?;
+        cp.build_indexes(true)?;
 
         let intervals: Vec<(u32, u32)> = vec![
             (0, 0),
@@ -498,9 +498,9 @@ mod tests_coverage_prefix {
     }
 
     #[test]
-    fn finalize_after_drop_prefix_panics() {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(10);
-        cp.drop_prefix();
+    fn finalize_after_drop_deltas_panics() {
+        let mut cp = Coverage::new(10);
+        cp.drop_deltas();
         // finalize_coverage currently assumes the prefix exists and will panic
         let panicked = catch_unwind(AssertUnwindSafe(|| {
             let _ = cp.finalize_coverage(false);
@@ -511,14 +511,14 @@ mod tests_coverage_prefix {
 
     #[test]
     fn queries_cover_edges_exactly() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(10);
-        cp.add_fragment_to_prefix(Fragment {
+        let mut cp = Coverage::new(10);
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 0,
             end: 10,
         })?;
         cp.finalize_coverage(true);
-        cp.build_query_index(true)?;
+        cp.build_indexes(true)?;
         // Full range
         assert!(deq(cp.sum_coverage(0, 10, false)?, 10.0, 1e-12));
         // Left edge zero-width
@@ -532,14 +532,14 @@ mod tests_coverage_prefix {
 
     #[test]
     fn manual_vs_indexed_sum_consistency() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(200);
+        let mut cp = Coverage::new(200);
         // Coverage 1.0 on [20,60) and 0.5 on [100,150)
-        cp.add_fragment_to_prefix(Fragment {
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 20,
             end: 60,
         })?;
-        cp.add_fragment_to_prefix_weighted(
+        cp.add_fragment_weighted(
             Fragment {
                 tid: 0,
                 start: 100,
@@ -548,7 +548,7 @@ mod tests_coverage_prefix {
             0.5,
         )?;
         let cov = cp.finalize_coverage(true).to_vec();
-        cp.build_query_index(true)?;
+        cp.build_indexes(true)?;
 
         let intervals = vec![(0, 200), (0, 20), (20, 60), (50, 120), (140, 160)];
         for &(a, b) in &intervals {
@@ -561,8 +561,8 @@ mod tests_coverage_prefix {
 
     #[test]
     fn mask_positions_nan_semantics() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(30);
-        cp.add_fragment_to_prefix(Fragment {
+        let mut cp = Coverage::new(30);
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 10,
             end: 20,
@@ -576,7 +576,7 @@ mod tests_coverage_prefix {
         }
 
         // With blacklist, NaNs appear inside masked region
-        cp.set_blacklist_mask_from_intervals(&vec![(12, 15)])?;
+        cp.set_blacklist_mask(&vec![(12, 15)])?;
 
         let v = cp.coverage_at_positions_nan(&[11, 12, 13, 14, 15])?;
         assert!(!v[0].is_nan());
@@ -589,19 +589,19 @@ mod tests_coverage_prefix {
 
     #[test]
     fn add_fragment_after_indexes_invalidates_and_requires_refinalize() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(100);
-        cp.add_fragment_to_prefix(Fragment {
+        let mut cp = Coverage::new(100);
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 10,
             end: 20,
         })?;
         cp.finalize_coverage(false); // Cannot refinalize if delta is dropped
-        cp.build_query_index(false)?;
+        cp.build_indexes(false)?;
         let s1 = cp.sum_coverage(0, 100, false)?;
         assert!(deq(s1, 10.0, 1e-12));
 
         // Add more fragments, which should invalidate coverage and indexes
-        cp.add_fragment_to_prefix(Fragment {
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 20,
             end: 30,
@@ -612,7 +612,7 @@ mod tests_coverage_prefix {
 
         // Finalize again and rebuild
         cp.finalize_coverage(true);
-        cp.build_query_index(true)?;
+        cp.build_indexes(true)?;
         let s2 = cp.sum_coverage(0, 100, false)?;
         assert!(deq(s2, 20.0, 1e-12));
         Ok(())
@@ -631,7 +631,7 @@ mod tests_coverage_prefix {
         let mut cp = new_cp(100);
         cp.add_fragment_with_segments(fws, 1.0)?;
         cp.finalize_coverage(true);
-        cp.build_query_index(true)?;
+        cp.build_indexes(true)?;
 
         // Only read spans counted: 10..20 (10 bp) and 40..50 (10 bp) => 20
         let s = cp.sum_coverage(10, 50, false)?;
@@ -654,7 +654,7 @@ mod tests_coverage_prefix {
         let mut cp = new_cp(100);
         cp.add_fragment_with_segments(fws, 1.0)?;
         cp.finalize_coverage(true);
-        cp.build_query_index(true)?;
+        cp.build_indexes(true)?;
 
         let s = cp.sum_coverage(10, 50, false)?;
         assert!(deq(s, 40.0, 1e-9));
@@ -673,7 +673,7 @@ mod tests_coverage_prefix {
         let mut cp = new_cp(100);
         cp.add_fragment_with_segments(fws, 1.0)?;
         cp.finalize_coverage(true);
-        cp.build_query_index(true)?;
+        cp.build_indexes(true)?;
 
         // 10..20 (10) + 25..50 (25) = 35
         let s = cp.sum_coverage(10, 50, false)?;
@@ -695,7 +695,7 @@ mod tests_coverage_prefix {
         let mut cp = new_cp(100);
         cp.add_fragment_with_segments(fws, 1.0)?;
         cp.finalize_coverage(true);
-        cp.build_query_index(true)?;
+        cp.build_indexes(true)?;
 
         // 10..20 (10) + 25..30 (5) + 40..50 (10) = 25
         let s = cp.sum_coverage(10, 50, false)?;
@@ -705,10 +705,10 @@ mod tests_coverage_prefix {
 
     #[test]
     fn has_blacklist_false_when_no_blacklist() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(100);
+        let mut cp = Coverage::new(100);
 
         // Add a simple fragment so we can finalize coverage
-        cp.add_fragment_to_prefix(Fragment {
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 10,
             end: 20,
@@ -726,7 +726,7 @@ mod tests_window_results {
     use anyhow::{Result, anyhow};
     use cfdnalab::utils::{
         coverage::{
-            coverage_prefix::CoveragePrefix,
+            coverage_prefix::Coverage,
             window_results::{
                 CoverageOutput, CoverageWindowAction, WindowValue, compute_window_outputs,
             },
@@ -741,15 +741,15 @@ mod tests_window_results {
         (a - b).abs() <= tol
     }
 
-    fn make_cp_with_simple_fragments(len: u32) -> Result<CoveragePrefix> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(len);
+    fn make_cp_with_simple_fragments(len: u32) -> Result<Coverage> {
+        let mut cp = Coverage::new(len);
         // Two 10-bp blocks: [10,20) and [30,40)
-        cp.add_fragment_to_prefix(Fragment {
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 10,
             end: 20,
         })?;
-        cp.add_fragment_to_prefix(Fragment {
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 30,
             end: 40,
@@ -823,9 +823,9 @@ mod tests_window_results {
 
     #[test]
     fn compute_windows_positions_with_nan_blacklist() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(60);
+        let mut cp = Coverage::new(60);
         // One fragment spanning [5, 15)
-        cp.add_fragment_to_prefix(Fragment {
+        cp.add_fragment(Fragment {
             tid: 0,
             start: 5,
             end: 15,
@@ -833,7 +833,7 @@ mod tests_window_results {
         cp.finalize_coverage(true);
 
         // Blacklist [9, 12) so indices 9,10,11 are masked
-        cp.set_blacklist_mask_from_intervals(&vec![(9, 12)])?;
+        cp.set_blacklist_mask(&vec![(9, 12)])?;
 
         // Window [8, 13) -> positions 8,9,10,11,12
         let windows = vec![(8_u64, 13_u64, 0_u64)];
@@ -899,7 +899,7 @@ mod tests_window_results {
 
     #[test]
     fn compute_windows_errors_if_coverage_not_finalized() -> Result<()> {
-        let mut cp = CoveragePrefix::initialize_coverage_prefix(30);
+        let mut cp = Coverage::new(30);
         // Do not finalize_coverage here
         let windows = vec![(0_u64, 10_u64, 0_u64)];
         let res =

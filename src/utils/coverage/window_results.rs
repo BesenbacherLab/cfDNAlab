@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use anyhow::Result;
 
-use crate::utils::coverage::coverage_prefix::CoveragePrefix;
+use crate::utils::coverage::coverage_prefix::Coverage;
 
 /// What to do per window
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -76,7 +76,7 @@ pub enum CoverageOutput {
 ///
 /// Parameters
 /// ----------
-/// - cp: CoveragePrefix with coverage finalized and indexes buildable
+/// - cp: Coverage with coverage finalized and indexes buildable
 /// - windows: Optional triplets of `(start, end, original_idx)`
 /// - action: What to return per window
 /// - nan_blacklisted: Set blacklisted positions to `f32::NAN` and exclude when computing sums/averages
@@ -85,7 +85,7 @@ pub enum CoverageOutput {
 /// -------
 /// - out: `CoverageOutput` with either per-window results or whole positional coverage
 pub fn compute_window_outputs(
-    cp: &mut CoveragePrefix,
+    cp: &mut Coverage,
     windows: Option<&[(u64, u64, u64)]>,
     action: CoverageWindowAction,
     nan_blacklisted: bool,
@@ -121,7 +121,7 @@ pub fn compute_window_outputs(
     match action {
         CoverageWindowAction::Average => {
             // Build (or reuse) indexes explicitly for clarity
-            cp.build_query_index(true)?;
+            cp.build_indexes(true)?;
 
             let spans: Vec<(u32, u32)> = windows
                 .iter()
@@ -148,7 +148,7 @@ pub fn compute_window_outputs(
             Ok(CoverageOutput::PerWindow { action, results })
         }
         CoverageWindowAction::Total => {
-            cp.build_query_index(true)?;
+            cp.build_indexes(true)?;
             let spans: Vec<(u32, u32)> = windows
                 .iter()
                 .map(|&(s, e, _)| (s as u32, e as u32))

@@ -17,7 +17,7 @@ use crate::{
     utils::{
         bam::create_chromosome_reader,
         blacklist::{BlacklistStrategy, load_blacklists},
-        coverage::coverage_prefix::CoveragePrefix,
+        coverage::coverage_prefix::Coverage,
         fragment::minimal_fragment::{MinimalReadInfo, collect_fragment},
         normalize_genome::{
             StrideBin, fill_triangular_overlap, normalize_avg_overlap_by_global_mean,
@@ -355,7 +355,7 @@ fn process_chrom(
         .context(format!("fetch {}", chr))?;
 
     // Initialize coverage counter
-    let mut cp = CoveragePrefix::initialize_coverage_prefix(chrom_len as u32);
+    let mut cp = Coverage::new(chrom_len as u32);
 
     // Loop over records and count
     for res in reader.records() {
@@ -393,7 +393,7 @@ fn process_chrom(
             counter.counted_fragments += 1;
 
             // Add to coverage prefix
-            cp.add_fragment_to_prefix(fragment)?;
+            cp.add_fragment(fragment)?;
         } else {
             // Stash read if new qname
             stash.insert(rec.qname().to_vec(), MinimalReadInfo::from(&rec));
@@ -402,12 +402,12 @@ fn process_chrom(
 
     // Add blacklist
     if !blacklist_intervals.is_empty() {
-        cp.set_blacklist_mask_from_intervals(blacklist_intervals)?;
+        cp.set_blacklist_mask(blacklist_intervals)?;
     }
 
     // Get ready to extract average coverage per stride-bin
     cp.finalize_coverage(true);
-    cp.build_query_index(true)?;
+    cp.build_indexes(true)?;
 
     // Decide once whether to exclude blacklisted bases
     let exclude_blacklisted = cp.blacklist_mask().is_some();
