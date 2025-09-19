@@ -171,7 +171,8 @@ impl FromStr for WindowAssigner {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
 pub struct AssignToWindowArgs {
-    /// The fragment positions that should overlap a window for it to be counted in that window `[string]`
+    /// The fragment positions that should overlap a window for it to be counted in that window,
+    /// OR the option to count the fraction of overlapping bases `[string]`
     ///
     /// Possible values:
     ///     "any", "all", "midpoint", or "proportion=<threshold>"

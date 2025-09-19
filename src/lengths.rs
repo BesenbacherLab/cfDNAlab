@@ -36,12 +36,14 @@ use crate::{
 ///
 /// Fragment length is defined as `end(reverse) - start(forward)`.
 ///
-/// For windows, we count fragments by their overlap fraction. That is, most
+/// The default for windows is to count fragments by their overlap fraction. That is, most
 /// fragments are counted as `1.0`, while fragments overlapping the edge of a window are counted
-/// as the fraction (`< 1.0`). For consequtive non-overlapping windows, this conserves the total mass,
-/// as an edge-overlapping fragment will count `f` in one window and `1-f` in the other window.
-/// To get base-weighted counts (i.e. coverage in the window), you can multiply the output counts
-/// by their lengths (`C'[L] = L * C[L]`).
+/// as the fraction it overlaps the window (`< 1.0`). For consequtive non-overlapping windows, 
+/// this conserves the total mass, as an edge-overlapping fragment will count `f` in one window 
+/// and `1-f` in the other window. To get base-weighted counts (i.e. coverage in the window), 
+/// you can multiply the output counts by their lengths (`C'[L] = L * C[L]`). **Other options**
+/// include counting the full fragment if the *fragment midpoint* or a given *proportion* of
+/// positions overlap the window.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct LengthsConfig {
@@ -442,7 +444,7 @@ fn process_chrom(
                 &mut sf_ptr,
                 Some(&scaling_with_bin_idx),
                 None,
-                fragment.start.into(),
+                fragment.start.into(), // Full fragment
                 fragment.end.into(),
                 1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
                 opt.fragment_lengths.max_fragment_length.into(),
