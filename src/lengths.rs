@@ -14,7 +14,8 @@ use std::{
 
 use crate::{
     cli_common::{
-        ChromosomeArgs, FragmentLengthArgs, IOCArgs, ScaleGenomeArgs, WindowSpec, WindowsArgs,
+        AssignToWindowArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs, ScaleGenomeArgs,
+        WindowAssigner, WindowSpec, WindowsArgs,
     },
     counters::LengthsCounters,
     utils::{
@@ -49,6 +50,9 @@ pub struct LengthsConfig {
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     windows: WindowsArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    window_assignment: AssignToWindowArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     chromosomes: ChromosomeArgs,
@@ -316,6 +320,17 @@ fn process_chrom(
         num_bins
     ];
 
+    // Fraction of a fragment that must overlap with a window to assign to that window
+    let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
+        WindowAssigner::Any | WindowAssigner::CountOverlap => {
+            1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0)
+        } // +1 to avoid rounding error issues
+        WindowAssigner::All | WindowAssigner::Midpoint => {
+            1.0 - (1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0))
+        } // 1.0 but just below to avoid rounding errors
+        WindowAssigner::Proportion(p) => p,
+    };
+
     // Streaming pointers and single fetch for this chr
     let mut bl_ptr = 0; // Blacklist interval
     let mut wd_ptr = 0; // Genomic window
@@ -383,14 +398,27 @@ fn process_chrom(
             continue;
         }
 
+        // Find all overlapping windows
+        let (interval_start, interval_end) = match opt.window_assignment.assign_by {
+            WindowAssigner::Midpoint => {
+                let mid = fragment.start + (fragment_length / 2);
+                (mid, mid + 1)
+            }
+            WindowAssigner::Any
+            | WindowAssigner::All
+            | WindowAssigner::Proportion(_)
+            | WindowAssigner::CountOverlap => (fragment.start, fragment.end),
+        };
+
         // Find all overlapping count-windows
         let overlapping_windows = find_overlapping_windows(
             chrom_len,
             &mut wd_ptr,
             windows,
             opt.windows.by_size,
-            fragment.start.into(),
-            fragment.end.into(),
+            interval_start.into(),
+            interval_end.into(),
+            min_overlap_fraction,
             opt.fragment_lengths.max_fragment_length.into(),
         )?;
         let overlapping_windows = if let Some(overlaps) = overlapping_windows {
@@ -416,6 +444,7 @@ fn process_chrom(
                 None,
                 fragment.start.into(),
                 fragment.end.into(),
+                1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
                 opt.fragment_lengths.max_fragment_length.into(),
             )?
             .context("unwrapping overlapping scaling bins")?; // Should always find >= 1 bin

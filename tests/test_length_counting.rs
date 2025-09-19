@@ -39,6 +39,7 @@ mod tests {
             None, // by_size
             frag_start,
             frag_end,
+            0.0,
             1_000, // look_back (large enough)
         )?
         .context("expected >=1 overlapping scaling bin")?;
@@ -64,6 +65,7 @@ mod tests {
             None,
             frag_start,
             frag_end,
+            0.0,
             1000,
         )?
         .context("count overlaps")?;
@@ -95,6 +97,7 @@ mod tests {
             None,
             frag_start,
             frag_end,
+            0.0,
             1000,
         )?
         .context("count overlaps")?;
@@ -127,6 +130,7 @@ mod tests {
             None,
             frag_start,
             frag_end,
+            0.0,
             1000,
         )?
         .context("count overlaps")?;
@@ -167,6 +171,7 @@ mod tests {
             None,
             frag_start,
             frag_end,
+            0.0,
             1000,
         )?
         .context("count overlaps")?;
@@ -196,6 +201,7 @@ mod tests {
             None,
             frag_start,
             frag_end,
+            0.0,
             1000,
         )?
         .expect("count overlaps must be Some");
@@ -228,6 +234,7 @@ mod tests {
             None,
             frag_start,
             frag_end,
+            0.0,
             1000,
         )?
         .context("count overlaps")?;
@@ -256,6 +263,7 @@ mod tests {
             None,
             frag_start,
             frag_end,
+            0.0,
             1000,
         )?
         .context("count overlaps")?;

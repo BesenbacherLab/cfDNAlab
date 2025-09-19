@@ -97,6 +97,7 @@ pub fn half_open_intervals_overlap(a_start: u64, a_end: u64, b_start: u64, b_end
 ///                Technically, the `original_idx` is ignored and can be any u64.
 /// - `by_size`:   If `Some(bin_size)`, use fixed-size bins; otherwise use `windows` if provided.
 /// - `interval_start`, `interval_end`: Interval coordinates (start inclusive, end exclusive).
+/// - `min_overlap_fraction`: Minimum overlap fraction to use overlap.
 /// - `look_back`: Max look-back distance for advancing `wd_ptr` (e.g., max fragment length).
 ///
 /// Returns
@@ -110,6 +111,7 @@ pub fn find_overlapping_windows(
     by_size: Option<u64>,                // bin size for size‑mode
     interval_start: u64,
     interval_end: u64,
+    min_overlap_fraction: f64,
     look_back: u64,
 ) -> anyhow::Result<Option<OverlappingWindows>> {
     // Build window list according to mode
@@ -130,6 +132,9 @@ pub fn find_overlapping_windows(
             };
             let overlap_proportion =
                 fraction_overlap_of_a(interval_start, interval_end, ow.win_start, ow.win_end);
+            if (overlap_proportion as f64) < min_overlap_fraction {
+                continue;
+            }
             ow.set_overlap_fraction(overlap_proportion)?;
             overlaps.windows.push(ow);
         }
@@ -156,6 +161,9 @@ pub fn find_overlapping_windows(
                 };
                 let overlap_proportion =
                     fraction_overlap_of_a(interval_start, interval_end, ow.win_start, ow.win_end);
+                if (overlap_proportion as f64) < min_overlap_fraction {
+                    continue;
+                }
                 ow.set_overlap_fraction(overlap_proportion)?;
                 overlaps.windows.push(ow);
             }

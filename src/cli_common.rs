@@ -126,12 +126,13 @@ impl WindowsArgs {
     }
 }
 
-// TODO: Consider allowing counting up the proportion?
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 /// How to assign a fragment to windows.
 pub enum WindowAssigner {
-    /// Assign to windows overlapping any of the fragment bases.
+    /// Count up the fraction of overlapping fragment bases.
     #[default]
+    CountOverlap,
+    /// Assign to windows overlapping any of the fragment bases.
     Any,
     /// Assign to windows overlapping all of the fragment bases.
     All,
@@ -144,7 +145,9 @@ pub enum WindowAssigner {
 impl FromStr for WindowAssigner {
     type Err = String;
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        if s == "all" {
+        if s == "count-overlap" {
+            Ok(WindowAssigner::CountOverlap)
+        } else if s == "all" {
             Ok(WindowAssigner::All)
         } else if s == "any" {
             Ok(WindowAssigner::Any)
@@ -160,7 +163,7 @@ impl FromStr for WindowAssigner {
                 Ok(WindowAssigner::Proportion(thr))
             }
         } else {
-            Err("Use 'any', 'all', 'midpoint', or 'proportion=<0.0–1.0>'".into())
+            Err("Use 'count-overlap', 'any', 'all', 'midpoint', or 'proportion=<0.0–1.0>'".into())
         }
     }
 }
@@ -180,9 +183,9 @@ pub struct AssignToWindowArgs {
         feature = "cli",
         clap(
             long,
-            default_value = "any",
+            default_value = "count-overlap",
             ignore_case = true,
-            help = "What to assign fragments to windows by.",
+            help = "What to assign fragments to windows by (or count fragments as).",
             help_heading = "Window Assignment"
         )
     )]

@@ -335,7 +335,9 @@ fn process_chrom(
 
     // Fraction of a fragment that must overlap with a window to assign to that window
     let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
-        WindowAssigner::Any => 1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // +1 to avoid rounding error issues
+        WindowAssigner::Any | WindowAssigner::CountOverlap => {
+            1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0)
+        } // +1 to avoid rounding error issues
         WindowAssigner::All | WindowAssigner::Midpoint => {
             1.0 - (1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0))
         } // 1.0 but just below to avoid rounding errors
@@ -424,9 +426,10 @@ fn process_chrom(
                 let mid = fragment.start + (fragment_length / 2);
                 (mid, mid + 1)
             }
-            WindowAssigner::Any | WindowAssigner::All | WindowAssigner::Proportion(_) => {
-                (fragment.start, fragment.end)
-            }
+            WindowAssigner::Any
+            | WindowAssigner::All
+            | WindowAssigner::Proportion(_)
+            | WindowAssigner::CountOverlap => (fragment.start, fragment.end),
         };
         let overlapping_windows = find_overlapping_windows(
             chrom_len,
@@ -435,6 +438,7 @@ fn process_chrom(
             opt.windows.by_size,
             interval_start.into(),
             interval_end.into(),
+            min_overlap_fraction,
             opt.fragment_lengths.max_fragment_length.into(),
         )?;
         let overlapping_windows = if let Some(overlaps) = overlapping_windows {
