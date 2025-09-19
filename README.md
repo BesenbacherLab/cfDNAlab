@@ -35,9 +35,11 @@ $ target/release/cfdna --help
 ## Commands
 The following commands are currently available:
 
-| Command         | Description                                                             | Output                                                            |
-| --------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `cfdna lengths` | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)` | `all_length_counts.npy`: Count array<br />`bins.bed`: Window coordinates |
+| Command                  | Description                                                                    | Output                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| `cfdna fcoverage`        | Count *fragment* coverage per position or aggregated in windows                | TODO                                                                     |
+| `cfdna lengths`          | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)`        | `all_length_counts.npy`: Count array<br />`bins.bed`: Window coordinates |
+| `cfdna normalize-genome` | Calculate scaling factors for normalizing/smoothing coverage across the genome | TODO                                                                     |
  
 
 ### Common options
