@@ -29,6 +29,7 @@ use crate::{
         fragment_iterator::fragments_from_bam,
         lengths::counting::{LengthCounts, stack_length_counts},
         overlaps::find_overlapping_windows,
+        read::default_include_read,
     },
 };
 
@@ -38,9 +39,9 @@ use crate::{
 ///
 /// The default for windows is to count fragments by their overlap fraction. That is, most
 /// fragments are counted as `1.0`, while fragments overlapping the edge of a window are counted
-/// as the fraction it overlaps the window (`< 1.0`). For consequtive non-overlapping windows, 
-/// this conserves the total mass, as an edge-overlapping fragment will count `f` in one window 
-/// and `1-f` in the other window. To get base-weighted counts (i.e. coverage in the window), 
+/// as the fraction it overlaps the window (`< 1.0`). For consequtive non-overlapping windows,
+/// this conserves the total mass, as an edge-overlapping fragment will count `f` in one window
+/// and `1-f` in the other window. To get base-weighted counts (i.e. coverage in the window),
 /// you can multiply the output counts by their lengths (`C'[L] = L * C[L]`). **Other options**
 /// include counting the full fragment if the *fragment midpoint* or a given *proportion* of
 /// positions overlap the window.
@@ -114,19 +115,6 @@ pub struct LengthsConfig {
 
     // #[cfg_attr(feature = "cli", clap(flatten))]
     // two_bit: TwoBitArgs,
-}
-
-/// Whether to include the read or continue
-fn include_read(rec: &Record, opt: &LengthsConfig) -> bool {
-    !(rec.is_unmapped()
-        || rec.is_mate_unmapped()
-        || rec.tid() != rec.mtid()
-        || rec.is_secondary()
-        || rec.is_supplementary()
-        || rec.is_duplicate()
-        || rec.is_quality_check_failed()
-        || (opt.require_proper_pair && !rec.is_proper_pair())
-        || rec.mapq() < opt.min_mapq) as bool
 }
 
 pub fn run(opt: LengthsConfig) -> Result<()> {
@@ -370,7 +358,7 @@ fn process_chrom(
     // Wrap to use opt
     let include_read_fn = {
         let opt = (*opt).clone();
-        move |r: &Record| include_read(r, &opt)
+        move |r: &Record| default_include_read(r, opt.require_proper_pair, opt.min_mapq)
     };
 
     // Create fragment iterator

@@ -1,6 +1,19 @@
 use rust_htslib::bam::Record;
 use rust_htslib::bam::record::Aux;
 
+/// Whether to include the read or continue
+pub fn default_include_read(rec: &Record, require_proper_pair: bool, min_mapq: u8) -> bool {
+    !(rec.is_unmapped()
+        || rec.is_mate_unmapped()
+        || rec.tid() != rec.mtid()
+        || rec.is_secondary()
+        || rec.is_supplementary()
+        || rec.is_duplicate()
+        || rec.is_quality_check_failed()
+        || (require_proper_pair && !rec.is_proper_pair())
+        || rec.mapq() < min_mapq) as bool
+}
+
 /// Extract 'NM' aux tag from read as u16
 ///
 /// Parameters

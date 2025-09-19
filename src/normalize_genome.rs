@@ -23,6 +23,7 @@ use crate::{
         normalize_genome::{
             StrideBin, fill_triangular_overlap, normalize_avg_overlap_by_global_mean,
         },
+        read::default_include_read,
     },
 };
 
@@ -182,19 +183,6 @@ impl NormalizeGenomeConfig {
 
         Ok(())
     }
-}
-
-/// Whether to include the read or continue
-fn include_read(rec: &Record, opt: &NormalizeGenomeConfig) -> bool {
-    !(rec.is_unmapped()
-        || rec.is_mate_unmapped()
-        || rec.tid() != rec.mtid()
-        || rec.is_secondary()
-        || rec.is_supplementary()
-        || rec.is_duplicate()
-        || rec.is_quality_check_failed()
-        || (opt.require_proper_pair && !rec.is_proper_pair())
-        || rec.mapq() < opt.min_mapq) as bool
 }
 
 pub fn run(opt: NormalizeGenomeConfig) -> Result<()> {
@@ -371,7 +359,7 @@ fn process_chrom(
     // Wrap to use opt
     let include_read_fn = {
         let opt = (*opt).clone();
-        move |r: &Record| include_read(r, &opt)
+        move |r: &Record| default_include_read(r, opt.require_proper_pair, opt.min_mapq)
     };
 
     // Create fragment iterator

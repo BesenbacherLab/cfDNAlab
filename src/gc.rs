@@ -9,6 +9,7 @@ use crate::{
         fragment_iterator::fragments_from_bam,
         gc::counting::{GCCounts, build_gc_prefixes, get_gc_fraction_in_window, stack_gc_counts},
         overlaps::find_overlapping_windows,
+        read::default_include_read,
         reference::read_seq,
     },
 };
@@ -127,19 +128,6 @@ pub struct GCConfig {
         clap(long, default_value = "20", group = "min_acgt", 
              value_parser = clap::value_parser!(u8).range(0..), help_heading="Minimum ACGT (select 0-2 args)"))]
     pub min_acgt_count: u8,
-}
-
-/// Whether to include the read or continue
-fn include_read(rec: &Record, opt: &GCConfig) -> bool {
-    !(rec.is_unmapped()
-        || rec.is_mate_unmapped()
-        || rec.tid() != rec.mtid()
-        || rec.is_secondary()
-        || rec.is_supplementary()
-        || rec.is_duplicate()
-        || rec.is_quality_check_failed()
-        || (opt.require_proper_pair && !rec.is_proper_pair())
-        || rec.mapq() < opt.min_mapq) as bool
 }
 
 pub fn run(opt: GCConfig) -> Result<()> {
@@ -379,7 +367,7 @@ fn process_chrom(
     // Wrap to use opt
     let include_read_fn = {
         let opt = (*opt).clone();
-        move |r: &Record| include_read(r, &opt)
+        move |r: &Record| default_include_read(r, opt.require_proper_pair, opt.min_mapq)
     };
 
     // Create fragment iterator
