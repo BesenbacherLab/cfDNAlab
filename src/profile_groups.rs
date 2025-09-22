@@ -179,7 +179,7 @@ pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
     };
 
     // Load sites from BED file
-    println!("Start: Loading fixed-size intervals from --intervals");
+    println!("Start: Loading fixed-size intervals");
     let (windows_map, group_idx_to_name) =
         load_grouped_windows_from_bed(opt.intervals.clone(), &chromosomes, None)?;
     let num_groups = group_idx_to_name.len();
@@ -435,6 +435,11 @@ fn process_tile(
         // Determine fragment midpoint
         // Uses random rounding for even-sized fragments to avoid bias
         let midpoint = midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
+
+        // Only keep fragments with midpoints within the tile
+        if midpoint < tile.core_start || midpoint > tile.core_start {
+            continue;
+        }
 
         // Find all overlapping count-windows
         let overlapping_windows = find_overlapping_windows(
