@@ -35,11 +35,10 @@ pub struct IOCArgs {
 
     /// Number of threads to use (increases RAM usage) `[integer]`
     ///
-    /// Defaults to the minimum of 22 (one thread per chromosome) and
-    /// the number of available CPU cores (-1).
+    /// Defaults to the number of available CPU cores (-1).
     #[cfg_attr(
         feature = "cli",
-        clap(short = 't', long, default_value_t = (num_cpus::get()-1).max(1).min(22), help_heading = "Core")
+        clap(short = 't', long, default_value_t = (num_cpus::get()-1).max(1), help_heading = "Core")
     )]
     pub n_threads: usize,
 }
@@ -284,6 +283,7 @@ pub struct ScaleGenomeArgs {
     /// The scaling-bin-overlapping parts of the fragments are counted as the scaling factor of the bin (`w=sf`).
     ///
     /// File Requirements
+    ///
     /// -----------------
     ///
     /// The TSV file **must** have a header. Column names are matched **case-insensitively**.
