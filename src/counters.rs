@@ -168,6 +168,8 @@ pub struct ProfileGroupsCounters {
     pub accepted_reverse: u64,
     /// Fragments excluded due to overlap with blacklist intervals
     pub blacklisted_fragments: u64,
+    /// *Fragments* created (double counts likely)
+    pub yielded_fragments: u64,
     /// *Fragments* counted
     pub counted_fragments: u64,
 }
@@ -179,6 +181,7 @@ impl std::ops::AddAssign for ProfileGroupsCounters {
         self.accepted_forward += other.accepted_forward;
         self.accepted_reverse += other.accepted_reverse;
         self.blacklisted_fragments += other.blacklisted_fragments;
+        self.yielded_fragments += other.yielded_fragments;
         self.counted_fragments += other.counted_fragments;
     }
 }
