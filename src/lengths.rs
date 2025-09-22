@@ -267,7 +267,7 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
         global_counter.accepted_reverse
     );
     println!(
-        "Blacklist-excluded fragments: {}",
+        "  Blacklist-excluded fragments: {}",
         global_counter.blacklisted_fragments
     );
     // if opt.gc.bin_by_gc {
