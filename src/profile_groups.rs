@@ -185,7 +185,7 @@ pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
     let num_groups = group_idx_to_name.len();
     let total_windows: usize = windows_map.values().map(|gw| gw.len()).sum();
     println!(
-        "  Num. chromosomes: {:?} | Num. windows: {:?} | Num. groups: {:?}",
+        "       Num. chromosomes: {:?} | Num. windows: {:?} | Num. groups: {:?}",
         windows_map.keys().len(),
         total_windows,
         num_groups,
