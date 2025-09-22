@@ -2,6 +2,7 @@ use cfdnalab::fcoverage::FCoverageConfig;
 use cfdnalab::gc::GCConfig;
 use cfdnalab::lengths::LengthsConfig;
 use cfdnalab::normalize_genome::NormalizeGenomeConfig;
+use cfdnalab::profile_groups::ProfileGroupsConfig;
 use cfdnalab::refgc::RefGCConfig;
 
 #[cfg(feature = "cli")]
@@ -20,6 +21,7 @@ enum Cmd {
     NormalizeGenome(NormalizeGenomeConfig),
     Lengths(LengthsConfig),
     Fcoverage(FCoverageConfig),
+    ProfileGroups(ProfileGroupsConfig),
     // Ends(EndsConfig),
 }
 
@@ -46,6 +48,7 @@ fn main() {
         Cmd::NormalizeGenome(cfg) => cfdnalab::normalize_genome::run(cfg),
         Cmd::Lengths(cfg) => cfdnalab::lengths::run(cfg),
         Cmd::Fcoverage(cfg) => cfdnalab::fcoverage::run(cfg),
+        Cmd::ProfileGroups(cfg) => cfdnalab::profile_groups::run(cfg),
         // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg),
     };
 
