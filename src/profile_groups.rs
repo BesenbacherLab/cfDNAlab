@@ -55,7 +55,7 @@ pub struct ProfileGroupsConfig {
     /// The grouped fixed-size intervals to count within `[path]`
     ///
     /// A BED file of genomic intervals and their respective group names.
-    /// 
+    ///
     /// Must be sorted by the `chromosome` and `start` coordinates, and
     /// all intervals must have the same length.
     ///
@@ -64,7 +64,13 @@ pub struct ProfileGroupsConfig {
     /// Columns: `chromosome, start, end, group_name`.
     #[cfg_attr(
         feature = "cli",
-        clap(short = 'w', long, value_parser, required = true, help_heading = "Core")
+        clap(
+            short = 'w',
+            long,
+            value_parser,
+            required = true,
+            help_heading = "Core"
+        )
     )]
     pub intervals: PathBuf,
 
@@ -480,8 +486,16 @@ fn process_tile(
 
             // Count up the weight per overlapping count-window
             for (overlapped_window_idx, scaling_weight, _) in overlap_weights {
-                let (window_start, _, group_idx) = windows[overlapped_window_idx];
+                let (window_start, _, group_idx) = core_overlapping_windows[overlapped_window_idx];
                 let window_position = midpoint - window_start as u32;
+                debug_assert!(
+                    (window_start as u32) <= midpoint
+                        && midpoint < (core_overlapping_windows[overlapped_window_idx].1 as u32),
+                    "midpoint not inside window: midpoint={} window=({},{})",
+                    midpoint,
+                    window_start,
+                    core_overlapping_windows[overlapped_window_idx].1
+                );
                 counts.incr_weighted(
                     window_position as usize,
                     group_idx as usize,
@@ -493,8 +507,16 @@ fn process_tile(
             // When no scaling, increment counter by the overlap fraction for each window / bin
             for overlapped_window in overlapping_windows.windows {
                 let overlapped_window_idx = overlapped_window.idx;
-                let (window_start, _, group_idx) = windows[overlapped_window_idx];
+                let (window_start, _, group_idx) = core_overlapping_windows[overlapped_window_idx];
                 let window_position = midpoint - window_start as u32;
+                debug_assert!(
+                    (window_start as u32) <= midpoint
+                        && midpoint < (core_overlapping_windows[overlapped_window_idx].1 as u32),
+                    "midpoint not inside window: midpoint={} window=({},{})",
+                    midpoint,
+                    window_start,
+                    core_overlapping_windows[overlapped_window_idx].1
+                );
                 counts.incr_weighted(
                     window_position as usize,
                     group_idx as usize,
