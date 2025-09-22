@@ -73,7 +73,15 @@ pub struct ProfileGroupsConfig {
     ///
     /// Example: `--length-bins 20 80 150 220 500 1000`.
     #[cfg_attr(
-        feature = "cli", clap(short = 'b', long, value_parser = clap::value_parser!(u32).range(1..), default_values = ["20", "1000"], num_args = 2.., action = clap::ArgAction::Append, help_heading = "Core"))]
+        feature = "cli",
+        clap(
+            long,
+            value_parser = clap::value_parser!(u32).range(1..),
+            num_args = 2.., // at least two edges per occurrence
+            default_values_t = [20_u32, 1000_u32],
+            help_heading = "Core"
+        )
+    )]
     pub length_bins: Vec<u32>,
 
     /// Size of tiles to parallelize over `[integer]`
