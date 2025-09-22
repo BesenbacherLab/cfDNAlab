@@ -218,7 +218,7 @@ pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
     let total_tiles = tiles.len();
 
     // Where per-tile files go
-    let tmp_prefix = format!("{prefix}.site_profiles");
+    let tmp_prefix = format!("{prefix}.midpoint_profiles.tile");
     let tmp_prefix = tmp_prefix.as_str();
 
     // Create filenames for final output
@@ -316,6 +316,19 @@ pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
 
     println!("Start: Writing group index to: {:?}", &map_path);
     write_group_idx_to_name_tsv(map_path, &group_idx_to_name)?;
+
+    let keep_temp = false; // TODO: Make cli arg behind a feature for dev purposes?
+    if !keep_temp {
+        if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
+            eprintln!(
+                "warning: failed to remove temp dir {}: {}",
+                temp_dir.display(),
+                e
+            );
+        }
+    } else {
+        eprintln!("kept temp tiles in {}", temp_dir.display());
+    }
 
     println!("");
     println!("Statistics");
