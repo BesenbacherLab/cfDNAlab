@@ -175,7 +175,9 @@ pub struct AssignToWindowArgs {
     /// OR the option to count the fraction of overlapping bases `[string]`
     ///
     /// Possible values:
-    ///     "any", "all", "midpoint", or "proportion=<threshold>"
+    ///     "count-overlap", "any", "all", "midpoint", or "proportion=<threshold>"
+    ///
+    /// `'count-overlap'`: Count up the fraction of overlapping fragment bases.
     ///
     /// Example of proportion: `--assign-by proportion=0.2` (no space around `=`)
     ///
@@ -295,9 +297,12 @@ pub struct ScaleGenomeArgs {
     /// Bins are filtered to the provided `chromosomes`.
     ///
     /// For every chromosome in `chromosomes`, bins must:
-    ///   * start at 0,
-    ///   * be perfectly contiguous (no gaps, no overlaps),
-    ///   * end exactly at that chromosome’s length (from `contigs`).
+    ///
+    ///   - start at 0
+    ///
+    ///   - be perfectly contiguous (no gaps, no overlaps)
+    ///
+    ///   - end exactly at that chromosome’s length (from `contigs`)
     #[cfg_attr(
         feature = "cli",
         clap(short = 'i', long, value_parser, help_heading = "Normalization")
