@@ -193,6 +193,6 @@ impl ProfileGroupsCounters {
         self.collected_fragments += other.produced_fragments;
         self.accepted_forward += other.accepted_forward_reads;
         self.accepted_reverse += other.accepted_reverse_reads;
-        self.counted_fragments += other.yielded_fragments;
+        self.yielded_fragments += other.yielded_fragments;
     }
 }
