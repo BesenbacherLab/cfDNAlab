@@ -76,7 +76,7 @@ pub struct ProfileGroupsConfig {
 
     /// Edges of fragment length bins to count in `[path]`
     ///
-    /// The last edge is exclusive.
+    /// The last edge is *exclusive*.
     ///
     /// Example: `--length-bins 20 80 150 220 500 1000`.
     #[cfg_attr(
@@ -85,7 +85,7 @@ pub struct ProfileGroupsConfig {
             long,
             value_parser = clap::value_parser!(u32).range(1..),
             num_args = 2.., // at least two edges per occurrence
-            default_values_t = [20_u32, 1000_u32],
+            default_values_t = [20_u32, 1001_u32],
             help_heading = "Core"
         )
     )]
@@ -179,6 +179,7 @@ pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
     };
 
     // Load sites from BED file
+    println!("Start: Loading fixed-size intervals from --intervals");
     let (windows_map, group_idx_to_name) =
         load_grouped_windows_from_bed(opt.intervals.clone(), &chromosomes, None)?;
     let num_groups = group_idx_to_name.len();
@@ -377,7 +378,7 @@ fn process_tile(
 
     // Extract min/max fragment lengths
     let min_fragment_length = length_bins[0];
-    let max_fragment_length = length_bins[length_bins.len() - 1];
+    let max_fragment_length = length_bins[length_bins.len() - 1] - 1;
 
     // Function for filtering fragments after pairing
     // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
