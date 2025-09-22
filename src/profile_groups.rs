@@ -55,6 +55,7 @@ pub struct ProfileGroupsConfig {
     /// The grouped fixed-size intervals to count within `[path]`
     ///
     /// A BED file of genomic intervals and their respective group names.
+    /// 
     /// Must be sorted by the `chromosome` and `start` coordinates, and
     /// all intervals must have the same length.
     ///
@@ -63,7 +64,7 @@ pub struct ProfileGroupsConfig {
     /// Columns: `chromosome, start, end, group_name`.
     #[cfg_attr(
         feature = "cli",
-        clap(short = 'w', value_parser, required = true, help_heading = "Core")
+        clap(short = 'w', long, value_parser, required = true, help_heading = "Core")
     )]
     pub intervals: PathBuf,
 
