@@ -9,6 +9,7 @@ use crate::{
         fragment_iterator::fragments_from_bam,
         gc::counting::{GCCounts, build_gc_prefixes, get_gc_fraction_in_window, stack_gc_counts},
         overlaps::find_overlapping_windows,
+        profiling::midpoint::midpoint_random_even_with_thread_rng,
         read::default_include_read,
         reference::read_seq,
     },
@@ -411,8 +412,9 @@ fn process_chrom(
         // Find all overlapping windows
         let (interval_start, interval_end) = match opt.window_assignment.assign_by {
             WindowAssigner::Midpoint => {
-                let mid = fragment.start + (fragment_length / 2);
-                (mid, mid + 1)
+                let midpoint =
+                    midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
+                (midpoint, midpoint + 1)
             }
             WindowAssigner::Any
             | WindowAssigner::All

@@ -24,11 +24,15 @@ use crate::{
         blacklist::{
             BlacklistStrategy, compute_blacklist_overlap, is_blacklisted, load_blacklists,
         },
-        coverage::scale_genome::{compute_scaled_window_weights, load_scaling_factors_tsv},
+        coverage::scale_genome::{
+            compute_window_scaling_over_fragment, compute_window_scaling_over_overlap,
+            load_scaling_factors_tsv,
+        },
         fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
         lengths::counting::{LengthCounts, stack_length_counts},
         overlaps::find_overlapping_windows,
+        profiling::midpoint::midpoint_random_even_with_thread_rng,
         read::default_include_read,
     },
 };
@@ -321,6 +325,10 @@ fn process_chrom(
         WindowAssigner::Proportion(p) => p,
     };
 
+    // Replace scaling factor with unused index
+    let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
+        scaling_chr.iter().map(|(s, e, _)| (*s, *e, 0u64)).collect();
+
     // Streaming pointers and single fetch for this chr
     let mut bl_ptr = 0; // Blacklist interval
     let mut wd_ptr = 0; // Genomic window
@@ -391,8 +399,9 @@ fn process_chrom(
         // Find all overlapping windows
         let (interval_start, interval_end) = match opt.window_assignment.assign_by {
             WindowAssigner::Midpoint => {
-                let mid = fragment.start + (fragment_length / 2);
-                (mid, mid + 1)
+                let midpoint =
+                    midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
+                (midpoint, midpoint + 1)
             }
             WindowAssigner::Any
             | WindowAssigner::All
@@ -422,10 +431,6 @@ fn process_chrom(
         // Find all overlapping scaling-factor bins
         // And count up the weight
         if !scaling_chr.is_empty() {
-            // Replace scaling factor with unused index
-            let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
-                scaling_chr.iter().map(|(s, e, _)| (*s, *e, 0u64)).collect();
-
             // Find overlapping scaling-bins
             let overlapping_scaling_bins = find_overlapping_windows(
                 chrom_len,
@@ -436,8 +441,9 @@ fn process_chrom(
                 fragment.end.into(),
                 1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
                 opt.fragment_lengths.max_fragment_length.into(),
-            )?
-            .context("unwrapping overlapping scaling bins")?; // Should always find >= 1 bin
+            )
+            .with_context(|| format!("finding overlapping scaling bins on chr {chr}"))?
+            .context("no overlapping scaling bins found")?; // Should always find >= 1 bin
 
             // Extract the indices of the overlapping bins
             let overlapping_scaling_bin_indices: Vec<usize> = overlapping_scaling_bins
@@ -447,24 +453,39 @@ fn process_chrom(
                 .collect();
 
             // Calculate the weight per overlapping count-window
-            let overlap_weights = compute_scaled_window_weights(
-                &overlapping_windows,
-                &overlapping_scaling_bin_indices,
-                scaling_chr,
-            )?;
+            // NOTE: `compute_window_scaling_over_fragment` always returns
+            // an overlap fraction of 1.0 (count full fragment)!
+            let overlap_weights = match opt.window_assignment.assign_by {
+                WindowAssigner::CountOverlap => compute_window_scaling_over_overlap(
+                    &overlapping_windows,
+                    &overlapping_scaling_bin_indices,
+                    scaling_chr,
+                )?,
+                _ => compute_window_scaling_over_fragment(
+                    &overlapping_windows,
+                    &overlapping_scaling_bin_indices,
+                    scaling_chr,
+                )?,
+            };
 
             // Count up the weight per overlapping count-window
-            for (overlapped_window_idx, count_weight) in overlap_weights.iter() {
-                counts_by_bin[*overlapped_window_idx]
-                    .incr_weighted(fragment_length as usize, *count_weight);
+            for (overlapped_window_idx, scaling_weight, overlap_fraction_to_count) in
+                overlap_weights
+            {
+                counts_by_bin[overlapped_window_idx].incr_weighted(
+                    fragment_length as usize,
+                    overlap_fraction_to_count * scaling_weight,
+                );
             }
         } else {
-            // When no scaling, increment counter by the overlap fraction for each window / bin
-            for overlapped_window in overlapping_windows.windows.iter() {
-                counts_by_bin[overlapped_window.idx].incr_weighted(
-                    fragment_length as usize,
-                    overlapped_window.overlap_fraction as f64,
-                );
+            // When no scaling, increment counter by 1.0 or by the overlap fraction
+            for overlapped_window in overlapping_windows.windows {
+                let count_weight = match opt.window_assignment.assign_by {
+                    WindowAssigner::CountOverlap => overlapped_window.overlap_fraction as f64,
+                    _ => 1.0f64,
+                };
+                counts_by_bin[overlapped_window.idx]
+                    .incr_weighted(fragment_length as usize, count_weight);
             }
         }
     }

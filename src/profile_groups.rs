@@ -1,457 +1,563 @@
-// use anyhow::{Context, Result};
-// use fxhash::FxHashMap;
-// use indicatif::{ProgressBar, ProgressStyle};
-// use ndarray_npy::write_npy;
-// use rayon::prelude::*;
-// use rust_htslib::bam::{Read, Record};
-// use std::{
-//     collections::HashMap,
-//     fs::{File, create_dir_all},
-//     io::{BufWriter, Write},
-//     path::PathBuf,
-//     sync::Arc,
-//     time::Instant,
-// };
+use anyhow::{Context, Result};
+use fxhash::FxHashMap;
+use indicatif::{ProgressBar, ProgressStyle};
+use ndarray_npy::write_npy;
+use rayon::prelude::*;
+use rust_htslib::bam::{Read, Record};
+use std::{fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
 
-// use crate::{
-//     cli_common::{
-//         AssignToWindowArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs, WindowAssigner,
-//         WindowSpec, WindowsArgs,
-//     },
-//     counters::LengthsCounters,
-//     utils::{
-//         bam::create_chromosome_reader,
-//         bed::load_windows_from_bed,
-//         blacklist::{
-//             BlacklistStrategy, compute_blacklist_overlap, is_blacklisted, load_blacklists,
-//         },
-//         fragment::{MinimalReadInfo, collect_fragment},
-//         lengths::counting::{LengthCounts, stack_length_counts},
-//         overlaps::find_overlapping_windows,
-//     },
-// };
+use crate::{
+    cli_common::{ChromosomeArgs, IOCArgs, ScaleGenomeArgs},
+    counters::ProfileGroupsCounters,
+    utils::{
+        bam::{bam_contigs_info, create_chromosome_reader},
+        blacklist::{BlacklistStrategy, is_blacklisted, load_blacklists},
+        coverage::{
+            scale_genome::{compute_window_scaling_over_fragment, load_scaling_factors_tsv},
+            tiled_run::{Tile, build_tiles, make_temp_dir},
+        },
+        fragment::minimal_fragment::Fragment,
+        fragment_iterator::fragments_from_bam,
+        grouped_bed::{
+            ensure_uniform_window_len, load_grouped_windows_from_bed, write_group_idx_to_name_tsv,
+        },
+        overlaps::find_overlapping_windows,
+        profiling::{
+            counting_by_group::ProfileGroupsCounts, midpoint::midpoint_random_even_with_thread_rng,
+        },
+        read::default_include_read,
+    },
+};
 
-// /// Count fragment lengths in a BAM-file.
-// ///
-// /// Fragment length is defined as `end(reverse) - start(forward)`.
-// #[cfg_attr(feature = "cli", derive(clap::Args))]
-// pub struct LengthsConfig {
-//     #[cfg_attr(feature = "cli", clap(flatten))]
-//     ioc: IOCArgs,
+// Handle deletions?
 
-//     #[cfg_attr(feature = "cli", clap(flatten))]
-//     windows: WindowsArgs,
+/// Count fragment lengths in a BAM-file.
+///
+/// The fragment span is defined as `[end(reverse), start(forward)]`. // TODO: exclusive??
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Clone)]
+pub struct ProfileGroupsConfig {
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    ioc: IOCArgs,
 
-//     #[cfg_attr(feature = "cli", clap(flatten))]
-//     window_assignment: AssignToWindowArgs,
+    /// Prefix for output files (e.g., a sample name) `[string]`
+    ///
+    /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
+    ///
+    /// Examples produce files like:
+    ///   `<prefix>.midpoint_profiles.npy`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, short = 'x', default_value = "sites", help_heading = "Core")
+    )]
+    pub output_prefix: String,
 
-//     #[cfg_attr(feature = "cli", clap(flatten))]
-//     chromosomes: ChromosomeArgs,
+    /// The grouped fixed-size intervals to count within `[path]`
+    ///
+    /// A BED file of genomic intervals and their respective group names.
+    /// Must be sorted by the `chromosome` and `start` coordinates, and
+    /// all intervals must have the same length.
+    ///
+    /// Sites with the same group name are collapsed to a single profile.
+    ///
+    /// Columns: `chromosome, start, end, group_name`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(short = 'w', value_parser, required = true, help_heading = "Core")
+    )]
+    pub intervals: PathBuf,
 
-//     #[cfg_attr(feature = "cli", clap(flatten))]
-//     fragment_lengths: FragmentLengthArgs,
+    /// Edges of fragment length bins to count in `[path]`
+    ///
+    /// The last edge is exclusive.
+    ///
+    /// Example: `--length-bins 20 80 150 220 500 1000`.
+    #[cfg_attr(
+        feature = "cli", clap(short = 'b', long, value_parser = clap::value_parser!(u32).range(1..), default_values = ["20", "1000"], num_args = 2.., action = clap::ArgAction::Append, help_heading = "Core"))]
+    pub length_bins: Vec<u32>,
 
-//     /// Minimum mapping quality to include [integer]
-//     #[cfg_attr(
-//         feature = "cli",
-//         clap(long, alias = "mq", default_value = "30", value_parser = clap::value_parser!(u8).range(0..), help_heading="Filtering"))]
-//     pub min_mapq: u8,
+    /// Size of tiles to parallelize over `[integer]`
+    ///
+    /// Chromosomes are processed in tiles of this size to reduce memory usage.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
+    pub tile_size: u32,
 
-//     /// Only count properly paired reads [flag]
-//     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
-//     pub require_proper_pair: bool,
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    chromosomes: ChromosomeArgs,
 
-//     /// Optional BED file(s) with blacklisted regions [path]
-//     #[cfg_attr(
-//         feature = "cli", clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading = "Filtering"))]
-//     pub blacklist: Option<Vec<PathBuf>>,
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    scale_genome: ScaleGenomeArgs,
 
-//     /// Minimum size of blacklist intervals to load (bp) [integer]
-//     #[cfg_attr(
-//         feature = "cli",
-//         clap(
-//             long,
-//             alias = "bl-min-size",
-//             default_value = "1",
-//             help_heading = "Filtering"
-//         )
-//     )]
-//     pub blacklist_min_size: u64,
+    /// Minimum mapping quality to include `[integer]`
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, alias = "mq", default_value = "30", value_parser = clap::value_parser!(u8).range(0..), help_heading="Filtering"))]
+    pub min_mapq: u8,
 
-//     /// The fragment positions that should overlap blacklisted regions for it to be excluded [string]
-//     ///
-//     /// Possible values:
-//     ///     "any", "all", "midpoint", or "proportion=<threshold>" [string]
-//     ///
-//     /// Example of proportion: `--blacklist-strategy proportion=0.2` (no space around `=`)
-//     #[cfg_attr(
-//         feature = "cli",
-//         clap(
-//             long,
-//             alias = "bl-strategy",
-//             default_value = "any",
-//             ignore_case = true,
-//             help_heading = "Filtering"
-//         )
-//     )]
-//     pub blacklist_strategy: BlacklistStrategy,
-//     // #[cfg_attr(feature = "cli", clap(flatten))]
-//     // gc: GCArgs,
+    /// Only count properly paired reads `[flag]`
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
+    pub require_proper_pair: bool,
 
-//     // #[cfg_attr(feature = "cli", clap(flatten))]
-//     // two_bit: TwoBitArgs,
-// }
+    /// Optional BED file(s) with blacklisted regions `[path]`
+    ///
+    /// **NOTE**: It may be an advantage to instead remove intervals that overlap
+    /// blacklisted regions from the BED file.
+    #[cfg_attr(
+        feature = "cli", clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading = "Filtering"))]
+    pub blacklist: Option<Vec<PathBuf>>,
 
-// /// Whether to include the read or continue
-// fn include_read(rec: &Record, opt: &LengthsConfig) -> bool {
-//     !(rec.is_unmapped()
-//         || rec.is_mate_unmapped()
-//         || rec.tid() != rec.mtid()
-//         || rec.is_secondary()
-//         || rec.is_supplementary()
-//         || rec.is_duplicate()
-//         || rec.is_quality_check_failed()
-//         || (opt.require_proper_pair && !rec.is_proper_pair())
-//         || rec.mapq() < opt.min_mapq) as bool
-// }
+    /// Minimum size of blacklist intervals to load (bp) `[integer]`
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            alias = "bl-min-size",
+            default_value = "1",
+            help_heading = "Filtering"
+        )
+    )]
+    pub blacklist_min_size: u64,
 
-// pub fn run(opt: LengthsConfig) -> Result<()> {
-//     let start_time = Instant::now();
-//     let chromosomes = opt
-//         .chromosomes
-//         .resolve_chromosomes(Some(&opt.ioc.bam.as_path()))?;
-//     let window_opt = opt.windows.resolve_windows();
-//     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
-//     pb.set_style(
-//         ProgressStyle::default_bar()
-//             .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-//             .unwrap(),
-//     );
+    /// The fragment positions that should overlap blacklisted regions for it to be excluded `[string]`
+    ///
+    /// Possible values:
+    ///     "any", "all", "midpoint", or "proportion=<threshold>"
+    ///
+    /// Example of proportion: `--blacklist-strategy proportion=0.2` (no space around `=`)
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            alias = "bl-strategy",
+            default_value = "any",
+            ignore_case = true,
+            help_heading = "Filtering"
+        )
+    )]
+    pub blacklist_strategy: BlacklistStrategy,
+    // #[cfg_attr(feature = "cli", clap(flatten))]
+    // gc: GCArgs,
 
-//     // Create output directory
-//     create_dir_all(&opt.ioc.output_dir).context("Cannot create output_dir")?;
+    // #[cfg_attr(feature = "cli", clap(flatten))]
+    // two_bit: TwoBitArgs,
+}
 
-//     // Load blacklist intervals if provided
-//     let blacklist_map = if let Some(beds) = &opt.blacklist {
-//         println!("Start: Loading blacklists");
-//         load_blacklists(beds, opt.blacklist_min_size, &chromosomes)?
-//     } else {
-//         HashMap::new()
-//     };
+pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
+    let start_time = Instant::now();
+    let chromosomes = opt
+        .chromosomes
+        .resolve_chromosomes(Some(&opt.ioc.bam.as_path()))?;
+    let prefix = opt.output_prefix.trim();
+    let contigs = bam_contigs_info(&opt.ioc.bam, &chromosomes)?;
 
-//     // Load windows from BED file
-//     let windows_map = match &window_opt {
-//         WindowSpec::Bed(bed) => {
-//             println!("Start: Loading window coordinates");
-//             Some(load_windows_from_bed(bed, &chromosomes, None)?)
-//         }
-//         _ => None,
-//     };
+    // Create output directory
+    create_dir_all(&opt.ioc.output_dir).context("Cannot create output_dir")?;
 
-//     // Configure global thread‐pool size
-//     rayon::ThreadPoolBuilder::new()
-//         .num_threads(opt.ioc.n_threads as usize)
-//         .build_global()
-//         .context("building Rayon thread pool")?;
+    // Load blacklist intervals if provided
+    let blacklist_map = if let Some(beds) = &opt.blacklist {
+        println!("Start: Loading blacklists");
+        load_blacklists(beds, opt.blacklist_min_size, &chromosomes)?
+    } else {
+        FxHashMap::default()
+    };
 
-//     // Prepare per-bin counts and metadata
-//     let mut all_bins = Vec::new();
-//     let mut bin_info = Vec::new();
-//     let mut global_counter = LengthsCounters::default();
+    // Load sites from BED file
+    let (windows_map, group_idx_to_name) =
+        load_grouped_windows_from_bed(opt.intervals.clone(), &chromosomes, None)?;
+    let num_groups = group_idx_to_name.len();
 
-//     println!("Start: Counting per chromosome");
+    // Ensure all windows have the same length
+    let window_size = ensure_uniform_window_len(&windows_map)?;
 
-//     pb.set_position(0);
+    // Load genomic scaling factors
+    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
+        if let Some(path) = &opt.scale_genome.scaling_factors {
+            println!("Start: Loading scaling factors");
+            load_scaling_factors_tsv(path, &chromosomes, &contigs)?
+        } else {
+            FxHashMap::with_hasher(Default::default())
+        };
 
-//     let results: Vec<(
-//         Vec<LengthCounts>,
-//         Option<Vec<(String, u64, u64, u64, f64)>>,
-//         LengthsCounters,
-//     )> = chromosomes
-//         .par_iter()
-//         .map(|chr| -> Result<(_, _, _)> {
-//             let out = process_chrom(
-//                 &chr,
-//                 &opt,
-//                 windows_map
-//                     .as_ref()
-//                     .and_then(|m| m.get(chr).map(|v| v.as_slice())),
-//                 &window_opt,
-//                 blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
-//             )?;
-//             pb.inc(1);
-//             Ok(out)
-//         })
-//         .collect::<Result<_>>()?; // short-circuits on the first Err
+    // Build temporary directory
+    let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
 
-//     pb.finish_with_message("| Finished counting");
+    // Prepare length bins
+    let mut length_bins = opt.length_bins.clone();
+    length_bins.sort_unstable();
+    let num_length_bins = length_bins.len();
+    let max_fragment_length = length_bins[num_length_bins - 1];
 
-//     // Collect results (in chromosome order) back into the global vectors
-//     for (counts_by_bin, bin_vec, counter) in results {
-//         all_bins.extend(counts_by_bin);
-//         if !matches!(window_opt, WindowSpec::Global) {
-//             bin_info.extend(bin_vec.unwrap());
-//         }
-//         global_counter += counter;
-//     }
+    // Build tiles
+    let halo_bp: u32 = max_fragment_length; // Safe halo for pairing
+    let (tiles, _) = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, None)?;
+    let total_tiles = tiles.len();
 
-//     // Convert to single `LengthCounts` for global
-//     // Keep wrapped in vector to simplify writer
-//     let mut all_bins = if matches!(window_opt, WindowSpec::Global) {
-//         vec![LengthCounts::collapse(&all_bins)?]
-//     } else {
-//         all_bins
-//     };
+    // Where per-tile files go
+    let tmp_prefix = format!("{prefix}.site_profiles");
+    let tmp_prefix = tmp_prefix.as_str();
 
-//     // Sort by original index (when given a bed file)
-//     if matches!(window_opt, WindowSpec::Bed(_)) {
-//         println!("Start: Reordering counts by original window index in BED file");
+    // Create filenames for final output
+    let final_counts_path = opt
+        .ioc
+        .output_dir
+        .join(format!("{prefix}.midpoint_profiles.npy"));
+    let map_path = opt
+        .ioc
+        .output_dir
+        .join(format!("{}.group_index.tsv", prefix));
 
-//         // Zip into a single Vec to allow sorting together
-//         let mut paired: Vec<_> = bin_info.into_iter().zip(all_bins.into_iter()).collect(); // (BinInfo, DecodedCounts)
+    let pb = Arc::new(ProgressBar::new(total_tiles as u64));
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
+            .unwrap(),
+    );
 
-//         // Sort primarily by original window index
-//         paired.sort_unstable_by_key(|(info, _)| info.3);
+    // Configure global thread‐pool size
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(opt.ioc.n_threads as usize)
+        .build_global()
+        .context("building Rayon thread pool")?;
 
-//         // Unzip back out if you need separate Vecs again
-//         (bin_info, all_bins) = paired.into_iter().unzip();
-//     }
+    // Prepare per-bin counts and metadata
+    let mut global_counter = ProfileGroupsCounters::default();
 
-//     // Write final counts to output_dir
-//     write_npy(
-//         &opt.ioc.output_dir.join("all_length_counts.npy"),
-//         &stack_length_counts(&all_bins),
-//     )
-//     .context("Write final fail")?;
+    println!("Start: Counting per chromosome");
 
-//     // Write window coordinates as BED file to output_dir
-//     // Write bins BED file
-//     if !matches!(window_opt, WindowSpec::Global) {
-//         println!("Start: Writing window coordinates to disk");
-//         let mut bed_writer = BufWriter::new(
-//             File::create(&opt.ioc.output_dir.join("bins.bed")).context("Create bed fail")?,
-//         );
-//         for (chr, start, end, _, overlap_perc) in &bin_info {
-//             writeln!(bed_writer, "{}\t{}\t{}\t{}", chr, start, end, overlap_perc)
-//                 .context("Write bed line fail")?;
-//         }
-//     }
+    pb.set_position(0);
 
-//     // Print summary statistics and execution time
-//     let elapsed = start_time.elapsed();
-//     println!("  Total reads: {}", global_counter.total_reads);
-//     println!(
-//         "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-//         global_counter.accepted_forward + global_counter.accepted_reverse,
-//         (global_counter.accepted_forward + global_counter.accepted_reverse) as f64
-//             / global_counter.total_reads as f64
-//             * 100.0,
-//         global_counter.accepted_forward,
-//         global_counter.accepted_reverse
-//     );
-//     println!(
-//         "Blacklist-excluded fragments: {}",
-//         global_counter.blacklisted_fragments
-//     );
-//     println!(
-//         "Out-of-length-range-excluded fragments: {}",
-//         global_counter.illegal_length_fragments
-//     );
-//     // if opt.gc.bin_by_gc {
-//     //     println!("GC-excluded reads: {}", global_counter.gc_excl);
-//     // }
-//     println!(
-//         "  Fragments counted one or more times: {}",
-//         global_counter.counted_fragments
-//     );
-//     println!("Elapsed time: {:.2?}", elapsed);
-//     Ok(())
-// }
+    let tile_results: Vec<(ProfileGroupsCounters, Option<PathBuf>)> = tiles
+        .par_iter()
+        .map(|tile| -> Result<(_, _)> {
+            // Per-chrom projections
+            let windows_chr: &[(u64, u64, u64)] = windows_map
+                .get(&tile.chr)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+            let blacklist_chr: &[(u64, u64)] = blacklist_map
+                .get(&tile.chr)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+            let scaling_chr: &[(u64, u64, f32)] = scaling_map
+                .get(&tile.chr)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
 
-// fn process_chrom(
-//     chr: &str,
-//     opt: &LengthsConfig,
-//     windows: Option<&[(u64, u64, u64)]>,
-//     window_opt: &WindowSpec,
-//     blacklist_intervals: &[(u64, u64)],
-// ) -> anyhow::Result<(
-//     Vec<LengthCounts>,
-//     Option<Vec<(String, u64, u64, u64, f64)>>,
-//     LengthsCounters,
-// )> {
-//     // Open a fresh BAM reader for this thread
-//     let (mut reader, tid, chrom_len) = create_chromosome_reader(&opt.ioc.bam, chr)?;
+            // Windowed tmp outputs for faster reducer later on
+            let tile_counts_out = temp_dir.join(format!(
+                "{prefix}.{chr}.{idx}.npy",
+                prefix = tmp_prefix,
+                chr = tile.chr,
+                idx = tile.index
+            ));
 
-//     // Initialize counters (default -> 0s)
-//     let mut counter = LengthsCounters::default();
+            let out = process_tile(
+                &opt,
+                tile,
+                tile_counts_out,
+                window_size,
+                num_groups,
+                &length_bins,
+                windows_chr,
+                blacklist_chr,
+                scaling_chr,
+            )?;
+            pb.inc(1);
+            Ok(out)
+        })
+        .collect::<Result<_>>()?; // short-circuits on the first Err
 
-//     let num_bins = match window_opt {
-//         WindowSpec::Bed(_) => windows.unwrap().len(),
-//         WindowSpec::Size(s) => ((chrom_len + s - 1) / s) as usize,
-//         WindowSpec::Global => 1,
-//     };
+    pb.finish_with_message("| Finished counting");
 
-//     // Initialize count arrays
-//     let mut counts_by_bin = vec![
-//         LengthCounts::new(
-//             opt.min_fragment_length as usize,
-//             opt.max_fragment_length as usize
-//         );
-//         num_bins
-//     ];
+    let mut all_tmp_count_paths: Vec<PathBuf> = Vec::with_capacity(total_tiles);
+    // Collect results (in chromosome order) back into the global vectors
+    for (counter, tmp_counts_path) in tile_results {
+        if let Some(tmp_path) = tmp_counts_path {
+            all_tmp_count_paths.push(tmp_path);
+        }
+        global_counter += counter;
+    }
 
-//     // Fraction of a fragment that must overlap with a window to assign to that window
-//     let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
-//         WindowAssigner::Any => 1. / (opt.max_fragment_length as f64 + 1.0), // +1 to avoid rounding error issues
-//         WindowAssigner::All | WindowAssigner::Midpoint => {
-//             1.0 - (1. / (opt.max_fragment_length as f64 + 1.0))
-//         } // 1.0 but just below to avoid rounding errors
-//         WindowAssigner::Proportion(p) => p,
-//     };
+    println!("Start: Merging temporary tile files to final output");
 
-//     // Streaming pointers and single fetch for this chr
-//     let mut bl_ptr = 0; // Blacklist interval
-//     let mut wd_ptr = 0; // Genomic window
+    // Initialize count array and load+fill with tmp counts
+    let mut all_counts = ProfileGroupsCounts::new(window_size, num_groups, length_bins.to_vec());
+    all_counts.add_from_npy_1d_files_parallel(all_tmp_count_paths)?;
+    let all_counts_3d_arr = all_counts.view_ndarray3_group_len_pos();
 
-//     // Stash for keeping reads until mates arrive
-//     let mut stash = FxHashMap::<Vec<u8>, MinimalReadInfo>::default();
+    println!("Start: Writing final counts to: {:?}", &final_counts_path);
+    // Write final counts to output_dir
+    write_npy(&final_counts_path, &all_counts_3d_arr).context("Write final fail")?;
 
-//     // Get coordinates to fetch reads from and to
-//     let (fetch_from, fetch_to) = match window_opt {
-//         WindowSpec::Bed(_) => {
-//             let wn = windows.unwrap();
-//             let fetch_start = wn[0].0 as i64;
-//             let fetch_end = wn.iter().map(|w| w.1).max().unwrap() as i64;
-//             (
-//                 (fetch_start - opt.fragment_lengths.max_fragment_length as i64).max(0i64),
-//                 (fetch_end + opt.fragment_lengths.max_fragment_length as i64).min(chrom_len as i64),
-//             )
-//         }
-//         _ => (0i64, chrom_len as i64),
-//     };
+    println!("Start: Writing group index to: {:?}", &map_path);
+    write_group_idx_to_name_tsv(&map_path, &group_idx_to_name)?;
 
-//     reader
-//         .fetch((tid, fetch_from, fetch_to))
-//         .context(format!("fetch {}", chr))?;
+    println!("");
+    println!("Statistics");
+    println!("----------");
 
-//     // Loop over records and count
-//     for res in reader.records() {
-//         let rec = res.context("reading bam record")?;
-//         counter.total_reads += 1;
+    // Print summary statistics and execution time
+    let elapsed = start_time.elapsed();
+    println!("  Total reads: {}", global_counter.total_reads);
+    println!(
+        "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
+        global_counter.accepted_forward + global_counter.accepted_reverse,
+        (global_counter.accepted_forward + global_counter.accepted_reverse) as f64
+            / global_counter.total_reads as f64
+            * 100.0,
+        global_counter.accepted_forward,
+        global_counter.accepted_reverse
+    );
+    println!(
+        "Blacklist-excluded fragments: {}",
+        global_counter.blacklisted_fragments
+    );
+    // if opt.gc.bin_by_gc {
+    //     println!("GC-excluded reads: {}", global_counter.gc_excl);
+    // }
+    println!(
+        "  Fragments counted one or more times: {}",
+        global_counter.counted_fragments
+    );
+    println!("----------");
+    println!("Elapsed time: {:.2?}", elapsed);
+    Ok(())
+}
 
-//         if rec.tid() != tid as i32 || !include_read(&rec, opt) {
-//             continue;
-//         }
+fn process_tile(
+    opt: &ProfileGroupsConfig,
+    tile: &Tile,
+    tile_counts_out: PathBuf,
+    window_size: usize,
+    num_groups: usize,
+    length_bins: &[u32],
+    windows: &[(u64, u64, u64)],
+    blacklist_intervals: &[(u64, u64)],
+    scaling_chr: &[(u64, u64, f32)],
+) -> anyhow::Result<(ProfileGroupsCounters, Option<PathBuf>)> {
+    // Open a fresh BAM reader for this thread
+    let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
+    debug_assert!(_tid_check == tile.tid as u32);
 
-//         match rec.is_reverse() {
-//             true => counter.accepted_reverse += 1,
-//             false => counter.accepted_forward += 1,
-//         }
+    // Initialize counters (default -> 0s)
+    let mut counter = ProfileGroupsCounters::default();
 
-//         if let Some(mate) = stash.remove(rec.qname()) {
-//             // Combine reads to a fragment
-//             let fragment = if let Some(f) = collect_fragment(&MinimalReadInfo::from(&rec), &mate) {
-//                 f
-//             } else {
-//                 continue;
-//             };
+    // Replace scaling factor with unused index for overlap finder
+    let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
+        scaling_chr.iter().map(|(s, e, _)| (*s, *e, 0u64)).collect();
 
-//             counter.collected_fragments += 1;
+    // Adapt the fetch coordinates to the present windows
+    // When no windows are present, skip this tile
+    let Some((core_overlapping_windows, fetch_from, fetch_to)) =
+        get_overlapping_sites_and_adapt_fetch_to_extremes(windows, &tile, chrom_len as u32)
+    else {
+        return Ok((counter, None));
+    };
 
-//             // Determine blacklist status
-//             let in_blacklist = is_blacklisted(
-//                 blacklist_intervals,
-//                 opt.blacklist_strategy.clone(),
-//                 fragment.start.into(),
-//                 fragment.end.into(),
-//                 opt.max_fragment_length as u64,
-//                 &mut bl_ptr,
-//             );
-//             if in_blacklist {
-//                 counter.blacklisted_fragments += 1;
-//             }
+    reader
+        .fetch((tile.tid as i32, fetch_from as i64, fetch_to as i64))
+        .context(format!("fetch {} {}-{}", &tile.chr, fetch_from, fetch_to))?;
 
-//             // Check length is within allowed range
-//             let fragment_length = fragment.len();
-//             if fragment_length < opt.min_fragment_length
-//                 || fragment_length > opt.max_fragment_length
-//             {
-//                 counter.illegal_length_fragments += 1;
-//                 continue;
-//             }
+    // Extract min/max fragment lengths
+    let min_fragment_length = length_bins[0];
+    let max_fragment_length = length_bins[length_bins.len() - 1];
 
-//             // Find all overlapping windows
-//             let (interval_start, interval_end) = match opt.window_assignment.assign_by {
-//                 WindowAssigner::Midpoint => {
-//                     let mid = fragment.start + (fragment_length / 2);
-//                     (mid, mid + 1)
-//                 }
-//                 WindowAssigner::Any | WindowAssigner::All | WindowAssigner::Proportion(_) => {
-//                     (fragment.start, fragment.end)
-//                 }
-//             };
-//             let overlapping_windows = find_overlapping_windows(
-//                 chrom_len,
-//                 &mut wd_ptr,
-//                 windows,
-//                 opt.windows.by_size,
-//                 interval_start.into(),
-//                 interval_end.into(),
-//                 min_overlap_fraction,
-//                 opt.max_fragment_length.into(),
-//             );
-//             let overlapping_windows = if let Some(overlaps) = overlapping_windows {
-//                 overlaps
-//             } else {
-//                 continue;
-//             };
+    // Function for filtering fragments after pairing
+    // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
+    let fragment_filter = {
+        let min_len = min_fragment_length;
+        let max_len = max_fragment_length;
+        move |f: &Fragment| {
+            let len = f.len();
+            len >= min_len && len <= max_len
+        }
+    };
 
-//             counter.counted_fragments += 1;
+    // Wrap to use opt
+    let include_read_fn = {
+        let opt = (*opt).clone();
+        move |r: &Record| default_include_read(r, opt.require_proper_pair, opt.min_mapq)
+    };
 
-//             // Increment counter for each window / bin
-//             for overlapped_window in overlapping_windows.windows.iter() {
-//                 counts_by_bin[overlapped_window.idx].incr(fragment_length as usize);
-//             }
-//         } else {
-//             // Stash read if new qname
-//             stash.insert(rec.qname().to_vec(), MinimalReadInfo::from(&rec));
-//         }
-//     }
+    // Initialize count array
+    let mut counts = ProfileGroupsCounts::new(window_size, num_groups, length_bins.to_vec());
 
-//     let bin_info = if let Some(size) = opt.windows.by_size {
-//         // Build bin information for chromosome
-//         // chrom,start,end,total_count,blacklist_overlap
-//         let mut bl_ptr = 0;
-//         let mut bin_info = Vec::with_capacity(num_bins);
-//         for b in 0..num_bins {
-//             let start = b as u64 * size;
-//             let end = (start + size).min(chrom_len);
-//             let overlap_perc =
-//                 compute_blacklist_overlap(blacklist_intervals, start, end, 0u64, &mut bl_ptr);
-//             // Note: b (index) is a placeholder that is removed later
-//             bin_info.push((chr.to_string(), start, end, b as u64, overlap_perc));
-//         }
-//         Some(bin_info)
-//     } else if opt.windows.by_bed.is_some() {
-//         // build bin_info from the exact BED windows
-//         let mut bl_ptr = 0;
-//         let windows = windows.unwrap();
-//         let mut bin_info = Vec::with_capacity(num_bins);
-//         for (_b, (wstart, wend, original_win_idx)) in windows.iter().cloned().enumerate() {
-//             let overlap_perc =
-//                 compute_blacklist_overlap(blacklist_intervals, wstart, wend, 0u64, &mut bl_ptr);
-//             bin_info.push((
-//                 chr.to_string(),
-//                 wstart,
-//                 wend,
-//                 original_win_idx as u64,
-//                 overlap_perc,
-//             ));
-//         }
-//         Some(bin_info)
-//     } else {
-//         None
-//     };
+    // Streaming pointers and single fetch for this chr
+    let mut bl_ptr = 0; // Blacklist interval
+    let mut wd_ptr = 0; // Genomic window
+    let mut sf_ptr = 0; // Scaling factor bin
 
-//     Ok((counts_by_bin, bin_info, counter))
-// }
+    // Create fragment iterator
+    let mut iter = fragments_from_bam(
+        reader.records().map(|r| r.map_err(anyhow::Error::from)),
+        include_read_fn,
+        fragment_filter,
+    )
+    .with_local_counters();
+
+    // Iterate fragments and add coverage
+    for fragment_res in iter.by_ref() {
+        let fragment = fragment_res.context("reading fragment")?;
+        let fragment_length = fragment.len();
+
+        // Determine blacklist status
+        let in_blacklist = is_blacklisted(
+            blacklist_intervals,
+            opt.blacklist_strategy.clone(),
+            fragment.start.into(),
+            fragment.end.into(),
+            max_fragment_length as u64,
+            &mut bl_ptr,
+        );
+        if in_blacklist {
+            counter.blacklisted_fragments += 1;
+            continue;
+        }
+
+        // Determine fragment midpoint
+        // Uses random rounding for even-sized fragments to avoid bias
+        let midpoint = midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
+
+        // Find all overlapping count-windows
+        let overlapping_windows = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            Some(&core_overlapping_windows),
+            None,
+            midpoint.into(),
+            (midpoint + 1).into(),
+            0.99, // "Full" 1bp overlap but avoid rounding error
+            max_fragment_length.into(),
+        )?;
+        let overlapping_windows = if let Some(overlaps) = overlapping_windows {
+            overlaps
+        } else {
+            continue;
+        };
+
+        counter.counted_fragments += 1;
+
+        // Find all overlapping scaling-factor bins
+        // And count up the weight
+        if !scaling_chr.is_empty() {
+            // Find overlapping scaling-bins
+            let overlapping_scaling_bins = find_overlapping_windows(
+                chrom_len,
+                &mut sf_ptr,
+                Some(&scaling_with_bin_idx),
+                None,
+                fragment.start.into(), // Full fragment
+                fragment.end.into(),
+                1. / (max_fragment_length as f64 + 1.0), // Any overlap
+                max_fragment_length.into(),
+            )?
+            .context("unwrapping overlapping scaling bins")?; // Should always find >= 1 bin
+
+            // Extract the indices of the overlapping bins
+            let overlapping_scaling_bin_indices: Vec<usize> = overlapping_scaling_bins
+                .windows
+                .iter()
+                .map(|w| w.idx)
+                .collect();
+
+            // Calculate the weight per overlapping count-window
+            let overlap_weights = compute_window_scaling_over_fragment(
+                &overlapping_windows,
+                &overlapping_scaling_bin_indices,
+                scaling_chr,
+            )?;
+
+            // Count up the weight per overlapping count-window
+            for (overlapped_window_idx, scaling_weight, _) in overlap_weights {
+                let (window_start, _, group_idx) = windows[overlapped_window_idx];
+                let window_position = midpoint - window_start as u32;
+                counts.incr_weighted(
+                    window_position as usize,
+                    group_idx as usize,
+                    fragment_length as usize,
+                    scaling_weight,
+                )?;
+            }
+        } else {
+            // When no scaling, increment counter by the overlap fraction for each window / bin
+            for overlapped_window in overlapping_windows.windows {
+                let overlapped_window_idx = overlapped_window.idx;
+                let (window_start, _, group_idx) = windows[overlapped_window_idx];
+                let window_position = midpoint - window_start as u32;
+                counts.incr_weighted(
+                    window_position as usize,
+                    group_idx as usize,
+                    fragment_length as usize,
+                    1.0,
+                )?;
+            }
+        }
+    }
+
+    // Write tile counts to temp dir
+    let arr1 = counts.as_ndarray1();
+    write_npy(&tile_counts_out, &arr1).context("Write final fail")?;
+
+    // Get counters from iterator
+    counter.add_from_snapshot(iter.counters_snapshot());
+
+    Ok((counter, Some(tile_counts_out)))
+}
+
+pub fn get_overlapping_sites_and_adapt_fetch_to_extremes<'a>(
+    windows: &'a [(u64, u64, u64)],
+    tile: &Tile,
+    chrom_len: u32,
+) -> Option<(Vec<(u64, u64, u64)>, i64, i64)> {
+    let cs = tile.core_start as u64;
+    let ce = tile.core_end as u64;
+
+    // Collect indices of overlaps, track extremes
+    let mut idxs: Vec<usize> = Vec::new();
+    let mut found = false;
+    let mut min_ws: u64 = u64::MAX;
+    let mut max_we: u64 = 0;
+
+    // For fixed length, start-sorted windows, we can break early once ws >= ce
+    for (i, &(ws, we, _)) in windows.iter().enumerate() {
+        if ws >= ce {
+            break; // Nothing further can overlap [cs, ce)
+        }
+        if we > cs && ws < ce {
+            found = true;
+            if ws < min_ws {
+                min_ws = ws;
+            }
+            if we > max_we {
+                max_we = we;
+            }
+            idxs.push(i);
+        }
+    }
+
+    if !found {
+        return None;
+    }
+
+    // Use the tile's actual halo (already clamped to chromosome edges in your tile)
+    let left_halo = tile.core_start.saturating_sub(tile.fetch_start);
+    let right_halo = tile.fetch_end.saturating_sub(tile.core_end);
+
+    // Proposed narrower fetch band from window span ± halo
+    let narrowed_start = (min_ws as u32).saturating_sub(left_halo);
+    let narrowed_end = (max_we as u32).saturating_add(right_halo);
+
+    // Intersect with tile's original fetch band and clamp to chrom length
+    let start_u32 = narrowed_start.max(tile.fetch_start);
+    let end_u32 = narrowed_end.min(tile.fetch_end).min(chrom_len);
+    if start_u32 >= end_u32 {
+        return None;
+    }
+
+    // Build vector of the overlappign sites from the indices
+    let overlapping_sites = idxs.iter().map(move |i| windows[*i]).collect();
+
+    Some((overlapping_sites, start_u32 as i64, end_u32 as i64))
+}

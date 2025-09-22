@@ -38,9 +38,6 @@ use crate::{
     },
 };
 
-// Support:
-//  - bigwig
-
 /// Count positional **fragment** coverage across the genome.
 ///
 /// Only paired-end fragments with both reads present are counted. By default,
@@ -86,10 +83,10 @@ pub struct FCoverageConfig {
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
     /// Examples produce files like:
-    ///   <prefix>.per_position.bedgraph.zst
-    ///   <prefix>.per_position_per_window.tsv.zst
-    ///   <prefix>.avg.tsv.zst
-    ///   <prefix>.total.tsv.zst
+    ///   `<prefix>.per_position.bedgraph.zst`,
+    ///   `<prefix>.per_position_per_window.tsv.zst`,
+    ///   `<prefix>.avg.tsv.zst`, or
+    ///   `<prefix>.total.tsv.zst`.
     #[cfg_attr(
         feature = "cli",
         clap(long, short = 'x', default_value = "coverage", help_heading = "Core")
@@ -128,7 +125,7 @@ pub struct FCoverageConfig {
     ///     - "total": Get the total coverage per window.
     ///
     ///     - "unique-positions": Get the positional coverage for the included windows only (`--by-bed` *only*).
-    ///         Overlapping windows are merged to reduce duplicate positions.
+    ///         Overlapping windows are merged to avoid duplicate positions.
     ///         Excludes all positions that do not overlap a window from the output.
     ///
     ///     - "indexed-positions": Get the positional coverage for the included windows only (`--by-bed` *only*).
@@ -188,7 +185,6 @@ pub struct FCoverageConfig {
     // #[cfg_attr(feature = "cli", clap(flatten))]
     // two_bit: TwoBitArgs,
 }
-
 
 pub fn run(opt: FCoverageConfig) -> Result<()> {
     let start_time = Instant::now();
@@ -454,7 +450,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                 }
             };
 
-            let ctr = process_tile(
+            let counter = process_tile(
                 &opt,
                 tile,
                 blacklist_chr,
@@ -463,7 +459,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
                 decimals_to_use,
             )?;
             pb.inc(1);
-            Ok(ctr)
+            Ok(counter)
         })
         .collect::<anyhow::Result<_>>()?;
 

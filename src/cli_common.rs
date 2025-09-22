@@ -179,6 +179,9 @@ pub struct AssignToWindowArgs {
     ///
     /// Example of proportion: `--assign-by proportion=0.2` (no space around `=`)
     ///
+    /// Midpoints for even-sized fragments are randomly selected as either the left or right base
+    /// to avoid bias.
+    ///
     /// **NOTE**: Ignored when no windows are specified.
     #[cfg_attr(
         feature = "cli",

@@ -1,5 +1,5 @@
 use crate::utils::{bam::Contigs, overlaps::OverlappingWindows};
-use anyhow::Context;
+use anyhow::{Context, Result, bail};
 use fxhash::{FxHashMap, FxHashSet};
 use std::io::{BufRead, BufReader};
 
@@ -58,111 +58,143 @@ pub fn apply_scaling_to_coverage_in_place(
     }
 }
 
-/// Compute mass-conserving, scaling-aware weights for one fragment across overlapped count windows.
-///
-/// For each count window that overlaps the fragment, compute the fragment’s proportional
-/// contribution and modulate it by the **average per-base scaling weight** over that *overlapped
-/// span*. Here, the scaling weight stored in `scaling_chr[..].2` is already the value you want
-/// to **multiply** with per base (i.e., if you conceptually “divide by coverage”, the stored
-/// weight is the pre-inverted factor).
-///
-/// Details
-/// -------
-/// For fragment `[frag_start, frag_end)` and a count window `[win_start, win_end)`, the overlapped
-/// span is `[overlap_start, overlap_end)`, where:
-/// `overlap_start = max(frag_start, win_start)` and `overlap_end = min(frag_end, win_end)`.
-///
-/// Over this overlapped span, average the piecewise-constant scaling weights defined by
-/// `scaling_chr` by summing `weight * overlapped_len` for each intersecting scaling bin and then
-/// dividing by the total overlapped length. The final window weight is:
-/// `weight = (overlap_len / fragment_len) * avg_scaling_weight_in_that_span`.
-///
-/// Parameters
-/// ----------
-/// - count_overlaps:
-///     Overlaps of this fragment with the **count windows** from `find_overlapping_windows`.
-///     Uses `interval_start` (i.e., fragment start), `interval_end` (i.e., fragment end),
-///     and iterates `windows` with `win_start`, `win_end`, `idx`.
-/// - scaling_bin_indices:
-///     Sorted, non-empty indices into `scaling_chr` for scaling bins that overlap this fragment.
-///     Passing only the bins that actually intersect the fragment reduces work per window.
-/// - scaling_chr:
-///     Slice of scaling bins as `(start, end, weight)`, half-open on end. `weight` is the
-///     **already inverted per-base scaling factor to multiply** (e.g., `1.0 / coverage_norm`).
+/// Compute per-window scaling factors averaged over the **overlapped span only**.
 ///
 /// Returns
 /// -------
-/// - weights:
-///     Vector of `(idx, weight)` per overlapped count window, where `idx` is the count-window
-///     scan index and `weight` is the mass-conserving, scaling-aware contribution.
-///
-/// Errors
-/// ------
-/// - Returns an error if `count_overlaps.interval_start >= count_overlaps.interval_end`.
-/// - Returns an error if `scaling_bin_indices` is empty.
+/// For each count window that overlaps the fragment, returns:
+///     `(window_idx, avg_scaling_over_overlap, overlap_fraction)`
+///     where
+///         `avg_scaling_over_overlap` is the average per-base
+///         scaling evaluated over `overlap = window ∩ fragment`.
 #[inline]
-pub fn compute_scaled_window_weights(
+pub fn compute_window_scaling_over_overlap(
     count_overlaps: &OverlappingWindows,
     scaling_bin_indices: &[usize],
     scaling_chr: &[(u64, u64, f32)],
-) -> anyhow::Result<Vec<(usize, f64)>> {
-    let frag_start = count_overlaps.interval_start;
-    let frag_end = count_overlaps.interval_end;
+) -> Result<Vec<(usize, f64, f64)>> {
+    let fragment_start_bp = count_overlaps.interval_start;
+    let fragment_end_bp = count_overlaps.interval_end;
 
-    if frag_end <= frag_start {
-        anyhow::bail!(
-            "count_overlaps.interval_start >= count_overlaps.interval_end. This should never happen, report please."
-        );
+    if fragment_end_bp <= fragment_start_bp {
+        bail!("count_overlaps.interval_start >= interval_end (empty fragment span)");
     }
     if scaling_bin_indices.is_empty() {
-        anyhow::bail!("scaling_bin_indices is empty but scaling was requested");
+        bail!("scaling_bin_indices is empty but scaling was requested");
     }
 
-    let fragment_len = (frag_end - frag_start) as f64;
-    let mut weights = Vec::with_capacity(count_overlaps.windows.len());
+    let mut per_window_scaling = Vec::with_capacity(count_overlaps.windows.len());
 
-    for w in &count_overlaps.windows {
-        let win_start = w.win_start;
-        let win_end = w.win_end;
+    for window in &count_overlaps.windows {
+        let window_start_bp = window.win_start;
+        let window_end_bp = window.win_end;
 
-        let overlap_start = frag_start.max(win_start);
-        let overlap_end = frag_end.min(win_end);
-        if overlap_end <= overlap_start {
+        let overlap_start_bp = fragment_start_bp.max(window_start_bp);
+        let overlap_end_bp = fragment_end_bp.min(window_end_bp);
+        if overlap_end_bp <= overlap_start_bp {
+            continue; // No overlap with this window
+        }
+
+        let avg_scaling = avg_scaling_over_span(
+            overlap_start_bp,
+            overlap_end_bp,
+            scaling_bin_indices,
+            scaling_chr,
+        )?;
+        per_window_scaling.push((window.idx, avg_scaling, window.overlap_fraction as f64));
+    }
+
+    Ok(per_window_scaling)
+}
+
+/// Compute per-window scaling factors averaged over the **entire fragment** (treat fragment as fully included).
+///
+/// Returns
+/// -------
+/// For each count window that overlaps the fragment, returns:
+/// `(window_idx, avg_scaling_over_fragment, full_overlap_fraction)` where `avg_scaling_over_fragment` is the average per-base
+/// scaling evaluated over the **whole** fragment span `[fragment_start_bp, fragment_end_bp)`.
+/// This value is identical for every returned window of the same fragment.
+/// `full_overlap_fraction` is always `1.0`.
+#[inline]
+pub fn compute_window_scaling_over_fragment(
+    count_overlaps: &OverlappingWindows,
+    scaling_bin_indices: &[usize],
+    scaling_chr: &[(u64, u64, f32)],
+) -> Result<Vec<(usize, f64, f64)>> {
+    let fragment_start_bp = count_overlaps.interval_start;
+    let fragment_end_bp = count_overlaps.interval_end;
+
+    if fragment_end_bp <= fragment_start_bp {
+        bail!("count_overlaps.interval_start >= interval_end (empty fragment span)");
+    }
+    if scaling_bin_indices.is_empty() {
+        bail!("scaling_bin_indices is empty but scaling was requested");
+    }
+
+    // Compute one average over the full fragment span.
+    let avg_over_fragment = avg_scaling_over_span(
+        fragment_start_bp,
+        fragment_end_bp,
+        scaling_bin_indices,
+        scaling_chr,
+    )?;
+
+    // Emit the same value for every window that actually overlaps the fragment.
+    let mut per_window_scaling = Vec::with_capacity(count_overlaps.windows.len());
+    for window in &count_overlaps.windows {
+        if window.win_end > fragment_start_bp && window.win_start < fragment_end_bp {
+            per_window_scaling.push((window.idx, avg_over_fragment, 1.0));
+        }
+    }
+    Ok(per_window_scaling)
+}
+
+/// Average per-base scaling over an arbitrary span `[span_start_bp, span_end_bp)`.
+///
+/// - Uses `scaling_bin_indices` (sorted, non-empty) to limit work to bins that touch the fragment.
+/// - `scaling_chr` entries are `(bin_start_bp, bin_end_bp, weight_per_base)`.
+/// - `weight_per_base` is already the factor you want to multiply (e.g., 1.0 / normalized_coverage).
+#[inline]
+fn avg_scaling_over_span(
+    span_start_bp: u64,
+    span_end_bp: u64,
+    scaling_bin_indices: &[usize],
+    scaling_chr: &[(u64, u64, f32)],
+) -> Result<f64> {
+    if span_end_bp <= span_start_bp {
+        bail!("avg_scaling_over_span called with empty or inverted span");
+    }
+    if scaling_bin_indices.is_empty() {
+        bail!("scaling_bin_indices is empty but scaling was requested");
+    }
+
+    let span_len_bp = (span_end_bp - span_start_bp) as f64;
+    let mut weighted_sum_bp = 0.0f64;
+
+    // Walk only the intersecting scaling bins and accumulate:
+    // weighted_sum_bp += overlap_len_bp * weight_per_base
+    for &bin_idx in scaling_bin_indices {
+        let (bin_start_bp, bin_end_bp, weight_per_base) = scaling_chr[bin_idx];
+
+        // Skip bins entirely left of the span
+        if bin_end_bp <= span_start_bp {
             continue;
         }
-
-        let overlap_len = (overlap_end - overlap_start) as f64;
-
-        // Sum weight * overlapped_len across scaling bins intersecting [overlap_start, overlap_end)
-        let mut weighted_bp_sum = 0.0f64;
-
-        for &bin_idx in scaling_bin_indices {
-            let (bin_start, bin_end, weight_per_base) = scaling_chr[bin_idx];
-
-            if bin_end <= overlap_start {
-                continue; // Bin entirely left of the overlap
-            }
-            if bin_start >= overlap_end {
-                break; // Bins are sorted; we are past the overlap
-            }
-
-            let seg_start = overlap_start.max(bin_start);
-            let seg_end = overlap_end.min(bin_end);
-            if seg_end > seg_start {
-                let seg_len = (seg_end - seg_start) as f64;
-                weighted_bp_sum += seg_len * (weight_per_base as f64); // Multiply: weights are already inverted
-            }
+        // Stop once bins start at or beyond the span end (bins must be sorted)
+        if bin_start_bp >= span_end_bp {
+            break;
         }
 
-        let avg_scaling_weight = weighted_bp_sum / overlap_len;
-        let weight = (overlap_len / fragment_len) * avg_scaling_weight;
-
-        if weight > 0.0 {
-            weights.push((w.idx, weight));
+        let overlap_start_bp = span_start_bp.max(bin_start_bp);
+        let overlap_end_bp = span_end_bp.min(bin_end_bp);
+        if overlap_end_bp > overlap_start_bp {
+            let overlap_len_bp = (overlap_end_bp - overlap_start_bp) as f64;
+            weighted_sum_bp += overlap_len_bp * (weight_per_base as f64);
         }
     }
 
-    Ok(weights)
+    Ok(weighted_sum_bp / span_len_bp)
 }
 
 /// Load per-bin scaling factors from a TSV and validate that, for each requested
