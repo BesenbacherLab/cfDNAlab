@@ -183,6 +183,13 @@ pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
     let (windows_map, group_idx_to_name) =
         load_grouped_windows_from_bed(opt.intervals.clone(), &chromosomes, None)?;
     let num_groups = group_idx_to_name.len();
+    let total_windows: usize = windows_map.values().map(|gw| gw.len()).sum();
+    println!(
+        "  Num. chromosomes: {:?} | Num. windows: {:?} | Num. groups: {:?}",
+        windows_map.keys().len(),
+        total_windows,
+        num_groups,
+    );
 
     // Ensure all windows have the same length
     let window_size = ensure_uniform_window_len(&windows_map)?;
