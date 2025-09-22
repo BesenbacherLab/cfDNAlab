@@ -437,7 +437,7 @@ fn process_tile(
         let midpoint = midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
 
         // Only keep fragments with midpoints within the tile
-        if midpoint < tile.core_start || midpoint > tile.core_start {
+        if midpoint < tile.core_start || midpoint >= tile.core_end {
             continue;
         }
 
