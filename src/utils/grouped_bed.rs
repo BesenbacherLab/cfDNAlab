@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, ensure};
 use fxhash::{FxHashMap, FxHashSet};
 use std::{
-    fs::{File, create_dir_all},
+    fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
     path::Path,
 };

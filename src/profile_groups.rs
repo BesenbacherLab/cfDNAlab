@@ -292,7 +292,7 @@ pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
     write_npy(&final_counts_path, &all_counts_3d_arr).context("Write final fail")?;
 
     println!("Start: Writing group index to: {:?}", &map_path);
-    write_group_idx_to_name_tsv(&map_path, &group_idx_to_name)?;
+    write_group_idx_to_name_tsv(map_path, &group_idx_to_name)?;
 
     println!("");
     println!("Statistics");
