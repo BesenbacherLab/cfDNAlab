@@ -88,13 +88,13 @@ pub struct ProfileGroupsConfig {
     ///
     /// The last edge is *exclusive*.
     ///
-    /// Example: `--length-bins 20 80 150 220 500 1000`.
+    /// Example: `--length-bins 20 80 150 220 500 1000` or `--length-bins {20..601..10}` for `20 30 40 ... 601`
     #[cfg_attr(
         feature = "cli",
         clap(
             long,
             value_parser = clap::value_parser!(u32).range(1..),
-            num_args = 2.., // at least two edges per occurrence
+            num_args = 2.., // At least two edges per occurrence
             default_values_t = [20_u32, 1001_u32],
             help_heading = "Core"
         )
