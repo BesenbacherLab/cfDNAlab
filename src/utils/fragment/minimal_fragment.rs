@@ -164,7 +164,6 @@ pub fn is_inwards_oriented<'a, T: PairOrientable>(forward: &'a T, backward: &'a 
 }
 
 // Consider counting orientations in a stats command?
-///
 // #[derive(Default, Debug)]
 // struct OrientationCounts {
 //     inward: u64,
