@@ -87,8 +87,10 @@ pub struct ProfileGroupsConfig {
     /// Edges of fragment length bins to count in `[path]`
     ///
     /// The last edge is *exclusive*.
+    /// 
+    /// **NOTE**: Memory consumption increases linearly with the number of bins.
     ///
-    /// Example: `--length-bins 20 80 150 220 500 1000` or `--length-bins {20..601..10}` for `20 30 40 ... 601`
+    /// Example: `--length-bins 20 80 150 220 500 1001` or `--length-bins {20..1001..10}` for `20 30 40 ... 1001`
     #[cfg_attr(
         feature = "cli",
         clap(
