@@ -1,10 +1,10 @@
 # cfDNAlab
 
-Incredibly fast command-line tools for analysis of cell-free DNA. Count the fragment coverage, midpoint coverage, or fragment lengths across the whole genome (or selected windows) in mere seconds or minutes. Apply sample-specific GC correction and large-scale genomic smoothing. Built for *paired-end* sequencing data.
+Incredibly fast command-line tools for analysis of cell-free DNA. Count the fragment coverage, midpoint coverage, or fragment lengths across the whole genome (or selected windows) in mere seconds or minutes. Apply sample-specific GC correction and large-scale genomic smoothing.
 
-Written in rust for *speed*. 
+Written in rust for *speed*. Built for *paired-end* sequencing data.
 
-The commands are highly flexible to allow many usecases. Many options and good default settings.
+To enable a wide set of usecases, the commands are highly flexible with many options and good default settings.
 
 Suggest a tool or feature [here](https://github.com/LudvigOlsen/cfDNAlab/issues/new/choose)!
 
