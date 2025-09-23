@@ -81,7 +81,7 @@ pub struct GCConfig {
     /// The read is mapped to a different `tid` than the mate.
     /// The read is secondary, supplementary or duplicate.
     /// The read failed quality check.
-    /// The paired reads are not inwardly directed.
+    /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
     #[cfg_attr(
         feature = "cli",
         clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading="Filtering"))]

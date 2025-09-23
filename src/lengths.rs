@@ -58,7 +58,7 @@ use crate::{
 /// The read is mapped to a different `tid` than the mate. 
 /// The read is secondary, supplementary or duplicate.
 /// The read failed quality check.
-/// The paired reads are not inwardly directed.
+/// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct LengthsConfig {
