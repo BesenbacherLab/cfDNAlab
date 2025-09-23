@@ -1,8 +1,10 @@
 # cfDNAlab
 
-Incredibly fast command-line tools for analysis of cell-free DNA.
+Incredibly fast command-line tools for analysis of cell-free DNA. Count the fragment coverage, midpoint coverage, or fragment lengths across the whole genome (or selected windows) in mere seconds or minutes. Apply sample-specific GC correction and large-scale genomic smoothing. Built for *paired-end* sequencing data.
 
-Written in rust for *speed*.
+Written in rust for *speed*. 
+
+The commands are highly flexible to allow many usecases. Many options and good default settings.
 
 Suggest a tool or feature [here](https://github.com/LudvigOlsen/cfDNAlab/issues/new/choose)!
 
@@ -35,11 +37,13 @@ $ target/release/cfdna --help
 ## Commands
 The following commands are currently available:
 
-| Command                  | Description                                                                    | Output                                                                   |
-| ------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| `cfdna fcoverage`        | Count *fragment* coverage per position or aggregated in windows                | TODO                                                                     |
-| `cfdna lengths`          | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)`        | `all_length_counts.npy`: Count array<br />`bins.bed`: Window coordinates |
-| `cfdna normalize-genome` | Calculate scaling factors for normalizing/smoothing coverage across the genome | TODO                                                                     |
+| Command                  | Description                                                                                                                                                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cfdna fcoverage`        | Count *fragment* coverage per position or aggregated in windows                                                                                                                                                           |
+| `cfdna profile-groups`   | Count fragment *midpoint* coverage in fixed-size intervals, collapsed by groups across the genome.<br />E.g. transcription factor binding sites, aggregated per transcription factor.<br />Fast alternative to *Griffin*. |
+| `cfdna lengths`<br />    | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)`                                                                                                                                                   |
+| **Normalization**        | Precompute these normalization/correction factors to enable their use in the main commands                                                                                                                                |
+| `cfdna normalize-genome` | Calculate scaling factors for normalizing/smoothing coverage across the genome                                                                                                                                            |
  
 
 ### Common options
@@ -63,7 +67,15 @@ cfdna lengths \
 
 ---
 
+## FAQ
+
+ - How is *fragment* coverage different from the outputs of similar tools like `mosdepth` and `samtools`?
+   - `mosdepth` counts the coverage of aligned bases per *read* independently. `fcoverage` instead first collects the paired reads into a fragment and then counts the coverage of the aligned bases and (optionally) the gap between mate reads. We define the fragment "span" as [start(forward), end(reverse)). (TODO on samtools!). 
+ - Should I order the BAM files differently to allow pairing of reads into fragments?
+   - No! We expect BAM files to be *coordinate-sorted* and indexed.
+
 ## TODO
 
     - Bin chromosomes for higher parallelization where meaningful.
     - Add GC correction tools and implementations.
+    - Allow input BED files to be compressed.

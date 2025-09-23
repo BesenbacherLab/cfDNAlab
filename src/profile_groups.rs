@@ -34,6 +34,16 @@ use crate::{
 /// Count fragment lengths in a BAM-file.
 ///
 /// The fragment span is defined as `[end(reverse), start(forward)]`. // TODO: exclusive??
+///
+/// ## Always-on exclusion criteria
+///
+/// The following criteria always exclude a read:
+///
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
+/// The read is secondary, supplementary or duplicate.
+/// The read failed quality check.
+///
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct ProfileGroupsConfig {

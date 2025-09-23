@@ -49,6 +49,15 @@ use crate::{
 /// you can multiply the output counts by their lengths (`C'[L] = L * C[L]`). **Other options**
 /// include counting the full fragment if the *fragment midpoint* or a given *proportion* of
 /// positions overlaps the window.
+/// 
+/// ## Always-on exclusion criteria
+/// 
+/// The following criteria always exclude a read:
+/// 
+/// The read or mate read is unmapped. 
+/// The read is mapped to a different `tid` than the mate. 
+/// The read is secondary, supplementary or duplicate.
+/// The read failed quality check.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct LengthsConfig {
@@ -254,6 +263,10 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
         }
     }
 
+    println!("");
+    println!("Statistics");
+    println!("----------");
+
     // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
     println!("  Total reads: {}", global_counter.total_reads);
@@ -277,6 +290,7 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
         "  Fragments counted one or more times: {}",
         global_counter.counted_fragments
     );
+    println!("----------");
     println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
 }

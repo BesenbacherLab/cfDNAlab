@@ -58,7 +58,6 @@ use crate::{
 ///    Choose between:
 ///     1) Indexed: Adds the original window index as an output column and keeps duplicate positions.
 ///     2) Unique: Overlapping windows are merged to reduce duplicate positions.
-///         
 ///
 /// Without windowing, positional coverage for the selected chromosomes are outputted.
 ///
@@ -72,6 +71,15 @@ use crate::{
 /// We write temporary files to a `<output-dir>/tmp.<output-prefix>.<random>` directory to reduce memory.
 /// This directory is deleted at the end of the run. If the software is disrupted, the directory
 /// may be left behind.
+///
+/// ## Always-on exclusion criteria
+///
+/// The following criteria always exclude a read:
+///
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
+/// The read is secondary, supplementary or duplicate.
+/// The read failed quality check.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct FCoverageConfig {

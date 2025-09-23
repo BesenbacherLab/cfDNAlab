@@ -77,6 +77,15 @@ use crate::{
 /// At chromosome edges, the weights are truncated (e.g., `W_D: [2][3][2][1][0]`).
 ///
 /// The weights are normalized by their sum (after potential truncation at edges).
+///
+/// ## Always-on exclusion criteria
+///
+/// The following criteria always exclude a read:
+///
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
+/// The read is secondary, supplementary or duplicate.
+/// The read failed quality check.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct NormalizeGenomeConfig {

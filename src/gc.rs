@@ -72,6 +72,15 @@ pub struct GCConfig {
     /// Masking: Blacklisted positions are set to 'N' in the reference sequence
     /// the GC fraction is calculated from. See the `Minimum ACGT` options
     /// for when to ignore a fragment with too few ACGT (non-'N' and non-blacklisted) bases.
+    ///
+    /// ## Always-on exclusion criteria
+    ///
+    /// The following criteria always exclude a read:
+    ///
+    /// The read or mate read is unmapped.
+    /// The read is mapped to a different `tid` than the mate.
+    /// The read is secondary, supplementary or duplicate.
+    /// The read failed quality check.
     #[cfg_attr(
         feature = "cli",
         clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading="Filtering"))]
@@ -242,7 +251,6 @@ pub fn run(opt: GCConfig) -> Result<()> {
     )
     .context("Write final fail")?;
 
-    // Prepare counts to get correct motifs (collapsed, N-filtered, etc.)
     // TODO: Create actual correction factor here!
 
     // println!("Start: Writing mismatch rates to disk");
@@ -260,7 +268,9 @@ pub fn run(opt: GCConfig) -> Result<()> {
         }
     }
 
-    println!("Statistics:");
+    println!("");
+    println!("Statistics");
+    println!("----------");
 
     // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
@@ -278,6 +288,7 @@ pub fn run(opt: GCConfig) -> Result<()> {
         "  Fragments counted one or more times: {}",
         global_counter.counted_fragments
     );
+    println!("----------");
     println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
 }
