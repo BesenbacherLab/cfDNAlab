@@ -3,7 +3,7 @@ use rust_htslib::bam::record::{Cigar, Record};
 use smallvec::SmallVec;
 
 use crate::utils::fragment::minimal_fragment::{
-    Fragment, PairOrientable, oriented_pair_from_read_info,
+    Fragment, PairOrientable, is_inwards_oriented, oriented_pair_from_read_info,
 };
 
 /// Fragment that may carry explicit reference-coverage segments
@@ -153,6 +153,10 @@ impl PairOrientable for SegmentedReadInfo {
     fn is_reverse(&self) -> bool {
         self.is_reverse
     }
+    #[inline]
+    fn pos(&self) -> u32 {
+        self.pos
+    }
 }
 
 /// Build a `FragmentWithSegments` from two `SegmentedReadInfo` instances
@@ -168,7 +172,7 @@ impl PairOrientable for SegmentedReadInfo {
 /// - a: First read
 /// - b: Mate read
 /// - trigger_min_gap_bp: Minimum D/N length in either read to trigger segment mode
-/// - include_inter_mate_gap: Count the [fwd.end, rev.pos) gap
+/// - include_inter_mate_gap: Count the [forward.end, reverse.pos) gap
 ///   (when reads don't overlap) as part of the fragment
 ///
 /// Returns
@@ -181,22 +185,22 @@ pub fn collect_fragment_with_segments(
     trigger_min_gap_bp: u32,
     include_inter_mate_gap: bool,
 ) -> Option<FragmentWithSegments> {
-    let (fwd, rev) = oriented_pair_from_read_info(a, b)?;
-    if rev.end <= fwd.pos {
+    let (forward, reverse) = oriented_pair_from_read_info(a, b)?;
+    if !is_inwards_oriented(forward, reverse) {
         return None;
     }
 
-    let span_start = fwd.pos;
-    let span_end = rev.end;
+    let span_start = forward.pos;
+    let span_end = reverse.end;
 
     // Decide if we switch to segments
-    let trigger = (fwd.has_ref_gap && fwd.max_ref_gap >= trigger_min_gap_bp)
-        || (rev.has_ref_gap && rev.max_ref_gap >= trigger_min_gap_bp);
+    let trigger = (forward.has_ref_gap && forward.max_ref_gap >= trigger_min_gap_bp)
+        || (reverse.has_ref_gap && reverse.max_ref_gap >= trigger_min_gap_bp);
 
     // If no trigger and user wants full fragment counting, return the plain span
     if !trigger && include_inter_mate_gap {
         return Some(FragmentWithSegments {
-            tid: fwd.tid,
+            tid: forward.tid,
             start: span_start,
             end: span_end,
             segments: None,
@@ -208,10 +212,10 @@ pub fn collect_fragment_with_segments(
     // - Or, when not triggered and include_inter_mate_gap == false (the +2),
     //   exclude the inter-mate gap by using only per-read spans
     let mut abs: Vec<(u32, u32)> = Vec::with_capacity(
-        2 + fwd
+        2 + forward
             .ref_mapped_segments
             .len()
-            .saturating_add(rev.ref_mapped_segments.len()),
+            .saturating_add(reverse.ref_mapped_segments.len()),
     );
 
     // Expand forward read's relative ref-mapped segments to absolute genome coords
@@ -219,25 +223,25 @@ pub fn collect_fragment_with_segments(
     // Each stored tuple is (offset_from_pos, len) measured on the reference
     // Add `pos` to get absolute [start, end) on the chromosome
     // If the list is empty (no gaps worth storing), fall back to the read's aligned span [pos, end)
-    if !fwd.ref_mapped_segments.is_empty() {
-        for (off, len) in &fwd.ref_mapped_segments {
-            let s = fwd.pos.saturating_add(*off);
+    if !forward.ref_mapped_segments.is_empty() {
+        for (off, len) in &forward.ref_mapped_segments {
+            let s = forward.pos.saturating_add(*off);
             let e = s.saturating_add(*len);
             abs.push((s, e));
         }
     } else {
-        abs.push((fwd.pos, fwd.end));
+        abs.push((forward.pos, forward.end));
     }
 
     // Same expansion for the reverse read
-    if !rev.ref_mapped_segments.is_empty() {
-        for (off, len) in &rev.ref_mapped_segments {
-            let s = rev.pos.saturating_add(*off);
+    if !reverse.ref_mapped_segments.is_empty() {
+        for (off, len) in &reverse.ref_mapped_segments {
+            let s = reverse.pos.saturating_add(*off);
             let e = s.saturating_add(*len);
             abs.push((s, e));
         }
     } else {
-        abs.push((rev.pos, rev.end));
+        abs.push((reverse.pos, reverse.end));
     }
 
     // Optionally include the fragment insert between mates
@@ -249,15 +253,15 @@ pub fn collect_fragment_with_segments(
     //
     // Note: When !trigger and include_inter_mate_gap == false we intentionally do not add the gap
     if trigger && include_inter_mate_gap {
-        if fwd.end < rev.pos {
-            abs.push((fwd.end, rev.pos));
+        if forward.end < reverse.pos {
+            abs.push((forward.end, reverse.pos));
         }
     }
 
     if abs.is_empty() {
         // Fallback to plain span
         return Some(FragmentWithSegments {
-            tid: fwd.tid,
+            tid: forward.tid,
             start: span_start,
             end: span_end,
             segments: None,
@@ -304,7 +308,7 @@ pub fn collect_fragment_with_segments(
     };
 
     Some(FragmentWithSegments {
-        tid: fwd.tid,
+        tid: forward.tid,
         start: span_start,
         end: span_end,
         segments,

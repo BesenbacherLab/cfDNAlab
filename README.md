@@ -41,7 +41,7 @@ The following commands are currently available:
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cfdna fcoverage`        | Count *fragment* coverage per position or aggregated in windows                                                                                                                                                           |
 | `cfdna profile-groups`   | Count fragment *midpoint* coverage in fixed-size intervals, collapsed by groups across the genome.<br />E.g. transcription factor binding sites, aggregated per transcription factor.<br />Fast alternative to *Griffin*. |
-| `cfdna lengths`<br />    | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)`                                                                                                                                                   |
+| `cfdna lengths`<br />    | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)` for inwardly directed pairs only                                                                                                                  |
 | **Normalization**        | Precompute these normalization/correction factors to enable their use in the main commands                                                                                                                                |
 | `cfdna normalize-genome` | Calculate scaling factors for normalizing/smoothing coverage across the genome                                                                                                                                            |
  
@@ -55,11 +55,11 @@ The following commands are currently available:
 
 ## Quick‑start example
 
-Runtime depends on the size of the bam file. The below example ran in ~3min with 12 cores for a ~25x WGS file:
+Runtime depends on the size of the bam file. The below example ran in < 3min with 12 cores for a ~28x WGS file:
 
 ```bash
 cfdna lengths \
-  --bam sample.bam \                      # bam file with paired-end cfDNA
+  --bam sample.bam \                      # coordinate-sorted bam file with paired-end cfDNA
   --output-dir results \                  # where to write files
   --n-threads 12 \                        # use 12 CPU cores (max. one per chromosome)
   --blacklist encode_blacklist.bed        # exclude ENCODE blacklist intervals
@@ -70,12 +70,18 @@ cfdna lengths \
 ## FAQ
 
  - How is *fragment* coverage different from the outputs of similar tools like `mosdepth` and `samtools`?
-   - `mosdepth` counts the coverage of aligned bases per *read* independently. `fcoverage` instead first collects the paired reads into a fragment and then counts the coverage of the aligned bases and (optionally) the gap between mate reads. We define the fragment "span" as [start(forward), end(reverse)). (TODO on samtools!). 
+   - `mosdepth` counts the coverage of aligned bases per *read* independently. `fcoverage` instead first collects the paired reads into a fragment and then counts the coverage of the aligned bases and (optionally) the gap between mate reads.  (TODO on samtools!).
+ - How do you define a "fragment"?
+   - We define the *fragment* as the bases from the start of the forward read till the end of the reverse read: `[start(forward), end(reverse))` (inwardly directed pairs only), as suggested by Wang, H. et al. 2025. Some methods exclude deletions and skipped-regions.
  - Should I order the BAM files differently to allow pairing of reads into fragments?
-   - No! We expect BAM files to be *coordinate-sorted* and indexed.
+   - We expect BAM files to be *coordinate-sorted* and indexed.
 
 ## TODO
 
     - Bin chromosomes for higher parallelization where meaningful.
     - Add GC correction tools and implementations.
     - Allow input BED files to be compressed.
+
+## References
+
+ - Wang, H., Mennea, P.D., Chan, Y.K.E. et al. A standardized framework for robust fragmentomic feature extraction from cell-free DNA sequencing data. Genome Biol 26, 141 (2025). https://doi.org/10.1186/s13059-025-03607-5

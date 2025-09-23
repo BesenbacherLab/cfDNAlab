@@ -43,7 +43,7 @@ use crate::{
 /// The read is mapped to a different `tid` than the mate.
 /// The read is secondary, supplementary or duplicate.
 /// The read failed quality check.
-///
+/// The paired reads are not inwardly directed.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct ProfileGroupsConfig {
@@ -122,6 +122,8 @@ pub struct ProfileGroupsConfig {
     pub min_mapq: u8,
 
     /// Only count properly paired reads `[flag]`
+    /// 
+    /// This is NOT recommended by default as it trims the tails of the length distribution.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 

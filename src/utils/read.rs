@@ -6,6 +6,7 @@ pub fn default_include_read(rec: &Record, require_proper_pair: bool, min_mapq: u
     !(rec.is_unmapped()
         || rec.is_mate_unmapped()
         || rec.tid() != rec.mtid()
+        || rec.is_reverse() == rec.is_mate_reverse() // We want one forward, one reverse
         || rec.is_secondary()
         || rec.is_supplementary()
         || rec.is_duplicate()

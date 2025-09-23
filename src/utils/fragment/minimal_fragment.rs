@@ -49,6 +49,10 @@ impl PairOrientable for MinimalReadInfo {
     fn is_reverse(&self) -> bool {
         self.is_reverse
     }
+    #[inline]
+    fn pos(&self) -> u32 {
+        self.pos
+    }
 }
 
 /// Compute the cfDNA fragment coordinates (forward.left -> reverse.right).
@@ -71,14 +75,14 @@ pub fn collect_fragment_from_records(a: &Record, b: &Record) -> Option<Fragment>
 
 /// Build a Fragment from two `MinimalReadInfo`s (no full BAM records needed).
 pub fn collect_fragment(a: &MinimalReadInfo, b: &MinimalReadInfo) -> Option<Fragment> {
-    let (fwd, rev) = oriented_pair_from_read_info(a, b)?;
-    if rev.end <= fwd.pos {
+    let (forward, reverse) = oriented_pair_from_read_info(a, b)?;
+    if !is_inwards_oriented(forward, reverse) {
         return None;
     }
     Some(Fragment {
-        tid: fwd.tid,
-        start: fwd.pos,
-        end: rev.end,
+        tid: forward.tid,
+        start: forward.pos,
+        end: reverse.end,
     })
 }
 
@@ -88,6 +92,7 @@ pub fn collect_fragment(a: &MinimalReadInfo, b: &MinimalReadInfo) -> Option<Frag
 pub trait PairOrientable {
     fn tid(&self) -> i32;
     fn is_reverse(&self) -> bool;
+    fn pos(&self) -> u32;
 }
 
 // /// Identify forward/reverse reads (return (forward, reverse)) if both are inward.
@@ -122,15 +127,14 @@ pub trait PairOrientable {
 ///
 /// Parameters
 /// ----------
-/// a: &MinimalReadInfo
+/// a:
 ///     One read.
-/// b: &MinimalReadInfo
+/// b:
 ///     Mate read.
 ///
 /// Returns
 /// -------
-/// pair: Option<(&MinimalReadInfo, &MinimalReadInfo)>
-///     `(forward, reverse)` or `None` if invalid (different contigs, same strand).
+/// pair: `(forward, reverse)` or `None` if invalid (different contigs, same strand).
 #[inline]
 pub fn oriented_pair_from_read_info<'a, T: PairOrientable>(
     a: &'a T,
@@ -144,6 +148,19 @@ pub fn oriented_pair_from_read_info<'a, T: PairOrientable>(
         (true, false) => Some((b, a)), // b forward, a reverse
         _ => None,                     // same orientation or ambiguous
     }
+}
+
+/// Whether a fragment from two reads are inwards-oriented, meaning `forward.pos < reverse.pos`.
+///
+/// Parameters
+/// ----------
+/// forward:
+///     The forward read.
+/// reverse:
+///     The reverse read.
+#[inline]
+pub fn is_inwards_oriented<'a, T: PairOrientable>(forward: &'a T, backward: &'a T) -> bool {
+    forward.pos() < backward.pos()
 }
 
 // Other ideas but commented out for now!
