@@ -150,7 +150,7 @@ pub fn oriented_pair_from_read_info<'a, T: PairOrientable>(
     }
 }
 
-/// Whether a fragment from two reads are inwards-oriented, meaning `forward.pos < reverse.pos`.
+/// Whether a fragment from two reads are inwards-oriented, meaning `forward.pos <= reverse.pos`.
 ///
 /// Parameters
 /// ----------
@@ -160,8 +160,47 @@ pub fn oriented_pair_from_read_info<'a, T: PairOrientable>(
 ///     The reverse read.
 #[inline]
 pub fn is_inwards_oriented<'a, T: PairOrientable>(forward: &'a T, backward: &'a T) -> bool {
-    forward.pos() < backward.pos()
+    forward.pos() <= backward.pos()
 }
+
+// Consider counting orientations in a stats command?
+///
+// #[derive(Default, Debug)]
+// struct OrientationCounts {
+//     inward: u64,
+//     outward: u64,
+//     same_strand: u64,
+//     cross_chrom: u64,
+// }
+
+// fn categorize_pair<'a, T: PairOrientable>(a: &'a T, b: &'a T, c: &mut OrientationCounts) {
+//     if a.tid() != b.tid() {
+//         c.cross_chrom += 1;
+//         return;
+//     }
+//     match (a.is_reverse(), b.is_reverse()) {
+//         (true, true) => {
+//             c.same_strand += 1;
+//         }
+//         (false, false) => {
+//             c.same_strand += 1;
+//         }
+//         (false, true) => {
+//             if a.pos() < b.pos() {
+//                 c.inward += 1
+//             } else {
+//                 c.outward += 1
+//             }
+//         }
+//         (true, false) => {
+//             if b.pos() < a.pos() {
+//                 c.inward += 1
+//             } else {
+//                 c.outward += 1
+//             }
+//         }
+//     }
+// }
 
 // Other ideas but commented out for now!
 
