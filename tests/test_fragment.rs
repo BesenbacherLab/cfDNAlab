@@ -429,3 +429,177 @@ mod test_segmented_fragments {
         );
     }
 }
+
+#[cfg(test)]
+mod tests_fragment_with_indel_counts {
+    use cfdnalab::utils::fragment::indel_counting_fragment::*;
+    use cfdnalab::utils::fragment::minimal_fragment::{
+        is_inwards_oriented, oriented_pair_from_read_info,
+    };
+    use rust_htslib::bam::Record;
+    use rust_htslib::bam::record::{Cigar, CigarString};
+
+    // Helper: build a BAM record with given tid/pos/strand/cigar
+    fn make_rec(tid: i32, pos: u32, is_reverse: bool, cigar: Vec<Cigar>) -> Record {
+        let mut r = Record::new();
+        r.set_tid(tid);
+        r.set_pos(pos as i64);
+        r.set_mapq(60);
+        let mut flags: u16 = 0;
+        if is_reverse {
+            flags |= 0x10; // reverse strand
+        }
+        r.set_flags(flags);
+        r.set_cigar(Some(&CigarString(cigar)));
+        r
+    }
+
+    // Helper: simple M-only cigar of length l
+    fn m(len: u32) -> Vec<Cigar> {
+        vec![Cigar::Match(len as u32)]
+    }
+
+    // Helper: cigar with ref deletion D at offset off of length d, total M before/after
+    fn m_del_m(m1: u32, d: u32, m2: u32) -> Vec<Cigar> {
+        vec![Cigar::Match(m1), Cigar::Del(d), Cigar::Match(m2)]
+    }
+
+    // Helper: cigar with insertion I at offset off of length i, total M before/after
+    fn m_ins_m(m1: u32, i: u32, m2: u32) -> Vec<Cigar> {
+        vec![Cigar::Match(m1), Cigar::Ins(i), Cigar::Match(m2)]
+    }
+
+    // Helper: quirky duplicate insertions at the same ref pos: I S I
+    fn m_ins_s_ins_m(m1: u32, i1: u32, sc: u32, i2: u32, m2: u32) -> Vec<Cigar> {
+        vec![
+            Cigar::Match(m1),
+            Cigar::Ins(i1),
+            Cigar::SoftClip(sc),
+            Cigar::Ins(i2),
+            Cigar::Match(m2),
+        ]
+    }
+
+    #[test]
+    fn indelreadinfo_parses_deletions_and_insertions() {
+        // Forward read: start 100, cigar M50 D5 M45 => deletions at [150,155)
+        let r = make_rec(0, 100, false, m_del_m(50, 5, 45));
+        let info = IndelReadInfo::from(&r);
+        assert_eq!(info.pos, 100);
+        assert_eq!(info.end, 100 + 50 + 5 + 45);
+        assert_eq!(info.deletions, vec![(150, 155)]);
+        assert!(info.insertions.is_empty());
+
+        // Reverse read: start 200, cigar M30 I4 M20 => insertion at ref pos 230 length 4
+        let r2 = make_rec(0, 200, true, m_ins_m(30, 4, 20));
+        let info2 = IndelReadInfo::from(&r2);
+        assert_eq!(info2.insertions, vec![(230, 4)]);
+        assert!(info2.deletions.is_empty());
+    }
+
+    #[test]
+    fn orientation_and_inward_check() {
+        // Forward at 100..160, Reverse at 150..210 (inward: forward.pos <= reverse.pos)
+        let f = IndelReadInfo::from(&make_rec(0, 100, false, m(60)));
+        let r = IndelReadInfo::from(&make_rec(0, 150, true, m(60)));
+        let (fwd, rev) = oriented_pair_from_read_info(&f, &r).unwrap();
+        assert!(is_inwards_oriented(fwd, rev));
+    }
+
+    #[test]
+    fn collect_no_indels_fast_path() {
+        // No indels; expect zero adjustments.
+        let f = make_rec(0, 100, false, m(60));
+        let r = make_rec(0, 180, true, m(40));
+        let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
+        assert_eq!(frag.tid, 0);
+        assert_eq!(frag.start, 100);
+        assert_eq!(frag.end, 220);
+        assert_eq!(frag.len_ref(), 120);
+        assert_eq!(frag.deletions_nonoverlap, 0);
+        assert_eq!(frag.insertions_nonoverlap, 0);
+        assert_eq!(frag.deletions_overlap_supported, 0);
+        assert_eq!(frag.insertions_overlap_supported, 0);
+        assert_eq!(frag.len_indel_adjusted(), frag.len_ref());
+    }
+
+    #[test]
+    fn collect_skip_indels_filters_out() {
+        // Has insertion; skip_indels=true => None.
+        let f = make_rec(0, 100, false, m_ins_m(20, 3, 20));
+        let r = make_rec(0, 140, true, m(40));
+        assert!(collect_fragment_with_indel_counts_from_records(&f, &r, true, true).is_none());
+    }
+
+    #[test]
+    fn collect_count_indels_disabled_returns_zeroed() {
+        // Indels present but count_indels=false => fragment with zero adjustments.
+        let f = make_rec(0, 100, false, m_ins_m(20, 3, 20));
+        let r = make_rec(0, 140, true, m_del_m(10, 4, 30));
+        let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, false).unwrap();
+        assert_eq!(frag.deletions_nonoverlap, 0);
+        assert_eq!(frag.insertions_nonoverlap, 0);
+        assert_eq!(frag.deletions_overlap_supported, 0);
+        assert_eq!(frag.insertions_overlap_supported, 0);
+    }
+
+    #[test]
+    fn nonoverlap_indels_counted_fully() {
+        // Non-overlapping mates: forward 100..120, reverse 140..160.
+        // Forward has D3 at [110,113), Reverse has I4 at ref pos 150.
+        let f = make_rec(0, 100, false, m_del_m(10, 3, 7)); // 100..120
+        let r = make_rec(0, 140, true, m_ins_m(10, 4, 10)); // 140..160
+        let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
+        // No aligned overlap → both indels are non-overlap
+        assert_eq!(frag.deletions_nonoverlap, 3);
+        assert_eq!(frag.insertions_nonoverlap, 4);
+        assert_eq!(frag.deletions_overlap_supported, 0);
+        assert_eq!(frag.insertions_overlap_supported, 0);
+        // Adjusted length = (end-start) + 4 - 3
+        let expected = frag.len_ref() + 1;
+        assert_eq!(frag.len_indel_adjusted(), expected);
+    }
+
+    #[test]
+    fn overlap_deletion_counts_intersection_only() {
+        // Overlapping mates: forward 100..180, reverse 160..220 → overlap [160,180)
+        // Forward deletion [170,175); Reverse deletion [172,178) → intersection [172,175) len 3.
+        let f = make_rec(0, 100, false, m_del_m(70, 5, 5)); // del at [170,175)
+        let r = make_rec(0, 160, true, m_del_m(12, 6, 42)); // del at [172,178)
+        let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
+        assert_eq!(frag.deletions_nonoverlap, 0);
+        assert_eq!(frag.deletions_overlap_supported, 3);
+        assert_eq!(frag.insertions_nonoverlap, 0);
+        assert_eq!(frag.insertions_overlap_supported, 0);
+        // Adjusted length subtracts 3
+        assert_eq!(frag.len_indel_adjusted(), frag.len_ref() - 3);
+    }
+
+    #[test]
+    fn overlap_insertions_require_both_mates_same_ref_pos() {
+        // Overlap [160,180).
+        // Forward insertion at ref 165 len 5; Reverse insertion at ref 165 len 3 → min = 3 counted.
+        // Forward insertion at ref 170 len 2; Reverse none at 170 → 0 counted in overlap.
+        let f = make_rec(0, 100, false, {
+            let mut v = m_ins_m(65, 5, 15); // ins at 165
+            v.extend(m_ins_m(5, 2, 10)); // then ins at 170 (since 100 + 65 + [I] + 15 + 5 + [I] + 10)
+            v
+        });
+        let r = make_rec(0, 160, true, m_ins_m(5, 3, 15)); // ins at 165
+        let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
+        assert_eq!(frag.insertions_nonoverlap, 0);
+        assert_eq!(frag.insertions_overlap_supported, 3); // min(5,3)
+    }
+
+    #[test]
+    fn duplicate_insertions_at_same_pos_per_read_take_max_then_min_across_mates() {
+        // Overlap [160,200).
+        // Forward has two insertions at ref 170: lengths 2 and 5 (separated by soft-clip); keep max=5.
+        // Reverse has insertion at ref 170 length 3 → min(5,3) = 3 counted.
+        let f = make_rec(0, 150, false, m_ins_s_ins_m(20, 2, 4, 5, 26)); // two I at ref 170
+        let r = make_rec(0, 160, true, m_ins_m(10, 3, 30)); // I at ref 170
+        let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
+        assert_eq!(frag.insertions_overlap_supported, 3);
+        assert_eq!(frag.insertions_nonoverlap, 0);
+    }
+}

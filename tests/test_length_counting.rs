@@ -2,7 +2,8 @@
 mod tests {
     use anyhow::{Context, Result};
     use cfdnalab::utils::{
-        coverage::scale_genome::compute_scaled_window_weights, overlaps::find_overlapping_windows,
+        coverage::scale_genome::compute_window_scaling_over_overlap,
+        overlaps::find_overlapping_windows,
     };
 
     // ------- helpers -------
@@ -39,7 +40,7 @@ mod tests {
             None, // by_size
             frag_start,
             frag_end,
-            0.0,
+            0.0,   // accept any overlap
             1_000, // look_back (large enough)
         )?
         .context("expected >=1 overlapping scaling bin")?;
@@ -73,17 +74,18 @@ mod tests {
         let scaling_chr: Vec<(u64, u64, f32)> = vec![(0, 100, 1.25)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
-        let w = compute_scaled_window_weights(&overlaps, &sf_idx, &scaling_chr)?;
+        // (idx, avg_scaling_over_overlap, overlap_fraction)
+        let w = compute_window_scaling_over_overlap(&overlaps, &sf_idx, &scaling_chr)?;
         assert_eq!(w.len(), 1);
-        // Full-window overlap => weight equals average scaling = 1.25
-        approx_eq(w[0].1, 1.25, 1e-9);
+        approx_eq(w[0].1, 1.25, 1e-9); // full-window overlap -> avg scaling is the bin's weight
+        approx_eq(w[0].2, 1.0, 1e-12); // overlap_fraction relative to fragment length
         Ok(())
     }
 
     #[test]
     fn full_window_two_bins_averages_by_length() -> Result<()> {
         // Window [0,10), scaling bins: [0,5)->2.0, [5,10)->1.0, fragment [0,10)
-        // Expected: (5*2 + 5*1) / 10 = 1.5
+        // Expected average over overlap: (5*2 + 5*1) / 10 = 1.5
         let chrom_len = 100;
         let count_wins = bed_windows(&[(0, 10)]);
         let mut wd_ptr = 0usize;
@@ -105,9 +107,10 @@ mod tests {
         let scaling_chr = vec![(0, 5, 2.0), (5, 10, 1.0)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
-        let w = compute_scaled_window_weights(&overlaps, &sf_idx, &scaling_chr)?;
+        let w = compute_window_scaling_over_overlap(&overlaps, &sf_idx, &scaling_chr)?;
         assert_eq!(w.len(), 1);
-        approx_eq(w[0].1, 1.5, 1e-9);
+        approx_eq(w[0].1, 1.5, 1e-9); // average scaling
+        approx_eq(w[0].2, 1.0, 1e-12); // full overlap of fragment with window
         Ok(())
     }
 
@@ -115,8 +118,16 @@ mod tests {
     fn two_count_windows_partition_additivity() -> Result<()> {
         // Count windows partition [0,10) into [0,5), [5,10)
         // Scaling bins: [0,5)->2.0, [5,10)->1.0
-        // Fragment [3,9) crosses both windows.
-        // Expected weights: w1 = (2/6)*2.0 = 0.666..., w2 = (4/6)*1.0 = 0.666..., sum=1.333...
+        // Fragment [3,9) crosses both windows (fragment len = 6).
+        //
+        // For each overlapped window we now get:
+        //   - avg_scaling_over_overlap (over that window∩fragment span)
+        //   - overlap_fraction = overlap_len / fragment_len
+        //
+        // Combined weight used by the caller for CountOverlap is:
+        //   combined = avg_scaling_over_overlap * overlap_fraction
+        //
+        // Expected: [3,5) => (2/6)*2.0 = 0.666..., [5,9) => (4/6)*1.0 = 0.666..., sum=1.333...
         let chrom_len = 100;
         let count_wins = bed_windows(&[(0, 5), (5, 10)]);
         let mut wd_ptr = 0usize;
@@ -138,13 +149,14 @@ mod tests {
         let scaling_chr = vec![(0, 5, 2.0), (5, 10, 1.0)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
-        let w = compute_scaled_window_weights(&overlaps, &sf_idx, &scaling_chr)?;
+        // (idx, avg_scaling_over_overlap, overlap_fraction)
+        let w = compute_window_scaling_over_overlap(&overlaps, &sf_idx, &scaling_chr)?;
         assert_eq!(w.len(), 2);
 
-        // Map by window idx for stable assertions
+        // Map by window idx for stable assertions, and multiply avg_scaling by overlap_fraction
         let mut by_idx = std::collections::BTreeMap::new();
-        for (idx, weight) in w {
-            by_idx.insert(idx, weight);
+        for (idx, avg_scaling, overlap_fraction) in w {
+            by_idx.insert(idx, avg_scaling * overlap_fraction);
         }
 
         approx_eq(*by_idx.get(&0).unwrap(), (2.0 / 6.0) * 2.0, 1e-9); // [3,5) in first window
@@ -179,9 +191,11 @@ mod tests {
         let scaling_chr = vec![(0, 3, 1.0), (3, 6, 2.0), (6, 9, 0.5)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
-        let w = compute_scaled_window_weights(&overlaps, &sf_idx, &scaling_chr)?;
+        let w = compute_window_scaling_over_overlap(&overlaps, &sf_idx, &scaling_chr)?;
         assert_eq!(w.len(), 1);
-        approx_eq(w[0].1, 8.0 / 6.0, 1e-9);
+        approx_eq(w[0].1, 8.0 / 6.0, 1e-9); // avg scaling over the overlapped span
+        // Overlap_fraction is 1.0 here because the single window completely contains [2,8)
+        approx_eq(w[0].2, 1.0, 1e-12);
         Ok(())
     }
 
@@ -209,7 +223,8 @@ mod tests {
         let scaling_chr = vec![(0, 10, 1.0)];
         let sf_idx: Vec<usize> = Vec::new();
 
-        let err = compute_scaled_window_weights(&overlaps, &sf_idx, &scaling_chr).unwrap_err();
+        let err =
+            compute_window_scaling_over_overlap(&overlaps, &sf_idx, &scaling_chr).unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("scaling_bin_indices is empty"),
@@ -220,7 +235,7 @@ mod tests {
 
     #[test]
     fn no_scaling_single_window_uses_overlap_fraction_full_overlap() -> Result<()> {
-        // One count window fully covering the fragment -> weight == 1.0
+        // One count window fully covering the fragment -> overlap_fraction == 1.0
         let chrom_len = 100;
         let count_wins = bed_windows(&[(0, 100)]);
         let mut wd_ptr = 0usize;
@@ -239,7 +254,6 @@ mod tests {
         )?
         .context("count overlaps")?;
 
-        // No-scaling branch uses the overlap_fraction directly
         assert_eq!(overlaps.windows.len(), 1);
         approx_eq(overlaps.windows[0].overlap_fraction as f64, 1.0, 1e-12);
         Ok(())
@@ -249,7 +263,7 @@ mod tests {
     fn no_scaling_two_windows_uses_overlap_fraction_partition() -> Result<()> {
         // Count windows partition [0,10) into [0,5), [5,10)
         // Fragment [3,9) -> overlaps are lengths 2 and 4 over total len 6
-        // Expected weights: 2/6 and 4/6, summing to 1.0
+        // Expected fractions: 2/6 and 4/6, summing to 1.0
         let chrom_len = 100;
         let count_wins = bed_windows(&[(0, 5), (5, 10)]);
         let mut wd_ptr = 0usize;
@@ -270,7 +284,6 @@ mod tests {
 
         assert_eq!(overlaps.windows.len(), 2);
 
-        // No-scaling branch increments by overlap_fraction
         let mut by_idx = std::collections::BTreeMap::new();
         for ow in overlaps.windows {
             by_idx.insert(ow.idx, ow.overlap_fraction as f64);
