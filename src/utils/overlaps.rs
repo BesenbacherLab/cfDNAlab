@@ -153,19 +153,18 @@ pub fn find_overlapping_windows(
             let (win_start, mut win_end, _) = window_list[bin_idx];
             win_end = win_end.min(chrom_len);
             if half_open_intervals_overlap(interval_start, interval_end, win_start, win_end) {
-                let mut ow = OverlappedWindow {
-                    idx: bin_idx,
-                    win_start,
-                    win_end,
-                    overlap_fraction: 0.0, // Placeholder
-                };
                 let overlap_proportion =
-                    fraction_overlap_of_a(interval_start, interval_end, ow.win_start, ow.win_end);
-                if (overlap_proportion as f64) < min_overlap_fraction {
-                    continue;
+                    fraction_overlap_of_a(interval_start, interval_end, win_start, win_end);
+                if (overlap_proportion as f64) >= min_overlap_fraction {
+                    let mut ow = OverlappedWindow {
+                        idx: bin_idx,
+                        win_start,
+                        win_end,
+                        overlap_fraction: 0.0, // Placeholder
+                    };
+                    ow.set_overlap_fraction(overlap_proportion)?;
+                    overlaps.windows.push(ow);
                 }
-                ow.set_overlap_fraction(overlap_proportion)?;
-                overlaps.windows.push(ow);
             }
             bin_idx += 1;
         }
