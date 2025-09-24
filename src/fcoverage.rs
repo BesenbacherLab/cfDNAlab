@@ -129,17 +129,17 @@ pub struct FCoverageConfig {
     ///
     /// Possible values:
     ///
-    ///     - "average": Get the average coverage per window (default).
+    /// - `"average"`: Get the average coverage per window (default).
     ///
-    ///     - "total": Get the total coverage per window.
+    /// - `"total"`: Get the total coverage per window.
     ///
-    ///     - "unique-positions": Get the positional coverage for the included windows only (`--by-bed` *only*).
-    ///         Overlapping windows are merged to avoid duplicate positions.
-    ///         Excludes all positions that do not overlap a window from the output.
+    /// - `"unique-positions"`: Get the positional coverage for the included windows only (`--by-bed` *only*).
+    ///   Overlapping windows are merged to avoid duplicate positions.
+    ///   Excludes all positions that do not overlap a window from the output.
     ///
-    ///     - "indexed-positions": Get the positional coverage for the included windows only (`--by-bed` *only*).
-    ///         Adds the original window index as an output column and keeps duplicate positions.
-    ///         Excludes all positions that do not overlap a window from the output.
+    /// - `"indexed-positions"`: Get the positional coverage for the included windows only (`--by-bed` *only*).
+    ///   Adds the original window index as an output column and keeps duplicate positions.
+    ///   Excludes all positions that do not overlap a window from the output.
     ///
     /// **NOTE**: Ignored when no windows are specified.
     #[cfg_attr(

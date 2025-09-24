@@ -70,22 +70,22 @@ pub struct LengthsConfig {
 
     /// How to calculate fragment length `[string]`
     ///
-    /// Deletions: Both `D` and `N` in the cigar string are considered deletions.
+    /// Deletions: Both 'D' and 'N' in the cigar string are considered deletions.
     ///
     /// Possible values:
     ///
-    ///     - `"reference"`:
-    ///         Use the reference coordinates `end(reverse) - start(forward)`.
-    ///         Note, we only include inwardly directed pairs.
+    /// - `"reference"`:
+    ///   Use the reference coordinates `end(reverse) - start(forward)`.
+    ///   Note, we only include inwardly directed pairs.
     ///
-    ///     - `"indel-adjusted"`:
-    ///         Adjust the reference length by the observed insertions and deletions in the aligned bases.
-    ///         In the mate overlap, both reads must agree on the position-level, with the shortest insertion selected per position.
-    ///         **NOTE**: Blacklist exclusion and calculation of scaling weights (--scaling-factors)
-    ///         use the full reference span.
+    /// - `"indel-adjusted"`:
+    ///   Adjust the reference length by the observed insertions and deletions in the aligned bases.
+    ///   In the mate overlap, both reads must agree on the position-level, with the shortest insertion selected per position.
+    ///   **NOTE**: Blacklist exclusion and calculation of scaling weights (--scaling-factors)
+    ///   use the full reference span.
     ///
-    ///     - `"skip-indels"`:
-    ///         Skip fragments with any insertion or deletion present.
+    /// - `"skip-indels"`:
+    ///   Skip fragments with any insertion or deletion present.
     #[cfg_attr(
         feature = "cli",
         clap(
