@@ -303,6 +303,10 @@ pub fn collect_fragment_with_indel_counts(
     let split_insertion = |(ins_ref_pos, ins_len): (u32, u32),
                            nonov_acc: &mut u32,
                            ov_map: &mut FxHashMap<u32, u32>| {
+        // Ignore insertions whose reference anchor lies outside the fragment span
+        if ins_ref_pos < fragment_start_bp || ins_ref_pos >= fragment_end_bp {
+            return;
+        }
         if !has_aligned_overlap
             || ins_ref_pos < aligned_overlap_start_bp
             || ins_ref_pos >= aligned_overlap_end_bp
