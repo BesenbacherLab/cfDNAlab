@@ -478,7 +478,7 @@ mod tests {
         // Midpoint from odd-length fragment
         let m = midpoint_random_even_with_thread_rng(start, len);
         assert!(
-            m == start + len / 2 - 1,
+            m == start + len / 2,
             "midpoint {m} not the center element"
         );
     }
