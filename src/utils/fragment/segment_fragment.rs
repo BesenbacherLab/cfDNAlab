@@ -1,4 +1,4 @@
-use rust_htslib::bam::ext::BamRecordExtensions; // reference_end()
+use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::{Cigar, Record};
 use smallvec::SmallVec;
 
@@ -51,8 +51,8 @@ impl From<Fragment> for FragmentWithSegments {
 #[derive(Debug, Clone)]
 pub struct SegmentedReadInfo {
     pub tid: i32, // Contig id
-    pub pos: u32, // 0-based leftmost aligned ref pos
-    pub end: u32, // 0-based exclusive rightmost aligned ref pos
+    pub pos: u32, // Leftmost aligned ref pos
+    pub end: u32, // Exclusive rightmost aligned ref pos
     pub is_reverse: bool,
     pub has_ref_gap: bool,                    // True if any D/N present
     pub max_ref_gap: u32,                     // Longest single D/N length (0 if none)

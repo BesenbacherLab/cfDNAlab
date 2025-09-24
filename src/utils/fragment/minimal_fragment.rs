@@ -1,14 +1,14 @@
-use rust_htslib::bam::ext::BamRecordExtensions; // reference_end()
+use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::Record;
 
 /// Basic fragment on the reference (0-based, end-exclusive).
 #[derive(Debug, Clone, Copy)]
 pub struct Fragment {
-    /// 0-based tid/contig id
+    /// tid/contig id
     pub tid: i32,
-    /// 0-based inclusive start (left boundary of the forward read)
+    /// inclusive start (left boundary of the forward read)
     pub start: u32,
-    /// 0-based exclusive end (right boundary of the reverse read)
+    /// exclusive end (right boundary of the reverse read)
     pub end: u32,
 }
 
@@ -23,8 +23,8 @@ impl Fragment {
 #[derive(Debug, Clone, Copy)]
 pub struct MinimalReadInfo {
     pub tid: i32, // Contig id
-    pub pos: u32, // 0-based leftmost aligned ref pos
-    pub end: u32, // 0-based exclusive rightmost aligned ref pos (reference_end)
+    pub pos: u32, // leftmost aligned ref pos
+    pub end: u32, // exclusive rightmost aligned ref pos (reference_end)
     pub is_reverse: bool,
 }
 
@@ -231,7 +231,7 @@ pub fn is_inwards_oriented<'a, T: PairOrientable>(forward: &'a T, backward: &'a 
 // pub struct FragmentOverlapMM {
 //     pub frag: Fragment,
 //     pub overlap: Overlap,
-//     /// 0-based reference coordinates for each column (strictly increasing).
+//     /// reference coordinates for each column (strictly increasing).
 //     pub ref_coords: Vec<u32>,
 //     /// Bases from the forward read at those coords (left -> right on reference).
 //     pub left_bases: Vec<u8>,
@@ -376,7 +376,7 @@ pub fn is_inwards_oriented<'a, T: PairOrientable>(forward: &'a T, backward: &'a 
 // /// rec: &Record
 // ///     BAM record (mapped).
 // /// range: (u32, u32)
-// ///     0-based inclusive start, exclusive end on the reference.
+// ///     inclusive start, exclusive end on the reference.
 // ///
 // /// Returns
 // /// -------
@@ -478,7 +478,7 @@ pub fn is_inwards_oriented<'a, T: PairOrientable>(forward: &'a T, backward: &'a 
 // /// rec: &Record
 // ///     BAM record (mapped).
 // /// range: (u32, u32)
-// ///     0-based inclusive start, exclusive end on the reference.
+// ///     inclusive start, exclusive end on the reference.
 // ///
 // /// Returns
 // /// -------

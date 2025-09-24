@@ -28,9 +28,12 @@ use crate::{
             compute_window_scaling_over_fragment, compute_window_scaling_over_overlap,
             load_scaling_factors_tsv,
         },
-        fragment::minimal_fragment::Fragment,
-        fragment_iterator::fragments_from_bam,
-        lengths::counting::{LengthCounts, stack_length_counts},
+        fragment::{indel_counting_fragment::FragmentWithIndelCounts, minimal_fragment::Fragment},
+        fragment_iterator::{fragments_from_bam, fragments_with_indel_counts_from_bam},
+        lengths::{
+            counting::{LengthCounts, stack_length_counts},
+            length_mode::LengthMode,
+        },
         overlaps::find_overlapping_windows,
         profiling::midpoint::midpoint_random_even_with_thread_rng,
         read::default_include_read,
@@ -49,13 +52,13 @@ use crate::{
 /// you can multiply the output counts by their lengths (`C'[L] = L * C[L]`). **Other options**
 /// include counting the full fragment if the *fragment midpoint* or a given *proportion* of
 /// positions overlaps the window.
-/// 
+///
 /// ## Always-on exclusion criteria
-/// 
+///
 /// The following criteria always exclude a read:
-/// 
-/// The read or mate read is unmapped. 
-/// The read is mapped to a different `tid` than the mate. 
+///
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
 /// The read is secondary, supplementary or duplicate.
 /// The read failed quality check.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
@@ -64,6 +67,37 @@ use crate::{
 pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     ioc: IOCArgs,
+
+    /// How to calculate fragment length `[string]`
+    ///
+    /// Deletions: Both `D` and `N` in the cigar string are considered deletions.
+    ///
+    /// Possible values:
+    ///
+    ///     - `"reference"`:
+    ///         Use the reference coordinates `end(reverse) - start(forward)`.
+    ///         Note, we only include inwardly directed pairs.
+    ///
+    ///     - `"indel-adjusted"`:
+    ///         Adjust the reference length by the observed insertions and deletions.
+    ///         In the aligned bases, we subtract deletions and add insertions.
+    ///         In the mate overlap, both reads must agree on the position-level.
+    ///         The shortest insertion is counted when agreeing on the position but not the length.
+    ///         **NOTE*: Blacklist exclusion and calculation of scaling weights (--scaling-factors)
+    ///         use the full reference span.
+    ///
+    ///     - `"skip-indels"`:
+    ///         Skip fragments with any insertion or deletion present.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value = "reference",
+            ignore_case = true,
+            help_heading = "Core"
+        )
+    )]
+    pub length_mode: LengthMode,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     windows: WindowsArgs,
@@ -87,7 +121,7 @@ pub struct LengthsConfig {
     pub min_mapq: u8,
 
     /// Only count properly paired reads `[flag]`
-    /// 
+    ///
     /// This is NOT recommended by default as it trims the tails of the distribution.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
@@ -374,8 +408,8 @@ fn process_chrom(
     let fragment_filter = {
         let min_len = opt.fragment_lengths.min_fragment_length;
         let max_len = opt.fragment_lengths.max_fragment_length;
-        move |f: &Fragment| {
-            let len = f.len();
+        move |f: &FragmentWithIndelCounts| {
+            let len = f.len_indel_adjusted(); // Only adjusted when --length-mode asks for it
             len >= min_len && len <= max_len
         }
     };
@@ -387,9 +421,10 @@ fn process_chrom(
     };
 
     // Create fragment iterator
-    let mut iter = fragments_from_bam(
+    let mut iter = fragments_with_indel_counts_from_bam(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
         include_read_fn,
+        opt.length_mode,
         fragment_filter,
     )
     .with_local_counters();
@@ -397,7 +432,7 @@ fn process_chrom(
     // Iterate fragments and add coverage
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
-        let fragment_length = fragment.len();
+        let fragment_length = fragment.len_indel_adjusted(); // Only adjusted when --length-mode asks for it
 
         // Determine blacklist status
         let in_blacklist = is_blacklisted(

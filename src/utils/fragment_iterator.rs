@@ -67,6 +67,9 @@ use rust_htslib::bam::Record;
 
 use crate::utils::{
     fragment::{
+        indel_counting_fragment::{
+            FragmentWithIndelCounts, IndelReadInfo, collect_fragment_with_indel_counts,
+        },
         minimal_fragment::{Fragment, MinimalReadInfo, collect_fragment},
         segment_fragment::{
             FragmentWithSegments, SegmentedReadInfo, collect_fragment_with_segments,
@@ -75,6 +78,7 @@ use crate::utils::{
     iterator_counter::{
         FragmentCounterSnapshot, FragmentCounters, LocalCounters, NoopCounters, SharedCounters,
     },
+    lengths::length_mode::LengthMode,
 };
 
 pub trait HasStrand {
@@ -362,4 +366,69 @@ where
     let mapped = frags.map(|res| res.map(InputItem::Fragment));
 
     PairingAdapter::new(mapped, None::<BasicPairer>).with_fragment_filter(fragment_filter)
+}
+
+/* WithIndelCounts pairing */
+
+pub struct WithIndelCountsPairer {
+    pub length_mode: LengthMode,
+}
+
+impl Pairer for WithIndelCountsPairer {
+    type Read = IndelReadInfo;
+    type Output = FragmentWithIndelCounts;
+
+    fn pair(&self, a: &Self::Read, b: &Self::Read) -> Option<Self::Output> {
+        collect_fragment_with_indel_counts(
+            a,
+            b,
+            matches!(self.length_mode, LengthMode::SkipIndels),
+            matches!(self.length_mode, LengthMode::IndelAdjusted),
+        )
+    }
+}
+
+/// From BAM: pair reads into `FragmentWithIndelCounts`.
+pub fn fragments_with_indel_counts_from_bam<RIter, PF>(
+    records: RIter,
+    include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
+    length_mode: LengthMode,
+    fragment_filter: PF,
+) -> PairingAdapter<
+    impl Iterator<Item = Result<InputItem<FragmentWithIndelCounts>>>,
+    WithIndelCountsPairer,
+    IndelReadInfo,
+    FragmentWithIndelCounts,
+>
+where
+    RIter: Iterator<Item = Result<Record>>,
+    PF: Fn(&FragmentWithIndelCounts) -> bool + Send + Sync + 'static,
+{
+    let pairer = WithIndelCountsPairer { length_mode };
+
+    // Map BAM records -> InputItem::Read, converting errors to anyhow with context.
+    let mapped = records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord));
+
+    PairingAdapter::new(mapped, Some(pairer))
+        .with_bam_filter_and_mapper(include_read, |rec| IndelReadInfo::from(rec))
+        .with_fragment_filter(fragment_filter)
+}
+
+/// From an iterator of ready-made `FragmentWithIndelCounts` (e.g., BED-like source).
+pub fn fragments_with_indel_counts_from_iter<I, PF>(
+    frags: I,
+    fragment_filter: PF,
+) -> PairingAdapter<
+    impl Iterator<Item = Result<InputItem<FragmentWithIndelCounts>>>,
+    WithIndelCountsPairer,
+    IndelReadInfo,
+    FragmentWithIndelCounts,
+>
+where
+    I: Iterator<Item = Result<FragmentWithIndelCounts>>,
+    PF: Fn(&FragmentWithIndelCounts) -> bool + Send + Sync + 'static,
+{
+    let mapped = frags.map(|res| res.map(InputItem::Fragment));
+
+    PairingAdapter::new(mapped, None::<WithIndelCountsPairer>).with_fragment_filter(fragment_filter)
 }
