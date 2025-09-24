@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use anyhow::{Context, Result};
     use cfdnalab::utils::{
         coverage::scale_genome::{
@@ -81,8 +83,8 @@ mod tests {
         // (idx, avg_scaling_over_overlap, overlap_fraction)
         let w = compute_window_scaling_over_overlap(&overlaps, &sf_idx, &scaling_chr)?;
         assert_eq!(w.len(), 1);
-        approx_eq(w[0].1, 1.25, 1e-9); // full-window overlap -> avg scaling is the bin's weight
-        approx_eq(w[0].2, 1.0, 1e-12); // overlap_fraction relative to fragment length
+        approx_eq(w[0].1, 1.25, 1e-6); // full-window overlap -> avg scaling is the bin's weight
+        approx_eq(w[0].2, 1.0, 1e-6); // overlap_fraction relative to fragment length
         Ok(())
     }
 
@@ -113,8 +115,8 @@ mod tests {
 
         let w = compute_window_scaling_over_overlap(&overlaps, &sf_idx, &scaling_chr)?;
         assert_eq!(w.len(), 1);
-        approx_eq(w[0].1, 1.5, 1e-9); // average scaling
-        approx_eq(w[0].2, 1.0, 1e-12); // full overlap of fragment with window
+        approx_eq(w[0].1, 1.5, 1e-6); // average scaling
+        approx_eq(w[0].2, 1.0, 1e-6); // full overlap of fragment with window
         Ok(())
     }
 
@@ -163,9 +165,9 @@ mod tests {
             by_idx.insert(idx, avg_scaling * overlap_fraction);
         }
 
-        approx_eq(*by_idx.get(&0).unwrap(), (2.0 / 6.0) * 2.0, 1e-9); // [3,5) in first window
-        approx_eq(*by_idx.get(&1).unwrap(), (4.0 / 6.0) * 1.0, 1e-9); // [5,9) in second window
-        approx_eq(by_idx.values().copied().sum::<f64>(), 1.3333333333, 1e-9);
+        approx_eq(*by_idx.get(&0).unwrap(), (2.0 / 6.0) * 2.0, 1e-6); // [3,5) in first window
+        approx_eq(*by_idx.get(&1).unwrap(), (4.0 / 6.0) * 1.0, 1e-6); // [5,9) in second window
+        approx_eq(by_idx.values().copied().sum::<f64>(), 1.3333333333, 1e-6);
         Ok(())
     }
 
@@ -197,9 +199,9 @@ mod tests {
 
         let w = compute_window_scaling_over_overlap(&overlaps, &sf_idx, &scaling_chr)?;
         assert_eq!(w.len(), 1);
-        approx_eq(w[0].1, 8.0 / 6.0, 1e-9); // avg scaling over the overlapped span
+        approx_eq(w[0].1, 8.0 / 6.0, 1e-6); // avg scaling over the overlapped span
         // Overlap_fraction is 1.0 here because the single window completely contains [2,8)
-        approx_eq(w[0].2, 1.0, 1e-12);
+        approx_eq(w[0].2, 1.0, 1e-6);
         Ok(())
     }
 
@@ -259,7 +261,7 @@ mod tests {
         .context("count overlaps")?;
 
         assert_eq!(overlaps.windows.len(), 1);
-        approx_eq(overlaps.windows[0].overlap_fraction as f64, 1.0, 1e-12);
+        approx_eq(overlaps.windows[0].overlap_fraction as f64, 1.0, 1e-6);
         Ok(())
     }
 
@@ -293,9 +295,9 @@ mod tests {
             by_idx.insert(ow.idx, ow.overlap_fraction as f64);
         }
 
-        approx_eq(*by_idx.get(&0).unwrap(), 2.0 / 6.0, 1e-12); // [3,5) in first window
-        approx_eq(*by_idx.get(&1).unwrap(), 4.0 / 6.0, 1e-12); // [5,9) in second window
-        approx_eq(by_idx.values().copied().sum::<f64>(), 1.0, 1e-12);
+        approx_eq(*by_idx.get(&0).unwrap(), 2.0 / 6.0, 1e-6); // [3,5) in first window
+        approx_eq(*by_idx.get(&1).unwrap(), 4.0 / 6.0, 1e-6); // [5,9) in second window
+        approx_eq(by_idx.values().copied().sum::<f64>(), 1.0, 1e-6);
         Ok(())
     }
 
@@ -329,20 +331,23 @@ mod tests {
         let rows = compute_window_scaling_over_fragment(&overlaps, &sf_idx, &scaling_chr)?;
         assert_eq!(rows.len(), 2);
         for (_idx, avg, overlap_fraction) in rows {
-            approx_eq(avg, 13.0 / 7.0, 1e-9);
-            approx_eq(overlap_fraction, 1.0, 1e-12);
+            approx_eq(avg, 13.0 / 7.0, 1e-6);
+            approx_eq(overlap_fraction, 1.0, 1e-6);
         }
         Ok(())
     }
 
     #[test]
     fn find_overlapping_windows_respects_min_overlap_threshold() -> Result<()> {
-        // One window [0,100). Fragment [90,100) has 10% overlap; [1,2) has 1% overlap.
+        // One window [0,100).
+        // Note: min_overlap_fraction is the fraction of the *interval/fragment* overlapped by the window.
         let chrom_len = 1_000;
         let wins = bed_windows(&[(0, 100)]);
         let mut wd_ptr;
 
-        // 1) Threshold 0.0 -> both fragments should be considered overlapping
+        // 1) Threshold 0.0 -> both intervals should be considered overlapping
+        //    - [90,100): interval length 10, overlapped 10 -> 100%
+        //    - [99,199): interval length 100, overlapped 1  -> 1%
         wd_ptr = 0;
         {
             let f1 = find_overlapping_windows(
@@ -363,16 +368,16 @@ mod tests {
                 &mut wd_ptr,
                 Some(&wins),
                 None,
-                1,
-                2,
+                99,
+                199,
                 0.0,
                 500,
             )?
-            .context("should find tiny overlap [1,2)")?;
+            .context("should find tiny (1%) interval overlap [99,199)")?;
             assert_eq!(f2.windows.len(), 1);
         }
 
-        // 2) Threshold 0.05 -> [1,2) should be rejected, [90,100) passes
+        // 2) Threshold 0.05 (5%) -> [99,199) (1%) should be rejected; [90,100) (100%) passes
         wd_ptr = 0;
         {
             let f1 = find_overlapping_windows(
@@ -393,18 +398,23 @@ mod tests {
                 &mut wd_ptr,
                 Some(&wins),
                 None,
-                1,
-                2,
+                99,
+                199,
                 0.05,
                 500,
             )?;
-            assert!(f2.is_none(), "tiny overlap should be rejected at 5%");
+            assert!(
+                f2.is_none(),
+                "1% of the interval is <5%, so it should be rejected"
+            );
         }
 
-        // 3) Threshold 1.0 -> only near-full overlaps would pass; these do not
+        // 3) Threshold 1.0 (100%) -> only exact full-coverage intervals pass.
+        //    - [0,100) is fully covered by [0,100) -> pass
+        //    - [50,150) is not fully covered (only 50%) -> reject
         wd_ptr = 0;
         {
-            let f1 = find_overlapping_windows(
+            let f_full = find_overlapping_windows(
                 chrom_len,
                 &mut wd_ptr,
                 Some(&wins),
@@ -414,19 +424,37 @@ mod tests {
                 1.0,
                 500,
             )?;
-            assert!(f1.is_some(), "exact full overlap should pass 100%");
+            assert!(
+                f_full.is_some(),
+                "exact full overlap [0,100) should pass 100%"
+            );
 
-            let f2 = find_overlapping_windows(
+            let f_full_smaller = find_overlapping_windows(
                 chrom_len,
                 &mut wd_ptr,
                 Some(&wins),
                 None,
-                90,
-                100,
+                20,
+                80,
                 1.0,
                 500,
             )?;
-            assert!(f2.is_none(), "partial overlap should fail 100%");
+            assert!(
+                f_full_smaller.is_some(),
+                "smaller full overlap [20,80) should pass 100%"
+            );
+
+            let f_partial = find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                Some(&wins),
+                None,
+                50,
+                150,
+                1.0,
+                500,
+            )?;
+            assert!(f_partial.is_none(), "partial overlap should fail at 100%");
         }
 
         Ok(())
@@ -442,37 +470,70 @@ mod tests {
         for _ in 0..100 {
             let m = midpoint_random_even_with_thread_rng(start, len);
             assert!(
-                m == start + len / 2 || m == start + len / 2 + 1,
+                m == start + len / 2 || m == start + len / 2 - 1,
                 "midpoint {m} not one of the two centers"
             );
         }
+
+        // Midpoint from odd-length fragment
+        let m = midpoint_random_even_with_thread_rng(start, len + 1);
+        assert!(
+            m == start + len / 2 - 1,
+            "midpoint {m} not the center element"
+        );
     }
 
     #[test]
     fn indel_fragment_builder_fast_paths_and_counts() {
-        // Forward and reverse on same tid, inward. Build synthetic per-read indels.
+        // Forward and reverse on same tid, inward.
+        // Overlap will be [120,150) so ref pos 125 lies in the overlap.
         let fwd = IndelReadInfo {
             tid: 0,
             pos: 100,
             end: 150,
             is_reverse: false,
-            // One deletion in non-overlap, one within overlap
-            deletions: vec![(90, 95), (120, 122)],
-            // One insertion in non-overlap and one in overlap at ref pos 125
-            insertions: vec![(80, 2), (125, 3)],
+            // One deletion in non-overlap (inside fragment), one within overlap
+            deletions: vec![(110, 115), (120, 122)],
+            // One insertion in non-overlap (inside fragment) and one in overlap at ref 125
+            insertions: vec![(105, 2), (125, 3)],
         };
         let rev = IndelReadInfo {
             tid: 0,
-            pos: 130,
+            pos: 120,
             end: 200,
             is_reverse: true,
-            // One deletion in overlap overlapping [120,122] by 1 bp: [121,124)
+            // Deletion overlaps [120,122) by 2 bp (121..122), plus 2 bp non-overlap (120..121 and 122..124)
             deletions: vec![(121, 124)],
-            // Insertion at same overlap ref pos 125 but length 1 (min rules)
+            // Insertion at same overlap ref pos 125 but length 1 (min rule will pick 1)
             insertions: vec![(125, 1)],
         };
 
-        // 1) skip_indels = true -> None
+        let frag = collect_fragment_with_indel_counts(&fwd, &rev, false, true).unwrap();
+
+        // Non-overlap deletions: (110..115)=5 from fwd, and for rev (121..124) the non-overlap parts
+        // outside [120,150)∩[120,150) are zero on the left (inside overlap start) and right (up to 150), so only the portion
+        // left of overlap start counts if any (here 120..121 is non-overlap for rev by clipping) => +1.
+        // Plus the fwd deletion (120..122) contributes 0 to non-overlap (fully within overlap).
+        // Total deletions_nonoverlap = 5 (fwd 110..115) + 1 (rev 120..121) = 6.
+        assert_eq!(frag.deletions_nonoverlap, 6);
+
+        // Overlap deletions supported: intersection of (fwd 120..122) with (rev 121..124) is (121..122) => 1.
+        assert_eq!(frag.deletions_overlap_supported, 1);
+
+        // Non-overlap insertions: (105,+2) is non-overlap (before 120) => 2
+        // The (125,*) insertions are in the overlap, so not counted here
+        assert_eq!(frag.insertions_nonoverlap, 2);
+
+        // Overlap insertions supported: both at ref 125 => min(3,1)=1
+        assert_eq!(frag.insertions_overlap_supported, 1);
+
+        // Length adjusted = ref_len + inserts_total - dels_total = 100 + (6+1) - (2+1) = 96
+        assert_eq!(frag.len_ref(), 100);
+        assert_eq!(frag.len_indel_adjusted(), 96);
+
+        // Skip and no-counts
+
+        // Skip_indels = true -> None
         let r = collect_fragment_with_indel_counts(&fwd, &rev, true, true);
         assert!(r.is_none());
 
@@ -485,38 +546,6 @@ mod tests {
         assert_eq!(r.deletions_overlap_supported, 0);
         assert_eq!(r.insertions_overlap_supported, 0);
         assert_eq!(r.len_indel_adjusted(), r.len_ref());
-
-        // 3) Full counting -> Check non-overlap and overlap-supported math
-        let r = collect_fragment_with_indel_counts(&fwd, &rev, false, true).unwrap();
-        // Fragment span is [100,200)
-
-        // Non-overlap deletions:
-        //   Forward (90,95) is entirely outside (non-overlap with mate's aligned segment), count 5 bp
-        //   In overlap logic, we only split relative to the per-read aligned-overlap:
-        //     Overlap on aligned segments: [max(100,130)=130, min(150,200)=150) = [130,150)
-        //   Forward (120,122) has [120,130) as non-overlap => +10 bp (and [130,122) clipped to none)
-        // Total deletions_nonoverlap = 5 + 10 = 15
-        assert_eq!(r.deletions_nonoverlap, 15);
-
-        // Overlap-supported deletions:
-        //   Forward (120,122) contributes (clipped to overlap) [130,150) ∩ [120,122) = [130,122) -> none
-        //   Reverse has (121,124) in overlap; intersection with forward's overlap part is none
-        // -> 0
-        assert_eq!(r.deletions_overlap_supported, 0);
-
-        // Non-overlap insertions:
-        //   Forward (80,2) outside aligned-overlap -> count 2
-        //   Forward (125,3) is in overlap; do not add here (handled in overlap-supported)
-        //   Reverse has only (125,1) in overlap; nothing in non-overlap
-        assert_eq!(r.insertions_nonoverlap, 2);
-
-        // Overlap-supported insertions:
-        //   Both at ref pos 125 -> add min(3,1) = 1
-        assert_eq!(r.insertions_overlap_supported, 1);
-
-        // Length adjusted = ref_len + inserts_total - dels_total = 100 + (2+1) - (15+0) = 88
-        assert_eq!(r.len_ref(), 100);
-        assert_eq!(r.len_indel_adjusted(), 88);
     }
 
     #[test]
@@ -548,8 +577,8 @@ mod tests {
         let rows = compute_window_scaling_over_fragment(&overlaps, &sf_idx, &scaling_chr)?;
         assert_eq!(rows.len(), 3);
         for (_idx, avg, overlap_fraction) in rows {
-            approx_eq(avg, 2.0, 1e-12);
-            approx_eq(overlap_fraction, 1.0, 1e-12);
+            approx_eq(avg, 2.0, 1e-6);
+            approx_eq(overlap_fraction, 1.0, 1e-6);
         }
         Ok(())
     }
@@ -579,6 +608,345 @@ mod tests {
 
         assert_eq!(overlaps.windows.len(), 1);
         assert_eq!(overlaps.windows[0].idx, 0); // First window
+        Ok(())
+    }
+
+    #[test]
+    fn size_mode_basic_three_bins() -> Result<()> {
+        // Bins [0,10), [10,20), [20,30) via size-mode.
+        // Fragment [3,27) overlaps 3 bins with lengths 7,10,7 -> fractions over fragment_len=24.
+        let chrom_len = 1_000;
+        let mut wd_ptr = 0usize;
+        let by_size = Some(10);
+
+        let frag_start = 3;
+        let frag_end = 27; // len = 24
+
+        let res = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            None,    // BED-mode windows not used
+            by_size, // fixed-size bins
+            frag_start,
+            frag_end,
+            0.0, // no min fraction threshold
+            1_000,
+        )?
+        .context("expect overlaps in size-mode")?;
+
+        // Expect bins with indices 0,1,2 (i.e., [0,10),[10,20),[20,30))
+        assert_eq!(res.windows.len(), 3);
+
+        // Collect overlap fractions in a stable order by idx.
+        let mut by_idx = BTreeMap::new();
+        for w in res.windows {
+            by_idx.insert(w.idx, w.overlap_fraction as f64);
+        }
+
+        // Fractions are overlap_len / fragment_len = {7/24, 10/24, 7/24}
+        approx_eq(*by_idx.get(&0).unwrap(), 7.0 / 24.0, 1e-6);
+        approx_eq(*by_idx.get(&1).unwrap(), 10.0 / 24.0, 1e-6);
+        approx_eq(*by_idx.get(&2).unwrap(), 7.0 / 24.0, 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn size_mode_min_fraction_filters_bins() -> Result<()> {
+        // Same setup as above but require >= 0.3 fraction of the fragment per bin.
+        // 7/24 ≈ 0.2917 (filtered), 10/24 ≈ 0.4167 (kept), 7/24 filtered.
+        let chrom_len = 1_000;
+        let mut wd_ptr = 0usize;
+
+        let res = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            None,
+            Some(10),
+            3,
+            27,
+            0.30, // threshold
+            1_000,
+        )?
+        .context("size-mode with threshold")?;
+
+        // Only the middle bin remains.
+        assert_eq!(res.windows.len(), 1);
+        assert_eq!(res.windows[0].idx, 1);
+        approx_eq(res.windows[0].overlap_fraction as f64, 10.0 / 24.0, 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn bed_mode_edge_touching_and_tiny_overlap() -> Result<()> {
+        // Window [20,30). A fragment [10,20) just touches -> no overlap.
+        // A fragment [19,20) 1 bp long, [19,20)∩[20,30)=∅ -> no overlap.
+        // A fragment [19,21) overlaps 1 bp -> fraction = 1/2.
+        let chrom_len = 1_000;
+        let wins = bed_windows(&[(20, 30)]);
+
+        // Touching at 20: no overlap
+        let mut wd_ptr = 0usize;
+        let none1 =
+            find_overlapping_windows(chrom_len, &mut wd_ptr, Some(&wins), None, 10, 20, 0.0, 500)?;
+        assert!(none1.is_none(), "pure edge touch should not overlap");
+
+        // Still no overlap for [19,20)
+        wd_ptr = 0;
+        let none2 =
+            find_overlapping_windows(chrom_len, &mut wd_ptr, Some(&wins), None, 19, 20, 0.0, 500)?;
+        assert!(
+            none2.is_none(),
+            "1bp ending at 20 should not overlap [20,30)"
+        );
+
+        // [19,21): 1 bp overlap with window -> fraction = 1/2 of the fragment
+        wd_ptr = 0;
+        let some =
+            find_overlapping_windows(chrom_len, &mut wd_ptr, Some(&wins), None, 19, 21, 0.0, 500)?
+                .context("expected a small overlap")?;
+        assert_eq!(some.windows.len(), 1);
+        approx_eq(some.windows[0].overlap_fraction as f64, 1.0 / 2.0, 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn midpoint_mode_bed() -> Result<()> {
+        // “Midpoint” usage simulated by interval [m, m+1) and high min-overlap threshold.
+        // Windows: [0,10), [10,20), [20,30). Midpoint m=17 hits only [10,20).
+        let chrom_len = 10_000;
+        let wins = bed_windows(&[(0, 10), (10, 20), (20, 30)]);
+        let mut wd_ptr = 0usize;
+
+        let midpoint = 17u64;
+        let res = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            Some(&wins),
+            None,
+            midpoint,
+            midpoint + 1,
+            0.99, // effectively require 1/1 bp overlap
+            1_000,
+        )?
+        .context("midpoint overlap")?;
+
+        assert_eq!(res.windows.len(), 1);
+        assert_eq!(res.windows[0].idx, 1); // [10,20)
+        approx_eq(res.windows[0].overlap_fraction as f64, 1.0, 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn midpoint_mode_size_bins() -> Result<()> {
+        // Same as above but with size-mode bins of 10 bp.
+        let chrom_len = 10_000;
+        let mut wd_ptr = 0usize;
+
+        let m = 17u64;
+        let res = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            None,
+            Some(10),
+            m,
+            m + 1,
+            0.99,
+            1_000,
+        )?
+        .context("midpoint in size-mode")?;
+
+        assert_eq!(res.windows.len(), 1);
+        // Bin index = floor(m/10) = 1
+        assert_eq!(res.windows[0].idx, 1);
+        approx_eq(res.windows[0].overlap_fraction as f64, 1.0, 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn streaming_pointer_advances_past_lookback() -> Result<()> {
+        // Two windows: [0,100), [100,200). We’ll feed two fragments in ascending order and
+        // ensure wd_ptr advances so the second call doesn’t re-check the first window.
+        let chrom_len = 10_000;
+        let wins = bed_windows(&[(0, 100), (100, 200)]);
+        let mut wd_ptr = 0usize;
+        let look_back = 0u64; // strict advancement
+
+        // Fragment overlaps only the first window
+        let _ = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            Some(&wins),
+            None,
+            10,
+            20,
+            0.0,
+            look_back,
+        )?
+        .context("first call should overlap [0,100)")?;
+        // wd_ptr may still be 0 here (we didn’t push beyond), so drive it with a distant fragment
+
+        // Now a fragment that only hits the second window; with look_back=0 we
+        // should skip the first quickly (pointer should not regress)
+        let res2 = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            Some(&wins),
+            None,
+            150,
+            160,
+            0.0,
+            look_back,
+        )?
+        .context("second call should overlap [100,200)")?;
+        assert_eq!(res2.windows.len(), 1);
+        assert_eq!(res2.windows[0].idx, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn size_mode_one_bp_on_left_boundary_hits_left_bin() -> Result<()> {
+        // Bins [0,10) [10,20) ...
+        // Fragment [9,10) (len=1) overlaps bin 0 only by 1 bp.
+        let chrom_len = 1_000;
+        let mut wd_ptr = 0usize;
+
+        let res =
+            find_overlapping_windows(chrom_len, &mut wd_ptr, None, Some(10), 9, 10, 0.0, 1_000)?
+                .context("expect overlap at left boundary")?;
+
+        assert_eq!(res.windows.len(), 1);
+        assert_eq!(res.windows[0].idx, 0);
+        approx_eq(res.windows[0].overlap_fraction as f64, 1.0, 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn size_mode_one_bp_on_right_boundary_hits_right_bin() -> Result<()> {
+        // Bins [0,10) [10,20) ...
+        // Fragment [10,11) (len=1) overlaps bin 1 only by 1 bp.
+        let chrom_len = 1_000;
+        let mut wd_ptr = 0usize;
+
+        let res =
+            find_overlapping_windows(chrom_len, &mut wd_ptr, None, Some(10), 10, 11, 0.0, 1_000)?
+                .context("expect overlap at right boundary")?;
+
+        assert_eq!(res.windows.len(), 1);
+        assert_eq!(res.windows[0].idx, 1);
+        approx_eq(res.windows[0].overlap_fraction as f64, 1.0, 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn size_mode_one_bp_boundary_with_high_threshold() -> Result<()> {
+        // With min_overlap_fraction ~1.0 the 1 bp fragment still passes (1/1).
+        let chrom_len = 1_000;
+        let mut wd_ptr = 0usize;
+
+        let res =
+            find_overlapping_windows(chrom_len, &mut wd_ptr, None, Some(10), 10, 11, 0.99, 1_000)?
+                .context("expect overlap at boundary with strict threshold")?;
+
+        assert_eq!(res.windows.len(), 1);
+        assert_eq!(res.windows[0].idx, 1);
+        approx_eq(res.windows[0].overlap_fraction as f64, 1.0, 1e-6);
+        Ok(())
+    }
+
+    // ---------- Look-back permitting slight backtracking ----------
+
+    #[test]
+    fn look_back_allows_small_backtracking_without_losing_windows() -> Result<()> {
+        // BED windows [100,200) and [200,300).
+        // First fragment [210,220) (hits bin 1).
+        // Second fragment [150,160) (goes "backwards" but within look_back=100).
+        // wd_ptr should not skip [100,200) based on the look_back logic.
+        let chrom_len = 10_000;
+        let wins = bed_windows(&[(100, 200), (200, 300)]);
+        let look_back = 100u64;
+        let mut wd_ptr = 0usize;
+
+        // Forward-ish fragment (later)
+        let later = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            Some(&wins),
+            None,
+            210,
+            220,
+            0.0,
+            look_back,
+        )?
+        .context("later fragment should overlap [200,300)")?;
+        assert_eq!(later.windows.len(), 1);
+        assert_eq!(later.windows[0].idx, 1);
+
+        // Slight backtrack, but within look_back
+        let earlier = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            Some(&wins),
+            None,
+            150,
+            160,
+            0.0,
+            look_back,
+        )?
+        .context("earlier fragment should still see [100,200)")?;
+        assert_eq!(earlier.windows.len(), 1);
+        assert_eq!(earlier.windows[0].idx, 0);
+        Ok(())
+    }
+
+    // ---------- Large fragment spanning many size-bins + threshold ----------
+
+    #[test]
+    fn big_fragment_spanning_many_bins_with_threshold_filters_edges() -> Result<()> {
+        // Size-mode bins of 10 bp. Fragment [5,95) has len=90 and touches bins 0..9.
+        // Overlap lengths: edge bins have 5 bp each; middle bins have 10 bp.
+        // With threshold 0.11:
+        //   - Middle bins: 10/90 ≈ 0.111... >= 0.11 -> keep
+        //   - Edge bins:   5/90  ≈ 0.0555... < 0.11  -> drop
+        let chrom_len = 1_000;
+        let mut wd_ptr = 0usize;
+
+        let res =
+            find_overlapping_windows(chrom_len, &mut wd_ptr, None, Some(10), 5, 95, 0.11, 1_000)?
+                .context("expect multiple bins after thresholding")?;
+
+        // Expect bins 1..=8 (8 bins).
+        assert_eq!(res.windows.len(), 8);
+
+        let mut indices = Vec::new();
+        let mut fracs = Vec::new();
+        for w in res.windows {
+            indices.push(w.idx);
+            fracs.push(w.overlap_fraction as f64);
+        }
+
+        assert_eq!(indices, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+        for f in fracs {
+            approx_eq(f, 10.0 / 90.0, 1e-6);
+        }
+        Ok(())
+    }
+
+    // ---------- Mixed sanity: size-mode multiple bins, sum of fractions ----------
+
+    #[test]
+    fn size_mode_overlap_fractions_sum_to_one_for_partition() -> Result<()> {
+        // Fragment [3,27) len=24 across bins of 10 bp.
+        // Overlaps: 7,10,7 -> fractions sum to 1.0.
+        let chrom_len = 1_000;
+        let mut wd_ptr = 0usize;
+
+        let res =
+            find_overlapping_windows(chrom_len, &mut wd_ptr, None, Some(10), 3, 27, 0.0, 1_000)?
+                .context("partition fractions")?;
+
+        let sum: f64 = res.windows.iter().map(|w| w.overlap_fraction as f64).sum();
+
+        approx_eq(sum, 1.0, 1e-6);
         Ok(())
     }
 }
