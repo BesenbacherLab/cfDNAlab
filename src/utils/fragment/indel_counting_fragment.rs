@@ -240,30 +240,33 @@ pub fn collect_fragment_with_indel_counts(
 
     let split_deletion_interval =
         |del_iv: (u32, u32), nonov_acc: &mut u32, ov_sink: &mut Vec<(u32, u32)>| {
-            let (del_start, del_end) = del_iv;
-            if !has_aligned_overlap {
-                // Entire deletion is non-overlap if mates don't overlap at all
-                *nonov_acc = nonov_acc.saturating_add(del_end.saturating_sub(del_start));
-                return;
-            }
+            if let Some((del_start, del_end)) =
+                clip_to_fragment(del_iv.0, del_iv.1, fragment_start_bp, fragment_end_bp)
+            {
+                if !has_aligned_overlap {
+                    // Entire deletion is non-overlap if mates don't overlap at all
+                    *nonov_acc = nonov_acc.saturating_add(del_end.saturating_sub(del_start));
+                    return;
+                }
 
-            // Left non-overlap segment
-            if del_start < aligned_overlap_start_bp {
-                *nonov_acc =
-                    nonov_acc.saturating_add(aligned_overlap_start_bp.saturating_sub(del_start));
-            }
+                // Left non-overlap segment
+                if del_start < aligned_overlap_start_bp {
+                    *nonov_acc = nonov_acc
+                        .saturating_add(aligned_overlap_start_bp.saturating_sub(del_start));
+                }
 
-            // Overlap segment
-            let ov_s = del_start.max(aligned_overlap_start_bp);
-            let ov_e = del_end.min(aligned_overlap_end_bp);
-            if ov_e > ov_s {
-                ov_sink.push((ov_s, ov_e));
-            }
+                // Overlap segment
+                let ov_s = del_start.max(aligned_overlap_start_bp);
+                let ov_e = del_end.min(aligned_overlap_end_bp);
+                if ov_e > ov_s {
+                    ov_sink.push((ov_s, ov_e));
+                }
 
-            // Right non-overlap segment
-            if del_end > aligned_overlap_end_bp {
-                *nonov_acc =
-                    nonov_acc.saturating_add(del_end.saturating_sub(aligned_overlap_end_bp));
+                // Right non-overlap segment
+                if del_end > aligned_overlap_end_bp {
+                    *nonov_acc =
+                        nonov_acc.saturating_add(del_end.saturating_sub(aligned_overlap_end_bp));
+                }
             }
         };
 
@@ -406,4 +409,12 @@ fn calculate_deletion_in_overlap(
     }
 
     supported_overlap_deletions_bp
+}
+
+// Clip [s,e) to the fragment span; return None if outside
+#[inline]
+fn clip_to_fragment(s: u32, e: u32, frag_s: u32, frag_e: u32) -> Option<(u32, u32)> {
+    let cs = s.max(frag_s);
+    let ce = e.min(frag_e);
+    (ce > cs).then_some((cs, ce))
 }
