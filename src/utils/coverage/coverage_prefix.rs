@@ -382,7 +382,7 @@ impl Coverage {
     ///     Coverage sum over the interval, masked if requested.
     #[inline]
     pub fn sum_coverage(&mut self, start: u32, end: u32, exclude_blacklisted: bool) -> Result<f64> {
-        self.ensure_indexes()?;
+        self.ensure_ready_for_queries()?;
         self.check_bounds(start, end)?;
 
         let a = start as usize;
@@ -415,7 +415,7 @@ impl Coverage {
     ///     Coverage average over the interval, masked if requested.
     #[inline]
     pub fn avg_coverage(&mut self, start: u32, end: u32, exclude_blacklisted: bool) -> Result<f32> {
-        self.ensure_indexes()?;
+        self.ensure_ready_for_queries()?;
         self.check_bounds(start, end)?;
 
         let a = start as usize;
@@ -463,7 +463,7 @@ impl Coverage {
         exclude_blacklisted: bool,
         parallelize: bool,
     ) -> Result<Vec<f64>> {
-        self.ensure_indexes()?;
+        self.ensure_ready_for_queries()?;
         for &(a, b) in intervals {
             self.check_bounds(a, b)?;
         }
@@ -517,7 +517,7 @@ impl Coverage {
         exclude_blacklisted: bool,
         parallelize: bool,
     ) -> Result<Vec<f32>> {
-        self.ensure_indexes()?;
+        self.ensure_ready_for_queries()?;
         for &(a, b) in intervals {
             self.check_bounds(a, b)?;
         }
@@ -800,22 +800,15 @@ impl Coverage {
 
     // Private helpers
 
-    fn ensure_indexes(&mut self) -> Result<()> {
-        let need_allowed = self.has_blacklist();
-        let have_all = self.psum_all.is_some();
-        let have_allowed = self.psum_allowed.is_some() && self.psum_allowed_count.is_some();
-
-        if !have_all || (need_allowed && !have_allowed) {
-            if self.coverage.is_none() {
-                bail!(
-                    "query indexes not built and coverage was dropped; \
-                   rebuild indexes earlier with build_indexes(false), \
-                   or avoid dropping coverage before queries"
-                );
+    #[inline]
+    fn ensure_ready_for_queries(&mut self) -> anyhow::Result<()> {
+        match self.cov_stage {
+            Stage::Indexed => Ok(()),                    // good to go
+            Stage::Covered => self.build_indexes(false), // lazily build, then OK
+            Stage::Building => {
+                anyhow::bail!("coverage not finalized; call finalize_coverage() first")
             }
-            self.build_indexes(false)?;
         }
-        Ok(())
     }
 
     fn invalidate_indexes(&mut self) {
