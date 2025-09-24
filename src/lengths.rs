@@ -28,8 +28,8 @@ use crate::{
             compute_window_scaling_over_fragment, compute_window_scaling_over_overlap,
             load_scaling_factors_tsv,
         },
-        fragment::{indel_counting_fragment::FragmentWithIndelCounts, minimal_fragment::Fragment},
-        fragment_iterator::{fragments_from_bam, fragments_with_indel_counts_from_bam},
+        fragment::indel_counting_fragment::FragmentWithIndelCounts,
+        fragment_iterator::fragments_with_indel_counts_from_bam,
         lengths::{
             counting::{LengthCounts, stack_length_counts},
             length_mode::LengthMode,
@@ -79,11 +79,9 @@ pub struct LengthsConfig {
     ///         Note, we only include inwardly directed pairs.
     ///
     ///     - `"indel-adjusted"`:
-    ///         Adjust the reference length by the observed insertions and deletions.
-    ///         In the aligned bases, we subtract deletions and add insertions.
-    ///         In the mate overlap, both reads must agree on the position-level.
-    ///         The shortest insertion is counted when agreeing on the position but not the length.
-    ///         **NOTE*: Blacklist exclusion and calculation of scaling weights (--scaling-factors)
+    ///         Adjust the reference length by the observed insertions and deletions in the aligned bases.
+    ///         In the mate overlap, both reads must agree on the position-level, with the shortest insertion selected per position.
+    ///         **NOTE**: Blacklist exclusion and calculation of scaling weights (--scaling-factors)
     ///         use the full reference span.
     ///
     ///     - `"skip-indels"`:
