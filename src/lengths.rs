@@ -37,6 +37,7 @@ use crate::{
         overlaps::find_overlapping_windows,
         profiling::midpoint::midpoint_random_even_with_thread_rng,
         read::default_include_read,
+        thread_pool::init_global_pool,
     },
 };
 
@@ -165,6 +166,52 @@ pub struct LengthsConfig {
     // two_bit: TwoBitArgs,
 }
 
+impl LengthsConfig {
+    pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
+        Self {
+            ioc,
+            length_mode: LengthMode::Reference,
+            windows: WindowsArgs::default(),
+            window_assignment: AssignToWindowArgs::default(),
+            chromosomes,
+            scale_genome: ScaleGenomeArgs::default(),
+            fragment_lengths: FragmentLengthArgs {
+                min_fragment_length: 20,
+                max_fragment_length: 1000,
+            },
+            min_mapq: 30,
+            require_proper_pair: false,
+            blacklist: None,
+            blacklist_min_size: 1,
+            blacklist_strategy: BlacklistStrategy::default(),
+        }
+    }
+
+    pub fn set_length_mode(&mut self, mode: LengthMode) {
+        self.length_mode = mode;
+    }
+
+    pub fn set_windows(&mut self, windows: WindowsArgs) {
+        self.windows = windows;
+    }
+
+    pub fn set_window_assignment(&mut self, assign: AssignToWindowArgs) {
+        self.window_assignment = assign;
+    }
+
+    pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
+        &mut self.fragment_lengths
+    }
+
+    pub fn set_min_mapq(&mut self, min_mapq: u8) {
+        self.min_mapq = min_mapq;
+    }
+
+    pub fn set_require_proper_pair(&mut self, require: bool) {
+        self.require_proper_pair = require;
+    }
+}
+
 pub fn run(opt: LengthsConfig) -> Result<()> {
     let start_time = Instant::now();
     let chromosomes = opt
@@ -209,10 +256,7 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
         };
 
     // Configure global thread‐pool size
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(opt.ioc.n_threads as usize)
-        .build_global()
-        .context("building Rayon thread pool")?;
+    init_global_pool(opt.ioc.n_threads as usize)?;
 
     // Prepare per-bin counts and metadata
     let mut all_bins = Vec::new();

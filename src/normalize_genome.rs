@@ -24,6 +24,7 @@ use crate::{
             StrideBin, fill_triangular_overlap, normalize_avg_overlap_by_global_mean,
         },
         read::default_include_read,
+        thread_pool::init_global_pool,
     },
 };
 
@@ -172,6 +173,48 @@ pub struct NormalizeGenomeConfig {
 }
 
 impl NormalizeGenomeConfig {
+    pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
+        Self {
+            ioc,
+            bin_size: 5_000_000,
+            stride: 500_000,
+            chromosomes,
+            fragment_lengths: FragmentLengthArgs {
+                min_fragment_length: 20,
+                max_fragment_length: 1000,
+            },
+            min_mapq: 30,
+            require_proper_pair: false,
+            blacklist: None,
+            blacklist_min_size: 1,
+            blacklist_strategy: BlacklistStrategy::default(),
+        }
+    }
+
+    pub fn set_bin_size(&mut self, bin_size: u32) {
+        self.bin_size = bin_size;
+    }
+
+    pub fn set_stride(&mut self, stride: u32) {
+        self.stride = stride;
+    }
+
+    pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
+        &mut self.fragment_lengths
+    }
+
+    pub fn set_min_mapq(&mut self, min_mapq: u8) {
+        self.min_mapq = min_mapq;
+    }
+
+    pub fn set_require_proper_pair(&mut self, require: bool) {
+        self.require_proper_pair = require;
+    }
+
+    pub fn set_blacklist(&mut self, blacklist: Option<Vec<PathBuf>>) {
+        self.blacklist = blacklist;
+    }
+
     pub fn check_bin_sizes(&self) -> anyhow::Result<()> {
         let stride = self.stride.clone();
         let bin_size = self.bin_size.clone();
@@ -220,10 +263,7 @@ pub fn run(opt: NormalizeGenomeConfig) -> Result<()> {
     };
 
     // Configure global thread‐pool size
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(opt.ioc.n_threads as usize)
-        .build_global()
-        .context("building Rayon thread pool")?;
+    init_global_pool(opt.ioc.n_threads as usize)?;
 
     // Prepare output containers
     let mut bins_by_chr =

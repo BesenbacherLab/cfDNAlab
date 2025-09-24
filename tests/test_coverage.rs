@@ -268,9 +268,7 @@ mod tests_coverage_prefix {
         assert!(format!("{err}").contains("start 10 >= end 10"));
 
         // Out-of-bounds blacklist
-        let err = cp
-            .set_blacklist_mask(&vec![(45, 60)])
-            .unwrap_err();
+        let err = cp.set_blacklist_mask(&vec![(45, 60)]).unwrap_err();
         assert!(format!("{err}").contains("out of bounds"));
 
         // Bounds check in queries

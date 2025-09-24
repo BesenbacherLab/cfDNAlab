@@ -35,6 +35,7 @@ use crate::{
             tiled_run::{Tile, TileMode, add_fragment_clipped_to_core, windows_overlapping_core},
             window_results::CoverageWindowAction,
         },
+        thread_pool::init_global_pool,
     },
 };
 
@@ -195,6 +196,74 @@ pub struct FCoverageConfig {
     // two_bit: TwoBitArgs,
 }
 
+impl FCoverageConfig {
+    pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
+        Self {
+            ioc,
+            output_prefix: "coverage".into(),
+            decimals: 2,
+            keep_zero_runs: false,
+            tile_size: 20_000_000,
+            per_window: CoverageWindowAction::Average,
+            ignore_gap: false,
+            windows: WindowsArgs::default(),
+            chromosomes,
+            scale_genome: ScaleGenomeArgs::default(),
+            fragment_lengths: FragmentLengthArgs {
+                min_fragment_length: 20,
+                max_fragment_length: 1000,
+            },
+            min_mapq: 30,
+            require_proper_pair: false,
+            blacklist: None,
+        }
+    }
+
+    pub fn set_output_prefix<S: Into<String>>(&mut self, prefix: S) {
+        self.output_prefix = prefix.into();
+    }
+
+    pub fn set_decimals(&mut self, decimals: u8) {
+        self.decimals = decimals;
+    }
+
+    pub fn set_keep_zero_runs(&mut self, keep: bool) {
+        self.keep_zero_runs = keep;
+    }
+
+    pub fn set_tile_size(&mut self, tile_size: u32) {
+        self.tile_size = tile_size;
+    }
+
+    pub fn set_per_window(&mut self, action: CoverageWindowAction) {
+        self.per_window = action;
+    }
+
+    pub fn set_ignore_gap(&mut self, ignore: bool) {
+        self.ignore_gap = ignore;
+    }
+
+    pub fn set_windows(&mut self, windows: WindowsArgs) {
+        self.windows = windows;
+    }
+
+    pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
+        &mut self.fragment_lengths
+    }
+
+    pub fn set_min_mapq(&mut self, min_mapq: u8) {
+        self.min_mapq = min_mapq;
+    }
+
+    pub fn set_require_proper_pair(&mut self, require: bool) {
+        self.require_proper_pair = require;
+    }
+
+    pub fn set_scale_genome(&mut self, scale: ScaleGenomeArgs) {
+        self.scale_genome = scale;
+    }
+}
+
 pub fn run(opt: FCoverageConfig) -> Result<()> {
     let start_time = Instant::now();
     let chromosomes = opt
@@ -332,10 +401,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     );
 
     // Configure global thread‐pool size
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(opt.ioc.n_threads as usize)
-        .build_global()
-        .context("building Rayon thread pool")?;
+    init_global_pool(opt.ioc.n_threads as usize)?;
 
     let mut global_counter = FCoverageCounters::default();
 

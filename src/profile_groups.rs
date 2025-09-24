@@ -26,6 +26,7 @@ use crate::{
             counting_by_group::ProfileGroupsCounts, midpoint::midpoint_random_even_with_thread_rng,
         },
         read::default_include_read,
+        thread_pool::init_global_pool,
     },
 };
 
@@ -87,7 +88,7 @@ pub struct ProfileGroupsConfig {
     /// Edges of fragment length bins to count in `[path]`
     ///
     /// The last edge is *exclusive*.
-    /// 
+    ///
     /// **NOTE**: Memory consumption increases linearly with the number of bins.
     ///
     /// Example: `--length-bins 20 80 150 220 500 1001` or `--length-bins {20..1001..10}` for `20 30 40 ... 1001`
@@ -173,6 +174,49 @@ pub struct ProfileGroupsConfig {
     // two_bit: TwoBitArgs,
 }
 
+impl ProfileGroupsConfig {
+    pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs, intervals: PathBuf) -> Self {
+        Self {
+            ioc,
+            output_prefix: "sites".into(),
+            intervals,
+            length_bins: vec![20, 1001],
+            tile_size: 63_000_000,
+            chromosomes,
+            scale_genome: ScaleGenomeArgs::default(),
+            min_mapq: 30,
+            require_proper_pair: false,
+            blacklist: None,
+            blacklist_min_size: 1,
+            blacklist_strategy: BlacklistStrategy::default(),
+        }
+    }
+
+    pub fn set_output_prefix<S: Into<String>>(&mut self, prefix: S) {
+        self.output_prefix = prefix.into();
+    }
+
+    pub fn set_length_bins(&mut self, bins: Vec<u32>) {
+        self.length_bins = bins;
+    }
+
+    pub fn set_tile_size(&mut self, tile_size: u32) {
+        self.tile_size = tile_size;
+    }
+
+    pub fn set_min_mapq(&mut self, min_mapq: u8) {
+        self.min_mapq = min_mapq;
+    }
+
+    pub fn set_require_proper_pair(&mut self, require: bool) {
+        self.require_proper_pair = require;
+    }
+
+    pub fn set_scale_genome(&mut self, scale: ScaleGenomeArgs) {
+        self.scale_genome = scale;
+    }
+}
+
 pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
     let start_time = Instant::now();
     let chromosomes = opt
@@ -253,10 +297,7 @@ pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
     );
 
     // Configure global thread‐pool size
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(opt.ioc.n_threads as usize)
-        .build_global()
-        .context("building Rayon thread pool")?;
+    init_global_pool(opt.ioc.n_threads as usize)?;
 
     // Prepare per-bin counts and metadata
     let mut global_counter = ProfileGroupsCounters::default();

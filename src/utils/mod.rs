@@ -16,3 +16,4 @@ pub mod profiling;
 pub mod read;
 pub mod reference;
 pub mod sampling;
+pub mod thread_pool;
