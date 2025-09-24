@@ -2,8 +2,12 @@
 mod tests {
     use anyhow::{Context, Result};
     use cfdnalab::utils::{
-        coverage::scale_genome::compute_window_scaling_over_overlap,
+        coverage::scale_genome::{
+            compute_window_scaling_over_fragment, compute_window_scaling_over_overlap,
+        },
+        fragment::indel_counting_fragment::{IndelReadInfo, collect_fragment_with_indel_counts},
         overlaps::find_overlapping_windows,
+        profiling::midpoint::midpoint_random_even_with_thread_rng,
     };
 
     // ------- helpers -------
@@ -292,6 +296,289 @@ mod tests {
         approx_eq(*by_idx.get(&0).unwrap(), 2.0 / 6.0, 1e-12); // [3,5) in first window
         approx_eq(*by_idx.get(&1).unwrap(), 4.0 / 6.0, 1e-12); // [5,9) in second window
         approx_eq(by_idx.values().copied().sum::<f64>(), 1.0, 1e-12);
+        Ok(())
+    }
+
+    #[test]
+    fn compute_window_scaling_over_fragment_returns_same_avg_for_all_overlaps() -> Result<()> {
+        // Two count windows, one fragment crossing both.
+        // Average scaling is computed over the FULL fragment, so both rows share the same avg.
+        let count_wins = bed_windows(&[(0, 5), (5, 10)]);
+        let chrom_len = 100;
+        let mut wd_ptr = 0usize;
+
+        let frag_start = 2;
+        let frag_end = 9; // len = 7
+        let overlaps = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            Some(&count_wins),
+            None,
+            frag_start,
+            frag_end,
+            0.0,
+            1000,
+        )?
+        .context("count overlaps")?;
+
+        // Three bins over [0,10): [0,4)->2.0, [4,7)->1.0, [7,10)->3.0.
+        // Avg over fragment [2,9): ([2,4)=2*2 + [4,7)=3*1 + [7,9)=2*3) / 7 = (4 + 3 + 6)/7 = 13/7
+        let scaling_chr = vec![(0, 4, 2.0), (4, 7, 1.0), (7, 10, 3.0)];
+        let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
+
+        let rows = compute_window_scaling_over_fragment(&overlaps, &sf_idx, &scaling_chr)?;
+        assert_eq!(rows.len(), 2);
+        for (_idx, avg, overlap_fraction) in rows {
+            approx_eq(avg, 13.0 / 7.0, 1e-9);
+            approx_eq(overlap_fraction, 1.0, 1e-12);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn find_overlapping_windows_respects_min_overlap_threshold() -> Result<()> {
+        // One window [0,100). Fragment [90,100) has 10% overlap; [1,2) has 1% overlap.
+        let chrom_len = 1_000;
+        let wins = bed_windows(&[(0, 100)]);
+        let mut wd_ptr;
+
+        // 1) Threshold 0.0 -> both fragments should be considered overlapping
+        wd_ptr = 0;
+        {
+            let f1 = find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                Some(&wins),
+                None,
+                90,
+                100,
+                0.0,
+                500,
+            )?
+            .context("should find overlap [90,100)")?;
+            assert_eq!(f1.windows.len(), 1);
+
+            let f2 = find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                Some(&wins),
+                None,
+                1,
+                2,
+                0.0,
+                500,
+            )?
+            .context("should find tiny overlap [1,2)")?;
+            assert_eq!(f2.windows.len(), 1);
+        }
+
+        // 2) Threshold 0.05 -> [1,2) should be rejected, [90,100) passes
+        wd_ptr = 0;
+        {
+            let f1 = find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                Some(&wins),
+                None,
+                90,
+                100,
+                0.05,
+                500,
+            )?
+            .context("should find overlap [90,100) at 5%")?;
+            assert_eq!(f1.windows.len(), 1);
+
+            let f2 = find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                Some(&wins),
+                None,
+                1,
+                2,
+                0.05,
+                500,
+            )?;
+            assert!(f2.is_none(), "tiny overlap should be rejected at 5%");
+        }
+
+        // 3) Threshold 1.0 -> only near-full overlaps would pass; these do not
+        wd_ptr = 0;
+        {
+            let f1 = find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                Some(&wins),
+                None,
+                0,
+                100,
+                1.0,
+                500,
+            )?;
+            assert!(f1.is_some(), "exact full overlap should pass 100%");
+
+            let f2 = find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                Some(&wins),
+                None,
+                90,
+                100,
+                1.0,
+                500,
+            )?;
+            assert!(f2.is_none(), "partial overlap should fail 100%");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn midpoint_random_even_with_thread_rng_returns_one_of_two_centers() {
+        // Even-length fragment [start, start+len), len=6 -> centers are start+2 or start+3.
+        let start = 1000u32;
+        let len = 6u32;
+
+        // Sample a few times; each must be one of the two positions.
+        for _ in 0..100 {
+            let m = midpoint_random_even_with_thread_rng(start, len);
+            assert!(
+                m == start + len / 2 || m == start + len / 2 + 1,
+                "midpoint {m} not one of the two centers"
+            );
+        }
+    }
+
+    #[test]
+    fn indel_fragment_builder_fast_paths_and_counts() {
+        // Forward and reverse on same tid, inward. Build synthetic per-read indels.
+        let fwd = IndelReadInfo {
+            tid: 0,
+            pos: 100,
+            end: 150,
+            is_reverse: false,
+            // One deletion in non-overlap, one within overlap
+            deletions: vec![(90, 95), (120, 122)],
+            // One insertion in non-overlap and one in overlap at ref pos 125
+            insertions: vec![(80, 2), (125, 3)],
+        };
+        let rev = IndelReadInfo {
+            tid: 0,
+            pos: 130,
+            end: 200,
+            is_reverse: true,
+            // One deletion in overlap overlapping [120,122] by 1 bp: [121,124)
+            deletions: vec![(121, 124)],
+            // Insertion at same overlap ref pos 125 but length 1 (min rules)
+            insertions: vec![(125, 1)],
+        };
+
+        // 1) skip_indels = true -> None
+        let r = collect_fragment_with_indel_counts(&fwd, &rev, true, true);
+        assert!(r.is_none());
+
+        // 2) count_indels = false -> Zero adjustments returned
+        let r = collect_fragment_with_indel_counts(&fwd, &rev, false, false).unwrap();
+        assert_eq!(r.start, 100);
+        assert_eq!(r.end, 200);
+        assert_eq!(r.deletions_nonoverlap, 0);
+        assert_eq!(r.insertions_nonoverlap, 0);
+        assert_eq!(r.deletions_overlap_supported, 0);
+        assert_eq!(r.insertions_overlap_supported, 0);
+        assert_eq!(r.len_indel_adjusted(), r.len_ref());
+
+        // 3) Full counting -> Check non-overlap and overlap-supported math
+        let r = collect_fragment_with_indel_counts(&fwd, &rev, false, true).unwrap();
+        // Fragment span is [100,200)
+
+        // Non-overlap deletions:
+        //   Forward (90,95) is entirely outside (non-overlap with mate's aligned segment), count 5 bp
+        //   In overlap logic, we only split relative to the per-read aligned-overlap:
+        //     Overlap on aligned segments: [max(100,130)=130, min(150,200)=150) = [130,150)
+        //   Forward (120,122) has [120,130) as non-overlap => +10 bp (and [130,122) clipped to none)
+        // Total deletions_nonoverlap = 5 + 10 = 15
+        assert_eq!(r.deletions_nonoverlap, 15);
+
+        // Overlap-supported deletions:
+        //   Forward (120,122) contributes (clipped to overlap) [130,150) ∩ [120,122) = [130,122) -> none
+        //   Reverse has (121,124) in overlap; intersection with forward's overlap part is none
+        // -> 0
+        assert_eq!(r.deletions_overlap_supported, 0);
+
+        // Non-overlap insertions:
+        //   Forward (80,2) outside aligned-overlap -> count 2
+        //   Forward (125,3) is in overlap; do not add here (handled in overlap-supported)
+        //   Reverse has only (125,1) in overlap; nothing in non-overlap
+        assert_eq!(r.insertions_nonoverlap, 2);
+
+        // Overlap-supported insertions:
+        //   Both at ref pos 125 -> add min(3,1) = 1
+        assert_eq!(r.insertions_overlap_supported, 1);
+
+        // Length adjusted = ref_len + inserts_total - dels_total = 100 + (2+1) - (15+0) = 88
+        assert_eq!(r.len_ref(), 100);
+        assert_eq!(r.len_indel_adjusted(), 88);
+    }
+
+    #[test]
+    fn scaling_over_fragment_is_constant_per_fragment_even_with_many_windows() -> Result<()> {
+        // Three windows tile [0,30); fragment [5,25) overlaps all three.
+        let chrom_len = 1000;
+        let count_wins = bed_windows(&[(0, 10), (10, 20), (20, 30)]);
+        let mut wd_ptr = 0usize;
+
+        let frag_start = 5;
+        let frag_end = 25; // len=20
+        let overlaps = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            Some(&count_wins),
+            None,
+            frag_start,
+            frag_end,
+            0.0,
+            1000,
+        )?
+        .context("count overlaps")?;
+
+        // Scaling bins across [0,30): [0,10)->1.0, [10,20)->2.0, [20,30)->3.0
+        // Average over [5,25) = (5*1 + 10*2 + 5*3)/20 = (5 + 20 + 15)/20 = 40/20 = 2.0
+        let scaling_chr = vec![(0, 10, 1.0), (10, 20, 2.0), (20, 30, 3.0)];
+        let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
+
+        let rows = compute_window_scaling_over_fragment(&overlaps, &sf_idx, &scaling_chr)?;
+        assert_eq!(rows.len(), 3);
+        for (_idx, avg, overlap_fraction) in rows {
+            approx_eq(avg, 2.0, 1e-12);
+            approx_eq(overlap_fraction, 1.0, 1e-12);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn synthetic_no_scaling_midpoint_assignment_counts_full() -> Result<()> {
+        // Midpoint assignment ignores overlap fraction and counts as 1.0 per overlapped window,
+        // but here we simulate it by building the OverlappingWindows with a 1 bp interval.
+        let chrom_len = 100;
+        let wins = bed_windows(&[(10, 20), (20, 30)]);
+        let mut wd_ptr = 0usize;
+
+        // Fragment midpoint hits exactly 19 -> falls in first window only.
+        let midpoint_start = 19;
+        let midpoint_end = 20;
+        let overlaps = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            Some(&wins),
+            None,
+            midpoint_start,
+            midpoint_end,
+            0.99, // Require nearly full (for 1 bp, this is fine)
+            500,
+        )?
+        .context("midpoint overlaps")?;
+
+        assert_eq!(overlaps.windows.len(), 1);
+        assert_eq!(overlaps.windows[0].idx, 0); // First window
         Ok(())
     }
 }

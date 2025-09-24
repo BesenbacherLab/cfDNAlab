@@ -265,7 +265,7 @@ impl Coverage {
     /// - Returns an error if any interval violates the contract (out of bounds or empty).
     pub fn set_blacklist_mask(&mut self, intervals: &[(u64, u64)]) -> Result<()> {
         if intervals.is_empty() {
-            // No blacklist → drop mask to avoid allocating an all-zero vector.
+            // No blacklist -> drop mask to avoid allocating an all-zero vector.
             self.bl_mask = None;
             self.invalidate_indexes();
             return Ok(());
@@ -324,7 +324,7 @@ impl Coverage {
                 mask.len(),
                 n
             );
-            // Mask present → also build allowed sums & counts
+            // Mask present -> also build allowed sums & counts
             let mut psum_allowed = Vec::with_capacity(n + 1);
             let mut psum_allowed_count = Vec::with_capacity(n + 1);
             psum_allowed.push(0.0_f64);
@@ -347,7 +347,7 @@ impl Coverage {
             self.psum_allowed = Some(psum_allowed);
             self.psum_allowed_count = Some(psum_allowed_count);
         } else {
-            // No mask → only psum_all; keep allowed structures None to save RAM
+            // No mask -> only psum_all; keep allowed structures None to save RAM
             let mut all = 0.0_f64;
             for i in 0..n {
                 all += cov[i] as f64;

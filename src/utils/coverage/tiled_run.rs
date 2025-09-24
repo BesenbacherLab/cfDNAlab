@@ -544,7 +544,7 @@ impl fmt::Display for CompactNumber {
 
 /// Emit BedGraph runs for cov[a..b), skipping masked bases.
 /// - Standard 4-column BedGraph: chrom, start, end, value
-/// - Masked bases (mask==1) are **not written** → gaps in the track.
+/// - Masked bases (mask==1) are **not written** -> gaps in the track.
 /// - Values are rounded to `decimals` before comparing/printing to avoid run explosion.
 pub fn emit_bedgraph_runs<W: Write>(
     chr: &str,

@@ -550,7 +550,7 @@ mod tests_fragment_with_indel_counts {
         let f = make_rec(0, 100, false, m_del_m(10, 3, 7)); // 100..120
         let r = make_rec(0, 140, true, m_ins_m(10, 4, 10)); // 140..160
         let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
-        // No aligned overlap → both indels are non-overlap
+        // No aligned overlap -> both indels are non-overlap
         assert_eq!(frag.deletions_nonoverlap, 3);
         assert_eq!(frag.insertions_nonoverlap, 4);
         assert_eq!(frag.deletions_overlap_supported, 0);
@@ -562,8 +562,8 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn overlap_deletion_counts_intersection_only() {
-        // Overlapping mates: forward 100..180, reverse 160..220 → overlap [160,180)
-        // Forward deletion [170,175); Reverse deletion [172,178) → intersection [172,175) len 3.
+        // Overlapping mates: forward 100..180, reverse 160..220 -> overlap [160,180)
+        // Forward deletion [170,175); Reverse deletion [172,178) -> intersection [172,175) len 3.
         let f = make_rec(0, 100, false, m_del_m(70, 5, 5)); // del at [170,175)
         let r = make_rec(0, 160, true, m_del_m(12, 6, 42)); // del at [172,178)
         let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
@@ -578,16 +578,16 @@ mod tests_fragment_with_indel_counts {
     #[test]
     fn overlap_insertions_require_both_mates_same_ref_pos() {
         // Overlap [160,180).
-        // Forward insertion at ref 165 len 5; Reverse insertion at ref 165 len 3 → min = 3 counted.
-        // Forward insertion at ref 170 len 2; Reverse none at 170 → 0 counted in overlap.
+        // Forward insertion at ref 165 len 5; Reverse insertion at ref 165 len 3 -> min = 3 counted.
+        // Forward insertion at ref 170 len 2; Reverse none at 170 -> 0 counted in overlap.
         let f = make_rec(0, 100, false, {
-            let mut v = m_ins_m(65, 5, 15); // ins at 165
-            v.extend(m_ins_m(5, 2, 10)); // then ins at 170 (since 100 + 65 + [I] + 15 + 5 + [I] + 10)
+            let mut v = m_ins_m(65, 5, 4); // ins at 165
+            v.extend(m_ins_m(1, 2, 10)); // then ins at 170 (since 100 + 65 + [I] + 4 + 1 + [I] + 10)
             v
         });
         let r = make_rec(0, 160, true, m_ins_m(5, 3, 15)); // ins at 165
         let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
-        assert_eq!(frag.insertions_nonoverlap, 0);
+        assert_eq!(frag.insertions_nonoverlap, 0); // Second insert is in the overlap but not in both reads
         assert_eq!(frag.insertions_overlap_supported, 3); // min(5,3)
     }
 
@@ -595,7 +595,7 @@ mod tests_fragment_with_indel_counts {
     fn duplicate_insertions_at_same_pos_per_read_take_max_then_min_across_mates() {
         // Overlap [160,200).
         // Forward has two insertions at ref 170: lengths 2 and 5 (separated by soft-clip); keep max=5.
-        // Reverse has insertion at ref 170 length 3 → min(5,3) = 3 counted.
+        // Reverse has insertion at ref 170 length 3 -> min(5,3) = 3 counted.
         let f = make_rec(0, 150, false, m_ins_s_ins_m(20, 2, 4, 5, 26)); // two I at ref 170
         let r = make_rec(0, 160, true, m_ins_m(10, 3, 30)); // I at ref 170
         let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
