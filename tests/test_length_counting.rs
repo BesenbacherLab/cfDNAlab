@@ -476,7 +476,7 @@ mod tests {
         }
 
         // Midpoint from odd-length fragment
-        let m = midpoint_random_even_with_thread_rng(start, len + 1);
+        let m = midpoint_random_even_with_thread_rng(start, len);
         assert!(
             m == start + len / 2 - 1,
             "midpoint {m} not the center element"
@@ -502,7 +502,7 @@ mod tests {
             pos: 120,
             end: 200,
             is_reverse: true,
-            // Deletion overlaps [120,122) by 2 bp (121..122), plus 2 bp non-overlap (120..121 and 122..124)
+            // Deletion overlaps [120,122) by 2 bp (121..122), rest are discarded as non-consensus
             deletions: vec![(121, 124)],
             // Insertion at same overlap ref pos 125 but length 1 (min rule will pick 1)
             insertions: vec![(125, 1)],
@@ -510,12 +510,8 @@ mod tests {
 
         let frag = collect_fragment_with_indel_counts(&fwd, &rev, false, true).unwrap();
 
-        // Non-overlap deletions: (110..115)=5 from fwd, and for rev (121..124) the non-overlap parts
-        // outside [120,150)∩[120,150) are zero on the left (inside overlap start) and right (up to 150), so only the portion
-        // left of overlap start counts if any (here 120..121 is non-overlap for rev by clipping) => +1.
-        // Plus the fwd deletion (120..122) contributes 0 to non-overlap (fully within overlap).
-        // Total deletions_nonoverlap = 5 (fwd 110..115) + 1 (rev 120..121) = 6.
-        assert_eq!(frag.deletions_nonoverlap, 6);
+        // Non-overlap deletions: (110..115)=5 from fwd and none for rev
+        assert_eq!(frag.deletions_nonoverlap, 5);
 
         // Overlap deletions supported: intersection of (fwd 120..122) with (rev 121..124) is (121..122) => 1.
         assert_eq!(frag.deletions_overlap_supported, 1);
@@ -527,9 +523,9 @@ mod tests {
         // Overlap insertions supported: both at ref 125 => min(3,1)=1
         assert_eq!(frag.insertions_overlap_supported, 1);
 
-        // Length adjusted = ref_len + inserts_total - dels_total = 100 + (6+1) - (2+1) = 96
+        // Length adjusted = ref_len + inserts_total - dels_total = 100 + (5+1) - (2+1) = 97
         assert_eq!(frag.len_ref(), 100);
-        assert_eq!(frag.len_indel_adjusted(), 96);
+        assert_eq!(frag.len_indel_adjusted(), 97);
 
         // Skip and no-counts
 
@@ -537,7 +533,7 @@ mod tests {
         let r = collect_fragment_with_indel_counts(&fwd, &rev, true, true);
         assert!(r.is_none());
 
-        // 2) count_indels = false -> Zero adjustments returned
+        // Count_indels = false -> Zero adjustments returned
         let r = collect_fragment_with_indel_counts(&fwd, &rev, false, false).unwrap();
         assert_eq!(r.start, 100);
         assert_eq!(r.end, 200);
