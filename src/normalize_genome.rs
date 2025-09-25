@@ -4,7 +4,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{
-    fs::{File, create_dir_all},
+    fs::File,
     io::{BufWriter, Write},
     path::PathBuf,
     sync::Arc,
@@ -16,7 +16,8 @@ use crate::{
     counters::NormalizeGenomeCounters,
     utils::{
         bam::create_chromosome_reader,
-        blacklist::{BlacklistStrategy, load_blacklists},
+        blacklist::BlacklistStrategy,
+        command::{ensure_output_dir, load_blacklist_map, resolve_chromosomes_and_contigs},
         coverage::coverage_prefix::Coverage,
         fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
@@ -238,11 +239,28 @@ impl NormalizeGenomeConfig {
     }
 }
 
+/// Execute the genome-normalisation pipeline and emit stride-level scaling factors.
+///
+/// Implementation details:
+/// - Resolves chromosomes, prepares output directories, and loads optional blacklists before
+///   scanning each chromosome in parallel.
+/// - Converts fragments into coverage profiles, smooths them with a triangular kernel, and writes
+///   the resulting statistics to a TSV file.
+/// - Tracks iterator counters so the summary in the terminal reflects acceptance, blacklist hits,
+///   and fragment counts.
+///
+/// Parameters:
+/// - `opt`: Fully resolved configuration for the `normalize-genome` command.
+///
+/// Returns:
+/// - `Ok(())` when the scaling-factor TSV is written successfully.
+///
+/// Errors:
+/// - Returns an error if the BAM cannot be read, blacklist files are invalid, or the output file
+///   cannot be created.
 pub fn run(opt: NormalizeGenomeConfig) -> Result<()> {
     let start_time = Instant::now();
-    let chromosomes = opt
-        .chromosomes
-        .resolve_chromosomes(Some(&opt.ioc.bam.as_path()))?;
+    let (chromosomes, _contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc)?;
     opt.check_bin_sizes()?;
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
     pb.set_style(
@@ -252,15 +270,14 @@ pub fn run(opt: NormalizeGenomeConfig) -> Result<()> {
     );
 
     // Create output directory
-    create_dir_all(&opt.ioc.output_dir).context("Cannot create output_dir")?;
+    ensure_output_dir(&opt.ioc.output_dir)?;
 
     // Load blacklist intervals if provided
-    let blacklist_map = if let Some(beds) = &opt.blacklist {
+    if opt.blacklist.is_some() {
         println!("Start: Loading blacklists");
-        load_blacklists(beds, opt.blacklist_min_size, &chromosomes)?
-    } else {
-        FxHashMap::default()
-    };
+    }
+    let blacklist_map =
+        load_blacklist_map(opt.blacklist.as_ref(), opt.blacklist_min_size, &chromosomes)?;
 
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads as usize)?;
@@ -398,12 +415,8 @@ fn process_chrom(
     // Function for filtering fragments after pairing
     // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
     let fragment_filter = {
-        let min_len = opt.fragment_lengths.min_fragment_length;
-        let max_len = opt.fragment_lengths.max_fragment_length;
-        move |f: &Fragment| {
-            let len = f.len();
-            len >= min_len && len <= max_len
-        }
+        let lengths = opt.fragment_lengths.clone();
+        move |f: &Fragment| lengths.contains(f.len())
     };
 
     // Wrap to use opt

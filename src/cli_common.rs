@@ -62,6 +62,13 @@ pub struct FragmentLengthArgs {
     pub max_fragment_length: u32,
 }
 
+impl FragmentLengthArgs {
+    /// Check whether a fragment length is within the configured inclusive range.
+    pub fn contains(&self, len: u32) -> bool {
+        len >= self.min_fragment_length && len <= self.max_fragment_length
+    }
+}
+
 /* Window selection */
 
 // Windows option ENUM

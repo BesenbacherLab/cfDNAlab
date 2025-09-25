@@ -4,16 +4,13 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::io::Write;
-use std::{fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use crate::cli_common::ScaleGenomeArgs;
-use crate::utils::bam::bam_contigs_info;
 use crate::utils::coverage::reducer::{
     reduce_aggregates_by_size_with_cross_index_for_chr, reduce_bed_with_cross_index_for_chr,
 };
-use crate::utils::coverage::scale_genome::{
-    apply_scaling_to_coverage_in_place, load_scaling_factors_tsv,
-};
+use crate::utils::coverage::scale_genome::apply_scaling_to_coverage_in_place;
 use crate::utils::coverage::tiled_run::{
     adapt_fetch_to_extreme_windows, build_tiles, concat_aligned_size_tile_finals,
     coverage_sum_and_counts, emit_bedgraph_runs, emit_windowed_runs, finalize_value,
@@ -29,7 +26,10 @@ use crate::{
     utils::{
         bam::create_chromosome_reader,
         bed::load_windows_from_bed,
-        blacklist::load_blacklists,
+        command::{
+            ensure_output_dir, load_blacklist_map, load_scaling_map,
+            resolve_chromosomes_and_contigs,
+        },
         coverage::{
             coverage_prefix::Coverage,
             tiled_run::{Tile, TileMode, add_fragment_clipped_to_core, windows_overlapping_core},
@@ -264,25 +264,36 @@ impl FCoverageConfig {
     }
 }
 
+/// Execute the fragment coverage pipeline end-to-end.
+///
+/// Implementation details:
+/// - Resolves chromosomes, prepares IO state, then iterates tiles in parallel using Rayon.
+/// - Collects per-tile coverage into temporary artefacts before merging them into the final
+///   positional or aggregated outputs.
+/// - Applies fragment length, blacklist, and optional scaling filters during iteration.
+///
+/// Parameters:
+/// - `opt`: Fully resolved configuration for the `fcoverage` command.
+///
+/// Returns:
+/// - `Ok(())` when positional and/or windowed outputs are written successfully.
+///
+/// Errors:
+/// - Returns an error if the BAM cannot be read, auxiliary files are invalid, or writing outputs
+///   fails at any stage.
 pub fn run(opt: FCoverageConfig) -> Result<()> {
     let start_time = Instant::now();
-    let chromosomes = opt
-        .chromosomes
-        .resolve_chromosomes(Some(&opt.ioc.bam.as_path()))?;
+    let (chromosomes, contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc)?;
     let window_opt = opt.windows.resolve_windows();
     let prefix = opt.output_prefix.trim();
-    let contigs = bam_contigs_info(&opt.ioc.bam, &chromosomes)?;
 
     // Create output directory
-    create_dir_all(&opt.ioc.output_dir).context("Cannot create output_dir")?;
+    ensure_output_dir(&opt.ioc.output_dir)?;
 
-    // Load blacklist intervals if provided
-    let blacklist_map = if let Some(beds) = &opt.blacklist {
+    if opt.blacklist.is_some() {
         println!("Start: Loading blacklists");
-        load_blacklists(beds, 1, &chromosomes)?
-    } else {
-        FxHashMap::default()
-    };
+    }
+    let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, &chromosomes)?;
 
     // Load windows from BED file
     let windows_map = match &window_opt {
@@ -319,13 +330,11 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     };
 
     // Load genomic scaling factors
+    if opt.scale_genome.scaling_factors.is_some() {
+        println!("Start: Loading scaling factors");
+    }
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
-        if let Some(path) = &opt.scale_genome.scaling_factors {
-            println!("Start: Loading scaling factors");
-            load_scaling_factors_tsv(path, &chromosomes, &contigs)?
-        } else {
-            FxHashMap::with_hasher(Default::default())
-        };
+        load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
 
     // Decide mode once
     let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
@@ -758,12 +767,8 @@ fn process_tile(
     // Function for filtering fragments after pairing
     // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
     let fragment_filter = {
-        let min_len = opt.fragment_lengths.min_fragment_length;
-        let max_len = opt.fragment_lengths.max_fragment_length;
-        move |f: &FragmentWithSegments| {
-            let len = f.len();
-            len >= min_len && len <= max_len
-        }
+        let lengths = opt.fragment_lengths.clone();
+        move |f: &FragmentWithSegments| lengths.contains(f.len())
     };
 
     // Wrap to use opt

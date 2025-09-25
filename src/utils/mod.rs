@@ -2,6 +2,7 @@ pub mod bam;
 pub mod base;
 pub mod bed;
 pub mod blacklist;
+pub mod command;
 pub mod coverage;
 pub mod frag_file;
 pub mod fragment;

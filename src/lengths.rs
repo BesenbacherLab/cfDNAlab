@@ -5,7 +5,7 @@ use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{
-    fs::{File, create_dir_all},
+    fs::File,
     io::{BufWriter, Write},
     path::PathBuf,
     sync::Arc,
@@ -19,14 +19,15 @@ use crate::{
     },
     counters::LengthsCounters,
     utils::{
-        bam::{bam_contigs_info, create_chromosome_reader},
+        bam::create_chromosome_reader,
         bed::load_windows_from_bed,
-        blacklist::{
-            BlacklistStrategy, compute_blacklist_overlap, is_blacklisted, load_blacklists,
+        blacklist::{BlacklistStrategy, compute_blacklist_overlap, is_blacklisted},
+        command::{
+            ensure_output_dir, load_blacklist_map, load_scaling_map,
+            resolve_chromosomes_and_contigs,
         },
         coverage::scale_genome::{
             compute_window_scaling_over_fragment, compute_window_scaling_over_overlap,
-            load_scaling_factors_tsv,
         },
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
         fragment_iterator::fragments_with_indel_counts_from_bam,
@@ -212,13 +213,28 @@ impl LengthsConfig {
     }
 }
 
+/// Execute the fragment-length counting pipeline end-to-end.
+///
+/// Implementation details:
+/// - Resolves chromosomes, prepares optional windows/blacklists/scaling data, and then processes
+///   each chromosome in parallel tiles using Rayon.
+/// - Streams fragments through per-window accumulators, writing `npy` arrays (and optional BED
+///   metadata) summarising the length distribution per window.
+/// - Applies fragment-length, blacklist, and assignment policies consistently across threads.
+///
+/// Parameters:
+/// - `opt`: Fully resolved configuration for the `lengths` command.
+///
+/// Returns:
+/// - `Ok(())` when the counts and accompanying metadata files are written successfully.
+///
+/// Errors:
+/// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
+///   the first failure.
 pub fn run(opt: LengthsConfig) -> Result<()> {
     let start_time = Instant::now();
-    let chromosomes = opt
-        .chromosomes
-        .resolve_chromosomes(Some(&opt.ioc.bam.as_path()))?;
+    let (chromosomes, contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc)?;
     let window_opt = opt.windows.resolve_windows();
-    let contigs = bam_contigs_info(&opt.ioc.bam, &chromosomes)?;
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
     pb.set_style(
         ProgressStyle::default_bar()
@@ -227,15 +243,14 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
     );
 
     // Create output directory
-    create_dir_all(&opt.ioc.output_dir).context("Cannot create output_dir")?;
+    ensure_output_dir(&opt.ioc.output_dir)?;
 
     // Load blacklist intervals if provided
-    let blacklist_map = if let Some(beds) = &opt.blacklist {
+    if opt.blacklist.is_some() {
         println!("Start: Loading blacklists");
-        load_blacklists(beds, opt.blacklist_min_size, &chromosomes)?
-    } else {
-        FxHashMap::default()
-    };
+    }
+    let blacklist_map =
+        load_blacklist_map(opt.blacklist.as_ref(), opt.blacklist_min_size, &chromosomes)?;
 
     // Load windows from BED file
     let windows_map = match &window_opt {
@@ -247,13 +262,11 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
     };
 
     // Load genomic scaling factors
+    if opt.scale_genome.scaling_factors.is_some() {
+        println!("Start: Loading scaling factors");
+    }
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
-        if let Some(path) = &opt.scale_genome.scaling_factors {
-            println!("Start: Loading scaling factors");
-            load_scaling_factors_tsv(path, &chromosomes, &contigs)?
-        } else {
-            FxHashMap::with_hasher(Default::default())
-        };
+        load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
 
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads as usize)?;
@@ -448,12 +461,8 @@ fn process_chrom(
     // Function for filtering fragments after pairing
     // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
     let fragment_filter = {
-        let min_len = opt.fragment_lengths.min_fragment_length;
-        let max_len = opt.fragment_lengths.max_fragment_length;
-        move |f: &FragmentWithIndelCounts| {
-            let len = f.len_indel_adjusted(); // Only adjusted when --length-mode asks for it
-            len >= min_len && len <= max_len
-        }
+        let lengths = opt.fragment_lengths.clone();
+        move |f: &FragmentWithIndelCounts| lengths.contains(f.len_indel_adjusted())
     };
 
     // Wrap to use opt

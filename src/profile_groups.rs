@@ -4,16 +4,20 @@ use indicatif::{ProgressBar, ProgressStyle};
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use crate::{
     cli_common::{ChromosomeArgs, IOCArgs, ScaleGenomeArgs},
     counters::ProfileGroupsCounters,
     utils::{
-        bam::{bam_contigs_info, create_chromosome_reader},
-        blacklist::{BlacklistStrategy, is_blacklisted, load_blacklists},
+        bam::create_chromosome_reader,
+        blacklist::{BlacklistStrategy, is_blacklisted},
+        command::{
+            ensure_output_dir, load_blacklist_map, load_scaling_map,
+            resolve_chromosomes_and_contigs,
+        },
         coverage::{
-            scale_genome::{compute_window_scaling_over_fragment, load_scaling_factors_tsv},
+            scale_genome::compute_window_scaling_over_fragment,
             tiled_run::{Tile, build_tiles, make_temp_dir},
         },
         fragment::minimal_fragment::Fragment,
@@ -217,24 +221,39 @@ impl ProfileGroupsConfig {
     }
 }
 
+/// Execute the grouped midpoint profiling pipeline end-to-end.
+///
+/// Implementation details:
+/// - Resolves chromosomes, loads grouped BED windows, and prepares optional blacklist and scaling
+///   data before spawning parallel tiles.
+/// - Streams fragments through per-tile accumulators, writing temporary `.npy` slices that are
+///   merged into a final 3D array and companion group index.
+/// - Applies fragment length, blacklist, and scaling filters during aggregation so downstream tools
+///   can consume ready-to-use profiles.
+///
+/// Parameters:
+/// - `opt`: Fully resolved configuration for the `profile-groups` command.
+///
+/// Returns:
+/// - `Ok(())` when the output `npy` and group-index files are written successfully.
+///
+/// Errors:
+/// - Returns an error if any input cannot be read, the grouped BED is invalid, or writing the
+///   outputs fails.
 pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
     let start_time = Instant::now();
-    let chromosomes = opt
-        .chromosomes
-        .resolve_chromosomes(Some(&opt.ioc.bam.as_path()))?;
+    let (chromosomes, contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc)?;
     let prefix = opt.output_prefix.trim();
-    let contigs = bam_contigs_info(&opt.ioc.bam, &chromosomes)?;
 
     // Create output directory
-    create_dir_all(&opt.ioc.output_dir).context("Cannot create output_dir")?;
+    ensure_output_dir(&opt.ioc.output_dir)?;
 
     // Load blacklist intervals if provided
-    let blacklist_map = if let Some(beds) = &opt.blacklist {
+    if opt.blacklist.is_some() {
         println!("Start: Loading blacklists");
-        load_blacklists(beds, opt.blacklist_min_size, &chromosomes)?
-    } else {
-        FxHashMap::default()
-    };
+    }
+    let blacklist_map =
+        load_blacklist_map(opt.blacklist.as_ref(), opt.blacklist_min_size, &chromosomes)?;
 
     // Load sites from BED file
     println!("Start: Loading fixed-size intervals");
@@ -253,13 +272,11 @@ pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
     let window_size = ensure_uniform_window_len(&windows_map)?;
 
     // Load genomic scaling factors
+    if opt.scale_genome.scaling_factors.is_some() {
+        println!("Start: Loading scaling factors");
+    }
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
-        if let Some(path) = &opt.scale_genome.scaling_factors {
-            println!("Start: Loading scaling factors");
-            load_scaling_factors_tsv(path, &chromosomes, &contigs)?
-        } else {
-            FxHashMap::with_hasher(Default::default())
-        };
+        load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
 
     // Build temporary directory
     let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
