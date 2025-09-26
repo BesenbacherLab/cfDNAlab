@@ -39,20 +39,8 @@ use std::{
             .args(&["min_acgt_pct", "min_acgt_count"])
             .multiple(true)))]
 pub struct RefGCConfig {
-    /// 2bit reference file [path]
-    ///
-    /// E.g., "hg38.2bit"
-    #[cfg_attr(
-        feature = "cli",
-        clap(
-            short = 'r',
-            long,
-            value_parser,
-            required = true,
-            help_heading = "Core"
-        )
-    )]
-    pub ref_2bit: PathBuf,
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub ref_genome: Ref2BitRequiredArgs,
 
     /// Output directory for results [path]
     #[cfg_attr(
@@ -169,7 +157,7 @@ pub fn run(opt: RefGCConfig) -> Result<()> {
         let mut rng1 = rand::rng();
         sample_starts_per_chrom(
             &mut rng1,
-            &twobit_contig_lengths(opt.ref_2bit.clone(), &chromosomes)?,
+            &twobit_contig_lengths(opt.ref_genome.ref_2bit.clone(), &chromosomes)?,
             opt.n_positions,
             opt.fragment_lengths.max_fragment_length as usize,
         )?
@@ -275,7 +263,7 @@ fn process_chrom(
     blacklist_intervals: &[(u64, u64)],
     start_positions: &[usize],
 ) -> anyhow::Result<(Vec<GCCounts>, Option<Vec<(String, u64, u64, u64, f64)>>)> {
-    let mut seq_bytes = read_seq(&opt.ref_2bit, chr)?;
+    let mut seq_bytes = read_seq(&opt.ref_genome.ref_2bit, chr)?;
     apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals);
     let chrom_len = seq_bytes.len() as u64;
 

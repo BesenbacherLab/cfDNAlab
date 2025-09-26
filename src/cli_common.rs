@@ -43,6 +43,44 @@ pub struct IOCArgs {
     pub n_threads: usize,
 }
 
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Debug, Clone)]
+pub struct Ref2BitRequiredArgs {
+    /// 2bit reference genome file [path]
+    ///
+    /// E.g., "hg38.2bit" from UCSC ( https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/hg38.2bit ).
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            short = 'r',
+            long,
+            value_parser,
+            required = true,
+            help_heading = "Core"
+        )
+    )]
+    pub ref_2bit: PathBuf,
+}
+
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Debug, Clone)]
+pub struct Ref2BitOptionalArgs {
+    /// 2bit reference genome file [path]
+    ///
+    /// E.g., "hg38.2bit" from UCSC ( https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/hg38.2bit ).
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            short = 'r',
+            long,
+            value_parser,
+            required = false,
+            help_heading = "Core"
+        )
+    )]
+    pub ref_2bit: PathBuf,
+}
+
 /* Min/Max fragment lengths */
 
 /// Args for setting minimum and maximum fragment length.
