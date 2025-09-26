@@ -710,22 +710,22 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
 
     // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
-    println!("  Total reads: {}", global_counter.total_reads);
+    println!("  Total reads: {}", global_counter.base.total_reads);
     println!(
         "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-        global_counter.accepted_forward + global_counter.accepted_reverse,
-        (global_counter.accepted_forward + global_counter.accepted_reverse) as f64
-            / global_counter.total_reads as f64
+        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
+        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
+            / global_counter.base.total_reads as f64
             * 100.0,
-        global_counter.accepted_forward,
-        global_counter.accepted_reverse
+        global_counter.base.accepted_forward,
+        global_counter.base.accepted_reverse
     );
     // if opt.gc.bin_by_gc {
-    //     println!("GC-excluded reads: {}", global_counter.gc_excl);
+    //     println!("GC-excluded reads: {}", global_counter.base.gc_excl);
     // }
     println!(
         "  Fragments counted one or more times: {}",
-        global_counter.counted_fragments
+        global_counter.base.counted_fragments
     );
     println!("----------");
     println!("Elapsed time: {:.2?}", elapsed);
@@ -790,7 +790,7 @@ fn process_tile(
     // Iterate fragments and add coverage
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
-        counter.counted_fragments += 1;
+        counter.base.counted_fragments += 1;
 
         // Clip and add to tile core coverage (segments respected)
         add_fragment_clipped_to_core(&mut cp, &fragment, 1.0, tile.core_start, tile.core_end)?;

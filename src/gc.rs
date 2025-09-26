@@ -277,19 +277,19 @@ pub fn run(opt: GCConfig) -> Result<()> {
 
     // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
-    println!("  Total reads: {}", global_counter.total_reads);
+    println!("  Total reads: {}", global_counter.base.total_reads);
     println!(
         "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-        global_counter.accepted_forward + global_counter.accepted_reverse,
-        (global_counter.accepted_forward + global_counter.accepted_reverse) as f64
-            / global_counter.total_reads as f64
+        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
+        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
+            / global_counter.base.total_reads as f64
             * 100.0,
-        global_counter.accepted_forward,
-        global_counter.accepted_reverse
+        global_counter.base.accepted_forward,
+        global_counter.base.accepted_reverse
     );
     println!(
         "  Fragments counted one or more times: {}",
-        global_counter.counted_fragments
+        global_counter.base.counted_fragments
     );
     println!("----------");
     println!("Elapsed time: {:.2?}", elapsed);
@@ -451,7 +451,7 @@ fn process_chrom(
             continue;
         };
 
-        counter.counted_fragments += 1;
+        counter.base.counted_fragments += 1;
 
         // Increment counter for each window / bin
         for overlapped_window in overlapping_windows.windows.iter() {

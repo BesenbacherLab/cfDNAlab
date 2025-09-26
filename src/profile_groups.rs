@@ -408,26 +408,26 @@ pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
 
     // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
-    println!("  Total reads: {}", global_counter.total_reads);
+    println!("  Total reads: {}", global_counter.base.total_reads);
     println!(
         "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-        global_counter.accepted_forward + global_counter.accepted_reverse,
-        (global_counter.accepted_forward + global_counter.accepted_reverse) as f64
-            / global_counter.total_reads as f64
+        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
+        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
+            / global_counter.base.total_reads as f64
             * 100.0,
-        global_counter.accepted_forward,
-        global_counter.accepted_reverse
+        global_counter.base.accepted_forward,
+        global_counter.base.accepted_reverse
     );
     println!(
         "  Blacklist-excluded fragments: {}",
         global_counter.blacklisted_fragments
     );
     // if opt.gc.bin_by_gc {
-    //     println!("GC-excluded reads: {}", global_counter.gc_excl);
+    //     println!("GC-excluded reads: {}", global_counter.base.gc_excl);
     // }
     println!(
         "  Fragments counted one or more times: {}",
-        global_counter.counted_fragments
+        global_counter.base.counted_fragments
     );
     println!("----------");
     println!("Elapsed time: {:.2?}", elapsed);
@@ -550,7 +550,7 @@ fn process_tile(
             continue;
         };
 
-        counter.counted_fragments += 1;
+        counter.base.counted_fragments += 1;
 
         // Find all overlapping scaling-factor bins
         // And count up the weight

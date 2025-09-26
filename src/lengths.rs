@@ -31,10 +31,8 @@ use crate::{
         },
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
         fragment_iterator::fragments_with_indel_counts_from_bam,
-        lengths::{
-            counting::{LengthCounts, stack_length_counts},
-            length_mode::LengthMode,
-        },
+        indel_mode::IndelMode,
+        lengths::counting::{LengthCounts, stack_length_counts},
         overlaps::find_overlapping_windows,
         profiling::midpoint::midpoint_random_even_with_thread_rng,
         read::default_include_read,
@@ -70,23 +68,22 @@ pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     ioc: IOCArgs,
 
-    /// How to calculate fragment length `[string]`
+    /// How to handle insertions and deletions in fragments `[string]`
     ///
     /// Deletions: Both 'D' and 'N' in the cigar string are considered deletions.
     ///
     /// Possible values:
     ///
-    /// - `"reference"`:
-    ///   Use the reference coordinates `end(reverse) - start(forward)`.
-    ///   Note, we only include inwardly directed pairs.
+    /// - `"ignore"`:
+    ///   Ignore whether indels are present or not. Lengths are calculated from the reference coordinates `end(reverse) - start(forward)`.
     ///
-    /// - `"indel-adjusted"`:
+    /// - `"adjust"`:
     ///   Adjust the reference length by the observed insertions and deletions in the aligned bases.
     ///   In the mate overlap, both reads must agree on the position-level, with the shortest insertion selected per position.
     ///   **NOTE**: Blacklist exclusion and calculation of scaling weights (--scaling-factors)
     ///   use the full reference span.
     ///
-    /// - `"skip-indels"`:
+    /// - `"skip"`:
     ///   Skip fragments with any insertion or deletion present.
     #[cfg_attr(
         feature = "cli",
@@ -97,7 +94,7 @@ pub struct LengthsConfig {
             help_heading = "Core"
         )
     )]
-    pub length_mode: LengthMode,
+    pub indel_mode: IndelMode,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     windows: WindowsArgs,
@@ -122,7 +119,7 @@ pub struct LengthsConfig {
 
     /// Only count properly paired reads `[flag]`
     ///
-    /// This is NOT recommended by default as it trims the tails of the distribution.
+    /// This is NOT recommended by default as it trims the tails of the length distribution.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
@@ -171,7 +168,7 @@ impl LengthsConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
-            length_mode: LengthMode::Reference,
+            indel_mode: IndelMode::Ignore,
             windows: WindowsArgs::default(),
             window_assignment: AssignToWindowArgs::default(),
             chromosomes,
@@ -188,8 +185,8 @@ impl LengthsConfig {
         }
     }
 
-    pub fn set_length_mode(&mut self, mode: LengthMode) {
-        self.length_mode = mode;
+    pub fn set_indel_mode(&mut self, mode: IndelMode) {
+        self.indel_mode = mode;
     }
 
     pub fn set_windows(&mut self, windows: WindowsArgs) {
@@ -361,15 +358,15 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
 
     // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
-    println!("  Total reads: {}", global_counter.total_reads);
+    println!("  Total reads: {}", global_counter.base.total_reads);
     println!(
         "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-        global_counter.accepted_forward + global_counter.accepted_reverse,
-        (global_counter.accepted_forward + global_counter.accepted_reverse) as f64
-            / global_counter.total_reads as f64
+        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
+        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
+            / global_counter.base.total_reads as f64
             * 100.0,
-        global_counter.accepted_forward,
-        global_counter.accepted_reverse
+        global_counter.base.accepted_forward,
+        global_counter.base.accepted_reverse
     );
     println!(
         "  Blacklist-excluded fragments: {}",
@@ -380,7 +377,7 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
     // }
     println!(
         "  Fragments counted one or more times: {}",
-        global_counter.counted_fragments
+        global_counter.base.counted_fragments
     );
     println!("----------");
     println!("Elapsed time: {:.2?}", elapsed);
@@ -475,7 +472,7 @@ fn process_chrom(
     let mut iter = fragments_with_indel_counts_from_bam(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
         include_read_fn,
-        opt.length_mode,
+        opt.indel_mode,
         fragment_filter,
     )
     .with_local_counters();
@@ -529,7 +526,7 @@ fn process_chrom(
             continue;
         };
 
-        counter.counted_fragments += 1;
+        counter.base.counted_fragments += 1;
 
         // Find all overlapping scaling-factor bins
         // And count up the weight

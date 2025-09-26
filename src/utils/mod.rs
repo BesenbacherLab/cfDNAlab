@@ -9,6 +9,7 @@ pub mod fragment;
 pub mod fragment_iterator;
 pub mod gc;
 pub mod grouped_bed;
+pub mod indel_mode;
 pub mod iterator_counter;
 pub mod lengths;
 pub mod normalize_genome;

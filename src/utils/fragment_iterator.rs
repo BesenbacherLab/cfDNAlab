@@ -75,10 +75,10 @@ use crate::utils::{
             FragmentWithSegments, SegmentedReadInfo, collect_fragment_with_segments,
         },
     },
+    indel_mode::IndelMode,
     iterator_counter::{
         FragmentCounterSnapshot, FragmentCounters, LocalCounters, NoopCounters, SharedCounters,
     },
-    lengths::length_mode::LengthMode,
 };
 
 pub trait HasStrand {
@@ -371,7 +371,7 @@ where
 /* WithIndelCounts pairing */
 
 pub struct WithIndelCountsPairer {
-    pub length_mode: LengthMode,
+    pub indel_mode: IndelMode,
 }
 
 impl Pairer for WithIndelCountsPairer {
@@ -382,8 +382,8 @@ impl Pairer for WithIndelCountsPairer {
         collect_fragment_with_indel_counts(
             a,
             b,
-            matches!(self.length_mode, LengthMode::SkipIndels),
-            matches!(self.length_mode, LengthMode::IndelAdjusted),
+            matches!(self.indel_mode, IndelMode::Skip),
+            matches!(self.indel_mode, IndelMode::Adjust),
         )
     }
 }
@@ -392,7 +392,7 @@ impl Pairer for WithIndelCountsPairer {
 pub fn fragments_with_indel_counts_from_bam<RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
-    length_mode: LengthMode,
+    indel_mode: IndelMode,
     fragment_filter: PF,
 ) -> PairingAdapter<
     impl Iterator<Item = Result<InputItem<FragmentWithIndelCounts>>>,
@@ -404,7 +404,7 @@ where
     RIter: Iterator<Item = Result<Record>>,
     PF: Fn(&FragmentWithIndelCounts) -> bool + Send + Sync + 'static,
 {
-    let pairer = WithIndelCountsPairer { length_mode };
+    let pairer = WithIndelCountsPairer { indel_mode };
 
     // Map BAM records -> InputItem::Read, converting errors to anyhow with context.
     let mapped = records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord));
