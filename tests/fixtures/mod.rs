@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use rust_htslib::bam::{self, header::HeaderRecord, record::Cigar, record::CigarString};
 use std::{
     fs::{File, OpenOptions},
@@ -8,6 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use tempfile::TempDir;
+use twobit::convert::{fasta::FastaReader, to_2bit};
 use zstd::stream::read::Decoder as ZstdDecoder;
 
 const FLAG_FIRST_MATE: u16 = 0x40;
@@ -30,6 +31,71 @@ impl BamFixture {
             bai,
         }
     }
+}
+
+#[derive(Debug)]
+pub struct TwoBitFixture {
+    _tempdir: TempDir,
+    pub path: PathBuf,
+    sequences: Vec<(String, String)>,
+}
+
+impl TwoBitFixture {
+    fn new(tempdir: TempDir, path: PathBuf, sequences: Vec<(String, String)>) -> Self {
+        Self {
+            _tempdir: tempdir,
+            path,
+            sequences,
+        }
+    }
+
+    pub fn sequence(&self, chr: &str) -> Option<&str> {
+        self.sequences
+            .iter()
+            .find(|(name, _)| name == chr)
+            .map(|(_, seq)| seq.as_str())
+    }
+
+    pub fn sequences(&self) -> &[(String, String)] {
+        &self.sequences
+    }
+}
+
+pub fn twobit_from_sequences(
+    name: &str,
+    sequences: Vec<(String, String)>,
+) -> Result<TwoBitFixture> {
+    let normalized: Vec<(String, String)> = sequences
+        .into_iter()
+        .map(|(chr, seq)| (chr, seq.to_ascii_uppercase()))
+        .collect();
+    let tempdir = TempDir::new()?;
+    let fasta_path = tempdir.path().join(format!("{name}.fasta"));
+    write_fasta(&fasta_path, &normalized)?;
+    let path = tempdir.path().join(format!("{name}.2bit"));
+    {
+        let reader = FastaReader::open(&fasta_path).map_err(|e| anyhow!(e.to_string()))?;
+        let mut file = File::create(&path)?;
+        to_2bit(&mut file, &reader).map_err(|e| anyhow!(e.to_string()))?;
+    }
+    Ok(TwoBitFixture::new(tempdir, path, normalized))
+}
+
+fn write_fasta<P: AsRef<Path>>(path: P, sequences: &[(String, String)]) -> Result<()> {
+    let mut file = File::create(path)?;
+    for (name, seq) in sequences {
+        writeln!(file, ">{name}")?;
+        for chunk in seq.as_bytes().chunks(60) {
+            file.write_all(chunk)?;
+            file.write_all(b"\n")?;
+        }
+    }
+    Ok(())
+}
+
+pub fn simple_reference_twobit() -> Result<TwoBitFixture> {
+    let chr1 = ("chr1".to_string(), "ACGT".repeat(64));
+    twobit_from_sequences("simple_reference", vec![chr1])
 }
 
 #[derive(Clone)]

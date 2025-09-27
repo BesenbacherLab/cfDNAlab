@@ -312,9 +312,10 @@ impl FragmentKmersConfig {
 /// Implementation details:
 /// - Resolves chromosomes, prepares optional windows/blacklists/scaling data, and then processes
 ///   each chromosome in parallel tiles using Rayon.
-/// - Streams fragments through per-window accumulators, writing `npy` arrays (and optional BED
-///   metadata) summarising the length distribution per window.
-/// - Applies fragment-length and blacklist policies consistently across threads.
+/// - Streams fragments through per-window accumulators, enumerating the requested k-mers inside
+///   every counted window and writing dense (or optional sparse) count matrices plus motif lists.
+/// - Applies fragment-length, blacklist, indel, scaling, and strand handling policies consistently
+///   across threads.
 ///
 /// Parameters:
 /// - `opt`: Fully resolved configuration for the `fragment-kmers` command.
@@ -633,7 +634,8 @@ fn process_chrom(
         counter.base.counted_fragments += 1;
 
         for overlapped_window in overlapping_windows.windows {
-            let counts = &mut counts_by_bin[overlapped_window.idx.clone()];
+            let idx = overlapped_window.idx;
+            let counts = &mut counts_by_bin[idx];
             count_kmers_in_segments(
                 &fragment,
                 &positional_codes_by_k,
@@ -692,16 +694,25 @@ fn count_kmers_in_segments(
     counts: &mut FxHashMap<Kmer, f64>,
     weights: Option<&Vec<f32>>,
 ) {
-    for k in kmer_specs.keys() {
-        let codes = positional_codes_by_k.get(k).unwrap();
-        for (seg_start, seq_end) in &fragment.segments {
-            for idx in *seg_start..(*seq_end - *k as u32) {
-                let w = weights.map_or(1.0, |w| unsafe { *w.get_unchecked(idx as usize) });
+    for (&k, _) in kmer_specs {
+        let codes = positional_codes_by_k
+            .get(&k)
+            .expect("missing positional codes for requested k");
+        let k_span = k as u32;
+
+        for (seg_start, seg_end) in &fragment.segments {
+            let Some(last_start) = seg_end.checked_sub(k_span) else {
+                continue;
+            };
+
+            for idx in *seg_start..=last_start {
+                let idx_usize = idx as usize;
+                let w = weights.map_or(1.0, |w| unsafe { *w.get_unchecked(idx_usize) });
 
                 *counts
                     .entry(Kmer {
-                        k: *k,
-                        code: codes.get(idx as usize),
+                        k,
+                        code: codes.get(idx_usize),
                     })
                     .or_insert(0.) += w as f64;
             }
