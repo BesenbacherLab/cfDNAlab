@@ -1,3 +1,6 @@
+/// The 5 bases: `A, C, G, T, N`
+pub const BASES: [char; 5] = ['A', 'C', 'G', 'T', 'N'];
+
 /// Encode a single nucleotide into its base‑5 digit.
 ///
 /// - A or a -> 0  
@@ -53,12 +56,24 @@ pub fn rev_complement(seq: &str) -> String {
     seq.chars().rev().map(complement).collect()
 }
 
-// TODO: Check that this definition of canonical is sound
-
-/// Return the canonical form of `kmer`: the lexicographically smaller
-/// of the k-mer and its reverse complement.
+/// Return the canonical form of `kmer`.
+///
+/// Even-length k-mers are compared against their reverse complement,
+/// returning the lexicographically smaller of the two. For odd-length
+/// k-mers we only inspect the middle base, keeping the k-mer as-is if it
+/// is `A`, `C`, or `N`, and otherwise returning the reverse complement.
 #[inline]
 pub fn make_canonical(kmer: String) -> String {
+    let len = kmer.len();
+
+    if len % 2 == 1 {
+        let mid = kmer.as_bytes()[len / 2].to_ascii_uppercase();
+        if mid == b'G' || mid == b'T' {
+            return rev_complement(&kmer);
+        }
+        return kmer;
+    }
+
     let rc = rev_complement(&kmer);
     if kmer <= rc { kmer } else { rc }
 }

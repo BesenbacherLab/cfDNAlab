@@ -2,6 +2,7 @@ pub mod cli_common;
 mod counters;
 pub mod ends;
 pub mod fcoverage;
+pub mod fragment_kmers;
 pub mod gc;
 pub mod lengths;
 pub mod normalize_genome;

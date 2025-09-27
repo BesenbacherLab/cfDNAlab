@@ -3,7 +3,7 @@ mod fixtures;
 use anyhow::Result;
 use cfdnalab::cli_common::{AssignToWindowArgs, ChromosomeArgs, IOCArgs, WindowsArgs};
 use cfdnalab::lengths::{LengthsConfig, run};
-use cfdnalab::utils::lengths::length_mode::LengthMode;
+use cfdnalab::utils::indel_mode::IndelMode;
 use fixtures::simple_inward_bam;
 use ndarray::Array2;
 use ndarray_npy::read_npy;
@@ -29,7 +29,7 @@ fn counts_reference_lengths_global_window() -> Result<()> {
         },
         base_chromosomes(&["chr1"]),
     );
-    cfg.set_length_mode(LengthMode::Reference);
+    cfg.set_indel_mode(IndelMode::Ignore);
     cfg.set_windows(WindowsArgs::default());
     cfg.set_window_assignment(AssignToWindowArgs::default());
     cfg.set_min_mapq(0);

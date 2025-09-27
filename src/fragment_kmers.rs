@@ -1,7 +1,43 @@
+use crate::{
+    cli_common::{
+        ChromosomeArgs, FragmentLengthArgs, IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
+        WindowSpec, WindowsArgs,
+    },
+    counters::FragmentKmersCounters,
+    utils::{
+        bam::create_chromosome_reader,
+        bed::load_windows_from_bed,
+        blacklist::{
+            BlacklistStrategy, apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE,
+            compute_blacklist_overlap, is_blacklisted,
+        },
+        command::{
+            ensure_output_dir, load_blacklist_map, load_scaling_map,
+            resolve_chromosomes_and_contigs,
+        },
+        coverage::scale_genome::apply_scaling_to_coverage_in_place,
+        fragment::segment_kmer_fragment::FragmentWithKmerSegments,
+        fragment_iterator::fragments_with_kmer_segments_from_bam,
+        indel_mode::IndelMode,
+        kmers::{
+            kmer_codec::{
+                Kmer, KmerCodes, KmerSpec, build_kmer_specs, build_left_aligned_codes_per_k,
+            },
+            process_counts::{
+                DecodedCounts, merge_decoded_counts, prepare_decoded_counts,
+                split_and_decode_counts,
+            },
+            write::write_decoded_counts_matrix,
+        },
+        overlaps::find_overlapping_windows,
+        read::default_include_read,
+        reference::read_seq,
+        thread_pool::init_global_pool,
+    },
+};
 use anyhow::{Context, Result};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
-use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{
@@ -12,46 +48,10 @@ use std::{
     time::Instant,
 };
 
-use crate::{
-    cli_common::{
-        AssignToWindowArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs, ScaleGenomeArgs,
-        WindowAssigner, WindowSpec, WindowsArgs,
-    },
-    counters::LengthsCounters,
-    utils::{
-        bam::create_chromosome_reader,
-        bed::load_windows_from_bed,
-        blacklist::{BlacklistStrategy, compute_blacklist_overlap, is_blacklisted},
-        command::{
-            ensure_output_dir, load_blacklist_map, load_scaling_map,
-            resolve_chromosomes_and_contigs,
-        },
-        coverage::scale_genome::{
-            compute_window_scaling_over_fragment, compute_window_scaling_over_overlap,
-        },
-        fragment::indel_counting_fragment::FragmentWithIndelCounts,
-        fragment_iterator::fragments_with_indel_counts_from_bam,
-        indel_mode::IndelMode,
-        lengths::counting::{LengthCounts, stack_length_counts},
-        overlaps::find_overlapping_windows,
-        profiling::midpoint::midpoint_random_even_with_thread_rng,
-        read::default_include_read,
-        thread_pool::init_global_pool,
-    },
-};
-
-/// Count fragment lengths in a BAM-file.
+/// Count kmers within the fragments in a BAM-file.
 ///
-/// Fragment length is defined as `end(reverse) - start(forward)`.
-///
-/// The default for windows is to count fragments by their overlap fraction. That is, most
-/// fragments are counted as `1.0`, while fragments overlapping the edge of a window are counted
-/// as the fraction it overlaps the window (`< 1.0`). For consequtive non-overlapping windows,
-/// this conserves the total mass, as an edge-overlapping fragment will count `f` in one window
-/// and `1-f` in the other window. To get base-weighted counts (i.e. coverage in the window),
-/// you can multiply the output counts by their lengths (`C'[L] = L * C[L]`). **Other options**
-/// include counting the full fragment if the *fragment midpoint* or a given *proportion* of
-/// positions overlaps the window.
+/// Whereas the `cfdna ends` tool extracts end-motifs, this tool extracts all kmers
+/// in a sliding window across the fragment.
 ///
 /// ## Always-on exclusion criteria
 ///
@@ -64,9 +64,50 @@ use crate::{
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
-pub struct LengthsConfig {
+pub struct FragmentKmersConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     ioc: IOCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub ref_genome: Ref2BitRequiredArgs,
+
+    /// Prefix for output files (e.g., a sample name) `[string]`
+    ///
+    /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
+    ///
+    /// Examples produce files like:
+    ///   `<prefix>.k3_counts.npy`,
+    ///   `<prefix>.k3_motifs.txt`,
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            short = 'x',
+            default_value = "fragment_kmers",
+            help_heading = "Core"
+        )
+    )]
+    pub output_prefix: String,
+
+    /// List of K-mer sizes [integer].
+    ///
+    /// When counting for many kmer-sizes (>8), consider splitting
+    /// into multiple runs to reduce memory consumption at a time.
+    ///
+    /// Example: `--kmer-sizes 3 5 11`
+    #[cfg_attr(
+        feature = "cli",
+        clap(short = 'k', long, num_args = 1.., value_parser = clap::value_parser!(u8).range(1..28), required=true, help_heading="Core"))]
+    pub kmer_sizes: Vec<u8>,
+
+    /// Number of bases to exclude from each end of fragments `[integer]`
+    ///
+    /// This allows not counting end-motifs, to focus only on the center kmers.
+    /// For pure end-motif counting, use `cfdna ends` instead.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "0", value_parser = clap::value_parser!(u32).range(0..), help_heading="Core"))]
+    pub end_offset: u32,
 
     /// How to handle insertions and deletions in fragments `[string]`
     ///
@@ -75,15 +116,15 @@ pub struct LengthsConfig {
     /// Possible values:
     ///
     /// - `"ignore"`:
-    ///   Ignore whether indels are present or not. Lengths are calculated from the reference coordinates `end(reverse) - start(forward)`.
+    ///   Ignore whether indels are present or not.
+    ///   Kmers are extracted for the full/offset fragment span from the reference genome.
     ///
     /// - `"adjust"`:
-    ///   Adjust the reference length by the observed insertions and deletions in the
-    ///   observed bases (we cannot adjust in the mate-gap).
+    ///   Adjust the counts by excluding kmers overlapping positions with observed insertions and deletions in the
+    ///   observed bases (we cannot adjust in mate-gaps).
     ///   Outside the mate-overlap, all indels and deletions are adjusted for.
-    ///   **Overlap**: In the mate-overlap, both reads must agree on the position-level,
-    ///   with the shortest insertion selected per position.
-    ///   Only overlap-positions were both reads have the indel are adjusted for.
+    ///   **Overlap**: In the mate-overlap, both reads must agree on the position-level.
+    ///   Only overlap-positions were both reads have the indel are excluded.
     ///   **NOTE**: Blacklist exclusion and calculation of scaling weights (--scaling-factors)
     ///   use the full reference span.
     ///
@@ -100,15 +141,37 @@ pub struct LengthsConfig {
     )]
     pub indel_mode: IndelMode,
 
+    /// Ignore inter-mate gap `[flag]`
+    ///
+    /// Disable counting in the gap between reads (i.e., `[forward.end, reverse.start)`)
+    /// when the two reads do not overlap.
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
+    pub ignore_gap: bool,
+
+    /// Collapse each kmer with its reverse-complement. [flag]
+    ///
+    /// Odd-sized kmers are collapsed such that the middle base is `A` or `C`.
+    /// Even-sized kmers are collapsed to the lexicographically lowest motif.
+    #[clap(long, help_heading = "Core")]
+    canonical: bool,
+
+    /// Save counts as sparse-array. [flag]
+    ///
+    /// For large kmer-sizes, we cannot save dense arrays with all motifs
+    /// unless we have a LOT of RAM and storage space. Enable this
+    /// flag to save as a COO sparse array that can be opened in
+    /// python via `scipy.sparse.load_npz()`.
+    #[clap(long, help_heading = "Core")]
+    pub save_sparse: bool,
+
     #[cfg_attr(feature = "cli", clap(flatten))]
     windows: WindowsArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    window_assignment: AssignToWindowArgs,
-
-    #[cfg_attr(feature = "cli", clap(flatten))]
     chromosomes: ChromosomeArgs,
 
+    // TODO: Add that we use the scaling weight for the first kmer-position
+    // And that sf=0 for any kmer base guarantees the kmer is excluded
     #[cfg_attr(feature = "cli", clap(flatten))]
     scale_genome: ScaleGenomeArgs,
 
@@ -128,6 +191,10 @@ pub struct LengthsConfig {
     pub require_proper_pair: bool,
 
     /// Optional BED file(s) with blacklisted regions `[path]`
+    ///
+    /// Two levels of filtering are performed. First, all blacklisted regions are assigned
+    /// the N-"base" to exclude kmers that include the positions. Then, depending on the `--blacklist-strategy`,
+    /// fragments overlapping blacklisted regions with some fraction are excluded.
     #[cfg_attr(
         feature = "cli", clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading = "Filtering"))]
     pub blacklist: Option<Vec<PathBuf>>,
@@ -168,13 +235,19 @@ pub struct LengthsConfig {
     // two_bit: TwoBitArgs,
 }
 
-impl LengthsConfig {
-    pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
+impl FragmentKmersConfig {
+    pub fn new(ioc: IOCArgs, ref_genome: Ref2BitRequiredArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
+            ref_genome,
+            output_prefix: "fragment_kmers".to_string(),
+            kmer_sizes: vec![3u8],
+            end_offset: 0,
             indel_mode: IndelMode::Ignore,
+            ignore_gap: false,
+            canonical: false,
+            save_sparse: false,
             windows: WindowsArgs::default(),
-            window_assignment: AssignToWindowArgs::default(),
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
             fragment_lengths: FragmentLengthArgs {
@@ -189,16 +262,36 @@ impl LengthsConfig {
         }
     }
 
-    pub fn set_indel_mode(&mut self, mode: IndelMode) {
-        self.indel_mode = mode;
+    pub fn set_output_prefix(&mut self, output_prefix: String) {
+        self.output_prefix = output_prefix;
+    }
+
+    pub fn set_kmer_sizes(&mut self, kmer_sizes: Vec<u8>) {
+        self.kmer_sizes = kmer_sizes;
+    }
+
+    pub fn set_end_offset(&mut self, end_offset: u32) {
+        self.end_offset = end_offset;
+    }
+
+    pub fn set_ignore_gap(&mut self, ignore_gap: bool) {
+        self.ignore_gap = ignore_gap;
+    }
+
+    pub fn set_canonical(&mut self, canonical: bool) {
+        self.canonical = canonical;
+    }
+
+    pub fn set_save_sparse(&mut self, save_sparse: bool) {
+        self.save_sparse = save_sparse;
+    }
+
+    pub fn set_indel_mode(&mut self, indel_mode: IndelMode) {
+        self.indel_mode = indel_mode;
     }
 
     pub fn set_windows(&mut self, windows: WindowsArgs) {
         self.windows = windows;
-    }
-
-    pub fn set_window_assignment(&mut self, assign: AssignToWindowArgs) {
-        self.window_assignment = assign;
     }
 
     pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
@@ -214,17 +307,17 @@ impl LengthsConfig {
     }
 }
 
-/// Execute the fragment-length counting pipeline end-to-end.
+/// Execute the fragment kmers counting pipeline end-to-end.
 ///
 /// Implementation details:
 /// - Resolves chromosomes, prepares optional windows/blacklists/scaling data, and then processes
 ///   each chromosome in parallel tiles using Rayon.
 /// - Streams fragments through per-window accumulators, writing `npy` arrays (and optional BED
 ///   metadata) summarising the length distribution per window.
-/// - Applies fragment-length, blacklist, and assignment policies consistently across threads.
+/// - Applies fragment-length and blacklist policies consistently across threads.
 ///
 /// Parameters:
-/// - `opt`: Fully resolved configuration for the `lengths` command.
+/// - `opt`: Fully resolved configuration for the `fragment-kmers` command.
 ///
 /// Returns:
 /// - `Ok(())` when the counts and accompanying metadata files are written successfully.
@@ -232,7 +325,7 @@ impl LengthsConfig {
 /// Errors:
 /// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
 ///   the first failure.
-pub fn run(opt: LengthsConfig) -> Result<()> {
+pub fn run(opt: FragmentKmersConfig) -> Result<()> {
     let start_time = Instant::now();
     let (chromosomes, contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc)?;
     let window_opt = opt.windows.resolve_windows();
@@ -262,6 +355,8 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
         _ => None,
     };
 
+    let kmer_specs: FxHashMap<u8, KmerSpec> = build_kmer_specs(&opt.kmer_sizes)?;
+
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
         println!("Start: Loading scaling factors");
@@ -275,22 +370,23 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
     // Prepare per-bin counts and metadata
     let mut all_bins = Vec::new();
     let mut bin_info = Vec::new();
-    let mut global_counter = LengthsCounters::default();
+    let mut global_counter = FragmentKmersCounters::default();
 
     println!("Start: Counting per chromosome");
 
     pb.set_position(0);
 
     let results: Vec<(
-        Vec<LengthCounts>,
+        Vec<FxHashMap<Kmer, f64>>,
         Option<Vec<(String, u64, u64, u64, f64)>>,
-        LengthsCounters,
+        FragmentKmersCounters,
     )> = chromosomes
         .par_iter()
         .map(|chr| -> Result<(_, _, _)> {
             let out = process_chrom(
                 &chr,
                 &opt,
+                &kmer_specs,
                 windows_map
                     .as_ref()
                     .and_then(|m| m.get(chr).map(|v| v.as_slice())),
@@ -307,41 +403,56 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
 
     // Collect results (in chromosome order) back into the global vectors
     for (counts_by_bin, bin_vec, counter) in results {
-        all_bins.extend(counts_by_bin);
+        let counts_decoded: Vec<DecodedCounts> = counts_by_bin
+            .iter()
+            .map(|c| split_and_decode_counts(c, &kmer_specs))
+            .collect();
+        all_bins.extend(counts_decoded);
         if !matches!(window_opt, WindowSpec::Global) {
             bin_info.extend(bin_vec.unwrap());
         }
         global_counter += counter;
     }
 
-    // Convert to single `LengthCounts` for global
+    // Convert to single map for global
     // Keep wrapped in vector to simplify writer
-    let mut all_bins = if matches!(window_opt, WindowSpec::Global) {
-        vec![LengthCounts::collapse(&all_bins)?]
+    let all_bins = if matches!(window_opt, WindowSpec::Global) {
+        vec![merge_decoded_counts(all_bins)]
     } else {
         all_bins
     };
+
+    // Prepare counts to get correct motifs (collapsed, N-filtered, etc.)
+    let (mut prepared_counts, motifs_by_k) =
+        prepare_decoded_counts(&all_bins, opt.canonical, &kmer_specs);
 
     // Sort by original index (when given a bed file)
     if matches!(window_opt, WindowSpec::Bed(_)) {
         println!("Start: Reordering counts by original window index in BED file");
 
         // Zip into a single Vec to allow sorting together
-        let mut paired: Vec<_> = bin_info.into_iter().zip(all_bins.into_iter()).collect(); // (BinInfo, DecodedCounts)
+        let mut paired: Vec<_> = bin_info
+            .into_iter()
+            .zip(prepared_counts.into_iter())
+            .collect(); // (BinInfo, DecodedCounts)
 
         // Sort primarily by original window index
         paired.sort_unstable_by_key(|(info, _)| info.3);
 
         // Unzip back out if you need separate Vecs again
-        (bin_info, all_bins) = paired.into_iter().unzip();
+        (bin_info, prepared_counts) = paired.into_iter().unzip();
     }
 
     // Write final counts to output_dir
-    write_npy(
-        &opt.ioc.output_dir.join("all_length_counts.npy"),
-        &stack_length_counts(&all_bins),
-    )
-    .context("Write final fail")?;
+    println!("Start: Writing counts to disk");
+    write_decoded_counts_matrix(
+        &prepared_counts,
+        &kmer_specs,
+        &motifs_by_k,
+        &opt.ioc.output_dir,
+        &opt.output_prefix,
+        opt.save_sparse,
+    )?;
 
     // Write window coordinates as BED file to output_dir
     // Write bins BED file
@@ -377,7 +488,7 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
         global_counter.blacklisted_fragments
     );
     // if opt.gc.bin_by_gc {
-    //     println!("GC-excluded reads: {}", global_counter.gc_excl);
+    //     println!("GC-excluded reads: {}", global_counter.base.gc_excl);
     // }
     println!(
         "  Fragments counted one or more times: {}",
@@ -390,21 +501,44 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
 
 fn process_chrom(
     chr: &str,
-    opt: &LengthsConfig,
+    opt: &FragmentKmersConfig,
+    kmer_specs: &FxHashMap<u8, KmerSpec>,
     windows: Option<&[(u64, u64, u64)]>,
     window_opt: &WindowSpec,
     blacklist_intervals: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
 ) -> anyhow::Result<(
-    Vec<LengthCounts>,
+    Vec<FxHashMap<Kmer, f64>>,
     Option<Vec<(String, u64, u64, u64, f64)>>,
-    LengthsCounters,
+    FragmentKmersCounters,
 )> {
     // Open a fresh BAM reader for this thread
     let (mut reader, tid, chrom_len) = create_chromosome_reader(&opt.ioc.bam, chr)?;
 
+    let mut seq_bytes = read_seq(&opt.ref_genome.ref_2bit, chr)?;
+    apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals);
+
+    // Scaled weights to count up
+    let positional_scaling_weights = if !scaling_chr.is_empty() {
+        let mut scaling_weights = vec![1.0; seq_bytes.len()];
+        apply_scaling_to_coverage_in_place(&mut scaling_weights, 0, scaling_chr);
+        // "Blacklist" positions with scaling factors of 0, so they don't get counted
+        for (base, weight) in seq_bytes.iter_mut().zip(&scaling_weights) {
+            if *weight == 0.0 {
+                *base = BLACKLIST_BYTE;
+            }
+        }
+        Some(scaling_weights)
+    } else {
+        None
+    };
+
+    // Prepare left-aligned kmer-codes for each kmer-size
+    let positional_codes_by_k: FxHashMap<u8, KmerCodes> =
+        build_left_aligned_codes_per_k(&seq_bytes, kmer_specs);
+
     // Initialize counters (default -> 0s)
-    let mut counter = LengthsCounters::default();
+    let mut counter = FragmentKmersCounters::default();
 
     let num_bins = match window_opt {
         WindowSpec::Bed(_) => windows.unwrap().len(),
@@ -413,33 +547,11 @@ fn process_chrom(
     };
 
     // Initialize count arrays
-    let mut counts_by_bin = vec![
-        LengthCounts::new(
-            opt.fragment_lengths.min_fragment_length as usize,
-            opt.fragment_lengths.max_fragment_length as usize
-        );
-        num_bins
-    ];
-
-    // Fraction of a fragment that must overlap with a window to assign to that window
-    let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
-        WindowAssigner::Any | WindowAssigner::CountOverlap => {
-            1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0)
-        } // +1 to avoid rounding error issues
-        WindowAssigner::All | WindowAssigner::Midpoint => {
-            1.0 - (1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0))
-        } // 1.0 but just below to avoid rounding errors
-        WindowAssigner::Proportion(p) => p,
-    };
-
-    // Replace scaling factor with unused index
-    let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
-        scaling_chr.iter().map(|(s, e, _)| (*s, *e, 0u64)).collect();
+    let mut counts_by_bin = vec![FxHashMap::<Kmer, f64>::default(); num_bins];
 
     // Streaming pointers and single fetch for this chr
     let mut bl_ptr = 0; // Blacklist interval
     let mut wd_ptr = 0; // Genomic window
-    let mut sf_ptr = 0; // Scaling factor bin
 
     // Get coordinates to fetch reads from and to
     let (fetch_from, fetch_to) = match window_opt {
@@ -463,7 +575,7 @@ fn process_chrom(
     // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
     let fragment_filter = {
         let lengths = opt.fragment_lengths.clone();
-        move |f: &FragmentWithIndelCounts| lengths.contains(f.len_indel_adjusted())
+        move |f: &FragmentWithKmerSegments| lengths.contains(f.len())
     };
 
     // Wrap to use opt
@@ -473,10 +585,12 @@ fn process_chrom(
     };
 
     // Create fragment iterator
-    let mut iter = fragments_with_indel_counts_from_bam(
+    let mut iter = fragments_with_kmer_segments_from_bam(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
         include_read_fn,
         opt.indel_mode,
+        !opt.ignore_gap,
+        opt.end_offset,
         fragment_filter,
     )
     .with_local_counters();
@@ -484,7 +598,6 @@ fn process_chrom(
     // Iterate fragments and add coverage
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
-        let fragment_length = fragment.len_indel_adjusted(); // Only adjusted when --indel-mode asks for it
 
         // Determine blacklist status
         let in_blacklist = is_blacklisted(
@@ -500,29 +613,16 @@ fn process_chrom(
             continue;
         }
 
-        // Find all overlapping windows
-        let (interval_start, interval_end) = match opt.window_assignment.assign_by {
-            WindowAssigner::Midpoint => {
-                let midpoint =
-                    midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
-                (midpoint, midpoint + 1)
-            }
-            WindowAssigner::Any
-            | WindowAssigner::All
-            | WindowAssigner::Proportion(_)
-            | WindowAssigner::CountOverlap => (fragment.start, fragment.end),
-        };
-
         // Find all overlapping count-windows
         let overlapping_windows = find_overlapping_windows(
             chrom_len,
             &mut wd_ptr,
             windows,
             opt.windows.by_size,
-            interval_start.into(),
-            interval_end.into(),
-            min_overlap_fraction,
-            opt.fragment_lengths.max_fragment_length.into(),
+            (fragment.start + opt.end_offset).into(), // Should only get fragments where this is okay
+            (fragment.end - opt.end_offset).into(),
+            1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
+            (opt.fragment_lengths.max_fragment_length + opt.end_offset).into(),
         )?;
         let overlapping_windows = if let Some(overlaps) = overlapping_windows {
             overlaps
@@ -532,65 +632,15 @@ fn process_chrom(
 
         counter.base.counted_fragments += 1;
 
-        // Find all overlapping scaling-factor bins
-        // And count up the weight
-        if !scaling_chr.is_empty() {
-            // Find overlapping scaling-bins
-            let overlapping_scaling_bins = find_overlapping_windows(
-                chrom_len,
-                &mut sf_ptr,
-                Some(&scaling_with_bin_idx),
-                None,
-                fragment.start.into(), // Full fragment
-                fragment.end.into(),
-                1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
-                opt.fragment_lengths.max_fragment_length.into(),
-            )
-            .with_context(|| format!("finding overlapping scaling bins on chr {chr}"))?
-            .context("no overlapping scaling bins found")?; // Should always find >= 1 bin
-
-            // Extract the indices of the overlapping bins
-            let overlapping_scaling_bin_indices: Vec<usize> = overlapping_scaling_bins
-                .windows
-                .iter()
-                .map(|w| w.idx)
-                .collect();
-
-            // Calculate the weight per overlapping count-window
-            // NOTE: `compute_window_scaling_over_fragment` always returns
-            // an overlap fraction of 1.0 (count full fragment)!
-            let overlap_weights = match opt.window_assignment.assign_by {
-                WindowAssigner::CountOverlap => compute_window_scaling_over_overlap(
-                    &overlapping_windows,
-                    &overlapping_scaling_bin_indices,
-                    scaling_chr,
-                )?,
-                _ => compute_window_scaling_over_fragment(
-                    &overlapping_windows,
-                    &overlapping_scaling_bin_indices,
-                    scaling_chr,
-                )?,
-            };
-
-            // Count up the weight per overlapping count-window
-            for (overlapped_window_idx, scaling_weight, overlap_fraction_to_count) in
-                overlap_weights
-            {
-                counts_by_bin[overlapped_window_idx].incr_weighted(
-                    fragment_length as usize,
-                    overlap_fraction_to_count * scaling_weight,
-                );
-            }
-        } else {
-            // When no scaling, increment counter by 1.0 or by the overlap fraction
-            for overlapped_window in overlapping_windows.windows {
-                let count_weight = match opt.window_assignment.assign_by {
-                    WindowAssigner::CountOverlap => overlapped_window.overlap_fraction as f64,
-                    _ => 1.0f64,
-                };
-                counts_by_bin[overlapped_window.idx]
-                    .incr_weighted(fragment_length as usize, count_weight);
-            }
+        for overlapped_window in overlapping_windows.windows {
+            let counts = &mut counts_by_bin[overlapped_window.idx.clone()];
+            count_kmers_in_segments(
+                &fragment,
+                &positional_codes_by_k,
+                kmer_specs,
+                counts,
+                positional_scaling_weights.as_ref(),
+            );
         }
     }
 
@@ -633,4 +683,28 @@ fn process_chrom(
     };
 
     Ok((counts_by_bin, bin_info, counter))
+}
+
+fn count_kmers_in_segments(
+    fragment: &FragmentWithKmerSegments,
+    positional_codes_by_k: &FxHashMap<u8, KmerCodes>,
+    kmer_specs: &FxHashMap<u8, KmerSpec>,
+    counts: &mut FxHashMap<Kmer, f64>,
+    weights: Option<&Vec<f32>>,
+) {
+    for k in kmer_specs.keys() {
+        let codes = positional_codes_by_k.get(k).unwrap();
+        for (seg_start, seq_end) in &fragment.segments {
+            for idx in *seg_start..(*seq_end - *k as u32) {
+                let w = weights.map_or(1.0, |w| unsafe { *w.get_unchecked(idx as usize) });
+
+                *counts
+                    .entry(Kmer {
+                        k: *k,
+                        code: codes.get(idx as usize),
+                    })
+                    .or_insert(0.) += w as f64;
+            }
+        }
+    }
 }

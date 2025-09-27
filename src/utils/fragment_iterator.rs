@@ -74,6 +74,9 @@ use crate::utils::{
         segment_fragment::{
             FragmentWithSegments, SegmentedReadInfo, collect_fragment_with_segments,
         },
+        segment_kmer_fragment::{
+            FragmentWithKmerSegments, KmerSegmentedReadInfo, collect_fragment_with_kmer_segments,
+        },
     },
     indel_mode::IndelMode,
     iterator_counter::{
@@ -310,6 +313,64 @@ where
     let mapped = frags.map(|res| res.map(InputItem::Fragment));
 
     PairingAdapter::new(mapped, None::<WithSegmentsPairer>).with_fragment_filter(fragment_filter)
+}
+
+/* Kmer segments pairing */
+
+#[derive(Clone, Copy)]
+pub struct KmerSegmentsPairer {
+    pub indel_mode: IndelMode,
+    pub include_inter_mate_gap: bool,
+    pub end_offset: u32,
+}
+
+impl Pairer for KmerSegmentsPairer {
+    type Read = KmerSegmentedReadInfo;
+    type Output = FragmentWithKmerSegments;
+
+    fn pair(&self, a: &Self::Read, b: &Self::Read) -> Option<Self::Output> {
+        collect_fragment_with_kmer_segments(
+            a,
+            b,
+            self.indel_mode,
+            self.include_inter_mate_gap,
+            self.end_offset,
+        )
+    }
+}
+
+pub fn fragments_with_kmer_segments_from_bam<RIter, PF>(
+    records: RIter,
+    include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
+    indel_mode: IndelMode,
+    include_inter_mate_gap: bool,
+    end_offset: u32,
+    fragment_filter: PF,
+) -> PairingAdapter<
+    impl Iterator<Item = Result<InputItem<FragmentWithKmerSegments>>>,
+    KmerSegmentsPairer,
+    KmerSegmentedReadInfo,
+    FragmentWithKmerSegments,
+>
+where
+    RIter: Iterator<Item = Result<Record>>,
+    PF: Fn(&FragmentWithKmerSegments) -> bool + Send + Sync + 'static,
+{
+    let pairer = KmerSegmentsPairer {
+        indel_mode,
+        include_inter_mate_gap,
+        end_offset,
+    };
+
+    let mapped = records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord));
+
+    let capture_segments = matches!(indel_mode, IndelMode::Adjust);
+
+    PairingAdapter::new(mapped, Some(pairer))
+        .with_bam_filter_and_mapper(include_read, move |rec| {
+            KmerSegmentedReadInfo::from_record(rec, capture_segments)
+        })
+        .with_fragment_filter(fragment_filter)
 }
 
 /* Basic fragment pairing */

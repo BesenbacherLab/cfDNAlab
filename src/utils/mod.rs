@@ -11,6 +11,7 @@ pub mod gc;
 pub mod grouped_bed;
 pub mod indel_mode;
 pub mod iterator_counter;
+pub mod kmers;
 pub mod lengths;
 pub mod normalize_genome;
 pub mod overlaps;

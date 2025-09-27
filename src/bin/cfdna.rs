@@ -1,4 +1,5 @@
 use cfdnalab::fcoverage::FCoverageConfig;
+use cfdnalab::fragment_kmers::FragmentKmersConfig;
 use cfdnalab::gc::GCConfig;
 use cfdnalab::lengths::LengthsConfig;
 use cfdnalab::normalize_genome::NormalizeGenomeConfig;
@@ -22,6 +23,7 @@ enum Cmd {
     Lengths(LengthsConfig),
     Fcoverage(FCoverageConfig),
     ProfileGroups(ProfileGroupsConfig),
+    FragmentKmers(FragmentKmersConfig),
     // Ends(EndsConfig),
 }
 
@@ -49,6 +51,7 @@ fn main() {
         Cmd::Lengths(cfg) => cfdnalab::lengths::run(cfg),
         Cmd::Fcoverage(cfg) => cfdnalab::fcoverage::run(cfg),
         Cmd::ProfileGroups(cfg) => cfdnalab::profile_groups::run(cfg),
+        Cmd::FragmentKmers(cfg) => cfdnalab::fragment_kmers::run(cfg),
         // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg),
     };
 
