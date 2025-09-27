@@ -152,7 +152,7 @@ pub struct FragmentKmersConfig {
     ///
     /// Odd-sized kmers are collapsed such that the middle base is `A` or `C`.
     /// Even-sized kmers are collapsed to the lexicographically lowest motif.
-    #[clap(long, help_heading = "Core")]
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     canonical: bool,
 
     /// Save counts as sparse-array. [flag]
@@ -161,7 +161,7 @@ pub struct FragmentKmersConfig {
     /// unless we have a LOT of RAM and storage space. Enable this
     /// flag to save as a COO sparse array that can be opened in
     /// python via `scipy.sparse.load_npz()`.
-    #[clap(long, help_heading = "Core")]
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub save_sparse: bool,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
