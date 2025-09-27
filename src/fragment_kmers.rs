@@ -134,7 +134,7 @@ pub struct FragmentKmersConfig {
         feature = "cli",
         clap(
             long,
-            default_value = "reference",
+            default_value = "ignore",
             ignore_case = true,
             help_heading = "Core"
         )
