@@ -835,14 +835,14 @@ mod test_kmer_segments {
             120,
             true,
             &[
-                Cigar::Match(5), // 120-125
-                Cigar::Ins(1),   // agreed insertion in overlap
-                Cigar::Match(5), // 125-130
-                Cigar::Del(2),   // agreed deletion in overlap (130-132)
-                Cigar::Match(8), // 132-140
-                Cigar::Match(5), // 140-145
-                Cigar::Ins(1),   // insertion beyond overlap (reverse tail)
-                Cigar::Match(5), // 145-160
+                Cigar::Match(5),  // 120-125
+                Cigar::Ins(1),    // agreed insertion in overlap
+                Cigar::Match(5),  // 125-130
+                Cigar::Del(2),    // agreed deletion in overlap (130-132)
+                Cigar::Match(8),  // 132-140
+                Cigar::Match(5),  // 140-145
+                Cigar::Ins(1),    // insertion beyond overlap (reverse tail)
+                Cigar::Match(15), // 145-160
             ],
         );
 
