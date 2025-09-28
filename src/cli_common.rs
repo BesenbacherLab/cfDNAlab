@@ -350,7 +350,7 @@ pub struct ScaleGenomeArgs {
     ///   - end exactly at that chromosome’s length (from `contigs`)
     #[cfg_attr(
         feature = "cli",
-        clap(short = 'i', long, value_parser, help_heading = "Normalization")
+        clap(long, value_parser, help_heading = "Normalization")
     )]
     pub scaling_factors: Option<PathBuf>,
 }
