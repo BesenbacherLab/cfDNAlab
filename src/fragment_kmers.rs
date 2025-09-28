@@ -708,6 +708,9 @@ fn count_kmers_in_segments(
             let Some(last_start) = seg_end.checked_sub(k_span) else {
                 continue;
             };
+            if last_start < *seg_start {
+                continue;
+            }
 
             for idx in *seg_start..=last_start {
                 let idx_usize = idx as usize;
