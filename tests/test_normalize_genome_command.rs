@@ -30,6 +30,7 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
     cfg.set_stride(20);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
+    cfg.set_output_prefix("coverage".to_string());
     {
         let frag = cfg.fragment_lengths_mut();
         frag.min_fragment_length = 10;
@@ -38,7 +39,7 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
 
     run(cfg)?;
 
-    let tsv_path = out_dir.path().join("coverage_scaling_factors.tsv");
+    let tsv_path = out_dir.path().join("coverage.scaling_factors.tsv");
     assert!(tsv_path.exists());
     let content = std::fs::read_to_string(&tsv_path)?;
     let mut lines = content.lines();
