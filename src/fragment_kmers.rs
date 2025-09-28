@@ -294,6 +294,10 @@ impl FragmentKmersConfig {
         self.windows = windows;
     }
 
+    pub fn set_scale_genome(&mut self, scale: ScaleGenomeArgs) {
+        self.scale_genome = scale;
+    }
+
     pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
         &mut self.fragment_lengths
     }

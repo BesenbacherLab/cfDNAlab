@@ -98,6 +98,121 @@ pub fn simple_reference_twobit() -> Result<TwoBitFixture> {
     twobit_from_sequences("simple_reference", vec![chr1])
 }
 
+fn repeat_pattern(pattern: &[u8], len: usize) -> String {
+    let mut buf = Vec::with_capacity(len);
+    for i in 0..len {
+        buf.push(pattern[i % pattern.len()]);
+    }
+    String::from_utf8(buf).expect("valid DNA pattern")
+}
+
+pub fn complex_reference_twobit() -> Result<TwoBitFixture> {
+    let chr1 = ("chr1".to_string(), repeat_pattern(b"ACGT", 500));
+    let chr2 = ("chr2".to_string(), repeat_pattern(b"TGCA", 400));
+    twobit_from_sequences("complex_reference", vec![chr1, chr2])
+}
+
+pub fn fragment_kmers_edge_reference() -> Result<TwoBitFixture> {
+    let chr1 = (
+        "chr1".to_string(),
+        "ACGTGACCTTAGGCTAACCGTACGTTAGCCGATTACAAGT".to_string(),
+    );
+    twobit_from_sequences("fragment_kmers_edge", vec![chr1])
+}
+
+pub fn fragment_kmers_edge_bam() -> Result<BamFixture> {
+    let chroms = vec![("chr1".to_string(), 40u32)];
+
+    let fragments = vec![
+        FragmentSpec {
+            forward: ReadSpec {
+                tid: 0,
+                pos: 0,
+                cigar: vec![('M', 10)],
+                seq: seq(10, b'A'),
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: FLAG_FIRST_MATE | FLAG_MATE_REVERSE | FLAG_PROPER_PAIR,
+                mate_tid: Some(0),
+                mate_pos: Some(14),
+                insert_size: 24,
+            },
+            reverse: ReadSpec {
+                tid: 0,
+                pos: 14,
+                cigar: vec![('M', 10)],
+                seq: seq(10, b'T'),
+                qual: 40,
+                is_reverse: true,
+                mapq: 60,
+                flags: FLAG_SECOND_MATE | FLAG_PROPER_PAIR,
+                mate_tid: Some(0),
+                mate_pos: Some(0),
+                insert_size: -24,
+            },
+        },
+        FragmentSpec {
+            forward: ReadSpec {
+                tid: 0,
+                pos: 5,
+                cigar: vec![('M', 4), ('I', 1), ('M', 4)],
+                seq: seq(9, b'C'),
+                qual: 35,
+                is_reverse: false,
+                mapq: 55,
+                flags: FLAG_FIRST_MATE | FLAG_MATE_REVERSE | FLAG_PROPER_PAIR,
+                mate_tid: Some(0),
+                mate_pos: Some(13),
+                insert_size: 16,
+            },
+            reverse: ReadSpec {
+                tid: 0,
+                pos: 13,
+                cigar: vec![('M', 8)],
+                seq: seq(8, b'G'),
+                qual: 35,
+                is_reverse: true,
+                mapq: 55,
+                flags: FLAG_SECOND_MATE | FLAG_PROPER_PAIR,
+                mate_tid: Some(0),
+                mate_pos: Some(5),
+                insert_size: -16,
+            },
+        },
+        FragmentSpec {
+            forward: ReadSpec {
+                tid: 0,
+                pos: 16,
+                cigar: vec![('M', 3), ('D', 1), ('M', 5)],
+                seq: seq(8, b'A'),
+                qual: 30,
+                is_reverse: false,
+                mapq: 50,
+                flags: FLAG_FIRST_MATE | FLAG_MATE_REVERSE | FLAG_PROPER_PAIR,
+                mate_tid: Some(0),
+                mate_pos: Some(20),
+                insert_size: 11,
+            },
+            reverse: ReadSpec {
+                tid: 0,
+                pos: 20,
+                cigar: vec![('M', 7)],
+                seq: seq(7, b'T'),
+                qual: 30,
+                is_reverse: true,
+                mapq: 50,
+                flags: FLAG_SECOND_MATE | FLAG_PROPER_PAIR,
+                mate_tid: Some(0),
+                mate_pos: Some(16),
+                insert_size: -11,
+            },
+        },
+    ];
+
+    bam_from_specs(chroms, fragments, Vec::new(), "fragment_kmers_edge")
+}
+
 #[derive(Clone)]
 pub struct ReadSpec {
     pub tid: usize,
@@ -438,6 +553,7 @@ pub fn write_scaling_factors<P: AsRef<Path>>(
     rows: &[(&str, u64, u64, f32)],
 ) -> Result<()> {
     let mut f = File::create(path)?;
+    writeln!(f, "chromosome\tstart\tend\tscaling_factor")?;
     for (chr, start, end, factor) in rows {
         writeln!(f, "{}\t{}\t{}\t{}", chr, start, end, factor)?;
     }
