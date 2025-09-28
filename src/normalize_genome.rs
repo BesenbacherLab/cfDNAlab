@@ -95,6 +95,23 @@ pub struct NormalizeGenomeConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     ioc: IOCArgs,
 
+    /// Prefix for output files (e.g., a sample name) `[string]`
+    ///
+    /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
+    ///
+    /// Examples produce files like:
+    ///   `<prefix>.scaling_factors.tsv`
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            short = 'x',
+            default_value = "normalize_genome",
+            help_heading = "Core"
+        )
+    )]
+    pub output_prefix: String,
+
     /// Size (bp) of large genomic bins to calculate coverage in [integer]
     ///
     /// Larger values lead to a more smooth coverage across the genome.
@@ -177,6 +194,7 @@ impl NormalizeGenomeConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
+            output_prefix: "normalize_genome".to_string(),
             bin_size: 5_000_000,
             stride: 500_000,
             chromosomes,
@@ -190,6 +208,10 @@ impl NormalizeGenomeConfig {
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::default(),
         }
+    }
+
+    pub fn set_output_prefix(&mut self, output_prefix: String) {
+        self.output_prefix = output_prefix;
     }
 
     pub fn set_bin_size(&mut self, bin_size: u32) {
@@ -325,9 +347,9 @@ pub fn run(opt: NormalizeGenomeConfig) -> Result<()> {
     // Write bins BED file
 
     println!("Start: Writing stride-bin coordinates and scaling factors to disk");
+    let file_name = format!("{}.scaling_factors.tsv", opt.output_prefix);
     let mut bed_writer = BufWriter::new(
-        File::create(&opt.ioc.output_dir.join("coverage_scaling_factors.tsv"))
-            .context("Creating tsv failed")?,
+        File::create(&opt.ioc.output_dir.join(file_name)).context("Creating tsv failed")?,
     );
     writeln!(
         bed_writer,
