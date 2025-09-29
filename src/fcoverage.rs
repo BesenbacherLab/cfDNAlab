@@ -12,9 +12,10 @@ use crate::utils::coverage::reducer::{
 };
 use crate::utils::coverage::scale_genome::apply_scaling_to_coverage_in_place;
 use crate::utils::coverage::tiled_run::{
-    adapt_fetch_to_extreme_windows, build_tiles, concat_aligned_size_tile_finals,
-    coverage_sum_and_counts, emit_bedgraph_runs, emit_windowed_runs, finalize_value,
-    intersect_abs_with_core_to_local, make_temp_dir, merge_positional_tiles, round_to,
+    Tile, TileMode, TileWindowSpan, adapt_fetch_to_extreme_windows, add_fragment_clipped_to_core,
+    build_tiles, concat_aligned_size_tile_finals, coverage_sum_and_counts, emit_bedgraph_runs,
+    emit_windowed_runs, finalize_value, intersect_abs_with_core_to_local, make_temp_dir,
+    merge_positional_tiles, overlapping_windows_for_tile, precompute_tile_window_spans, round_to,
 };
 use crate::utils::coverage::writer::{open_zstd_auto_writer, write_final_row};
 use crate::utils::fragment::segment_fragment::FragmentWithSegments;
@@ -30,11 +31,7 @@ use crate::{
             ensure_output_dir, load_blacklist_map, load_scaling_map,
             resolve_chromosomes_and_contigs,
         },
-        coverage::{
-            coverage_prefix::Coverage,
-            tiled_run::{Tile, TileMode, add_fragment_clipped_to_core, windows_overlapping_core},
-            window_results::CoverageWindowAction,
-        },
+        coverage::{coverage_prefix::Coverage, window_results::CoverageWindowAction},
         thread_pool::init_global_pool,
     },
 };
@@ -362,9 +359,16 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     };
 
     // Build tiles
-    let halo_bp: u32 = opt.fragment_lengths.max_fragment_length; // safe halo for pairing/segments
+    let halo_bp: u32 = opt.fragment_lengths.max_fragment_length; // Safe halo for pairing/segments
     let (tiles, tile_and_window_boundaries_align) =
         build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, by_size_bp)?;
+
+    let windows_lookup = windows_map.as_ref();
+    let tile_window_spans = Arc::new(precompute_tile_window_spans(&tiles, |chr| {
+        windows_lookup
+            .and_then(|m| m.get(chr).map(|w| w.as_slice()))
+            .unwrap_or(&[])
+    }));
 
     // Where per-tile files go
     let positional_prefix = format!("{prefix}.pos");
@@ -418,9 +422,13 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
 
     pb.set_position(0);
 
+    let tile_window_spans_for_threads = tile_window_spans.clone();
+
     let tile_results: Vec<FCoverageCounters> = tiles
         .par_iter()
-        .map(|tile| -> Result<FCoverageCounters> {
+        .enumerate()
+        .map(|(tile_idx, tile)| -> Result<FCoverageCounters> {
+            let tile_span = tile_window_spans_for_threads[tile_idx];
             // Per-chrom projections
             let windows_chr: Option<&[(u64, u64, u64)]> = windows_map
                 .as_ref()
@@ -537,6 +545,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
             let counter = process_tile(
                 &opt,
                 tile,
+                tile_span.as_ref(),
                 blacklist_chr,
                 scaling_chr,
                 mode,
@@ -736,6 +745,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
 fn process_tile(
     opt: &FCoverageConfig,
     tile: &Tile,
+    tile_window_span: Option<&TileWindowSpan>,
     blacklist_chr: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
     mode: TileMode,
@@ -751,7 +761,7 @@ fn process_tile(
     // Adapt the fetch coordinates to the present windows (*in windowed mode!*)
     // When no windows are present, skip this tile
     let Some((fetch_from, fetch_to)) =
-        adapt_fetch_to_extreme_windows(&tile, &mode, chrom_len as u32)
+        adapt_fetch_to_extreme_windows(&tile, tile_window_span, &mode, chrom_len as u32)
     else {
         return Ok(counter);
     };
@@ -843,9 +853,8 @@ fn process_tile(
                     )?;
                 }
                 Some(win_chr) => {
-                    // Only include windows that overlap the tile core
                     for &(window_start, window_end, original_idx) in
-                        windows_overlapping_core(win_chr, tile.core_start, tile.core_end)
+                        overlapping_windows_for_tile(win_chr, tile, tile_window_span)
                     {
                         let (local_start_idx, local_end_idx) =
                             if let Some((local_start_idx, local_end_idx, _, _)) =
@@ -921,8 +930,7 @@ fn process_tile(
             let ce = tile.core_end as u64;
 
             // Walk only windows overlapping the core (already start-sorted)
-            for &(ws, we, idx) in windows_overlapping_core(windows, tile.core_start, tile.core_end)
-            {
+            for &(ws, we, idx) in overlapping_windows_for_tile(windows, tile, tile_window_span) {
                 let (local_start_idx, local_end_idx) =
                     if let Some((local_start_idx, local_end_idx, _, _)) =
                         intersect_abs_with_core_to_local(ws, we, tile.core_start, tile.core_end)

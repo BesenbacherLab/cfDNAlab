@@ -109,7 +109,10 @@ impl FragmentLengthArgs {
 
 /* Window selection */
 
-// Windows option ENUM
+/// The windowing options `[ENUM]`
+///
+/// Whether to perform a command globally (1 overall genomic window)
+/// or in windows specified with a BED file or a fixed window size.
 #[derive(Debug, Clone)]
 pub enum WindowSpec {
     Global,

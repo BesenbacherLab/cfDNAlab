@@ -18,7 +18,10 @@ use crate::{
         },
         coverage::{
             scale_genome::compute_window_scaling_over_fragment,
-            tiled_run::{Tile, build_tiles, make_temp_dir},
+            tiled_run::{
+                Tile, TileWindowSpan, build_tiles, clamp_fetch_to_window_span, make_temp_dir,
+                overlapping_windows_for_tile, precompute_tile_window_spans,
+            },
         },
         fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
@@ -292,6 +295,11 @@ pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
     let (tiles, _) = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, None)?;
     let total_tiles = tiles.len();
 
+    let windows_lookup = &windows_map;
+    let tile_window_spans = Arc::new(precompute_tile_window_spans(&tiles, |chr| {
+        windows_lookup.get(chr).map(|w| w.as_slice()).unwrap_or(&[])
+    }));
+
     // Where per-tile files go
     let tmp_prefix = format!("{prefix}.midpoint_profiles.tile");
     let tmp_prefix = tmp_prefix.as_str();
@@ -323,9 +331,13 @@ pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
 
     pb.set_position(0);
 
+    let tile_window_spans_for_threads = tile_window_spans.clone();
+
     let tile_results: Vec<(ProfileGroupsCounters, Option<PathBuf>)> = tiles
         .par_iter()
-        .map(|tile| -> Result<(_, _)> {
+        .enumerate()
+        .map(|(tile_idx, tile)| -> Result<(_, _)> {
+            let tile_span = tile_window_spans_for_threads[tile_idx];
             // Per-chrom projections
             let windows_chr: &[(u64, u64, u64)] = windows_map
                 .get(&tile.chr)
@@ -356,6 +368,7 @@ pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
                 num_groups,
                 &length_bins,
                 windows_chr,
+                tile_span.as_ref(),
                 blacklist_chr,
                 scaling_chr,
             )?;
@@ -442,6 +455,7 @@ fn process_tile(
     num_groups: usize,
     length_bins: &[u32],
     windows: &[(u64, u64, u64)],
+    tile_window_span: Option<&TileWindowSpan>,
     blacklist_intervals: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
 ) -> anyhow::Result<(ProfileGroupsCounters, Option<PathBuf>)> {
@@ -459,7 +473,12 @@ fn process_tile(
     // Adapt the fetch coordinates to the present windows
     // When no windows are present, skip this tile
     let Some((core_overlapping_windows, fetch_from, fetch_to)) =
-        get_overlapping_sites_and_adapt_fetch_to_extremes(windows, &tile, chrom_len as u32)
+        get_overlapping_sites_and_adapt_fetch_to_extremes(
+            windows,
+            tile_window_span,
+            &tile,
+            chrom_len as u32,
+        )
     else {
         return Ok((counter, None));
     };
@@ -494,7 +513,9 @@ fn process_tile(
 
     // Streaming pointers and single fetch for this chr
     let mut bl_ptr = 0; // Blacklist interval
-    let mut wd_ptr = 0; // Genomic window
+    let mut wd_ptr = tile_window_span
+        .and_then(|span| (!span.is_empty()).then_some(span.first_idx))
+        .unwrap_or(0);
     let mut sf_ptr = 0; // Scaling factor bin
 
     // Create fragment iterator
@@ -637,56 +658,24 @@ fn process_tile(
 
 pub fn get_overlapping_sites_and_adapt_fetch_to_extremes<'a>(
     windows: &'a [(u64, u64, u64)],
+    tile_span: Option<&TileWindowSpan>,
     tile: &Tile,
     chrom_len: u32,
 ) -> Option<(Vec<(u64, u64, u64)>, i64, i64)> {
-    let cs = tile.core_start as u64;
-    let ce = tile.core_end as u64;
+    let overlapping_sites: Vec<(u64, u64, u64)> =
+        overlapping_windows_for_tile(windows, tile, tile_span)
+            .map(|&(s, e, idx)| (s, e, idx))
+            .collect();
 
-    // Collect indices of overlaps, track extremes
-    let mut idxs: Vec<usize> = Vec::new();
-    let mut found = false;
-    let mut min_ws: u64 = u64::MAX;
-    let mut max_we: u64 = 0;
-
-    // For fixed length, start-sorted windows, we can break early once ws >= ce
-    for (i, &(ws, we, _)) in windows.iter().enumerate() {
-        if ws >= ce {
-            break; // Nothing further can overlap [cs, ce)
-        }
-        if we > cs && ws < ce {
-            found = true;
-            if ws < min_ws {
-                min_ws = ws;
-            }
-            if we > max_we {
-                max_we = we;
-            }
-            idxs.push(i);
-        }
-    }
-
-    if !found {
+    if overlapping_sites.is_empty() {
         return None;
     }
 
-    // Use the tile's actual halo (already clamped to chromosome edges in your tile)
-    let left_halo = tile.core_start.saturating_sub(tile.fetch_start);
-    let right_halo = tile.fetch_end.saturating_sub(tile.core_end);
+    let min_ws = overlapping_sites.iter().map(|(s, _, _)| *s).min().unwrap();
+    let max_we = overlapping_sites.iter().map(|(_, e, _)| *e).max().unwrap();
 
-    // Proposed narrower fetch band from window span ± halo
-    let narrowed_start = (min_ws as u32).saturating_sub(left_halo);
-    let narrowed_end = (max_we as u32).saturating_add(right_halo);
+    let (fetch_from, fetch_to) =
+        clamp_fetch_to_window_span(tile, chrom_len as u64, min_ws, max_we)?;
 
-    // Intersect with tile's original fetch band and clamp to chrom length
-    let start_u32 = narrowed_start.max(tile.fetch_start);
-    let end_u32 = narrowed_end.min(tile.fetch_end).min(chrom_len);
-    if start_u32 >= end_u32 {
-        return None;
-    }
-
-    // Build vector of the overlappign sites from the indices
-    let overlapping_sites = idxs.iter().map(move |i| windows[*i]).collect();
-
-    Some((overlapping_sites, start_u32 as i64, end_u32 as i64))
+    Some((overlapping_sites, fetch_from, fetch_to))
 }

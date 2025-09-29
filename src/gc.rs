@@ -312,7 +312,7 @@ fn process_chrom(
     let (mut reader, tid, chrom_len) = create_chromosome_reader(&opt.ioc.bam, chr)?;
 
     let mut seq_bytes = read_seq(&opt.ref_2bit, chr)?;
-    apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals);
+    apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals, 0);
 
     let gc_prefixes = build_gc_prefixes(&seq_bytes);
 

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use fxhash::{FxHashMap, FxHashSet};
-use std::path::Path;
+use std::{ops::RangeBounds, path::Path};
 use twobit::TwoBitFile;
 
 /// Load reference genome sequence for
@@ -12,6 +12,24 @@ pub fn read_seq(path: &Path, chr: &str) -> anyhow::Result<Vec<u8>> {
     let seq = tb
         .read_sequence(chr, ..)
         .context(format!("extracting reference seq for {}", chr))?;
+    Ok(seq.as_bytes().to_vec())
+}
+
+/// Load reference genome sequence for a range of positions
+/// in a single chromosome from a 2bit file.
+pub fn read_seq_in_range<R>(path: &Path, chr: &str, range: R) -> anyhow::Result<Vec<u8>>
+where
+    R: RangeBounds<usize> + Clone,
+{
+    // Open 2bit file
+    let mut tb = TwoBitFile::open(path).context("opening 2bit")?;
+    // Extract reference sequence
+    let seq = tb.read_sequence(chr, range.clone()).context(format!(
+        "extracting reference seq for {}:{:?}-{:?}",
+        chr,
+        range.start_bound().cloned(),
+        range.end_bound().cloned()
+    ))?;
     Ok(seq.as_bytes().to_vec())
 }
 

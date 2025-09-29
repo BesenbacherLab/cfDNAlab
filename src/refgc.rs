@@ -264,7 +264,7 @@ fn process_chrom(
     start_positions: &[usize],
 ) -> anyhow::Result<(Vec<GCCounts>, Option<Vec<(String, u64, u64, u64, f64)>>)> {
     let mut seq_bytes = read_seq(&opt.ref_genome.ref_2bit, chr)?;
-    apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals);
+    apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals, 0);
     let chrom_len = seq_bytes.len() as u64;
 
     let gc_prefixes = build_gc_prefixes(&seq_bytes);

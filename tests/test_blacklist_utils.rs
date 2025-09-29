@@ -79,7 +79,7 @@ mod tests_seq_blacklisting {
     fn mask_simple() {
         let mut seq = b"ACGTACGT".to_vec();
         let ivs = vec![(2, 4), (6, 8)]; // mask "GT" and last "GT"
-        apply_blacklist_mask_to_seq(&mut seq, &ivs);
+        apply_blacklist_mask_to_seq(&mut seq, &ivs, 0);
         assert_eq!(seq, b"ACXXACXX");
     }
 
@@ -87,7 +87,7 @@ mod tests_seq_blacklisting {
     fn mask_past_end_is_safe() {
         let mut seq = b"AAAA".to_vec();
         let ivs = vec![(2, 10)]; // interval overhangs chromosome
-        apply_blacklist_mask_to_seq(&mut seq, &ivs);
+        apply_blacklist_mask_to_seq(&mut seq, &ivs, 0);
         assert_eq!(seq, b"AAXX");
     }
 
@@ -95,14 +95,22 @@ mod tests_seq_blacklisting {
     fn no_intervals_no_change() {
         let original = b"TGCA".to_vec();
         let mut seq = original.clone();
-        apply_blacklist_mask_to_seq(&mut seq, &[]);
+        apply_blacklist_mask_to_seq(&mut seq, &[], 0);
         assert_eq!(seq, original);
     }
 
     #[test]
     fn uses_correct_byte() {
         let mut seq = b"GGGG".to_vec();
-        apply_blacklist_mask_to_seq(&mut seq, &[(0, 4)]);
+        apply_blacklist_mask_to_seq(&mut seq, &[(0, 4)], 0);
         assert!(seq.iter().all(|&b| b == BLACKLIST_BYTE));
+    }
+
+    #[test]
+    fn masks_with_offset_slice() {
+        let mut seq = b"ACGTACGT".to_vec();
+        let ivs = vec![(4, 6)];
+        apply_blacklist_mask_to_seq(&mut seq, &ivs, 2);
+        assert_eq!(seq, b"ACXXACGT");
     }
 }

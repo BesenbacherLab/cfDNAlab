@@ -317,3 +317,152 @@ fn complex_edge_cases_respect_scaling_and_blacklists() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests_fragment_kmers_tiling {
+    use anyhow::Result;
+    use cfdnalab::{
+        fragment_kmers::*,
+        utils::kmers::kmer_codec::{KmerSpec, build_kmer_specs},
+    };
+
+    fn code_for_motif(spec: &KmerSpec, motif: &str) -> u64 {
+        let limit = 5u64.pow(spec.k as u32);
+        for code in 0..limit {
+            if spec.decode_kmer(code) == motif {
+                return code;
+            }
+        }
+        panic!("motif {} not encodable", motif);
+    }
+
+    #[test]
+    fn merge_tile_counts_merges_two_tiles() -> Result<()> {
+        let kmer_specs = build_kmer_specs(&[3])?;
+        let spec3 = &kmer_specs[&3];
+        let code_aaa = code_for_motif(spec3, "AAA");
+
+        let payload_a = vec![TileWindowCounts {
+            original_idx: 0,
+            entries: vec![TileKmerCountEntry {
+                k: 3,
+                code: code_aaa,
+                value: 1.5,
+            }],
+        }];
+
+        let payload_b = vec![TileWindowCounts {
+            original_idx: 0,
+            entries: vec![TileKmerCountEntry {
+                k: 3,
+                code: code_aaa,
+                value: 2.0,
+            }],
+        }];
+
+        let merged = merge_tile_counts(vec![payload_a, payload_b], 1, &kmer_specs)?;
+        assert_eq!(merged.len(), 1);
+        let window_counts = merged[0].counts.get(&3).unwrap();
+        let value = window_counts.get("AAA").copied().unwrap_or_default();
+        assert!((value - 3.5).abs() < 1e-9);
+        Ok(())
+    }
+
+    #[test]
+    fn merge_tile_counts_merges_three_tiles() -> Result<()> {
+        let kmer_specs = build_kmer_specs(&[3])?;
+        let spec3 = &kmer_specs[&3];
+        let code_aaa = code_for_motif(spec3, "AAA");
+        let code_aac = code_for_motif(spec3, "AAC");
+
+        let payload_1 = vec![
+            TileWindowCounts {
+                original_idx: 0,
+                entries: vec![TileKmerCountEntry {
+                    k: 3,
+                    code: code_aaa,
+                    value: 1.0,
+                }],
+            },
+            TileWindowCounts {
+                original_idx: 1,
+                entries: vec![TileKmerCountEntry {
+                    k: 3,
+                    code: code_aac,
+                    value: 2.0,
+                }],
+            },
+        ];
+
+        let payload_2 = vec![
+            TileWindowCounts {
+                original_idx: 0,
+                entries: vec![TileKmerCountEntry {
+                    k: 3,
+                    code: code_aaa,
+                    value: 3.0,
+                }],
+            },
+            TileWindowCounts {
+                original_idx: 2,
+                entries: vec![TileKmerCountEntry {
+                    k: 3,
+                    code: code_aaa,
+                    value: 5.0,
+                }],
+            },
+        ];
+
+        let payload_3 = vec![
+            TileWindowCounts {
+                original_idx: 0,
+                entries: vec![TileKmerCountEntry {
+                    k: 3,
+                    code: code_aaa,
+                    value: 0.5,
+                }],
+            },
+            TileWindowCounts {
+                original_idx: 1,
+                entries: vec![TileKmerCountEntry {
+                    k: 3,
+                    code: code_aac,
+                    value: 1.5,
+                }],
+            },
+        ];
+
+        let merged = merge_tile_counts(vec![payload_1, payload_2, payload_3], 3, &kmer_specs)?;
+        assert_eq!(merged.len(), 3);
+
+        let win0 = merged[0].counts.get(&3).unwrap();
+        assert!((win0.get("AAA").copied().unwrap_or_default() - 4.5).abs() < 1e-9);
+
+        let win1 = merged[1].counts.get(&3).unwrap();
+        assert!((win1.get("AAC").copied().unwrap_or_default() - 3.5).abs() < 1e-9);
+
+        let win2 = merged[2].counts.get(&3).unwrap();
+        assert_eq!(win2.len(), 1);
+        assert!((win2.get("AAA").copied().unwrap_or_default() - 5.0).abs() < 1e-9);
+        Ok(())
+    }
+
+    #[test]
+    fn merge_tile_counts_rejects_out_of_range_indices() {
+        let kmer_specs = build_kmer_specs(&[3]).expect("build specs");
+        let spec3 = &kmer_specs[&3];
+        let code_aaa = code_for_motif(spec3, "AAA");
+
+        let payload = vec![TileWindowCounts {
+            original_idx: 5,
+            entries: vec![TileKmerCountEntry {
+                k: 3,
+                code: code_aaa,
+                value: 1.0,
+            }],
+        }];
+
+        let result = merge_tile_counts(vec![payload], 2, &kmer_specs);
+        assert!(result.is_err());
+    }
+}
