@@ -936,10 +936,16 @@ fn process_tile(
         });
     };
 
+    // Extend the reference slice to include k-mers at the right tile edge
+    let max_k: u32 = kmer_specs.keys().copied().max().unwrap_or(1) as u32;
+    let seq_end_abs = (tile.core_end as u64)
+        .saturating_add((max_k as u64).saturating_sub(1))
+        .min(chrom_len) as usize;
+
     let mut seq_bytes = read_seq_in_range(
         &opt.ref_genome.ref_2bit,
         &tile.chr,
-        (tile.core_start as usize)..(tile.core_end as usize),
+        (tile.core_start as usize)..(seq_end_abs),
     )?;
 
     apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals, tile.core_start as u64);
@@ -1113,12 +1119,16 @@ fn count_kmers_in_segments_clipped(
 
         for &(seg_start, seg_end) in &fragment.segments {
             let seg_start = seg_start.max(tile_core_start);
-            let seg_end = seg_end.min(tile_core_end);
-            if seg_start >= seg_end {
+
+            // Allow k-mers that START within the core to use up to (k-1) bases past core_end
+            let effective_seg_end =
+                seg_end.min(tile_core_end.saturating_add(k_span).saturating_sub(1));
+
+            if seg_start >= seg_end.min(tile_core_end) {
                 continue;
             }
 
-            let Some(last_start) = seg_end.checked_sub(k_span) else {
+            let Some(last_start) = effective_seg_end.checked_sub(k_span) else {
                 continue;
             };
             if last_start < seg_start {
@@ -1126,6 +1136,10 @@ fn count_kmers_in_segments_clipped(
             }
 
             for idx_abs in seg_start..=last_start {
+                // Count only starts inside the core to avoid double counting across tiles
+                if idx_abs >= tile_core_end {
+                    break;
+                }
                 let idx_local = (idx_abs - tile_core_start) as usize;
                 let w = weights.map_or(1.0, |weights| unsafe { *weights.get_unchecked(idx_local) });
 
