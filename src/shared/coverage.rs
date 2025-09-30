@@ -17,8 +17,8 @@ enum Stage {
 /// Example
 /// -------
 /// ```rust
-/// use cfdnalab::utils::coverage::coverage_prefix::Coverage;
-/// use cfdnalab::utils::fragment::minimal_fragment::Fragment;
+/// use cfdnalab::coverage::Coverage;
+/// use cfdnalab::fragment::minimal_fragment::Fragment;
 ///
 /// # use anyhow::Result;
 /// # fn demo() -> Result<()> {
