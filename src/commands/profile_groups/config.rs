@@ -4,7 +4,7 @@ use crate::{
 };
 use std::path::PathBuf;
 
-/// Count positional *midpoint* coverage in groups of genomic windows.
+/// Count positional fragment **midpoint** coverage in groups of genomic windows.
 ///
 /// **Midpoints**: The center of the fragment span (`[end(reverse), start(forward)]`),
 /// with ties (in even-sized windows) randomly assigned to either the left or right mid-position
