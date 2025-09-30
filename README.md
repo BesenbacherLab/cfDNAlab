@@ -43,7 +43,7 @@ The following commands are currently available:
 | `cfdna profile-groups`   | Count fragment *midpoint* coverage in fixed-size intervals, collapsed by groups across the genome.<br />E.g. transcription factor binding sites, aggregated per transcription factor.<br />Fast alternative to *Griffin*. |
 | `cfdna lengths`          | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)` for inwardly directed pairs only                                                                                                                  |
 | **Normalization**        | Precompute normalization/correction factors to enable their use in the main commands                                                                                                                                      |
-| `cfdna normalize-genome` | Calculate scaling factors for normalizing/smoothing coverage across the genome                                                                                                                                            |
+| `cfdna coverage-weights` | Calculate scaling factors for normalizing/smoothing coverage across the genome                                                                                                                                            |
  
 
 ### Common options
