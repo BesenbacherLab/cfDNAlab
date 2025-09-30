@@ -4,9 +4,15 @@ use crate::{
 };
 use std::path::PathBuf;
 
-/// Count fragment lengths in a BAM-file.
+/// Count positional *midpoint* coverage in groups of genomic windows.
 ///
-/// The fragment span is defined as `[end(reverse), start(forward)]`. // TODO: exclusive??
+/// **Midpoints**: The center of the fragment span (`[end(reverse), start(forward)]`),
+/// with ties (in even-sized windows) randomly assigned to either the left or right mid-position
+/// to reduce rounding bias.
+///
+/// **Groups**: The coverage profiles are "collapsed" (summed per position) for all windows in a group.
+/// E.g., groups can be transcription factors with windows being binding sites. We then
+/// get the overall profile per transcription factor.
 ///
 /// ## Always-on exclusion criteria
 ///

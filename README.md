@@ -81,6 +81,7 @@ cfdna lengths \
     - Bin chromosomes for higher parallelization where meaningful.
     - Add GC correction tools and implementations.
     - Allow input BED files to be compressed.
+    - Check / optimize RAM usage in `cfdna coverage-weights`.
 
 ## References
 
