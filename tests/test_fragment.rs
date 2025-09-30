@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod test_minimal_fragment {
-    use cfdnalab::utils::fragment::minimal_fragment::*;
+    use cfdnalab::shared::fragment::minimal_fragment::*;
     use rust_htslib::bam::record::{Cigar, CigarString, Record};
 
     // Helpers
@@ -331,7 +331,7 @@ mod test_minimal_fragment {
 #[cfg(test)]
 mod test_segmented_fragments {
 
-    use cfdnalab::utils::fragment::{
+    use cfdnalab::shared::fragment::{
         minimal_fragment::oriented_pair_from_read_info, segment_fragment::*,
     };
 
@@ -432,8 +432,8 @@ mod test_segmented_fragments {
 
 #[cfg(test)]
 mod tests_fragment_with_indel_counts {
-    use cfdnalab::utils::fragment::indel_counting_fragment::*;
-    use cfdnalab::utils::fragment::minimal_fragment::{
+    use cfdnalab::shared::fragment::indel_counting_fragment::*;
+    use cfdnalab::shared::fragment::minimal_fragment::{
         is_inwards_oriented, oriented_pair_from_read_info,
     };
     use rust_htslib::bam::Record;
@@ -606,10 +606,10 @@ mod tests_fragment_with_indel_counts {
 
 #[cfg(test)]
 mod test_kmer_segments {
-    use cfdnalab::utils::fragment::segment_kmer_fragment::{
+    use cfdnalab::shared::fragment::segment_kmer_fragment::{
         FragmentWithKmerSegments, KmerSegmentedReadInfo, collect_fragment_with_kmer_segments,
     };
-    use cfdnalab::utils::indel_mode::IndelMode;
+    use cfdnalab::shared::indel_mode::IndelMode;
     use rust_htslib::bam::record::{Cigar, CigarString, Record};
     fn read_len(cigar: &[Cigar]) -> usize {
         cigar

@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests_apply_scaling {
-    use cfdnalab::utils::coverage::scale_genome::apply_scaling_to_coverage_in_place;
+    use cfdnalab::shared::scale_genome::apply_scaling_to_coverage_in_place;
 
     // Assert two slices are approximately equal within eps
     fn assert_slice_eq_eps(a: &[f32], b: &[f32], eps: f32) {

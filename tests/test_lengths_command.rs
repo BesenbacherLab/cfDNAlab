@@ -1,9 +1,10 @@
 mod fixtures;
 
 use anyhow::Result;
-use cfdnalab::cli_common::{AssignToWindowArgs, ChromosomeArgs, IOCArgs, WindowsArgs};
-use cfdnalab::lengths::{LengthsConfig, run};
-use cfdnalab::utils::indel_mode::IndelMode;
+use cfdnalab::commands::cli_common::{AssignToWindowArgs, ChromosomeArgs, IOCArgs, WindowsArgs};
+use cfdnalab::commands::lengths::config::LengthsConfig;
+use cfdnalab::commands::lengths::lengths::run;
+use cfdnalab::shared::indel_mode::IndelMode;
 use fixtures::simple_inward_bam;
 use ndarray::Array2;
 use ndarray_npy::read_npy;

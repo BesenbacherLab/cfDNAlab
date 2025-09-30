@@ -3,8 +3,8 @@
 #[cfg(test)]
 mod tests_coverage_prefix {
     use anyhow::Result;
-    use cfdnalab::utils::{
-        coverage::coverage_prefix::Coverage,
+    use cfdnalab::shared::{
+        coverage::Coverage,
         fragment::{
             minimal_fragment::Fragment,
             segment_fragment::{SegmentedReadInfo, collect_fragment_with_segments},
@@ -722,14 +722,11 @@ mod tests_coverage_prefix {
 #[cfg(test)]
 mod tests_window_results {
     use anyhow::{Result, anyhow};
-    use cfdnalab::utils::{
-        coverage::{
-            coverage_prefix::Coverage,
-            window_results::{
-                CoverageOutput, CoverageWindowAction, WindowValue, compute_window_outputs,
-            },
+    use cfdnalab::{
+        commands::fcoverage::window_results::{
+            CoverageOutput, CoverageWindowAction, WindowValue, compute_window_outputs,
         },
-        fragment::minimal_fragment::Fragment,
+        shared::{coverage::Coverage, fragment::minimal_fragment::Fragment},
     };
 
     fn deq_f32(a: f32, b: f32, tol: f32) -> bool {

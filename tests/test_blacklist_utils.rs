@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests_merge_intervals {
-    use cfdnalab::utils::blacklist::load::merge_intervals;
+    use cfdnalab::shared::blacklist::load::merge_intervals;
 
     #[test]
     fn empty_input() {
@@ -73,7 +73,7 @@ mod tests_merge_intervals {
 
 #[cfg(test)]
 mod tests_seq_blacklisting {
-    use cfdnalab::utils::blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE};
+    use cfdnalab::shared::blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE};
 
     #[test]
     fn mask_simple() {

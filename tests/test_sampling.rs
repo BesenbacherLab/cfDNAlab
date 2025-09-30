@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use cfdnalab::utils::sampling::sample_starts_per_chrom;
+    use cfdnalab::shared::sampling::sample_starts_per_chrom;
     use fxhash::FxHashMap;
     use rand::{SeedableRng, rngs::StdRng};
 

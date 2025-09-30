@@ -1,10 +1,10 @@
-use cfdnalab::fcoverage::FCoverageConfig;
-use cfdnalab::fragment_kmers::FragmentKmersConfig;
-use cfdnalab::gc::GCConfig;
-use cfdnalab::lengths::LengthsConfig;
-use cfdnalab::normalize_genome::NormalizeGenomeConfig;
-use cfdnalab::profile_groups::ProfileGroupsConfig;
-use cfdnalab::refgc::RefGCConfig;
+use cfdnalab::commands::coverage_weights::config::CoverageWeightsConfig;
+use cfdnalab::commands::fcoverage::config::FCoverageConfig;
+use cfdnalab::commands::fragment_kmers::config::FragmentKmersConfig;
+use cfdnalab::commands::gc_bias::config::GCConfig;
+use cfdnalab::commands::lengths::config::LengthsConfig;
+use cfdnalab::commands::profile_groups::config::ProfileGroupsConfig;
+use cfdnalab::commands::reference_gc::config::RefGCConfig;
 
 #[cfg(feature = "cli")]
 #[cfg_attr(feature = "cli", derive(clap::Parser))]
@@ -17,12 +17,12 @@ struct Cli {
 #[cfg(feature = "cli")]
 #[cfg_attr(feature = "cli", derive(clap::Subcommand))]
 enum Cmd {
-    GC(GCConfig),
-    RefGC(RefGCConfig), // Extract reference GC counts
-    NormalizeGenome(NormalizeGenomeConfig),
+    GCBias(GCConfig),
+    ReferenceGC(RefGCConfig), // Extract reference GC counts
+    CoverageWeights(CoverageWeightsConfig),
     Lengths(LengthsConfig),
     Fcoverage(FCoverageConfig),
-    ProfileGroups(ProfileGroupsConfig),
+    Profiles(ProfileGroupsConfig),
     FragmentKmers(FragmentKmersConfig),
     // Ends(EndsConfig),
 }
@@ -45,13 +45,15 @@ fn main() {
 
     // Run selected subcommand and capture its Result (no `?` in main).
     let res: anyhow::Result<()> = match cli.cmd {
-        Cmd::GC(cfg) => cfdnalab::gc::run(cfg),
-        Cmd::RefGC(cfg) => cfdnalab::refgc::run(cfg),
-        Cmd::NormalizeGenome(cfg) => cfdnalab::normalize_genome::run(cfg),
-        Cmd::Lengths(cfg) => cfdnalab::lengths::run(cfg),
-        Cmd::Fcoverage(cfg) => cfdnalab::fcoverage::run(cfg),
-        Cmd::ProfileGroups(cfg) => cfdnalab::profile_groups::run(cfg),
-        Cmd::FragmentKmers(cfg) => cfdnalab::fragment_kmers::run(cfg),
+        Cmd::GCBias(cfg) => cfdnalab::commands::gc_bias::gc_bias::run(cfg),
+        Cmd::ReferenceGC(cfg) => cfdnalab::commands::reference_gc::reference_gc::run(cfg),
+        Cmd::CoverageWeights(cfg) => {
+            cfdnalab::commands::coverage_weights::coverage_weights::run(cfg)
+        }
+        Cmd::Lengths(cfg) => cfdnalab::commands::lengths::lengths::run(cfg),
+        Cmd::Fcoverage(cfg) => cfdnalab::commands::fcoverage::fcoverage::run(cfg),
+        Cmd::Profiles(cfg) => cfdnalab::commands::profile_groups::profile_groups::run(cfg),
+        Cmd::FragmentKmers(cfg) => cfdnalab::commands::fragment_kmers::fragment_kmers::run(cfg),
         // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg),
     };
 

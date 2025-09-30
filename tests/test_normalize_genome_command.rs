@@ -1,8 +1,9 @@
 mod fixtures;
 
 use anyhow::Result;
-use cfdnalab::cli_common::{ChromosomeArgs, IOCArgs};
-use cfdnalab::normalize_genome::{NormalizeGenomeConfig, run};
+use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs};
+use cfdnalab::commands::coverage_weights::config::CoverageWeightsConfig;
+use cfdnalab::commands::coverage_weights::coverage_weights::run;
 use fixtures::simple_inward_bam;
 use tempfile::TempDir;
 
@@ -18,7 +19,7 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
 
-    let mut cfg = NormalizeGenomeConfig::new(
+    let mut cfg = CoverageWeightsConfig::new(
         IOCArgs {
             bam: bam.bam.clone(),
             output_dir: out_dir.path().to_path_buf(),
@@ -70,7 +71,7 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
 
 #[test]
 fn check_bin_sizes_rejects_invalid_stride() {
-    let mut cfg = NormalizeGenomeConfig::new(
+    let mut cfg = CoverageWeightsConfig::new(
         IOCArgs {
             bam: std::path::PathBuf::new(),
             output_dir: std::path::PathBuf::new(),

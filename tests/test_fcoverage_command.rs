@@ -1,11 +1,12 @@
 mod fixtures;
 
 use anyhow::Result;
-use cfdnalab::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
-use cfdnalab::fcoverage::{FCoverageConfig, run};
-use cfdnalab::utils::coverage::window_results::CoverageWindowAction;
-use cfdnalab::utils::fragment::minimal_fragment::collect_fragment_from_records;
-use cfdnalab::utils::read::default_include_read;
+use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
+use cfdnalab::commands::fcoverage::config::FCoverageConfig;
+use cfdnalab::commands::fcoverage::fcoverage::run;
+use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
+use cfdnalab::shared::fragment::minimal_fragment::collect_fragment_from_records;
+use cfdnalab::shared::read::default_include_read;
 use fixtures::{read_zst_to_string, simple_inward_bam};
 use rust_htslib::bam::{Read, Reader};
 use tempfile::TempDir;

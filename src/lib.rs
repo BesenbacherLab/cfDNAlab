@@ -1,14 +1,5 @@
-pub mod cli_common;
-mod counters;
-pub mod ends;
-pub mod fcoverage;
-pub mod fragment_kmers;
-pub mod gc;
-pub mod lengths;
-pub mod normalize_genome;
-pub mod profile_groups;
-pub mod refgc;
-pub mod utils;
+pub mod shared;
+pub mod commands;
 
 // Curate the top-level API:
 // pub use lengths::compute_lengths;

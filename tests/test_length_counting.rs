@@ -3,13 +3,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use anyhow::{Context, Result};
-    use cfdnalab::utils::{
-        coverage::scale_genome::{
-            compute_window_scaling_over_fragment, compute_window_scaling_over_overlap,
-        },
+    use cfdnalab::shared::{
         fragment::indel_counting_fragment::{IndelReadInfo, collect_fragment_with_indel_counts},
+        midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
-        profiling::midpoint::midpoint_random_even_with_thread_rng,
+        scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
     };
 
     // ------- helpers -------

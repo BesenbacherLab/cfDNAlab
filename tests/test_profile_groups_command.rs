@@ -1,8 +1,9 @@
 mod fixtures;
 
 use anyhow::Result;
-use cfdnalab::cli_common::{ChromosomeArgs, IOCArgs, ScaleGenomeArgs};
-use cfdnalab::profile_groups::{ProfileGroupsConfig, run};
+use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, ScaleGenomeArgs};
+use cfdnalab::commands::profile_groups::config::ProfileGroupsConfig;
+use cfdnalab::commands::profile_groups::profile_groups::run;
 use fixtures::{complex_bam_fixture, write_bed};
 use ndarray::Array3;
 use ndarray_npy::read_npy;

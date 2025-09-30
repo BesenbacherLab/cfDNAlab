@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests_flattening {
-    use cfdnalab::utils::bed::*;
+    use cfdnalab::shared::bed::*;
 
     // Helper: build a start-sorted Windows from (s,e) pairs (original_idx is dummy)
     fn mk_sorted(pairs: &[(u64, u64)]) -> Windows {

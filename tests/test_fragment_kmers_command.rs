@@ -4,13 +4,14 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use cfdnalab::cli_common::{
+use cfdnalab::commands::cli_common::{
     ChromosomeArgs, FragmentLengthArgs, IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs, WindowsArgs,
 };
-use cfdnalab::fragment_kmers::{FragmentKmersConfig, run};
-use cfdnalab::utils::base::make_canonical;
-use cfdnalab::utils::blacklist::BlacklistStrategy;
-use cfdnalab::utils::indel_mode::IndelMode;
+use cfdnalab::commands::fragment_kmers::config::FragmentKmersConfig;
+use cfdnalab::commands::fragment_kmers::fragment_kmers::run;
+use cfdnalab::shared::base::make_canonical;
+use cfdnalab::shared::blacklist::BlacklistStrategy;
+use cfdnalab::shared::indel_mode::IndelMode;
 use fixtures::{
     fragment_kmers_edge_bam, fragment_kmers_edge_reference, simple_inward_bam,
     simple_reference_twobit, write_bed, write_scaling_factors,
@@ -322,8 +323,10 @@ fn complex_edge_cases_respect_scaling_and_blacklists() -> Result<()> {
 mod tests_fragment_kmers_tiling {
     use anyhow::Result;
     use cfdnalab::{
-        fragment_kmers::*,
-        utils::kmers::kmer_codec::{KmerSpec, build_kmer_specs},
+        commands::fragment_kmers::tiling::{
+            TileKmerCountEntry, TileWindowCounts, merge_tile_counts,
+        },
+        shared::kmers::kmer_codec::{KmerSpec, build_kmer_specs},
     };
 
     fn code_for_motif(spec: &KmerSpec, motif: &str) -> u64 {

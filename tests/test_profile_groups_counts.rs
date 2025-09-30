@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use cfdnalab::utils::profiling::counting_by_group::*;
+    use cfdnalab::commands::profile_groups::counting_by_group::*;
 
     // Small helper for approximate comparisons where needed
     fn approx_eq(a: f32, b: f32, eps: f32) {
