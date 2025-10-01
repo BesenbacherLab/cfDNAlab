@@ -6,5 +6,6 @@ pub mod fcoverage;
 pub mod fragment_kmers;
 pub mod gc_bias;
 pub mod lengths;
+pub mod prepare_windows;
 pub mod profile_groups;
 pub mod reference_gc;
