@@ -314,14 +314,15 @@ pub fn nearest_edge_distance(
                 distance_from_end
             };
 
+            let signed_distance = distance;
             if !signed {
                 distance = distance.abs();
             }
 
             let abs_distance = distance.abs();
-            let side = if iv.end <= window_start {
+            let side = if signed_distance < 0 {
                 NearSide::Upstream
-            } else if iv.start >= window_end {
+            } else if signed_distance > 0 {
                 NearSide::Downstream
             } else {
                 NearSide::Overlap

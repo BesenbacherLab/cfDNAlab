@@ -311,8 +311,8 @@ mod tests_prepare_windows_pipeline {
         assert_eq!(
             lines,
             vec![
-                "chr1\t7\t24\tA.N1.close".to_string(),
-                "chr2\t0\t8\tC.N2.close".to_string(),
+                "chr1\t7\t24\tA.=N1.close__A.-N1.close".to_string(),
+                "chr2\t0\t8\tC.=N2.close".to_string(),
             ],
         );
         Ok(())
