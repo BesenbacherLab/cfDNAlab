@@ -7,30 +7,27 @@ use std::path::PathBuf;
 
 /// Prepare BED-like genomic windows for cfDNA fragmentomics tools.
 ///
-/// This command ingests a BED-like file with at least `chrom,start,end`, applies optional
+/// This command loads a BED-like file with at least `chrom,start,end`, applies optional
 /// filtering, subdivision, resizing/flanking, blacklist exclusion, and group-wise postfilters,
 /// and writes a minimal BED-like output with `chrom,start,end,group` (tabs).
 ///
-/// Notes:
+/// ## Notes:
+/// 
 /// - Coordinates are interpreted as 0-based half-open `[start, end)`.
+/// 
 /// - Column indices are 0-based. If `--header absent`, column *names* are not allowed.
+/// 
 /// - Blacklisting is evaluated with an optional halo on the blacklist intervals. By design,
 ///   blacklisting is checked against the **final** window size both at the beginning (to drop
 ///   obvious failures early) and at the end.
+/// 
 /// - “Nearest distance” is measured to the **nearest edge** of the target intervals.
 ///   If you need TSS-only distances, precompute 1-bp intervals at the correct strand-specific
 ///   TSS coordinate.
+/// 
 /// - Output **does not** include a header. Column emission is minimal by default.
+/// 
 /// - Sorting is always applied deterministically by `(chrom, start, end, group)`.
-///
-/// ## Sections
-/// - Core (I/O and schema)
-/// - Score filtering
-/// - Blacklist
-/// - Distance to ‘near' intervals
-/// - Resizing / flanking
-/// - Group-wise filters
-/// - Performance and reproducibility
 #[cfg_attr(feature = "cli", derive(Parser, Clone))]
 #[cfg_attr(
     feature = "cli",
@@ -93,7 +90,7 @@ pub struct PrepareConfig {
             help_heading = "Core"
         )
     )]
-    pub separator: char,
+    pub sep: char,
 
     /// Column mapping for the *required* first three columns `[string]`
     ///
@@ -629,7 +626,7 @@ impl Default for PrepareConfig {
             cols: "chrom=0,start=1,end=2".to_string(),
             group_cols: Vec::new(),
             score_col: None,
-            separator: '\t',
+            sep: '\t',
             score_filter: None,
             score_missing: MissingScore::Keep,
             blacklist: None,

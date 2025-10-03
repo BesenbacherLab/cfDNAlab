@@ -5,7 +5,7 @@ mod tests_prepare_windows_pipeline {
         DedupKeep, DistSign, DistanceTiesPolicy, HeaderMode, MergeLabel, MergeScope, NearDirection,
         NearEdge, OobPolicy, PrepareConfig,
     };
-    use cfdnalab::commands::prepare_windows::prepare_windows::run_prepare_pipeline;
+    use cfdnalab::commands::prepare_windows::prepare_windows::run;
     use std::fs;
     use tempfile::TempDir;
 
@@ -16,7 +16,7 @@ mod tests_prepare_windows_pipeline {
     }
 
     fn run_pipeline(cfg: &PrepareConfig) -> Result<Vec<String>> {
-        run_prepare_pipeline(cfg)?;
+        run(cfg)?;
         let output_path = cfg.output.as_ref().expect("output path");
         let contents = fs::read_to_string(output_path)?;
         Ok(contents
@@ -262,7 +262,7 @@ mod tests_prepare_windows_pipeline {
         cfg.oob = OobPolicy::Allow;
 
         // Act
-        let err = run_prepare_pipeline(&cfg).unwrap_err();
+        let err = run(&cfg).unwrap_err();
 
         // Assert
         assert!(
@@ -285,7 +285,7 @@ mod tests_prepare_windows_pipeline {
         cfg.oob = OobPolicy::Allow;
 
         // Act
-        let err = run_prepare_pipeline(&cfg).unwrap_err();
+        let err = run(&cfg).unwrap_err();
 
         // Assert
         assert!(format!("{err}").contains("has start 3 before previous 5"));
@@ -969,7 +969,7 @@ mod tests_writers {
     }
 
     #[test]
-    fn write_windows_honors_custom_separator() {
+    fn write_windows_honors_custom_sep() {
         let windows = vec![win("chr1", 0, 5, "")];
         let mut buf = Vec::new();
         write_windows(&mut buf, &windows, ',').unwrap();
@@ -1030,7 +1030,7 @@ mod tests_writers {
         )?;
         let mut cfg = PrepareConfig::default();
         cfg.output = Some(dir.path().join("out.tsv"));
-        cfg.separator = '\t';
+        cfg.sep = '\t';
         cfg.group_cols = vec!["3".to_string()];
         cfg.min_per_group = Some(2);
         let mut counts = FxHashMap::default();
@@ -1055,7 +1055,7 @@ mod tests_writers {
         fs::write(&temp_path, "chr1\t0\t5\nchr1\t10\t15\n")?;
         let mut cfg = PrepareConfig::default();
         cfg.output = Some(dir.path().join("out.tsv"));
-        cfg.separator = '\t';
+        cfg.sep = '\t';
         concatenate_temps_enforcing_min_per_group(
             &cfg,
             &[("chr1".to_string(), temp_path)],
@@ -1097,7 +1097,7 @@ mod tests_chunk {
         cfg.merge_scope = MergeScope::None;
         cfg.merge_gap = None;
         cfg.merge_label = MergeLabel::Join;
-        cfg.separator = '\t';
+        cfg.sep = '\t';
         cfg
     }
 
@@ -1276,7 +1276,7 @@ mod tests_stdio {
     use anyhow::{Result, anyhow};
     use cfdnalab::commands::prepare_windows::{
         config::{HeaderMode, OobPolicy, PrepareConfig},
-        prepare_windows::run_prepare_pipeline,
+        prepare_windows::run,
     };
     use libc;
     use std::{
@@ -1357,7 +1357,7 @@ mod tests_stdio {
     }
 
     #[test]
-    fn run_prepare_pipeline_supports_stdio() -> Result<()> {
+    fn run_supports_stdio() -> Result<()> {
         let mut cfg = PrepareConfig::default();
         cfg.input = Some(PathBuf::from("-"));
         cfg.output = Some(PathBuf::from("-"));
@@ -1366,7 +1366,7 @@ mod tests_stdio {
         cfg.resize = Some(8);
 
         let input = "chr1\t0\t5\nchr1\t5\t10\n";
-        let output = run_with_piped_stdio(input, || run_prepare_pipeline(&cfg))?;
+        let output = run_with_piped_stdio(input, || run(&cfg))?;
         let mut lines: Vec<&str> = output
             .lines()
             .filter(|line| line.starts_with("chr"))

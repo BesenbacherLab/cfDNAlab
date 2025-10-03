@@ -74,7 +74,7 @@ pub fn process_and_write_chunk(
 
     let writer = ensure_temp_writer_for_chrom(chrom, temp_dir, temp_writers)?;
 
-    write_windows(writer.writer(), &safe_prefix, cfg.separator)?;
+    write_windows(writer.writer(), &safe_prefix, cfg.sep)?;
     for w in &safe_prefix {
         if !w.group.is_empty() {
             *global_group_counts.entry(w.group.clone()).or_insert(0) += 1;
@@ -128,7 +128,7 @@ pub fn flush_chromosome(
 
     if !carryover_tail.is_empty() {
         let writer = ensure_temp_writer_for_chrom(chrom, temp_dir, temp_writers)?;
-        write_windows(writer.writer(), carryover_tail, cfg.separator)?;
+        write_windows(writer.writer(), carryover_tail, cfg.sep)?;
         for w in carryover_tail.drain(..) {
             if !w.group.is_empty() {
                 *global_group_counts.entry(w.group.clone()).or_insert(0) += 1;

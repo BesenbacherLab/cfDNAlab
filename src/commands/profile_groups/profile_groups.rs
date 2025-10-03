@@ -57,7 +57,7 @@ use crate::{
 /// Errors:
 /// - Returns an error if any input cannot be read, the grouped BED is invalid, or writing the
 ///   outputs fails.
-pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
+pub fn run(opt: &ProfileGroupsConfig) -> Result<()> {
     let start_time = Instant::now();
     let (chromosomes, contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc)?;
     let prefix = opt.output_prefix.trim();
@@ -179,7 +179,7 @@ pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
             ));
 
             let out = process_tile(
-                &opt,
+                opt,
                 tile,
                 tile_counts_out,
                 window_size,

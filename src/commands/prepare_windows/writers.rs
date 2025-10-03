@@ -191,7 +191,7 @@ pub fn concatenate_temps_enforcing_min_per_group(
 
             // If group column exists, it is the 4th field
             // We do not add a header; this is a minimal BED-like.
-            let mut parts = line.split(cfg.separator);
+            let mut parts = line.split(cfg.sep);
             let chrom_name = parts.next().unwrap_or_default();
             let start = parts.next().unwrap_or_default();
             let end = parts.next().unwrap_or_default();
@@ -202,7 +202,7 @@ pub fn concatenate_temps_enforcing_min_per_group(
                 writeln!(
                     out,
                     "{}{}{}{}{}",
-                    chrom_name, cfg.separator, start, cfg.separator, end
+                    chrom_name, cfg.sep, start, cfg.sep, end
                 )?;
             } else if let Some(min_n) = min_required {
                 let count = *global_group_counts.get(group).unwrap_or(&0);
@@ -214,7 +214,7 @@ pub fn concatenate_temps_enforcing_min_per_group(
                         start,
                         end,
                         group,
-                        sep = cfg.separator
+                        sep = cfg.sep
                     )?;
                 }
             } else {
@@ -225,7 +225,7 @@ pub fn concatenate_temps_enforcing_min_per_group(
                     start,
                     end,
                     group,
-                    sep = cfg.separator
+                    sep = cfg.sep
                 )?;
             }
         }

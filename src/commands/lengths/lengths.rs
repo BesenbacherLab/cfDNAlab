@@ -54,7 +54,7 @@ use std::{
 /// Errors:
 /// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
 ///   the first failure.
-pub fn run(opt: LengthsConfig) -> Result<()> {
+pub fn run(opt: &LengthsConfig) -> Result<()> {
     let start_time = Instant::now();
     let (chromosomes, contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc)?;
     let window_opt = opt.windows.resolve_windows();
@@ -120,7 +120,7 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
         .map(|chr| -> Result<(_, _, _)> {
             let out = process_chrom(
                 &chr,
-                &opt,
+                opt,
                 windows_map
                     .as_ref()
                     .and_then(|m| m.get(chr).map(|v| v.as_slice())),

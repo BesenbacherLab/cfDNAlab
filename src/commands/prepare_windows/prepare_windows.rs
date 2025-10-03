@@ -75,7 +75,7 @@ struct BlacklistCursor {
 /// -------
 /// - ok:
 ///     Success or error.
-pub fn run_prepare_pipeline(cfg: &PrepareConfig) -> Result<()> {
+pub fn run(cfg: &PrepareConfig) -> Result<()> {
     // Compile distance bins (if any)
     let distance_bins = if let Some(specs) = &cfg.distance_bins {
         Some(parse_distance_bins(specs)?)
@@ -95,12 +95,12 @@ pub fn run_prepare_pipeline(cfg: &PrepareConfig) -> Result<()> {
         let has_header_final = match cfg.near_header {
             HeaderMode::Present => true,
             HeaderMode::Absent => false,
-            HeaderMode::Auto => detect_header(path, cfg.separator).unwrap_or(false),
+            HeaderMode::Auto => detect_header(path, cfg.sep).unwrap_or(false),
         };
         let group_col_present = true; // If your near has optional group, you can make this configurable
         Some(load_near_index(
             path,
-            cfg.separator,
+            cfg.sep,
             has_header_final,
             group_col_present,
         )?)
@@ -182,7 +182,7 @@ pub fn run_prepare_pipeline(cfg: &PrepareConfig) -> Result<()> {
             if candidate.is_empty() {
                 continue;
             }
-            if line_looks_like_header(candidate, cfg.separator) {
+            if line_looks_like_header(candidate, cfg.sep) {
                 line_buffer.clear();
                 break;
             } else {
@@ -230,7 +230,7 @@ pub fn run_prepare_pipeline(cfg: &PrepareConfig) -> Result<()> {
         }
 
         let (chrom, start, end, input_group, score) =
-            parse_record_line(line, cfg.separator, &column_indices)?;
+            parse_record_line(line, cfg.sep, &column_indices)?;
 
         if current_chrom.is_empty() {
             current_chrom = chrom.clone();

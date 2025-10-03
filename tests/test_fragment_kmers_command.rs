@@ -52,7 +52,7 @@ fn counts_dinucleotides_in_global_window() -> Result<()> {
     cfg.set_require_proper_pair(false);
     cfg.set_canonical(false);
 
-    run(cfg)?;
+    run(&cfg)?;
 
     let counts_path = out_dir.path().join("kmers.k2_counts.npy");
     let motifs_path = out_dir.path().join("kmers.k2_motifs.txt");
@@ -122,7 +122,7 @@ fn canonical_trimers_collapse_matches_manual_counts() -> Result<()> {
     cfg.set_require_proper_pair(false);
     cfg.set_canonical(true);
 
-    run(cfg)?;
+    run(&cfg)?;
 
     let counts_path = out_dir.path().join("kmers.k3_counts.npy");
     let motifs_path = out_dir.path().join("kmers.k3_motifs.txt");
@@ -246,7 +246,7 @@ fn complex_edge_cases_respect_scaling_and_blacklists() -> Result<()> {
         fl.max_fragment_length = fragment_lengths.max_fragment_length;
     }
 
-    run(cfg_base.clone())?;
+    run(&cfg_base)?;
 
     let observed_base = load_counts_from_output(out_dir.path(), "edge_base", 2)?;
     let expected_base: HashMap<String, f64> = vec![
@@ -293,7 +293,7 @@ fn complex_edge_cases_respect_scaling_and_blacklists() -> Result<()> {
     scale_args.scaling_factors = Some(scaling_path.clone());
     cfg_scaled.set_scale_genome(scale_args);
 
-    run(cfg_scaled.clone())?;
+    run(&cfg_scaled)?;
 
     let observed_scaled = load_counts_from_output(out_dir.path(), "edge_scaled", 2)?;
 

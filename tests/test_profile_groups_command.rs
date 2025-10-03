@@ -47,7 +47,7 @@ fn midpoint_profiles_written_with_group_index() -> Result<()> {
     cfg.set_require_proper_pair(false);
     cfg.set_scale_genome(ScaleGenomeArgs::default());
 
-    run(cfg)?;
+    run(&cfg)?;
 
     let counts_path = temp.path().join("sites.midpoint_profiles.npy");
     assert!(counts_path.exists());

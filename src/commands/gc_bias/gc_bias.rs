@@ -27,7 +27,7 @@ use std::{
     time::Instant,
 };
 
-pub fn run(opt: GCConfig) -> Result<()> {
+pub fn run(opt: &GCConfig) -> Result<()> {
     let start_time = Instant::now();
     let chromosomes = opt
         .chromosomes
@@ -83,7 +83,7 @@ pub fn run(opt: GCConfig) -> Result<()> {
         .map(|chr| -> Result<(_, _, _)> {
             let out = process_chrom(
                 &chr,
-                &opt,
+                opt,
                 windows_map
                     .as_ref()
                     .and_then(|m| m.get(chr).map(|v| v.as_slice())),

@@ -76,7 +76,7 @@ fn per_position_outputs_basic_fragment() -> Result<()> {
     let frag = collect_fragment_from_records(&pair_store[0], &pair_store[1]);
     assert!(frag.is_some(), "expected fragment collection to succeed");
 
-    run(cfg)?;
+    run(&cfg)?;
 
     let bedgraph = out_dir.path().join("testcov.per_position.bedgraph.zst");
     assert!(bedgraph.exists(), "expected positional bedgraph output");
@@ -120,7 +120,7 @@ fn by_size_total_and_average_outputs() -> Result<()> {
         frag.max_fragment_length = 200;
     }
 
-    run(cfg)?;
+    run(&cfg)?;
 
     let totals = out_dir.path().join("testcov.total.tsv.zst");
     assert!(totals.exists(), "expected per-window totals output");

@@ -47,17 +47,17 @@ fn main() {
 
     // Run selected subcommand and capture its Result (no `?` in main).
     let res: anyhow::Result<()> = match cli.cmd {
-        Cmd::GCBias(cfg) => cfdnalab::commands::gc_bias::gc_bias::run(cfg),
-        Cmd::ReferenceGC(cfg) => cfdnalab::commands::reference_gc::reference_gc::run(cfg),
+        Cmd::GCBias(cfg) => cfdnalab::commands::gc_bias::gc_bias::run(&cfg),
+        Cmd::ReferenceGC(cfg) => cfdnalab::commands::reference_gc::reference_gc::run(&cfg),
         Cmd::CoverageWeights(cfg) => {
-            cfdnalab::commands::coverage_weights::coverage_weights::run(cfg)
+            cfdnalab::commands::coverage_weights::coverage_weights::run(&cfg)
         }
-        Cmd::Lengths(cfg) => cfdnalab::commands::lengths::lengths::run(cfg),
-        Cmd::Fcoverage(cfg) => cfdnalab::commands::fcoverage::fcoverage::run(cfg),
-        Cmd::Profiles(cfg) => cfdnalab::commands::profile_groups::profile_groups::run(cfg),
-        Cmd::FragmentKmers(cfg) => cfdnalab::commands::fragment_kmers::fragment_kmers::run(cfg),
+        Cmd::Lengths(cfg) => cfdnalab::commands::lengths::lengths::run(&cfg),
+        Cmd::Fcoverage(cfg) => cfdnalab::commands::fcoverage::fcoverage::run(&cfg),
+        Cmd::Profiles(cfg) => cfdnalab::commands::profile_groups::profile_groups::run(&cfg),
+        Cmd::FragmentKmers(cfg) => cfdnalab::commands::fragment_kmers::fragment_kmers::run(&cfg),
         Cmd::PrepWindows(cfg) => {
-            cfdnalab::commands::prepare_windows::prepare_windows::run_prepare_pipeline(&cfg)
+            cfdnalab::commands::prepare_windows::prepare_windows::run(&cfg)
         } // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg),
     };
 

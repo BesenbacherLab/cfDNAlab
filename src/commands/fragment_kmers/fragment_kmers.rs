@@ -58,7 +58,7 @@ use std::{
 /// Errors:
 /// - Propagates IO and parsing errors when reading inputs or writing results, aborting the run on
 ///   the first failure.
-pub fn run(opt: FragmentKmersConfig) -> Result<()> {
+pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
     let start_time = Instant::now();
     let (chromosomes, contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc)?;
     let window_opt = opt.windows.resolve_windows();
@@ -178,7 +178,7 @@ pub fn run(opt: FragmentKmersConfig) -> Result<()> {
                 .unwrap_or(&[]);
 
             let out = process_tile(
-                &opt,
+                opt,
                 tile,
                 &kmer_specs,
                 &window_ctx,

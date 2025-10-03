@@ -57,7 +57,7 @@ use std::{sync::Arc, time::Instant};
 /// Errors:
 /// - Returns an error if the BAM cannot be read, auxiliary files are invalid, or writing outputs
 ///   fails at any stage.
-pub fn run(opt: FCoverageConfig) -> Result<()> {
+pub fn run(opt: &FCoverageConfig) -> Result<()> {
     let start_time = Instant::now();
     let (chromosomes, contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc)?;
     let window_opt = opt.windows.resolve_windows();
@@ -322,7 +322,7 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
             };
 
             let counter = process_tile(
-                &opt,
+                opt,
                 tile,
                 tile_span.as_ref(),
                 blacklist_chr,

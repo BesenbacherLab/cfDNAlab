@@ -41,7 +41,7 @@ fn counts_reference_lengths_global_window() -> Result<()> {
         frag.max_fragment_length = 200;
     }
 
-    run(cfg)?;
+    run(&cfg)?;
 
     let npy_path = out_dir.path().join("all_length_counts.npy");
     assert!(npy_path.exists());

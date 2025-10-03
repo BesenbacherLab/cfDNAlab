@@ -44,7 +44,7 @@ use std::{
 /// Errors:
 /// - Returns an error if the BAM cannot be read, blacklist files are invalid, or the output file
 ///   cannot be created.
-pub fn run(opt: CoverageWeightsConfig) -> Result<()> {
+pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
     let start_time = Instant::now();
     let (chromosomes, _contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc)?;
     opt.check_bin_sizes()?;
@@ -86,7 +86,7 @@ pub fn run(opt: CoverageWeightsConfig) -> Result<()> {
         .map(|chr| -> Result<(_, _, _)> {
             let out = process_chrom(
                 &chr,
-                &opt,
+                opt,
                 blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
             )?;
             pb.inc(1);

@@ -38,7 +38,7 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
         frag.max_fragment_length = 200;
     }
 
-    run(cfg)?;
+    run(&cfg)?;
 
     let tsv_path = out_dir.path().join("coverage.scaling_factors.tsv");
     assert!(tsv_path.exists());
