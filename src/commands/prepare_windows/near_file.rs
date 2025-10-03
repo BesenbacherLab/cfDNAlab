@@ -305,21 +305,17 @@ pub fn nearest_edge_distance(
 
         for k in 0..num_edges {
             let target_edge = candidate_edges[k];
-            let distance_from_start = (window_start as i32) - target_edge;
-            let distance_from_end = (window_end as i32) - target_edge;
+            let diff_start = target_edge - window_start as i32;
+            let diff_end = target_edge - window_end as i32;
 
-            let mut distance = if distance_from_start.abs() <= distance_from_end.abs() {
-                distance_from_start
+            let mut signed_distance = if diff_start.abs() <= diff_end.abs() {
+                diff_start
             } else {
-                distance_from_end
+                diff_end
             };
 
-            let signed_distance = distance;
-            if !signed {
-                distance = distance.abs();
-            }
-
-            let abs_distance = distance.abs();
+            // Direction follows the sign of the chosen difference: negative means
+            // the interval lies upstream of the window, positive means downstream.
             let side = if signed_distance < 0 {
                 NearSide::Upstream
             } else if signed_distance > 0 {
@@ -328,13 +324,18 @@ pub fn nearest_edge_distance(
                 NearSide::Overlap
             };
 
+            let abs_distance = signed_distance.abs();
+            if !signed {
+                signed_distance = abs_distance;
+            }
+
             match best_abs_distance {
                 None => {
                     best_abs_distance = Some(abs_distance);
                     best_candidates.clear();
                     best_candidates.push(Candidate {
                         idx: j,
-                        distance,
+                        distance: signed_distance,
                         side,
                     });
                 }
@@ -344,14 +345,14 @@ pub fn nearest_edge_distance(
                         best_candidates.clear();
                         best_candidates.push(Candidate {
                             idx: j,
-                            distance,
+                            distance: signed_distance,
                             side,
                         });
                     } else if abs_distance == current_abs {
                         if !best_candidates.iter().any(|cand| cand.idx == j) {
                             best_candidates.push(Candidate {
                                 idx: j,
-                                distance,
+                                distance: signed_distance,
                                 side,
                             });
                         }

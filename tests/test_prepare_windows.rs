@@ -1022,23 +1022,24 @@ mod tests_near_file {
             })
         );
 
-        let upstream = nearest_edge_distance(0, 5, &chrom, &NearEdge::Nearest, true).unwrap();
+        let window_before = nearest_edge_distance(0, 5, &chrom, &NearEdge::Nearest, true).unwrap();
         assert_eq!(
-            upstream,
-            NearestResult::Single(NearHit {
-                distance: -5,
-                group_id: Some(0),
-                side: NearSide::Upstream,
-            })
-        );
-
-        let downstream = nearest_edge_distance(25, 30, &chrom, &NearEdge::Nearest, false).unwrap();
-        assert_eq!(
-            downstream,
+            window_before,
             NearestResult::Single(NearHit {
                 distance: 5,
                 group_id: Some(0),
                 side: NearSide::Downstream,
+            })
+        );
+
+        let window_after =
+            nearest_edge_distance(25, 30, &chrom, &NearEdge::Nearest, false).unwrap();
+        assert_eq!(
+            window_after,
+            NearestResult::Single(NearHit {
+                distance: 5,
+                group_id: Some(0),
+                side: NearSide::Upstream,
             })
         );
     }
@@ -1096,7 +1097,7 @@ mod tests_near_file {
             NearestResult::Single(NearHit {
                 distance: 20,
                 group_id: Some(1),
-                side: NearSide::Downstream,
+                side: NearSide::Upstream,
             })
         );
     }

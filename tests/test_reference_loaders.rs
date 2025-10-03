@@ -10,7 +10,7 @@ const SAMPLE_FASTA: &str = ">chr1\nACGTACGTNN\n>chr2\nTTAA\n";
 
 fn write_twobit(fasta: &str) -> Result<NamedTempFile> {
     let reader = FastaReader::mem_open(fasta.as_bytes().to_vec())?;
-    let mut file = NamedTempFile::new()?;
+    let file = NamedTempFile::new()?;
     {
         let mut writer = BufWriter::new(file.reopen()?);
         to_2bit(&mut writer, &reader).map_err(|err| anyhow!(err.to_string()))?;
