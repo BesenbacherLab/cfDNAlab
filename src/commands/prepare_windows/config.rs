@@ -5,42 +5,39 @@ use std::path::PathBuf;
 
 /// Clean and standardise genomic windows so downstream cfDNA tools receive a tidy BED.
 ///
-/// `prepare-windows` loads a delimited table containing at least `chrom,start,end`, applies the
-/// optional transformations you request, and emits a sorted BED-like file that downstream commands
-/// can consume directly.
+/// `prep-windows` reads a delimited table with at least `chrom,start,end`, validates every row,
+/// and writes a canonical BED-like file that downstream tools can reuse. The command keeps
+/// your metadata columns during processing but emits only well-behaved coordinates plus an optional
+/// `group` label for downstream tools.
 ///
-/// ## Typical steps
-/// 
-/// - Parsing TSV/CSV (automatic header detection, explicit column mapping, configurable separator).
+/// A *group* is simply a tag that tells later analyses how to partition the windows (for example,
+/// promoter vs enhancer sets, distance quartiles). You can supply it from existing
+/// columns or instruct the command to derive it while reshaping the windows.
 ///
-/// - Filtering by numeric score, genomic blacklist, or custom QC thresholds.
+/// The command parses the TSV/CSV input and:
 ///
-/// - Deriving group labels from input columns or on-the-fly subdivision (distance bins, chunking,
-///   flanks, GC filters, near-file lookups, etc.).
+/// - Filters windows using score thresholds, blacklist overlap, deduplication, and distance to nearest same-group window.
 ///
-/// - Resizing, padding, trimming, and enforcing minimum/maximum lengths.
+/// - Adjust coordinates by resizing to a specific size or adding flanks to the current sizes (trimmed to chromosome limits).
 ///
-/// - Post-processing per group (resizing to even bp, coverage rescoring) before writing output.
+/// - Build or refine groups by combining input columns or subdividing windows by their distance
+///   to elements in the `near`-file. Windows can be merged when close to other windows in/across groups.
 ///
-/// The result is a minimal, headerless BED with deterministic ordering and optional `group`
-/// annotations—ready for commands such as `prepare-windows postprocess`, `fragment-kmers`, or
-/// `profile-groups`.
+/// The output is minimal, headerless, sorted by `(chrom, start, end, group)`, and ready for commands
+/// such as `profile-groups`.
 ///
 /// ## Practical notes
-/// 
+///
 /// - All coordinates are 0-based half-open `[start, end)`.
 ///
-/// - Column indices are 0-based when you refer to them explicitly. If `--header absent`, only
-///   indices are accepted.
+/// - Column indices are 0-based when you refer to them explicitly.
 ///
-/// - Blacklist checks run on the final window span using the halo you configure, so windows that
-///   will eventually overlap the blacklist are rejected up-front.
+/// - Blacklist checks run on the final window span using the halo you configure.
 ///
-/// - “Nearest distance” refers to the closest edge of the comparison interval. For TSS-only
-///   distances, pass 1 bp intervals centred on the strand-specific start you care about.
+/// - “Nearest distance” refers to the closest edge of the comparison interval. NOTE:
+///   For TSS-only distances, pass 1 bp intervals centred on the strand-specific start.
 ///
-/// - Output is intentionally lean (no header, minimal columns) and sorted by
-///   `(chrom, start, end, group)` to ease downstream comparisons.
+/// - Output is sorted by `(chrom, start, end, group)`.
 #[cfg_attr(feature = "cli", derive(Parser, Clone))]
 #[cfg_attr(
     feature = "cli",
@@ -58,7 +55,7 @@ pub struct PrepareConfig {
     // ─────────────────────────────────────────────────────────────────────────────
     /// Input BED-like file `[path]`
     ///
-    /// Compression inferred from file extension (e.g. .gz, .bgz). Use '-' for stdin.
+    /// Compression inferred from file extension (.gz or .zst). Use '-' for stdin.
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser, required = true, help_heading = "Core")
@@ -67,7 +64,7 @@ pub struct PrepareConfig {
 
     /// Output BED-like file `[path]`
     ///
-    /// Compression inferred from file extension (e.g. .gz, .bgz). Use '-' for stdout.
+    /// Compression inferred from file extension (.gz or .zst). Use '-' for stdout.
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser, default_value = "-", help_heading = "Core")
@@ -300,6 +297,22 @@ pub struct PrepareConfig {
         )
     )]
     pub near_direction: NearDirection,
+
+    /// How to respond when multiple near intervals tie for the minimum distance `[string]`
+    ///
+    /// - "annotate": keep the window and annotate upstream/downstream groups separately.
+    /// - "drop": discard the window when a tie occurs.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_enum,
+            default_value = "annotate",
+            ignore_case = true,
+            help_heading = "Distance to near intervals"
+        )
+    )]
+    pub near_ties: NearTiePolicy,
 
     /// How to treat the computed distances when binning `[string]`
     ///
@@ -575,6 +588,15 @@ pub enum NearDirection {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
+pub enum NearTiePolicy {
+    #[cfg_attr(feature = "cli", value(name = "annotate"))]
+    Annotate,
+    #[cfg_attr(feature = "cli", value(name = "drop"))]
+    Drop,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum OobPolicy {
     Drop,
     Trim,
@@ -649,6 +671,7 @@ impl Default for PrepareConfig {
             near_header: HeaderMode::Auto,
             near_edge: NearEdge::Nearest,
             near_direction: NearDirection::Both,
+            near_ties: NearTiePolicy::Annotate,
             distance_sign: DistSign::Absolute,
             distance_bins: None,
             distance_max: None,

@@ -1,4 +1,5 @@
 use crate::commands::prepare_windows::{config::PrepareConfig, prepare_windows::FinalWindow};
+use crate::shared::io::{TextWriter, create_text_writer, stdout_text_writer};
 use anyhow::{Context, Result};
 use fxhash::FxHashMap;
 use std::{
@@ -55,7 +56,7 @@ pub fn write_windows<W: Write>(
             writeln!(
                 writer,
                 "{}{sep}{}{sep}{}",
-                w.chrom,
+                w.chrom.as_ref(),
                 w.start,
                 w.end,
                 sep = separator
@@ -64,7 +65,7 @@ pub fn write_windows<W: Write>(
             writeln!(
                 writer,
                 "{}{sep}{}{sep}{}{sep}{}",
-                w.chrom,
+                w.chrom.as_ref(),
                 w.start,
                 w.end,
                 w.group,
@@ -153,18 +154,14 @@ pub fn concatenate_temps_enforcing_min_per_group(
     temp_entries: &[(String, PathBuf)],
     global_group_counts: &FxHashMap<String, u64>,
 ) -> Result<()> {
-    // Open output
-    let mut out: Box<dyn Write> = if let Some(path) = &cfg.output {
+    let mut out: TextWriter = if let Some(path) = &cfg.output {
         if path.as_os_str() == "-" {
-            Box::new(BufWriter::with_capacity(1 << 20, std::io::stdout()))
+            stdout_text_writer()
         } else {
-            Box::new(BufWriter::with_capacity(
-                1 << 20,
-                File::create(path).with_context(|| format!("Creating output {:?}", path))?,
-            ))
+            create_text_writer(path)?
         }
     } else {
-        Box::new(BufWriter::with_capacity(1 << 20, std::io::stdout()))
+        stdout_text_writer()
     };
 
     // Helper to decide if a group passes the threshold
@@ -199,11 +196,7 @@ pub fn concatenate_temps_enforcing_min_per_group(
 
             if group.is_empty() {
                 // If there is no group after all processing, write the 3 cols only
-                writeln!(
-                    out,
-                    "{}{}{}{}{}",
-                    chrom_name, cfg.sep, start, cfg.sep, end
-                )?;
+                writeln!(out, "{}{}{}{}{}", chrom_name, cfg.sep, start, cfg.sep, end)?;
             } else if let Some(min_n) = min_required {
                 let count = *global_group_counts.get(group).unwrap_or(&0);
                 if count >= min_n as u64 {
@@ -231,5 +224,6 @@ pub fn concatenate_temps_enforcing_min_per_group(
         }
     }
 
+    out.finish()?;
     Ok(())
 }

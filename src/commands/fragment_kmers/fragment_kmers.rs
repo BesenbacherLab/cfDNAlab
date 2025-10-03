@@ -13,6 +13,7 @@ use crate::{
         blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE, is_blacklisted},
         fragment::segment_kmer_fragment::FragmentWithKmerSegments,
         fragment_iterator::fragments_with_kmer_segments_from_bam,
+        io::create_text_writer,
         kmers::{
             kmer_codec::{
                 Kmer, KmerCodes, KmerSpec, build_kmer_specs, build_left_aligned_codes_per_k,
@@ -35,9 +36,7 @@ use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{
-    convert::TryInto, fs::File, io::BufWriter, io::Write, path::Path, sync::Arc, time::Instant,
-};
+use std::{convert::TryInto, io::Write, path::Path, sync::Arc, time::Instant};
 
 /// Execute the fragment kmers counting pipeline end-to-end.
 ///
@@ -256,13 +255,13 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
     // Write bins BED file
     if !matches!(window_opt, WindowSpec::Global) {
         println!("Start: Writing window coordinates to disk");
-        let mut bed_writer = BufWriter::new(
-            File::create(&opt.ioc.output_dir.join("bins.bed")).context("Create bed fail")?,
-        );
+        let bins_path = opt.ioc.output_dir.join("bins.bed");
+        let mut bed_writer = create_text_writer(&bins_path).context("Create bed fail")?;
         for (chr, start, end, _, overlap_perc) in &bin_info {
             writeln!(bed_writer, "{}\t{}\t{}\t{}", chr, start, end, overlap_perc)
                 .context("Write bed line fail")?;
         }
+        bed_writer.finish().context("Finalize bins.bed writer")?;
     }
 
     println!("");

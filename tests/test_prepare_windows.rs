@@ -3,11 +3,14 @@ mod tests_prepare_windows_pipeline {
     use anyhow::Result;
     use cfdnalab::commands::prepare_windows::config::{
         DedupKeep, DistSign, DistanceTiesPolicy, HeaderMode, MergeLabel, MergeScope, NearDirection,
-        NearEdge, OobPolicy, PrepareConfig,
+        NearEdge, NearTiePolicy, OobPolicy, PrepareConfig,
     };
     use cfdnalab::commands::prepare_windows::prepare_windows::run;
+    use flate2::{Compression, write::GzEncoder};
     use std::fs;
+    use std::io::{BufWriter, Read, Write};
     use tempfile::TempDir;
+    use zstd::Decoder as ZstdDecoder;
 
     fn write_temp_file(dir: &TempDir, name: &str, lines: &[&str]) -> Result<std::path::PathBuf> {
         let path = dir.path().join(name);
@@ -94,10 +97,81 @@ mod tests_prepare_windows_pipeline {
         assert_eq!(
             lines,
             vec![
-                "chr1\t40\t50\tG2.SiteA.prox".to_string(),
-                "chr2\t5\t15\tG2.SiteB.prox".to_string(),
+                "chr1\t40\t50\tG2.=SiteA.prox".to_string(),
+                "chr2\t5\t15\tG2.=SiteB.prox".to_string(),
             ],
         );
+        Ok(())
+    }
+
+    #[test]
+    fn should_annotate_ties_with_directional_groups() -> Result<()> {
+        let tmpdir = TempDir::new()?;
+        let input = write_temp_file(&tmpdir, "input.tsv", &["chr1\t10\t20"])?;
+        let near = write_temp_file(&tmpdir, "near.tsv", &["chr1\t0\t5\tUP", "chr1\t25\t30\tDN"])?;
+        let output = tmpdir.path().join("out.tsv");
+
+        let mut cfg = PrepareConfig::default();
+        cfg.input = Some(input);
+        cfg.output = Some(output);
+        cfg.header = HeaderMode::Absent;
+        cfg.near = Some(near);
+        cfg.near_header = HeaderMode::Absent;
+        cfg.near_edge = NearEdge::Nearest;
+        cfg.near_direction = NearDirection::Both;
+        cfg.distance_sign = DistSign::Signed;
+        cfg.oob = OobPolicy::Allow;
+
+        let lines = run_pipeline(&cfg)?;
+        assert_eq!(lines, vec!["chr1\t10\t20\t-UP/+DN".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn should_drop_ties_when_configured() -> Result<()> {
+        let tmpdir = TempDir::new()?;
+        let input = write_temp_file(&tmpdir, "input.tsv", &["chr1\t10\t20"])?;
+        let near = write_temp_file(&tmpdir, "near.tsv", &["chr1\t0\t5\tUP", "chr1\t25\t30\tDN"])?;
+        let output = tmpdir.path().join("out.tsv");
+
+        let mut cfg = PrepareConfig::default();
+        cfg.input = Some(input);
+        cfg.output = Some(output);
+        cfg.header = HeaderMode::Absent;
+        cfg.near = Some(near);
+        cfg.near_header = HeaderMode::Absent;
+        cfg.near_edge = NearEdge::Nearest;
+        cfg.near_direction = NearDirection::Both;
+        cfg.distance_sign = DistSign::Signed;
+        cfg.near_ties = NearTiePolicy::Drop;
+        cfg.oob = OobPolicy::Allow;
+
+        let lines = run_pipeline(&cfg)?;
+        assert!(lines.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn should_add_direction_prefix_for_unique_hits() -> Result<()> {
+        let tmpdir = TempDir::new()?;
+        let input = write_temp_file(&tmpdir, "input.tsv", &["chr1\t0\t10", "chr1\t150\t160"])?;
+        let near = write_temp_file(&tmpdir, "near.tsv", &["chr1\t100\t110\tTARG"])?;
+        let output = tmpdir.path().join("out.tsv");
+
+        let mut cfg = PrepareConfig::default();
+        cfg.input = Some(input);
+        cfg.output = Some(output);
+        cfg.header = HeaderMode::Absent;
+        cfg.near = Some(near);
+        cfg.near_header = HeaderMode::Absent;
+        cfg.near_edge = NearEdge::Nearest;
+        cfg.distance_sign = DistSign::Absolute; // direction prefix should still appear
+        cfg.oob = OobPolicy::Allow;
+
+        let mut lines = run_pipeline(&cfg)?;
+        lines.sort();
+
+        assert_eq!(lines, vec!["chr1\t0\t10\t+TARG", "chr1\t150\t160\t-TARG"],);
         Ok(())
     }
 
@@ -291,6 +365,44 @@ mod tests_prepare_windows_pipeline {
         assert!(format!("{err}").contains("has start 3 before previous 5"));
         Ok(())
     }
+
+    #[test]
+    fn should_accept_gz_input_and_emit_zst_output() -> Result<()> {
+        let tmpdir = TempDir::new()?;
+        let gz_path = tmpdir.path().join("input.tsv.gz");
+        {
+            let file = std::fs::File::create(&gz_path)?;
+            let buf = BufWriter::new(file);
+            let mut encoder = GzEncoder::new(buf, Compression::default());
+            writeln!(encoder, "chr1\t0\t10")?;
+            writeln!(encoder, "chr1\t10\t20")?;
+            let mut buf = encoder.finish()?;
+            buf.flush()?;
+        }
+
+        let output = tmpdir.path().join("out.tsv.zst");
+
+        let mut cfg = PrepareConfig::default();
+        cfg.input = Some(gz_path);
+        cfg.output = Some(output.clone());
+        cfg.header = HeaderMode::Absent;
+        cfg.oob = OobPolicy::Allow;
+
+        run(&cfg)?;
+
+        let file = std::fs::File::open(&output)?;
+        let mut decoder = ZstdDecoder::new(file)?;
+        let mut text = String::new();
+        decoder.read_to_string(&mut text)?;
+        let lines: Vec<_> = text
+            .trim()
+            .split('\n')
+            .filter(|line| !line.is_empty())
+            .collect();
+
+        assert_eq!(lines, vec!["chr1\t0\t10", "chr1\t10\t20"]);
+        Ok(())
+    }
 }
 
 mod tests_postprocess {
@@ -301,10 +413,11 @@ mod tests_postprocess {
         },
         prepare_windows::FinalWindow,
     };
+    use std::sync::Arc;
 
     fn win(chrom: &str, start: u32, end: u32, group: &str, score: Option<f32>) -> FinalWindow {
         FinalWindow {
-            chrom: chrom.to_string(),
+            chrom: Arc::<str>::from(chrom.to_string()),
             start,
             end,
             group: group.to_string(),
@@ -315,7 +428,15 @@ mod tests_postprocess {
     fn snapshot(windows: &[FinalWindow]) -> Vec<(String, u32, u32, String, Option<f32>)> {
         windows
             .iter()
-            .map(|w| (w.chrom.clone(), w.start, w.end, w.group.clone(), w.score))
+            .map(|w| {
+                (
+                    w.chrom.as_ref().to_string(),
+                    w.start,
+                    w.end,
+                    w.group.clone(),
+                    w.score,
+                )
+            })
             .collect()
     }
 
@@ -581,10 +702,11 @@ mod tests_mergers {
         mergers::{merge_across_groups, merge_windows, merge_within_groups},
         prepare_windows::FinalWindow,
     };
+    use std::sync::Arc;
 
     fn win(chrom: &str, start: u32, end: u32, group: &str) -> FinalWindow {
         FinalWindow {
-            chrom: chrom.to_string(),
+            chrom: Arc::<str>::from(chrom.to_string()),
             start,
             end,
             group: group.to_string(),
@@ -595,7 +717,14 @@ mod tests_mergers {
     fn snapshot(windows: &[FinalWindow]) -> Vec<(String, u32, u32, String)> {
         windows
             .iter()
-            .map(|w| (w.chrom.clone(), w.start, w.end, w.group.clone()))
+            .map(|w| {
+                (
+                    w.chrom.as_ref().to_string(),
+                    w.start,
+                    w.end,
+                    w.group.clone(),
+                )
+            })
             .collect()
     }
 
@@ -841,7 +970,10 @@ mod tests_near_file {
 
     use cfdnalab::commands::prepare_windows::{
         config::NearEdge,
-        near_file::{NearChrom, NearInterval, load_near_index, nearest_edge_distance},
+        near_file::{
+            NearChrom, NearHit, NearInterval, NearSide, NearestResult, load_near_index,
+            nearest_edge_distance,
+        },
     };
     use tempfile::TempDir;
 
@@ -881,13 +1013,34 @@ mod tests_near_file {
             }],
         };
         let overlap = nearest_edge_distance(12, 18, &chrom, &NearEdge::Nearest, true).unwrap();
-        assert_eq!(overlap, (0, Some(0)));
+        assert_eq!(
+            overlap,
+            NearestResult::Single(NearHit {
+                distance: 0,
+                group_id: Some(0),
+                side: NearSide::Overlap,
+            })
+        );
 
         let upstream = nearest_edge_distance(0, 5, &chrom, &NearEdge::Nearest, true).unwrap();
-        assert_eq!(upstream, (-5, Some(0)));
+        assert_eq!(
+            upstream,
+            NearestResult::Single(NearHit {
+                distance: -5,
+                group_id: Some(0),
+                side: NearSide::Upstream,
+            })
+        );
 
         let downstream = nearest_edge_distance(25, 30, &chrom, &NearEdge::Nearest, false).unwrap();
-        assert_eq!(downstream, (5, Some(0)));
+        assert_eq!(
+            downstream,
+            NearestResult::Single(NearHit {
+                distance: 5,
+                group_id: Some(0),
+                side: NearSide::Downstream,
+            })
+        );
     }
 
     #[test]
@@ -900,7 +1053,14 @@ mod tests_near_file {
             }],
         };
         let on_boundary = nearest_edge_distance(20, 25, &chrom, &NearEdge::Nearest, false).unwrap();
-        assert_eq!(on_boundary, (0, Some(0)));
+        assert_eq!(
+            on_boundary,
+            NearestResult::Single(NearHit {
+                distance: 0,
+                group_id: Some(0),
+                side: NearSide::Overlap,
+            })
+        );
     }
 
     #[test]
@@ -931,7 +1091,55 @@ mod tests_near_file {
             }],
         };
         let dist = nearest_edge_distance(30, 35, &chrom, &NearEdge::Left, false).unwrap();
-        assert_eq!(dist, (20, Some(1)));
+        assert_eq!(
+            dist,
+            NearestResult::Single(NearHit {
+                distance: 20,
+                group_id: Some(1),
+                side: NearSide::Downstream,
+            })
+        );
+    }
+
+    #[test]
+    fn nearest_edge_distance_reports_ties_with_sides() {
+        let chrom = NearChrom {
+            intervals: vec![
+                NearInterval {
+                    start: 0,
+                    end: 5,
+                    group_id: Some(1),
+                },
+                NearInterval {
+                    start: 25,
+                    end: 30,
+                    group_id: Some(2),
+                },
+            ],
+        };
+
+        let result = nearest_edge_distance(10, 20, &chrom, &NearEdge::Nearest, true).unwrap();
+        match result {
+            NearestResult::Tie(tie) => {
+                assert_eq!(
+                    tie.upstream,
+                    Some(NearHit {
+                        distance: -5,
+                        group_id: Some(1),
+                        side: NearSide::Upstream,
+                    })
+                );
+                assert_eq!(
+                    tie.downstream,
+                    Some(NearHit {
+                        distance: 5,
+                        group_id: Some(2),
+                        side: NearSide::Downstream,
+                    })
+                );
+            }
+            other => panic!("expected tie, got {other:?}"),
+        }
     }
 }
 
@@ -951,7 +1159,7 @@ mod tests_writers {
 
     fn win(chrom: &str, start: u32, end: u32, group: &str) -> FinalWindow {
         FinalWindow {
-            chrom: chrom.to_string(),
+            chrom: chrom.to_string().into(),
             start,
             end,
             group: group.to_string(),
@@ -1077,11 +1285,12 @@ mod tests_chunk {
     };
     use fxhash::FxHashMap;
     use std::fs;
+    use std::sync::Arc;
     use tempfile::TempDir;
 
     fn win(chrom: &str, start: u32, end: u32, group: &str) -> FinalWindow {
         FinalWindow {
-            chrom: chrom.to_string(),
+            chrom: Arc::<str>::from(chrom.to_string()),
             start,
             end,
             group: group.to_string(),

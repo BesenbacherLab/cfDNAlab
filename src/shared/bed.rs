@@ -1,8 +1,9 @@
+use crate::shared::io::open_text_reader;
 use anyhow::{Context, Result, ensure};
 use fxhash::{FxHashMap, FxHashSet};
-use std::fs::File;
 use std::{
-    io::{BufRead, BufReader, BufWriter, Write},
+    fs::File,
+    io::{BufRead, BufWriter, Write},
     path::Path,
 };
 
@@ -25,8 +26,7 @@ pub fn load_windows_from_bed(
     chromosomes: Option<&[String]>,
     filter_fn: Option<&dyn Fn(&str, u64, u64) -> bool>,
 ) -> Result<FxHashMap<String, Windows>> {
-    let f = File::open(bed.as_ref()).context("Opening BED file with windows/intervals")?;
-    let mut reader = BufReader::with_capacity(1 << 20, f);
+    let mut reader = open_text_reader(bed.as_ref())?;
 
     // Optional whitelist of chromosomes
     let mut vec_mapping: FxHashMap<String, Vec<(u64, u64, u64)>> = FxHashMap::default();
@@ -342,8 +342,7 @@ pub fn load_grouped_windows_from_bed(
     chromosomes: &Vec<String>,
     filter_fn: Option<&dyn Fn(&str, u64, u64) -> bool>,
 ) -> Result<(FxHashMap<String, GroupedWindows>, FxHashMap<u64, String>)> {
-    let f = File::open(bed.as_ref()).context("Opening BED file with windows/intervals")?; // Works with &Path, PathBuf, &str
-    let mut reader = BufReader::with_capacity(1 << 20, f);
+    let mut reader = open_text_reader(bed.as_ref())?; // Works with &Path, PathBuf, &str
 
     // Pre-seed output map with requested chromosomes
     let mut vec_mapping: FxHashMap<&str, Vec<(u64, u64, u64)>> =
@@ -635,8 +634,7 @@ pub fn line_looks_like_header(line: &str, separator: char) -> bool {
 /// - has_header:
 ///     True if a header is likely present.
 pub fn detect_header(path: &Path, separator: char) -> Result<bool> {
-    let file = File::open(path)?;
-    let mut reader = BufReader::with_capacity(1 << 20, file);
+    let mut reader = open_text_reader(path)?;
     let mut line = String::new();
     loop {
         line.clear();

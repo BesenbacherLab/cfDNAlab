@@ -56,9 +56,7 @@ fn main() {
         Cmd::Fcoverage(cfg) => cfdnalab::commands::fcoverage::fcoverage::run(&cfg),
         Cmd::Profiles(cfg) => cfdnalab::commands::profile_groups::profile_groups::run(&cfg),
         Cmd::FragmentKmers(cfg) => cfdnalab::commands::fragment_kmers::fragment_kmers::run(&cfg),
-        Cmd::PrepWindows(cfg) => {
-            cfdnalab::commands::prepare_windows::prepare_windows::run(&cfg)
-        } // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg),
+        Cmd::PrepWindows(cfg) => cfdnalab::commands::prepare_windows::prepare_windows::run(&cfg), // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg),
     };
 
     if let Err(e) = res {

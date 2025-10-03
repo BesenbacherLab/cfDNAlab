@@ -14,9 +14,12 @@
 
 use crate::commands::prepare_windows::chunk::{flush_chromosome, process_and_write_chunk};
 use crate::commands::prepare_windows::config::*;
-use crate::commands::prepare_windows::near_file::{load_near_index, nearest_edge_distance};
+use crate::commands::prepare_windows::near_file::{
+    NearHit, NearIndex, NearSide, NearestResult, load_near_index, nearest_edge_distance,
+};
 use crate::commands::prepare_windows::parsers::{
-    parse_distance_bins, parse_record_line, parse_score_filter, resolve_column_indices,
+    DistanceBins, parse_distance_bins, parse_record_line, parse_score_filter,
+    resolve_column_indices,
 };
 use crate::commands::prepare_windows::resizers::apply_size_transform;
 use crate::commands::prepare_windows::writers::{
@@ -24,13 +27,15 @@ use crate::commands::prepare_windows::writers::{
 };
 use crate::shared::bed::{detect_header, line_looks_like_header};
 use crate::shared::blacklist::{is_blacklisted, load_blacklists};
+use crate::shared::io::open_text_reader;
 use crate::shared::reference::load_chrom_sizes;
 use crate::shared::tiled_run::make_temp_dir;
 use anyhow::{Context, Result, bail};
 use fxhash::{FxHashMap, FxHashSet};
-use std::fs::File;
+use std::collections::hash_map::Entry;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::{env, fs, mem};
 
 /// Final window representation used throughout the pipeline.
@@ -38,7 +43,7 @@ use std::{env, fs, mem};
 /// Coordinates are 0-based, half-open `[start, end)`.
 #[derive(Debug, Clone)]
 pub struct FinalWindow {
-    pub chrom: String,
+    pub chrom: Arc<str>,
     pub start: u32,
     pub end: u32,
     pub group: String,      // Empty means "no group label"
@@ -108,6 +113,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         None
     };
 
+    // TODO: We ALSO need to blacklist after potential merging (so here and then again later if merging is enabled!)
     // Load blacklist intervals (optional)
     let mut blacklist_cursors: FxHashMap<String, BlacklistCursor> = FxHashMap::default();
     if let Some(paths) = &cfg.blacklist {
@@ -129,10 +135,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         if path.as_os_str() == "-" {
             Box::new(BufReader::with_capacity(1 << 20, std::io::stdin()))
         } else {
-            Box::new(BufReader::with_capacity(
-                1 << 20,
-                File::open(path).with_context(|| format!("Opening input {:?}", path))?,
-            ))
+            open_text_reader(path)?
         }
     } else {
         Box::new(BufReader::with_capacity(1 << 20, std::io::stdin()))
@@ -160,6 +163,8 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     let mut last_start_for_current: Option<u32> = None;
     let mut carryover_tail: Vec<FinalWindow> = Vec::new();
     let mut current_batch: Vec<FinalWindow> = Vec::with_capacity(chunk_size + 1024);
+    let mut current_chrom_size: Option<u32> = None;
+    let mut chrom_intern: FxHashMap<String, Arc<str>> = FxHashMap::default();
 
     // Optional header handling for input: skip if present
     let mut reader = input_reader;
@@ -234,6 +239,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
 
         if current_chrom.is_empty() {
             current_chrom = chrom.clone();
+            current_chrom_size = chrom_sizes_map.get(&current_chrom).copied();
             last_start_for_current = None;
         }
 
@@ -261,6 +267,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             // Move to new chromosome
             current_chrom.clear();
             current_chrom = chrom.clone();
+            current_chrom_size = chrom_sizes_map.get(&current_chrom).copied();
             last_start_for_current = None;
         }
 
@@ -293,7 +300,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         }
 
         // Transform to final coordinates
-        let chrom_size = chrom_sizes_map.get(&chrom).copied();
+        let chrom_size = current_chrom_size;
         let Some((final_start, final_end)) = apply_size_transform(start, end, chrom_size, cfg)
         else {
             continue;
@@ -316,80 +323,35 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         }
 
         // Nearest distance and binning
-        let (composed_group, maybe_skip) = if let Some(near_idx) = &near_index {
-            if let Some(near_chrom) = near_idx.per_chrom.get(&chrom) {
-                if near_chrom.intervals.is_empty() {
-                    (input_group.clone(), false)
-                } else {
-                    // Compute distance (0 if overlapping)
-                    let signed = matches!(cfg.distance_sign, DistSign::Signed);
-                    if let Some((mut dist, maybe_group_id)) = nearest_edge_distance(
-                        final_start,
-                        final_end,
-                        near_chrom,
-                        &cfg.near_edge,
-                        signed,
-                    ) {
-                        // Direction filter
-                        if matches!(cfg.near_direction, NearDirection::Upstream) && dist > 0 {
-                            continue;
-                        }
-                        if matches!(cfg.near_direction, NearDirection::Downstream) && dist < 0 {
-                            continue;
-                        }
+        let (composed_group, should_skip) = resolve_near_annotation(
+            &near_index,
+            &chrom,
+            final_start,
+            final_end,
+            cfg,
+            distance_bins.as_ref(),
+            &input_group,
+        );
 
-                        // Absolute distance if requested
-                        if matches!(cfg.distance_sign, DistSign::Absolute) {
-                            dist = dist.abs();
-                        }
-
-                        // Max distance
-                        if let Some(maxd) = cfg.distance_max {
-                            if dist.unsigned_abs() > maxd {
-                                continue;
-                            }
-                        }
-
-                        // Distance bin label
-                        let bin_label = if let Some(bins) = &distance_bins {
-                            bins.match_label(dist)
-                        } else {
-                            None
-                        };
-
-                        // Compose group label:
-                        // Motivation for omitting near group when equidistant to two intervals:
-                        // we validated near intervals to avoid overlaps and duplicate edges,
-                        // but exact equidistance across a gap can still occur due to geometry.
-                        // Attaching a specific near group in that rare case would imply a false
-                        // association. We therefore keep only the input group + bin label.
-                        let near_group_name = maybe_group_id
-                            .map(|id| near_idx.group_id_to_name[id as usize].as_str());
-                        let group_label = if near_group_name.is_some() {
-                            compose_group_label(&input_group, near_group_name, bin_label)
-                        } else {
-                            compose_group_label(&input_group, None, bin_label)
-                        };
-                        (group_label, false)
-                    } else {
-                        (input_group.clone(), false)
-                    }
-                }
-            } else {
-                (input_group.clone(), false)
-            }
-        } else {
-            // No near file; group may be from input or empty
-            (input_group.clone(), false)
-        };
-
-        if maybe_skip {
+        if should_skip {
             continue;
         }
 
+        // Intern chromosome identifiers so every window for the same chromosome
+        // shares a single heap allocation; the Arc keeps those copies alive
+        // while allowing cheap cloning across batches.
+        let chrom_arc = match chrom_intern.entry(chrom.clone()) {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => {
+                let arc: Arc<str> = chrom.into_boxed_str().into();
+                entry.insert(arc.clone());
+                arc
+            }
+        };
+
         // Accumulate into batch
         current_batch.push(FinalWindow {
-            chrom,
+            chrom: chrom_arc,
             start: final_start,
             end: final_end,
             group: composed_group,
@@ -468,4 +430,145 @@ fn compose_group_label(
         }
     }
     parts.join(".")
+}
+
+fn resolve_near_annotation(
+    near_index: &Option<NearIndex>,
+    chrom: &str,
+    final_start: u32,
+    final_end: u32,
+    cfg: &PrepareConfig,
+    distance_bins: Option<&DistanceBins>,
+    input_group: &str,
+) -> (String, bool) {
+    // Returns `(group_label, should_skip_window)` for the near filters.
+    let Some(near_idx) = near_index else {
+        return (input_group.to_owned(), false);
+    };
+
+    let Some(near_chrom) = near_idx.per_chrom.get(chrom) else {
+        return (input_group.to_owned(), false);
+    };
+
+    if near_chrom.intervals.is_empty() {
+        return (input_group.to_owned(), false);
+    }
+
+    let signed = matches!(cfg.distance_sign, DistSign::Signed);
+    let Some(result) =
+        nearest_edge_distance(final_start, final_end, near_chrom, &cfg.near_edge, signed)
+    else {
+        return (input_group.to_owned(), false);
+    };
+
+    let passes_direction = |side: NearSide| -> bool {
+        match cfg.near_direction {
+            NearDirection::Both => true,
+            NearDirection::Upstream => matches!(side, NearSide::Upstream | NearSide::Overlap),
+            NearDirection::Downstream => matches!(side, NearSide::Downstream | NearSide::Overlap),
+        }
+    };
+
+    let within_distance = |distance: i32| -> bool {
+        if let Some(maxd) = cfg.distance_max {
+            if distance.unsigned_abs() > maxd {
+                return false;
+            }
+        }
+        true
+    };
+
+    let normalize_distance = |distance: i32| -> i32 {
+        if matches!(cfg.distance_sign, DistSign::Absolute) {
+            distance.abs()
+        } else {
+            distance
+        }
+    };
+
+    match result {
+        NearestResult::Single(mut hit) => {
+            if !passes_direction(hit.side) {
+                return (input_group.to_owned(), true);
+            }
+            if !within_distance(hit.distance) {
+                return (input_group.to_owned(), true);
+            }
+
+            hit.distance = normalize_distance(hit.distance);
+
+            let bin_label = distance_bins.and_then(|bins| bins.match_label(hit.distance));
+            let prefix = match hit.side {
+                NearSide::Upstream => "-",
+                NearSide::Downstream => "+",
+                NearSide::Overlap => "=",
+            };
+            let mut near_label = String::new();
+            near_label.push_str(prefix);
+            if let Some(id) = hit.group_id {
+                near_label.push_str(near_idx.group_id_to_name[id as usize].as_str());
+            }
+            let group_label =
+                compose_group_label(input_group, Some(near_label.as_str()), bin_label);
+
+            (group_label, false)
+        }
+        NearestResult::Tie(tie) => {
+            if matches!(cfg.near_ties, NearTiePolicy::Drop) {
+                return (input_group.to_owned(), true);
+            }
+
+            let mut kept_hits: Vec<NearHit> = Vec::new();
+            if let Some(mut up) = tie.upstream {
+                if passes_direction(up.side) && within_distance(up.distance) {
+                    up.distance = normalize_distance(up.distance);
+                    kept_hits.push(up);
+                }
+            }
+            if let Some(mut down) = tie.downstream {
+                if passes_direction(down.side) && within_distance(down.distance) {
+                    down.distance = normalize_distance(down.distance);
+                    kept_hits.push(down);
+                }
+            }
+
+            if kept_hits.is_empty() {
+                return (input_group.to_owned(), true);
+            }
+
+            // Compose directional elements so the caller sees `-group/+group` when both sides
+            // survive filtering (`-` = upstream, `+` = downstream, `=` = overlap).
+            let mut side_labels: Vec<String> = Vec::new();
+            for hit in &kept_hits {
+                let prefix = match hit.side {
+                    NearSide::Upstream => "-",
+                    NearSide::Downstream => "+",
+                    NearSide::Overlap => "=",
+                };
+                if let Some(id) = hit.group_id {
+                    let name = near_idx.group_id_to_name[id as usize].as_str();
+                    side_labels.push(format!("{prefix}{name}"));
+                } else {
+                    side_labels.push(prefix.to_string());
+                }
+            }
+
+            let bin_distance = kept_hits[0].distance;
+            let bin_label = distance_bins.and_then(|bins| bins.match_label(bin_distance));
+
+            let near_combo = if side_labels.is_empty() {
+                None
+            } else {
+                Some(side_labels.join("/"))
+            };
+
+            let group_label = if let Some(label) = near_combo {
+                compose_group_label(input_group, Some(label.as_str()), bin_label)
+            } else {
+                compose_group_label(input_group, None, bin_label)
+            };
+
+            (group_label, false)
+        }
+    }
 }

@@ -16,6 +16,7 @@ use crate::{
         blacklist::{compute_blacklist_overlap, is_blacklisted},
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
         fragment_iterator::fragments_with_indel_counts_from_bam,
+        io::create_text_writer,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         read::default_include_read,
@@ -29,12 +30,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{
-    fs::File,
-    io::{BufWriter, Write},
-    sync::Arc,
-    time::Instant,
-};
+use std::{io::Write, sync::Arc, time::Instant};
 
 /// Execute the fragment-length counting pipeline end-to-end.
 ///
@@ -177,13 +173,13 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     // Write bins BED file
     if !matches!(window_opt, WindowSpec::Global) {
         println!("Start: Writing window coordinates to disk");
-        let mut bed_writer = BufWriter::new(
-            File::create(&opt.ioc.output_dir.join("bins.bed")).context("Create bed fail")?,
-        );
+        let bins_path = opt.ioc.output_dir.join("bins.bed");
+        let mut bed_writer = create_text_writer(&bins_path).context("Create bed fail")?;
         for (chr, start, end, _, overlap_perc) in &bin_info {
             writeln!(bed_writer, "{}\t{}\t{}\t{}", chr, start, end, overlap_perc)
                 .context("Write bed line fail")?;
         }
+        bed_writer.finish().context("Finalize bins.bed writer")?;
     }
 
     println!("");

@@ -4,6 +4,7 @@ use crate::commands::prepare_windows::{
 };
 use fxhash::FxHashMap;
 use std::cmp::Ordering;
+use std::sync::Arc;
 
 /// Candidate retained while resolving spacing conflicts.
 ///
@@ -146,8 +147,8 @@ pub fn enforce_min_distance_within_group(
     let limit = min_distance_bp.unwrap();
 
     let mut result: Vec<FinalWindow> = Vec::with_capacity(windows.len());
-    let mut last_end_by_key: FxHashMap<(String, String), u32> = FxHashMap::default();
-    let mut pending_by_key: FxHashMap<(String, String), Vec<Candidate>> = FxHashMap::default();
+    let mut last_end_by_key: FxHashMap<(String, Arc<str>), u32> = FxHashMap::default();
+    let mut pending_by_key: FxHashMap<(String, Arc<str>), Vec<Candidate>> = FxHashMap::default();
 
     for (idx, window) in windows.iter().enumerate() {
         let key = (window.group.clone(), window.chrom.clone());
@@ -253,7 +254,7 @@ pub fn partition_safe_and_tail(
 /// # Returns
 /// Earliest index that must remain in the tail.
 fn compute_tail_start_within(windows: &[FinalWindow], margin: u32) -> usize {
-    let mut last_per_key: FxHashMap<(String, String), u32> = FxHashMap::default();
+    let mut last_per_key: FxHashMap<(String, Arc<str>), u32> = FxHashMap::default();
     let mut min_index = windows.len();
 
     for (idx, window) in windows.iter().enumerate().rev() {
@@ -298,18 +299,18 @@ fn compute_tail_start_across(windows: &[FinalWindow], margin: u32) -> usize {
 
     for (idx, window) in windows.iter().enumerate().rev() {
         let last_end = last_end_by_chrom
-            .get(window.chrom.as_str())
+            .get(window.chrom.as_ref())
             .copied()
             .unwrap_or(0);
         if last_end == 0 {
-            last_end_by_chrom.insert(window.chrom.as_str(), window.end);
+            last_end_by_chrom.insert(window.chrom.as_ref(), window.end);
             if margin > 0 {
                 min_index = min_index.min(idx);
             }
         } else if window.start <= last_end.saturating_add(margin) {
             min_index = min_index.min(idx);
             let new_end = last_end.max(window.end);
-            last_end_by_chrom.insert(window.chrom.as_str(), new_end);
+            last_end_by_chrom.insert(window.chrom.as_ref(), new_end);
         }
     }
     min_index

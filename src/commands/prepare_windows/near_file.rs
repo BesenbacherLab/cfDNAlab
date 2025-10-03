@@ -1,11 +1,7 @@
+use crate::shared::io::open_text_reader;
 use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
-use std::{
-    cmp::Ordering,
-    fs::File,
-    io::{BufRead, BufReader},
-    path::Path,
-};
+use std::{cmp::Ordering, io::BufRead, path::Path};
 
 use crate::commands::prepare_windows::config::NearEdge;
 
@@ -31,6 +27,36 @@ pub struct NearIndex {
     pub per_chrom: FxHashMap<String, NearChrom>,
     pub group_name_to_id: FxHashMap<String, u32>,
     pub group_id_to_name: Vec<String>,
+}
+
+/// Where the nearest interval sits relative to the window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NearSide {
+    Upstream,
+    Downstream,
+    Overlap,
+}
+
+/// Distance, group id, and side for a single nearest hit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NearHit {
+    pub distance: i32,
+    pub group_id: Option<u32>,
+    pub side: NearSide,
+}
+
+/// Captures the upstream and downstream hits when a tie happens.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NearTie {
+    pub upstream: Option<NearHit>,
+    pub downstream: Option<NearHit>,
+}
+
+/// Result of the nearest-edge lookup: either one hit or a tie.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NearestResult {
+    Single(NearHit),
+    Tie(NearTie),
 }
 
 /// Load and validate the `--near` intervals.
@@ -62,8 +88,7 @@ pub fn load_near_index(
     has_header: bool,
     group_col_present: bool,
 ) -> Result<NearIndex> {
-    let file = File::open(path).with_context(|| format!("Opening near file {:?}", path))?;
-    let mut reader = BufReader::with_capacity(1 << 20, file);
+    let mut reader = open_text_reader(path)?;
     let mut line = String::new();
 
     if has_header {
@@ -225,33 +250,34 @@ pub fn load_near_index(
 ///
 /// Returns
 /// -------
-/// - distance:
-///     The distance (0 if overlapping).
-/// - near_group_id:
-///     The near interval's group id if a unique nearest interval exists; otherwise None.
+/// - result:
+///     Either a single nearest hit or a tie describing upstream/downstream hits.
 pub fn nearest_edge_distance(
     window_start: u32,
     window_end: u32,
     near_chrom: &NearChrom,
     which_edge: &NearEdge,
     signed: bool,
-) -> Option<(i32, Option<u32>)> {
+) -> Option<NearestResult> {
     if near_chrom.intervals.is_empty() {
         return None;
     }
 
-    // Binary search candidate by start
+    // Track the best absolute distance and every interval that matches it.
+    #[derive(Clone, Copy)]
+    struct Candidate {
+        idx: usize,
+        distance: i32,
+        side: NearSide,
+    }
+
     let idx = near_chrom
         .intervals
         .binary_search_by_key(&window_start, |iv| iv.start)
         .unwrap_or_else(|i| i);
 
-    // We will check a small neighborhood around idx. Because the near intervals are
-    // non-overlapping and sorted, the nearest interval (by edge distance) must be among
-    // a small set near the insertion point.
-    let mut best_distance: Option<i32> = None;
-    let mut best_group_id: Option<u32> = None;
-    let mut best_interval_index: Option<usize> = None;
+    let mut best_abs_distance: Option<i32> = None;
+    let mut best_candidates: Vec<Candidate> = Vec::new();
 
     let start_index = idx.saturating_sub(2);
     let end_index = (idx + 2).min(near_chrom.intervals.len().saturating_sub(1));
@@ -259,13 +285,15 @@ pub fn nearest_edge_distance(
     for j in start_index..=end_index {
         let iv = near_chrom.intervals[j];
 
-        // Overlap check: window overlaps interval -> distance = 0
         if window_start < iv.end && window_end > iv.start {
-            return Some((0, iv.group_id));
+            return Some(NearestResult::Single(NearHit {
+                distance: 0,
+                group_id: iv.group_id,
+                side: NearSide::Overlap,
+            }));
         }
 
-        // Candidate target edges
-        let mut candidate_edges: [i32; 2] = [iv.start as i32, iv.end as i32]; // right edge is at end (exclusive)
+        let mut candidate_edges: [i32; 2] = [iv.start as i32, iv.end as i32];
         let num_edges = match which_edge {
             NearEdge::Left => 1,
             NearEdge::Right => {
@@ -277,12 +305,9 @@ pub fn nearest_edge_distance(
 
         for k in 0..num_edges {
             let target_edge = candidate_edges[k];
-
-            // Distance to this edge from window edges
             let distance_from_start = (window_start as i32) - target_edge;
             let distance_from_end = (window_end as i32) - target_edge;
 
-            // Choose the closer window edge for this target edge
             let mut distance = if distance_from_start.abs() <= distance_from_end.abs() {
                 distance_from_start
             } else {
@@ -293,55 +318,41 @@ pub fn nearest_edge_distance(
                 distance = distance.abs();
             }
 
-            match best_distance {
-                None => {
-                    best_distance = Some(distance);
-                    best_group_id = iv.group_id;
-                    best_interval_index = Some(j);
-                }
-                Some(current) => {
-                    if distance.abs() < current.abs() {
-                        best_distance = Some(distance);
-                        best_group_id = iv.group_id;
-                        best_interval_index = Some(j);
-                    } else if distance.abs() == current.abs() {
-                        // Tie between different intervals or edges. Because we validated that
-                        // intervals do not overlap and do not share identical edges, an exact
-                        // tie can only occur in gaps symmetrical to two neighbors.
-                        //
-                        // Design choice to avoid arbitrary selection:
-                        // - Keep the distance value as-is (absolute tie).
-                        // - Do not attach a near group label in this tie case (set to None).
-                        // - If signed is requested, sign will follow the interval with smaller start
-                        //   deterministically below.
-                        best_group_id = None;
+            let abs_distance = distance.abs();
+            let side = if iv.end <= window_start {
+                NearSide::Upstream
+            } else if iv.start >= window_end {
+                NearSide::Downstream
+            } else {
+                NearSide::Overlap
+            };
 
-                        // Resolve sign deterministically if needed by picking the left interval.
-                        if signed {
-                            if let Some(prev_idx) = best_interval_index {
-                                let left_idx = j.min(prev_idx);
-                                let left_iv = near_chrom.intervals[left_idx];
-                                // Recompute sign vs left interval's nearest edge
-                                let left_edge = if (window_start as i32 - left_iv.end as i32).abs()
-                                    <= (window_end as i32 - left_iv.end as i32).abs()
-                                {
-                                    left_iv.end as i32
-                                } else {
-                                    left_iv.start as i32
-                                };
-                                let signed_from_start = (window_start as i32) - left_edge;
-                                let signed_from_end = (window_end as i32) - left_edge;
-                                let signed_distance =
-                                    if signed_from_start.abs() <= signed_from_end.abs() {
-                                        signed_from_start
-                                    } else {
-                                        signed_from_end
-                                    };
-                                best_distance = Some(signed_distance);
-                                best_interval_index = Some(left_idx);
-                            }
-                        } else {
-                            best_distance = Some(distance.abs());
+            match best_abs_distance {
+                None => {
+                    best_abs_distance = Some(abs_distance);
+                    best_candidates.clear();
+                    best_candidates.push(Candidate {
+                        idx: j,
+                        distance,
+                        side,
+                    });
+                }
+                Some(current_abs) => {
+                    if abs_distance < current_abs {
+                        best_abs_distance = Some(abs_distance);
+                        best_candidates.clear();
+                        best_candidates.push(Candidate {
+                            idx: j,
+                            distance,
+                            side,
+                        });
+                    } else if abs_distance == current_abs {
+                        if !best_candidates.iter().any(|cand| cand.idx == j) {
+                            best_candidates.push(Candidate {
+                                idx: j,
+                                distance,
+                                side,
+                            });
                         }
                     }
                 }
@@ -349,5 +360,46 @@ pub fn nearest_edge_distance(
         }
     }
 
-    best_distance.map(|d| (d, best_group_id))
+    if best_candidates.is_empty() {
+        return None;
+    }
+
+    if best_candidates.len() == 1 {
+        let cand = best_candidates[0];
+        let group_id = near_chrom.intervals[cand.idx].group_id;
+        return Some(NearestResult::Single(NearHit {
+            distance: cand.distance,
+            group_id,
+            side: cand.side,
+        }));
+    }
+
+    // More than one interval shares the same distance: record the upstream and
+    // downstream hits so the caller can decide how to label or drop them.
+    let mut tie = NearTie::default();
+    for cand in best_candidates {
+        let group_id = near_chrom.intervals[cand.idx].group_id;
+        let hit = NearHit {
+            distance: cand.distance,
+            group_id,
+            side: cand.side,
+        };
+        match cand.side {
+            NearSide::Upstream => {
+                if tie.upstream.is_none() {
+                    tie.upstream = Some(hit);
+                }
+            }
+            NearSide::Downstream => {
+                if tie.downstream.is_none() {
+                    tie.downstream = Some(hit);
+                }
+            }
+            NearSide::Overlap => {
+                return Some(NearestResult::Single(hit));
+            }
+        }
+    }
+
+    Some(NearestResult::Tie(tie))
 }

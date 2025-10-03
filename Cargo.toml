@@ -13,6 +13,7 @@ arrayvec = "0.7.6"
 bincode = { version = "2.0.1", features = ["serde"] }
 chrono = { version = "0.4.42", features = ["clock"] }
 clap = { version = "4.5.37", features = ["derive"], optional = true }
+flate2 = "1.1.2"
 fxhash = "0.2.1"
 indicatif = { version = "0.17.11", default-features = false, features = ["rayon", "unicode-width"] }
 ndarray = "0.16.1"

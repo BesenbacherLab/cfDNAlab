@@ -1,11 +1,12 @@
 use anyhow::Result;
 use cfdnalab::shared::bed::load_windows_from_bed;
+use flate2::{Compression, write::GzEncoder};
+use std::io::Write;
 use tempfile::NamedTempFile;
 
 /// Write helper content to a temporary BED file used across tests.
 fn write_bed(lines: &[&str]) -> Result<NamedTempFile> {
     let mut file = NamedTempFile::new()?;
-    use std::io::Write;
     for line in lines {
         writeln!(file, "{}", line)?;
     }
@@ -48,5 +49,23 @@ fn should_filter_windows_by_predicate_when_loading_bed() -> Result<()> {
     // Assert
     let chr1 = map.get("chr1").expect("chr1 missing");
     assert_eq!(chr1.as_slice(), &[(10, 25, 0)]);
+    Ok(())
+}
+
+#[test]
+fn should_load_gzipped_bed() -> Result<()> {
+    let gz = tempfile::Builder::new().suffix(".bed.gz").tempfile()?;
+
+    {
+        let file = std::fs::File::create(gz.path())?;
+        let mut encoder = GzEncoder::new(file, Compression::default());
+        writeln!(encoder, "chr1\t0\t5")?;
+        writeln!(encoder, "chr1\t10\t15")?;
+        encoder.finish()?;
+    }
+
+    let map = load_windows_from_bed(gz.path(), None, None)?;
+    let chr1 = map.get("chr1").expect("chr1 missing");
+    assert_eq!(chr1.as_slice(), &[(0, 5, 0), (10, 15, 1)]);
     Ok(())
 }
