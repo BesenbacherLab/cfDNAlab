@@ -10,6 +10,7 @@ use std::path::PathBuf;
 /// can consume directly.
 ///
 /// ## Typical steps
+/// 
 /// - Parsing TSV/CSV (automatic header detection, explicit column mapping, configurable separator).
 ///
 /// - Filtering by numeric score, genomic blacklist, or custom QC thresholds.
@@ -26,6 +27,7 @@ use std::path::PathBuf;
 /// `profile-groups`.
 ///
 /// ## Practical notes
+/// 
 /// - All coordinates are 0-based half-open `[start, end)`.
 ///
 /// - Column indices are 0-based when you refer to them explicitly. If `--header absent`, only
