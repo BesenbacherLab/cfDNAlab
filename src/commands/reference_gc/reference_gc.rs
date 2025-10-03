@@ -5,13 +5,12 @@ use crate::{
     commands::{cli_common::*, reference_gc::config::RefGCConfig},
     shared::{
         bed::load_windows_from_bed,
-        blacklist::{apply_blacklist_mask_to_seq, compute_blacklist_overlap, load_blacklists},
+        blacklist::{apply_blacklist_mask_to_seq, compute_blacklist_overlap},
         reference::{read_seq, twobit_contig_lengths},
         sampling::sample_starts_per_chrom,
     },
 };
 use anyhow::{Context, Result};
-use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
@@ -37,18 +36,17 @@ pub fn run(opt: RefGCConfig) -> Result<()> {
     create_dir_all(&opt.output_dir).context("Cannot create output_dir")?;
 
     // Load blacklist intervals if provided
-    let blacklist_map = if let Some(beds) = &opt.blacklist {
-        println!("Start: Loading blacklists");
-        load_blacklists(beds, 1, &chromosomes)?
-    } else {
-        FxHashMap::default()
-    };
+    let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, 0, &chromosomes)?;
 
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             println!("Start: Loading window coordinates");
-            Some(load_windows_from_bed(bed, &chromosomes, None)?)
+            Some(load_windows_from_bed(
+                bed,
+                Some(chromosomes.as_slice()),
+                None,
+            )?)
         }
         _ => None,
     };

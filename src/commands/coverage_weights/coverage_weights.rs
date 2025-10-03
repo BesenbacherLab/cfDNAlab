@@ -62,8 +62,12 @@ pub fn run(opt: CoverageWeightsConfig) -> Result<()> {
     if opt.blacklist.is_some() {
         println!("Start: Loading blacklists");
     }
-    let blacklist_map =
-        load_blacklist_map(opt.blacklist.as_ref(), opt.blacklist_min_size, &chromosomes)?;
+    let blacklist_map = load_blacklist_map(
+        opt.blacklist.as_ref(),
+        opt.blacklist_min_size,
+        0,
+        &chromosomes,
+    )?;
 
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads as usize)?;

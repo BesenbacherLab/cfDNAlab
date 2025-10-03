@@ -72,14 +72,22 @@ pub fn run(opt: LengthsConfig) -> Result<()> {
     if opt.blacklist.is_some() {
         println!("Start: Loading blacklists");
     }
-    let blacklist_map =
-        load_blacklist_map(opt.blacklist.as_ref(), opt.blacklist_min_size, &chromosomes)?;
+    let blacklist_map = load_blacklist_map(
+        opt.blacklist.as_ref(),
+        opt.blacklist_min_size,
+        0,
+        &chromosomes,
+    )?;
 
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             println!("Start: Loading window coordinates");
-            Some(load_windows_from_bed(bed, &chromosomes, None)?)
+            Some(load_windows_from_bed(
+                bed,
+                Some(chromosomes.as_slice()),
+                None,
+            )?)
         }
         _ => None,
     };

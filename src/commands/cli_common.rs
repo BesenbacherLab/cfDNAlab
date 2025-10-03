@@ -433,10 +433,11 @@ pub fn ensure_output_dir(path: &Path) -> Result<()> {
 pub fn load_blacklist_map(
     beds: Option<&Vec<std::path::PathBuf>>,
     min_size: u64,
+    halo_bp: u64,
     chromosomes: &Vec<String>,
 ) -> Result<FxHashMap<String, Vec<(u64, u64)>>> {
     if let Some(paths) = beds {
-        load_blacklists(paths, min_size, chromosomes)
+        load_blacklists(paths, min_size, halo_bp, Some(chromosomes.as_slice()))
     } else {
         Ok(FxHashMap::default())
     }

@@ -69,8 +69,12 @@ pub fn run(opt: ProfileGroupsConfig) -> Result<()> {
     if opt.blacklist.is_some() {
         println!("Start: Loading blacklists");
     }
-    let blacklist_map =
-        load_blacklist_map(opt.blacklist.as_ref(), opt.blacklist_min_size, &chromosomes)?;
+    let blacklist_map = load_blacklist_map(
+        opt.blacklist.as_ref(),
+        opt.blacklist_min_size,
+        0,
+        &chromosomes,
+    )?;
 
     // Load sites from BED file
     println!("Start: Loading fixed-size intervals");

@@ -1,66 +1,56 @@
-use crate::shared::bed::load_windows_from_bed;
+use crate::shared::bed::{Windows, load_windows_from_bed};
 use anyhow::Result;
 use fxhash::FxHashMap;
 use std::path::Path;
 
-// TODO: Test properly loaded, concatenated and sorted
-
 /// Load blacklisted genomic intervals from *one or more* BED files.
 ///
-/// Overlapping intervals are merged (flattened).
+/// Intervals shorter than `min_size` are discarded. When `halo_bp > 0`, each
+/// interval is expanded by that halo on both sides *before* merging, ensuring
+/// the coalescing step accounts for the expanded span.
 ///
-/// Returns sorted, flattened intervals per chromosome.
+/// # Parameters
+/// - `beds`: BED files to read.
+/// - `min_size`: Minimum interval length (bp) to keep.
+/// - `halo_bp`: Halo to expand on both sides before merging.
+/// - `chromosomes`: Optional whitelist of chromosome names to retain.
 ///
-/// * Uses **only** the first three columns (`chrom`, `start`, `end`) and
-///   ignores any additional BED fields.
-/// * Lines that begin with `#`, `track`, `browser`, or are blank are skipped.
-/// * `chromosomes` is usually the autosome whitelist (e.g. `["chr1", … "chr22"]`).
+/// TODO: plumb through a streaming reader so we do not materialise every
+/// interval before merging when very large inputs are used.
 pub fn load_blacklists<P: AsRef<Path>>(
     beds: &[P],
     min_size: u64,
-    chromosomes: &Vec<String>,
+    halo_bp: u64,
+    chromosomes: Option<&[String]>,
 ) -> Result<FxHashMap<String, Vec<(u64, u64)>>> {
-    let mut merged: FxHashMap<String, Vec<(u64, u64)>> = FxHashMap::default();
-    let filter_fn = move |_chr: &str, s: u64, e: u64| (e - s) >= min_size;
-
-    // Load each BED file
-    for bed in beds {
-        let single = load_windows_from_bed(bed, chromosomes, Some(&filter_fn))?;
-        for (chr, ivs) in single {
-            let mut v: Vec<(u64, u64)> = ivs
-                .into_inner()
-                .into_iter()
-                .map(|(s, e, _)| (s, e))
-                .collect();
-            merged.entry(chr).or_default().append(&mut v);
-        }
+    if beds.is_empty() {
+        return Ok(FxHashMap::default());
     }
 
-    // Sort and merge per chromosome
+    let mut merged: FxHashMap<String, Vec<(u64, u64)>> = FxHashMap::default();
+
+    for bed in beds {
+        let single = load_windows_from_bed(bed, chromosomes, None)?;
+        accumulate_blacklist_windows(&mut merged, single, min_size, halo_bp);
+    }
+
     for ivs in merged.values_mut() {
         ivs.sort_unstable();
         *ivs = merge_intervals(std::mem::take(ivs));
     }
+
     Ok(merged)
 }
 
-// TODO: Test, rename, and improve documentation!
-
-/// Merge intervals when they touch or overlap.
-///
-/// * ivs: Intervals sorted by start and end positions.
 pub fn merge_intervals(ivs: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
     if ivs.is_empty() {
         return ivs;
     }
-    // Already sorted by caller (`sort_unstable`)
     let mut merged = Vec::with_capacity(ivs.len());
     let mut cur = ivs[0];
-    // Find
     for (s, e) in ivs.into_iter().skip(1) {
         if s <= cur.1 {
-            // overlap or touch
-            cur.1 = cur.1.max(e); // extend the current block
+            cur.1 = cur.1.max(e);
         } else {
             merged.push(cur);
             cur = (s, e);
@@ -68,4 +58,29 @@ pub fn merge_intervals(ivs: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
     }
     merged.push(cur);
     merged
+}
+
+fn accumulate_blacklist_windows(
+    merged: &mut FxHashMap<String, Vec<(u64, u64)>>,
+    windows_map: FxHashMap<String, Windows>,
+    min_size: u64,
+    halo_bp: u64,
+) {
+    for (chr, ivs) in windows_map {
+        let mut out: Vec<(u64, u64)> = Vec::new();
+        for (start, end, _) in ivs.into_inner() {
+            if end <= start {
+                continue;
+            }
+            if (end - start) < min_size {
+                continue;
+            }
+            let halo_start = start.saturating_sub(halo_bp);
+            let halo_end = end.saturating_add(halo_bp);
+            out.push((halo_start, halo_end));
+        }
+        if !out.is_empty() {
+            merged.entry(chr).or_default().extend(out);
+        }
+    }
 }

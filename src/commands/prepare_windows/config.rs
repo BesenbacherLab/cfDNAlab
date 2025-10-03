@@ -3,6 +3,8 @@ use crate::shared::blacklist::BlacklistStrategy;
 use clap::{ArgGroup, Parser, ValueEnum};
 use std::path::PathBuf;
 
+// TODO: Test: “Stress merge closure” — construct a chain of windows where each is within merge_gap of the next across chunk boundaries; assert that the final output matches a one-shot full-chrom run.
+
 /// Prepare BED-like genomic windows for cfDNA fragmentomics tools.
 ///
 /// This command ingests a BED-like file with at least `chrom,start,end`, applies optional
@@ -29,7 +31,7 @@ use std::path::PathBuf;
 /// - Resizing / flanking
 /// - Group-wise filters
 /// - Performance and reproducibility
-#[cfg_attr(feature = "cli", derive(Parser))]
+#[cfg_attr(feature = "cli", derive(Parser, Clone))]
 #[cfg_attr(
     feature = "cli",
     command(
@@ -91,14 +93,11 @@ pub struct PrepareConfig {
             help_heading = "Core"
         )
     )]
-    pub separator: Option<char>,
+    pub separator: char,
 
     /// Column mapping for the *required* first three columns `[string]`
     ///
-    /// Format: `chrom=<idx|name>,start=<idx|name>,end=<idx|name>`
-    ///
-    /// Indices are 0-based. Names are honored only if `--header != absent`; otherwise, the
-    /// program will exit with an error if names are used.
+    /// Format: `chrom=<idx>,start=<idx>,end=<idx>` (0-based indices only).
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -223,7 +222,9 @@ pub struct PrepareConfig {
     /// Expected columns:
     ///   `chromosome`, `start`, `end`, and optionally `group`. Header handling follows `--near-header`.
     ///
-    /// The distance is measured to the **nearest edge** of the nearest target interval.
+    /// Distance: If the window overlaps a target interval, distance = 0. Otherwise uses the minimum
+    /// distance from either window edge to the nearest target interval edge.
+    ///
     /// If you require e.g., TSS distances, provide 1-bp intervals at the strand-specific TSS.
     ///
     /// When `--distance-bins` is used, the output group combines the original group (from
@@ -434,8 +435,8 @@ pub struct PrepareConfig {
     /// How to resolve distance ties when enforcing `--min-distance-within-group` `[string]`
     ///
     /// - "keep-first": Keep the first; skip subsequent windows within distance.
-    /// - "keep-higher-score": Prefer higher score (requires `--score-col`).
-    /// - "keep-lower-score": Prefer lower score (requires `--score-col`).
+    /// - "keep-highest-score": Prefer higher score (requires `--score-col`).
+    /// - "keep-lowest-score": Prefer lower score (requires `--score-col`).
     /// - "keep-longest": Prefer longer windows.
     #[cfg_attr(
         feature = "cli",
@@ -458,7 +459,8 @@ pub struct PrepareConfig {
     ///
     /// - "none": No deduplication.
     /// - "keep-first": Keep the first occurrence.
-    /// - "keep-best-score": Keep the one with highest score (requires `--score-col`).
+    /// - "keep-highest-score": Prefer the window with the highest score (requires `--score-col`).
+    /// - "keep-lowest-score": Prefer the window with the lowest score (requires `--score-col`).
     /// - "keep-longest": Keep the longest.
     #[cfg_attr(
         feature = "cli",
@@ -520,66 +522,64 @@ pub struct PrepareConfig {
     pub merge_label: MergeLabel,
 
     // ─────────────────────────────────────────────────────────────────────────────
-    // Performance and reproducibility
+    // Reproducibility
     // ─────────────────────────────────────────────────────────────────────────────
     /// Seed for any randomized operations `[integer]`
     #[cfg_attr(
         feature = "cli",
-        clap(long, value_parser = clap::value_parser!(u64), help_heading = "Performance and reproducibility")
+        clap(long, value_parser = clap::value_parser!(u64), help_heading = "Reproducibility")
     )]
     pub seed: Option<u64>,
-
-    /// Number of threads to use (increases RAM usage) `[integer]`
-    ///
-    /// Defaults to the number of available CPU cores (-1).
-    #[cfg_attr(
-        feature = "cli",
-        clap(short = 't', long, default_value_t = (num_cpus::get()-1).max(1), help_heading = "Performance and reproducibility")
-    )]
-    pub n_threads: usize,
 }
 
-#[cfg_attr(feature = "cli", derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum))]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum HeaderMode {
     Auto,
     Present,
     Absent,
 }
 
-#[cfg_attr(feature = "cli", derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum))]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum MissingScore {
     Keep,
     Drop,
 }
 
-#[cfg_attr(feature = "cli", derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum))]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum NearEdge {
     Left,
     Right,
     Nearest,
 }
 
-#[cfg_attr(feature = "cli", derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum))]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum NearDirection {
     Upstream,
     Downstream,
     Both,
 }
 
-#[cfg_attr(feature = "cli", derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum))]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum OobPolicy {
     Drop,
     Trim,
     Allow,
 }
 
-#[cfg_attr(feature = "cli", derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum))]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum DistSign {
     Absolute,
     Signed,
 }
 
-#[cfg_attr(feature = "cli", derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum))]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum DistanceTiesPolicy {
     #[cfg_attr(feature = "cli", value(name = "keep-first"))]
     KeepFirst,
@@ -591,25 +591,30 @@ pub enum DistanceTiesPolicy {
     KeepLongest,
 }
 
-#[cfg_attr(feature = "cli", derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum))]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum DedupKeep {
     None,
     #[cfg_attr(feature = "cli", value(name = "keep-first"))]
     KeepFirst,
-    #[cfg_attr(feature = "cli", value(name = "keep-best-score"))]
-    KeepBestScore,
+    #[cfg_attr(feature = "cli", value(name = "keep-highest-score"))]
+    KeepHighestScore,
+    #[cfg_attr(feature = "cli", value(name = "keep-lowest-score"))]
+    KeepLowestScore,
     #[cfg_attr(feature = "cli", value(name = "keep-longest"))]
     KeepLongest,
 }
 
-#[cfg_attr(feature = "cli", derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum))]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum MergeScope {
     None,
     Within,
     Across,
 }
 
-#[cfg_attr(feature = "cli", derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum))]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum MergeLabel {
     Join,
     First,
@@ -624,7 +629,7 @@ impl Default for PrepareConfig {
             cols: "chrom=0,start=1,end=2".to_string(),
             group_cols: Vec::new(),
             score_col: None,
-            separator: None,
+            separator: '\t',
             score_filter: None,
             score_missing: MissingScore::Keep,
             blacklist: None,
@@ -649,7 +654,6 @@ impl Default for PrepareConfig {
             merge_gap: None,
             merge_label: MergeLabel::Join,
             seed: None,
-            n_threads: (num_cpus::get() - 1).max(1),
         }
     }
 }

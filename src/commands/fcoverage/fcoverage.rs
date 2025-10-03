@@ -69,13 +69,13 @@ pub fn run(opt: FCoverageConfig) -> Result<()> {
     if opt.blacklist.is_some() {
         println!("Start: Loading blacklists");
     }
-    let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, &chromosomes)?;
+    let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, 0, &chromosomes)?;
 
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             println!("Start: Loading window coordinates");
-            let wds = load_windows_from_bed(bed, &chromosomes, None)?;
+            let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None)?;
             if matches!(
                 opt.per_window,
                 CoverageWindowAction::OnlyIncludeThesePositionsUnique

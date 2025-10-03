@@ -5,7 +5,7 @@ use std::path::Path;
 /// Open a zstd-compressed buffered writer once per file
 ///
 /// Use when you plan to write many lines to the same file.
-/// 
+///
 /// Keeps the concrete encoder type hidden behind `Box<dyn Write>` which is fine for IO-bound paths
 pub fn open_zstd_auto_writer<P: AsRef<Path>>(
     path: P,

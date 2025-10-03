@@ -1,1 +1,9 @@
+pub mod chunk;
 pub mod config;
+pub mod mergers;
+pub mod near_file;
+pub mod parsers;
+pub mod postprocess;
+pub mod prepare_windows;
+pub mod resizers;
+pub mod writers;

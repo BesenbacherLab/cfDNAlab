@@ -22,25 +22,22 @@ use std::{
 ///  - Mapping of 'chromosome -> sorted window coordinates (start, end, original window index)'.
 pub fn load_windows_from_bed(
     bed: impl AsRef<Path>,
-    chromosomes: &Vec<String>,
+    chromosomes: Option<&[String]>,
     filter_fn: Option<&dyn Fn(&str, u64, u64) -> bool>,
 ) -> Result<FxHashMap<String, Windows>> {
-    let f = File::open(bed.as_ref()).context("Opening BED file with windows/intervals")?; // Works with &Path, PathBuf, &str
+    let f = File::open(bed.as_ref()).context("Opening BED file with windows/intervals")?;
     let mut reader = BufReader::with_capacity(1 << 20, f);
 
-    // Pre-seed output map with requested chromosomes
-    let mut vec_mapping: FxHashMap<&str, Vec<(u64, u64, u64)>> =
-        FxHashMap::with_capacity_and_hasher(chromosomes.len(), Default::default());
-    for chr in chromosomes {
-        vec_mapping.entry(chr.as_str()).or_default();
-    }
-
-    // Quick-hashing set of chromosomes to include
-    let mut allowed_chromosomes: FxHashSet<&str> =
-        FxHashSet::with_capacity_and_hasher(chromosomes.len(), Default::default());
-    for chr in chromosomes {
-        allowed_chromosomes.insert(chr.as_str());
-    }
+    // Optional whitelist of chromosomes
+    let mut vec_mapping: FxHashMap<String, Vec<(u64, u64, u64)>> = FxHashMap::default();
+    let allowed: Option<FxHashSet<&str>> = chromosomes.map(|chr_list| {
+        let mut allowed = FxHashSet::with_capacity_and_hasher(chr_list.len(), Default::default());
+        for chr in chr_list {
+            allowed.insert(chr.as_str());
+            vec_mapping.entry(chr.clone()).or_default();
+        }
+        allowed
+    });
 
     // Reuse a single buffer for all lines
     let mut buf = String::new();
@@ -76,10 +73,12 @@ pub fn load_windows_from_bed(
 
         let chr = match it.next() {
             Some(s) => s,
-            None => continue, // or bail; here we skip blank/whitespace-only lines
+            None => continue,
         };
-        if !allowed_chromosomes.contains(chr) {
-            continue;
+        if let Some(allowed_chroms) = &allowed {
+            if !allowed_chroms.contains(chr) {
+                continue;
+            }
         }
 
         let start_str = it
@@ -110,7 +109,6 @@ pub fn load_windows_from_bed(
             start
         );
 
-        // Apply passed filtering function
         if let Some(filterer) = filter_fn {
             if !filterer(chr, start, end) {
                 continue;
@@ -118,16 +116,15 @@ pub fn load_windows_from_bed(
         }
 
         vec_mapping
-            .get_mut(chr)
-            .unwrap()
+            .entry(chr.to_string())
+            .or_default()
             .push((start, end, win_idx));
         win_idx += 1;
     }
 
-    // Convert to Windows collections (Windows::new sorts internally)
     let windows_mapping: FxHashMap<String, Windows> = vec_mapping
         .into_iter()
-        .map(|(chr, v)| (chr.to_string(), Windows::new(v)))
+        .map(|(chr, v)| (chr, Windows::new(v)))
         .collect();
 
     Ok(windows_mapping)
@@ -601,4 +598,55 @@ pub fn write_group_idx_to_name_tsv<P: AsRef<Path>>(
     }
 
     Ok(())
+}
+
+/* Other utilities */
+
+/// Check whether line looks like a header or an observation
+pub fn line_looks_like_header(line: &str, separator: char) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with('#') {
+        return true;
+    }
+    let fields: Vec<&str> = line
+        .trim_end_matches(['\n', '\r'])
+        .split(separator)
+        .collect();
+    if fields.len() < 3 {
+        return true;
+    }
+    let start_ok = fields[1].trim().parse::<u64>().is_ok();
+    let end_ok = fields[2].trim().parse::<u64>().is_ok();
+    !(start_ok && end_ok)
+}
+
+// TODO: Generalize and test
+/// Detect whether a file appears to have a header by peeking the first non-comment line.
+///
+/// Parameters
+/// ----------
+/// - path:
+///     Path to file.
+/// - separator:
+///     Field separator.
+///
+/// Returns
+/// -------
+/// - has_header:
+///     True if a header is likely present.
+pub fn detect_header(path: &Path, separator: char) -> Result<bool> {
+    let file = File::open(path)?;
+    let mut reader = BufReader::with_capacity(1 << 20, file);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = reader.read_line(&mut line)?;
+        if n == 0 {
+            return Ok(false);
+        }
+        if line.starts_with('#') || line.trim().is_empty() {
+            continue;
+        }
+        return Ok(line_looks_like_header(&line, separator));
+    }
 }

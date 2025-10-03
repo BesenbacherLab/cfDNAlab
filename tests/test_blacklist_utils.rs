@@ -114,3 +114,47 @@ mod tests_seq_blacklisting {
         assert_eq!(seq, b"ACXXACGT");
     }
 }
+
+#[cfg(test)]
+mod tests_load_blacklists {
+    use anyhow::Result;
+    use cfdnalab::shared::blacklist::load::load_blacklists;
+    use tempfile::NamedTempFile;
+
+    fn write_bed(lines: &[&str]) -> Result<NamedTempFile> {
+        let mut file = NamedTempFile::new()?;
+        use std::io::Write;
+        for line in lines {
+            writeln!(file, "{}", line)?;
+        }
+        Ok(file)
+    }
+
+    #[test]
+    fn should_filter_by_min_size_and_whitelist() -> Result<()> {
+        // Arrange
+        let bed = write_bed(&["chr1\t0\t3", "chr1\t10\t20", "chr2\t5\t30"])?;
+        let whitelist = vec!["chr1".to_string()];
+
+        // Act
+        let map = load_blacklists(&[bed.path()], 5, 0, Some(whitelist.as_slice()))?;
+
+        // Assert
+        assert_eq!(map.get("chr1").unwrap().as_slice(), &[(10, 20)]);
+        assert!(map.get("chr2").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn should_expand_by_halo_before_merging() -> Result<()> {
+        // Arrange
+        let bed = write_bed(&["chrX\t100\t110", "chrX\t112\t120"])?;
+
+        // Act
+        let map = load_blacklists(&[bed.path()], 1, 2, None)?;
+
+        // Assert
+        assert_eq!(map.get("chrX").unwrap().as_slice(), &[(98, 122)]);
+        Ok(())
+    }
+}
