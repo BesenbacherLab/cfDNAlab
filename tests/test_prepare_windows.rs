@@ -1363,15 +1363,16 @@ mod tests_stdio {
         cfg.output = Some(PathBuf::from("-"));
         cfg.header = HeaderMode::Absent;
         cfg.oob = OobPolicy::Allow;
+        cfg.resize = Some(8);
 
         let input = "chr1\t0\t5\nchr1\t5\t10\n";
         let output = run_with_piped_stdio(input, || run_prepare_pipeline(&cfg))?;
-        let first = output.find("chr1\t0\t5").expect("first line present");
-        let second = output[first..]
-            .find("chr1\t5\t10")
-            .map(|idx| idx + first)
-            .expect("second line present");
-        assert!(second > first);
+        let mut lines: Vec<&str> = output
+            .lines()
+            .filter(|line| line.starts_with("chr"))
+            .collect();
+        lines.sort();
+        assert_eq!(lines, vec!["chr1\t0\t6", "chr1\t4\t12"]);
         Ok(())
     }
 }

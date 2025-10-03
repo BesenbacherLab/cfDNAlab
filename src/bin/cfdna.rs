@@ -3,6 +3,7 @@ use cfdnalab::commands::fcoverage::config::FCoverageConfig;
 use cfdnalab::commands::fragment_kmers::config::FragmentKmersConfig;
 use cfdnalab::commands::gc_bias::config::GCConfig;
 use cfdnalab::commands::lengths::config::LengthsConfig;
+use cfdnalab::commands::prepare_windows::config::PrepareConfig;
 use cfdnalab::commands::profile_groups::config::ProfileGroupsConfig;
 use cfdnalab::commands::reference_gc::config::RefGCConfig;
 
@@ -24,6 +25,7 @@ enum Cmd {
     Fcoverage(FCoverageConfig),
     Profiles(ProfileGroupsConfig),
     FragmentKmers(FragmentKmersConfig),
+    PrepWindows(PrepareConfig),
     // Ends(EndsConfig),
 }
 
@@ -54,7 +56,9 @@ fn main() {
         Cmd::Fcoverage(cfg) => cfdnalab::commands::fcoverage::fcoverage::run(cfg),
         Cmd::Profiles(cfg) => cfdnalab::commands::profile_groups::profile_groups::run(cfg),
         Cmd::FragmentKmers(cfg) => cfdnalab::commands::fragment_kmers::fragment_kmers::run(cfg),
-        // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg),
+        Cmd::PrepWindows(cfg) => {
+            cfdnalab::commands::prepare_windows::prepare_windows::run_prepare_pipeline(&cfg)
+        } // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg),
     };
 
     if let Err(e) = res {
