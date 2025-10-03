@@ -3,31 +3,42 @@ use crate::shared::blacklist::BlacklistStrategy;
 use clap::{ArgGroup, Parser, ValueEnum};
 use std::path::PathBuf;
 
-// TODO: Test: “Stress merge closure” — construct a chain of windows where each is within merge_gap of the next across chunk boundaries; assert that the final output matches a one-shot full-chrom run.
-
-/// Prepare BED-like genomic windows for cfDNA fragmentomics tools.
+/// Clean and standardise genomic windows so downstream cfDNA tools receive a tidy BED.
 ///
-/// This command loads a BED-like file with at least `chrom,start,end`, applies optional
-/// filtering, subdivision, resizing/flanking, blacklist exclusion, and group-wise postfilters,
-/// and writes a minimal BED-like output with `chrom,start,end,group` (tabs).
+/// `prepare-windows` loads a delimited table containing at least `chrom,start,end`, applies the
+/// optional transformations you request, and emits a sorted BED-like file that downstream commands
+/// can consume directly.
 ///
-/// ## Notes:
-/// 
-/// - Coordinates are interpreted as 0-based half-open `[start, end)`.
-/// 
-/// - Column indices are 0-based. If `--header absent`, column *names* are not allowed.
-/// 
-/// - Blacklisting is evaluated with an optional halo on the blacklist intervals. By design,
-///   blacklisting is checked against the **final** window size both at the beginning (to drop
-///   obvious failures early) and at the end.
-/// 
-/// - “Nearest distance” is measured to the **nearest edge** of the target intervals.
-///   If you need TSS-only distances, precompute 1-bp intervals at the correct strand-specific
-///   TSS coordinate.
-/// 
-/// - Output **does not** include a header. Column emission is minimal by default.
-/// 
-/// - Sorting is always applied deterministically by `(chrom, start, end, group)`.
+/// ## Typical steps
+/// - Parsing TSV/CSV (automatic header detection, explicit column mapping, configurable separator).
+///
+/// - Filtering by numeric score, genomic blacklist, or custom QC thresholds.
+///
+/// - Deriving group labels from input columns or on-the-fly subdivision (distance bins, chunking,
+///   flanks, GC filters, near-file lookups, etc.).
+///
+/// - Resizing, padding, trimming, and enforcing minimum/maximum lengths.
+///
+/// - Post-processing per group (resizing to even bp, coverage rescoring) before writing output.
+///
+/// The result is a minimal, headerless BED with deterministic ordering and optional `group`
+/// annotations—ready for commands such as `prepare-windows postprocess`, `fragment-kmers`, or
+/// `profile-groups`.
+///
+/// ## Practical notes
+/// - All coordinates are 0-based half-open `[start, end)`.
+///
+/// - Column indices are 0-based when you refer to them explicitly. If `--header absent`, only
+///   indices are accepted.
+///
+/// - Blacklist checks run on the final window span using the halo you configure, so windows that
+///   will eventually overlap the blacklist are rejected up-front.
+///
+/// - “Nearest distance” refers to the closest edge of the comparison interval. For TSS-only
+///   distances, pass 1 bp intervals centred on the strand-specific start you care about.
+///
+/// - Output is intentionally lean (no header, minimal columns) and sorted by
+///   `(chrom, start, end, group)` to ease downstream comparisons.
 #[cfg_attr(feature = "cli", derive(Parser, Clone))]
 #[cfg_attr(
     feature = "cli",
