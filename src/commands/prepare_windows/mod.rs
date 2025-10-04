@@ -7,3 +7,4 @@ pub mod postprocess;
 pub mod prepare_windows;
 pub mod resizers;
 pub mod writers;
+pub mod order;

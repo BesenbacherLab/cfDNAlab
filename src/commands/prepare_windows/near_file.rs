@@ -1,4 +1,4 @@
-use crate::shared::io::open_text_reader;
+use crate::{commands::prepare_windows::config::NearDirection, shared::io::open_text_reader};
 use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
 use std::{cmp::Ordering, io::BufRead, path::Path};
@@ -19,6 +19,7 @@ pub struct NearInterval {
 #[derive(Debug, Default)]
 pub struct NearChrom {
     pub intervals: Vec<NearInterval>,
+    pub cursor: usize,
 }
 
 /// Index holding near intervals per chromosome and a compact group-id interner.
@@ -37,6 +38,7 @@ pub enum NearSide {
     Overlap,
 }
 
+// TODO: Rename ("hit" is a bad name)
 /// Distance, group id, and side for a single nearest hit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NearHit {
@@ -218,6 +220,7 @@ pub fn load_near_index(
             chrom,
             NearChrom {
                 intervals: validated,
+                cursor: 0,
             },
         );
     }
@@ -225,28 +228,33 @@ pub fn load_near_index(
     Ok(index)
 }
 
-/// Compute distance from a window to the nearest `near` interval edge.
+/// Compute distance from a window to the nearest considered `near` interval edge.
 ///
-/// Concept:
-/// - If the window overlaps the interval, the distance is 0 (we are at the site).
-/// - Else, the distance is the minimum of the distances from the window's two edges
-///   to the selected target edges (left, right, or nearest).
+/// If the window overlaps the interval, the distance is 0 (we are at the site).
+/// Else, the distance is the minimum of the distances from the window's two edges
+/// to the selected target edges (left, right, or nearest).
 ///
 /// Signed distances:
-/// - Upstream is negative, downstream is positive, relative to the chosen nearest interval.
+/// - Target interval being *upstream* of the window gives a negative distance. *Downstream* gives a positive distance.
 ///
 /// Parameters
 /// ----------
-/// - window_start:
+/// - `window_start`:
 ///     Window start.
-/// - window_end:
+/// - `window_end`:
 ///     Window end (exclusive).
-/// - near_chrom:
-///     Validated, sorted intervals on the same chromosome.
-/// - which_edge:
-///     Edge selection mode (Left, Right, Nearest).
-/// - signed:
+/// - `near_chrom`:
+///     Validated, sorted, non-overlapping intervals on the same chromosome.
+/// - `which_edge`:
+///     Which edge (`Left`, `Right`, `Nearest`) of the near-intervals to measure to.
+/// - `directions`:
+///     Which direction(s) (`Upstream`, `Downstream`, `Both`) to consider near-intervals at.
+///     E.g., `Upstream` only considers near-intervals that lie before (or overlap) the window.
+/// - `signed`:
 ///     Whether to return signed distances.
+/// - `cursor`:
+///     Maintained across calls. After updating for this window, it points to the
+///     last interval with `end <= window_start` if such interval exists; otherwise it can remain at 0.
 ///
 /// Returns
 /// -------
@@ -255,36 +263,50 @@ pub fn load_near_index(
 pub fn nearest_edge_distance(
     window_start: u32,
     window_end: u32,
-    near_chrom: &NearChrom,
+    near_chrom: &mut NearChrom,
     which_edge: &NearEdge,
+    directions: &NearDirection,
     signed: bool,
 ) -> Option<NearestResult> {
-    if near_chrom.intervals.is_empty() {
+    let n = near_chrom.intervals.len();
+    if n == 0 {
         return None;
     }
 
-    // Track the best absolute distance and every interval that matches it.
-    #[derive(Clone, Copy)]
-    struct Candidate {
-        idx: usize,
-        distance: i32,
-        side: NearSide,
+    // Move cursor to the last interval whose end <= window_start.
+    while near_chrom.cursor + 1 < n
+        && near_chrom.intervals[near_chrom.cursor + 1].end <= window_start
+    {
+        near_chrom.cursor += 1;
     }
 
-    let idx = near_chrom
-        .intervals
-        .binary_search_by_key(&window_start, |iv| iv.start)
-        .unwrap_or_else(|i| i);
+    // Determine upstream/downstream candidate indices based on the cursor position.
+    let upstream_idx: Option<usize> = if near_chrom.intervals[near_chrom.cursor].end <= window_start
+    {
+        Some(near_chrom.cursor)
+    } else {
+        None
+    };
+    let downstream_idx: Option<usize> = match upstream_idx {
+        Some(ui) => {
+            if ui + 1 < n {
+                Some(ui + 1)
+            } else {
+                None
+            }
+        }
+        None => {
+            if near_chrom.cursor < n {
+                Some(near_chrom.cursor)
+            } else {
+                None
+            }
+        }
+    };
 
-    let mut best_abs_distance: Option<i32> = None;
-    let mut best_candidates: Vec<Candidate> = Vec::new();
-
-    let start_index = idx.saturating_sub(2);
-    let end_index = (idx + 2).min(near_chrom.intervals.len().saturating_sub(1));
-
-    for j in start_index..=end_index {
-        let iv = near_chrom.intervals[j];
-
+    // If the downstream candidate overlaps the window (any overlap), we are at the site
+    if let Some(di) = downstream_idx {
+        let iv = near_chrom.intervals[di];
         if window_start < iv.end && window_end > iv.start {
             return Some(NearestResult::Single(NearHit {
                 distance: 0,
@@ -292,116 +314,125 @@ pub fn nearest_edge_distance(
                 side: NearSide::Overlap,
             }));
         }
+    }
 
-        let mut candidate_edges: [i32; 2] = [iv.start as i32, iv.end as i32];
-        let num_edges = match which_edge {
-            NearEdge::Left => 1,
-            NearEdge::Right => {
-                candidate_edges[0] = iv.end as i32;
-                1
-            }
-            NearEdge::Nearest => 2,
-        };
+    // Helper: evaluate the chosen edge(s) of `iv` against both window edges and
+    // return the signed distance and side for the closest pairing
+    #[inline]
+    fn edge_distance(
+        interval: &NearInterval,
+        which_edge: &NearEdge,
+        window_start: u32,
+        window_end: u32,
+    ) -> (i32, NearSide) {
+        // Best candidate across the considered edges of this interval
+        let mut best_signed_distance: i32 = i32::MAX;
+        let mut best_side: NearSide = NearSide::Overlap;
 
-        for k in 0..num_edges {
-            let target_edge = candidate_edges[k];
-            let diff_start = target_edge - window_start as i32;
-            let diff_end = target_edge - window_end as i32;
+        // Evaluate one target edge against both window edges
+        let mut consider_edge = |target_edge_bp: i32| {
+            let distance_to_window_start = target_edge_bp - window_start as i32;
+            let distance_to_window_end = target_edge_bp - window_end as i32;
 
-            let mut signed_distance = if diff_start.abs() <= diff_end.abs() {
-                diff_start
-            } else {
-                diff_end
-            };
+            // Choose the closer of {to-start, to-end}; prefer start on ties
+            let chosen_signed_distance =
+                if distance_to_window_start.abs() <= distance_to_window_end.abs() {
+                    distance_to_window_start
+                } else {
+                    distance_to_window_end
+                };
 
-            // Direction follows the sign of the chosen difference: negative means
-            // the interval lies upstream of the window, positive means downstream.
-            let side = if signed_distance < 0 {
+            let side_of_target = if chosen_signed_distance < 0 {
                 NearSide::Upstream
-            } else if signed_distance > 0 {
+            } else if chosen_signed_distance > 0 {
                 NearSide::Downstream
             } else {
                 NearSide::Overlap
             };
 
-            let abs_distance = signed_distance.abs();
-            if !signed {
-                signed_distance = abs_distance;
+            if chosen_signed_distance.abs() < best_signed_distance.abs() {
+                best_signed_distance = chosen_signed_distance;
+                best_side = side_of_target;
             }
-
-            match best_abs_distance {
-                None => {
-                    best_abs_distance = Some(abs_distance);
-                    best_candidates.clear();
-                    best_candidates.push(Candidate {
-                        idx: j,
-                        distance: signed_distance,
-                        side,
-                    });
-                }
-                Some(current_abs) => {
-                    if abs_distance < current_abs {
-                        best_abs_distance = Some(abs_distance);
-                        best_candidates.clear();
-                        best_candidates.push(Candidate {
-                            idx: j,
-                            distance: signed_distance,
-                            side,
-                        });
-                    } else if abs_distance == current_abs {
-                        if !best_candidates.iter().any(|cand| cand.idx == j) {
-                            best_candidates.push(Candidate {
-                                idx: j,
-                                distance: signed_distance,
-                                side,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if best_candidates.is_empty() {
-        return None;
-    }
-
-    if best_candidates.len() == 1 {
-        let cand = best_candidates[0];
-        let group_id = near_chrom.intervals[cand.idx].group_id;
-        return Some(NearestResult::Single(NearHit {
-            distance: cand.distance,
-            group_id,
-            side: cand.side,
-        }));
-    }
-
-    // More than one interval shares the same distance: record the upstream and
-    // downstream hits so the caller can decide how to label or drop them.
-    let mut tie = NearTie::default();
-    for cand in best_candidates {
-        let group_id = near_chrom.intervals[cand.idx].group_id;
-        let hit = NearHit {
-            distance: cand.distance,
-            group_id,
-            side: cand.side,
         };
-        match cand.side {
-            NearSide::Upstream => {
-                if tie.upstream.is_none() {
-                    tie.upstream = Some(hit);
-                }
+
+        match which_edge {
+            NearEdge::Left => consider_edge(interval.start as i32),
+            NearEdge::Right => consider_edge(interval.end as i32),
+            NearEdge::Nearest => {
+                consider_edge(interval.start as i32);
+                consider_edge(interval.end as i32);
             }
-            NearSide::Downstream => {
-                if tie.downstream.is_none() {
-                    tie.downstream = Some(hit);
-                }
+        }
+
+        (best_signed_distance, best_side)
+    }
+
+    // Build at most two candidates: upstream and downstream.
+    let mut upstream_hit: Option<NearHit> = None;
+    if let Some(ui) = upstream_idx {
+        let iv = near_chrom.intervals[ui];
+        let (mut dist, side) = edge_distance(&iv, which_edge, window_start, window_end);
+
+        // Filter by requested direction(s). Overlap would have returned already.
+        let from_considered_side = match directions {
+            NearDirection::Both => true,
+            NearDirection::Upstream => matches!(side, NearSide::Upstream | NearSide::Overlap),
+            NearDirection::Downstream => matches!(side, NearSide::Downstream | NearSide::Overlap),
+        };
+        if from_considered_side {
+            if !signed {
+                dist = dist.abs();
             }
-            NearSide::Overlap => {
-                return Some(NearestResult::Single(hit));
-            }
+            upstream_hit = Some(NearHit {
+                distance: dist,
+                group_id: iv.group_id,
+                side,
+            });
         }
     }
 
-    Some(NearestResult::Tie(tie))
+    let mut downstream_hit: Option<NearHit> = None;
+    if let Some(di) = downstream_idx {
+        let iv = near_chrom.intervals[di];
+        let (mut dist, side) = edge_distance(&iv, which_edge, window_start, window_end);
+
+        let from_considered_side = match directions {
+            NearDirection::Both => true,
+            NearDirection::Upstream => matches!(side, NearSide::Upstream | NearSide::Overlap),
+            NearDirection::Downstream => matches!(side, NearSide::Downstream | NearSide::Overlap),
+        };
+        if from_considered_side {
+            if !signed {
+                dist = dist.abs();
+            }
+            downstream_hit = Some(NearHit {
+                distance: dist,
+                group_id: iv.group_id,
+                side,
+            });
+        }
+    }
+
+    // Choose winner or tie
+    match (upstream_hit, downstream_hit) {
+        (None, None) => None,
+        (Some(upstream), None) => Some(NearestResult::Single(upstream)),
+        (None, Some(downstream)) => Some(NearestResult::Single(downstream)),
+        (Some(upstream), Some(downstream)) => {
+            let upstream_abs_distance = upstream.distance.abs();
+            let downstream_abs_distance = downstream.distance.abs();
+
+            if upstream_abs_distance < downstream_abs_distance {
+                Some(NearestResult::Single(upstream))
+            } else if downstream_abs_distance < upstream_abs_distance {
+                Some(NearestResult::Single(downstream))
+            } else {
+                Some(NearestResult::Tie(NearTie {
+                    upstream: Some(upstream),
+                    downstream: Some(downstream),
+                }))
+            }
+        }
+    }
 }

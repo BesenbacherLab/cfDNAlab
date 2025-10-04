@@ -16,7 +16,7 @@
 use crate::commands::prepare_windows::chunk::{flush_chromosome, process_and_write_chunk};
 use crate::commands::prepare_windows::config::*;
 use crate::commands::prepare_windows::near_file::{
-    NearHit, NearIndex, NearSide, NearestResult, load_near_index, nearest_edge_distance,
+    NearHit, NearIndex, NearSide, NearTie, NearestResult, load_near_index, nearest_edge_distance,
 };
 use crate::commands::prepare_windows::parsers::{
     DistanceBins, parse_distance_bins, parse_record_line, parse_score_filter,
@@ -47,6 +47,7 @@ pub struct FinalWindow {
     pub chrom: Arc<str>,
     pub start: u32,
     pub end: u32,
+    pub merged: bool,
     pub group: String,      // Empty means "no group label"
     pub score: Option<f32>, // Present only if parsed and requested
 }
@@ -60,9 +61,9 @@ impl FinalWindow {
 
 /// Streaming cursor for blacklist interval sweeps.
 #[derive(Debug, Default)]
-struct BlacklistCursor {
-    intervals: Vec<(u64, u64)>,
-    cursor: usize,
+pub struct BlacklistCursor {
+    pub intervals: Vec<(u64, u64)>,
+    pub cursor: usize,
 }
 
 /// Run the prepare pipeline using the provided configuration.
@@ -96,8 +97,12 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         None
     };
 
+    // How to handle missing scores
+    let drop_missing_scores =
+        matches!(cfg.score_missing, MissingScore::Drop) && cfg.score_filter.is_some();
+
     // Load near index (validated)
-    let near_index = if let Some(path) = &cfg.near {
+    let mut near_index = if let Some(path) = &cfg.near {
         let has_header_final = match cfg.near_header {
             HeaderMode::Present => true,
             HeaderMode::Absent => false,
@@ -114,7 +119,6 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         None
     };
 
-    // TODO: We ALSO need to blacklist after potential merging (so here and then again later if merging is enabled!)
     // Load blacklist intervals (optional)
     let mut blacklist_cursors: FxHashMap<String, BlacklistCursor> = FxHashMap::default();
     if let Some(paths) = &cfg.blacklist {
@@ -132,19 +136,16 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     let blacklist_look_back: u64 = 0;
 
     // Open input and initial reader
-    let input_reader: Box<dyn BufRead> = if let Some(path) = &cfg.input {
-        if path.as_os_str() == "-" {
-            Box::new(BufReader::with_capacity(1 << 20, std::io::stdin()))
-        } else {
-            open_text_reader(path)?
-        }
-    } else {
+    let input_reader: Box<dyn BufRead> = if cfg.input.as_os_str() == "-" {
         Box::new(BufReader::with_capacity(1 << 20, std::io::stdin()))
+    } else {
+        open_text_reader(&cfg.input)?
     };
 
+    // TODO: Add info to config about this temporary directory, so user knows to not call (with "-") in a folder with no storage or write permissions!
     // Prepare per-run temporary directory and chromosome writers
     let base_output_dir = match &cfg.output {
-        Some(path) if path.as_os_str() != "-" => path
+        path if path.as_os_str() != "-" => path
             .parent()
             .map(PathBuf::from)
             .unwrap_or_else(|| env::current_dir().expect("current_dir")),
@@ -175,10 +176,11 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     match cfg.header {
         HeaderMode::Present => {
             line_buffer.clear();
-            reader.read_line(&mut line_buffer)?; // discard header
+            reader.read_line(&mut line_buffer)?; // Discard header
             line_buffer.clear();
         }
         HeaderMode::Auto => loop {
+            // TODO: Use detect_header() to the degree possible
             line_buffer.clear();
             let bytes = reader.read_line(&mut line_buffer)?;
             if bytes == 0 {
@@ -200,10 +202,6 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         HeaderMode::Absent => {}
     }
 
-    // Pre-resolve score filter missing behavior
-    let drop_missing_scores =
-        matches!(cfg.score_missing, MissingScore::Drop) && cfg.score_filter.is_some();
-
     // Map from chromosome to size if trimming/dropping is enabled
     let chrom_sizes_map: FxHashMap<String, u32> =
         if matches!(cfg.oob, OobPolicy::Trim | OobPolicy::Drop) && cfg.chrom_sizes.is_some() {
@@ -217,6 +215,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
 
     // Stream input records
     loop {
+        // TODO: Explain this if-else statement
         if let Some(mut pending) = pending_line.take() {
             mem::swap(&mut line_buffer, &mut pending);
         } else {
@@ -254,6 +253,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
                     chrom
                 );
             }
+
             // Flush remaining chunk for previous chromosome
             flush_chromosome(
                 &current_chrom,
@@ -262,6 +262,8 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
                 &mut temp_writers,
                 &temp_dir,
                 &mut global_group_counts,
+                blacklist_cursors.get_mut(&current_chrom),
+                blacklist_look_back,
                 cfg,
             )?;
 
@@ -307,7 +309,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             continue;
         };
 
-        // Blacklist pre-check on final coords
+        // Blacklist pre-check on pre-merge full-size coordinates
         if let Some(cursor) = blacklist_cursors.get_mut(&chrom) {
             if !cursor.intervals.is_empty()
                 && is_blacklisted(
@@ -323,20 +325,20 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             }
         }
 
-        // Nearest distance and binning
-        let (composed_group, should_skip) = resolve_near_annotation(
-            &near_index,
+        // Find nearest intervals and bin by distance and update the group name
+        let composed_group = if let Some(composed_group) = add_near_group_annotation(
+            &mut near_index,
             &chrom,
             final_start,
             final_end,
             cfg,
             distance_bins.as_ref(),
             &input_group,
-        );
-
-        if should_skip {
+        ) {
+            composed_group
+        } else {
             continue;
-        }
+        };
 
         // Intern chromosome identifiers so every window for the same chromosome
         // shares a single heap allocation; the Arc keeps those copies alive
@@ -355,6 +357,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             chrom: chrom_arc,
             start: final_start,
             end: final_end,
+            merged: false,
             group: composed_group,
             score,
         });
@@ -368,6 +371,8 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
                 &mut temp_writers,
                 &temp_dir,
                 &mut global_group_counts,
+                blacklist_cursors.get_mut(&current_chrom),
+                blacklist_look_back,
                 cfg,
             )?;
         }
@@ -382,6 +387,8 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             &mut temp_writers,
             &temp_dir,
             &mut global_group_counts,
+            blacklist_cursors.get_mut(&current_chrom),
+            blacklist_look_back,
             cfg,
         )?;
     }
@@ -433,143 +440,144 @@ fn compose_group_label(
     parts.join(".")
 }
 
-fn resolve_near_annotation(
-    near_index: &Option<NearIndex>,
+/// Build the near-annotation label for a window using the cursor-based nearest lookup.
+/// Returns the composed group label (input group + optional near group + optional bin),
+/// or `None` when the window should be dropped by policy (e.g., ties=drop, out of range).
+fn add_near_group_annotation(
+    near_index: &mut Option<NearIndex>,
     chrom: &str,
     final_start: u32,
     final_end: u32,
     cfg: &PrepareConfig,
     distance_bins: Option<&DistanceBins>,
     input_group: &str,
-) -> (String, bool) {
-    // Returns `(group_label, should_skip_window)` for the near filters.
-    let Some(near_idx) = near_index else {
-        return (input_group.to_owned(), false);
+) -> Option<String> {
+    // If no near index (or no data for this chrom), keep the input group as-is
+    let Some(near_idx) = near_index.as_mut() else {
+        return Some(input_group.to_owned());
     };
-
-    let Some(near_chrom) = near_idx.per_chrom.get(chrom) else {
-        return (input_group.to_owned(), false);
+    let Some(near_chrom) = near_idx.per_chrom.get_mut(chrom) else {
+        return Some(input_group.to_owned());
     };
-
     if near_chrom.intervals.is_empty() {
-        return (input_group.to_owned(), false);
+        return Some(input_group.to_owned());
     }
 
-    let signed = matches!(cfg.distance_sign, DistSign::Signed);
-    let Some(result) =
-        nearest_edge_distance(final_start, final_end, near_chrom, &cfg.near_edge, signed)
-    else {
-        return (input_group.to_owned(), false);
-    };
+    // Helpers
+    let is_signed_mode = matches!(cfg.distance_sign, DistSign::Signed);
 
-    let passes_direction = |side: NearSide| -> bool {
-        match cfg.near_direction {
-            NearDirection::Both => true,
-            NearDirection::Upstream => matches!(side, NearSide::Upstream | NearSide::Overlap),
-            NearDirection::Downstream => matches!(side, NearSide::Downstream | NearSide::Overlap),
-        }
-    };
-
-    let within_distance = |distance: i32| -> bool {
-        if let Some(maxd) = cfg.distance_max {
-            if distance.unsigned_abs() > maxd {
-                return false;
-            }
+    let within_max_distance = |distance_bp: i32| -> bool {
+        if let Some(max_abs) = cfg.distance_max {
+            return distance_bp.unsigned_abs() <= max_abs;
         }
         true
     };
 
-    let normalize_distance = |distance: i32| -> i32 {
+    let normalize_for_binning = |distance_bp: i32| -> i32 {
         if matches!(cfg.distance_sign, DistSign::Absolute) {
-            distance.abs()
+            distance_bp.abs()
         } else {
-            distance
+            distance_bp
         }
     };
 
-    match result {
-        NearestResult::Single(mut hit) => {
-            if !passes_direction(hit.side) {
-                return (input_group.to_owned(), true);
-            }
-            if !within_distance(hit.distance) {
-                return (input_group.to_owned(), true);
-            }
+    // Compute nearest using the in-struct cursor
+    let Some(nearest_result) = nearest_edge_distance(
+        final_start,
+        final_end,
+        near_chrom,
+        &cfg.near_edge,
+        &cfg.near_direction,
+        is_signed_mode,
+    ) else {
+        // No nearby intervals within the considered directions -> keep input group only
+        return Some(input_group.to_owned());
+    };
 
-            hit.distance = normalize_distance(hit.distance);
-
-            let bin_label = distance_bins.and_then(|bins| bins.match_label(hit.distance));
-            let prefix = match hit.side {
-                NearSide::Upstream => "-",
-                NearSide::Downstream => "+",
-                NearSide::Overlap => "=",
-            };
-            let mut near_label = String::new();
-            near_label.push_str(prefix);
-            if let Some(id) = hit.group_id {
-                near_label.push_str(near_idx.group_id_to_name[id as usize].as_str());
+    // Compose a side-prefixed label for a single hit.
+    let make_side_label = |hit: &NearHit| -> String {
+        let side_prefix = match hit.side {
+            NearSide::Upstream => "-",
+            NearSide::Downstream => "+",
+            NearSide::Overlap => "=",
+        };
+        match hit.group_id {
+            Some(id) => {
+                let name = near_idx.group_id_to_name[id as usize].as_str();
+                format!("{side_prefix}{name}")
             }
-            let group_label =
-                compose_group_label(input_group, Some(near_label.as_str()), bin_label);
-
-            (group_label, false)
+            None => side_prefix.to_string(),
         }
-        NearestResult::Tie(tie) => {
+    };
+
+    match nearest_result {
+        NearestResult::Single(mut hit) => {
+            // Distance filtering
+            if !within_max_distance(hit.distance) {
+                return None;
+            }
+            // Normalize for binning/output according to cfg.distance_sign
+            hit.distance = normalize_for_binning(hit.distance);
+
+            // Optional bin label
+            let bin_label = distance_bins.and_then(|bins| bins.match_label(hit.distance));
+
+            // Label for the near group (+-=)
+            let near_label = make_side_label(&hit);
+
+            // Compose final group label
+            Some(compose_group_label(
+                input_group,
+                Some(near_label.as_str()),
+                bin_label,
+            ))
+        }
+
+        NearestResult::Tie(NearTie {
+            mut upstream,
+            mut downstream,
+        }) => {
+            // Caller policy: drop on ties if requested
             if matches!(cfg.near_ties, NearTiePolicy::Drop) {
-                return (input_group.to_owned(), true);
+                return None;
             }
 
-            let mut kept_hits: Vec<NearHit> = Vec::new();
-            if let Some(mut up) = tie.upstream {
-                if passes_direction(up.side) && within_distance(up.distance) {
-                    up.distance = normalize_distance(up.distance);
-                    kept_hits.push(up);
+            // Apply distance threshold and normalization to both (when present)
+            let mut kept_labels: Vec<String> = Vec::with_capacity(2);
+
+            if let Some(ref mut upstream_hit) = upstream {
+                if within_max_distance(upstream_hit.distance) {
+                    upstream_hit.distance = normalize_for_binning(upstream_hit.distance);
+                    kept_labels.push(make_side_label(upstream_hit));
                 }
             }
-            if let Some(mut down) = tie.downstream {
-                if passes_direction(down.side) && within_distance(down.distance) {
-                    down.distance = normalize_distance(down.distance);
-                    kept_hits.push(down);
-                }
-            }
-
-            if kept_hits.is_empty() {
-                return (input_group.to_owned(), true);
-            }
-
-            // Compose directional elements so the caller sees `-group/+group` when both sides
-            // survive filtering (`-` = upstream, `+` = downstream, `=` = overlap).
-            let mut side_labels: Vec<String> = Vec::new();
-            for hit in &kept_hits {
-                let prefix = match hit.side {
-                    NearSide::Upstream => "-",
-                    NearSide::Downstream => "+",
-                    NearSide::Overlap => "=",
-                };
-                if let Some(id) = hit.group_id {
-                    let name = near_idx.group_id_to_name[id as usize].as_str();
-                    side_labels.push(format!("{prefix}{name}"));
-                } else {
-                    side_labels.push(prefix.to_string());
+            if let Some(ref mut downstream_hit) = downstream {
+                if within_max_distance(downstream_hit.distance) {
+                    downstream_hit.distance = normalize_for_binning(downstream_hit.distance);
+                    kept_labels.push(make_side_label(downstream_hit));
                 }
             }
 
-            let bin_distance = kept_hits[0].distance;
+            if kept_labels.is_empty() {
+                return None;
+            }
+
+            // Distances in a tie have the same absolute value by construction; pick one for binning
+            let bin_distance = upstream
+                .as_ref()
+                .map(|h| h.distance)
+                .or_else(|| downstream.as_ref().map(|h| h.distance))
+                .unwrap();
+
             let bin_label = distance_bins.and_then(|bins| bins.match_label(bin_distance));
 
-            let near_combo = if side_labels.is_empty() {
-                None
-            } else {
-                Some(side_labels.join("/"))
-            };
+            let near_combo = kept_labels.join("/");
 
-            let group_label = if let Some(label) = near_combo {
-                compose_group_label(input_group, Some(label.as_str()), bin_label)
-            } else {
-                compose_group_label(input_group, None, bin_label)
-            };
-
-            (group_label, false)
+            Some(compose_group_label(
+                input_group,
+                Some(near_combo.as_str()),
+                bin_label,
+            ))
         }
     }
 }

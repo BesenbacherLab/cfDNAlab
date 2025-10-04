@@ -20,7 +20,7 @@ mod tests_prepare_windows_pipeline {
 
     fn run_pipeline(cfg: &PrepareConfig) -> Result<Vec<String>> {
         run(cfg)?;
-        let output_path = cfg.output.as_ref().expect("output path");
+        let output_path = cfg.output.clone();
         let contents = fs::read_to_string(output_path)?;
         Ok(contents
             .trim()
@@ -38,8 +38,8 @@ mod tests_prepare_windows_pipeline {
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(input);
-        cfg.output = Some(output.clone());
+        cfg.input = input;
+        cfg.output = output.clone();
         cfg.header = HeaderMode::Absent;
         cfg.oob = OobPolicy::Allow;
 
@@ -74,8 +74,8 @@ mod tests_prepare_windows_pipeline {
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(input);
-        cfg.output = Some(output);
+        cfg.input = input;
+        cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.blacklist = Some(vec![blacklist]);
         cfg.blacklist_strategy = cfdnalab::shared::blacklist::BlacklistStrategy::Any;
@@ -90,8 +90,7 @@ mod tests_prepare_windows_pipeline {
         cfg.oob = OobPolicy::Allow;
 
         // Act
-        let mut lines = run_pipeline(&cfg)?;
-        lines.sort();
+        let lines = run_pipeline(&cfg)?;
 
         // Assert
         assert_eq!(
@@ -116,8 +115,8 @@ mod tests_prepare_windows_pipeline {
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(input);
-        cfg.output = Some(output);
+        cfg.input = input;
+        cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.blacklist = Some(vec![blacklist]);
         cfg.blacklist_strategy = cfdnalab::shared::blacklist::BlacklistStrategy::Any;
@@ -143,8 +142,8 @@ mod tests_prepare_windows_pipeline {
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(input);
-        cfg.output = Some(output);
+        cfg.input = input;
+        cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.group_cols = vec!["3".to_string()];
         cfg.flank = Some(vec![3, 3]);
@@ -153,8 +152,7 @@ mod tests_prepare_windows_pipeline {
         cfg.merge_gap = Some(0);
         cfg.merge_label = MergeLabel::Join;
 
-        let mut lines = run_pipeline(&cfg)?;
-        lines.sort();
+        let lines = run_pipeline(&cfg)?;
         assert_eq!(
             lines,
             vec!["chr1\t7\t27\tA".to_string(), "chr1\t37\t47\tA".to_string(),],
@@ -178,8 +176,8 @@ mod tests_prepare_windows_pipeline {
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(input);
-        cfg.output = Some(output);
+        cfg.input = input;
+        cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.near = Some(near);
         cfg.near_header = HeaderMode::Absent;
@@ -192,8 +190,7 @@ mod tests_prepare_windows_pipeline {
         ]);
         cfg.oob = OobPolicy::Allow;
 
-        let mut lines = run_pipeline(&cfg)?;
-        lines.sort();
+        let lines = run_pipeline(&cfg)?;
 
         assert_eq!(
             lines,
@@ -214,8 +211,8 @@ mod tests_prepare_windows_pipeline {
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(input);
-        cfg.output = Some(output);
+        cfg.input = input;
+        cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.near = Some(near);
         cfg.near_header = HeaderMode::Absent;
@@ -237,8 +234,8 @@ mod tests_prepare_windows_pipeline {
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(input);
-        cfg.output = Some(output);
+        cfg.input = input;
+        cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.near = Some(near);
         cfg.near_header = HeaderMode::Absent;
@@ -261,8 +258,8 @@ mod tests_prepare_windows_pipeline {
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(input);
-        cfg.output = Some(output);
+        cfg.input = input;
+        cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.near = Some(near);
         cfg.near_header = HeaderMode::Absent;
@@ -270,8 +267,7 @@ mod tests_prepare_windows_pipeline {
         cfg.distance_sign = DistSign::Absolute; // direction prefix should still appear
         cfg.oob = OobPolicy::Allow;
 
-        let mut lines = run_pipeline(&cfg)?;
-        lines.sort();
+        let lines = run_pipeline(&cfg)?;
 
         assert_eq!(lines, vec!["chr1\t0\t10\t+TARG", "chr1\t150\t160\t-TARG"],);
         Ok(())
@@ -289,8 +285,8 @@ mod tests_prepare_windows_pipeline {
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(input);
-        cfg.output = Some(output);
+        cfg.input = input;
+        cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.resize = Some(8);
         cfg.deduplicate = DedupKeep::KeepFirst;
@@ -299,8 +295,7 @@ mod tests_prepare_windows_pipeline {
         cfg.oob = OobPolicy::Allow;
 
         // Act
-        let mut lines = run_pipeline(&cfg)?;
-        lines.sort();
+        let lines = run_pipeline(&cfg)?;
 
         // Assert
         assert_eq!(lines, vec!["chr1\t12\t20", "chr1\t18\t26"]);
@@ -315,8 +310,8 @@ mod tests_prepare_windows_pipeline {
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(input);
-        cfg.output = Some(output);
+        cfg.input = input;
+        cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.flank = Some(vec![3, 7]);
         cfg.oob = OobPolicy::Allow;
@@ -346,8 +341,8 @@ mod tests_prepare_windows_pipeline {
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(input);
-        cfg.output = Some(output);
+        cfg.input = input;
+        cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.merge_scope = MergeScope::Within;
         cfg.merge_gap = Some(2);
@@ -357,8 +352,7 @@ mod tests_prepare_windows_pipeline {
         cfg.group_cols = vec!["3".to_string()];
 
         // Act
-        let mut lines = run_pipeline(&cfg)?;
-        lines.sort();
+        let lines = run_pipeline(&cfg)?;
 
         // Assert
         assert_eq!(lines, vec!["chr1\t50\t55\tH", "chr1\t60\t65\tH"]);
@@ -384,8 +378,8 @@ mod tests_prepare_windows_pipeline {
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(input);
-        cfg.output = Some(output);
+        cfg.input = input;
+        cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.blacklist = Some(vec![blacklist]);
         cfg.blacklist_strategy = cfdnalab::shared::blacklist::BlacklistStrategy::Any;
@@ -406,8 +400,7 @@ mod tests_prepare_windows_pipeline {
         cfg.group_cols = vec!["3".to_string()];
 
         // Act
-        let mut lines = run_pipeline(&cfg)?;
-        lines.sort();
+        let lines = run_pipeline(&cfg)?;
 
         // Assert
         assert_eq!(
@@ -432,8 +425,8 @@ mod tests_prepare_windows_pipeline {
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(input);
-        cfg.output = Some(output);
+        cfg.input = input;
+        cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.oob = OobPolicy::Allow;
 
@@ -455,8 +448,8 @@ mod tests_prepare_windows_pipeline {
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(input);
-        cfg.output = Some(output);
+        cfg.input = input;
+        cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.oob = OobPolicy::Allow;
 
@@ -485,8 +478,8 @@ mod tests_prepare_windows_pipeline {
         let output = tmpdir.path().join("out.tsv.zst");
 
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(gz_path);
-        cfg.output = Some(output.clone());
+        cfg.input = gz_path;
+        cfg.output = output.clone();
         cfg.header = HeaderMode::Absent;
         cfg.oob = OobPolicy::Allow;
 
@@ -524,6 +517,7 @@ mod tests_postprocess {
             end,
             group: group.to_string(),
             score,
+            merged: false,
         }
     }
 
@@ -813,6 +807,7 @@ mod tests_mergers {
             end,
             group: group.to_string(),
             score: None,
+            merged: false,
         }
     }
 
@@ -837,7 +832,7 @@ mod tests_mergers {
             win("chr1", 4, 8, "A"),
             win("chr1", 20, 25, "B"),
         ];
-        let merged = merge_within_groups(windows, 2, MergeLabel::Join);
+        let merged = merge_within_groups(windows, 2, MergeLabel::Join, false);
         assert_eq!(
             snapshot(&merged),
             vec![
@@ -850,21 +845,21 @@ mod tests_mergers {
     #[test]
     fn merge_within_groups_respects_gap_threshold() {
         let windows = vec![win("chr1", 0, 4, "A"), win("chr1", 7, 10, "A")];
-        let merged = merge_within_groups(windows.clone(), 2, MergeLabel::Join);
+        let merged = merge_within_groups(windows.clone(), 2, MergeLabel::Join, false);
         assert_eq!(snapshot(&merged), snapshot(&windows));
     }
 
     #[test]
     fn merge_within_groups_bridges_gap_within_threshold() {
         let windows = vec![win("chr1", 0, 4, "A"), win("chr1", 6, 9, "A")];
-        let merged = merge_within_groups(windows, 2, MergeLabel::Join);
+        let merged = merge_within_groups(windows, 2, MergeLabel::Join, false);
         assert_eq!(snapshot(&merged), vec![("chr1".into(), 0, 9, "A".into())]);
     }
 
     #[test]
     fn merge_across_groups_joins_labels() {
         let windows = vec![win("chr1", 0, 4, "G1"), win("chr1", 3, 6, "G2")];
-        let merged = merge_across_groups(windows, 1, MergeLabel::Join);
+        let merged = merge_across_groups(windows, 1, MergeLabel::Join, false);
         assert_eq!(
             snapshot(&merged),
             vec![("chr1".into(), 0, 6, "G1__G2".into())]
@@ -874,28 +869,40 @@ mod tests_mergers {
     #[test]
     fn merge_across_groups_sorts_unsorted_input() {
         let windows = vec![win("chr1", 5, 7, "B"), win("chr1", 2, 6, "A")];
-        let merged = merge_across_groups(windows, 1, MergeLabel::First);
+        let merged = merge_across_groups(windows, 1, MergeLabel::First, false);
         assert_eq!(snapshot(&merged), vec![("chr1".into(), 2, 7, "A".into())]);
     }
 
     #[test]
     fn merge_across_groups_honors_first_label_policy() {
         let windows = vec![win("chr1", 0, 4, "G1"), win("chr1", 3, 6, "G2")];
-        let merged = merge_across_groups(windows, 1, MergeLabel::First);
+        let merged = merge_across_groups(windows, 1, MergeLabel::First, false);
         assert_eq!(snapshot(&merged), vec![("chr1".into(), 0, 6, "G1".into())]);
     }
 
     #[test]
     fn merge_windows_respects_scope_none() {
         let windows = vec![win("chr1", 0, 5, "A")];
-        let merged = merge_windows(windows.clone(), MergeScope::None, Some(3), MergeLabel::Join);
+        let merged = merge_windows(
+            windows.clone(),
+            MergeScope::None,
+            Some(3),
+            MergeLabel::Join,
+            false,
+        );
         assert_eq!(snapshot(&merged), snapshot(&windows));
     }
 
     #[test]
     fn merge_windows_returns_original_when_gap_missing() {
         let windows = vec![win("chr1", 0, 5, "A"), win("chr1", 10, 12, "A")];
-        let merged = merge_windows(windows.clone(), MergeScope::Within, None, MergeLabel::Join);
+        let merged = merge_windows(
+            windows.clone(),
+            MergeScope::Within,
+            None,
+            MergeLabel::Join,
+            false,
+        );
         assert_eq!(snapshot(&merged), snapshot(&windows));
     }
 }
@@ -1071,7 +1078,7 @@ mod tests_near_file {
     use std::{fs::File, io::Write};
 
     use cfdnalab::commands::prepare_windows::{
-        config::NearEdge,
+        config::{NearDirection, NearEdge},
         near_file::{
             NearChrom, NearHit, NearInterval, NearSide, NearestResult, load_near_index,
             nearest_edge_distance,
@@ -1107,14 +1114,23 @@ mod tests_near_file {
 
     #[test]
     fn nearest_edge_distance_handles_overlap_and_sign() {
-        let chrom = NearChrom {
+        let mut chrom = NearChrom {
             intervals: vec![NearInterval {
                 start: 10,
                 end: 20,
                 group_id: Some(0),
             }],
+            cursor: 0,
         };
-        let overlap = nearest_edge_distance(12, 18, &chrom, &NearEdge::Nearest, true).unwrap();
+        let overlap = nearest_edge_distance(
+            12,
+            18,
+            &mut chrom,
+            &NearEdge::Nearest,
+            &NearDirection::Both,
+            true,
+        )
+        .unwrap();
         assert_eq!(
             overlap,
             NearestResult::Single(NearHit {
@@ -1124,7 +1140,15 @@ mod tests_near_file {
             })
         );
 
-        let window_before = nearest_edge_distance(0, 5, &chrom, &NearEdge::Nearest, true).unwrap();
+        let window_before = nearest_edge_distance(
+            0,
+            5,
+            &mut chrom,
+            &NearEdge::Nearest,
+            &NearDirection::Both,
+            true,
+        )
+        .unwrap();
         assert_eq!(
             window_before,
             NearestResult::Single(NearHit {
@@ -1134,8 +1158,15 @@ mod tests_near_file {
             })
         );
 
-        let window_after =
-            nearest_edge_distance(25, 30, &chrom, &NearEdge::Nearest, false).unwrap();
+        let window_after = nearest_edge_distance(
+            25,
+            30,
+            &mut chrom,
+            &NearEdge::Nearest,
+            &NearDirection::Both,
+            false,
+        )
+        .unwrap();
         assert_eq!(
             window_after,
             NearestResult::Single(NearHit {
@@ -1148,14 +1179,23 @@ mod tests_near_file {
 
     #[test]
     fn nearest_edge_distance_zero_on_interval_boundary() {
-        let chrom = NearChrom {
+        let mut chrom = NearChrom {
             intervals: vec![NearInterval {
                 start: 10,
                 end: 20,
                 group_id: Some(0),
             }],
+            cursor: 0,
         };
-        let on_boundary = nearest_edge_distance(20, 25, &chrom, &NearEdge::Nearest, false).unwrap();
+        let on_boundary = nearest_edge_distance(
+            20,
+            25,
+            &mut chrom,
+            &NearEdge::Nearest,
+            &NearDirection::Both,
+            false,
+        )
+        .unwrap();
         assert_eq!(
             on_boundary,
             NearestResult::Single(NearHit {
@@ -1180,20 +1220,42 @@ mod tests_near_file {
 
     #[test]
     fn nearest_edge_distance_returns_none_without_intervals() {
-        let chrom = NearChrom { intervals: vec![] };
-        assert!(nearest_edge_distance(0, 5, &chrom, &NearEdge::Nearest, false).is_none());
+        let mut chrom = NearChrom {
+            intervals: vec![],
+            cursor: 0,
+        };
+        assert!(
+            nearest_edge_distance(
+                0,
+                5,
+                &mut chrom,
+                &NearEdge::Nearest,
+                &NearDirection::Both,
+                false
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn nearest_edge_distance_respects_left_edge_mode() {
-        let chrom = NearChrom {
+        let mut chrom = NearChrom {
             intervals: vec![NearInterval {
                 start: 10,
                 end: 20,
                 group_id: Some(1),
             }],
+            cursor: 0,
         };
-        let dist = nearest_edge_distance(30, 35, &chrom, &NearEdge::Left, false).unwrap();
+        let dist = nearest_edge_distance(
+            30,
+            35,
+            &mut chrom,
+            &NearEdge::Left,
+            &NearDirection::Both,
+            false,
+        )
+        .unwrap();
         assert_eq!(
             dist,
             NearestResult::Single(NearHit {
@@ -1206,7 +1268,7 @@ mod tests_near_file {
 
     #[test]
     fn nearest_edge_distance_reports_ties_with_sides() {
-        let chrom = NearChrom {
+        let mut chrom = NearChrom {
             intervals: vec![
                 NearInterval {
                     start: 0,
@@ -1219,9 +1281,18 @@ mod tests_near_file {
                     group_id: Some(2),
                 },
             ],
+            cursor: 0,
         };
 
-        let result = nearest_edge_distance(10, 20, &chrom, &NearEdge::Nearest, true).unwrap();
+        let result = nearest_edge_distance(
+            10,
+            20,
+            &mut chrom,
+            &NearEdge::Nearest,
+            &NearDirection::Both,
+            true,
+        )
+        .unwrap();
         match result {
             NearestResult::Tie(tie) => {
                 assert_eq!(
@@ -1267,6 +1338,7 @@ mod tests_writers {
             end,
             group: group.to_string(),
             score: None,
+            merged: false,
         }
     }
 
@@ -1340,7 +1412,7 @@ mod tests_writers {
             "chr1\t0\t5\tG\nchr1\t10\t15\tG\nchr1\t20\t25\tH\n",
         )?;
         let mut cfg = PrepareConfig::default();
-        cfg.output = Some(dir.path().join("out.tsv"));
+        cfg.output = dir.path().join("out.tsv");
         cfg.sep = '\t';
         cfg.group_cols = vec!["3".to_string()];
         cfg.min_per_group = Some(2);
@@ -1353,7 +1425,7 @@ mod tests_writers {
             &counts,
         )?;
         let mut output = String::new();
-        fs::File::open(cfg.output.as_ref().unwrap())?.read_to_string(&mut output)?;
+        fs::File::open(cfg.output)?.read_to_string(&mut output)?;
         assert!(output.contains("chr1\t0\t5\tG"));
         assert!(!output.contains("H"));
         Ok(())
@@ -1365,7 +1437,7 @@ mod tests_writers {
         let temp_path = dir.path().join("chr1.tmp");
         fs::write(&temp_path, "chr1\t0\t5\nchr1\t10\t15\n")?;
         let mut cfg = PrepareConfig::default();
-        cfg.output = Some(dir.path().join("out.tsv"));
+        cfg.output = dir.path().join("out.tsv");
         cfg.sep = '\t';
         concatenate_temps_enforcing_min_per_group(
             &cfg,
@@ -1373,7 +1445,7 @@ mod tests_writers {
             &FxHashMap::default(),
         )?;
         let mut output = String::new();
-        fs::File::open(cfg.output.as_ref().unwrap())?.read_to_string(&mut output)?;
+        fs::File::open(cfg.output)?.read_to_string(&mut output)?;
         assert_eq!(output.trim(), "chr1\t0\t5\nchr1\t10\t15".trim());
         Ok(())
     }
@@ -1398,6 +1470,7 @@ mod tests_chunk {
             end,
             group: group.to_string(),
             score: None,
+            merged: false,
         }
     }
 
@@ -1428,6 +1501,8 @@ mod tests_chunk {
             &mut writers,
             dir.path(),
             &mut counts,
+            None,
+            0,
             &cfg,
         )?;
         assert!(carryover.is_empty());
@@ -1456,6 +1531,8 @@ mod tests_chunk {
             &mut writers,
             dir.path(),
             &mut counts,
+            None,
+            0,
             &cfg,
         )?;
         assert_eq!(carryover.len(), 1);
@@ -1482,6 +1559,8 @@ mod tests_chunk {
             &mut writers,
             dir.path(),
             &mut counts,
+            None,
+            0,
             &cfg,
         )?;
         assert!(carryover.is_empty());
@@ -1509,6 +1588,8 @@ mod tests_chunk {
             &mut writers,
             dir.path(),
             &mut counts,
+            None,
+            0,
             &cfg,
         )?;
         let entries = finalize_temp_writers(&mut writers)?;
@@ -1532,6 +1613,8 @@ mod tests_chunk {
             &mut writers,
             dir.path(),
             &mut counts,
+            None,
+            0,
             &cfg,
         )?;
         assert!(writers.is_empty());
@@ -1557,6 +1640,8 @@ mod tests_chunk {
             &mut writers,
             dir.path(),
             &mut counts,
+            None,
+            0,
             &cfg,
         )?;
 
@@ -1571,6 +1656,8 @@ mod tests_chunk {
             &mut writers,
             dir.path(),
             &mut counts,
+            None,
+            0,
             &cfg,
         )?;
 
@@ -1671,19 +1758,18 @@ mod tests_stdio {
     #[test]
     fn run_supports_stdio() -> Result<()> {
         let mut cfg = PrepareConfig::default();
-        cfg.input = Some(PathBuf::from("-"));
-        cfg.output = Some(PathBuf::from("-"));
+        cfg.input = PathBuf::from("-");
+        cfg.output = PathBuf::from("-");
         cfg.header = HeaderMode::Absent;
         cfg.oob = OobPolicy::Allow;
         cfg.resize = Some(8);
 
         let input = "chr1\t0\t5\nchr1\t5\t10\n";
         let output = run_with_piped_stdio(input, || run(&cfg))?;
-        let mut lines: Vec<&str> = output
+        let lines: Vec<&str> = output
             .lines()
             .filter(|line| line.starts_with("chr"))
             .collect();
-        lines.sort();
         assert_eq!(lines, vec!["chr1\t0\t6", "chr1\t4\t12"]);
         Ok(())
     }

@@ -60,7 +60,7 @@ pub struct PrepareConfig {
         feature = "cli",
         clap(long, value_parser, required = true, help_heading = "Core")
     )]
-    pub input: Option<PathBuf>,
+    pub input: PathBuf,
 
     /// Output BED-like file `[path]`
     ///
@@ -69,7 +69,7 @@ pub struct PrepareConfig {
         feature = "cli",
         clap(long, value_parser, default_value = "-", help_heading = "Core")
     )]
-    pub output: Option<PathBuf>,
+    pub output: PathBuf,
 
     /// Header presence in input `[string]`
     ///
@@ -230,7 +230,7 @@ pub struct PrepareConfig {
     ///   `chromosome`, `start`, `end`, and optionally `group`. Header handling follows `--near-header`.
     ///
     /// Distance: If the window overlaps a target interval, distance = 0. Otherwise uses the minimum
-    /// distance from either window edge to the nearest target interval edge.
+    /// distance from either window edge to the nearest considered target interval edge.
     ///
     /// If you require e.g., TSS distances, provide 1-bp intervals at the strand-specific TSS.
     ///
@@ -264,7 +264,7 @@ pub struct PrepareConfig {
     )]
     pub near_header: HeaderMode,
 
-    /// Edge to consider in distance calculation for the near intervals `[string]`
+    /// Edge of near-intervals to consider in distance calculation `[string]`
     ///
     /// - "left": Use left edge of target interval only.
     /// - "right": Use right edge target interval only.
@@ -283,8 +283,8 @@ pub struct PrepareConfig {
 
     /// Directionality of distance classification `[string]`
     ///
-    /// - "upstream": Keep only windows whose nearest target lies upstream (negative genomic distance).
-    /// - "downstream": Keep only windows whose nearest target lies downstream (positive genomic distance).
+    /// - "upstream": Only consider distance to nearest upstream targets (negative genomic distance).
+    /// - "downstream": Only consider distance to nearest downstream targets (positive genomic distance).
     /// - "both": Keep all windows regardless of sign (use with `--distance-sign absolute` to ignore sign).
     #[cfg_attr(
         feature = "cli",
@@ -672,8 +672,8 @@ pub enum MergeLabel {
 impl Default for PrepareConfig {
     fn default() -> Self {
         Self {
-            input: None,
-            output: None,
+            input: "-".into(),
+            output: "-".into(),
             header: HeaderMode::Auto,
             cols: "chrom=0,start=1,end=2".to_string(),
             group_cols: Vec::new(),

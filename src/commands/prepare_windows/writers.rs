@@ -154,14 +154,10 @@ pub fn concatenate_temps_enforcing_min_per_group(
     temp_entries: &[(String, PathBuf)],
     global_group_counts: &FxHashMap<String, u64>,
 ) -> Result<()> {
-    let mut out: TextWriter = if let Some(path) = &cfg.output {
-        if path.as_os_str() == "-" {
-            stdout_text_writer()
-        } else {
-            create_text_writer(path)?
-        }
-    } else {
+    let mut out: TextWriter = if cfg.output.as_os_str() == "-" {
         stdout_text_writer()
+    } else {
+        create_text_writer(&cfg.output)?
     };
 
     // Helper to decide if a group passes the threshold
