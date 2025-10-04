@@ -63,7 +63,8 @@ impl FinalWindow {
 #[derive(Debug, Default)]
 pub struct BlacklistCursor {
     pub intervals: Vec<(u64, u64)>,
-    pub cursor: usize,
+    pub pre_cursor: usize,  // Early filtering
+    pub post_cursor: usize, // Post-merge filtering
 }
 
 /// Run the prepare pipeline using the provided configuration.
@@ -128,7 +129,8 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
                 chrom,
                 BlacklistCursor {
                     intervals,
-                    cursor: 0,
+                    pre_cursor: 0,
+                    post_cursor: 0,
                 },
             );
         }
@@ -318,7 +320,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
                     final_start as u64,
                     final_end as u64,
                     blacklist_look_back,
-                    &mut cursor.cursor,
+                    &mut cursor.pre_cursor,
                 )
             {
                 continue;

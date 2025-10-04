@@ -224,7 +224,7 @@ fn filter_blacklisted_post_merge(
                         entry.start as u64,
                         entry.end as u64,
                         look_back,
-                        &mut cursor.cursor,
+                        &mut cursor.post_cursor,
                     ) {
                         continue;
                     }
