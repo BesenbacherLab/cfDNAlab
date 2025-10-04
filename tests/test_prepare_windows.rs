@@ -105,6 +105,108 @@ mod tests_prepare_windows_pipeline {
     }
 
     #[test]
+    fn should_merge_then_apply_blacklist() -> Result<()> {
+        let tmpdir = TempDir::new()?;
+        let input = write_temp_file(
+            &tmpdir,
+            "input.tsv",
+            &["chr1\t10\t14\tG", "chr1\t18\t22\tG", "chr1\t40\t44\tH"],
+        )?;
+        let blacklist = write_temp_file(&tmpdir, "blacklist.bed", &["chr1\t15\t17"])?;
+        let output = tmpdir.path().join("out.tsv");
+
+        let mut cfg = PrepareConfig::default();
+        cfg.input = Some(input);
+        cfg.output = Some(output);
+        cfg.header = HeaderMode::Absent;
+        cfg.blacklist = Some(vec![blacklist]);
+        cfg.blacklist_strategy = cfdnalab::shared::blacklist::BlacklistStrategy::Any;
+        cfg.group_cols = vec!["3".to_string()];
+        cfg.merge_scope = MergeScope::Within;
+        cfg.merge_gap = Some(4);
+        cfg.merge_label = MergeLabel::Join;
+        cfg.oob = OobPolicy::Allow;
+
+        let lines = run_pipeline(&cfg)?;
+        assert_eq!(lines, vec!["chr1\t40\t44\tH".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn should_resize_before_merging() -> Result<()> {
+        let tmpdir = TempDir::new()?;
+        let input = write_temp_file(
+            &tmpdir,
+            "input.tsv",
+            &["chr1\t10\t14\tA", "chr1\t20\t24\tA", "chr1\t40\t44\tA"],
+        )?;
+        let output = tmpdir.path().join("out.tsv");
+
+        let mut cfg = PrepareConfig::default();
+        cfg.input = Some(input);
+        cfg.output = Some(output);
+        cfg.header = HeaderMode::Absent;
+        cfg.group_cols = vec!["3".to_string()];
+        cfg.flank = Some(vec![3, 3]);
+        cfg.oob = OobPolicy::Allow;
+        cfg.merge_scope = MergeScope::Within;
+        cfg.merge_gap = Some(0);
+        cfg.merge_label = MergeLabel::Join;
+
+        let mut lines = run_pipeline(&cfg)?;
+        lines.sort();
+        assert_eq!(
+            lines,
+            vec!["chr1\t7\t27\tA".to_string(), "chr1\t37\t47\tA".to_string(),],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_assign_three_distance_bins() -> Result<()> {
+        let tmpdir = TempDir::new()?;
+        let input = write_temp_file(
+            &tmpdir,
+            "input.tsv",
+            &["chr1\t6\t8", "chr1\t52\t54", "chr1\t150\t152"],
+        )?;
+        let near = write_temp_file(
+            &tmpdir,
+            "near.tsv",
+            &["chr1\t10\t12\tA", "chr1\t40\t42\tB", "chr1\t80\t82\tC"],
+        )?;
+        let output = tmpdir.path().join("out.tsv");
+
+        let mut cfg = PrepareConfig::default();
+        cfg.input = Some(input);
+        cfg.output = Some(output);
+        cfg.header = HeaderMode::Absent;
+        cfg.near = Some(near);
+        cfg.near_header = HeaderMode::Absent;
+        cfg.near_edge = NearEdge::Nearest;
+        cfg.distance_sign = DistSign::Absolute;
+        cfg.distance_bins = Some(vec![
+            "prox:<5".to_string(),
+            "mid:5-15".to_string(),
+            "far:>15".to_string(),
+        ]);
+        cfg.oob = OobPolicy::Allow;
+
+        let mut lines = run_pipeline(&cfg)?;
+        lines.sort();
+
+        assert_eq!(
+            lines,
+            vec![
+                "chr1\t6\t8\t+A.prox".to_string(),
+                "chr1\t52\t54\t-B.mid".to_string(),
+                "chr1\t150\t152\t-C.far".to_string(),
+            ],
+        );
+        Ok(())
+    }
+
+    #[test]
     fn should_annotate_ties_with_directional_groups() -> Result<()> {
         let tmpdir = TempDir::new()?;
         let input = write_temp_file(&tmpdir, "input.tsv", &["chr1\t10\t20"])?;
