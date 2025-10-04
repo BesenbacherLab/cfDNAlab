@@ -90,12 +90,12 @@ pub struct PrepareConfig {
 
     /// Field separator for input and output `[char]`
     ///
-    /// Common separators are `\t` for `.tsv` files and `,` or `;` for `.csv` files.
+    /// Common separators are `\t` (accepts "tab") for `.tsv` files and `,` or `;` for `.csv` files.
     #[cfg_attr(
         feature = "cli",
         clap(
             long,
-            value_parser = clap::value_parser!(char),
+            value_parser = parse_sep,
             required = true,
             help_heading = "Core"
         )
@@ -118,19 +118,19 @@ pub struct PrepareConfig {
 
     /// Optional group columns `[strings]`
     ///
-    /// Provide one or more columns (indices or names). When multiple are given, they will be
+    /// Provide one or more column indices. When multiple are given, they will be
     /// concatenated using `__` into the single `group` output column.
     ///
     /// If omitted, the `group` will be derived from later subdivision steps (e.g. `--distance-bins`).
     /// If no subdivision occurs, no group column is written to the output.
     ///
-    /// Example: `--group-cols gene tf`
+    /// Example: `--group-cols 3`
     #[cfg_attr(feature = "cli", clap(long, value_parser, help_heading = "Core"))]
     pub group_cols: Vec<String>,
 
     /// Optional score column `[string]`
     ///
-    /// Column index or name for a numeric score used by `--score-filter`.
+    /// Column index for a numeric score used by `--score-filter`.
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser, requires = "score-filter", help_heading = "Core")
@@ -704,6 +704,24 @@ impl Default for PrepareConfig {
             merge_gap: None,
             merge_label: MergeLabel::Join,
             seed: None,
+        }
+    }
+}
+
+fn parse_sep(input: &str) -> Result<char, String> {
+    match input {
+        r"\t" | "tab" => Ok('\t'),
+        r"\n" | "nl" => Ok('\n'),
+        r"\0" | "nul" => Ok('\0'),
+        r"\r" => Ok('\r'),
+        r"\x20" => Ok(' '),
+        _ => {
+            let mut it = input.chars();
+            let ch = it.next().ok_or("separator cannot be empty")?;
+            if it.next().is_some() {
+                return Err("expected a single character or an escape like \\t".into());
+            }
+            Ok(ch)
         }
     }
 }
