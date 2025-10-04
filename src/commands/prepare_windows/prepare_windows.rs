@@ -4,7 +4,8 @@
 // 1) Validates and loads a `near` interval set (non-overlapping, unique edges).
 // 2) Loads and coalesces blacklist intervals (with halo).
 // 3) Streams the primary input by chromosome in chunks, applying early filters,
-//    nearest-distance binning, spacing, merging, and deduplication.
+//    nearest-distance binning (with `-/+/=` prefixes that reflect direction), spacing,
+//    merging, and deduplication.
 // 4) Writes per-chromosome temporary files and finally concatenates them,
 //    enforcing `min_per_group` in a final pass.
 //

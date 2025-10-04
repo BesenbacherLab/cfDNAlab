@@ -300,7 +300,7 @@ pub struct PrepareConfig {
 
     /// How to respond when multiple near intervals tie for the minimum distance `[string]`
     ///
-    /// - "annotate": keep the window and annotate upstream/downstream groups separately.
+    /// - "annotate": keep the window and include both sides in the near label (e.g. `-A/+B`).
     /// - "drop": discard the window when a tie occurs.
     #[cfg_attr(
         feature = "cli",
@@ -317,7 +317,24 @@ pub struct PrepareConfig {
     /// How to treat the computed distances when binning `[string]`
     ///
     /// - "absolute": Use `abs(distance)` for comparisons and thresholds.
-    /// - "signed": Use signed distances, where upstream is negative and downstream positive.
+    /// - "signed": Use signed distances.
+    /// 
+    /// **Distance sign**: 
+    /// If the window is upstream (left) of the near-interval, the distance is **positive**.
+    /// If the window is downstream (right) of the near-interval, the distance is **negative**.
+    /// 
+    /// E.g.:
+    /// 
+    /// ```text
+    /// windows:      [1]       [2]
+    ///            <--
+    /// near:   [A]         [B] [C]
+    /// ```
+    /// Here, `window 1` is closest to `A` with a **negative** distance and `window 2` is inside `C` so has a distance of `0`.
+    /// 
+    /// The emitted near label always carries a prefix that mirrors the relative placement: 
+    /// `-` for negative distances, `+` for positive distances, and `=` when the window overlaps the interval. 
+    /// This prefix is present even when you request absolute distances so you can still tell which side was nearest.
     #[cfg_attr(
         feature = "cli",
         clap(
