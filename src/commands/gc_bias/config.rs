@@ -2,6 +2,9 @@ use std::path::PathBuf;
 
 use crate::commands::cli_common::*;
 
+// TODO: Try excluding the first N bases (both ends) from GC fraction calculation to avoid correcting "biochemical cut bias" - the bias we care about is "regional bias"
+// Perhaps do an "end-proximal base composition (p≈1–10) bias" experiment to show how many bases to cut off in ends
+
 /// Count fragments per GC fraction and fragment length in a BAM-file.
 ///
 /// Fragment length is defined as `end(reverse) - start(forward)`.

@@ -116,6 +116,7 @@ pub struct PrepareConfig {
     )]
     pub cols: String,
 
+    // TODO: Change the other cols to accept u32
     /// Optional group columns `[strings]`
     ///
     /// Provide one or more column indices. When multiple are given, they will be

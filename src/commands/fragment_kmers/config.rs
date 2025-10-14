@@ -8,6 +8,8 @@ use crate::{
     shared::{blacklist::BlacklistStrategy, indel_mode::IndelMode},
 };
 
+// TODO: Add minimum or min mean base quality filtering!
+
 /// Count kmers within the fragments in a BAM-file.
 ///
 /// Whereas the `cfdna ends` tool extracts end-motifs, this tool extracts all kmers

@@ -37,6 +37,7 @@ use std::collections::hash_map::Entry;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 use std::{env, fs, mem};
 
 /// Final window representation used throughout the pipeline.
@@ -84,6 +85,14 @@ pub struct BlacklistCursor {
 /// - ok:
 ///     Success or error.
 pub fn run(cfg: &PrepareConfig) -> Result<()> {
+    let start_time = Instant::now();
+
+    println!("Preparing BED-like file");
+
+    // TODO: Print pipeline that will be applied
+
+    // TODO: Validate IO paths early (and other args)
+
     // Compile distance bins (if any)
     let distance_bins = if let Some(specs) = &cfg.distance_bins {
         Some(parse_distance_bins(specs)?)
@@ -109,7 +118,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             HeaderMode::Absent => false,
             HeaderMode::Auto => detect_header(path, cfg.sep).unwrap_or(false),
         };
-        let group_col_present = true; // If your near has optional group, you can make this configurable
+        let group_col_present = true; // TODO: configure as optional group
         Some(load_near_index(
             path,
             cfg.sep,
@@ -400,6 +409,8 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     concatenate_temps_enforcing_min_per_group(cfg, &temp_entries, &global_group_counts)?;
     fs::remove_dir_all(&temp_dir).ok();
 
+    let elapsed = start_time.elapsed();
+    println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
 }
 
