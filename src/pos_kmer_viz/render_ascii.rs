@@ -65,7 +65,7 @@ fn write_header(buffer: &mut String, viz: &LengthVisualization, config: &VizConf
         config.positions_input,
         config.step.get(),
         config.bases.as_str(),
-        config.overlap_resolution.as_str()
+        config.mismatch_bases_from.as_str()
     );
     if let Some(label) = &config.label {
         write!(line, "  label={}", label).ok();
