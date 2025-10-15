@@ -82,6 +82,14 @@ fn write_header(buffer: &mut String, viz: &LengthVisualization, config: &VizConf
     if let Some(label) = &config.label {
         write!(line, "  label={}", label).ok();
     }
+    let padding = viz
+        .tracks
+        .iter()
+        .map(|track| track.name.len())
+        .max()
+        .unwrap_or(6)
+        .saturating_sub(6);
+    line.push_str(&" ".repeat(padding + 2));
     buffer.push_str(&line);
     buffer.push('\n');
 }
