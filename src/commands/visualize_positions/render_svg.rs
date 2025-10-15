@@ -4,12 +4,12 @@ use std::fmt::Write;
 use super::model::{LengthVisualization, ReferenceFrame, Track, VizConfig};
 
 const CHAR_WIDTH: f64 = 7.0;
-const MARKER_BAND: f64 = 13.0;
+const MARKER_BAND: f64 = 12.0;
 const BAR_HEIGHT: f64 = 10.0;
 const INDEX_BAND: f64 = 28.0;
 const INDEX_LABEL_PAD: f64 = 4.0;
 const LABEL_BAND: f64 = 12.0;
-const FRAGMENT_PADDING: f64 = 28.0;
+const FRAGMENT_PADDING: f64 = 30.0;
 
 /// Render the visualization as an SVG string.
 pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String {
