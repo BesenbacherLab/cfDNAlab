@@ -140,6 +140,10 @@ fn parse_length_range(spec: &str) -> Result<Vec<u32>> {
 }
 
 fn parse_linear_range(input: &str) -> Result<LinearRange, RangeParseError> {
+    let input = input.trim();
+    if input == ".." {
+        return Ok(LinearRange::All);
+    }
     if let Some((start_str, end_str)) = input.split_once("..") {
         if start_str.is_empty() && end_str.is_empty() {
             return Err(RangeParseError::new(
@@ -197,6 +201,10 @@ fn parse_linear_range(input: &str) -> Result<LinearRange, RangeParseError> {
 }
 
 fn parse_nearest_range(input: &str) -> Result<NearestRange, RangeParseError> {
+    let input = input.trim();
+    if input == ".." {
+        return Ok(NearestRange::All);
+    }
     if let Some((start_str, tail)) = input.split_once("..half") {
         let minus = parse_optional_minus(tail, NEAREST_EXAMPLE)?;
         if start_str.is_empty() {
@@ -267,6 +275,10 @@ fn parse_nearest_range(input: &str) -> Result<NearestRange, RangeParseError> {
 }
 
 fn parse_mid_range(input: &str) -> Result<MidRange, RangeParseError> {
+    let input = input.trim();
+    if input == ".." {
+        return Ok(MidRange::All);
+    }
     if let Some(rest) = input.strip_prefix("..") {
         if rest.is_empty() {
             return Err(RangeParseError::new(

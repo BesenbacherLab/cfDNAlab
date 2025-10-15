@@ -72,6 +72,7 @@ fn collect_linear_indices(length: u32, range: &LinearRange) -> Vec<i32> {
     let axis_start = 1i32;
     let axis_end = length as i32;
     match *range {
+        LinearRange::All => inclusive_range(axis_start, axis_end),
         LinearRange::Closed { start, end } => {
             clamp_range_to_domain(start as i32, end as i32, axis_start, axis_end)
                 .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
@@ -155,6 +156,7 @@ fn collect_nearest_indices(half: u32, range: &NearestRange) -> Vec<i32> {
     let axis_start = 1i32;
     let axis_end = half as i32;
     match *range {
+        NearestRange::All => inclusive_range(axis_start, axis_end),
         NearestRange::Closed { start, end } => {
             clamp_range_to_domain(start as i32, end as i32, axis_start, axis_end)
                 .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
@@ -206,6 +208,7 @@ fn mid_axis_bounds(length: u32) -> AxisBounds {
 fn collect_mid_indices(length: u32, range: &MidRange) -> Vec<i32> {
     let axis = mid_axis_bounds(length);
     match *range {
+        MidRange::All => inclusive_range(axis.start, axis.end),
         MidRange::Closed { neg, pos } => {
             let start = -(neg as i32);
             let end = pos as i32;

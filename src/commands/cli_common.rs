@@ -403,19 +403,25 @@ pub struct FragmentPositionSelectionArgs {
     ///
     /// The allowed shapes depend on `--frame`:
     ///
-    /// - **`left`**, **`right`**, **`per-end`**: use `A..B`, `A..`, `..B`, `A..-B`, `..half`, or `A..half-K`.
+    /// - **`left`**, **`right`**, **`per-end`**: use `..` for the full span or `A..B`, `A..`, `..B`, `A..-B`, `..half`, `A..half-K`.
     ///   For example, `1..10` keeps the first ten bases, `10..-10` trims both ends, and `..half-5`
     ///   includes bases from the start up to five before the fragment midpoint. Open intervals like `A..`
     ///   include every coordinate from `A` to the end of the frame.
     ///
-    /// - **`nearest`** (folded 1..floor(length/2)): use `A..B`, `A..`, `..B`, `..half`, or `A..half-K`. Here, `half` expands to the
+    /// - **`nearest`** (folded 1..floor(length/2)): use `..` for every folded position or `A..B`, `A..`, `..B`, `..half`, `A..half-K`. Here, `half` expands to the
     ///   largest folded distance, ensuring the center base is maximally counted once. For odd-sized fragments, the central base remains uncounted.
     ///   Forms like `10..-10` are rejected for this frame.
     ///
-    /// - **`mid`** (centered at 0): use `-M..N`, `-M..`, or `..N`. E.g. `-10..10` for the 20 bases around the midpoint.
+    /// - **`mid`** (centered at 0): use `..` for the entire axis, `-M..N`, `-M..`, or `..N`. E.g. `-10..10` for the 20 bases around the midpoint.
     #[cfg_attr(
         feature = "cli",
-        arg(long, help_heading = "Region Selection", allow_hyphen_values = true)
+        arg(
+            long,
+            help_heading = "Region Selection",
+            default_value = "..",
+            required = false,
+            allow_hyphen_values = true
+        )
     )]
     pub positions: String,
 
@@ -433,14 +439,14 @@ pub struct FragmentPositionSelectionArgs {
     )]
     pub step: usize,
 
-    /// Choose which coordinate source defines the counted positions `[prefer-reads|reads|reference|nearest-read]`.
+    /// Choose which coordinate source defines the counted positions `[reference|prefer-reads|reads|nearest-read]`.
+    ///
+    /// - `reference`: Always use the reference span, even when reads do not cover those bases.
     ///
     /// - `prefer-reads`: Use read-space coordinates whenever an observed base covers the requested position
     ///   and fall back to the reference span when reads don't cover the positions.
     ///
     /// - `reads`: Only count positions the reads cover.
-    ///
-    /// - `reference`: Always use the reference span, even when reads do not cover those bases.
     ///
     /// - `nearest-read`: Clamp the selection to the read that corresponds to the frame origin (e.g., the
     ///   left/forward read for the `left` frame).
@@ -449,13 +455,13 @@ pub struct FragmentPositionSelectionArgs {
         arg(
             long,
             value_enum,
-            default_value = "prefer-reads",
+            default_value = "reference",
             help_heading = "Region Selection"
         )
     )]
     pub bases_from: BasesFrom,
 
-    /// Resolve overlapping read mismatches when preferring read bases `[nearest-read|base-quality|reference]`.
+    /// Resolve overlapping read **mismatches** when preferring read bases `[nearest-read|base-quality|reference]`.
     ///
     /// - `nearest-read`: Take the base from whichever read is closest to the frame origin. **NOTE**: Incompatible with `--frame mid`.
     ///

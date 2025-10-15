@@ -28,7 +28,7 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
     let mut y_cursor = 30.0;
     for viz in results {
         let header = format!(
-            "L={} | frame={} | positions={} | step={} | bases={} | overlap={}",
+            "L={} | frame={} | positions={} | step={} | bases={} | mismatches={}",
             viz.fragment_length,
             config.frame.as_str(),
             config.positions_input,

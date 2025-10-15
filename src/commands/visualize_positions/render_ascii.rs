@@ -94,6 +94,7 @@ fn build_tick_lines(track: &Track, width: usize) -> (String, String) {
     }
     let mut ticks = vec![' '; width];
     let mut labels = vec![' '; width];
+    let mut chosen: Vec<Option<(i32, u8)>> = vec![None; width];
 
     let start = track.axis.start;
     let end = track.axis.end;
@@ -102,10 +103,29 @@ fn build_tick_lines(track: &Track, width: usize) -> (String, String) {
             if should_mark_tick(value, start, end) {
                 let column = value_to_column(value as f64, start as f64, end as f64, width);
                 if column < width {
-                    ticks[column] = '|';
-                    place_label(&mut labels, column, value);
+                    let priority = tick_priority(value, start, end);
+                    let slot = &mut chosen[column];
+                    let should_replace = match slot {
+                        None => true,
+                        Some((existing_value, existing_priority)) => {
+                            priority > *existing_priority
+                                || (priority == *existing_priority
+                                    && value == end
+                                    && *existing_value != end)
+                        }
+                    };
+                    if should_replace {
+                        *slot = Some((value, priority));
+                    }
                 }
             }
+        }
+    }
+
+    for (column, slot) in chosen.into_iter().enumerate() {
+        if let Some((value, _)) = slot {
+            ticks[column] = '|';
+            place_label(&mut labels, column, value);
         }
     }
 
@@ -114,6 +134,10 @@ fn build_tick_lines(track: &Track, width: usize) -> (String, String) {
 
 fn should_mark_tick(value: i32, start: i32, end: i32) -> bool {
     value == start || value == end || value % 10 == 0
+}
+
+fn tick_priority(value: i32, start: i32, end: i32) -> u8 {
+    if value == start || value == end { 2 } else { 1 }
 }
 
 fn place_label(line: &mut [char], column: usize, value: i32) {

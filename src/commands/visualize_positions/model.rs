@@ -30,14 +30,15 @@ impl ReferenceFrame {
 
 /// Whether the user wants to reason about read or reference coordinates.
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BasesFrom {
+    /// Always use reference positions regardless of read coverage.
+    #[default]
+    Reference,
     /// Prefer observed read coordinates, but fall back to the reference span when a read is missing.
     PreferReads,
     /// Only include positions covered by either read. Inferred mate gaps are skipped.
     Reads,
-    /// Always use reference positions regardless of read coverage.
-    Reference,
     /// Clamp to the read nearest to the frame origin.
     NearestRead,
 }
@@ -45,17 +46,11 @@ pub enum BasesFrom {
 impl BasesFrom {
     pub fn as_str(self) -> &'static str {
         match self {
+            BasesFrom::Reference => "reference",
             BasesFrom::PreferReads => "prefer-reads",
             BasesFrom::Reads => "reads",
-            BasesFrom::Reference => "reference",
             BasesFrom::NearestRead => "nearest-read",
         }
-    }
-}
-
-impl Default for BasesFrom {
-    fn default() -> Self {
-        BasesFrom::PreferReads
     }
 }
 
@@ -166,6 +161,8 @@ impl MismatchBasesFrom {
 /// Range grammar for frames that index strictly from one end.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinearRange {
+    /// Entire fragment axis.
+    All,
     /// Closed inclusive range `A..B`.
     Closed { start: u32, end: u32 },
     /// Open-right range `A:`.
@@ -183,18 +180,39 @@ pub enum LinearRange {
 /// Range grammar used with the `nearest` frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NearestRange {
-    Closed { start: u32, end: u32 },
-    From { start: u32 },
-    ToHalf { minus: u32 },
-    FromToHalf { start: u32, minus: u32 },
+    /// Entire folded axis.
+    All,
+    Closed {
+        start: u32,
+        end: u32,
+    },
+    From {
+        start: u32,
+    },
+    ToHalf {
+        minus: u32,
+    },
+    FromToHalf {
+        start: u32,
+        minus: u32,
+    },
 }
 
 /// Range grammar used with the `mid` frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MidRange {
-    Closed { neg: u32, pos: u32 },
-    LeftOpen { neg: u32 },
-    RightOpen { pos: u32 },
+    /// Entire symmetric axis.
+    All,
+    Closed {
+        neg: u32,
+        pos: u32,
+    },
+    LeftOpen {
+        neg: u32,
+    },
+    RightOpen {
+        pos: u32,
+    },
 }
 
 /// The position specification tagged to allow frame-specific dispatch.

@@ -110,6 +110,15 @@ mod tests_visualize_positions {
     }
 
     #[test]
+    fn selects_full_axis_when_positions_is_all_for_left_frame() {
+        let spec = parse_positions(ReferenceFrame::Left, "..").unwrap();
+        let length = 25;
+        let tracks = take_linear_indices(length, ReferenceFrame::Left, &spec, default_step());
+        let expected: Vec<i32> = (1..=length as i32).collect();
+        assert_eq!(tracks[0], expected);
+    }
+
+    #[test]
     fn left_half_range_includes_first_half() {
         let spec = parse_positions(ReferenceFrame::Left, "..half").unwrap();
         let tracks = take_linear_indices(100, ReferenceFrame::Left, &spec, default_step());
@@ -155,6 +164,17 @@ mod tests_visualize_positions {
     }
 
     #[test]
+    fn selects_full_axis_when_positions_is_all_for_mid_frame() {
+        let length = 18;
+        let spec = parse_positions(ReferenceFrame::Mid, "..").unwrap();
+        let tracks = take_linear_indices(length, ReferenceFrame::Mid, &spec, default_step());
+        let half = (length / 2) as i32;
+        let axis_end = if length % 2 == 0 { half - 1 } else { half };
+        let expected: Vec<i32> = (-half..=axis_end).collect();
+        assert_eq!(tracks[0], expected);
+    }
+
+    #[test]
     fn stride_application() {
         let spec = parse_positions(ReferenceFrame::Left, "1..10").unwrap();
         let step = NonZeroUsize::new(3).unwrap();
@@ -170,6 +190,36 @@ mod tests_visualize_positions {
         assert_eq!(tracks[1].iter().filter(|&&v| v == 50).count(), 1);
         assert!(tracks[0].contains(&1));
         assert!(tracks[0].contains(&100));
+    }
+
+    #[test]
+    fn selects_full_axis_when_positions_is_all_for_nearest_frame() {
+        let length = 21;
+        let spec = parse_positions(ReferenceFrame::Nearest, "..").unwrap();
+        let viz = build_tracks_for_length(length, ReferenceFrame::Nearest, &spec, default_step());
+        let fragment = viz
+            .tracks
+            .iter()
+            .find(|track| track.name == "fragment")
+            .expect("missing fragment track");
+        let nearest = viz
+            .tracks
+            .iter()
+            .find(|track| track.name == "nearest")
+            .expect("missing nearest track");
+
+        let half = (length / 2) as i32;
+        let expected_nearest: Vec<i32> = (1..=half).collect();
+        assert_eq!(nearest.selected_indices, expected_nearest);
+
+        let mut expected_fragment = Vec::new();
+        for distance in 1..=half {
+            expected_fragment.push(distance);
+            expected_fragment.push(length as i32 - distance + 1);
+        }
+        expected_fragment.sort_unstable();
+        expected_fragment.dedup();
+        assert_eq!(fragment.selected_indices, expected_fragment);
     }
 
     #[test]
@@ -233,6 +283,33 @@ mod tests_visualize_positions {
             "unexpected error: {}",
             err
         );
+    }
+}
+
+#[cfg(test)]
+mod tests_ticks {
+    use crate::commands::visualize_positions::model::AxisBounds;
+
+    #[test]
+    fn overlapping_ticks_prefer_endpoint_label() {
+        let track = Track {
+            name: "test".to_string(),
+            axis: AxisBounds::new(1, 121),
+            selected_indices: Vec::new(),
+        };
+        let width = 8;
+        let (ticks, labels) = build_tick_lines(&track, width);
+
+        let start = track.axis.start as f64;
+        let end = track.axis.end as f64;
+        let end_column = value_to_column(end, start, end, width);
+        assert_eq!(ticks.chars().nth(end_column), Some('|'));
+
+        let end_label_len = track.axis.end.to_string().len();
+        let end_start = end_column.saturating_sub(end_label_len.saturating_sub(1));
+        let end_label: String = labels.chars().skip(end_start).take(end_label_len).collect();
+        assert_eq!(end_label, track.axis.end.to_string());
+        assert!(!labels.contains("1121"));
     }
 }
 
