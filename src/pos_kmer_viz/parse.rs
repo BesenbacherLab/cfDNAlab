@@ -39,10 +39,9 @@ pub fn parse_positions(
     input: &str,
 ) -> Result<PositionsSpec, RangeParseError> {
     match frame {
-        ReferenceFrame::Left
-        | ReferenceFrame::Right
-        | ReferenceFrame::PerEnd
-        | ReferenceFrame::Span => parse_linear_range(input).map(PositionsSpec::Linear),
+        ReferenceFrame::Left | ReferenceFrame::Right | ReferenceFrame::PerEnd => {
+            parse_linear_range(input).map(PositionsSpec::Linear)
+        }
         ReferenceFrame::Nearest => parse_nearest_range(input).map(PositionsSpec::Nearest),
         ReferenceFrame::Mid => parse_mid_range(input).map(PositionsSpec::Mid),
     }
@@ -149,12 +148,21 @@ fn parse_linear_range(input: &str) -> Result<LinearRange, RangeParseError> {
             ));
         }
         if start_str.is_empty() {
+            if let Some(tail) = end_str.strip_prefix("half") {
+                let minus = parse_optional_minus(tail, LINEAR_EXAMPLE)?;
+                return Ok(LinearRange::ToHalf { minus });
+            }
             let end = parse_positive(end_str, "end", LINEAR_EXAMPLE)?;
             return Ok(LinearRange::To { end });
         }
         if end_str.is_empty() {
             let start = parse_positive(start_str, "start", LINEAR_EXAMPLE)?;
             return Ok(LinearRange::From { start });
+        }
+        if let Some(tail) = end_str.strip_prefix("half") {
+            let start = parse_positive(start_str, "start", LINEAR_EXAMPLE)?;
+            let minus = parse_optional_minus(tail, LINEAR_EXAMPLE)?;
+            return Ok(LinearRange::FromToHalf { start, minus });
         }
         if let Some(trim_str) = end_str.strip_prefix('-') {
             let start = parse_positive(start_str, "start", LINEAR_EXAMPLE)?;
@@ -183,7 +191,7 @@ fn parse_linear_range(input: &str) -> Result<LinearRange, RangeParseError> {
     }
 
     Err(RangeParseError::new(
-        "unsupported positions format for this frame (examples: 1..10, 10.., ..25, 5..-5)",
+        "unsupported positions format for this frame (examples: 1..10, 10.., ..25, 5..-5, ..half)",
         LINEAR_EXAMPLE,
     ))
 }

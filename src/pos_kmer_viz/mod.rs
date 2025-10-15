@@ -10,10 +10,10 @@ pub mod render_svg;
 pub mod select;
 
 pub use model::{
-    BasesFrom, LengthVisualization, LinearRange, MidRange, NearestRange, PositionsSpec,
-    ReferenceFrame, Style, Track, VizConfig,
+    BasesFrom, LengthVisualization, LinearRange, MidRange, NearestRange, OverlapResolution,
+    PositionsSpec, ReferenceFrame, Style, Track, VizConfig,
 };
 pub use parse::{RangeParseError, parse_lengths, parse_positions};
 pub use render_ascii::render_ascii;
 pub use render_svg::render_svg;
-pub use select::build_tracks_for_length;
+pub use select::{ReadClamp, build_tracks_for_length};

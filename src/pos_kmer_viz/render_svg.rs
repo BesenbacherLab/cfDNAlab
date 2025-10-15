@@ -28,12 +28,13 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
     let mut y_cursor = 30.0;
     for viz in results {
         let header = format!(
-            "L={} | frame={} | positions={} | step={} | bases={}",
+            "L={} | frame={} | positions={} | step={} | bases={} | overlap={}",
             viz.fragment_length,
             config.frame.as_str(),
             config.positions_input,
             config.step.get(),
-            config.bases.as_str()
+            config.bases.as_str(),
+            config.overlap_resolution.as_str()
         );
         writeln!(
             svg,
@@ -131,51 +132,9 @@ fn draw_track_svg(
         .ok();
     }
 
-    if config.show_half {
-        if config.frame == ReferenceFrame::Nearest {
-            let half = fragment_length / 2;
-            if half > 0 {
-                draw_marker(
-                    svg,
-                    '^',
-                    half as f64,
-                    track,
-                    bar_left,
-                    bar_top,
-                    bar_width,
-                    bar_height,
-                );
-            }
-        } else if config.frame == ReferenceFrame::Span {
-            let half = fragment_length / 2;
-            if half > 0 {
-                draw_marker(
-                    svg,
-                    '^',
-                    half as f64,
-                    track,
-                    bar_left,
-                    bar_top,
-                    bar_width,
-                    bar_height,
-                );
-            }
-        }
-    }
-
-    if config.show_mid {
-        match config.frame {
-            ReferenceFrame::Mid => draw_marker(
-                svg, '*', 0.0, track, bar_left, bar_top, bar_width, bar_height,
-            ),
-            ReferenceFrame::Span => {
-                let mid = (track.axis.start as f64 + track.axis.end as f64) / 2.0;
-                draw_marker(
-                    svg, '*', mid, track, bar_left, bar_top, bar_width, bar_height,
-                );
-            }
-            _ => {}
-        }
+    let markers = axis_markers(track, fragment_length, config);
+    for (value, symbol) in markers {
+        draw_axis_marker(svg, symbol, value, track, bar_left, bar_top, bar_width);
     }
 
     writeln!(
@@ -218,7 +177,7 @@ fn value_to_px(value: f64, track: &Track, left: f64, width: f64) -> f64 {
     left + ratio * width
 }
 
-fn draw_marker(
+fn draw_axis_marker(
     svg: &mut String,
     symbol: char,
     value: f64,
@@ -226,24 +185,56 @@ fn draw_marker(
     bar_left: f64,
     bar_top: f64,
     bar_width: f64,
-    bar_height: f64,
 ) {
     let x = value_to_px(value, track, bar_left, bar_width);
+    let top = (bar_top - 6.0).max(4.0);
+    let bottom = bar_top - 1.5;
     writeln!(
         svg,
         r##"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="#1f2937" stroke-width="1"/>"##,
-        x,
-        bar_top,
-        x,
-        bar_top + bar_height,
+        x, top, x, bottom
     )
     .ok();
     writeln!(
         svg,
         r##"<text x="{:.1}" y="{:.1}" fill="#1f2937" text-anchor="middle">{}</text>"##,
         x,
-        bar_top - 2.0,
+        top - 2.0,
         symbol
     )
     .ok();
+}
+
+fn axis_markers(track: &Track, fragment_length: u32, config: &VizConfig) -> Vec<(f64, char)> {
+    let mut markers = Vec::new();
+    if config.show_half {
+        match config.frame {
+            ReferenceFrame::Nearest => {
+                let half = (fragment_length / 2) as f64;
+                if half > 0.0 {
+                    markers.push((half.max(track.axis.start as f64), '^'));
+                }
+            }
+            ReferenceFrame::Left | ReferenceFrame::Right | ReferenceFrame::PerEnd => {
+                let half = (fragment_length / 2) as f64;
+                if half > 0.0 {
+                    markers.push((half.max(track.axis.start as f64), '^'));
+                }
+            }
+            _ => {}
+        }
+    }
+    if config.show_mid {
+        let mid = match config.frame {
+            ReferenceFrame::Mid => Some(0.0),
+            ReferenceFrame::Nearest => Some((fragment_length / 2) as f64),
+            ReferenceFrame::Left | ReferenceFrame::Right | ReferenceFrame::PerEnd => {
+                Some((track.axis.start as f64 + track.axis.end as f64) / 2.0)
+            }
+        };
+        if let Some(value) = mid {
+            markers.push((value, '*'));
+        }
+    }
+    markers
 }

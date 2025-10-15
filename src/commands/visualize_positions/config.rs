@@ -6,12 +6,12 @@ use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 
 use crate::pos_kmer_viz::{
-    BasesFrom, ReferenceFrame, Style, VizConfig, parse_lengths, parse_positions,
+    BasesFrom, OverlapResolution, ReferenceFrame, Style, VizConfig, parse_lengths, parse_positions,
 };
 
 /// `fragment-kmers` helper: Draw which fragment bases will be counted for a given frame and range setup.
 ///
-/// Use this helper to prototype the “where to count” arguments (`--frame`, `--positions`, `--step`, `--bases_from`),
+/// Use this helper to prototype the “where to count” arguments (`--frame`, `--positions`, `--step`, `--bases-from`, `--overlap-resolution`),
 /// before you run `cfdna fragment-kmers` on a BAM file. For every fragment length you request, the selected
 /// bases are rendered as ASCII or SVG, so you can check the correct positions are counted at. The
 /// command is geometry-only: no BAM or reference reads are touched while you iterate.
@@ -21,26 +21,29 @@ use crate::pos_kmer_viz::{
 /// `cfdna fragment-kmers`, assuming the same arguments are passed.
 #[cfg_attr(feature = "cli", derive(Parser, Clone))]
 pub struct VisualizeSelectedRegionConfig {
-    /// Choose the reference frame that interprets every other flag `[span|left|right|per-end|nearest|mid]`.
+    /// Choose the reference frame that interprets every other region selection argument `[left|right|per-end|nearest|mid]`.
     ///
     /// Note: `--positions` describe positions to count at relative to the chosen frame.
     /// Some frames are only relevant when `fragment-kmers` return positionally indexed counts.
     ///
-    /// - **`span`** walks linearly from the left 5' end to the right 5' end.
+    /// - **`left`** counts bases from the forward 5' end. Indices increase along the fragment and
+    ///   k-mers are counted in the forward-orientation.
     ///
-    /// - **`left`** counts bases from the forward 5' end.
+    /// - **`right`** counts bases from the reverse 5' end. Indices decrease along the fragment and
+    ///   k-mers are counted in the reverse-orientation with **complemented** bases.
     ///
-    /// - **`right`** counts bases from the reverse 5' end.
-    ///
-    /// - **`per-end`** counts both left/right with separate counts in the output.
+    /// - **`per-end`** counts both `left` and `right` simultaneously, producing two sets of k-mer counts.
+    ///   The `step` start can differ per side.
     ///
     /// - **`nearest`** folds the fragment around the midpoint so distances grow away from the nearest end.
     ///   The positional keyword `half` represents the midpoint (and maximum position).
+    ///   Bases contributed by the reverse 5' side are complemented.
     ///
-    /// - **`mid`** centres the axis on the midpoint, allowing getting N bases around the midpoint.
+    /// - **`mid`** centres the axis on the midpoint, allowing selections around zero with negative/positive offsets.
+    ///   K-mers are counted in the forward-orientation.
     #[cfg_attr(
         feature = "cli",
-        arg(long, value_enum, help_heading = "Region Selection")
+        arg(long, value_enum, default_value_t = ReferenceFrame::Left, help_heading = "Region Selection")
     )]
     pub frame: ReferenceFrame,
 
@@ -50,9 +53,10 @@ pub struct VisualizeSelectedRegionConfig {
     ///
     /// The allowed shapes depend on `--frame`:
     ///
-    /// - **`span`**, **`left`**, **`right`**, **`per-end`**: use `A..B`, `A..`, `..B`, or `A..-B`. For example, `1..10`
-    ///   keeps the first ten bases and `10..-10` trims both ends. Open intervals like `A..` include every
-    ///   coordinate from `A` to the end of the frame.
+    /// - **`left`**, **`right`**, **`per-end`**: use `A..B`, `A..`, `..B`, `A..-B`, `..half`, or `A..half-K`.
+    ///   For example, `1..10` keeps the first ten bases, `10..-10` trims both ends, and `..half-5`
+    ///   includes bases from the start up to five before the fragment midpoint. Open intervals like `A..`
+    ///   include every coordinate from `A` to the end of the frame.
     ///
     /// - **`nearest`** (folded 1..length/2): use `A..B`, `A..`, `..B`, `..half`, or `A..half-K`. Here, `half` expands to the
     ///   largest folded distance (ties are randomly assigned for even-length fragments), ensuring the centre base is
@@ -79,14 +83,18 @@ pub struct VisualizeSelectedRegionConfig {
     )]
     pub step: usize,
 
-    /// Choose which coordinate source defines the counted positions `[prefer-read|read|reference]`.
+    /// Choose which coordinate source defines the counted positions `[prefer-read|read|reference|nearest-read]`.
     ///
     /// - `prefer-read`: Use read-space coordinates whenever an observed base covers the requested position
     ///   and fall back to the reference span when reads don't cover the positions.
     ///
-    /// - `read`: Only count positions backed by read bases; gaps from CIGAR operations are excluded.
+    /// - `read`: Only count positions the reads can cover. The visualization clamps out the inferred gap
+    ///   between mates (everything strictly between the two read halves).
     ///
     /// - `reference`: Always use the reference span, even when reads do not cover those bases.
+    ///
+    /// - `nearest-read`: Clamp the selection to the read that corresponds to the frame origin (e.g., the
+    ///   left read for the `left` frame).
     #[cfg_attr(
         feature = "cli",
         arg(
@@ -97,6 +105,24 @@ pub struct VisualizeSelectedRegionConfig {
         )
     )]
     pub bases_from: BasesFrom,
+
+    /// Resolve overlapping read mismatches when preferring read bases `[nearest-read|base-quality|reference]`.
+    ///
+    /// - `nearest-read`: Take the base from whichever read is closest to the frame origin. **NOTE**: Incompatible with `--frame mid`.
+    ///
+    /// - `base-quality`: Take the base with the highest quality score.
+    ///
+    /// - `reference`: Ignore the reads and fall back to the reference base for that coordinate.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long = "overlap-resolution",
+            value_enum,
+            default_value_t = OverlapResolution::NearestRead,
+            help_heading = "Region Selection"
+        )
+    )]
+    pub overlap_resolution: OverlapResolution,
 
     /// Explicit fragment lengths to sketch (comma-separated) `[integers]`.
     ///
@@ -109,7 +135,7 @@ pub struct VisualizeSelectedRegionConfig {
             num_args = 1..,
             value_parser = clap::value_parser!(u32).range(1..),
             conflicts_with = "length_range",
-            help_heading = "Region Selection"
+            help_heading = "Visualization"
         )
     )]
     pub lengths: Option<Vec<u32>>,
@@ -123,7 +149,7 @@ pub struct VisualizeSelectedRegionConfig {
         arg(
             long,
             conflicts_with = "lengths",
-            help_heading = "Region Selection",
+            help_heading = "Visualization",
             value_parser = clap::builder::NonEmptyStringValueParser::new()
         )
     )]
@@ -131,7 +157,7 @@ pub struct VisualizeSelectedRegionConfig {
 
     /// Rendering backend for the diagram `[ascii|svg]`.
     ///
-    /// ASCII is compact and stdout-friendly; SVG produces a figure for slides or docs.
+    /// ASCII is compact and stdout-friendly. SVG produces a figure for slides or docs.
     #[cfg_attr(
         feature = "cli",
         arg(long, value_enum, default_value_t = Style::Ascii, help_heading = "Visualization")
@@ -162,20 +188,20 @@ pub struct VisualizeSelectedRegionConfig {
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Visualization"))]
     pub show_index: bool,
 
-    /// Mark the halfway point with `^` (ASCII) or a vertical line (SVG) `[flag]`.
+    /// Mark the halfway distance (length/2 from the frame origin) with `^` on the axis `[flag]`.
     ///
-    /// For `nearest`, the marker lands on `floor(length/2)` - the furthest folded distance before the ends meet.
-    /// For `span`, it marks the halfway distance from the left 5' end (length/2). Other frames do not display it.
+    /// For `nearest`, the preview line highlights the full fragment and marks `length/2` before the folded track.
+    /// For linear frames (`left`, `right`, `per-end`), the mark lands at `length/2` from their respective
+    /// origin. This differs from the fragment midpoint (`*`), which is the conceptual centre point of the fragment.
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Visualization"))]
     pub show_half: bool,
 
-    /// Mark the conceptual midpoint with `*` when the frame exposes it (`mid` or `span`) `[flag]`.
+    /// Hide the fragment midpoint marker (`*`) on the axis `[flag]`.
     ///
-    /// On the `mid` frame this labels the `q=0` origin. On `span` it marks the centre column the counter uses
-    /// when ties occur (even-length fragments still break the central pair according to the counting command).
-    /// Combine with `--show-half` on `span` to see both the halfway distance and the midpoint marker.
+    /// The midpoint marker is drawn by default whenever the frame exposes the conceptual centre (`mid` at 0,
+    /// `left`/`right`/`per-end` at the halfway coordinate, `nearest` at the folded maximum). Use this flag to suppress it.
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Visualization"))]
-    pub show_mid: bool,
+    pub hide_mid: bool,
 }
 
 impl VisualizeSelectedRegionConfig {
@@ -204,6 +230,12 @@ impl VisualizeSelectedRegionConfig {
             )
         })?;
 
+        if self.frame == ReferenceFrame::Mid && self.bases_from == BasesFrom::NearestRead {
+            return Err(anyhow!(
+                "`--bases-from nearest-read` is incompatible with the `mid` frame. Choose a different bases-from mode."
+            ));
+        }
+
         let width = self.width.unwrap_or(100);
         if width == 0 {
             return Err(anyhow!("--width must be positive (example: --width 120)"));
@@ -220,6 +252,7 @@ impl VisualizeSelectedRegionConfig {
             positions_input: self.positions.clone(),
             step,
             bases: self.bases_from,
+            overlap_resolution: self.overlap_resolution,
             fragment_lengths,
             style: self.style,
             width,
@@ -228,7 +261,7 @@ impl VisualizeSelectedRegionConfig {
             label: self.label.clone(),
             show_index: self.show_index,
             show_half: self.show_half,
-            show_mid: self.show_mid,
+            show_mid: !self.hide_mid,
         })
     }
 }

@@ -5,12 +5,9 @@ use std::path::PathBuf;
 use clap::ValueEnum;
 
 /// Enumeration of the available coordinate frames used to interpret positional selections.
-///
-/// The variants mirror the CLI keyword semantics documented in AGENTS.md.
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReferenceFrame {
-    Span,
     Left,
     Right,
     #[cfg_attr(feature = "cli", value(alias = "per-end"))]
@@ -27,7 +24,6 @@ impl ReferenceFrame {
             ReferenceFrame::PerEnd => "per-end",
             ReferenceFrame::Nearest => "nearest",
             ReferenceFrame::Mid => "mid",
-            ReferenceFrame::Span => "span",
         }
     }
 }
@@ -38,8 +34,12 @@ impl ReferenceFrame {
 pub enum BasesFrom {
     /// Prefer observed read coordinates, but fall back to the reference span when a read is missing.
     PreferRead,
+    /// Only include positions covered by either read. Inferred mate gaps are skipped.
     Read,
+    /// Always use reference positions regardless of read coverage.
     Reference,
+    /// Clamp to the read nearest to the frame origin.
+    NearestRead,
 }
 
 impl BasesFrom {
@@ -48,6 +48,7 @@ impl BasesFrom {
             BasesFrom::PreferRead => "prefer-read",
             BasesFrom::Read => "read",
             BasesFrom::Reference => "reference",
+            BasesFrom::NearestRead => "nearest-read",
         }
     }
 }
@@ -130,6 +131,7 @@ pub struct VizConfig {
     pub positions_input: String,
     pub step: NonZeroUsize,
     pub bases: BasesFrom,
+    pub overlap_resolution: OverlapResolution,
     pub fragment_lengths: Vec<u32>,
     pub style: Style,
     pub width: usize,
@@ -139,6 +141,25 @@ pub struct VizConfig {
     pub show_index: bool,
     pub show_half: bool,
     pub show_mid: bool,
+}
+
+/// How to resolve overlapping read mismatches when choosing read-backed bases.
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlapResolution {
+    NearestRead,
+    BaseQuality,
+    Reference,
+}
+
+impl OverlapResolution {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OverlapResolution::NearestRead => "nearest-read",
+            OverlapResolution::BaseQuality => "base-quality",
+            OverlapResolution::Reference => "reference",
+        }
+    }
 }
 
 /// Range grammar for frames that index strictly from one end.
@@ -152,6 +173,10 @@ pub enum LinearRange {
     To { end: u32 },
     /// Opposite-end trimmed range `A..-B`.
     TrimOtherEnd { start: u32, other_end_trim: u32 },
+    /// Range reaching up to the fragment half (`..half[-K]`).
+    ToHalf { minus: u32 },
+    /// Range starting at a fixed offset up to the fragment half (`A..half[-K]`).
+    FromToHalf { start: u32, minus: u32 },
 }
 
 /// Range grammar used with the `nearest` frame.

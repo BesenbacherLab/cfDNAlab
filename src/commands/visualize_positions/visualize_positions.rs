@@ -4,7 +4,8 @@ use std::io::{self, Write};
 use anyhow::Result;
 
 use crate::pos_kmer_viz::{
-    LengthVisualization, Style, build_tracks_for_length, render_ascii, render_svg,
+    BasesFrom, LengthVisualization, ReadClamp, Style, build_tracks_for_length, render_ascii,
+    render_svg,
 };
 
 use super::config::VisualizeSelectedRegionConfig;
@@ -14,8 +15,20 @@ pub fn run(cfg: &VisualizeSelectedRegionConfig) -> Result<()> {
     let viz_cfg = cfg.build()?;
 
     let mut results: Vec<LengthVisualization> = Vec::new();
+    let clamp_mode = match viz_cfg.bases {
+        BasesFrom::NearestRead => ReadClamp::Nearest,
+        BasesFrom::Read => ReadClamp::Both,
+        _ => ReadClamp::None,
+    };
+
     for &length in &viz_cfg.fragment_lengths {
-        let viz = build_tracks_for_length(length, viz_cfg.frame, &viz_cfg.positions, viz_cfg.step);
+        let viz = build_tracks_for_length(
+            length,
+            viz_cfg.frame,
+            &viz_cfg.positions,
+            viz_cfg.step,
+            clamp_mode,
+        );
         results.push(viz);
     }
 

@@ -1,7 +1,8 @@
 use std::num::NonZeroUsize;
 
 use cfdnalab::pos_kmer_viz::{
-    PositionsSpec, RangeParseError, ReferenceFrame, build_tracks_for_length, parse_positions,
+    PositionsSpec, RangeParseError, ReadClamp, ReferenceFrame, build_tracks_for_length,
+    parse_positions,
 };
 
 fn default_step() -> NonZeroUsize {
@@ -14,7 +15,17 @@ fn take_linear_indices(
     positions: &PositionsSpec,
     step: NonZeroUsize,
 ) -> Vec<Vec<i32>> {
-    let viz = build_tracks_for_length(length, frame, positions, step);
+    take_linear_indices_with_clamp(length, frame, positions, step, ReadClamp::None)
+}
+
+fn take_linear_indices_with_clamp(
+    length: u32,
+    frame: ReferenceFrame,
+    positions: &PositionsSpec,
+    step: NonZeroUsize,
+    clamp: ReadClamp,
+) -> Vec<Vec<i32>> {
+    let viz = build_tracks_for_length(length, frame, positions, step, clamp);
     viz.tracks
         .iter()
         .map(|track| track.selected_indices.clone())
@@ -25,7 +36,8 @@ fn take_linear_indices(
 fn nearest_open_to_half_small_l() {
     let spec = parse_positions(ReferenceFrame::Nearest, "10..").unwrap();
     let tracks = take_linear_indices(18, ReferenceFrame::Nearest, &spec, default_step());
-    assert!(tracks[0].is_empty());
+    assert_eq!(tracks.len(), 2);
+    assert!(tracks[1].is_empty());
 }
 
 #[test]
@@ -33,7 +45,9 @@ fn nearest_half_minus_k() {
     let spec = parse_positions(ReferenceFrame::Nearest, "5..half-3").unwrap();
     let tracks = take_linear_indices(151, ReferenceFrame::Nearest, &spec, default_step());
     let expected: Vec<i32> = (5..=72).collect();
-    assert_eq!(tracks[0], expected);
+    assert_eq!(tracks[1], expected);
+    assert!(tracks[0].contains(&5));
+    assert!(tracks[0].contains(&(151 - 5 + 1)));
 }
 
 #[test]
@@ -63,10 +77,51 @@ fn per_end_two_tracks() {
 }
 
 #[test]
-fn span_trim_both_ends() {
-    let spec = parse_positions(ReferenceFrame::Span, "15..-15").unwrap();
-    let tracks = take_linear_indices(80, ReferenceFrame::Span, &spec, default_step());
+fn per_end_stride_applies_independently() {
+    let spec = parse_positions(ReferenceFrame::PerEnd, "1..10").unwrap();
+    let viz = build_tracks_for_length(
+        12,
+        ReferenceFrame::PerEnd,
+        &spec,
+        NonZeroUsize::new(3).unwrap(),
+        ReadClamp::None,
+    );
+    let left_track = viz
+        .tracks
+        .iter()
+        .find(|track| track.name == "left")
+        .expect("missing left track");
+    let right_track = viz
+        .tracks
+        .iter()
+        .find(|track| track.name == "right")
+        .expect("missing right track");
+    assert_eq!(left_track.selected_indices, vec![1, 4, 7, 10]);
+    assert_eq!(right_track.selected_indices, vec![1, 4, 7, 10]);
+}
+
+#[test]
+fn left_trim_both_ends_extended() {
+    let spec = parse_positions(ReferenceFrame::Left, "15..-15").unwrap();
+    let tracks = take_linear_indices(80, ReferenceFrame::Left, &spec, default_step());
     let expected: Vec<i32> = (15..=65).collect();
+    assert_eq!(tracks[0], expected);
+}
+
+#[test]
+fn left_half_range_includes_first_half() {
+    let spec = parse_positions(ReferenceFrame::Left, "..half").unwrap();
+    let tracks = take_linear_indices(100, ReferenceFrame::Left, &spec, default_step());
+    let expected: Vec<i32> = (1..=50).collect();
+    assert_eq!(tracks[0], expected);
+}
+
+#[test]
+fn left_half_minus_offset() {
+    let spec = parse_positions(ReferenceFrame::Left, "10..half-5").unwrap();
+    let tracks = take_linear_indices(120, ReferenceFrame::Left, &spec, default_step());
+    let expected_end = 120 / 2 - 5;
+    let expected: Vec<i32> = (10..=expected_end).collect();
     assert_eq!(tracks[0], expected);
 }
 
@@ -110,8 +165,53 @@ fn stride_application() {
 fn nearest_center_double_count_guard() {
     let spec = parse_positions(ReferenceFrame::Nearest, "..half").unwrap();
     let tracks = take_linear_indices(100, ReferenceFrame::Nearest, &spec, default_step());
+    assert_eq!(tracks[1].last().copied(), Some(50));
+    assert_eq!(tracks[1].iter().filter(|&&v| v == 50).count(), 1);
+    assert!(tracks[0].contains(&1));
+    assert!(tracks[0].contains(&100));
+}
+
+#[test]
+fn left_clamp_nearest_read_truncates_second_half() {
+    let spec = parse_positions(ReferenceFrame::Left, "1..100").unwrap();
+    let tracks = take_linear_indices_with_clamp(
+        100,
+        ReferenceFrame::Left,
+        &spec,
+        default_step(),
+        ReadClamp::Nearest,
+    );
     assert_eq!(tracks[0].last().copied(), Some(50));
-    assert_eq!(tracks[0].iter().filter(|&&v| v == 50).count(), 1);
+    assert!(!tracks[0].contains(&51));
+}
+
+#[test]
+fn right_clamp_nearest_read_truncates_first_half() {
+    let spec = parse_positions(ReferenceFrame::Right, "1..100").unwrap();
+    let tracks = take_linear_indices_with_clamp(
+        100,
+        ReferenceFrame::Right,
+        &spec,
+        default_step(),
+        ReadClamp::Nearest,
+    );
+    assert_eq!(tracks[0].first().copied(), Some(51));
+    assert!(!tracks[0].contains(&50));
+}
+
+#[test]
+fn per_end_clamp_both_reads_splits_tracks() {
+    let spec = parse_positions(ReferenceFrame::PerEnd, "1..100").unwrap();
+    let tracks = take_linear_indices_with_clamp(
+        100,
+        ReferenceFrame::PerEnd,
+        &spec,
+        default_step(),
+        ReadClamp::Both,
+    );
+    assert_eq!(tracks.len(), 2);
+    assert_eq!(tracks[0].last().copied(), Some(50));
+    assert_eq!(tracks[1].first().copied(), Some(51));
 }
 
 #[test]

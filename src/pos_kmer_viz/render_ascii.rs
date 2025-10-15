@@ -10,16 +10,30 @@ pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> Stri
             output.push('\n');
         }
         write_header(&mut output, viz, config);
-        if viz.tracks.first().is_some() {
-            let ruler = build_ruler(config.width);
+        if let Some(first_track) = viz.tracks.first() {
+            let markers = axis_markers(first_track, viz.fragment_length, config);
+            let marker_columns = marker_columns(first_track, config.width, &markers);
+
+            let mut axis_chars: Vec<char> = build_ruler(config.width).chars().collect();
+            for &(column, symbol) in &marker_columns {
+                if column < axis_chars.len() {
+                    axis_chars[column] = symbol;
+                }
+            }
             output.push_str("axis  : ");
-            output.push_str(&ruler);
+            output.push_str(&axis_chars.into_iter().collect::<String>());
             output.push('\n');
 
             if config.show_index {
-                let (ticks, labels) = build_tick_lines(&viz.tracks[0], config.width);
+                let (ticks, labels) = build_tick_lines(first_track, config.width);
+                let mut ticks_chars: Vec<char> = ticks.chars().collect();
+                for &(column, _) in &marker_columns {
+                    if column < ticks_chars.len() {
+                        ticks_chars[column] = '|';
+                    }
+                }
                 output.push_str("ticks : ");
-                output.push_str(&ticks);
+                output.push_str(&ticks_chars.into_iter().collect::<String>());
                 output.push('\n');
                 output.push_str("index : ");
                 output.push_str(&labels);
@@ -28,7 +42,7 @@ pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> Stri
         }
 
         for track in &viz.tracks {
-            let bar = build_track_bar(track, viz.fragment_length, config);
+            let bar = build_track_bar(track, config);
             output.push_str(&format!("{:>6}: ", track.name));
             output.push_str(&bar);
             output.push('\n');
@@ -45,12 +59,13 @@ pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> Stri
 
 fn write_header(buffer: &mut String, viz: &LengthVisualization, config: &VizConfig) {
     let mut line = format!(
-        "L={}  | frame={}  positions={}  step={}  bases={}",
+        "L={}  | frame={}  positions={}  step={}  bases={}  overlap={}",
         viz.fragment_length,
         config.frame.as_str(),
         config.positions_input,
         config.step.get(),
-        config.bases.as_str()
+        config.bases.as_str(),
+        config.overlap_resolution.as_str()
     );
     if let Some(label) = &config.label {
         write!(line, "  label={}", label).ok();
@@ -116,7 +131,7 @@ fn place_label(line: &mut [char], column: usize, value: i32) {
     }
 }
 
-fn build_track_bar(track: &Track, fragment_length: u32, config: &VizConfig) -> String {
+fn build_track_bar(track: &Track, config: &VizConfig) -> String {
     if config.width == 0 {
         return String::new();
     }
@@ -130,61 +145,7 @@ fn build_track_bar(track: &Track, fragment_length: u32, config: &VizConfig) -> S
         }
     }
 
-    if config.show_half {
-        if config.frame == ReferenceFrame::Nearest {
-            let half = (fragment_length / 2) as f64;
-            place_marker(
-                &mut cells,
-                half.max(1.0),
-                axis_start,
-                axis_end,
-                config.width,
-                '^',
-            );
-        } else if config.frame == ReferenceFrame::Span {
-            let half = (fragment_length / 2) as f64;
-            place_marker(
-                &mut cells,
-                half.max(1.0),
-                axis_start,
-                axis_end,
-                config.width,
-                '^',
-            );
-        }
-    }
-
-    if config.show_mid {
-        match config.frame {
-            ReferenceFrame::Mid => {
-                place_marker(&mut cells, 0.0, axis_start, axis_end, config.width, '*');
-            }
-            ReferenceFrame::Span => {
-                let mid = (track.axis.start as f64 + track.axis.end as f64) / 2.0;
-                place_marker(&mut cells, mid, axis_start, axis_end, config.width, '*');
-            }
-            _ => {}
-        }
-    }
-
     cells.into_iter().collect()
-}
-
-fn place_marker(
-    cells: &mut [char],
-    value: f64,
-    axis_start: f64,
-    axis_end: f64,
-    width: usize,
-    symbol: char,
-) {
-    if width == 0 {
-        return;
-    }
-    let column = value_to_column(value, axis_start, axis_end, width);
-    if column < cells.len() {
-        cells[column] = symbol;
-    }
 }
 
 fn value_to_column(value: f64, axis_start: f64, axis_end: f64, width: usize) -> usize {
@@ -203,4 +164,60 @@ fn value_to_column(value: f64, axis_start: f64, axis_end: f64, width: usize) -> 
     let max_index = (width - 1) as f64;
     let scaled = ratio * max_index;
     scaled.round().clamp(0.0, max_index) as usize
+}
+
+fn axis_markers(track: &Track, fragment_length: u32, config: &VizConfig) -> Vec<(f64, char)> {
+    let mut markers = Vec::new();
+    if config.show_half {
+        match config.frame {
+            ReferenceFrame::Nearest => {
+                let half = (fragment_length / 2) as f64;
+                if half > 0.0 {
+                    markers.push((half.max(track.axis.start as f64), '^'));
+                }
+            }
+            ReferenceFrame::Left | ReferenceFrame::Right | ReferenceFrame::PerEnd => {
+                let half = (fragment_length / 2) as f64;
+                if half > 0.0 {
+                    markers.push((half.max(track.axis.start as f64), '^'));
+                }
+            }
+            _ => {}
+        }
+    }
+    if config.show_mid {
+        let mid = match config.frame {
+            ReferenceFrame::Mid => Some(0.0),
+            ReferenceFrame::Nearest => Some((fragment_length / 2) as f64),
+            ReferenceFrame::Left | ReferenceFrame::Right | ReferenceFrame::PerEnd => {
+                Some((track.axis.start as f64 + track.axis.end as f64) / 2.0)
+            }
+        };
+        if let Some(value) = mid {
+            markers.push((value, '*'));
+        }
+    }
+    markers
+}
+
+fn marker_columns(track: &Track, width: usize, markers: &[(f64, char)]) -> Vec<(usize, char)> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let axis_start = track.axis.start as f64;
+    let axis_end = track.axis.end as f64;
+    if axis_end <= axis_start {
+        return Vec::new();
+    }
+    markers
+        .iter()
+        .filter_map(|(value, symbol)| {
+            if *value < axis_start || *value > axis_end {
+                None
+            } else {
+                let column = value_to_column(*value, axis_start, axis_end, width);
+                Some((column, *symbol))
+            }
+        })
+        .collect()
 }
