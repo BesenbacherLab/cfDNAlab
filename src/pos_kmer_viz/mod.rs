@@ -10,7 +10,7 @@ pub mod render_svg;
 pub mod select;
 
 pub use model::{
-    BasesFrom, LengthVisualization, LinearRange, MidRange, NearestRange, OverlapResolution,
+    BasesFrom, LengthVisualization, LinearRange, MidRange, NearestRange, MismatchBasesFrom,
     PositionsSpec, ReferenceFrame, Style, Track, VizConfig,
 };
 pub use parse::{RangeParseError, parse_lengths, parse_positions};

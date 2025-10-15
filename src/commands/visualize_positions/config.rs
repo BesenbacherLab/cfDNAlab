@@ -6,12 +6,12 @@ use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 
 use crate::pos_kmer_viz::{
-    BasesFrom, OverlapResolution, ReferenceFrame, Style, VizConfig, parse_lengths, parse_positions,
+    BasesFrom, MismatchBasesFrom, ReferenceFrame, Style, VizConfig, parse_lengths, parse_positions,
 };
 
 /// `fragment-kmers` helper: Draw which fragment bases will be counted for a given frame and range setup.
 ///
-/// Use this helper to prototype the “where to count” arguments (`--frame`, `--positions`, `--step`, `--bases-from`, `--overlap-resolution`),
+/// Use this helper to prototype the “where to count” arguments (`--frame`, `--positions`, `--step`, `--bases-from`, `--mismatch-bases-from`),
 /// before you run `cfdna fragment-kmers` on a BAM file. For every fragment length you request, the selected
 /// bases are rendered as ASCII or SVG, so you can check the correct positions are counted at. The
 /// command is geometry-only: no BAM or reference reads are touched while you iterate.
@@ -58,9 +58,9 @@ pub struct VisualizeSelectedRegionConfig {
     ///   includes bases from the start up to five before the fragment midpoint. Open intervals like `A..`
     ///   include every coordinate from `A` to the end of the frame.
     ///
-    /// - **`nearest`** (folded 1..length/2): use `A..B`, `A..`, `..B`, `..half`, or `A..half-K`. Here, `half` expands to the
-    ///   largest folded distance (ties are randomly assigned for even-length fragments), ensuring the center base is
-    ///   maximally counted once. Forms like `10..-10` are rejected for this frame.
+    /// - **`nearest`** (folded 1..floor(length/2)): use `A..B`, `A..`, `..B`, `..half`, or `A..half-K`. Here, `half` expands to the
+    ///   largest folded distance, ensuring the center base is maximally counted once. For odd-sized fragments, the central base remains uncounted.
+    ///   Forms like `10..-10` are rejected for this frame.
     ///
     /// - **`mid`** (centered at 0): use `-M..N`, `-M..`, or `..N`. E.g. `-10..10` for the 20 bases around the midpoint.
     #[cfg_attr(
@@ -83,7 +83,7 @@ pub struct VisualizeSelectedRegionConfig {
     )]
     pub step: usize,
 
-    /// Choose which coordinate source defines the counted positions `[prefer-read|read|reference|nearest-read]`.
+    /// Choose which coordinate source defines the counted positions `[prefer-reads|reads|reference|nearest-read]`.
     ///
     /// - `prefer-reads`: Use read-space coordinates whenever an observed base covers the requested position
     ///   and fall back to the reference span when reads don't cover the positions.
@@ -93,7 +93,7 @@ pub struct VisualizeSelectedRegionConfig {
     /// - `reference`: Always use the reference span, even when reads do not cover those bases.
     ///
     /// - `nearest-read`: Clamp the selection to the read that corresponds to the frame origin (e.g., the
-    ///   left read for the `left` frame).
+    ///   left/forward read for the `left` frame).
     #[cfg_attr(
         feature = "cli",
         arg(
@@ -115,13 +115,13 @@ pub struct VisualizeSelectedRegionConfig {
     #[cfg_attr(
         feature = "cli",
         arg(
-            long = "overlap-resolution",
+            long,
             value_enum,
-            default_value_t = OverlapResolution::NearestRead,
+            default_value_t = MismatchBasesFrom::NearestRead,
             help_heading = "Region Selection"
         )
     )]
-    pub overlap_resolution: OverlapResolution,
+    pub mismatch_bases_from: MismatchBasesFrom,
 
     /// Explicit fragment lengths to sketch (comma-separated) `[integers]`.
     ///
@@ -255,7 +255,7 @@ impl VisualizeSelectedRegionConfig {
             positions_input: self.positions.clone(),
             step,
             bases: self.bases_from,
-            overlap_resolution: self.overlap_resolution,
+            mismatch_bases_from: self.mismatch_bases_from,
             fragment_lengths,
             style: self.style,
             width,

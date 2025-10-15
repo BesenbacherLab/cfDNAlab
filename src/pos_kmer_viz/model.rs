@@ -131,7 +131,7 @@ pub struct VizConfig {
     pub positions_input: String,
     pub step: NonZeroUsize,
     pub bases: BasesFrom,
-    pub overlap_resolution: OverlapResolution,
+    pub mismatch_bases_from: MismatchBasesFrom,
     pub fragment_lengths: Vec<u32>,
     pub style: Style,
     pub width: usize,
@@ -146,18 +146,18 @@ pub struct VizConfig {
 /// How to resolve overlapping read mismatches when choosing read-backed bases.
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OverlapResolution {
+pub enum MismatchBasesFrom {
     NearestRead,
     BaseQuality,
     Reference,
 }
 
-impl OverlapResolution {
+impl MismatchBasesFrom {
     pub fn as_str(self) -> &'static str {
         match self {
-            OverlapResolution::NearestRead => "nearest-read",
-            OverlapResolution::BaseQuality => "base-quality",
-            OverlapResolution::Reference => "reference",
+            MismatchBasesFrom::NearestRead => "nearest-read",
+            MismatchBasesFrom::BaseQuality => "base-quality",
+            MismatchBasesFrom::Reference => "reference",
         }
     }
 }

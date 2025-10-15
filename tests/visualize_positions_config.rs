@@ -1,5 +1,5 @@
 use cfdnalab::commands::visualize_positions::config::VisualizeSelectedRegionConfig;
-use cfdnalab::pos_kmer_viz::{BasesFrom, OverlapResolution, ReferenceFrame, Style};
+use cfdnalab::pos_kmer_viz::{BasesFrom, MismatchBasesFrom, ReferenceFrame, Style};
 
 #[test]
 fn build_uses_expected_defaults() {
@@ -8,7 +8,7 @@ fn build_uses_expected_defaults() {
         positions: "1..5".to_string(),
         step: 1,
         bases_from: BasesFrom::PreferReads,
-        overlap_resolution: OverlapResolution::NearestRead,
+        mismatch_bases_from: MismatchBasesFrom::NearestRead,
         lengths: Some(vec![120]),
         length_range: None,
         style: Style::Ascii,
@@ -26,7 +26,7 @@ fn build_uses_expected_defaults() {
     assert_eq!(viz.positions_input, "1..5");
     assert_eq!(viz.step.get(), 1);
     assert_eq!(viz.bases, BasesFrom::PreferReads);
-    assert_eq!(viz.overlap_resolution, OverlapResolution::NearestRead);
+    assert_eq!(viz.mismatch_bases_from, MismatchBasesFrom::NearestRead);
     assert!(viz.show_mid);
     assert_eq!(viz.fragment_lengths, vec![120]);
     assert_eq!(viz.style, Style::Ascii);
@@ -41,7 +41,7 @@ fn build_applies_overrides() {
         positions: "..half".to_string(),
         step: 3,
         bases_from: BasesFrom::NearestRead,
-        overlap_resolution: OverlapResolution::BaseQuality,
+        mismatch_bases_from: MismatchBasesFrom::BaseQuality,
         lengths: Some(vec![90, 120]),
         length_range: None,
         style: Style::Svg,
@@ -58,7 +58,7 @@ fn build_applies_overrides() {
     assert_eq!(viz.frame, ReferenceFrame::Right);
     assert_eq!(viz.step.get(), 3);
     assert_eq!(viz.bases, BasesFrom::NearestRead);
-    assert_eq!(viz.overlap_resolution, OverlapResolution::BaseQuality);
+    assert_eq!(viz.mismatch_bases_from, MismatchBasesFrom::BaseQuality);
     assert!(!viz.show_mid);
     assert_eq!(viz.fragment_lengths, vec![90, 120]);
     assert_eq!(viz.style, Style::Svg);
@@ -76,7 +76,7 @@ fn build_rejects_zero_step() {
         positions: "1..5".to_string(),
         step: 0,
         bases_from: BasesFrom::PreferReads,
-        overlap_resolution: OverlapResolution::NearestRead,
+        mismatch_bases_from: MismatchBasesFrom::NearestRead,
         lengths: Some(vec![100]),
         length_range: None,
         style: Style::Ascii,
@@ -100,7 +100,7 @@ fn build_rejects_mid_with_nearest_read() {
         positions: "-5..5".to_string(),
         step: 1,
         bases_from: BasesFrom::NearestRead,
-        overlap_resolution: OverlapResolution::NearestRead,
+        mismatch_bases_from: MismatchBasesFrom::NearestRead,
         lengths: Some(vec![100]),
         length_range: None,
         style: Style::Ascii,
