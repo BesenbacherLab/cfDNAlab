@@ -10,6 +10,8 @@
 ## Docstrings
 Docstrings should read like a short tutorial, then details, then structured sections. You may also add examples when they are relevant.
 
+Bullet points in CLI-facing documentation (config files) should have a newline between them, otherwise CLI collapses the sentences.
+
 **Order**
 1. **Summary (pedagogical):** What this does and when to use it.
 2. **Technical details:** Key behavior, assumptions, edge cases, complexity notes.
@@ -42,6 +44,8 @@ def fn(...):
 ## Communication Style
 
 **Explain only your current changes.** Do not restate steps from previous revisions. Keep change notes concise and specific to this update.
+
+**Ask before large refactors**: For larger refactors, such as renaming of core components, ask me about proposed changes first. I have the final say and don't want to waste credits.
 
 ## Scope & Backwards Compatibility
 
@@ -176,8 +180,6 @@ Fuzz parsers/decoders and other untrusted-input paths; seed with your “bug zoo
 Keep examples in docs as doctests so they compile and run.
 
 Use compile-fail/pass tests for macros/APIs that must error or succeed with specific messages.
-
-Bullet points in CLI-facing documentation (config files) should have a newline between them, otherwise CLI collapses the sentences.
 
 ### Review checklist (use before submitting tests)
 

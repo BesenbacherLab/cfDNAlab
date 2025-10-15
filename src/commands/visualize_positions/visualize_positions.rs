@@ -15,7 +15,7 @@ pub fn run(cfg: &VisualizeSelectedRegionConfig) -> Result<()> {
 
     let mut results: Vec<LengthVisualization> = Vec::new();
     for &length in &viz_cfg.fragment_lengths {
-        let viz = build_tracks_for_length(length, viz_cfg.anchor, &viz_cfg.positions, viz_cfg.step);
+        let viz = build_tracks_for_length(length, viz_cfg.frame, &viz_cfg.positions, viz_cfg.step);
         results.push(viz);
     }
 

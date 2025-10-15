@@ -3,7 +3,7 @@ use std::fmt;
 
 use anyhow::{Context, Result, anyhow};
 
-use super::model::{Anchor, LinearRange, MidRange, NearestRange, PositionsSpec};
+use super::model::{LinearRange, MidRange, NearestRange, PositionsSpec, ReferenceFrame};
 
 const LINEAR_EXAMPLE: &str = "--positions 1..10";
 const NEAREST_EXAMPLE: &str = "--positions ..half";
@@ -34,13 +34,17 @@ impl fmt::Display for RangeParseError {
 
 impl Error for RangeParseError {}
 
-pub fn parse_positions(anchor: Anchor, input: &str) -> Result<PositionsSpec, RangeParseError> {
-    match anchor {
-        Anchor::Left | Anchor::Right | Anchor::PerEnd | Anchor::Span => {
-            parse_linear_range(input).map(PositionsSpec::Linear)
-        }
-        Anchor::Nearest => parse_nearest_range(input).map(PositionsSpec::Nearest),
-        Anchor::Mid => parse_mid_range(input).map(PositionsSpec::Mid),
+pub fn parse_positions(
+    frame: ReferenceFrame,
+    input: &str,
+) -> Result<PositionsSpec, RangeParseError> {
+    match frame {
+        ReferenceFrame::Left
+        | ReferenceFrame::Right
+        | ReferenceFrame::PerEnd
+        | ReferenceFrame::Span => parse_linear_range(input).map(PositionsSpec::Linear),
+        ReferenceFrame::Nearest => parse_nearest_range(input).map(PositionsSpec::Nearest),
+        ReferenceFrame::Mid => parse_mid_range(input).map(PositionsSpec::Mid),
     }
 }
 
@@ -179,7 +183,7 @@ fn parse_linear_range(input: &str) -> Result<LinearRange, RangeParseError> {
     }
 
     Err(RangeParseError::new(
-        "unsupported positions format for this anchor (examples: 1..10, 10.., ..25, 5..-5)",
+        "unsupported positions format for this frame (examples: 1..10, 10.., ..25, 5..-5)",
         LINEAR_EXAMPLE,
     ))
 }
@@ -249,7 +253,7 @@ fn parse_nearest_range(input: &str) -> Result<NearestRange, RangeParseError> {
     }
 
     Err(RangeParseError::new(
-        "unsupported positions format for nearest anchor",
+        "unsupported positions format for nearest frame",
         NEAREST_EXAMPLE,
     ))
 }
@@ -300,7 +304,7 @@ fn parse_mid_range(input: &str) -> Result<MidRange, RangeParseError> {
     }
 
     Err(RangeParseError::new(
-        "unsupported positions format for mid anchor",
+        "unsupported positions format for mid frame",
         MID_EXAMPLE,
     ))
 }

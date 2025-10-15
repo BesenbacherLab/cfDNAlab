@@ -1,53 +1,66 @@
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
+#[cfg(feature = "cli")]
 use clap::ValueEnum;
 
-/// Enumeration of the available anchoring strategies.
+/// Enumeration of the available coordinate frames used to interpret positional selections.
 ///
 /// The variants mirror the CLI keyword semantics documented in AGENTS.md.
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
-pub enum Anchor {
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceFrame {
     Span,
     Left,
     Right,
-    #[value(alias = "per-end")]
+    #[cfg_attr(feature = "cli", value(alias = "per-end"))]
     PerEnd,
     Nearest,
     Mid,
 }
 
-impl Anchor {
+impl ReferenceFrame {
     pub fn as_str(self) -> &'static str {
         match self {
-            Anchor::Left => "left",
-            Anchor::Right => "right",
-            Anchor::PerEnd => "per-end",
-            Anchor::Nearest => "nearest",
-            Anchor::Mid => "mid",
-            Anchor::Span => "span",
+            ReferenceFrame::Left => "left",
+            ReferenceFrame::Right => "right",
+            ReferenceFrame::PerEnd => "per-end",
+            ReferenceFrame::Nearest => "nearest",
+            ReferenceFrame::Mid => "mid",
+            ReferenceFrame::Span => "span",
         }
     }
 }
 
 /// Whether the user wants to reason about read or reference coordinates.
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
-pub enum Bases {
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BasesFrom {
+    /// Prefer observed read coordinates, but fall back to the reference span when a read is missing.
+    PreferRead,
     Read,
     Reference,
 }
 
-impl Bases {
+impl BasesFrom {
     pub fn as_str(self) -> &'static str {
         match self {
-            Bases::Read => "read",
-            Bases::Reference => "reference",
+            BasesFrom::PreferRead => "prefer-read",
+            BasesFrom::Read => "read",
+            BasesFrom::Reference => "reference",
         }
     }
 }
 
+impl Default for BasesFrom {
+    fn default() -> Self {
+        BasesFrom::PreferRead
+    }
+}
+
 /// Available rendering backends for the CLI.
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Style {
     Ascii,
     Svg,
@@ -112,11 +125,11 @@ impl LengthVisualization {
 /// Parsed representation of the CLI configuration.
 #[derive(Debug, Clone)]
 pub struct VizConfig {
-    pub anchor: Anchor,
+    pub frame: ReferenceFrame,
     pub positions: PositionsSpec,
     pub positions_input: String,
     pub step: NonZeroUsize,
-    pub bases: Bases,
+    pub bases: BasesFrom,
     pub fragment_lengths: Vec<u32>,
     pub style: Style,
     pub width: usize,
@@ -128,7 +141,7 @@ pub struct VizConfig {
     pub show_mid: bool,
 }
 
-/// Range grammar for anchors that index strictly from one end.
+/// Range grammar for frames that index strictly from one end.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinearRange {
     /// Closed inclusive range `A..B`.
@@ -141,7 +154,7 @@ pub enum LinearRange {
     TrimOtherEnd { start: u32, other_end_trim: u32 },
 }
 
-/// Range grammar used with the `nearest` anchor.
+/// Range grammar used with the `nearest` frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NearestRange {
     Closed { start: u32, end: u32 },
@@ -150,7 +163,7 @@ pub enum NearestRange {
     FromToHalf { start: u32, minus: u32 },
 }
 
-/// Range grammar used with the `mid` anchor.
+/// Range grammar used with the `mid` frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MidRange {
     Closed { neg: u32, pos: u32 },
@@ -158,7 +171,7 @@ pub enum MidRange {
     RightOpen { pos: u32 },
 }
 
-/// The position specification tagged to allow anchor-specific dispatch.
+/// The position specification tagged to allow frame-specific dispatch.
 #[derive(Debug, Clone)]
 pub enum PositionsSpec {
     Linear(LinearRange),

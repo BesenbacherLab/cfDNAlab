@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use super::model::{Anchor, LengthVisualization, Track, VizConfig};
+use super::model::{LengthVisualization, ReferenceFrame, Track, VizConfig};
 
 /// Render the visualization as an SVG string.
 pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String {
@@ -28,9 +28,9 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
     let mut y_cursor = 30.0;
     for viz in results {
         let header = format!(
-            "L={} | anchor={} | positions={} | step={} | bases={}",
+            "L={} | frame={} | positions={} | step={} | bases={}",
             viz.fragment_length,
-            config.anchor.as_str(),
+            config.frame.as_str(),
             config.positions_input,
             config.step.get(),
             config.bases.as_str()
@@ -132,7 +132,7 @@ fn draw_track_svg(
     }
 
     if config.show_half {
-        if config.anchor == Anchor::Nearest {
+        if config.frame == ReferenceFrame::Nearest {
             let half = fragment_length / 2;
             if half > 0 {
                 draw_marker(
@@ -146,7 +146,7 @@ fn draw_track_svg(
                     bar_height,
                 );
             }
-        } else if config.anchor == Anchor::Span {
+        } else if config.frame == ReferenceFrame::Span {
             let half = fragment_length / 2;
             if half > 0 {
                 draw_marker(
@@ -164,11 +164,11 @@ fn draw_track_svg(
     }
 
     if config.show_mid {
-        match config.anchor {
-            Anchor::Mid => draw_marker(
+        match config.frame {
+            ReferenceFrame::Mid => draw_marker(
                 svg, '*', 0.0, track, bar_left, bar_top, bar_width, bar_height,
             ),
-            Anchor::Span => {
+            ReferenceFrame::Span => {
                 let mid = (track.axis.start as f64 + track.axis.end as f64) / 2.0;
                 draw_marker(
                     svg, '*', mid, track, bar_left, bar_top, bar_width, bar_height,

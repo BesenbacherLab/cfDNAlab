@@ -5,28 +5,32 @@ use anyhow::{Context, Result, anyhow};
 #[cfg(feature = "cli")]
 use clap::Parser;
 
-use crate::pos_kmer_viz::{Anchor, Bases, Style, VizConfig, parse_lengths, parse_positions};
+use crate::pos_kmer_viz::{
+    BasesFrom, ReferenceFrame, Style, VizConfig, parse_lengths, parse_positions,
+};
 
-/// `fragment-kmers` helper: Draw which fragment bases will be counted for a given anchor and range setup.
+/// `fragment-kmers` helper: Draw which fragment bases will be counted for a given frame and range setup.
 ///
-/// Use this helper to prototype the “where to count” arguments (`--anchor`, `--positions`, `--step`, `--bases_from`),
+/// Use this helper to prototype the “where to count” arguments (`--frame`, `--positions`, `--step`, `--bases_from`),
 /// before you run `cfdna fragment-kmers` on a BAM file. For every fragment length you request, the selected
 /// bases are rendered as ASCII or SVG, so you can check the correct positions are counted at. The
 /// command is geometry-only: no BAM or reference reads are touched while you iterate.
 ///
 /// Describe your selections with the **1-based inclusive** grammar (`A..B`, `A..-B`, `..half`, `5..half-3`,
-/// `-60..60` (`mid`-anchor-only), and friends) and the diagram will show the regions counted by
+/// `-60..60` (`mid`-frame-only), and friends) and the diagram will show the regions counted by
 /// `cfdna fragment-kmers`, assuming the same arguments are passed.
 #[cfg_attr(feature = "cli", derive(Parser, Clone))]
 pub struct VisualizeSelectedRegionConfig {
     /// Choose the reference frame that interprets every other flag `[span|left|right|per-end|nearest|mid]`.
     ///
-    /// Note: `--positions` describe positions to count at relative to the chosen anchor. 
-    /// Some anchors are only relevant when `fragment-kmers` return positionally indexed counts.
+    /// Note: `--positions` describe positions to count at relative to the chosen frame.
+    /// Some frames are only relevant when `fragment-kmers` return positionally indexed counts.
     ///
     /// - **`span`** walks linearly from the left 5' end to the right 5' end.
     ///
-    /// - **`left`** counts bases from the forward 5' end, while **`right`** from the reverse 5' end.
+    /// - **`left`** counts bases from the forward 5' end.
+    ///
+    /// - **`right`** counts bases from the reverse 5' end.
     ///
     /// - **`per-end`** counts both left/right with separate counts in the output.
     ///
@@ -38,32 +42,35 @@ pub struct VisualizeSelectedRegionConfig {
         feature = "cli",
         arg(long, value_enum, help_heading = "Region Selection")
     )]
-    pub anchor: Anchor,
+    pub frame: ReferenceFrame,
 
-    /// Describe which positions to count at relative to the anchoring `[string]`.
+    /// Describe which positions to count at relative to the selected frame `[string]`.
     ///
     /// Indices are **1-based inclusive**, why e.g. `1..10` would start at the first position and end at the tenth position (included).
     ///
-    /// The allowed shapes depend on `--anchor`:
+    /// The allowed shapes depend on `--frame`:
     ///
     /// - **`span`**, **`left`**, **`right`**, **`per-end`**: use `A..B`, `A..`, `..B`, or `A..-B`. For example, `1..10`
     ///   keeps the first ten bases and `10..-10` trims both ends. Open intervals like `A..` include every
-    ///   coordinate from `A` to the end of the anchor.
+    ///   coordinate from `A` to the end of the frame.
     ///
     /// - **`nearest`** (folded 1..length/2): use `A..B`, `A..`, `..B`, `..half`, or `A..half-K`. Here, `half` expands to the
     ///   largest folded distance (ties are randomly assigned for even-length fragments), ensuring the centre base is
-    ///   maximally counted once. Forms like `10..-10` are rejected for this anchor.
+    ///   maximally counted once. Forms like `10..-10` are rejected for this frame.
     ///
     /// - **`mid`** (centered at 0): use `-M..N`, `-M..`, or `..N`. E.g. `-10..10` for the 20 bases around the midpoint.
-    #[cfg_attr(feature = "cli", arg(long, help_heading = "Region Selection"))]
+    #[cfg_attr(
+        feature = "cli",
+        arg(long, help_heading = "Region Selection", allow_hyphen_values = true)
+    )]
     pub positions: String,
 
     /// Downsample after selection by keeping every Nth index `[integer ≥ 1]`.
     ///
-    /// Applied independently to each track in anchor order (e.g., per-end left and right both stride through
+    /// Applied independently to each track in frame order (e.g., per-end left and right both stride through
     /// their own selections). Leave at 1 to keep every base.
     ///
-    /// For the `mid` anchor, zero is treated as the origin of the stride: when the chosen range includes the
+    /// For the `mid` frame, zero is treated as the origin of the stride: when the chosen range includes the
     /// midpoint, it is always retained and every `step`th offset is kept symmetrically
     /// (`-2*step`, `-step`, `0`, `step`, `2*step`, …). Ranges that exclude the origin fall back to the default stride.
     #[cfg_attr(
@@ -72,16 +79,24 @@ pub struct VisualizeSelectedRegionConfig {
     )]
     pub step: usize,
 
-    /// Label the axis using read or reference coordinates `[read|reference]`.
+    /// Choose which coordinate source defines the counted positions `[prefer-read|read|reference]`.
     ///
-    /// The visualization always uses geometry from the reference. When you pick `read`, the legend reminds
-    /// you that downstream reports will show read-space positions; otherwise it notes that reference bases
-    /// frame the interpretation.
+    /// - `prefer-read`: Use read-space coordinates whenever an observed base covers the requested position
+    ///   and fall back to the reference span when reads don't cover the positions.
+    ///
+    /// - `read`: Only count positions backed by read bases; gaps from CIGAR operations are excluded.
+    ///
+    /// - `reference`: Always use the reference span, even when reads do not cover those bases.
     #[cfg_attr(
         feature = "cli",
-        arg(long, value_enum, help_heading = "Region Selection")
+        arg(
+            long,
+            value_enum,
+            default_value_t = BasesFrom::PreferRead,
+            help_heading = "Region Selection"
+        )
     )]
-    pub bases_from: Bases,
+    pub bases_from: BasesFrom,
 
     /// Explicit fragment lengths to sketch (comma-separated) `[integers]`.
     ///
@@ -150,13 +165,13 @@ pub struct VisualizeSelectedRegionConfig {
     /// Mark the halfway point with `^` (ASCII) or a vertical line (SVG) `[flag]`.
     ///
     /// For `nearest`, the marker lands on `floor(length/2)` - the furthest folded distance before the ends meet.
-    /// For `span`, it marks the halfway distance from the left 5' end (length/2). Other anchors do not display it.
+    /// For `span`, it marks the halfway distance from the left 5' end (length/2). Other frames do not display it.
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Visualization"))]
     pub show_half: bool,
 
-    /// Mark the conceptual midpoint with `*` when the anchor exposes it (`mid` or `span`) `[flag]`.
+    /// Mark the conceptual midpoint with `*` when the frame exposes it (`mid` or `span`) `[flag]`.
     ///
-    /// On the `mid` anchor this labels the `q=0` origin. On `span` it marks the centre column the counter uses
+    /// On the `mid` frame this labels the `q=0` origin. On `span` it marks the centre column the counter uses
     /// when ties occur (even-length fragments still break the central pair according to the counting command).
     /// Combine with `--show-half` on `span` to see both the halfway distance and the midpoint marker.
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Visualization"))]
@@ -181,11 +196,11 @@ impl VisualizeSelectedRegionConfig {
             ));
         }
 
-        let positions = parse_positions(self.anchor, &self.positions).with_context(|| {
+        let positions = parse_positions(self.frame, &self.positions).with_context(|| {
             format!(
-                "invalid --positions \"{}\" for anchor {}",
+                "invalid --positions \"{}\" for frame {}",
                 self.positions,
-                self.anchor.as_str()
+                self.frame.as_str()
             )
         })?;
 
@@ -200,7 +215,7 @@ impl VisualizeSelectedRegionConfig {
         }
 
         Ok(VizConfig {
-            anchor: self.anchor,
+            frame: self.frame,
             positions,
             positions_input: self.positions.clone(),
             step,

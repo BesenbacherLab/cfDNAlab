@@ -10,8 +10,8 @@ pub mod render_svg;
 pub mod select;
 
 pub use model::{
-    Anchor, Bases, LengthVisualization, LinearRange, MidRange, NearestRange, PositionsSpec, Style,
-    Track, VizConfig,
+    BasesFrom, LengthVisualization, LinearRange, MidRange, NearestRange, PositionsSpec,
+    ReferenceFrame, Style, Track, VizConfig,
 };
 pub use parse::{RangeParseError, parse_lengths, parse_positions};
 pub use render_ascii::render_ascii;

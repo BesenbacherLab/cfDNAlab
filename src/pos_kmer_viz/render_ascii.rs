@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use super::model::{Anchor, LengthVisualization, Track, VizConfig};
+use super::model::{LengthVisualization, ReferenceFrame, Track, VizConfig};
 
 /// Render the visualization as ASCII art.
 pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> String {
@@ -45,9 +45,9 @@ pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> Stri
 
 fn write_header(buffer: &mut String, viz: &LengthVisualization, config: &VizConfig) {
     let mut line = format!(
-        "L={}  | anchor={}  positions={}  step={}  bases={}",
+        "L={}  | frame={}  positions={}  step={}  bases={}",
         viz.fragment_length,
-        config.anchor.as_str(),
+        config.frame.as_str(),
         config.positions_input,
         config.step.get(),
         config.bases.as_str()
@@ -131,7 +131,7 @@ fn build_track_bar(track: &Track, fragment_length: u32, config: &VizConfig) -> S
     }
 
     if config.show_half {
-        if config.anchor == Anchor::Nearest {
+        if config.frame == ReferenceFrame::Nearest {
             let half = (fragment_length / 2) as f64;
             place_marker(
                 &mut cells,
@@ -141,7 +141,7 @@ fn build_track_bar(track: &Track, fragment_length: u32, config: &VizConfig) -> S
                 config.width,
                 '^',
             );
-        } else if config.anchor == Anchor::Span {
+        } else if config.frame == ReferenceFrame::Span {
             let half = (fragment_length / 2) as f64;
             place_marker(
                 &mut cells,
@@ -155,11 +155,11 @@ fn build_track_bar(track: &Track, fragment_length: u32, config: &VizConfig) -> S
     }
 
     if config.show_mid {
-        match config.anchor {
-            Anchor::Mid => {
+        match config.frame {
+            ReferenceFrame::Mid => {
                 place_marker(&mut cells, 0.0, axis_start, axis_end, config.width, '*');
             }
-            Anchor::Span => {
+            ReferenceFrame::Span => {
                 let mid = (track.axis.start as f64 + track.axis.end as f64) / 2.0;
                 place_marker(&mut cells, mid, axis_start, axis_end, config.width, '*');
             }

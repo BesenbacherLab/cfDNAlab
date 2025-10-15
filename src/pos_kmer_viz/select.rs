@@ -1,45 +1,47 @@
 use std::num::NonZeroUsize;
 
 use super::model::{
-    Anchor, AxisBounds, LengthVisualization, LinearRange, MidRange, NearestRange, PositionsSpec,
-    Track,
+    AxisBounds, LengthVisualization, LinearRange, MidRange, NearestRange, PositionsSpec,
+    ReferenceFrame, Track,
 };
 
 /// Build the set of tracks for a single fragment length.
 pub fn build_tracks_for_length(
     length: u32,
-    anchor: Anchor,
+    frame: ReferenceFrame,
     positions: &PositionsSpec,
     step: NonZeroUsize,
 ) -> LengthVisualization {
-    let tracks = match anchor {
-        Anchor::Left => vec![build_linear_track(
+    let tracks = match frame {
+        ReferenceFrame::Left => vec![build_linear_track(
             "left",
             length,
             expect_linear(positions),
             step,
         )],
-        Anchor::Right => vec![build_linear_track(
+        ReferenceFrame::Right => vec![build_linear_track(
             "right",
             length,
             expect_linear(positions),
             step,
         )],
-        Anchor::PerEnd => {
+        ReferenceFrame::PerEnd => {
             let range = expect_linear(positions);
             vec![
                 build_linear_track("left", length, range, step),
                 build_linear_track("right", length, range, step),
             ]
         }
-        Anchor::Span => vec![build_linear_track(
+        ReferenceFrame::Span => vec![build_linear_track(
             "span",
             length,
             expect_linear(positions),
             step,
         )],
-        Anchor::Nearest => vec![build_nearest_track(length, expect_nearest(positions), step)],
-        Anchor::Mid => vec![build_mid_track(length, expect_mid(positions), step)],
+        ReferenceFrame::Nearest => {
+            vec![build_nearest_track(length, expect_nearest(positions), step)]
+        }
+        ReferenceFrame::Mid => vec![build_mid_track(length, expect_mid(positions), step)],
     };
 
     LengthVisualization {
@@ -254,20 +256,20 @@ fn clamp_range_to_domain(
 fn expect_linear(positions: &PositionsSpec) -> &LinearRange {
     match positions {
         PositionsSpec::Linear(range) => range,
-        _ => panic!("expected linear range for linear anchor"),
+        _ => panic!("expected linear range for linear frame"),
     }
 }
 
 fn expect_nearest(positions: &PositionsSpec) -> &NearestRange {
     match positions {
         PositionsSpec::Nearest(range) => range,
-        _ => panic!("expected nearest range for nearest anchor"),
+        _ => panic!("expected nearest range for nearest frame"),
     }
 }
 
 fn expect_mid(positions: &PositionsSpec) -> &MidRange {
     match positions {
         PositionsSpec::Mid(range) => range,
-        _ => panic!("expected mid range for mid anchor"),
+        _ => panic!("expected mid range for mid frame"),
     }
 }
