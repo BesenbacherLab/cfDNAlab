@@ -58,11 +58,14 @@ pub struct VisualizeSelectedRegionConfig {
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Region Selection"))]
     pub positions: String,
 
-    // TODO: Add info on what happens in "mid" mode. It the middle should be a step in this case, so we go -N*step..-step,mid,step..N*step. Is this the case? Otherwise fix and document here
     /// Downsample after selection by keeping every Nth index `[integer ≥ 1]`.
     ///
     /// Applied independently to each track in anchor order (e.g., per-end left and right both stride through
     /// their own selections). Leave at 1 to keep every base.
+    ///
+    /// For the `mid` anchor, zero is treated as the origin of the stride: when the chosen range includes the
+    /// midpoint, it is always retained and every `step`th offset is kept symmetrically
+    /// (`-2*step`, `-step`, `0`, `step`, `2*step`, …). Ranges that exclude the origin fall back to the default stride.
     #[cfg_attr(
         feature = "cli",
         arg(long, default_value_t = 1, help_heading = "Region Selection")

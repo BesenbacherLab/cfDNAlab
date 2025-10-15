@@ -145,7 +145,7 @@ fn build_mid_track(length: u32, range: &MidRange, step: NonZeroUsize) -> Track {
     Track {
         name: "mid".to_string(),
         axis,
-        selected_indices: apply_stride(indices, step),
+        selected_indices: apply_mid_stride(indices, step),
     }
 }
 
@@ -178,6 +178,31 @@ fn collect_mid_indices(length: u32, range: &MidRange) -> Vec<i32> {
                 .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
         }
     }
+}
+
+fn apply_mid_stride(indices: Vec<i32>, step: NonZeroUsize) -> Vec<i32> {
+    if indices.len() <= 1 || step.get() == 1 {
+        return indices;
+    }
+
+    if let Some(origin_idx) = indices.iter().position(|&value| value == 0) {
+        let origin_idx = origin_idx as i64;
+        let step_span = step.get() as i64;
+        return indices
+            .into_iter()
+            .enumerate()
+            .filter_map(|(idx, value)| {
+                let idx = idx as i64;
+                if (idx - origin_idx).rem_euclid(step_span) == 0 {
+                    Some(value)
+                } else {
+                    None
+                }
+            })
+            .collect();
+    }
+
+    apply_stride(indices, step)
 }
 
 fn apply_stride(indices: Vec<i32>, step: NonZeroUsize) -> Vec<i32> {

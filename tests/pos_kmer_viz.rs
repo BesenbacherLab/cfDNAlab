@@ -91,6 +91,14 @@ fn mid_open_right() {
 }
 
 #[test]
+fn should_keep_origin_when_mid_stride_applied() {
+    let spec = parse_positions(Anchor::Mid, "-6..6").unwrap();
+    let step = NonZeroUsize::new(3).unwrap();
+    let tracks = take_linear_indices(101, Anchor::Mid, &spec, step);
+    assert_eq!(tracks[0], vec![-6, -3, 0, 3, 6]);
+}
+
+#[test]
 fn stride_application() {
     let spec = parse_positions(Anchor::Left, "1..10").unwrap();
     let step = NonZeroUsize::new(3).unwrap();
