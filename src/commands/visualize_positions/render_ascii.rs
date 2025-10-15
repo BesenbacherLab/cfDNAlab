@@ -59,7 +59,7 @@ pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> Stri
 
 fn write_header(buffer: &mut String, viz: &LengthVisualization, config: &VizConfig) {
     let mut line = format!(
-        "L={}  | frame={}  positions={}  step={}  bases={}  overlap={}",
+        "L={}  | frame={}  positions={}  step={}  bases={}  mismatches={}",
         viz.fragment_length,
         config.frame.as_str(),
         config.positions_input,
