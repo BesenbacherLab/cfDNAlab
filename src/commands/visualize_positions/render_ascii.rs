@@ -10,6 +10,17 @@ pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> Stri
             output.push('\n');
         }
         write_header(&mut output, viz, config);
+
+        let mut label_width = viz
+            .tracks
+            .iter()
+            .map(|track| track.name.len())
+            .max()
+            .unwrap_or(0);
+        for static_label in ["axis", "ticks", "index", "note"] {
+            label_width = label_width.max(static_label.len());
+        }
+
         if let Some(first_track) = viz.tracks.first() {
             let markers = axis_markers(first_track, viz.fragment_length, config);
             let marker_columns = marker_columns(first_track, config.width, &markers);
@@ -20,7 +31,7 @@ pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> Stri
                     axis_chars[column] = symbol;
                 }
             }
-            output.push_str("axis  : ");
+            write!(output, "{:>width$}: ", "axis", width = label_width).ok();
             output.push_str(&axis_chars.into_iter().collect::<String>());
             output.push('\n');
 
@@ -32,10 +43,10 @@ pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> Stri
                         ticks_chars[column] = '|';
                     }
                 }
-                output.push_str("ticks : ");
+                write!(output, "{:>width$}: ", "ticks", width = label_width).ok();
                 output.push_str(&ticks_chars.into_iter().collect::<String>());
                 output.push('\n');
-                output.push_str("index : ");
+                write!(output, "{:>width$}: ", "index", width = label_width).ok();
                 output.push_str(&labels);
                 output.push('\n');
             }
@@ -43,13 +54,14 @@ pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> Stri
 
         for track in &viz.tracks {
             let bar = build_track_bar(track, config);
-            output.push_str(&format!("{:>6}: ", track.name));
+            write!(output, "{:>width$}: ", track.name, width = label_width).ok();
             output.push_str(&bar);
             output.push('\n');
         }
 
         if viz.all_tracks_empty() {
-            output.push_str("note  : no positions selected for L=");
+            write!(output, "{:>width$}: ", "note", width = label_width).ok();
+            output.push_str("no positions selected for L=");
             output.push_str(&viz.fragment_length.to_string());
             output.push('\n');
         }

@@ -9,6 +9,7 @@ const BAR_HEIGHT: f64 = 10.0;
 const INDEX_BAND: f64 = 28.0;
 const INDEX_LABEL_PAD: f64 = 4.0;
 const LABEL_BAND: f64 = 12.0;
+const LABEL_COLUMN_PADDING: f64 = 60.0;
 const FRAGMENT_PADDING: f64 = 30.0;
 
 /// Render the visualization as an SVG string.
@@ -64,6 +65,13 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
         }
         y_cursor += 18.0;
 
+        let max_label_chars = viz
+            .tracks
+            .iter()
+            .map(|track| track.name.chars().count())
+            .max()
+            .unwrap_or(0);
+
         for track in &viz.tracks {
             let advance = draw_track_svg(
                 &mut svg,
@@ -72,6 +80,7 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
                 config,
                 width,
                 y_cursor,
+                max_label_chars,
             );
             y_cursor += advance;
         }
@@ -100,11 +109,13 @@ fn draw_track_svg(
     config: &VizConfig,
     full_width: f64,
     baseline_y: f64,
+    label_char_width: usize,
 ) -> f64 {
-    let label_space = track.name.chars().count() as f64 * CHAR_WIDTH + 60.0;
-    let max_margin = (full_width * 0.4).max(60.0);
+    let effective_chars = label_char_width.max(track.name.chars().count());
+    let label_space = effective_chars as f64 * CHAR_WIDTH + LABEL_COLUMN_PADDING;
+    let max_margin = (full_width * 0.4).max(LABEL_COLUMN_PADDING);
     let margin_right = 16.0;
-    let mut margin_left = label_space.clamp(60.0, max_margin);
+    let mut margin_left = label_space.clamp(LABEL_COLUMN_PADDING, max_margin);
     if margin_left > full_width - margin_right - 10.0 {
         margin_left = (full_width - margin_right - 10.0).max(12.0);
     }
