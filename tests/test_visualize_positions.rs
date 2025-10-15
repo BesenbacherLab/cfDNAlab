@@ -237,6 +237,7 @@ mod tests_visualize_positions {
 }
 
 mod tests_visualize_positions_config {
+    use cfdnalab::commands::cli_common::FragmentPositionSelectionArgs;
     use cfdnalab::commands::visualize_positions::config::VisualizePositionsConfig;
     use cfdnalab::commands::visualize_positions::{
         BasesFrom, MismatchBasesFrom, ReferenceFrame, Style,
@@ -245,11 +246,13 @@ mod tests_visualize_positions_config {
     #[test]
     fn build_uses_expected_defaults() {
         let cfg = VisualizePositionsConfig {
-            frame: ReferenceFrame::Left,
-            positions: "1..5".to_string(),
-            step: 1,
-            bases_from: BasesFrom::PreferReads,
-            mismatch_bases_from: MismatchBasesFrom::NearestRead,
+            position_selection: FragmentPositionSelectionArgs {
+                frame: ReferenceFrame::Left,
+                positions: "1..5".to_string(),
+                step: 1,
+                bases_from: BasesFrom::PreferReads,
+                mismatch_bases_from: MismatchBasesFrom::NearestRead,
+            },
             lengths: Some(vec![120]),
             length_range: None,
             style: Style::Ascii,
@@ -278,11 +281,13 @@ mod tests_visualize_positions_config {
     #[test]
     fn build_applies_overrides() {
         let cfg = VisualizePositionsConfig {
-            frame: ReferenceFrame::Right,
-            positions: "..half".to_string(),
-            step: 3,
-            bases_from: BasesFrom::NearestRead,
-            mismatch_bases_from: MismatchBasesFrom::BaseQuality,
+            position_selection: FragmentPositionSelectionArgs {
+                frame: ReferenceFrame::Right,
+                positions: "..half".to_string(),
+                step: 3,
+                bases_from: BasesFrom::NearestRead,
+                mismatch_bases_from: MismatchBasesFrom::BaseQuality,
+            },
             lengths: Some(vec![90, 120]),
             length_range: None,
             style: Style::Svg,
@@ -313,11 +318,13 @@ mod tests_visualize_positions_config {
     #[test]
     fn build_rejects_zero_step() {
         let cfg = VisualizePositionsConfig {
-            frame: ReferenceFrame::Left,
-            positions: "1..5".to_string(),
-            step: 0,
-            bases_from: BasesFrom::PreferReads,
-            mismatch_bases_from: MismatchBasesFrom::NearestRead,
+            position_selection: FragmentPositionSelectionArgs {
+                frame: ReferenceFrame::Left,
+                positions: "1..5".to_string(),
+                step: 0,
+                bases_from: BasesFrom::PreferReads,
+                mismatch_bases_from: MismatchBasesFrom::NearestRead,
+            },
             lengths: Some(vec![100]),
             length_range: None,
             style: Style::Ascii,
@@ -337,11 +344,13 @@ mod tests_visualize_positions_config {
     #[test]
     fn build_rejects_mid_with_nearest_read() {
         let cfg = VisualizePositionsConfig {
-            frame: ReferenceFrame::Mid,
-            positions: "-5..5".to_string(),
-            step: 1,
-            bases_from: BasesFrom::NearestRead,
-            mismatch_bases_from: MismatchBasesFrom::NearestRead,
+            position_selection: FragmentPositionSelectionArgs {
+                frame: ReferenceFrame::Mid,
+                positions: "-5..5".to_string(),
+                step: 1,
+                bases_from: BasesFrom::NearestRead,
+                mismatch_bases_from: MismatchBasesFrom::NearestRead,
+            },
             lengths: Some(vec![100]),
             length_range: None,
             style: Style::Ascii,

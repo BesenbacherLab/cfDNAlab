@@ -6,11 +6,11 @@ use clap::ValueEnum;
 
 /// Enumeration of the available coordinate frames used to interpret positional selections.
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReferenceFrame {
+    #[default]
     Left,
     Right,
-    #[cfg_attr(feature = "cli", value(alias = "per-end"))]
     PerEnd,
     Nearest,
     Mid,
@@ -145,8 +145,9 @@ pub struct VizConfig {
 
 /// How to resolve overlapping read mismatches when choosing read-backed bases.
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MismatchBasesFrom {
+    #[default]
     NearestRead,
     BaseQuality,
     Reference,

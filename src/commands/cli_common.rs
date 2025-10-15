@@ -1,3 +1,4 @@
+use crate::commands::visualize_positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 use crate::shared::bam::bam_header_contigs;
 use crate::shared::bam::{Contigs, bam_contigs_info};
 use crate::shared::blacklist::load_blacklists;
@@ -360,6 +361,117 @@ pub struct ScaleGenomeArgs {
         clap(long, value_parser, help_heading = "Normalization")
     )]
     pub scaling_factors: Option<PathBuf>,
+}
+
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Debug, Clone, Default)]
+pub struct FragmentPositionSelectionArgs {
+    /// Choose the reference frame that interprets every other region selection argument `[left|right|per-end|nearest|mid]`.
+    ///
+    /// Note: `--positions` describe positions to count at relative to the chosen frame.
+    /// Some frames are only relevant when `fragment-kmers` return positionally indexed counts.
+    ///
+    /// - **`left`** counts bases from the forward 5' end. Indices increase along the fragment and
+    ///   k-mers are counted in the forward-orientation.
+    ///
+    /// - **`right`** counts bases from the reverse 5' end. Indices decrease along the fragment and
+    ///   k-mers are counted in the reverse-orientation with **complemented** bases.
+    ///
+    /// - **`per-end`** counts both `left` and `right` simultaneously, producing two sets of k-mer counts.
+    ///   The `step` start can differ per side.
+    ///
+    /// - **`nearest`** folds the fragment around the midpoint so distances grow away from the nearest end.
+    ///   The positional keyword `half` represents the midpoint (and maximum position).
+    ///   Bases contributed by the reverse 5' side are complemented.
+    ///
+    /// - **`mid`** centers the axis on the midpoint, allowing selections around zero with negative/positive offsets.
+    ///   K-mers are counted in the forward-orientation.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long,
+            value_enum,
+            default_value = "left",
+            help_heading = "Region Selection"
+        )
+    )]
+    pub frame: ReferenceFrame,
+
+    /// Describe which positions to count at relative to the selected frame `[string]`.
+    ///
+    /// Indices are **1-based inclusive**, why e.g. `1..10` would start at the first position and end at the tenth position (included).
+    ///
+    /// The allowed shapes depend on `--frame`:
+    ///
+    /// - **`left`**, **`right`**, **`per-end`**: use `A..B`, `A..`, `..B`, `A..-B`, `..half`, or `A..half-K`.
+    ///   For example, `1..10` keeps the first ten bases, `10..-10` trims both ends, and `..half-5`
+    ///   includes bases from the start up to five before the fragment midpoint. Open intervals like `A..`
+    ///   include every coordinate from `A` to the end of the frame.
+    ///
+    /// - **`nearest`** (folded 1..floor(length/2)): use `A..B`, `A..`, `..B`, `..half`, or `A..half-K`. Here, `half` expands to the
+    ///   largest folded distance, ensuring the center base is maximally counted once. For odd-sized fragments, the central base remains uncounted.
+    ///   Forms like `10..-10` are rejected for this frame.
+    ///
+    /// - **`mid`** (centered at 0): use `-M..N`, `-M..`, or `..N`. E.g. `-10..10` for the 20 bases around the midpoint.
+    #[cfg_attr(
+        feature = "cli",
+        arg(long, help_heading = "Region Selection", allow_hyphen_values = true)
+    )]
+    pub positions: String,
+
+    /// Downsample after selection by keeping every Nth index `[integer >= 1]`.
+    ///
+    /// Applied independently to each track in frame order (e.g., per-end left and right both stride through
+    /// their own selections). Leave at 1 to keep every base.
+    ///
+    /// For the `mid` frame, zero is treated as the origin of the stride: when the chosen range includes the
+    /// midpoint, it is always retained and every `step`th offset is kept symmetrically
+    /// (`-2*step`, `-step`, `0`, `step`, `2*step`, ...). Ranges that exclude the origin fall back to the default stride.
+    #[cfg_attr(
+        feature = "cli",
+        arg(long, default_value_t = 1, help_heading = "Region Selection")
+    )]
+    pub step: usize,
+
+    /// Choose which coordinate source defines the counted positions `[prefer-reads|reads|reference|nearest-read]`.
+    ///
+    /// - `prefer-reads`: Use read-space coordinates whenever an observed base covers the requested position
+    ///   and fall back to the reference span when reads don't cover the positions.
+    ///
+    /// - `reads`: Only count positions the reads cover.
+    ///
+    /// - `reference`: Always use the reference span, even when reads do not cover those bases.
+    ///
+    /// - `nearest-read`: Clamp the selection to the read that corresponds to the frame origin (e.g., the
+    ///   left/forward read for the `left` frame).
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long,
+            value_enum,
+            default_value = "prefer-reads",
+            help_heading = "Region Selection"
+        )
+    )]
+    pub bases_from: BasesFrom,
+
+    /// Resolve overlapping read mismatches when preferring read bases `[nearest-read|base-quality|reference]`.
+    ///
+    /// - `nearest-read`: Take the base from whichever read is closest to the frame origin. **NOTE**: Incompatible with `--frame mid`.
+    ///
+    /// - `base-quality`: Take the base with the highest quality score.
+    ///
+    /// - `reference`: Ignore the reads and fall back to the reference base for that coordinate.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long,
+            value_enum,
+            default_value = "nearest-read",
+            help_heading = "Region Selection"
+        )
+    )]
+    pub mismatch_bases_from: MismatchBasesFrom,
 }
 
 // Common loaders
