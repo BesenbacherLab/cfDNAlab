@@ -16,6 +16,8 @@ Reduce the number of semi-colons in docstrings and comments. Use comma or dot in
 
 Never use "…" or similar non-ascii symbols. They don't work in the terminal. Use "...", "->", ">=", etc.
 
+Adapt to my language. If I use "center", don't use "centre".
+
 **Order**
 1. **Summary (pedagogical):** What this does and when to use it.
 2. **Technical details:** Key behavior, assumptions, edge cases, complexity notes.

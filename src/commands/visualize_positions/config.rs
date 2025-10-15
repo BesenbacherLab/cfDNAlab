@@ -39,7 +39,7 @@ pub struct VisualizeSelectedRegionConfig {
     ///   The positional keyword `half` represents the midpoint (and maximum position).
     ///   Bases contributed by the reverse 5' side are complemented.
     ///
-    /// - **`mid`** centres the axis on the midpoint, allowing selections around zero with negative/positive offsets.
+    /// - **`mid`** centers the axis on the midpoint, allowing selections around zero with negative/positive offsets.
     ///   K-mers are counted in the forward-orientation.
     #[cfg_attr(
         feature = "cli",
@@ -59,7 +59,7 @@ pub struct VisualizeSelectedRegionConfig {
     ///   include every coordinate from `A` to the end of the frame.
     ///
     /// - **`nearest`** (folded 1..length/2): use `A..B`, `A..`, `..B`, `..half`, or `A..half-K`. Here, `half` expands to the
-    ///   largest folded distance (ties are randomly assigned for even-length fragments), ensuring the centre base is
+    ///   largest folded distance (ties are randomly assigned for even-length fragments), ensuring the center base is
     ///   maximally counted once. Forms like `10..-10` are rejected for this frame.
     ///
     /// - **`mid`** (centered at 0): use `-M..N`, `-M..`, or `..N`. E.g. `-10..10` for the 20 bases around the midpoint.
@@ -187,18 +187,22 @@ pub struct VisualizeSelectedRegionConfig {
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Visualization"))]
     pub show_index: bool,
 
-    /// Mark the halfway distance (length/2 from the frame origin) with `^` on the axis `[flag]`.
+    /// Mark the halfway distance (`floor(length/2)` from the frame origin) with `^` on the axis `[flag]`.
     ///
-    /// For `nearest`, the preview line highlights the full fragment and marks `length/2` before the folded track.
-    /// For linear frames (`left`, `right`, `per-end`), the mark lands at `length/2` from their respective
-    /// origin. This differs from the fragment midpoint (`*`), which is the conceptual centre point of the fragment.
+    /// We deliberately use `floor(length/2)` rather than the mathematical midpoint so that “half” always refers to the
+    /// largest part entirely contained within the first half of the fragment. This keeps ranges such as `..half` and
+    /// `half+1..` disjoint, leaving the exact midpoint base (for odd lengths) to the separate `*` marker. For
+    /// `nearest`, the preview line shows the full fragment and places `^` that far along the folded track. For the
+    /// linear frames (`left`, `right`, `per-end`) the marker appears exactly `floor(length/2)` bases away from the
+    /// selected end, reinforcing the “halfway distance” interpretation even when the true center is the next base.
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Visualization"))]
     pub show_half: bool,
 
     /// Hide the fragment midpoint marker (`*`) on the axis `[flag]`.
     ///
-    /// The midpoint marker is drawn by default whenever the frame exposes the conceptual centre (`mid` at 0,
-    /// `left`/`right`/`per-end` at the halfway coordinate, `nearest` at the folded maximum). Use this flag to suppress it.
+    /// The midpoint marker denotes the exact center base that sits between both halves. It is drawn by default whenever
+    /// the frame exposes this conceptual center (`mid` at 0, `left`/`right`/`per-end` at the central coordinate, `nearest`
+    /// where the fold reaches its apex). Use this flag to suppress it.
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Visualization"))]
     pub hide_mid: bool,
 }
