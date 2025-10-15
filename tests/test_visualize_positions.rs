@@ -196,7 +196,13 @@ mod tests_visualize_positions {
     fn selects_full_axis_when_positions_is_all_for_nearest_frame() {
         let length = 21;
         let spec = parse_positions(ReferenceFrame::Nearest, "..").unwrap();
-        let viz = build_tracks_for_length(length, ReferenceFrame::Nearest, &spec, default_step());
+        let viz = build_tracks_for_length(
+            length,
+            ReferenceFrame::Nearest,
+            &spec,
+            default_step(),
+            ReadClamp::None,
+        );
         let fragment = viz
             .tracks
             .iter()
@@ -288,7 +294,11 @@ mod tests_visualize_positions {
 
 #[cfg(test)]
 mod tests_ticks {
-    use crate::commands::visualize_positions::model::AxisBounds;
+    use cfdnalab::commands::visualize_positions::{
+        Track,
+        model::AxisBounds,
+        render_ascii::{build_tick_lines, value_to_column},
+    };
 
     #[test]
     fn overlapping_ticks_prefer_endpoint_label() {

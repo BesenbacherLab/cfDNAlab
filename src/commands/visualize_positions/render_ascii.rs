@@ -88,7 +88,7 @@ fn build_ruler(width: usize) -> String {
     chars.into_iter().collect()
 }
 
-fn build_tick_lines(track: &Track, width: usize) -> (String, String) {
+pub fn build_tick_lines(track: &Track, width: usize) -> (String, String) {
     if width == 0 {
         return (String::new(), String::new());
     }
@@ -172,7 +172,7 @@ fn build_track_bar(track: &Track, config: &VizConfig) -> String {
     cells.into_iter().collect()
 }
 
-fn value_to_column(value: f64, axis_start: f64, axis_end: f64, width: usize) -> usize {
+pub fn value_to_column(value: f64, axis_start: f64, axis_end: f64, width: usize) -> usize {
     if width == 0 {
         return 0;
     }
