@@ -141,7 +141,7 @@ pub struct VisualizeSelectedRegionConfig {
 
     /// Generate a ladder of fragment lengths to sketch `[MIN:MAX[:STEP]]`.
     ///
-    /// The default step is 10 when omitted (e.g., `80:200:20`). Conflicts with `--lengths`.
+    /// The default step is 20 when omitted (e.g., `80:200:20`). Conflicts with `--lengths`.
     /// Omit both `--lengths` and `--length-range` to fall back to `100:220:20`.
     #[cfg_attr(
         feature = "cli",

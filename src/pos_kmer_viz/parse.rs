@@ -106,7 +106,7 @@ fn parse_length_range(spec: &str) -> Result<Vec<u32>> {
             .parse::<u32>()
             .with_context(|| format!("\"{}\" is not a positive integer", parts[2].trim()))?
     } else {
-        10
+        20
     };
     if step == 0 {
         return Err(anyhow!(
