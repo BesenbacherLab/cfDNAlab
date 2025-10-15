@@ -12,7 +12,9 @@ Docstrings should read like a short tutorial, then details, then structured sect
 
 Bullet points in CLI-facing documentation (config files) should have a newline between them, otherwise CLI collapses the sentences.
 
-Reduce the number of semi-colons in docstrings and comments. Use comma or dot instead.
+Reduce the number of semi-colons in docstrings and comments. Use comma or dot instead. 
+
+Never use "…" or similar non-ascii symbols. They don't work in the terminal. Use "...", "->", ">=", etc.
 
 **Order**
 1. **Summary (pedagogical):** What this does and when to use it.

@@ -69,14 +69,14 @@ pub struct VisualizeSelectedRegionConfig {
     )]
     pub positions: String,
 
-    /// Downsample after selection by keeping every Nth index `[integer ≥ 1]`.
+    /// Downsample after selection by keeping every Nth index `[integer >= 1]`.
     ///
     /// Applied independently to each track in frame order (e.g., per-end left and right both stride through
     /// their own selections). Leave at 1 to keep every base.
     ///
     /// For the `mid` frame, zero is treated as the origin of the stride: when the chosen range includes the
     /// midpoint, it is always retained and every `step`th offset is kept symmetrically
-    /// (`-2*step`, `-step`, `0`, `step`, `2*step`, …). Ranges that exclude the origin fall back to the default stride.
+    /// (`-2*step`, `-step`, `0`, `step`, `2*step`, ...). Ranges that exclude the origin fall back to the default stride.
     #[cfg_attr(
         feature = "cli",
         arg(long, default_value_t = 1, help_heading = "Region Selection")
@@ -85,11 +85,10 @@ pub struct VisualizeSelectedRegionConfig {
 
     /// Choose which coordinate source defines the counted positions `[prefer-read|read|reference|nearest-read]`.
     ///
-    /// - `prefer-read`: Use read-space coordinates whenever an observed base covers the requested position
+    /// - `prefer-reads`: Use read-space coordinates whenever an observed base covers the requested position
     ///   and fall back to the reference span when reads don't cover the positions.
     ///
-    /// - `read`: Only count positions the reads can cover. The visualization clamps out the inferred gap
-    ///   between mates (everything strictly between the two read halves).
+    /// - `reads`: Only count positions the reads cover.
     ///
     /// - `reference`: Always use the reference span, even when reads do not cover those bases.
     ///
@@ -100,7 +99,7 @@ pub struct VisualizeSelectedRegionConfig {
         arg(
             long,
             value_enum,
-            default_value_t = BasesFrom::PreferRead,
+            default_value_t = BasesFrom::PreferReads,
             help_heading = "Region Selection"
         )
     )]

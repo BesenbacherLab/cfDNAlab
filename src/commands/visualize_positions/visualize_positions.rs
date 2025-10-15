@@ -17,7 +17,7 @@ pub fn run(cfg: &VisualizeSelectedRegionConfig) -> Result<()> {
     let mut results: Vec<LengthVisualization> = Vec::new();
     let clamp_mode = match viz_cfg.bases {
         BasesFrom::NearestRead => ReadClamp::Nearest,
-        BasesFrom::Read => ReadClamp::Both,
+        BasesFrom::Reads => ReadClamp::Both,
         _ => ReadClamp::None,
     };
 

@@ -7,7 +7,7 @@ fn build_uses_expected_defaults() {
         frame: ReferenceFrame::Left,
         positions: "1..5".to_string(),
         step: 1,
-        bases_from: BasesFrom::PreferRead,
+        bases_from: BasesFrom::PreferReads,
         overlap_resolution: OverlapResolution::NearestRead,
         lengths: Some(vec![120]),
         length_range: None,
@@ -25,7 +25,7 @@ fn build_uses_expected_defaults() {
     assert_eq!(viz.frame, ReferenceFrame::Left);
     assert_eq!(viz.positions_input, "1..5");
     assert_eq!(viz.step.get(), 1);
-    assert_eq!(viz.bases, BasesFrom::PreferRead);
+    assert_eq!(viz.bases, BasesFrom::PreferReads);
     assert_eq!(viz.overlap_resolution, OverlapResolution::NearestRead);
     assert!(viz.show_mid);
     assert_eq!(viz.fragment_lengths, vec![120]);
@@ -75,7 +75,7 @@ fn build_rejects_zero_step() {
         frame: ReferenceFrame::Left,
         positions: "1..5".to_string(),
         step: 0,
-        bases_from: BasesFrom::PreferRead,
+        bases_from: BasesFrom::PreferReads,
         overlap_resolution: OverlapResolution::NearestRead,
         lengths: Some(vec![100]),
         length_range: None,

@@ -33,9 +33,9 @@ impl ReferenceFrame {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BasesFrom {
     /// Prefer observed read coordinates, but fall back to the reference span when a read is missing.
-    PreferRead,
+    PreferReads,
     /// Only include positions covered by either read. Inferred mate gaps are skipped.
-    Read,
+    Reads,
     /// Always use reference positions regardless of read coverage.
     Reference,
     /// Clamp to the read nearest to the frame origin.
@@ -45,8 +45,8 @@ pub enum BasesFrom {
 impl BasesFrom {
     pub fn as_str(self) -> &'static str {
         match self {
-            BasesFrom::PreferRead => "prefer-read",
-            BasesFrom::Read => "read",
+            BasesFrom::PreferReads => "prefer-reads",
+            BasesFrom::Reads => "reads",
             BasesFrom::Reference => "reference",
             BasesFrom::NearestRead => "nearest-read",
         }
@@ -55,7 +55,7 @@ impl BasesFrom {
 
 impl Default for BasesFrom {
     fn default() -> Self {
-        BasesFrom::PreferRead
+        BasesFrom::PreferReads
     }
 }
 
