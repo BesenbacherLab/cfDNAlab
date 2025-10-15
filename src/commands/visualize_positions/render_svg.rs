@@ -4,12 +4,16 @@ use std::fmt::Write;
 use super::model::{LengthVisualization, ReferenceFrame, Track, VizConfig};
 
 const CHAR_WIDTH: f64 = 7.0;
+const MARKER_BAND: f64 = 18.0;
+const BAR_HEIGHT: f64 = 10.0;
+const INDEX_BAND: f64 = 32.0;
+const LABEL_BAND: f64 = 14.0;
 
 /// Render the visualization as an SVG string.
 pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String {
     let width = config.width as f64;
     let mut height_estimate = 20.0;
-    let per_track_height = if config.show_index { 44.0 } else { 24.0 };
+    let per_track_height = track_block_height(config);
     for viz in results {
         height_estimate += 18.0; // header line
         height_estimate += viz.tracks.len() as f64 * per_track_height;
@@ -104,13 +108,13 @@ fn draw_track_svg(
     }
     let bar_left = margin_left;
     let bar_width = (full_width - margin_left - margin_right).max(1.0);
-    let bar_height = 10.0;
-    let bar_top = baseline_y;
+    let bar_top = baseline_y + MARKER_BAND;
+    let bar_height = BAR_HEIGHT;
 
     writeln!(
         svg,
         r##"<text x="12" y="{:.1}" fill="#111">{}</text>"##,
-        baseline_y + bar_height - 2.0,
+        bar_top + bar_height - 2.0,
         track.name
     )
     .ok();
@@ -151,9 +155,9 @@ fn draw_track_svg(
     }
 
     let text_y = if config.show_index {
-        axis_bottom + 32.0
+        axis_bottom + INDEX_BAND
     } else {
-        axis_bottom + 12.0
+        axis_bottom + LABEL_BAND
     };
 
     writeln!(
@@ -165,7 +169,17 @@ fn draw_track_svg(
     )
     .ok();
 
-    if config.show_index { 44.0 } else { 24.0 }
+    track_block_height(config)
+}
+
+fn track_block_height(config: &VizConfig) -> f64 {
+    MARKER_BAND
+        + BAR_HEIGHT
+        + if config.show_index {
+            INDEX_BAND
+        } else {
+            LABEL_BAND
+        }
 }
 
 fn contiguous_segments(indices: &[i32]) -> Vec<(i32, i32)> {
@@ -208,8 +222,8 @@ fn draw_axis_marker(
     bar_width: f64,
 ) {
     let x = value_to_px(value, track, bar_left, bar_width);
-    let top = (bar_top - 6.0).max(4.0);
-    let bottom = bar_top - 1.5;
+    let top = (bar_top - MARKER_BAND + 8.0).max(4.0);
+    let bottom = bar_top - 2.0;
     writeln!(
         svg,
         r##"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="#1f2937" stroke-width="1"/>"##,
@@ -269,8 +283,9 @@ fn draw_tick_marks(
         let x = value_to_px(value as f64, track, bar_left, bar_width);
         let label = value.to_string();
         let text_width = label.len() as f64 * CHAR_WIDTH;
-        let left = x - text_width;
-        let right = x;
+        let half = text_width / 2.0;
+        let left = x - half;
+        let right = x + half;
         if occupied
             .iter()
             .any(|&(occupied_left, occupied_right)| left < occupied_right && right > occupied_left)
@@ -284,9 +299,9 @@ fn draw_tick_marks(
     for (x, label) in placed_labels {
         writeln!(
             svg,
-            r##"<text x="{:.1}" y="{:.1}" fill="#334155" font-size="11" text-anchor="end">{}</text>"##,
+            r##"<text x="{:.1}" y="{:.1}" fill="#334155" font-size="11" text-anchor="middle">{}</text>"##,
             x,
-            axis_bottom + 18.0,
+            axis_bottom + 20.0,
             label
         )
         .ok();
@@ -308,13 +323,13 @@ fn axis_markers(track: &Track, fragment_length: u32, config: &VizConfig) -> Vec<
             ReferenceFrame::Nearest => {
                 let half = (fragment_length / 2) as f64;
                 if half > 0.0 {
-                    markers.push((half.max(track.axis.start as f64), '^'));
+                    push_marker(&mut markers, half.max(track.axis.start as f64), '^');
                 }
             }
             ReferenceFrame::Left | ReferenceFrame::Right | ReferenceFrame::PerEnd => {
                 let half = (fragment_length / 2) as f64;
                 if half > 0.0 {
-                    markers.push((half.max(track.axis.start as f64), '^'));
+                    push_marker(&mut markers, half.max(track.axis.start as f64), '^');
                 }
             }
             _ => {}
@@ -329,8 +344,30 @@ fn axis_markers(track: &Track, fragment_length: u32, config: &VizConfig) -> Vec<
             }
         };
         if let Some(value) = mid {
-            markers.push((value, '*'));
+            push_marker(&mut markers, value, '*');
         }
     }
     markers
+}
+
+fn push_marker(markers: &mut Vec<(f64, char)>, value: f64, symbol: char) {
+    let priority = marker_priority(symbol);
+    for (existing_value, existing_symbol) in markers.iter_mut() {
+        if (*existing_value - value).abs() <= 1.0 {
+            if marker_priority(*existing_symbol) < priority {
+                *existing_symbol = symbol;
+                *existing_value = value;
+            }
+            return;
+        }
+    }
+    markers.push((value, symbol));
+}
+
+fn marker_priority(symbol: char) -> u8 {
+    match symbol {
+        '*' => 2,
+        '^' => 1,
+        _ => 0,
+    }
 }
