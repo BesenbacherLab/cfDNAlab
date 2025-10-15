@@ -23,7 +23,7 @@ fn take_linear_indices(
 
 #[test]
 fn nearest_open_to_half_small_l() {
-    let spec = parse_positions(Anchor::Nearest, "10:").unwrap();
+    let spec = parse_positions(Anchor::Nearest, "10..").unwrap();
     let tracks = take_linear_indices(18, Anchor::Nearest, &spec, default_step());
     assert!(tracks[0].is_empty());
 }
@@ -38,7 +38,7 @@ fn nearest_half_minus_k() {
 
 #[test]
 fn left_opposite_end_bound() {
-    let spec = parse_positions(Anchor::Left, "10:-10").unwrap();
+    let spec = parse_positions(Anchor::Left, "10..-10").unwrap();
     let tracks = take_linear_indices(100, Anchor::Left, &spec, default_step());
     let expected: Vec<i32> = (10..=90).collect();
     assert_eq!(tracks[0], expected);
@@ -46,7 +46,7 @@ fn left_opposite_end_bound() {
 
 #[test]
 fn right_opposite_end_bound() {
-    let spec = parse_positions(Anchor::Right, "10:-10").unwrap();
+    let spec = parse_positions(Anchor::Right, "10..-10").unwrap();
     let tracks = take_linear_indices(101, Anchor::Right, &spec, default_step());
     let expected: Vec<i32> = (10..=91).collect();
     assert_eq!(tracks[0], expected);
@@ -54,7 +54,7 @@ fn right_opposite_end_bound() {
 
 #[test]
 fn per_end_two_tracks() {
-    let spec = parse_positions(Anchor::PerEnd, ":5").unwrap();
+    let spec = parse_positions(Anchor::PerEnd, "..5").unwrap();
     let tracks = take_linear_indices(120, Anchor::PerEnd, &spec, default_step());
     let expected: Vec<i32> = (1..=5).collect();
     assert_eq!(tracks.len(), 2);
@@ -64,7 +64,7 @@ fn per_end_two_tracks() {
 
 #[test]
 fn span_trim_both_ends() {
-    let spec = parse_positions(Anchor::Span, "15:-15").unwrap();
+    let spec = parse_positions(Anchor::Span, "15..-15").unwrap();
     let tracks = take_linear_indices(80, Anchor::Span, &spec, default_step());
     let expected: Vec<i32> = (15..=65).collect();
     assert_eq!(tracks[0], expected);
@@ -72,7 +72,7 @@ fn span_trim_both_ends() {
 
 #[test]
 fn mid_symmetric_closed() {
-    let spec = parse_positions(Anchor::Mid, "-10..+10").unwrap();
+    let spec = parse_positions(Anchor::Mid, "-10..10").unwrap();
     let tracks = take_linear_indices(99, Anchor::Mid, &spec, default_step());
     let expected: Vec<i32> = (-10..=10).collect();
     assert_eq!(tracks[0], expected);
@@ -80,15 +80,19 @@ fn mid_symmetric_closed() {
 
 #[test]
 fn mid_open_right() {
-    let spec = parse_positions(Anchor::Mid, "..+5").unwrap();
+    let spec = parse_positions(Anchor::Mid, "..5").unwrap();
     let tracks = take_linear_indices(150, Anchor::Mid, &spec, default_step());
     let expected: Vec<i32> = (0..=5).collect();
     assert_eq!(tracks[0], expected);
+
+    let legacy = parse_positions(Anchor::Mid, "..+5").unwrap();
+    let legacy_tracks = take_linear_indices(150, Anchor::Mid, &legacy, default_step());
+    assert_eq!(legacy_tracks[0], expected);
 }
 
 #[test]
 fn stride_application() {
-    let spec = parse_positions(Anchor::Left, "1-10").unwrap();
+    let spec = parse_positions(Anchor::Left, "1..10").unwrap();
     let step = NonZeroUsize::new(3).unwrap();
     let tracks = take_linear_indices(20, Anchor::Left, &spec, step);
     assert_eq!(tracks[0], vec![1, 4, 7, 10]);
@@ -96,17 +100,17 @@ fn stride_application() {
 
 #[test]
 fn nearest_center_double_count_guard() {
-    let spec = parse_positions(Anchor::Nearest, ":half").unwrap();
+    let spec = parse_positions(Anchor::Nearest, "..half").unwrap();
     let tracks = take_linear_indices(100, Anchor::Nearest, &spec, default_step());
     assert_eq!(tracks[0].last().copied(), Some(50));
     assert_eq!(tracks[0].iter().filter(|&&v| v == 50).count(), 1);
 }
 
 #[test]
-fn bad_grammar_left_double_dot() {
-    let err: RangeParseError = parse_positions(Anchor::Left, "1..10").unwrap_err();
+fn bad_grammar_left_hyphen_range() {
+    let err: RangeParseError = parse_positions(Anchor::Left, "1-10").unwrap_err();
     assert!(
-        err.to_string().contains("Example: --positions 1-10"),
+        err.to_string().contains("Example: --positions 1..10"),
         "unexpected error: {}",
         err
     );
@@ -114,9 +118,9 @@ fn bad_grammar_left_double_dot() {
 
 #[test]
 fn bad_negative_on_nearest() {
-    let err = parse_positions(Anchor::Nearest, "10:-10").unwrap_err();
+    let err = parse_positions(Anchor::Nearest, "10..-10").unwrap_err();
     assert!(
-        err.to_string().contains("Example: --positions :half"),
+        err.to_string().contains("Example: --positions ..half"),
         "unexpected error: {}",
         err
     );

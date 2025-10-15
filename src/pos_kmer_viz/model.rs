@@ -8,13 +8,13 @@ use clap::ValueEnum;
 /// The variants mirror the CLI keyword semantics documented in AGENTS.md.
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum Anchor {
+    Span,
     Left,
     Right,
     #[value(alias = "per-end")]
     PerEnd,
     Nearest,
     Mid,
-    Span,
 }
 
 impl Anchor {
@@ -131,13 +131,13 @@ pub struct VizConfig {
 /// Range grammar for anchors that index strictly from one end.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinearRange {
-    /// Closed inclusive range `A-B`.
+    /// Closed inclusive range `A..B`.
     Closed { start: u32, end: u32 },
     /// Open-right range `A:`.
     From { start: u32 },
     /// Open-left range `:B`.
     To { end: u32 },
-    /// Opposite-end trimmed range `A:-B`.
+    /// Opposite-end trimmed range `A..-B`.
     TrimOtherEnd { start: u32, other_end_trim: u32 },
 }
 

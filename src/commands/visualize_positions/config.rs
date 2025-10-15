@@ -7,42 +7,58 @@ use clap::Parser;
 
 use crate::pos_kmer_viz::{Anchor, Bases, Style, VizConfig, parse_lengths, parse_positions};
 
-/// Draw which fragment bases will be counted for a given anchor and range setup.
+/// `fragment-kmers` helper: Draw which fragment bases will be counted for a given anchor and range setup.
 ///
-/// Use this helper to prototype the “where to count” arguments (`--anchor`, `--positions`, `--step`, `--bases`),
-/// before you run the counter on a BAM file. For every fragment length you request it renders the selected
-/// bases as ASCII or SVG so you can sanity-check trims, interior windows, and where coverage concentrates. The
+/// Use this helper to prototype the “where to count” arguments (`--anchor`, `--positions`, `--step`, `--bases_from`),
+/// before you run `cfdna fragment-kmers` on a BAM file. For every fragment length you request, the selected
+/// bases are rendered as ASCII or SVG, so you can check the correct positions are counted at. The
 /// command is geometry-only: no BAM or reference reads are touched while you iterate.
 ///
-/// Describe your selections with the shared 1-based inclusive grammar (`A-B`, `A:-B`, `:half`, `5..half-3`,
-/// `-60..+60`, and friends) and the diagram will match the counting engine once it consumes the same arguments.
+/// Describe your selections with the **1-based inclusive** grammar (`A..B`, `A..-B`, `..half`, `5..half-3`,
+/// `-60..60` (`mid`-anchor-only), and friends) and the diagram will show the regions counted by
+/// `cfdna fragment-kmers`, assuming the same arguments are passed.
 #[cfg_attr(feature = "cli", derive(Parser, Clone))]
 pub struct VisualizeSelectedRegionConfig {
-    /// Choose the reference frame that interprets every other flag `[left|right|per-end|nearest|mid|span]`.
+    /// Choose the reference frame that interprets every other flag `[span|left|right|per-end|nearest|mid]`.
     ///
-    /// `left` counts bases from the forward 5′ end, `right` from the reverse 5′ end, `per-end` renders both
-    /// of those tracks side-by-side, `nearest` folds the fragment so distances grow away from the closer end
-    /// (`half` refers to floor(length/2)), `mid` centres the axis at 0 to emphasise symmetry, and `span`
-    /// walks linearly from the left 5′ end to the right 5′ end. In every case you describe bases using
-    /// 1-based inclusive indices relative to the chosen anchor.
+    /// Note: `--positions` describe positions to count at relative to the chosen anchor. 
+    /// Some anchors are only relevant when `fragment-kmers` return positionally indexed counts.
+    ///
+    /// - **`span`** walks linearly from the left 5' end to the right 5' end.
+    ///
+    /// - **`left`** counts bases from the forward 5' end, while **`right`** from the reverse 5' end.
+    ///
+    /// - **`per-end`** counts both left/right with separate counts in the output.
+    ///
+    /// - **`nearest`** folds the fragment around the midpoint so distances grow away from the nearest end.
+    ///   The positional keyword `half` represents the midpoint (and maximum position).
+    ///
+    /// - **`mid`** centres the axis on the midpoint, allowing getting N bases around the midpoint.
     #[cfg_attr(
         feature = "cli",
         arg(long, value_enum, help_heading = "Region Selection")
     )]
     pub anchor: Anchor,
 
-    /// Describe which bases remain after anchoring `[string]`.
+    /// Describe which positions to count at relative to the anchoring `[string]`.
     ///
-    /// Ranges are written with 1-based inclusive bounds inside that frame: `A-B`, `A:`, `:B`, and `A:-B`
-    /// for end-anchored systems (`left`, `right`, `per-end`, `span`). For the `nearest` anchor the grammar
-    /// folds the fragment, so `:half` spans from distance 1 up to the fold point and `A..half-K` reads as
-    /// “start at distance `A` and stop `K` bases before the fold” (e.g., `5..half-3` covers distances 5 through
-    /// floor(length/2) − 3). Symmetric anchors like `mid` use forms such as `-60..+60`. Put differently:
-    /// `1-10` keeps the first ten bases, `10:-10` trims both ends, `:half` reaches the fold point in `nearest`,
-    /// `5..half-3` keeps only the interior band, and `-60..+60` sketches a ±60 bp window around the midpoint.
+    /// Indices are **1-based inclusive**, why e.g. `1..10` would start at the first position and end at the tenth position (included).
+    ///
+    /// The allowed shapes depend on `--anchor`:
+    ///
+    /// - **`span`**, **`left`**, **`right`**, **`per-end`**: use `A..B`, `A..`, `..B`, or `A..-B`. For example, `1..10`
+    ///   keeps the first ten bases and `10..-10` trims both ends. Open intervals like `A..` include every
+    ///   coordinate from `A` to the end of the anchor.
+    ///
+    /// - **`nearest`** (folded 1..length/2): use `A..B`, `A..`, `..B`, `..half`, or `A..half-K`. Here, `half` expands to the
+    ///   largest folded distance (ties are randomly assigned for even-length fragments), ensuring the centre base is
+    ///   maximally counted once. Forms like `10..-10` are rejected for this anchor.
+    ///
+    /// - **`mid`** (centered at 0): use `-M..N`, `-M..`, or `..N`. E.g. `-10..10` for the 20 bases around the midpoint.
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Region Selection"))]
     pub positions: String,
 
+    // TODO: Add info on what happens in "mid" mode. It the middle should be a step in this case, so we go -N*step..-step,mid,step..N*step. Is this the case? Otherwise fix and document here
     /// Downsample after selection by keeping every Nth index `[integer ≥ 1]`.
     ///
     /// Applied independently to each track in anchor order (e.g., per-end left and right both stride through
@@ -131,14 +147,15 @@ pub struct VisualizeSelectedRegionConfig {
     /// Mark the halfway point with `^` (ASCII) or a vertical line (SVG) `[flag]`.
     ///
     /// For `nearest`, the marker lands on `floor(length/2)` - the furthest folded distance before the ends meet.
-    /// For `span`, it marks the halfway distance from the left 5′ end (length/2). Other anchors do not display it.
+    /// For `span`, it marks the halfway distance from the left 5' end (length/2). Other anchors do not display it.
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Visualization"))]
     pub show_half: bool,
 
-    /// Mark the exact midpoint with `*` when the anchor exposes it (`mid` or `span`) `[flag]`.
+    /// Mark the conceptual midpoint with `*` when the anchor exposes it (`mid` or `span`) `[flag]`.
     ///
-    /// On the `mid` anchor this labels the `q=0` origin; on `span` it sits at the geometrical centre between
-    /// the two ends. Combine with `--show-half` on `span` to see both the halfway distance and the true midpoint.
+    /// On the `mid` anchor this labels the `q=0` origin. On `span` it marks the centre column the counter uses
+    /// when ties occur (even-length fragments still break the central pair according to the counting command).
+    /// Combine with `--show-half` on `span` to see both the halfway distance and the midpoint marker.
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Visualization"))]
     pub show_mid: bool,
 }

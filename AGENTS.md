@@ -177,6 +177,8 @@ Keep examples in docs as doctests so they compile and run.
 
 Use compile-fail/pass tests for macros/APIs that must error or succeed with specific messages.
 
+Bullet points in CLI-facing documentation (config files) should have a newline between them, otherwise CLI collapses the sentences.
+
 ### Review checklist (use before submitting tests)
 
 Name states the behavior clearly.

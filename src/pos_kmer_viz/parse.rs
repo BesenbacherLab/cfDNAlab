@@ -5,9 +5,9 @@ use anyhow::{Context, Result, anyhow};
 
 use super::model::{Anchor, LinearRange, MidRange, NearestRange, PositionsSpec};
 
-const LINEAR_EXAMPLE: &str = "--positions 1-10";
-const NEAREST_EXAMPLE: &str = "--positions :half";
-const MID_EXAMPLE: &str = "--positions -10..+10";
+const LINEAR_EXAMPLE: &str = "--positions 1..10";
+const NEAREST_EXAMPLE: &str = "--positions ..half";
+const MID_EXAMPLE: &str = "--positions -10..10";
 
 /// Error type used when the range grammar does not match expectations.
 #[derive(Debug)]
@@ -137,127 +137,115 @@ fn parse_length_range(spec: &str) -> Result<Vec<u32>> {
 }
 
 fn parse_linear_range(input: &str) -> Result<LinearRange, RangeParseError> {
-    if let Some(idx) = input.find(":-") {
-        let start_str = &input[..idx];
-        let other = &input[idx + 2..];
-        if start_str.is_empty() || other.is_empty() {
+    if let Some((start_str, end_str)) = input.split_once("..") {
+        if start_str.is_empty() && end_str.is_empty() {
             return Err(RangeParseError::new(
-                "expected format A:-B with positive integers",
+                "expected bounds around '..' (example: 1..10)",
                 LINEAR_EXAMPLE,
             ));
         }
-        let start = parse_positive(start_str, "start", LINEAR_EXAMPLE)?;
-        let trim = parse_positive(other, "other-end trim", LINEAR_EXAMPLE)?;
-        return Ok(LinearRange::TrimOtherEnd {
-            start,
-            other_end_trim: trim,
-        });
-    }
-
-    if let Some(rest) = input.strip_suffix(':') {
-        if rest.is_empty() {
-            return Err(RangeParseError::new(
-                "expected digits before ':' (example: 10:)",
-                LINEAR_EXAMPLE,
-            ));
+        if start_str.is_empty() {
+            let end = parse_positive(end_str, "end", LINEAR_EXAMPLE)?;
+            return Ok(LinearRange::To { end });
         }
-        let start = parse_positive(rest, "start", LINEAR_EXAMPLE)?;
-        return Ok(LinearRange::From { start });
-    }
-
-    if let Some(rest) = input.strip_prefix(':') {
-        if rest.is_empty() {
-            return Err(RangeParseError::new(
-                "expected digits after ':' (example: :25)",
-                LINEAR_EXAMPLE,
-            ));
+        if end_str.is_empty() {
+            let start = parse_positive(start_str, "start", LINEAR_EXAMPLE)?;
+            return Ok(LinearRange::From { start });
         }
-        let end = parse_positive(rest, "end", LINEAR_EXAMPLE)?;
-        return Ok(LinearRange::To { end });
-    }
-
-    if input.contains('-') {
-        let mut parts = input.splitn(2, '-');
-        let start_str = parts.next().unwrap();
-        let end_str = parts.next().unwrap_or("");
-        if start_str.is_empty() || end_str.is_empty() {
-            return Err(RangeParseError::new(
-                "expected format A-B with positive integers",
-                LINEAR_EXAMPLE,
-            ));
+        if let Some(trim_str) = end_str.strip_prefix('-') {
+            let start = parse_positive(start_str, "start", LINEAR_EXAMPLE)?;
+            let trim = parse_positive(trim_str, "other-end trim", LINEAR_EXAMPLE)?;
+            return Ok(LinearRange::TrimOtherEnd {
+                start,
+                other_end_trim: trim,
+            });
         }
         let start = parse_positive(start_str, "start", LINEAR_EXAMPLE)?;
         let end = parse_positive(end_str, "end", LINEAR_EXAMPLE)?;
         if start > end {
             return Err(RangeParseError::new(
-                "start must be <= end (example: 10-30)",
+                "start must be <= end (example: 10..30)",
                 LINEAR_EXAMPLE,
             ));
         }
         return Ok(LinearRange::Closed { start, end });
     }
 
+    if input.contains(':') {
+        return Err(RangeParseError::new(
+            "colon ranges were replaced by '..' syntax (examples: 10.., ..25, 5..-5)",
+            LINEAR_EXAMPLE,
+        ));
+    }
+
     Err(RangeParseError::new(
-        "unsupported positions format for this anchor (examples: 1-10, 10:, :25, 5:-5)",
+        "unsupported positions format for this anchor (examples: 1..10, 10.., ..25, 5..-5)",
         LINEAR_EXAMPLE,
     ))
 }
 
 fn parse_nearest_range(input: &str) -> Result<NearestRange, RangeParseError> {
-    if let Some(rest) = input.strip_suffix(':') {
-        if rest.is_empty() {
-            return Err(RangeParseError::new(
-                "expected digits before ':' (example: 10:)",
-                NEAREST_EXAMPLE,
-            ));
-        }
-        let start = parse_positive(rest, "start", NEAREST_EXAMPLE)?;
-        return Ok(NearestRange::From { start });
-    }
-
-    if let Some(rest) = input.strip_prefix(":half") {
-        let minus = parse_optional_minus(rest, NEAREST_EXAMPLE)?;
-        return Ok(NearestRange::ToHalf { minus });
-    }
-
     if let Some((start_str, tail)) = input.split_once("..half") {
+        let minus = parse_optional_minus(tail, NEAREST_EXAMPLE)?;
         if start_str.is_empty() {
-            return Err(RangeParseError::new(
-                "expected digits before '..half'",
-                NEAREST_EXAMPLE,
-            ));
+            return Ok(NearestRange::ToHalf { minus });
         }
         let start = parse_positive(start_str, "start", NEAREST_EXAMPLE)?;
-        let minus = parse_optional_minus(tail, NEAREST_EXAMPLE)?;
         return Ok(NearestRange::FromToHalf { start, minus });
     }
 
     if input.contains("half") {
         return Err(RangeParseError::new(
-            "half-relative ranges must follow A..half[-K] or :half[-K]",
+            "half-relative ranges must follow A..half[-K] or ..half[-K]",
             NEAREST_EXAMPLE,
         ));
     }
 
-    if input.contains('-') {
-        let mut parts = input.splitn(2, '-');
-        let start_str = parts.next().unwrap();
-        let end_str = parts.next().unwrap_or("");
-        if start_str.is_empty() || end_str.is_empty() {
+    if let Some((start_str, end_str)) = input.split_once("..") {
+        if start_str.is_empty() && end_str.is_empty() {
             return Err(RangeParseError::new(
-                "expected format A-B with positive integers",
+                "expected bounds around '..' (example: 1..10)",
                 NEAREST_EXAMPLE,
             ));
         }
+        if start_str.is_empty() {
+            if end_str.is_empty() {
+                return Err(RangeParseError::new(
+                    "expected digits after '..'",
+                    NEAREST_EXAMPLE,
+                ));
+            }
+            if let Some(tail) = end_str.strip_prefix("half") {
+                let minus = parse_optional_minus(tail, NEAREST_EXAMPLE)?;
+                return Ok(NearestRange::ToHalf { minus });
+            }
+            let end = parse_positive(end_str, "end", NEAREST_EXAMPLE)?;
+            return Ok(NearestRange::Closed { start: 1, end });
+        }
+        if end_str.is_empty() {
+            let start = parse_positive(start_str, "start", NEAREST_EXAMPLE)?;
+            return Ok(NearestRange::From { start });
+        }
         let start = parse_positive(start_str, "start", NEAREST_EXAMPLE)?;
+        if let Some(tail) = end_str.strip_prefix("half") {
+            let minus = parse_optional_minus(tail, NEAREST_EXAMPLE)?;
+            return Ok(NearestRange::FromToHalf { start, minus });
+        }
         let end = parse_positive(end_str, "end", NEAREST_EXAMPLE)?;
         if start > end {
             return Err(RangeParseError::new(
-                "start must be <= end (example: 1-10)",
+                "start must be <= end (example: 1..10)",
                 NEAREST_EXAMPLE,
             ));
         }
         return Ok(NearestRange::Closed { start, end });
+    }
+
+    if input.contains(':') {
+        return Err(RangeParseError::new(
+            "colon ranges were replaced by '..' syntax (examples: 10.., ..10, ..half)",
+            NEAREST_EXAMPLE,
+        ));
     }
 
     Err(RangeParseError::new(
@@ -267,14 +255,21 @@ fn parse_nearest_range(input: &str) -> Result<NearestRange, RangeParseError> {
 }
 
 fn parse_mid_range(input: &str) -> Result<MidRange, RangeParseError> {
-    if let Some(rest) = input.strip_prefix("..+") {
+    if let Some(rest) = input.strip_prefix("..") {
         if rest.is_empty() {
             return Err(RangeParseError::new(
-                "expected digits after '..+'",
+                "expected digits after '..'",
                 MID_EXAMPLE,
             ));
         }
-        let pos = parse_positive(rest, "positive bound", MID_EXAMPLE)?;
+        let cleaned = rest.strip_prefix('+').unwrap_or(rest);
+        if cleaned.is_empty() {
+            return Err(RangeParseError::new(
+                "expected digits after '..'",
+                MID_EXAMPLE,
+            ));
+        }
+        let pos = parse_positive(cleaned, "positive bound", MID_EXAMPLE)?;
         return Ok(MidRange::RightOpen { pos });
     }
 
@@ -286,14 +281,21 @@ fn parse_mid_range(input: &str) -> Result<MidRange, RangeParseError> {
         return Ok(MidRange::LeftOpen { neg });
     }
 
-    if let Some(idx) = input.find("..+") {
+    if let Some(idx) = input.find("..") {
         let left = &input[..idx];
-        let right = &input[idx + 3..];
+        let right = &input[idx + 2..];
         if !left.starts_with('-') || left.len() <= 1 || right.is_empty() {
-            return Err(RangeParseError::new("expected form '-M..+N'", MID_EXAMPLE));
+            return Err(RangeParseError::new("expected form '-M..N'", MID_EXAMPLE));
         }
         let neg = parse_positive(&left[1..], "negative bound", MID_EXAMPLE)?;
-        let pos = parse_positive(right, "positive bound", MID_EXAMPLE)?;
+        let cleaned = right.strip_prefix('+').unwrap_or(right);
+        if cleaned.is_empty() {
+            return Err(RangeParseError::new(
+                "expected digits after '..'",
+                MID_EXAMPLE,
+            ));
+        }
+        let pos = parse_positive(cleaned, "positive bound", MID_EXAMPLE)?;
         return Ok(MidRange::Closed { neg, pos });
     }
 
