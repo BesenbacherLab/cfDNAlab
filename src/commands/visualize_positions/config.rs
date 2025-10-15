@@ -149,7 +149,9 @@ impl VisualizePositionsConfig {
             ));
         }
 
-        let width = self.width.unwrap_or(100);
+        let width = self
+            .width
+            .unwrap_or_else(|| if self.style == Style::Svg { 650 } else { 100 });
         if width == 0 {
             return Err(anyhow!("--width must be positive (example: --width 120)"));
         }

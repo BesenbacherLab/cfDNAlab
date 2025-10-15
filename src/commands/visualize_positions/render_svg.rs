@@ -1,14 +1,18 @@
+use std::cmp::Ordering;
 use std::fmt::Write;
 
 use super::model::{LengthVisualization, ReferenceFrame, Track, VizConfig};
+
+const CHAR_WIDTH: f64 = 7.0;
 
 /// Render the visualization as an SVG string.
 pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String {
     let width = config.width as f64;
     let mut height_estimate = 20.0;
+    let per_track_height = if config.show_index { 44.0 } else { 24.0 };
     for viz in results {
         height_estimate += 18.0; // header line
-        height_estimate += viz.tracks.len() as f64 * 24.0;
+        height_estimate += viz.tracks.len() as f64 * per_track_height;
         if viz.all_tracks_empty() {
             height_estimate += 16.0;
         }
@@ -55,7 +59,7 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
         y_cursor += 18.0;
 
         for track in &viz.tracks {
-            draw_track_svg(
+            let advance = draw_track_svg(
                 &mut svg,
                 track,
                 viz.fragment_length,
@@ -63,7 +67,7 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
                 width,
                 y_cursor,
             );
-            y_cursor += 24.0;
+            y_cursor += advance;
         }
 
         if viz.all_tracks_empty() {
@@ -90,14 +94,18 @@ fn draw_track_svg(
     config: &VizConfig,
     full_width: f64,
     baseline_y: f64,
-) {
-    let margin_left = (full_width * 0.18).max(70.0).min(full_width * 0.4);
+) -> f64 {
+    let label_space = track.name.chars().count() as f64 * CHAR_WIDTH + 60.0;
+    let max_margin = (full_width * 0.4).max(60.0);
     let margin_right = 16.0;
+    let mut margin_left = label_space.clamp(60.0, max_margin);
+    if margin_left > full_width - margin_right - 10.0 {
+        margin_left = (full_width - margin_right - 10.0).max(12.0);
+    }
     let bar_left = margin_left;
     let bar_width = (full_width - margin_left - margin_right).max(1.0);
     let bar_height = 10.0;
     let bar_top = baseline_y;
-    let text_y = baseline_y + bar_height + 12.0;
 
     writeln!(
         svg,
@@ -137,6 +145,17 @@ fn draw_track_svg(
         draw_axis_marker(svg, symbol, value, track, bar_left, bar_top, bar_width);
     }
 
+    let axis_bottom = bar_top + bar_height;
+    if config.show_index {
+        draw_tick_marks(svg, track, bar_left, axis_bottom, bar_width);
+    }
+
+    let text_y = if config.show_index {
+        axis_bottom + 32.0
+    } else {
+        axis_bottom + 12.0
+    };
+
     writeln!(
         svg,
         r##"<text x="{:.1}" y="{:.1}" fill="#475569">{}</text>"##,
@@ -145,6 +164,8 @@ fn draw_track_svg(
         format!("{}..{}", track.axis.start, track.axis.end)
     )
     .ok();
+
+    if config.show_index { 44.0 } else { 24.0 }
 }
 
 fn contiguous_segments(indices: &[i32]) -> Vec<(i32, i32)> {
@@ -203,6 +224,81 @@ fn draw_axis_marker(
         symbol
     )
     .ok();
+}
+
+fn draw_tick_marks(
+    svg: &mut String,
+    track: &Track,
+    bar_left: f64,
+    axis_bottom: f64,
+    bar_width: f64,
+) {
+    let start = track.axis.start;
+    let end = track.axis.end;
+    if start > end {
+        return;
+    }
+
+    let mut candidates = Vec::new();
+    for value in start..=end {
+        if should_mark_tick(value, start, end) {
+            candidates.push((value, tick_priority(value, start, end)));
+        }
+    }
+    if candidates.is_empty() {
+        return;
+    }
+
+    for (value, _) in &candidates {
+        let x = value_to_px(*value as f64, track, bar_left, bar_width);
+        writeln!(
+            svg,
+            r##"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="#1f2937" stroke-width="1"/>"##,
+            x,
+            axis_bottom,
+            x,
+            axis_bottom + 6.0
+        )
+        .ok();
+    }
+
+    let mut placed_labels = Vec::new();
+    let mut occupied: Vec<(f64, f64)> = Vec::new();
+    candidates.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    for (value, _) in candidates {
+        let x = value_to_px(value as f64, track, bar_left, bar_width);
+        let label = value.to_string();
+        let text_width = label.len() as f64 * CHAR_WIDTH;
+        let left = x - text_width;
+        let right = x;
+        if occupied
+            .iter()
+            .any(|&(occupied_left, occupied_right)| left < occupied_right && right > occupied_left)
+        {
+            continue;
+        }
+        occupied.push((left, right));
+        placed_labels.push((x, label));
+    }
+    placed_labels.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+    for (x, label) in placed_labels {
+        writeln!(
+            svg,
+            r##"<text x="{:.1}" y="{:.1}" fill="#334155" font-size="11" text-anchor="end">{}</text>"##,
+            x,
+            axis_bottom + 18.0,
+            label
+        )
+        .ok();
+    }
+}
+
+fn should_mark_tick(value: i32, start: i32, end: i32) -> bool {
+    value == start || value == end || value % 10 == 0
+}
+
+fn tick_priority(value: i32, start: i32, end: i32) -> u8 {
+    if value == start || value == end { 2 } else { 1 }
 }
 
 fn axis_markers(track: &Track, fragment_length: u32, config: &VizConfig) -> Vec<(f64, char)> {

@@ -403,6 +403,32 @@ mod tests_visualize_positions_config {
     }
 
     #[test]
+    fn svg_default_width_is_wider() {
+        let cfg = VisualizePositionsConfig {
+            position_selection: FragmentPositionSelectionArgs {
+                frame: ReferenceFrame::Left,
+                positions: "1..5".to_string(),
+                step: 1,
+                bases_from: BasesFrom::Reference,
+                mismatch_bases_from: MismatchBasesFrom::NearestRead,
+            },
+            lengths: Some(vec![150]),
+            length_range: None,
+            style: Style::Svg,
+            width: None,
+            height: None,
+            output: None,
+            label: None,
+            show_index: false,
+            show_half: false,
+            hide_mid: false,
+        };
+
+        let viz = cfg.build().expect("config should build");
+        assert_eq!(viz.width, 650);
+    }
+
+    #[test]
     fn build_rejects_zero_step() {
         let cfg = VisualizePositionsConfig {
             position_selection: FragmentPositionSelectionArgs {
