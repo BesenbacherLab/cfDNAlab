@@ -5,7 +5,7 @@ use anyhow::{Context, Result, anyhow};
 #[cfg(feature = "cli")]
 use clap::Parser;
 
-use crate::pos_kmer_viz::{
+use crate::commands::visualize_positions::{
     BasesFrom, MismatchBasesFrom, ReferenceFrame, Style, VizConfig, parse_lengths, parse_positions,
 };
 
@@ -20,7 +20,7 @@ use crate::pos_kmer_viz::{
 /// `-60..60` (`mid`-frame-only), and friends) and the diagram will show the regions counted by
 /// `cfdna fragment-kmers`, assuming the same arguments are passed.
 #[cfg_attr(feature = "cli", derive(Parser, Clone))]
-pub struct VisualizeSelectedRegionConfig {
+pub struct VisualizePositionsConfig {
     /// Choose the reference frame that interprets every other region selection argument `[left|right|per-end|nearest|mid]`.
     ///
     /// Note: `--positions` describe positions to count at relative to the chosen frame.
@@ -207,7 +207,7 @@ pub struct VisualizeSelectedRegionConfig {
     pub hide_mid: bool,
 }
 
-impl VisualizeSelectedRegionConfig {
+impl VisualizePositionsConfig {
     pub fn build(&self) -> Result<VizConfig> {
         let step = NonZeroUsize::new(self.step)
             .ok_or_else(|| anyhow!("--step must be at least 1 (example: --step 3)"))?;

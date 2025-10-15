@@ -1,17 +1,14 @@
-use std::fs;
-use std::io::{self, Write};
-
-use anyhow::Result;
-
-use crate::pos_kmer_viz::{
+use crate::commands::visualize_positions::config::VisualizePositionsConfig;
+use crate::commands::visualize_positions::{
     BasesFrom, LengthVisualization, ReadClamp, Style, build_tracks_for_length, render_ascii,
     render_svg,
 };
-
-use super::config::VisualizeSelectedRegionConfig;
+use anyhow::Result;
+use std::fs;
+use std::io::{self, Write};
 
 /// Execute the visualize-selected-region command.
-pub fn run(cfg: &VisualizeSelectedRegionConfig) -> Result<()> {
+pub fn run(cfg: &VisualizePositionsConfig) -> Result<()> {
     let viz_cfg = cfg.build()?;
 
     let mut results: Vec<LengthVisualization> = Vec::new();
