@@ -9,8 +9,6 @@ pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> Stri
         if idx > 0 {
             output.push('\n');
         }
-        write_header(&mut output, viz, config);
-
         let mut label_width = viz
             .tracks
             .iter()
@@ -20,6 +18,7 @@ pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> Stri
         for static_label in ["axis", "ticks", "index", "note"] {
             label_width = label_width.max(static_label.len());
         }
+        write_header(&mut output, viz, config, label_width);
 
         if let Some(first_track) = viz.tracks.first() {
             let markers = axis_markers(first_track, viz.fragment_length, config);
@@ -69,27 +68,32 @@ pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> Stri
     output
 }
 
-fn write_header(buffer: &mut String, viz: &LengthVisualization, config: &VizConfig) {
-    let mut line = format!(
-        "L={}  | frame={}  positions={}  step={}  bases={}  mismatches={}",
-        viz.fragment_length,
+fn write_header(
+    buffer: &mut String,
+    viz: &LengthVisualization,
+    config: &VizConfig,
+    label_width: usize,
+) {
+    let mut line = format!("L={}", viz.fragment_length);
+    let target_width = label_width + 2;
+    if line.len() < target_width {
+        line.push_str(&" ".repeat(target_width - line.len()));
+    } else {
+        line.push(' ');
+    }
+    write!(
+        line,
+        "| frame={}  positions={}  step={}  bases={}  mismatches={}",
         config.frame.as_str(),
         config.positions_input,
         config.step.get(),
         config.bases.as_str(),
         config.mismatch_bases_from.as_str()
-    );
+    )
+    .ok();
     if let Some(label) = &config.label {
         write!(line, "  label={}", label).ok();
     }
-    let padding = viz
-        .tracks
-        .iter()
-        .map(|track| track.name.len())
-        .max()
-        .unwrap_or(6)
-        .saturating_sub(6);
-    line.push_str(&" ".repeat(padding + 2));
     buffer.push_str(&line);
     buffer.push('\n');
 }
