@@ -122,11 +122,17 @@ pub fn build_tick_lines(track: &Track, width: usize) -> (String, String) {
         }
     }
 
+    let mut placements = Vec::new();
     for (column, slot) in chosen.into_iter().enumerate() {
-        if let Some((value, _)) = slot {
+        if let Some((value, priority)) = slot {
             ticks[column] = '|';
-            place_label(&mut labels, column, value);
+            placements.push((column, value, priority));
         }
+    }
+
+    placements.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
+    for (column, value, _) in placements {
+        try_place_label(&mut labels, column, value);
     }
 
     (ticks.into_iter().collect(), labels.into_iter().collect())
@@ -140,19 +146,30 @@ fn tick_priority(value: i32, start: i32, end: i32) -> u8 {
     if value == start || value == end { 2 } else { 1 }
 }
 
-fn place_label(line: &mut [char], column: usize, value: i32) {
+fn try_place_label(line: &mut [char], column: usize, value: i32) -> bool {
     let label = value.to_string();
     let len = label.len();
     if len == 0 || len > line.len() {
-        return;
+        return false;
     }
     let start = column.saturating_sub(len.saturating_sub(1));
+    if start >= line.len() {
+        return false;
+    }
+    let end = start + len;
+    if end > line.len() {
+        return false;
+    }
+    if (start..end).any(|pos| line[pos] != ' ') {
+        return false;
+    }
     for (idx, ch) in label.chars().enumerate() {
         let pos = start + idx;
         if pos < line.len() {
             line[pos] = ch;
         }
     }
+    true
 }
 
 fn build_track_bar(track: &Track, config: &VizConfig) -> String {
