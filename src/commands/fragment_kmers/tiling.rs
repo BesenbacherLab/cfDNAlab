@@ -5,7 +5,7 @@ use crate::{
     },
     shared::{
         kmers::{
-            kmer_codec::{Kmer, KmerSpec},
+            kmer_codec::{Kmer, KmerOrientation, KmerSpec},
             process_counts::{DecodedCounts, split_and_decode_counts},
         },
         tiled_run::{Tile, TileWindowSpan, clamp_fetch_to_window_span, tile_window_min_max},
@@ -29,6 +29,7 @@ use std::{
 pub struct TileKmerCountEntry {
     pub k: u8,
     pub code: u64,
+    pub orientation: KmerOrientation,
     pub value: f64,
 }
 
@@ -111,6 +112,7 @@ where
                 let kmer = Kmer {
                     k: count.k,
                     code: count.code,
+                    orientation: count.orientation,
                 };
                 *entry.entry(kmer).or_insert(0.0) += count.value;
             }
@@ -157,6 +159,7 @@ pub fn reduce_chromosome_tile_results(
                 let kmer = Kmer {
                     k: count.k,
                     code: count.code,
+                    orientation: count.orientation,
                 };
                 *entry.entry(kmer).or_insert(0.0) += count.value;
             }
@@ -171,6 +174,7 @@ pub fn reduce_chromosome_tile_results(
                 entries.push(TileKmerCountEntry {
                     k: kmer.k,
                     code: kmer.code,
+                    orientation: kmer.orientation,
                     value,
                 });
             }

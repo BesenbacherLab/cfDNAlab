@@ -14,6 +14,8 @@ Bullet points in CLI-facing documentation (config files) should have a newline b
 
 Reduce the number of semi-colons in docstrings and comments. Use comma or dot instead. 
 
+In-line comments start with title-cased first word and does not have a terminal dot *in the end*. E.g. `// A comment`
+
 Never use "…" or similar non-ascii symbols. They don't work in the terminal. Use "...", "->", ">=", etc.
 
 Adapt to my language. If I use "center", don't use "centre".

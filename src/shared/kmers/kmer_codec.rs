@@ -1,6 +1,7 @@
-use crate::shared::base::{BASES, encode_base};
+use crate::shared::base::{BASES, encode_base, rev_complement};
 use anyhow::{Context, Result, bail};
 use fxhash::{FxHashMap, FxHashSet};
+use serde::{Deserialize, Serialize};
 
 /// * `k`    – length
 /// * `code` – packed reference code in the narrowest type, promoted to u64
@@ -8,6 +9,13 @@ use fxhash::{FxHashMap, FxHashSet};
 pub struct Kmer {
     pub k: u8,
     pub code: u64,
+    pub orientation: KmerOrientation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum KmerOrientation {
+    Forward,
+    Reverse,
 }
 
 // -----------------------------------------------------------------------------
@@ -17,7 +25,11 @@ impl Kmer {
     /// Human-readable string representation.
     /// Requires a `KmerSpec` table to know how to decode arbitrary k.
     pub fn to_string(&self, specs: &FxHashMap<u8, KmerSpec>) -> String {
-        specs[&self.k].decode_kmer(self.code)
+        let motif = specs[&self.k].decode_kmer(self.code);
+        match self.orientation {
+            KmerOrientation::Forward => motif,
+            KmerOrientation::Reverse => rev_complement(&motif),
+        }
     }
 }
 

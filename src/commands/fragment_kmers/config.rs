@@ -1,9 +1,12 @@
 use std::path::PathBuf;
 
 use crate::{
-    commands::cli_common::{
-        ChromosomeArgs, FragmentLengthArgs, IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
-        WindowsArgs,
+    commands::{
+        cli_common::{
+            ChromosomeArgs, FragmentLengthArgs, FragmentPositionSelectionArgs, IOCArgs,
+            Ref2BitRequiredArgs, ScaleGenomeArgs, WindowsArgs,
+        },
+        visualize_positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame},
     },
     shared::{blacklist::BlacklistStrategy, indel_mode::IndelMode},
 };
@@ -70,14 +73,8 @@ pub struct FragmentKmersConfig {
         clap(short = 'k', long, num_args = 1.., value_parser = clap::value_parser!(u8).range(1..28), required=true, help_heading="Core"))]
     pub kmer_sizes: Vec<u8>,
 
-    /// Number of bases to exclude from each end of fragments `[integer]`
-    ///
-    /// This allows not counting end-motifs, to focus only on the center kmers.
-    /// For pure end-motif counting, use `cfdna ends` instead.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "0", value_parser = clap::value_parser!(u32).range(0..), help_heading="Core"))]
-    pub end_offset: u32,
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub position_selection: FragmentPositionSelectionArgs,
 
     /// How to handle insertions and deletions in fragments `[string]`
     ///
@@ -124,6 +121,10 @@ pub struct FragmentKmersConfig {
     /// Even-sized kmers are collapsed to the lexicographically lowest motif.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub canonical: bool,
+
+    /// Enable positional counting based on --frame/--positions `[flag]`
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
+    pub positional_counts: bool,
 
     /// Save counts as sparse-array. [flag]
     ///
@@ -213,10 +214,17 @@ impl FragmentKmersConfig {
             output_prefix: "fragment_kmers".to_string(),
             tile_size: 20_000_000,
             kmer_sizes: vec![3u8],
-            end_offset: 0,
+            position_selection: FragmentPositionSelectionArgs {
+                frame: ReferenceFrame::Left,
+                positions: "..".to_string(),
+                step: 1,
+                bases_from: BasesFrom::Reference,
+                mismatch_bases_from: MismatchBasesFrom::NearestRead,
+            },
             indel_mode: IndelMode::Ignore,
             ignore_gap: false,
             canonical: false,
+            positional_counts: false,
             save_sparse: false,
             windows: WindowsArgs::default(),
             chromosomes,
@@ -245,8 +253,8 @@ impl FragmentKmersConfig {
         self.kmer_sizes = kmer_sizes;
     }
 
-    pub fn set_end_offset(&mut self, end_offset: u32) {
-        self.end_offset = end_offset;
+    pub fn set_position_selection(&mut self, position_selection: FragmentPositionSelectionArgs) {
+        self.position_selection = position_selection;
     }
 
     pub fn set_ignore_gap(&mut self, ignore_gap: bool) {
@@ -255,6 +263,10 @@ impl FragmentKmersConfig {
 
     pub fn set_canonical(&mut self, canonical: bool) {
         self.canonical = canonical;
+    }
+
+    pub fn set_positional_counts(&mut self, positional: bool) {
+        self.positional_counts = positional;
     }
 
     pub fn set_save_sparse(&mut self, save_sparse: bool) {
