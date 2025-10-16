@@ -805,7 +805,7 @@ pub fn count_kmers_at_positions(
                             idx += 1;
                             continue;
                         };
-                        if kmer_start_abs < tile_start {
+                        if kmer_start_abs < tile_start || kmer_start_abs < seg_start {
                             idx += 1;
                             continue;
                         }

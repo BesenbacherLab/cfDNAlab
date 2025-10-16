@@ -331,19 +331,87 @@ mod tests_fragment_kmer_command {
 
         run(&cfg_base)?;
 
+        // Explaining expectations:
+        //
+        // Reference:
+        // 0 A 1 C 2 G 3 T 4 G 5 A 6 C 7 C 8 T 9 T
+        // 10 A 11 G 12 G 13 C 14 T 15 A 16 A 17 C 18 C 19 G
+        // 20 T 21 A 22 C 23 G 24 T 25 T 26 A 27 G 28 C 29 C
+        // 30 G 31 A 32 T 33 T 34 A 35 C 36 A 37 A 38 G 39 T
+        //
+        // frame = Left, positions = “2..”, so skip the first base of each fragment (offset 0) and count forward 2-mers only.
+        // insertions/deletions split segments. A 2-mer must be fully inside a single contiguous segment (no crossing the I/D boundary)
+        //
+        // # Fragment 1
+        //
+        // forward: 0..10 (10M)
+        //
+        // reverse: 14..24 (10M)
+        //
+        // segments: [0..10) and [14..24)
+        //
+        // Skip first left base (abs 0); k=2 allowed starts:
+        //
+        // [0..10): starts 1..8 -> CG, GT, TG, GA, AC, CC, CT, TT
+        //
+        // [14..24): starts 14..22 -> TA, AA, AC, CC, CG, GT, TA, AC, CG
+        //
+        // Counts from F1
+        // AA 1, AC 3, CC 2, CG 3, CT 1, GA 1, GT 2, TA 2, TG 1, TT 1
+        //
+        // # Fragment 2 (has 4M 1I 4M on forward)
+        //
+        // start..end: 5..21
+        //
+        // forward read splits the reference into [5..9) and [9..13) because of the insertion (I consumes read, not reference).
+        //
+        // reverse read adds [13..21).
+        //
+        // segments: [5..9), [9..13), [13..21)
+        //
+        // Skip first left base (abs 5). k=2 allowed starts:
+        //
+        // [5..9): 6..7 -> CC, CT (note: TT at 8 is NOT allowed, last start = 7)
+        //
+        // [9..13): 9..11 -> TA, AG, GG (GC at 12 is NOT allowed, last start = 11)
+        //
+        // [13..21): 13..19 -> CT, TA, AA, AC, CC, CG, GT
+        //
+        // Counts from F2
+        // AA 1, AC 1, CC 2, CG 1, CT 2, AG 1, GG 1, GT 1, TA 2
+        //
+        // # Fragment 3 (has 3M 1D 5M on forward)
+        //
+        // start..end: 16..27
+        //
+        // Deletion consumes reference -> gap at [19..20).
+        //
+        // reverse read 20..27.
+        //
+        // segments: [16..19) and [20..27)
+        //
+        // Skip first left base (abs 16). k=2 allowed starts:
+        //
+        // [16..19): 17 -> CC
+        //
+        // [20..27): 20..25 -> TA, AC, CG, GT, TT, TA
+        //
+        // Counts from F3
+        // AC 1, CC 1, CG 1, GT 1, TA 2, TT 1
+
         let observed_base = load_counts_from_output(out_dir.path(), "edge_base", 2)?;
-        println!("{:?}",observed_base);
+        println!("{:?}", observed_base);
         let expected_base: HashMap<String, f64> = vec![
             ("AA", 2.0),
             ("AC", 5.0),
             ("AG", 1.0),
             ("CC", 5.0),
-            ("CG", 4.0),
+            ("CG", 5.0),
             ("CT", 3.0),
             ("GA", 1.0),
             ("GG", 1.0),
-            ("GT", 3.0),
-            ("TA", 5.0),
+            ("GT", 4.0),
+            ("TA", 6.0),
             ("TG", 1.0),
             ("TT", 2.0),
         ]
