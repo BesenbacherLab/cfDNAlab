@@ -6,6 +6,7 @@ use cfdnalab::commands::lengths::config::LengthsConfig;
 use cfdnalab::commands::prepare_windows::config::PrepareConfig;
 use cfdnalab::commands::profile_groups::config::ProfileGroupsConfig;
 use cfdnalab::commands::reference_gc::config::RefGCConfig;
+use cfdnalab::commands::visualize_positions::config::VisualizePositionsConfig;
 
 #[cfg(feature = "cli")]
 #[cfg_attr(feature = "cli", derive(clap::Parser))]
@@ -26,6 +27,7 @@ enum Cmd {
     Profiles(ProfileGroupsConfig),
     FragmentKmers(FragmentKmersConfig),
     PrepWindows(PrepareConfig),
+    VisualizePositions(VisualizePositionsConfig),
     // Ends(EndsConfig),
 }
 
@@ -57,6 +59,9 @@ fn main() {
         Cmd::Profiles(cfg) => cfdnalab::commands::profile_groups::profile_groups::run(&cfg),
         Cmd::FragmentKmers(cfg) => cfdnalab::commands::fragment_kmers::fragment_kmers::run(&cfg),
         Cmd::PrepWindows(cfg) => cfdnalab::commands::prepare_windows::prepare_windows::run(&cfg), // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg),
+        Cmd::VisualizePositions(cfg) => {
+            cfdnalab::commands::visualize_positions::visualize_positions::run(&cfg)
+        }
     };
 
     if let Err(e) = res {

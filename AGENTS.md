@@ -10,6 +10,16 @@
 ## Docstrings
 Docstrings should read like a short tutorial, then details, then structured sections. You may also add examples when they are relevant.
 
+Bullet points in CLI-facing documentation (config files) should have a newline between them, otherwise CLI collapses the sentences.
+
+Reduce the number of semi-colons in docstrings and comments. Use comma or dot instead. 
+
+In-line comments start with title-cased first word and does not have a terminal dot *in the end*. E.g. `// A comment`
+
+Never use "…" or similar non-ascii symbols. They don't work in the terminal. Use "...", "->", ">=", etc.
+
+Adapt to my language. If I use "center", don't use "centre".
+
 **Order**
 1. **Summary (pedagogical):** What this does and when to use it.
 2. **Technical details:** Key behavior, assumptions, edge cases, complexity notes.
@@ -42,6 +52,8 @@ def fn(...):
 ## Communication Style
 
 **Explain only your current changes.** Do not restate steps from previous revisions. Keep change notes concise and specific to this update.
+
+**Ask before large refactors**: For larger refactors, such as renaming of core components, ask me about proposed changes first. I have the final say and don't want to waste credits.
 
 ## Scope & Backwards Compatibility
 
