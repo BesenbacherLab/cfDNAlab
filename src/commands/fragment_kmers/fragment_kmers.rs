@@ -767,6 +767,14 @@ pub fn count_kmers_at_positions(
                                 continue;
                             }
                         };
+
+                        // Ensure the forward k-mer stays within this contiguous segment
+                        // idx_abs is the start. Require idx_abs + (k-1) < seg_end
+                        if idx_abs.saturating_add(k_span.saturating_sub(1)) >= seg_end {
+                            idx += 1;
+                            continue;
+                        }
+
                         // We look up weights using the same tile-relative index as the positional codes
                         let weight = match weights {
                             Some(w) => unsafe { *w.get_unchecked(start_local) as f64 },
