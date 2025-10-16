@@ -332,6 +332,7 @@ mod tests_fragment_kmer_command {
         run(&cfg_base)?;
 
         let observed_base = load_counts_from_output(out_dir.path(), "edge_base", 2)?;
+        println!("{:?}",observed_base);
         let expected_base: HashMap<String, f64> = vec![
             ("AA", 2.0),
             ("AC", 5.0),
