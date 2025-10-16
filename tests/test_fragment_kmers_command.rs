@@ -352,9 +352,9 @@ mod tests_fragment_kmer_command {
         //
         // Skip first left base (abs 0); k=2 allowed starts:
         //
-        // [0..10): starts 1..8 -> CG, GT, TG, GA, AC, CC, CT, TT
+        // [0..10): starts 1..=8 -> CG, GT, TG, GA, AC, CC, CT, TT
         //
-        // [14..24): starts 14..22 -> TA, AA, AC, CC, CG, GT, TA, AC, CG
+        // [14..24): starts 14..=22 -> TA, AA, AC, CC, CG, GT, TA, AC, CG
         //
         // Counts from F1
         // AA 1, AC 3, CC 2, CG 3, CT 1, GA 1, GT 2, TA 2, TG 1, TT 1
@@ -371,11 +371,11 @@ mod tests_fragment_kmer_command {
         //
         // Skip first left base (abs 5). k=2 allowed starts:
         //
-        // [5..9): 6..7 -> CC, CT (note: TT at 8 is NOT allowed, last start = 7)
+        // [5..9): 6..=7 -> CC, CT (note: TT at 8 is NOT allowed, last start = 7)
         //
-        // [9..13): 9..11 -> TA, AG, GG (GC at 12 is NOT allowed, last start = 11)
+        // [9..13): 9..=11 -> TA, AG, GG (GC at 12 is NOT allowed, last start = 11)
         //
-        // [13..21): 13..19 -> CT, TA, AA, AC, CC, CG, GT
+        // [13..21): 13..=19 -> CT, TA, AA, AC, CC, CG, GT
         //
         // Counts from F2
         // AA 1, AC 1, CC 2, CG 1, CT 2, AG 1, GG 1, GT 1, TA 2
@@ -394,7 +394,7 @@ mod tests_fragment_kmer_command {
         //
         // [16..19): 17 -> CC
         //
-        // [20..27): 20..25 -> TA, AC, CG, GT, TT, TA
+        // [20..27): 20..=25 -> TA, AC, CG, GT, TT, TA
         //
         // Counts from F3
         // AC 1, CC 1, CG 1, GT 1, TA 2, TT 1
@@ -447,6 +447,47 @@ mod tests_fragment_kmer_command {
 
         run(&cfg_scaled)?;
 
+        // Explaining expectations:
+        //
+        // Blacklist (N-mask on reference): positions [9,11) => {(8),9,10} and [22,23) => {(21),22}
+        // Scaling: [0,6) -> 1.0, [6,8) -> 0.0 (also N-masked), [8,20) -> 1.5, [20,40) -> 0.5
+        //
+        // A start is valid iff both bases (start and start+1) are not N-masked
+        // Weighting = scaling weight at the start base
+        //
+        // per-fragment contributions (motif -> sum of weights)
+        //
+        // # Fragment 1
+        //
+        // starts kept (0-indexed): 1,2,3,4,5,14,15,16,17,18,19,20
+        //
+        // yields:
+        // CG 1.0(@1)+1.5(@18)=2.5;
+        // GT 1.0(@2)+1.5(@19)=2.5;
+        // TG 1.0(@3);
+        // GA 1.0(@4);
+        // TA 1.5(@14)+0.5(@20)=2.0;
+        // AA 1.5(@15);
+        // AC 1.5(@16);
+        // CC 1.5(@17)
+        //
+        // # Fragment 2
+        //
+        // starts kept: 11,13,14,15,16,17,18,19
+        // (note: 6,7 masked by scaling=0; 9,10 masked by blacklist)
+        //
+        // yields:
+        // GG 1.5(@11); CT 1.5(@13); TA 1.5(@14); AA 1.5(@15);
+        // AC 1.5(@16); CC 1.5(@17); CG 1.5(@18); GT 1.5(@19)
+        //
+        // # Fragment 3
+        //
+        // starts kept: 17,20,23,24,25
+        // (22 excluded due to blacklist)
+        //
+        // yields:
+        // CC 1.5(@17); TA 0.5(@20)+0.5(@25)=1.0; GT 0.5(@23); TT 0.5(@24)
+
         let observed_scaled = load_counts_from_output(out_dir.path(), "edge_scaled", 2)?;
 
         let expected_scaled: HashMap<String, f64> = vec![
@@ -457,8 +498,8 @@ mod tests_fragment_kmer_command {
             ("CT", 1.5),
             ("GA", 1.0),
             ("GG", 1.5),
-            ("GT", 3.0),
-            ("TA", 4.0),
+            ("GT", 4.5),
+            ("TA", 4.5),
             ("TG", 1.0),
             ("TT", 0.5),
         ]
