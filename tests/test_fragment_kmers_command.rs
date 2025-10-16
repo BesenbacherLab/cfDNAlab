@@ -285,7 +285,7 @@ mod tests_fragment_kmer_command {
     }
 
     #[test]
-    fn complex_edge_cases_respect_scaling_and_blacklists() -> Result<()> {
+    fn complex_edge_cases_left_frame_respect_scaling_and_blacklists() -> Result<()> {
         let bam = fragment_kmers_edge_bam()?;
         let reference = fragment_kmers_edge_reference()?;
         let out_dir = TempDir::new()?;
@@ -507,6 +507,132 @@ mod tests_fragment_kmer_command {
         .map(|(m, c)| (m.to_string(), c))
         .collect();
 
+        assert_counts_close(&observed_scaled, &expected_scaled);
+
+        Ok(())
+    }
+
+    #[test]
+    fn complex_edge_cases_right_frame_respect_scaling_and_blacklists() -> Result<()> {
+        let bam = fragment_kmers_edge_bam()?;
+        let reference = fragment_kmers_edge_reference()?;
+        let out_dir = TempDir::new()?;
+        let chromosomes = ["chr1"];
+
+        let fragment_lengths = FragmentLengthArgs {
+            min_fragment_length: 10,
+            max_fragment_length: 1000,
+        };
+
+        let mut cfg_base = FragmentKmersConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 2,
+            },
+            Ref2BitRequiredArgs {
+                ref_2bit: reference.path.clone(),
+            },
+            base_chromosomes(&chromosomes),
+        );
+        cfg_base.set_output_prefix("edge_base_right".to_string());
+        cfg_base.set_kmer_sizes(vec![2]);
+        cfg_base.set_indel_mode(IndelMode::Adjust);
+        cfg_base.set_min_mapq(0);
+        cfg_base.set_require_proper_pair(false);
+        cfg_base.set_canonical(false);
+        cfg_base.set_ignore_gap(true);
+        cfg_base.set_positional_counts(true);
+        cfg_base.set_position_selection(FragmentPositionSelectionArgs {
+            frame: ReferenceFrame::Right, // Mirror: count from the RIGHT end
+            positions: "2..".to_string(), // skip the fragment’s last base
+            step: 1,
+            bases_from: BasesFrom::Reference,
+            mismatch_bases_from: MismatchBasesFrom::NearestRead,
+        });
+        {
+            let fl = cfg_base.fragment_lengths_mut();
+            fl.min_fragment_length = fragment_lengths.min_fragment_length;
+            fl.max_fragment_length = fragment_lengths.max_fragment_length;
+        }
+
+        // Base (no blacklist/scaling)
+        run(&cfg_base)?;
+        let observed_base = load_counts_from_output(out_dir.path(), "edge_base_right", 2)?;
+        // Hand-derived (reverse anchoring, terminal-base weight=1.0 everywhere, no masking)
+        let expected_base: HashMap<String, f64> = vec![
+            ("AA", 2.0),
+            ("AC", 3.0),
+            ("AG", 3.0),
+            ("AT", 0.0),
+            ("CA", 1.0),
+            ("CC", 1.0),
+            ("CG", 4.0),
+            ("CT", 1.0),
+            ("GA", 0.0),
+            ("GC", 0.0),
+            ("GG", 5.0),
+            ("GT", 8.0),
+            ("TA", 5.0),
+            ("TC", 1.0),
+            ("TG", 0.0),
+            ("TT", 2.0),
+        ]
+        .into_iter()
+        .map(|(m, c)| (m.to_string(), c))
+        .collect();
+        assert_counts_close(&observed_base, &expected_base);
+
+        // Blacklist + scaling scenario
+
+        let blacklist_path = out_dir.path().join("mask.bed");
+        write_bed(
+            &blacklist_path,
+            &[("chr1", 9, 11, "mask"), ("chr1", 22, 23, "mask")],
+        )?;
+        let scaling_path = out_dir.path().join("scaling.tsv");
+        write_scaling_factors(
+            &scaling_path,
+            &[
+                ("chr1", 0, 6, 1.0),
+                ("chr1", 6, 8, 0.0), // also N-masked
+                ("chr1", 8, 20, 1.5),
+                ("chr1", 20, 40, 0.5),
+            ],
+        )?;
+
+        let mut cfg_scaled = cfg_base.clone();
+        cfg_scaled.set_output_prefix("edge_scaled_right".to_string());
+        cfg_scaled.blacklist = Some(vec![blacklist_path.clone()]);
+        cfg_scaled.blacklist_strategy = BlacklistStrategy::Proportion(1.0);
+        let mut scale_args = ScaleGenomeArgs::default();
+        scale_args.scaling_factors = Some(scaling_path.clone());
+        cfg_scaled.set_scale_genome(scale_args);
+
+        run(&cfg_scaled)?;
+        let observed_scaled = load_counts_from_output(out_dir.path(), "edge_scaled_right", 2)?;
+
+        // Hand-derived with masking (N at 6,7,9,10,22) and terminal-base weights:
+        // weight(p) = 1.0 for p∈[0,6), 0.0 for p∈[6,8), 1.5 for p∈[8,20), 0.5 for p∈[20,40).
+        // reverse k-mers use terminal base index 'p' for weighting and span [p-1, p].
+        // Consequently, anchors at p=6,7,9,10 are invalid (touch masked bases), p=23 is invalid (touches 22),
+        // but p=21 remains valid (spans 20–21 and does not touch 22).
+        let expected_scaled: HashMap<String, f64> = vec![
+            ("GT", 5.5),
+            ("GG", 4.5),
+            ("CG", 4.0),
+            ("TA", 4.0),
+            ("TT", 3.0),
+            ("AC", 2.0),
+            ("AG", 1.5),
+            ("CC", 1.5),
+            ("CA", 1.0),
+            ("TC", 1.0),
+            ("AA", 0.5),
+        ]
+        .into_iter()
+        .map(|(m, c)| (m.to_string(), c))
+        .collect();
         assert_counts_close(&observed_scaled, &expected_scaled);
 
         Ok(())
