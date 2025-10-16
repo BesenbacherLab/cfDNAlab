@@ -317,7 +317,8 @@ mod tests_fragment_kmer_command {
         cfg_base.set_positional_counts(true);
         cfg_base.set_position_selection(FragmentPositionSelectionArgs {
             frame: ReferenceFrame::Left,
-            positions: "2..-1".to_string(),
+            //positions: "2..-1".to_string(),
+            positions: "2..".to_string(),
             step: 1,
             bases_from: BasesFrom::Reference,
             mismatch_bases_from: MismatchBasesFrom::NearestRead,
