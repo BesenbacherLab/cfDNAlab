@@ -196,6 +196,18 @@ impl FragmentKmersSharedArgs {
         self.output_prefix = output_prefix;
     }
 
+    pub fn set_blacklist(&mut self, blacklist: Option<Vec<PathBuf>>) {
+        self.blacklist = blacklist;
+    }
+
+    pub fn set_blacklist_min_size(&mut self, blacklist_min_size: u64) {
+        self.blacklist_min_size = blacklist_min_size;
+    }
+
+    pub fn set_blacklist_strategy(&mut self, blacklist_strategy: BlacklistStrategy) {
+        self.blacklist_strategy = blacklist_strategy;
+    }
+
     pub fn set_tile_size(&mut self, tile_size: u32) {
         self.tile_size = tile_size;
     }
@@ -311,6 +323,18 @@ impl FragmentKmersConfig {
 
     pub fn set_output_prefix(&mut self, output_prefix: String) {
         self.shared_args.set_output_prefix(output_prefix);
+    }
+
+    pub fn set_blacklist(&mut self, blacklist: Option<Vec<PathBuf>>) {
+        self.shared_args.set_blacklist(blacklist);
+    }
+
+    pub fn set_blacklist_min_size(&mut self, blacklist_min_size: u64) {
+        self.shared_args.set_blacklist_min_size(blacklist_min_size);
+    }
+
+    pub fn set_blacklist_strategy(&mut self, blacklist_strategy: BlacklistStrategy) {
+        self.shared_args.set_blacklist_strategy(blacklist_strategy);
     }
 
     pub fn set_tile_size(&mut self, tile_size: u32) {

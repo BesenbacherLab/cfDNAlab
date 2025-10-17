@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::{
     commands::{
         cli_common::{
@@ -6,7 +8,7 @@ use crate::{
         },
         fragment_kmers::config::FragmentKmersSharedArgs,
     },
-    shared::indel_mode::IndelMode,
+    shared::{blacklist::BlacklistStrategy, indel_mode::IndelMode},
 };
 
 /// Calculate positional Nth-order transition probabilities within the fragment in a BAM-file.
@@ -88,6 +90,18 @@ impl TransitionsConfig {
 
     pub fn set_output_prefix(&mut self, output_prefix: String) {
         self.shared_args.set_output_prefix(output_prefix);
+    }
+
+    pub fn set_blacklist(&mut self, blacklist: Option<Vec<PathBuf>>) {
+        self.shared_args.set_blacklist(blacklist);
+    }
+
+    pub fn set_blacklist_min_size(&mut self, blacklist_min_size: u64) {
+        self.shared_args.set_blacklist_min_size(blacklist_min_size);
+    }
+
+    pub fn set_blacklist_strategy(&mut self, blacklist_strategy: BlacklistStrategy) {
+        self.shared_args.set_blacklist_strategy(blacklist_strategy);
     }
 
     pub fn set_tile_size(&mut self, tile_size: u32) {

@@ -439,8 +439,8 @@ mod tests_fragment_kmer_command {
 
         let mut cfg_scaled = cfg_base.clone();
         cfg_scaled.set_output_prefix("edge_scaled".to_string());
-        cfg_scaled.blacklist = Some(vec![blacklist_path.clone()]);
-        cfg_scaled.blacklist_strategy = BlacklistStrategy::Proportion(1.0);
+        cfg_scaled.set_blacklist(Some(vec![blacklist_path.clone()]));
+        cfg_scaled.set_blacklist_strategy(BlacklistStrategy::Proportion(1.0));
         let mut scale_args = ScaleGenomeArgs::default();
         scale_args.scaling_factors = Some(scaling_path.clone());
         cfg_scaled.set_scale_genome(scale_args);
@@ -603,8 +603,8 @@ mod tests_fragment_kmer_command {
 
         let mut cfg_scaled = cfg_base.clone();
         cfg_scaled.set_output_prefix("edge_scaled_right".to_string());
-        cfg_scaled.blacklist = Some(vec![blacklist_path.clone()]);
-        cfg_scaled.blacklist_strategy = BlacklistStrategy::Proportion(1.0);
+        cfg_scaled.set_blacklist(Some(vec![blacklist_path.clone()]));
+        cfg_scaled.set_blacklist_strategy(BlacklistStrategy::Proportion(1.0));
         let mut scale_args = ScaleGenomeArgs::default();
         scale_args.scaling_factors = Some(scaling_path.clone());
         cfg_scaled.set_scale_genome(scale_args);
