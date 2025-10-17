@@ -11,12 +11,19 @@ use crate::{
     shared::{blacklist::BlacklistStrategy, indel_mode::IndelMode},
 };
 
-// TODO: Add minimum or min mean base quality filtering!
-
-/// Count k-mers within the fragments in a BAM-file.
+/// Calculate positional Nth-order transition probabilities within the fragment in a BAM-file.
 ///
-/// Whereas the `cfdna ends` tool extracts end-motifs, this tool extracts all k-mers
-/// in a sliding window across the fragment.
+/// This command wraps `cfdna fragment-kmers` and calculates the probabilities based its the output.
+///
+/// Pipeline: A) **Count** k-mers of size `order + 1` (e.g. 2-mers for first-order transitions) per specified position.
+/// B) Calculate position-wise frequencies of all k-mers.
+///
+/// ## Example
+///
+/// ```rust,ignore
+/// // First-order transition probabilities in the 10 first bases from each 5' end:
+/// cfdna transitions --bam <> --output-dir <> --ref-2bit <> --n-threads 12 --orders 1 --frame nearest --positions '..10' --indel-mode adjust
+/// ```
 ///
 /// ## Always-on exclusion criteria
 ///
@@ -29,7 +36,7 @@ use crate::{
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
-pub struct FragmentKmersConfig {
+pub struct TransitionsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
 
@@ -41,14 +48,14 @@ pub struct FragmentKmersConfig {
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
     /// Examples produce files like:
-    ///   `<prefix>.k3_counts.npy`,
-    ///   `<prefix>.k3_motifs.txt`,
+    ///   `<prefix>.n1_frequencies.npy`,
+    ///   `<prefix>.n1_motifs.txt`,
     #[cfg_attr(
         feature = "cli",
         clap(
             long,
             short = 'x',
-            default_value = "fragment_kmers",
+            default_value = "transitions",
             help_heading = "Core"
         )
     )]
@@ -62,16 +69,19 @@ pub struct FragmentKmersConfig {
         clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
     pub tile_size: u32,
 
-    /// List of K-mer sizes [integer].
+    /// List of transition orders [integer].
     ///
-    /// When counting for many kmer-sizes (>8), consider splitting
+    /// E.g. if you want to predict based on only the previous base, it's first order (e.g. [A>C]). This practically leads to 2-mer frequencies.
+    /// If you want to predict based on the previous TWO bases, it's second order (e.g. [AT>C]).
+    ///
+    /// When counting for many orders (>8), consider splitting
     /// into multiple runs to reduce memory consumption at a time.
     ///
-    /// Example: `--kmer-sizes 3 5 11`
+    /// Example: `--orders 1 2`
     #[cfg_attr(
         feature = "cli",
-        clap(short = 'k', long, num_args = 1.., value_parser = clap::value_parser!(u8).range(1..28), required=true, help_heading="Core"))]
-    pub kmer_sizes: Vec<u8>,
+        clap(short = 'n', long, num_args = 1.., default_values_t = [1u8, 2u8], value_parser = clap::value_parser!(u8).range(1..27), help_heading="Core"))]
+    pub orders: Vec<u8>,
 
     // TODO: Is it still correct that scaling weights use the full reference span? 5th last line
     /// How to handle insertions and deletions in fragments `[string]`
@@ -113,16 +123,13 @@ pub struct FragmentKmersConfig {
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub ignore_gap: bool,
 
+    // TODO: Perhaps this should collapse around the first/terminal base instead?
     /// Collapse each kmer with its reverse-complement. [flag]
     ///
     /// Odd-sized k-mers are collapsed such that the middle base is `A` or `C`.
     /// Even-sized k-mers are collapsed to the lexicographically lowest motif.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub canonical: bool,
-
-    /// Enable positional counting based on --frame/--positions `[flag]`
-    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
-    pub positional_counts: bool,
 
     /// Save counts as sparse-array. [flag]
     ///
@@ -207,14 +214,14 @@ pub struct FragmentKmersConfig {
     // two_bit: TwoBitArgs,
 }
 
-impl FragmentKmersConfig {
+impl TransitionsConfig {
     pub fn new(ioc: IOCArgs, ref_genome: Ref2BitRequiredArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
             ref_genome,
             output_prefix: "fragment_kmers".to_string(),
             tile_size: 20_000_000,
-            kmer_sizes: vec![3u8],
+            orders: vec![1u8, 2u8],
             position_selection: FragmentPositionSelectionArgs {
                 frame: ReferenceFrame::Left,
                 positions: "..".to_string(),
@@ -225,7 +232,6 @@ impl FragmentKmersConfig {
             indel_mode: IndelMode::Ignore,
             ignore_gap: false,
             canonical: false,
-            positional_counts: false,
             save_sparse: false,
             windows: WindowsArgs::default(),
             chromosomes,
@@ -250,8 +256,8 @@ impl FragmentKmersConfig {
         self.tile_size = tile_size;
     }
 
-    pub fn set_kmer_sizes(&mut self, kmer_sizes: Vec<u8>) {
-        self.kmer_sizes = kmer_sizes;
+    pub fn set_orders(&mut self, orders: Vec<u8>) {
+        self.orders = orders;
     }
 
     pub fn set_position_selection(&mut self, position_selection: FragmentPositionSelectionArgs) {
@@ -264,10 +270,6 @@ impl FragmentKmersConfig {
 
     pub fn set_canonical(&mut self, canonical: bool) {
         self.canonical = canonical;
-    }
-
-    pub fn set_positional_counts(&mut self, positional: bool) {
-        self.positional_counts = positional;
     }
 
     pub fn set_save_sparse(&mut self, save_sparse: bool) {
