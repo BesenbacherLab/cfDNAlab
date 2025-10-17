@@ -61,20 +61,56 @@ use std::{convert::TryInto, io::Write, num::NonZeroUsize, path::Path, sync::Arc,
 ///   the first failure.
 pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
     let start_time = Instant::now();
-    let (chromosomes, contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc)?;
-    let window_opt = opt.windows.resolve_windows();
-    let prefix = opt.output_prefix.trim();
+    let global_counter = run_inner(opt)?;
+
+    println!("");
+    println!("Statistics");
+    println!("----------");
+
+    // Print summary statistics and execution time
+    let elapsed = start_time.elapsed();
+    println!("  Total reads: {}", global_counter.base.total_reads);
+    println!(
+        "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
+        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
+        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
+            / global_counter.base.total_reads as f64
+            * 100.0,
+        global_counter.base.accepted_forward,
+        global_counter.base.accepted_reverse
+    );
+    println!(
+        "  Blacklist-excluded fragments: {}",
+        global_counter.blacklisted_fragments
+    );
+    // if opt.gc.bin_by_gc {
+    //     println!("GC-excluded reads: {}", global_counter.base.gc_excl);
+    // }
+    println!(
+        "  Fragments counted one or more times: {}",
+        global_counter.base.counted_fragments
+    );
+    println!("----------");
+    println!("Elapsed time: {:.2?}", elapsed);
+    Ok(())
+}
+
+pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
+    let (chromosomes, contigs) =
+        resolve_chromosomes_and_contigs(&opt.shared_args.chromosomes, &opt.shared_args.ioc)?;
+    let window_opt = opt.shared_args.windows.resolve_windows();
+    let prefix = opt.shared_args.output_prefix.trim();
 
     // Create output directory
-    ensure_output_dir(&opt.ioc.output_dir)?;
+    ensure_output_dir(&opt.shared_args.ioc.output_dir)?;
 
     // Load blacklist intervals if provided
-    if opt.blacklist.is_some() {
+    if opt.shared_args.blacklist.is_some() {
         println!("Start: Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
-        opt.blacklist.as_ref(),
-        opt.blacklist_min_size,
+        opt.shared_args.blacklist.as_ref(),
+        opt.shared_args.blacklist_min_size,
         0,
         &chromosomes,
     )?;
@@ -95,36 +131,37 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
     let kmer_specs: FxHashMap<u8, KmerSpec> = build_kmer_specs(&opt.kmer_sizes)?;
 
     let positional_cache = if opt.positional_counts {
-        if opt.position_selection.bases_from != BasesFrom::Reference {
+        if opt.shared_args.position_selection.bases_from != BasesFrom::Reference {
             bail!("positional counting currently supports bases-from=reference only");
         }
         let positions_spec = parse_positions(
-            opt.position_selection.frame,
-            &opt.position_selection.positions,
+            opt.shared_args.position_selection.frame,
+            &opt.shared_args.position_selection.positions,
         )
         .context("failed to parse --positions for fragment-kmers")?;
-        let step = NonZeroUsize::new(opt.position_selection.step)
+        let step = NonZeroUsize::new(opt.shared_args.position_selection.step)
             .ok_or_else(|| anyhow!("--step must be at least 1"))?;
         Some(Arc::new(PositionSelectionCache::new(
-            opt.position_selection.frame,
+            opt.shared_args.position_selection.frame,
             &positions_spec,
             step,
-            opt.fragment_lengths.min_fragment_length,
-            opt.fragment_lengths.max_fragment_length,
+            opt.shared_args.fragment_lengths.min_fragment_length,
+            opt.shared_args.fragment_lengths.max_fragment_length,
         )?))
     } else {
         None
     };
 
     // Load genomic scaling factors
-    if opt.scale_genome.scaling_factors.is_some() {
+    if opt.shared_args.scale_genome.scaling_factors.is_some() {
         println!("Start: Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
-        load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
+        load_scaling_map(&opt.shared_args.scale_genome, &chromosomes, &contigs)?;
 
     // Build temporary directory
-    let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
+    let temp_dir = make_temp_dir(&opt.shared_args.ioc.output_dir, prefix)
+        .context("create per-run temp dir")?;
 
     // Window size when --by-size (otherwise None)
     let by_size_bp: Option<u64> = match &window_opt {
@@ -133,9 +170,14 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
     };
 
     // Build tiles
-    let halo_bp: u32 = opt.fragment_lengths.max_fragment_length; // Safe halo for pairing/segments
-    let (tiles, _tile_and_window_boundaries_align) =
-        build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, by_size_bp)?;
+    let halo_bp: u32 = opt.shared_args.fragment_lengths.max_fragment_length; // Safe halo for pairing/segments
+    let (tiles, _tile_and_window_boundaries_align) = build_tiles(
+        &chromosomes,
+        &contigs,
+        opt.shared_args.tile_size,
+        halo_bp,
+        by_size_bp,
+    )?;
 
     let windows_lookup = windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(&tiles, |chr| {
@@ -163,7 +205,7 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
     );
 
     // Configure global thread‐pool size
-    init_global_pool(opt.ioc.n_threads as usize)?;
+    init_global_pool(opt.shared_args.ioc.n_threads as usize)?;
 
     println!("Start: Counting per chromosome");
 
@@ -274,8 +316,8 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
         &prepared_counts,
         &kmer_specs,
         &motifs_by_k,
-        &opt.ioc.output_dir,
-        &opt.output_prefix,
+        &opt.shared_args.ioc.output_dir,
+        &opt.shared_args.output_prefix,
         opt.save_sparse,
     )?;
 
@@ -283,7 +325,7 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
     // Write bins BED file
     if !matches!(window_opt, WindowSpec::Global) {
         println!("Start: Writing window coordinates to disk");
-        let bins_path = opt.ioc.output_dir.join("bins.bed");
+        let bins_path = opt.shared_args.ioc.output_dir.join("bins.bed");
         let mut bed_writer = create_text_writer(&bins_path).context("Create bed fail")?;
         for (chr, start, end, _, overlap_perc) in &bin_info {
             writeln!(bed_writer, "{}\t{}\t{}\t{}", chr, start, end, overlap_perc)
@@ -292,36 +334,7 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
         bed_writer.finish().context("Finalize bins.bed writer")?;
     }
 
-    println!("");
-    println!("Statistics");
-    println!("----------");
-
-    // Print summary statistics and execution time
-    let elapsed = start_time.elapsed();
-    println!("  Total reads: {}", global_counter.base.total_reads);
-    println!(
-        "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
-        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
-            / global_counter.base.total_reads as f64
-            * 100.0,
-        global_counter.base.accepted_forward,
-        global_counter.base.accepted_reverse
-    );
-    println!(
-        "  Blacklist-excluded fragments: {}",
-        global_counter.blacklisted_fragments
-    );
-    // if opt.gc.bin_by_gc {
-    //     println!("GC-excluded reads: {}", global_counter.base.gc_excl);
-    // }
-    println!(
-        "  Fragments counted one or more times: {}",
-        global_counter.base.counted_fragments
-    );
-    println!("----------");
-    println!("Elapsed time: {:.2?}", elapsed);
-    Ok(())
+    Ok(global_counter)
 }
 
 /// Process a single tile: stream fragments, accumulate per-window counts, and persist results.
@@ -337,7 +350,8 @@ fn process_tile(
     counts_path: &Path,
 ) -> anyhow::Result<TileResult> {
     // Open a fresh BAM reader for this thread
-    let (mut reader, tid, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
+    let (mut reader, tid, chrom_len) =
+        create_chromosome_reader(&opt.shared_args.ioc.bam, &tile.chr)?;
 
     let fetch_span = determine_fetch_span(tile, window_ctx, tile_window_span, chrom_len);
     let Some((fetch_from, fetch_to)) = fetch_span else {
@@ -355,7 +369,7 @@ fn process_tile(
         .min(chrom_len) as usize;
 
     let mut seq_bytes = read_seq_in_range(
-        &opt.ref_genome.ref_2bit,
+        &opt.shared_args.ref_genome.ref_2bit,
         &tile.chr,
         (tile.core_start as usize)..(seq_end_abs),
     )?;
@@ -401,22 +415,28 @@ fn process_tile(
     // Function for filtering fragments after pairing
     // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
     let fragment_filter = {
-        let lengths = opt.fragment_lengths.clone();
+        let lengths = opt.shared_args.fragment_lengths.clone();
         move |f: &FragmentWithKmerSegments| lengths.contains(f.len())
     };
 
     // Wrap to use opt
     let include_read_fn = {
         let opt = (*opt).clone();
-        move |r: &Record| default_include_read(r, opt.require_proper_pair, opt.min_mapq)
+        move |r: &Record| {
+            default_include_read(
+                r,
+                opt.shared_args.require_proper_pair,
+                opt.shared_args.min_mapq,
+            )
+        }
     };
 
     // Create fragment iterator
     let mut iter = fragments_with_kmer_segments_from_bam(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
         include_read_fn,
-        opt.indel_mode,
-        !opt.ignore_gap,
+        opt.shared_args.indel_mode,
+        !opt.shared_args.ignore_gap,
         0,
         fragment_filter,
     )
@@ -432,10 +452,10 @@ fn process_tile(
         // Determine blacklist status
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
-            opt.blacklist_strategy.clone(),
+            opt.shared_args.blacklist_strategy.clone(),
             fragment.start.into(),
             fragment.end.into(),
-            opt.fragment_lengths.max_fragment_length as u64,
+            opt.shared_args.fragment_lengths.max_fragment_length as u64,
             &mut bl_ptr,
         );
         if in_blacklist {
@@ -465,16 +485,16 @@ fn process_tile(
 
         // Find all overlapping count-windows
         debug_assert!(interval_start >= fragment.start as u64);
-        let lookback_distance = opt.fragment_lengths.max_fragment_length as u64
+        let lookback_distance = opt.shared_args.fragment_lengths.max_fragment_length as u64
             + (interval_start - fragment.start as u64);
         let overlapping_windows = find_overlapping_windows(
             chrom_len,
             &mut wd_ptr,
             window_ctx.windows_slice(),
-            opt.windows.by_size,
+            opt.shared_args.windows.by_size,
             interval_start,
             interval_end,
-            1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
+            1. / (opt.shared_args.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
             lookback_distance,
         )?;
         let overlapping_windows = if let Some(overlaps) = overlapping_windows {
