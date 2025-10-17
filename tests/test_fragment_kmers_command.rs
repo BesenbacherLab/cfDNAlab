@@ -19,7 +19,7 @@ mod tests_fragment_kmer_command {
     use cfdnalab::shared::base::make_canonical;
     use cfdnalab::shared::blacklist::BlacklistStrategy;
     use cfdnalab::shared::indel_mode::IndelMode;
-    use ndarray::Array2;
+    use ndarray::{Array2, Array3};
     use ndarray_npy::read_npy;
     use tempfile::TempDir;
 
@@ -135,17 +135,24 @@ mod tests_fragment_kmer_command {
 
         run(&cfg)?;
 
-        let counts_path = out_dir.path().join("kmers_first.k2_counts.npy");
-        let motifs_path = out_dir.path().join("kmers_first.k2_motifs.txt");
+        let counts_path = out_dir.path().join("kmers_first.k2_left_counts.npy");
+        let motifs_path = out_dir.path().join("kmers_first.k2_left_motifs.txt");
+        let positions_path = out_dir.path().join("kmers_first.left_positions.txt");
         assert!(counts_path.exists());
         assert!(motifs_path.exists());
+        assert!(positions_path.exists());
 
-        let counts: Array2<f64> = read_npy(&counts_path)?;
-        assert_eq!(counts.shape(), &[1, 16]);
+        let counts: Array3<f64> = read_npy(&counts_path)?;
+        assert_eq!(counts.shape(), &[1, 1, 16]);
         let motif_list: Vec<String> = std::fs::read_to_string(&motifs_path)?
             .lines()
             .map(|s| s.to_string())
             .collect();
+        let positions: Vec<i32> = std::fs::read_to_string(&positions_path)?
+            .lines()
+            .map(|line| line.parse::<i32>().expect("position"))
+            .collect();
+        assert_eq!(positions, vec![0]);
 
         let chr1_seq = reference
             .sequence("chr1")
@@ -162,7 +169,7 @@ mod tests_fragment_kmer_command {
 
         let mut actual: HashMap<String, f64> = HashMap::new();
         for (motif_idx, motif) in motif_list.iter().enumerate() {
-            let value = counts[[0, motif_idx]];
+            let value = counts[[0, 0, motif_idx]];
             if value != 0.0 {
                 actual.insert(motif.clone(), value);
             }
@@ -643,10 +650,11 @@ mod tests_fragment_kmer_command {
 mod tests_fragment_kmers_tiling {
     use anyhow::Result;
     use cfdnalab::{
-        commands::fragment_kmers::tiling::{
-            TileKmerCountEntry, TileWindowCounts, merge_tile_counts,
+        commands::fragment_kmers::{
+            positions::PositionGroup,
+            tiling::{TileKmerCountEntry, TileWindowCounts, merge_tile_counts},
         },
-        shared::kmers::kmer_codec::{KmerOrientation, KmerSpec, build_kmer_specs},
+        shared::kmers::kmer_codec::{KmerSpec, build_kmer_specs},
     };
 
     fn code_for_motif(spec: &KmerSpec, motif: &str) -> u64 {
@@ -670,7 +678,8 @@ mod tests_fragment_kmers_tiling {
             entries: vec![TileKmerCountEntry {
                 k: 3,
                 code: code_aaa,
-                orientation: KmerOrientation::Forward,
+                position: None,
+                group: PositionGroup::Left,
                 value: 1.5,
             }],
         }];
@@ -680,7 +689,8 @@ mod tests_fragment_kmers_tiling {
             entries: vec![TileKmerCountEntry {
                 k: 3,
                 code: code_aaa,
-                orientation: KmerOrientation::Forward,
+                position: None,
+                group: PositionGroup::Left,
                 value: 2.0,
             }],
         }];
@@ -706,7 +716,8 @@ mod tests_fragment_kmers_tiling {
                 entries: vec![TileKmerCountEntry {
                     k: 3,
                     code: code_aaa,
-                    orientation: KmerOrientation::Forward,
+                    position: None,
+                    group: PositionGroup::Left,
                     value: 1.0,
                 }],
             },
@@ -715,7 +726,8 @@ mod tests_fragment_kmers_tiling {
                 entries: vec![TileKmerCountEntry {
                     k: 3,
                     code: code_aac,
-                    orientation: KmerOrientation::Forward,
+                    position: None,
+                    group: PositionGroup::Left,
                     value: 2.0,
                 }],
             },
@@ -727,7 +739,8 @@ mod tests_fragment_kmers_tiling {
                 entries: vec![TileKmerCountEntry {
                     k: 3,
                     code: code_aaa,
-                    orientation: KmerOrientation::Forward,
+                    position: None,
+                    group: PositionGroup::Left,
                     value: 3.0,
                 }],
             },
@@ -736,7 +749,8 @@ mod tests_fragment_kmers_tiling {
                 entries: vec![TileKmerCountEntry {
                     k: 3,
                     code: code_aaa,
-                    orientation: KmerOrientation::Forward,
+                    position: None,
+                    group: PositionGroup::Left,
                     value: 5.0,
                 }],
             },
@@ -748,7 +762,8 @@ mod tests_fragment_kmers_tiling {
                 entries: vec![TileKmerCountEntry {
                     k: 3,
                     code: code_aaa,
-                    orientation: KmerOrientation::Forward,
+                    position: None,
+                    group: PositionGroup::Left,
                     value: 0.5,
                 }],
             },
@@ -757,7 +772,8 @@ mod tests_fragment_kmers_tiling {
                 entries: vec![TileKmerCountEntry {
                     k: 3,
                     code: code_aac,
-                    orientation: KmerOrientation::Forward,
+                    position: None,
+                    group: PositionGroup::Left,
                     value: 1.5,
                 }],
             },
@@ -789,7 +805,8 @@ mod tests_fragment_kmers_tiling {
             entries: vec![TileKmerCountEntry {
                 k: 3,
                 code: code_aaa,
-                orientation: KmerOrientation::Forward,
+                position: None,
+                group: PositionGroup::Left,
                 value: 1.0,
             }],
         }];
@@ -806,14 +823,15 @@ mod tests_fragment_kmer_positions {
         commands::{
             fragment_kmers::{
                 fragment_kmers::count_kmers_at_positions,
-                positions::{PositionSelection, PositionSelectionCache},
+                positions::{PositionGroup, PositionSelection, PositionSelectionCache},
+                tiling::CountKey,
             },
             visualize_positions::{LinearRange, PositionsSpec, ReferenceFrame},
         },
         shared::{
             fragment::segment_kmer_fragment::FragmentWithKmerSegments,
             kmers::kmer_codec::{
-                Kmer, KmerCodes, KmerOrientation, KmerSpec, build_kmer_specs,
+                KmerCodes, KmerOrientation, KmerSpec, build_kmer_specs,
                 build_left_aligned_codes_per_k,
             },
         },
@@ -834,10 +852,11 @@ mod tests_fragment_kmer_positions {
             .offsets(context.fragment.len())
             .expect("left frame offsets");
 
-        let mut counts = FxHashMap::default();
+        let mut counts: FxHashMap<CountKey, f64> = FxHashMap::default();
         count_kmers_at_positions(
             &context.fragment,
             selections,
+            true,
             &context.positional_codes_by_k,
             &context.kmer_specs,
             &mut counts,
@@ -853,10 +872,11 @@ mod tests_fragment_kmer_positions {
             context.k as usize,
         );
         assert_eq!(counts, expected);
+        assert!(counts.keys().all(|key| key.group == PositionGroup::Left));
         assert!(
             counts
                 .keys()
-                .all(|kmer| matches!(kmer.orientation, KmerOrientation::Forward))
+                .all(|key| matches!(key.orientation(), KmerOrientation::Forward))
         );
     }
 
@@ -873,10 +893,11 @@ mod tests_fragment_kmer_positions {
             .offsets(context.fragment.len())
             .expect("right frame offsets");
 
-        let mut counts = FxHashMap::default();
+        let mut counts: FxHashMap<CountKey, f64> = FxHashMap::default();
         count_kmers_at_positions(
             &context.fragment,
             selections,
+            true,
             &context.positional_codes_by_k,
             &context.kmer_specs,
             &mut counts,
@@ -895,8 +916,9 @@ mod tests_fragment_kmer_positions {
         assert!(
             counts
                 .keys()
-                .all(|kmer| matches!(kmer.orientation, KmerOrientation::Reverse))
+                .all(|key| matches!(key.orientation(), KmerOrientation::Reverse))
         );
+        assert!(counts.keys().all(|key| key.group == PositionGroup::Right));
     }
 
     #[test]
@@ -912,10 +934,11 @@ mod tests_fragment_kmer_positions {
             .offsets(context.fragment.len())
             .expect("per-end offsets");
 
-        let mut counts = FxHashMap::default();
+        let mut counts: FxHashMap<CountKey, f64> = FxHashMap::default();
         count_kmers_at_positions(
             &context.fragment,
             selections,
+            true,
             &context.positional_codes_by_k,
             &context.kmer_specs,
             &mut counts,
@@ -935,13 +958,17 @@ mod tests_fragment_kmer_positions {
         assert!(
             counts
                 .keys()
-                .any(|kmer| kmer.orientation == KmerOrientation::Forward)
+                .any(|key| key.orientation() == KmerOrientation::Forward)
         );
         assert!(
             counts
                 .keys()
-                .any(|kmer| kmer.orientation == KmerOrientation::Reverse)
+                .any(|key| key.orientation() == KmerOrientation::Reverse)
         );
+        assert!(counts.keys().any(|key| key.group == PositionGroup::Left));
+        assert!(counts.keys().any(|key| key.group == PositionGroup::Right));
+        assert!(counts.keys().any(|key| key.group == PositionGroup::Left));
+        assert!(counts.keys().any(|key| key.group == PositionGroup::Right));
     }
 
     #[test]
@@ -957,10 +984,11 @@ mod tests_fragment_kmer_positions {
             .offsets(context.fragment.len())
             .expect("nearest offsets");
 
-        let mut counts = FxHashMap::default();
+        let mut counts: FxHashMap<CountKey, f64> = FxHashMap::default();
         count_kmers_at_positions(
             &context.fragment,
             selections,
+            true,
             &context.positional_codes_by_k,
             &context.kmer_specs,
             &mut counts,
@@ -980,12 +1008,12 @@ mod tests_fragment_kmer_positions {
         assert!(
             counts
                 .keys()
-                .any(|kmer| kmer.orientation == KmerOrientation::Forward)
+                .any(|key| key.orientation() == KmerOrientation::Forward)
         );
         assert!(
             counts
                 .keys()
-                .any(|kmer| kmer.orientation == KmerOrientation::Reverse)
+                .any(|key| key.orientation() == KmerOrientation::Reverse)
         );
     }
 
@@ -1038,7 +1066,7 @@ mod tests_fragment_kmer_positions {
         fragment_len: usize,
         codes: &KmerCodes,
         k: usize,
-    ) -> FxHashMap<Kmer, f64> {
+    ) -> FxHashMap<CountKey, f64> {
         let mut expected = FxHashMap::default();
         for selection in selections {
             let offset = selection.offset() as usize;
@@ -1048,13 +1076,13 @@ mod tests_fragment_kmer_positions {
                         continue;
                     }
                     let code = codes.get(offset);
-                    *expected
-                        .entry(Kmer {
-                            k: k as u8,
-                            code,
-                            orientation: KmerOrientation::Forward,
-                        })
-                        .or_insert(0.0) += 1.0;
+                    let key = CountKey {
+                        k: k as u8,
+                        code,
+                        position: Some(selection.offset() as i32),
+                        group: selection.group(),
+                    };
+                    *expected.entry(key).or_insert(0.0) += 1.0;
                 }
                 cfdnalab::commands::fragment_kmers::positions::PositionOrientation::Reverse => {
                     if offset + 1 < k || offset >= fragment_len {
@@ -1065,13 +1093,13 @@ mod tests_fragment_kmer_positions {
                         continue;
                     }
                     let code = codes.get(start);
-                    *expected
-                        .entry(Kmer {
-                            k: k as u8,
-                            code,
-                            orientation: KmerOrientation::Reverse,
-                        })
-                        .or_insert(0.0) += 1.0;
+                    let key = CountKey {
+                        k: k as u8,
+                        code,
+                        position: Some(selection.offset() as i32),
+                        group: selection.group(),
+                    };
+                    *expected.entry(key).or_insert(0.0) += 1.0;
                 }
             }
         }

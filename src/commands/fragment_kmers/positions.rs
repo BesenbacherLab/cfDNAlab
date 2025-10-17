@@ -1,6 +1,7 @@
 use std::num::NonZeroUsize;
 
 use anyhow::{Result, bail};
+use serde::{Deserialize, Serialize};
 
 use crate::commands::visualize_positions::select::{ReadClamp, build_tracks_for_length};
 use crate::commands::visualize_positions::{PositionsSpec, ReferenceFrame, Track};
@@ -11,10 +12,29 @@ pub enum PositionOrientation {
     Reverse,
 }
 
+impl PositionOrientation {
+    /// Get PositionOrientation from PositionGroup
+    ///
+    /// Left/Mid => forward, right => reverse
+    pub fn from_position_group(group: PositionGroup) -> PositionOrientation {
+        match group {
+            PositionGroup::Left | PositionGroup::Mid => PositionOrientation::Forward,
+            PositionGroup::Right => PositionOrientation::Reverse,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum PositionGroup {
+    Left,
+    Right,
+    Mid,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PositionSelection {
     offset: u32,
-    orientation: PositionOrientation,
+    group: PositionGroup,
 }
 
 impl PositionSelection {
@@ -25,7 +45,12 @@ impl PositionSelection {
 
     #[inline]
     pub fn orientation(&self) -> PositionOrientation {
-        self.orientation
+        PositionOrientation::from_position_group(self.group)
+    }
+
+    #[inline]
+    pub fn group(&self) -> PositionGroup {
+        self.group
     }
 }
 
@@ -53,9 +78,12 @@ impl PositionSelectionCache {
         for length in min_len..=max_len {
             let mut values = offsets_for_length(length, frame, positions, step)?;
             values.sort_unstable_by(|a, b| match a.offset.cmp(&b.offset) {
-                std::cmp::Ordering::Equal => {
-                    orientation_order(a.orientation).cmp(&orientation_order(b.orientation))
-                }
+                std::cmp::Ordering::Equal => match orientation_order(a.orientation())
+                    .cmp(&orientation_order(b.orientation()))
+                {
+                    std::cmp::Ordering::Equal => group_order(a.group).cmp(&group_order(b.group)),
+                    other => other,
+                },
                 other => other,
             });
             values.dedup();
@@ -101,33 +129,23 @@ fn offsets_for_length(
     match frame {
         ReferenceFrame::Left => {
             if let Some(track) = viz.tracks.first() {
-                offsets.extend(linear_offsets(
-                    track,
-                    length,
-                    false,
-                    PositionOrientation::Forward,
-                )?);
+                offsets.extend(linear_offsets(track, length, false, PositionGroup::Left)?);
             }
         }
         ReferenceFrame::Right => {
             if let Some(track) = viz.tracks.first() {
-                offsets.extend(linear_offsets(
-                    track,
-                    length,
-                    true,
-                    PositionOrientation::Reverse,
-                )?);
+                offsets.extend(linear_offsets(track, length, true, PositionGroup::Right)?);
             }
         }
         ReferenceFrame::PerEnd => {
             for track in viz.tracks.iter() {
                 let is_right = track.name.eq_ignore_ascii_case("right");
-                let orientation = if is_right {
-                    PositionOrientation::Reverse
+                let group = if is_right {
+                    PositionGroup::Right
                 } else {
-                    PositionOrientation::Forward
+                    PositionGroup::Left
                 };
-                offsets.extend(linear_offsets(track, length, is_right, orientation)?);
+                offsets.extend(linear_offsets(track, length, is_right, group)?);
             }
         }
         ReferenceFrame::Nearest => {
@@ -151,7 +169,7 @@ fn linear_offsets(
     track: &Track,
     length: u32,
     from_right: bool,
-    orientation: PositionOrientation,
+    group: PositionGroup,
 ) -> Result<Vec<PositionSelection>> {
     let mut out = Vec::with_capacity(track.selected_indices.len());
     for &idx in &track.selected_indices {
@@ -169,10 +187,7 @@ fn linear_offsets(
         } else {
             idx - 1
         };
-        out.push(PositionSelection {
-            offset,
-            orientation,
-        });
+        out.push(PositionSelection { offset, group });
     }
     Ok(out)
 }
@@ -187,7 +202,7 @@ fn mid_offsets(track: &Track, length: u32) -> Result<Vec<PositionSelection>> {
         }
         out.push(PositionSelection {
             offset: offset as u32,
-            orientation: PositionOrientation::Forward,
+            group: PositionGroup::Mid,
         });
     }
     Ok(out)
@@ -211,7 +226,11 @@ fn nearest_offsets(track: &Track, length: u32) -> Result<Vec<PositionSelection>>
         };
         out.push(PositionSelection {
             offset: idx - 1,
-            orientation,
+            group: if orientation == PositionOrientation::Forward {
+                PositionGroup::Left
+            } else {
+                PositionGroup::Right
+            },
         });
     }
     Ok(out)
@@ -222,5 +241,14 @@ fn orientation_order(orientation: PositionOrientation) -> u8 {
     match orientation {
         PositionOrientation::Forward => 0,
         PositionOrientation::Reverse => 1,
+    }
+}
+
+#[inline]
+fn group_order(group: PositionGroup) -> u8 {
+    match group {
+        PositionGroup::Left => 0,
+        PositionGroup::Right => 1,
+        PositionGroup::Mid => 2,
     }
 }

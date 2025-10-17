@@ -5,7 +5,7 @@ use crate::{
             resolve_chromosomes_and_contigs,
         },
         counters::FragmentKmersCounters,
-        fragment_kmers::{config::*, positions::*, tiling::*, windows::*},
+        fragment_kmers::{config::*, positional_output::*, positions::*, tiling::*, windows::*},
         visualize_positions::{BasesFrom, parse_positions},
     },
     shared::{
@@ -16,11 +16,8 @@ use crate::{
         fragment_iterator::fragments_with_kmer_segments_from_bam,
         io::create_text_writer,
         kmers::{
-            kmer_codec::{
-                Kmer, KmerCodes, KmerOrientation, KmerSpec, build_kmer_specs,
-                build_left_aligned_codes_per_k,
-            },
-            process_counts::prepare_decoded_counts,
+            kmer_codec::{KmerCodes, KmerSpec, build_kmer_specs, build_left_aligned_codes_per_k},
+            process_counts::{DecodedCounts, prepare_decoded_counts, split_and_decode_counts},
             write::write_decoded_counts_matrix,
         },
         overlaps::find_overlapping_windows,
@@ -130,9 +127,9 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
 
     let kmer_specs: FxHashMap<u8, KmerSpec> = build_kmer_specs(&opt.kmer_sizes)?;
 
-    let positional_cache = if opt.positional_counts {
+    let positional_cache = {
         if opt.shared_args.position_selection.bases_from != BasesFrom::Reference {
-            bail!("positional counting currently supports bases-from=reference only");
+            bail!("position selection currently supports bases-from=reference only");
         }
         let positions_spec = parse_positions(
             opt.shared_args.position_selection.frame,
@@ -141,15 +138,13 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
         .context("failed to parse --positions for fragment-kmers")?;
         let step = NonZeroUsize::new(opt.shared_args.position_selection.step)
             .ok_or_else(|| anyhow!("--step must be at least 1"))?;
-        Some(Arc::new(PositionSelectionCache::new(
+        Arc::new(PositionSelectionCache::new(
             opt.shared_args.position_selection.frame,
             &positions_spec,
             step,
             opt.shared_args.fragment_lengths.min_fragment_length,
             opt.shared_args.fragment_lengths.max_fragment_length,
-        )?))
-    } else {
-        None
+        )?)
     };
 
     // Load genomic scaling factors
@@ -243,8 +238,7 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
 
-            let position_cache_binding = positional_cache_for_threads.clone();
-            let position_cache = position_cache_binding.as_ref().map(|arc| arc.as_ref());
+            let position_cache = positional_cache_for_threads.clone();
             let out = process_tile(
                 opt,
                 tile,
@@ -294,11 +288,60 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
         .try_into()
         .context("number of windows exceeds addressable size")?;
 
-    let all_bins = merge_tile_counts(payloads, total_windows_usize, &kmer_specs)?;
+    if opt.positional_counts {
+        let positional_bins = merge_tile_counts_positional(payloads, total_windows_usize)?;
 
-    // Prepare counts to get correct motifs (collapsed, N-filtered, etc.)
-    let (prepared_counts, motifs_by_k) =
-        prepare_decoded_counts(&all_bins, opt.canonical, &kmer_specs);
+        let mut positional_decoded: Vec<FxHashMap<PositionDescriptor, DecodedCounts>> =
+            Vec::with_capacity(positional_bins.len());
+        let mut flattened: Vec<DecodedCounts> = Vec::new();
+
+        for window_counts in positional_bins {
+            let mut decoded_map: FxHashMap<PositionDescriptor, DecodedCounts> =
+                FxHashMap::default();
+            decoded_map.reserve(window_counts.len());
+            for (descriptor, counts) in window_counts {
+                let decoded = split_and_decode_counts(&counts, &kmer_specs);
+                flattened.push(decoded.clone());
+                decoded_map.insert(descriptor, decoded);
+            }
+            positional_decoded.push(decoded_map);
+        }
+
+        if flattened.is_empty() {
+            flattened.push(DecodedCounts {
+                counts: FxHashMap::default(),
+            });
+        }
+
+        let (_, motifs_by_k) = prepare_decoded_counts(&flattened, opt.canonical, &kmer_specs);
+
+        println!("Start: Writing positional counts to disk");
+        write_positional_output(
+            &positional_decoded,
+            &motifs_by_k,
+            &kmer_specs,
+            &opt.shared_args.ioc.output_dir,
+            &opt.shared_args.output_prefix,
+            opt.save_sparse,
+        )?;
+    } else {
+        let all_bins = merge_tile_counts(payloads, total_windows_usize, &kmer_specs)?;
+
+        // Prepare counts to get correct motifs (collapsed, N-filtered, etc.)
+        let (prepared_counts, motifs_by_k) =
+            prepare_decoded_counts(&all_bins, opt.canonical, &kmer_specs);
+
+        // Write final counts to output_dir
+        println!("Start: Writing counts to disk");
+        write_decoded_counts_matrix(
+            &prepared_counts,
+            &kmer_specs,
+            &motifs_by_k,
+            &opt.shared_args.ioc.output_dir,
+            &opt.shared_args.output_prefix,
+            opt.save_sparse,
+        )?;
+    }
 
     // Build bin metadata when windowed
     let bin_info = build_bin_info(
@@ -308,17 +351,6 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
         windows_map.as_ref(),
         &blacklist_map,
         chr_offsets.as_ref(),
-    )?;
-
-    // Write final counts to output_dir
-    println!("Start: Writing counts to disk");
-    write_decoded_counts_matrix(
-        &prepared_counts,
-        &kmer_specs,
-        &motifs_by_k,
-        &opt.shared_args.ioc.output_dir,
-        &opt.shared_args.output_prefix,
-        opt.save_sparse,
     )?;
 
     // Write window coordinates as BED file to output_dir
@@ -342,7 +374,7 @@ fn process_tile(
     opt: &FragmentKmersConfig,
     tile: &Tile,
     kmer_specs: &FxHashMap<u8, KmerSpec>,
-    position_cache: Option<&PositionSelectionCache>,
+    position_cache: Arc<PositionSelectionCache>,
     window_ctx: &WindowContext,
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_intervals: &[(u64, u64)],
@@ -400,7 +432,7 @@ fn process_tile(
         build_left_aligned_codes_per_k(&seq_bytes, kmer_specs);
 
     // Sparse map keyed by original window index -> kmer counts
-    let mut counts_by_window: FxHashMap<u64, FxHashMap<Kmer, f64>> = FxHashMap::default();
+    let mut counts_by_window: FxHashMap<u64, FxHashMap<CountKey, f64>> = FxHashMap::default();
 
     // Streaming pointers and single fetch for this chr
     let mut bl_ptr = 0; // Blacklist interval
@@ -445,6 +477,8 @@ fn process_tile(
     // Initialize counters (default -> 0s)
     let mut counter = FragmentKmersCounters::default();
 
+    let store_positions = opt.positional_counts;
+
     // Iterate fragments and add coverage
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
@@ -463,25 +497,21 @@ fn process_tile(
             continue;
         }
 
-        let (selected_offsets, interval_start, interval_end) = if let Some(cache) = position_cache {
-            let offsets = match cache.offsets(fragment.len()) {
-                Some(slice) if !slice.is_empty() => slice,
-                _ => {
-                    continue;
-                }
-            };
-            let (first, last) = cache
-                .bounds(fragment.len())
-                .expect("non-empty offsets must have bounds");
-            let start = fragment.start as u64 + first as u64;
-            let end = fragment.start as u64 + last as u64 + 1;
-            if start >= end {
+        let cache = position_cache.as_ref();
+        let selected_offsets = match cache.offsets(fragment.len()) {
+            Some(slice) if !slice.is_empty() => slice,
+            _ => {
                 continue;
             }
-            (Some(offsets), start, end)
-        } else {
-            (None, fragment.start as u64, fragment.end as u64)
         };
+        let (first, last) = cache
+            .bounds(fragment.len())
+            .expect("non-empty offsets must have bounds");
+        let interval_start = fragment.start as u64 + first as u64;
+        let interval_end = fragment.start as u64 + last as u64 + 1;
+        if interval_start >= interval_end {
+            continue;
+        }
 
         // Find all overlapping count-windows
         debug_assert!(interval_start >= fragment.start as u64);
@@ -510,28 +540,17 @@ fn process_tile(
             let counts = counts_by_window
                 .entry(original_idx)
                 .or_insert_with(FxHashMap::default);
-            if let Some(selections) = selected_offsets {
-                count_kmers_at_positions(
-                    &fragment,
-                    selections,
-                    &positional_codes_by_k,
-                    kmer_specs,
-                    counts,
-                    positional_scaling_weights.as_deref(),
-                    tile.core_start,
-                    tile.core_end,
-                );
-            } else {
-                count_kmers_in_segments_clipped(
-                    &fragment,
-                    &positional_codes_by_k,
-                    kmer_specs,
-                    counts,
-                    positional_scaling_weights.as_deref(),
-                    tile.core_start,
-                    tile.core_end,
-                );
-            }
+            count_kmers_at_positions(
+                &fragment,
+                selected_offsets,
+                store_positions,
+                &positional_codes_by_k,
+                kmer_specs,
+                counts,
+                positional_scaling_weights.as_deref(),
+                tile.core_start,
+                tile.core_end,
+            );
         }
     }
 
@@ -545,13 +564,8 @@ fn process_tile(
                 return None;
             }
             let mut entries: Vec<TileKmerCountEntry> = Vec::with_capacity(hm.len());
-            for (kmer, value) in hm {
-                entries.push(TileKmerCountEntry {
-                    k: kmer.k,
-                    code: kmer.code,
-                    orientation: kmer.orientation,
-                    value,
-                });
+            for (key, value) in hm {
+                entries.push(TileKmerCountEntry::from((key, value)));
             }
             Some(TileWindowCounts {
                 original_idx,
@@ -570,66 +584,13 @@ fn process_tile(
     })
 }
 
-/// Count kmers within the fragment’s usable segments, respecting tile core boundaries.
-fn count_kmers_in_segments_clipped(
-    fragment: &FragmentWithKmerSegments,
-    positional_codes_by_k: &FxHashMap<u8, KmerCodes>,
-    kmer_specs: &FxHashMap<u8, KmerSpec>,
-    counts: &mut FxHashMap<Kmer, f64>,
-    weights: Option<&[f32]>,
-    tile_core_start: u32,
-    tile_core_end: u32,
-) {
-    for (&k, _) in kmer_specs {
-        let codes = positional_codes_by_k
-            .get(&k)
-            .expect("missing positional codes for requested k");
-        let k_span = k as u32;
-
-        for &(seg_start, seg_end) in &fragment.segments {
-            let seg_start = seg_start.max(tile_core_start);
-
-            // Allow k-mers that START within the core to use up to (k-1) bases past core_end
-            let effective_seg_end =
-                seg_end.min(tile_core_end.saturating_add(k_span).saturating_sub(1));
-
-            if seg_start >= seg_end.min(tile_core_end) {
-                continue;
-            }
-
-            let Some(last_start) = effective_seg_end.checked_sub(k_span) else {
-                continue;
-            };
-            if last_start < seg_start {
-                continue;
-            }
-
-            for idx_abs in seg_start..=last_start {
-                // Count only starts inside the core to avoid double counting across tiles
-                if idx_abs >= tile_core_end {
-                    break;
-                }
-                let idx_local = (idx_abs - tile_core_start) as usize;
-                let w = weights.map_or(1.0, |weights| unsafe { *weights.get_unchecked(idx_local) });
-
-                *counts
-                    .entry(Kmer {
-                        k,
-                        code: codes.get(idx_local),
-                        orientation: KmerOrientation::Forward,
-                    })
-                    .or_insert(0.) += w as f64;
-            }
-        }
-    }
-}
-
 pub fn count_kmers_at_positions(
     fragment: &FragmentWithKmerSegments,
     selections: &[PositionSelection],
+    store_positions: bool,
     positional_codes_by_k: &FxHashMap<u8, KmerCodes>,
     kmer_specs: &FxHashMap<u8, KmerSpec>,
-    counts: &mut FxHashMap<Kmer, f64>,
+    counts: &mut FxHashMap<CountKey, f64>,
     weights: Option<&[f32]>,
     tile_core_start: u32,
     tile_core_end: u32,
@@ -754,6 +715,7 @@ pub fn count_kmers_at_positions(
             while idx < selections.len() {
                 let selection = selections[idx];
                 let offset = selection.offset() as u64;
+                let offset_i32 = selection.offset() as i32;
                 if offset > segment_range_end {
                     // Remaining selections start after this segment range, so move to next segment
                     break;
@@ -801,13 +763,13 @@ pub fn count_kmers_at_positions(
                             None => 1.0,
                         };
                         // Record the forward kmer code emitted at this start position
-                        *counts
-                            .entry(Kmer {
-                                k,
-                                code: codes.get(start_local),
-                                orientation: KmerOrientation::Forward,
-                            })
-                            .or_insert(0.) += weight;
+                        let key = CountKey {
+                            k,
+                            code: codes.get(start_local),
+                            position: store_positions.then_some(offset_i32),
+                            group: selection.group(),
+                        };
+                        *counts.entry(key).or_insert(0.0) += weight;
                     }
                     PositionOrientation::Reverse => {
                         let Some((reverse_min, reverse_max)) = reverse_range else {
@@ -845,13 +807,13 @@ pub fn count_kmers_at_positions(
                         };
 
                         // Record the reverse-complement code keyed by its true start position
-                        *counts
-                            .entry(Kmer {
-                                k,
-                                code: codes.get(start_local),
-                                orientation: KmerOrientation::Reverse,
-                            })
-                            .or_insert(0.) += weight;
+                        let key = CountKey {
+                            k,
+                            code: codes.get(start_local),
+                            position: store_positions.then_some(offset_i32),
+                            group: selection.group(),
+                        };
+                        *counts.entry(key).or_insert(0.0) += weight;
                     }
                 }
 

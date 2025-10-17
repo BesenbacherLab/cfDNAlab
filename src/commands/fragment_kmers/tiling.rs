@@ -1,7 +1,8 @@
 use crate::{
     commands::{
-        cli_common::WindowSpec, counters::FragmentKmersCounters,
-        fragment_kmers::windows::WindowContext,
+        cli_common::WindowSpec,
+        counters::FragmentKmersCounters,
+        fragment_kmers::{positions::PositionGroup, windows::WindowContext},
     },
     shared::{
         kmers::{
@@ -29,7 +30,8 @@ use std::{
 pub struct TileKmerCountEntry {
     pub k: u8,
     pub code: u64,
-    pub orientation: KmerOrientation,
+    pub position: Option<i32>,
+    pub group: PositionGroup,
     pub value: f64,
 }
 
@@ -38,6 +40,59 @@ pub struct TileKmerCountEntry {
 pub struct TileWindowCounts {
     pub original_idx: u64,
     pub entries: Vec<TileKmerCountEntry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CountKey {
+    pub k: u8,
+    pub code: u64,
+    pub position: Option<i32>,
+    pub group: PositionGroup,
+}
+
+impl CountKey {
+    #[inline]
+    pub fn as_kmer(self) -> Kmer {
+        Kmer {
+            k: self.k,
+            code: self.code,
+            orientation: self.orientation(),
+        }
+    }
+
+    // Get orientation based on `group`
+    pub fn orientation(&self) -> KmerOrientation {
+        KmerOrientation::from_position_group(self.group)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PositionDescriptor {
+    pub group: PositionGroup,
+    pub offset: i32,
+}
+
+impl From<&TileKmerCountEntry> for CountKey {
+    fn from(entry: &TileKmerCountEntry) -> Self {
+        Self {
+            k: entry.k,
+            code: entry.code,
+            position: entry.position,
+            group: entry.group,
+        }
+    }
+}
+
+impl From<(CountKey, f64)> for TileKmerCountEntry {
+    fn from((key, value): (CountKey, f64)) -> Self {
+        Self {
+            k: key.k,
+            code: key.code,
+            position: key.position,
+            group: key.group,
+            value,
+        }
+    }
 }
 
 /// Persist per-tile k-mer counts so they can be merged after parallel tile processing.
@@ -101,7 +156,7 @@ pub fn merge_tile_counts<I>(
 where
     I: IntoIterator<Item = Vec<TileWindowCounts>>,
 {
-    let mut aggregated_counts: FxHashMap<u64, FxHashMap<Kmer, f64>> = FxHashMap::default();
+    let mut aggregated_counts: FxHashMap<u64, FxHashMap<CountKey, f64>> = FxHashMap::default();
 
     for payload in payloads {
         for window_counts in payload {
@@ -109,12 +164,12 @@ where
                 .entry(window_counts.original_idx)
                 .or_insert_with(FxHashMap::default);
             for count in window_counts.entries {
-                let kmer = Kmer {
-                    k: count.k,
-                    code: count.code,
-                    orientation: count.orientation,
-                };
-                *entry.entry(kmer).or_insert(0.0) += count.value;
+                let key = CountKey::from(&count);
+                debug_assert!(
+                    key.position.is_none(),
+                    "merge_tile_counts received positional entry in non-positional mode"
+                );
+                *entry.entry(key).or_insert(0.0) += count.value;
             }
         }
     }
@@ -123,9 +178,79 @@ where
     let mut all_bins: Vec<DecodedCounts> = Vec::with_capacity(total_windows);
     for idx in 0..total_windows {
         if let Some(counts) = aggregated_counts.remove(&(idx as u64)) {
-            all_bins.push(split_and_decode_counts(&counts, kmer_specs));
+            let mut plain_counts: FxHashMap<Kmer, f64> = FxHashMap::default();
+            plain_counts.reserve(counts.len());
+            for (key, value) in counts {
+                debug_assert!(
+                    key.position.is_none(),
+                    "merge_tile_counts received positional entry in non-positional mode"
+                );
+                let kmer = key.as_kmer();
+                *plain_counts.entry(kmer).or_insert(0.0) += value;
+            }
+            all_bins.push(split_and_decode_counts(&plain_counts, kmer_specs));
         } else {
             all_bins.push(split_and_decode_counts(&empty_counts, kmer_specs));
+        }
+    }
+
+    if !aggregated_counts.is_empty() {
+        bail!(
+            "Received counts for unexpected window indices: {:?}",
+            aggregated_counts.keys().collect::<Vec<&u64>>()
+        );
+    }
+
+    Ok(all_bins)
+}
+
+#[cfg_attr(not(test), doc(hidden))]
+pub fn merge_tile_counts_positional<I>(
+    payloads: I,
+    total_windows: usize,
+) -> Result<Vec<FxHashMap<PositionDescriptor, FxHashMap<Kmer, f64>>>>
+where
+    I: IntoIterator<Item = Vec<TileWindowCounts>>,
+{
+    let mut aggregated_counts: FxHashMap<u64, FxHashMap<CountKey, f64>> = FxHashMap::default();
+
+    for payload in payloads {
+        for window_counts in payload {
+            let entry = aggregated_counts
+                .entry(window_counts.original_idx)
+                .or_insert_with(FxHashMap::default);
+            for count in window_counts.entries {
+                let key = CountKey::from(&count);
+                *entry.entry(key).or_insert(0.0) += count.value;
+            }
+        }
+    }
+
+    let mut all_bins: Vec<FxHashMap<PositionDescriptor, FxHashMap<Kmer, f64>>> =
+        Vec::with_capacity(total_windows);
+    for idx in 0..total_windows {
+        if let Some(counts) = aggregated_counts.remove(&(idx as u64)) {
+            let mut by_position: FxHashMap<PositionDescriptor, FxHashMap<Kmer, f64>> =
+                FxHashMap::default();
+            for (key, value) in counts {
+                let group = key.group;
+                let offset = match key.position {
+                    Some(offset) => offset,
+                    _ => bail!(
+                        "Positional merge encountered entry without position for window {}",
+                        idx
+                    ),
+                };
+                let descriptor = PositionDescriptor { group, offset };
+                let kmer = key.as_kmer();
+                let entry = by_position
+                    .entry(descriptor)
+                    .or_insert_with(FxHashMap::default);
+                *entry.entry(kmer).or_insert(0.0) += value;
+            }
+            all_bins.push(by_position);
+        } else {
+            all_bins.push(FxHashMap::default());
         }
     }
 
@@ -142,7 +267,7 @@ where
 pub fn reduce_chromosome_tile_results(
     tile_results: Vec<TileResult>,
 ) -> Result<Vec<TileWindowCounts>> {
-    let mut aggregated: FxHashMap<u64, FxHashMap<Kmer, f64>> = FxHashMap::default();
+    let mut aggregated: FxHashMap<u64, FxHashMap<CountKey, f64>> = FxHashMap::default();
 
     for tile_result in tile_results {
         let Some(path) = tile_result.counts_path else {
@@ -156,12 +281,8 @@ pub fn reduce_chromosome_tile_results(
                 .entry(window_counts.original_idx)
                 .or_insert_with(FxHashMap::default);
             for count in window_counts.entries {
-                let kmer = Kmer {
-                    k: count.k,
-                    code: count.code,
-                    orientation: count.orientation,
-                };
-                *entry.entry(kmer).or_insert(0.0) += count.value;
+                let key = CountKey::from(&count);
+                *entry.entry(key).or_insert(0.0) += count.value;
             }
         }
     }
@@ -171,12 +292,7 @@ pub fn reduce_chromosome_tile_results(
         .map(|(original_idx, counts_map)| {
             let mut entries: Vec<TileKmerCountEntry> = Vec::with_capacity(counts_map.len());
             for (kmer, value) in counts_map {
-                entries.push(TileKmerCountEntry {
-                    k: kmer.k,
-                    code: kmer.code,
-                    orientation: kmer.orientation,
-                    value,
-                });
+                entries.push(TileKmerCountEntry::from((kmer, value)));
             }
             TileWindowCounts {
                 original_idx,

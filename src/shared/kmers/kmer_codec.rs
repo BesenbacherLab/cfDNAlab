@@ -1,4 +1,7 @@
-use crate::shared::base::{BASES, encode_base, rev_complement};
+use crate::{
+    commands::fragment_kmers::positions::PositionGroup,
+    shared::base::{BASES, encode_base, rev_complement},
+};
 use anyhow::{Context, Result, bail};
 use fxhash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
@@ -16,6 +19,18 @@ pub struct Kmer {
 pub enum KmerOrientation {
     Forward,
     Reverse,
+}
+
+impl KmerOrientation {
+    /// Get KmerOrientation from a PositionGroup
+    ///
+    /// Left/Mid => forward, right => reverse
+    pub fn from_position_group(group: PositionGroup) -> KmerOrientation {
+        match group {
+            PositionGroup::Left | PositionGroup::Mid => KmerOrientation::Forward,
+            PositionGroup::Right => KmerOrientation::Reverse,
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------
