@@ -8,7 +8,7 @@ mod tests_fragment_kmer_command {
         fragment_kmers_edge_bam, fragment_kmers_edge_reference, simple_inward_bam,
         simple_reference_twobit, write_bed, write_scaling_factors,
     };
-    use anyhow::{Context, Result};
+    use anyhow::{Context, Result, bail};
     use cfdnalab::commands::cli_common::{
         ChromosomeArgs, FragmentLengthArgs, FragmentPositionSelectionArgs, IOCArgs,
         Ref2BitRequiredArgs, ScaleGenomeArgs, WindowsArgs,
@@ -255,23 +255,65 @@ mod tests_fragment_kmer_command {
     }
 
     fn load_counts_from_output(dir: &Path, prefix: &str, k: u8) -> Result<HashMap<String, f64>> {
-        let counts_path = dir.join(format!("{prefix}.k{k}_counts.npy"));
-        let motifs_path = dir.join(format!("{prefix}.k{k}_motifs.txt"));
-        let counts: Array2<f64> = read_npy(&counts_path)?;
-        assert_eq!(
-            counts.shape()[0],
-            1,
-            "counts matrix should have one window row"
-        );
-        let motif_list: Vec<String> = std::fs::read_to_string(&motifs_path)?
-            .lines()
-            .map(|s| s.to_string())
-            .collect();
-        let mut out = HashMap::new();
-        for (idx, motif) in motif_list.iter().enumerate() {
-            out.insert(motif.clone(), counts[(0, idx)]);
+        let dense_path = dir.join(format!("{prefix}.k{k}_counts.npy"));
+        if dense_path.exists() {
+            let motifs_path = dir.join(format!("{prefix}.k{k}_motifs.txt"));
+            let counts: Array2<f64> = read_npy(&dense_path)?;
+            assert_eq!(
+                counts.shape()[0],
+                1,
+                "counts matrix should have one window row"
+            );
+            let motif_list: Vec<String> = std::fs::read_to_string(&motifs_path)?
+                .lines()
+                .map(|s| s.to_string())
+                .collect();
+            let mut out = HashMap::new();
+            for (idx, motif) in motif_list.iter().enumerate() {
+                out.insert(motif.clone(), counts[(0, idx)]);
+            }
+            return Ok(out);
         }
-        Ok(out)
+
+        // Positional output is split per-group (left/right/mid). Aggregate counts over windows and positions.
+        let mut aggregates: HashMap<String, f64> = HashMap::new();
+        let groups = ["left", "right", "mid"];
+        for group in groups {
+            let counts_path = dir.join(format!("{prefix}.k{k}_{group}_counts.npy"));
+            if !counts_path.exists() {
+                continue;
+            }
+            let motifs_path = dir.join(format!("{prefix}.k{k}_{group}_motifs.txt"));
+            let counts: Array3<f64> = read_npy(&counts_path)?;
+            let motif_list: Vec<String> = std::fs::read_to_string(&motifs_path)?
+                .lines()
+                .map(|s| s.to_string())
+                .collect();
+
+            let mut totals = vec![0.0f64; motif_list.len()];
+            for window_idx in 0..counts.shape()[0] {
+                for pos_idx in 0..counts.shape()[1] {
+                    for motif_idx in 0..counts.shape()[2] {
+                        totals[motif_idx] += counts[(window_idx, pos_idx, motif_idx)];
+                    }
+                }
+            }
+
+            for (motif, total) in motif_list.iter().zip(totals.into_iter()) {
+                *aggregates.entry(motif.clone()).or_insert(0.0) += total;
+            }
+        }
+
+        if aggregates.is_empty() {
+            bail!(
+                "no counts files found for prefix '{}' and k {} in {}",
+                prefix,
+                k,
+                dir.display()
+            );
+        }
+
+        Ok(aggregates)
     }
 
     fn assert_counts_close(actual: &HashMap<String, f64>, expected: &HashMap<String, f64>) {
@@ -405,11 +447,6 @@ mod tests_fragment_kmer_command {
         //
         // Counts from F3
         // AC 1, CC 1, CG 1, GT 1, TA 2, TT 1
-
-        // DEBUG: list output files so we can see the actual positional counts filename
-        for entry in std::fs::read_dir(out_dir.path())? {
-            println!("OUT FILE: {:?}", entry?.path());
-        }
 
         let observed_base = load_counts_from_output(out_dir.path(), "edge_base", 2)?;
         println!("{:?}", observed_base);
