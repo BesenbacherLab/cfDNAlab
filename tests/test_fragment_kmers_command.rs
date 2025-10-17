@@ -406,6 +406,11 @@ mod tests_fragment_kmer_command {
         // Counts from F3
         // AC 1, CC 1, CG 1, GT 1, TA 2, TT 1
 
+        // DEBUG: list output files so we can see the actual positional counts filename
+        for entry in std::fs::read_dir(out_dir.path())? {
+            println!("OUT FILE: {:?}", entry?.path());
+        }
+
         let observed_base = load_counts_from_output(out_dir.path(), "edge_base", 2)?;
         println!("{:?}", observed_base);
         let expected_base: HashMap<String, f64> = vec![
@@ -427,6 +432,8 @@ mod tests_fragment_kmer_command {
         .collect();
         // Sanity check: manually computed expectations for edge-case fragments.
         assert_counts_close(&observed_base, &expected_base);
+
+        println!("Next setup");
 
         let blacklist_path = out_dir.path().join("mask.bed");
         write_bed(
