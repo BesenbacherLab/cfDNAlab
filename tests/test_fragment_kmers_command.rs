@@ -5,8 +5,9 @@ mod tests_fragment_kmer_command {
     use std::path::Path;
 
     use crate::fixtures::{
-        fragment_kmers_edge_bam, fragment_kmers_edge_reference, simple_inward_bam,
-        simple_reference_twobit, write_bed, write_scaling_factors,
+        FragmentSpec, ReadSpec, bam_from_specs, fragment_kmers_edge_bam,
+        fragment_kmers_edge_reference, simple_inward_bam, simple_reference_twobit,
+        twobit_from_sequences, write_bed, write_scaling_factors,
     };
     use anyhow::{Context, Result, bail};
     use cfdnalab::commands::cli_common::{
@@ -23,10 +24,190 @@ mod tests_fragment_kmer_command {
     use ndarray_npy::read_npy;
     use tempfile::TempDir;
 
-    fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
+    pub(crate) fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
         ChromosomeArgs {
             chromosomes: Some(chrs.iter().map(|c| c.to_string()).collect()),
             chromosomes_file: None,
+        }
+    }
+
+    pub(crate) fn build_revcomp_assets(
+        left: &str,
+    ) -> Result<(
+        crate::fixtures::TwoBitFixture,
+        crate::fixtures::BamFixture,
+        crate::fixtures::TwoBitFixture,
+        crate::fixtures::BamFixture,
+        u32,
+        u32,
+    )> {
+        let right = revcomp(left);
+        let combined = format!("{left}{right}");
+
+        let left_ref =
+            twobit_from_sequences("revcomp_left", vec![("chr1".to_string(), left.to_string())])?;
+        let combined_ref =
+            twobit_from_sequences("revcomp_combined", vec![("chr1".to_string(), combined)])?;
+
+        let left_len = left.len() as u32;
+        if left_len % 2 != 0 {
+            bail!("left reference length must be even to fold symmetrically");
+        }
+        let read_len_left = left_len / 2;
+        assert!(
+            read_len_left > 0 && read_len_left * 2 == left_len,
+            "left reference length must be even and >= 2"
+        );
+
+        let left_fragment = make_fragment_pair(0, 0, read_len_left);
+        let left_bam = bam_from_specs(
+            vec![("chr1".to_string(), left_len)],
+            vec![left_fragment],
+            Vec::new(),
+            "revcomp_left",
+        )?;
+
+        let read_len_combined = left_len;
+        let combined_fragments = vec![make_fragment_pair(0, 0, read_len_combined)];
+        let combined_bam = bam_from_specs(
+            vec![("chr1".to_string(), left_len * 2)],
+            combined_fragments,
+            Vec::new(),
+            "revcomp_combined",
+        )?;
+
+        Ok((
+            left_ref,
+            left_bam,
+            combined_ref,
+            combined_bam,
+            left_len,
+            left_len * 2,
+        ))
+    }
+
+    pub(crate) fn revcomp(seq: &str) -> String {
+        seq.chars()
+            .rev()
+            .map(|c| match c {
+                'A' | 'a' => 'T',
+                'C' | 'c' => 'G',
+                'G' | 'g' => 'C',
+                'T' | 't' => 'A',
+                other => panic!("unexpected base {other}"),
+            })
+            .collect()
+    }
+
+    pub(crate) fn make_fragment_pair(tid: usize, start: i64, read_len: u32) -> FragmentSpec {
+        const FLAG_FIRST_MATE: u16 = 0x40;
+        const FLAG_SECOND_MATE: u16 = 0x80;
+        const FLAG_PROPER_PAIR: u16 = 0x2;
+        const FLAG_MATE_REVERSE: u16 = 0x20;
+
+        let insert_size = (read_len as i64) * 2;
+        FragmentSpec {
+            forward: ReadSpec {
+                tid,
+                pos: start,
+                cigar: vec![('M', read_len)],
+                seq: vec![b'A'; read_len as usize],
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: FLAG_FIRST_MATE | FLAG_MATE_REVERSE | FLAG_PROPER_PAIR,
+                mate_tid: Some(tid),
+                mate_pos: Some(start + read_len as i64),
+                insert_size,
+            },
+            reverse: ReadSpec {
+                tid,
+                pos: start + read_len as i64,
+                cigar: vec![('M', read_len)],
+                seq: vec![b'T'; read_len as usize],
+                qual: 40,
+                is_reverse: true,
+                mapq: 60,
+                flags: FLAG_SECOND_MATE | FLAG_PROPER_PAIR,
+                mate_tid: Some(tid),
+                mate_pos: Some(start),
+                insert_size: -insert_size,
+            },
+        }
+    }
+
+    pub(crate) fn manual_kmer_counts(seq: &str, k: usize) -> HashMap<String, f64> {
+        let mut counts = HashMap::new();
+        if seq.len() < k {
+            return counts;
+        }
+        for idx in 0..=(seq.len() - k) {
+            let motif = &seq[idx..idx + k];
+            *counts.entry(motif.to_string()).or_insert(0.0) += 1.0;
+        }
+        counts
+    }
+
+    pub(crate) fn manual_offset_counts(
+        seq: &str,
+        k: usize,
+        offsets: &[usize],
+    ) -> HashMap<String, f64> {
+        let mut counts = HashMap::new();
+        for &offset in offsets {
+            let motif = &seq[offset..offset + k];
+            *counts.entry(motif.to_string()).or_insert(0.0) += 1.0;
+        }
+        counts
+    }
+
+    pub(crate) fn load_positional_group_counts(
+        dir: &Path,
+        prefix: &str,
+        k: u8,
+        group: &str,
+    ) -> Result<HashMap<String, f64>> {
+        let counts_path = dir.join(format!("{prefix}.k{k}_{group}_counts.npy"));
+        let motifs_path = dir.join(format!("{prefix}.k{k}_{group}_motifs.txt"));
+        let counts: Array3<f64> = read_npy(&counts_path)?;
+        let motifs: Vec<String> = std::fs::read_to_string(&motifs_path)?
+            .lines()
+            .map(|line| line.to_string())
+            .collect();
+        let mut totals = vec![0.0f64; motifs.len()];
+        for window_idx in 0..counts.shape()[0] {
+            for pos_idx in 0..counts.shape()[1] {
+                for motif_idx in 0..counts.shape()[2] {
+                    totals[motif_idx] += counts[[window_idx, pos_idx, motif_idx]];
+                }
+            }
+        }
+        let mut out = HashMap::new();
+        for (motif, total) in motifs.into_iter().zip(totals.into_iter()) {
+            out.insert(motif, total);
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn assert_count_map_matches(
+        observed: &HashMap<String, f64>,
+        expected: &HashMap<String, f64>,
+        context: &str,
+    ) {
+        for (motif, exp) in expected {
+            let obs = observed.get(motif).copied().unwrap_or_default();
+            assert!(
+                (obs - exp).abs() < 1e-6,
+                "{context}: motif {motif} expected {exp} observed {obs}"
+            );
+        }
+        for (motif, obs) in observed {
+            if !expected.contains_key(motif) {
+                assert!(
+                    obs.abs() < 1e-6,
+                    "{context}: unexpected non-zero motif {motif}: {obs}"
+                );
+            }
         }
     }
 
@@ -254,7 +435,11 @@ mod tests_fragment_kmer_command {
         Ok(())
     }
 
-    fn load_counts_from_output(dir: &Path, prefix: &str, k: u8) -> Result<HashMap<String, f64>> {
+    pub(crate) fn load_counts_from_output(
+        dir: &Path,
+        prefix: &str,
+        k: u8,
+    ) -> Result<HashMap<String, f64>> {
         let dense_path = dir.join(format!("{prefix}.k{k}_counts.npy"));
         if dense_path.exists() {
             let motifs_path = dir.join(format!("{prefix}.k{k}_motifs.txt"));
@@ -1148,5 +1333,280 @@ mod tests_fragment_kmer_positions {
             }
         }
         expected
+    }
+}
+mod revcomp_tests {
+    use crate::tests_fragment_kmer_command::{
+        assert_count_map_matches, base_chromosomes, build_revcomp_assets, load_counts_from_output,
+        load_positional_group_counts, manual_kmer_counts, manual_offset_counts,
+    };
+    use anyhow::Result;
+    use cfdnalab::commands::cli_common::{
+        FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs,
+    };
+    use cfdnalab::commands::fragment_kmers::config::FragmentKmersConfig;
+    use cfdnalab::commands::fragment_kmers::fragment_kmers::run;
+    use cfdnalab::commands::visualize_positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
+    use tempfile::TempDir;
+
+    #[test]
+    fn nearest_counts_double_on_revcomp_reference() -> Result<()> {
+        let left_seq = "AGTACGCT";
+        let k = 2u8;
+        let expected = manual_kmer_counts(left_seq, k as usize);
+        let (
+            left_ref,
+            left_bam,
+            combined_ref,
+            combined_bam,
+            left_fragment_len,
+            combined_fragment_len,
+        ) = build_revcomp_assets(left_seq)?;
+
+        // Baseline: left reference only, left frame
+        let baseline_dir = TempDir::new()?;
+        let mut baseline_cfg = FragmentKmersConfig::new(
+            IOCArgs {
+                bam: left_bam.bam.clone(),
+                output_dir: baseline_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            Ref2BitRequiredArgs {
+                ref_2bit: left_ref.path.clone(),
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        baseline_cfg.set_output_prefix("left_only".to_string());
+        baseline_cfg.set_kmer_sizes(vec![k]);
+        baseline_cfg.set_min_mapq(0);
+        baseline_cfg.set_require_proper_pair(false);
+        baseline_cfg.set_ignore_gap(true);
+        baseline_cfg.set_canonical(false);
+        baseline_cfg.set_position_selection(FragmentPositionSelectionArgs {
+            frame: ReferenceFrame::Left,
+            positions: "..".to_string(),
+            step: 1,
+            bases_from: BasesFrom::Reference,
+            mismatch_bases_from: MismatchBasesFrom::NearestRead,
+        });
+        {
+            let lengths = baseline_cfg.fragment_lengths_mut();
+            lengths.min_fragment_length = left_fragment_len;
+            lengths.max_fragment_length = left_fragment_len;
+        }
+        run(&baseline_cfg)?;
+        let baseline_counts = load_counts_from_output(baseline_dir.path(), "left_only", k)?;
+        assert_count_map_matches(&baseline_counts, &expected, "baseline left-only");
+
+        // Combined reference: nearest frame should double every count
+        let combined_dir = TempDir::new()?;
+        let mut combined_cfg = FragmentKmersConfig::new(
+            IOCArgs {
+                bam: combined_bam.bam.clone(),
+                output_dir: combined_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            Ref2BitRequiredArgs {
+                ref_2bit: combined_ref.path.clone(),
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        combined_cfg.set_output_prefix("nearest".to_string());
+        combined_cfg.set_kmer_sizes(vec![k]);
+        combined_cfg.set_min_mapq(0);
+        combined_cfg.set_require_proper_pair(false);
+        combined_cfg.set_ignore_gap(true);
+        combined_cfg.set_canonical(false);
+        combined_cfg.set_position_selection(FragmentPositionSelectionArgs {
+            frame: ReferenceFrame::Nearest,
+            positions: "..".to_string(),
+            step: 1,
+            bases_from: BasesFrom::Reference,
+            mismatch_bases_from: MismatchBasesFrom::NearestRead,
+        });
+        {
+            let lengths = combined_cfg.fragment_lengths_mut();
+            lengths.min_fragment_length = combined_fragment_len;
+            lengths.max_fragment_length = combined_fragment_len;
+        }
+        run(&combined_cfg)?;
+        let combined_counts = load_counts_from_output(combined_dir.path(), "nearest", k)?;
+        for (motif, value) in &expected {
+            let observed = combined_counts.get(motif).copied().unwrap_or_default();
+            assert!(
+                (observed - value * 2.0).abs() < 1e-6,
+                "combined nearest global: motif {motif} expected {} observed {observed}",
+                value * 2.0
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn nearest_positional_counts_reflect_revcomp_symmetry() -> Result<()> {
+        let left_seq = "AGTACGCT";
+        let k = 2u8;
+        let expected_offsets = manual_offset_counts(left_seq, k as usize, &[0, 1, 2]);
+        let (
+            left_ref,
+            left_bam,
+            combined_ref,
+            combined_bam,
+            left_fragment_len,
+            combined_fragment_len,
+        ) = build_revcomp_assets(left_seq)?;
+
+        // Baseline positional counts using left frame
+        let baseline_dir = TempDir::new()?;
+        let mut baseline_cfg = FragmentKmersConfig::new(
+            IOCArgs {
+                bam: left_bam.bam.clone(),
+                output_dir: baseline_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            Ref2BitRequiredArgs {
+                ref_2bit: left_ref.path.clone(),
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        baseline_cfg.set_output_prefix("left_pos".to_string());
+        baseline_cfg.set_kmer_sizes(vec![k]);
+        baseline_cfg.set_min_mapq(0);
+        baseline_cfg.set_require_proper_pair(false);
+        baseline_cfg.set_ignore_gap(true);
+        baseline_cfg.set_canonical(false);
+        baseline_cfg.set_positional_counts(true);
+        baseline_cfg.set_position_selection(FragmentPositionSelectionArgs {
+            frame: ReferenceFrame::Left,
+            positions: "1..3".to_string(),
+            step: 1,
+            bases_from: BasesFrom::Reference,
+            mismatch_bases_from: MismatchBasesFrom::NearestRead,
+        });
+        {
+            let lengths = baseline_cfg.fragment_lengths_mut();
+            lengths.min_fragment_length = left_fragment_len;
+            lengths.max_fragment_length = left_fragment_len;
+        }
+        run(&baseline_cfg)?;
+        let baseline_left =
+            load_positional_group_counts(baseline_dir.path(), "left_pos", k, "left")?;
+        assert_count_map_matches(
+            &baseline_left,
+            &expected_offsets,
+            "baseline positional left",
+        );
+
+        // Combined positional counts with nearest frame
+        let combined_dir = TempDir::new()?;
+        let mut combined_cfg = FragmentKmersConfig::new(
+            IOCArgs {
+                bam: combined_bam.bam.clone(),
+                output_dir: combined_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            Ref2BitRequiredArgs {
+                ref_2bit: combined_ref.path.clone(),
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        combined_cfg.set_output_prefix("nearest_pos".to_string());
+        combined_cfg.set_kmer_sizes(vec![k]);
+        combined_cfg.set_min_mapq(0);
+        combined_cfg.set_require_proper_pair(false);
+        combined_cfg.set_ignore_gap(true);
+        combined_cfg.set_canonical(false);
+        combined_cfg.set_positional_counts(true);
+        combined_cfg.set_position_selection(FragmentPositionSelectionArgs {
+            frame: ReferenceFrame::Nearest,
+            positions: "1..3".to_string(),
+            step: 1,
+            bases_from: BasesFrom::Reference,
+            mismatch_bases_from: MismatchBasesFrom::NearestRead,
+        });
+        {
+            let lengths = combined_cfg.fragment_lengths_mut();
+            lengths.min_fragment_length = combined_fragment_len;
+            lengths.max_fragment_length = combined_fragment_len;
+        }
+        run(&combined_cfg)?;
+        let nearest_left =
+            load_positional_group_counts(combined_dir.path(), "nearest_pos", k, "left")?;
+        let nearest_right =
+            load_positional_group_counts(combined_dir.path(), "nearest_pos", k, "right")?;
+
+        assert_count_map_matches(&nearest_left, &expected_offsets, "nearest positional left");
+        assert_count_map_matches(
+            &nearest_right,
+            &expected_offsets,
+            "nearest positional right",
+        );
+        for (motif, expected) in &expected_offsets {
+            let total = nearest_left.get(motif).copied().unwrap_or_default()
+                + nearest_right.get(motif).copied().unwrap_or_default();
+            assert!(
+                (total - expected * 2.0).abs() < 1e-6,
+                "motif {motif} expected {} combined observed {total}",
+                expected * 2.0
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn per_end_half_positions_are_balanced() -> Result<()> {
+        let left_seq = "AGTACGCT";
+        let k = 2u8;
+        let expected_half = manual_offset_counts(left_seq, k as usize, &[0, 1, 2, 3]);
+        let (
+            _left_ref,
+            _left_bam,
+            combined_ref,
+            combined_bam,
+            _left_fragment_len,
+            combined_fragment_len,
+        ) = build_revcomp_assets(left_seq)?;
+
+        let out_dir = TempDir::new()?;
+        let mut cfg = FragmentKmersConfig::new(
+            IOCArgs {
+                bam: combined_bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            Ref2BitRequiredArgs {
+                ref_2bit: combined_ref.path.clone(),
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_output_prefix("per_end".to_string());
+        cfg.set_kmer_sizes(vec![k]);
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_ignore_gap(true);
+        cfg.set_canonical(false);
+        cfg.set_positional_counts(true);
+        cfg.set_position_selection(FragmentPositionSelectionArgs {
+            frame: ReferenceFrame::PerEnd,
+            positions: "..4".to_string(),
+            step: 1,
+            bases_from: BasesFrom::Reference,
+            mismatch_bases_from: MismatchBasesFrom::NearestRead,
+        });
+        {
+            let lengths = cfg.fragment_lengths_mut();
+            lengths.min_fragment_length = combined_fragment_len;
+            lengths.max_fragment_length = combined_fragment_len;
+        }
+        run(&cfg)?;
+
+        let per_end_left = load_positional_group_counts(out_dir.path(), "per_end", k, "left")?;
+        let per_end_right = load_positional_group_counts(out_dir.path(), "per_end", k, "right")?;
+        assert_count_map_matches(&per_end_left, &expected_half, "per-end left");
+        assert_count_map_matches(&per_end_right, &expected_half, "per-end right");
+
+        Ok(())
     }
 }

@@ -189,7 +189,8 @@ pub fn split_and_decode_counts(
             continue;
         }
 
-        count_bins.entry(kmer.k).or_default().insert(motif, cnt);
+        let bucket = count_bins.entry(kmer.k).or_default();
+        *bucket.entry(motif).or_insert(0.0) += cnt;
     }
 
     DecodedCounts { counts: count_bins }

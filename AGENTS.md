@@ -89,6 +89,8 @@ Include at least:
 
 See the below testing best-behaviors and try to follow them. Without proper tests validating logic, code is useless.
 
+IMPORTANT!: If you cannot make tests succeed, it indicates errors in the code or a misunderstanding of what's expected. Break the generation and check with me instead of spending a long time on redoing tests again and again.
+
 ### Philosophy
 
 Test public behavior, not private implementation.
