@@ -1092,6 +1092,7 @@ mod tests_fragment_kmer_positions {
             None,
             0,
             context.fragment.len(),
+            ReferenceFrame::Left,
         );
 
         let expected = expected_counts(
@@ -1133,6 +1134,7 @@ mod tests_fragment_kmer_positions {
             None,
             0,
             context.fragment.len(),
+            ReferenceFrame::Right,
         );
 
         let expected = expected_counts(
@@ -1174,6 +1176,7 @@ mod tests_fragment_kmer_positions {
             None,
             0,
             context.fragment.len(),
+            ReferenceFrame::PerEnd,
         );
 
         let expected = expected_counts(
@@ -1224,6 +1227,7 @@ mod tests_fragment_kmer_positions {
             None,
             0,
             context.fragment.len(),
+            ReferenceFrame::Nearest,
         );
 
         let expected = expected_counts(
