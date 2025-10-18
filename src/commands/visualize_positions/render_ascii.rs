@@ -256,21 +256,58 @@ fn build_track_bar(track: &Track, config: &VizConfig) -> String {
     let axis_end = track.axis.end as f64;
     let mut previous_column: Option<usize> = None;
     let mut previous_value: Option<i32> = None;
+    let mut seen_columns: Vec<usize> = Vec::new();
     for &value in &track.selected_indices {
         let column = value_to_column(value as f64, axis_start, axis_end, config.width);
         if column >= cells.len() {
             continue;
         }
+
         if let (Some(prev_col), Some(prev_val)) = (previous_column, previous_value) {
-            if value == prev_val + 1 && column > prev_col {
-                for fill_col in (prev_col + 1)..=column {
-                    cells[fill_col] = '#';
+            if value == prev_val + 1 && column >= prev_col {
+                for fill_col in prev_col..=column {
+                    if fill_col < cells.len() {
+                        cells[fill_col] = '#';
+                    }
                 }
+                previous_column = Some(column);
+                previous_value = Some(value);
+                seen_columns.push(column);
+                continue;
             }
         }
+
         cells[column] = '#';
         previous_column = Some(column);
         previous_value = Some(value);
+        seen_columns.push(column);
+    }
+
+    if domain_length > 0 && track.selected_indices.len() < domain_length {
+        seen_columns.sort_unstable();
+        seen_columns.dedup();
+        let width = cells.len();
+        if width > 0 && seen_columns.len() == width {
+            let fill_ratio = track.selected_indices.len() as f64 / domain_length.max(1) as f64;
+            let target_fill = (fill_ratio * width as f64).round().clamp(1.0, width as f64) as usize;
+            if target_fill < width {
+                cells.fill('.');
+                let mut chosen = Vec::with_capacity(target_fill);
+                for i in 0..target_fill {
+                    let idx = (i * seen_columns.len()) / target_fill;
+                    let column = seen_columns[idx.min(seen_columns.len() - 1)];
+                    if chosen.last() != Some(&column) {
+                        chosen.push(column);
+                    }
+                }
+                if chosen.is_empty() {
+                    chosen.push(seen_columns[0]);
+                }
+                for column in chosen {
+                    cells[column] = '#';
+                }
+            }
+        }
     }
 
     cells.into_iter().collect()
