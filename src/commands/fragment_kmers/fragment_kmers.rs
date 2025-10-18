@@ -6,7 +6,7 @@ use crate::{
         },
         counters::FragmentKmersCounters,
         fragment_kmers::{config::*, positional_output::*, positions::*, tiling::*, windows::*},
-        visualize_positions::{BasesFrom, parse_positions},
+        visualize_positions::{BasesFrom, ReferenceFrame, parse_positions},
     },
     shared::{
         bam::create_chromosome_reader,
@@ -550,6 +550,7 @@ fn process_tile(
                 positional_scaling_weights.as_deref(),
                 tile.core_start,
                 tile.core_end,
+                opt.shared_args.position_selection.frame,
             );
         }
     }
@@ -594,6 +595,7 @@ pub fn count_kmers_at_positions(
     weights: Option<&[f32]>,
     tile_core_start: u32,
     tile_core_end: u32,
+    frame: ReferenceFrame,
 ) {
     if selections.is_empty() {
         // Some frames filter out every position for a fragment of a given length
@@ -619,6 +621,31 @@ pub fn count_kmers_at_positions(
         // using a single cursor so the overall complexity stays linear in the number
         // of usable offsets
         let mut offset_cursor = 0usize;
+
+        // Precompute midpoint guards for Nearest: forbid crossing the true midpoint.
+        // Rule:
+        // - If there IS a physical midpoint (odd length), exclude that base entirely:
+        //     forward:  start + (k-1) <= mid-1  -> start <= mid - k
+        //     reverse:  start >= mid+1          -> anchor(offset) >= mid + (k-1) + 1 = mid + k
+        // - If there is NO physical midpoint (even length), pick the base nearest each side's start:
+        //     left  boundary = L/2 - 1 (0-based), right boundary = L/2
+        //     forward:  start + (k-1) <= left_boundary   -> start <= (L/2) - k
+        //     reverse:  start >= right_boundary          -> anchor(offset) >= (L/2) + (k-1)
+        let mut nearest_left_max_start: Option<u64> = None; // inclusive
+        let mut nearest_right_min_anchor: Option<u64> = None; // inclusive
+        if matches!(frame, ReferenceFrame::Nearest) {
+            let len = fragment.len() as u64;
+            let half = len / 2; // floor
+            if (len % 2) == 1 {
+                // Odd length: physical midpoint at `half` is excluded
+                nearest_left_max_start = Some(half.saturating_sub(k_span)); // mid - k
+                nearest_right_min_anchor = Some(half.saturating_add(k_span)); // mid + k
+            } else {
+                // Even length: choose base nearest each side's start
+                nearest_left_max_start = Some(half.saturating_sub(k_span)); // (L/2) - k
+                nearest_right_min_anchor = Some(half.saturating_add(k_span.saturating_sub(1))); // (L/2) + (k-1)
+            }
+        }
 
         // Fragments may be gapped by indels, so we examine each contiguous segment
         // and clip it to the tile coordinates before accepting offsets
@@ -742,6 +769,15 @@ pub fn count_kmers_at_positions(
                             idx += 1;
                             continue;
                         }
+
+                        // Nearest-frame guard: keep left-side starts that do NOT cross the midpoint
+                        if let Some(max_start) = nearest_left_max_start {
+                            if offset > max_start {
+                                idx += 1;
+                                continue;
+                            }
+                        }
+
                         let start_local = match idx_abs.checked_sub(tile_start) {
                             Some(val) => val as usize,
                             None => {
@@ -787,9 +823,18 @@ pub fn count_kmers_at_positions(
                             idx += 1;
                             continue;
                         };
+
                         if kmer_start_abs < tile_start || kmer_start_abs < seg_start {
                             idx += 1;
                             continue;
+                        }
+
+                        // Nearest-frame guard: anchor must be far enough right so the k-mer starts on/right of midpoint
+                        if let Some(min_anchor) = nearest_right_min_anchor {
+                            if offset < min_anchor {
+                                idx += 1;
+                                continue;
+                            }
                         }
 
                         let start_local = match kmer_start_abs.checked_sub(tile_start) {
