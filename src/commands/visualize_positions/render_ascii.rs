@@ -118,14 +118,14 @@ fn write_header(
         config.mismatch_bases_from.as_str()
     )
     .ok();
-    if let Some(orders) = &config.orders {
-        if !orders.is_empty() {
-            let list = orders
+    if let Some(kmer_sizes) = &config.kmer_sizes {
+        if !kmer_sizes.is_empty() {
+            let list = kmer_sizes
                 .iter()
-                .map(|order| order.to_string())
+                .map(|s| s.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            write!(line, "  orders={}", list).ok();
+            write!(line, "  kmer sizes={}", list).ok();
         }
     }
     if let Some(label) = &config.label {

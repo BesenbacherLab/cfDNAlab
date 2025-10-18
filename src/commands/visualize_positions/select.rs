@@ -149,30 +149,34 @@ fn build_nearest_tracks(length: u32, range: &NearestRange, step: NonZeroUsize) -
     vec![fragment_track, nearest_track]
 }
 
-/// Build helper tracks that illustrate the valid k-mer start bases for the requested orders.
+/// Build helper tracks that illustrate the valid k-mer start bases for the requested kmer_sizes.
 pub fn build_kmer_start_overlays(
     frame: ReferenceFrame,
     length: u32,
     base_tracks: &[Track],
-    orders: &[u8],
+    kmer_sizes: &[u8],
 ) -> Vec<Track> {
-    if length == 0 || orders.is_empty() || base_tracks.is_empty() {
+    if length == 0 || kmer_sizes.is_empty() || base_tracks.is_empty() {
         return Vec::new();
     }
 
     match frame {
-        ReferenceFrame::Left => build_linear_forward_overlays(length, base_tracks, orders),
-        ReferenceFrame::Right => build_linear_reverse_overlays(length, base_tracks, orders),
-        ReferenceFrame::PerEnd => build_per_end_overlays(length, base_tracks, orders),
-        ReferenceFrame::Nearest => build_nearest_overlays(length, base_tracks, orders),
-        ReferenceFrame::Mid => build_mid_overlays(length, base_tracks, orders),
+        ReferenceFrame::Left => build_linear_forward_overlays(length, base_tracks, kmer_sizes),
+        ReferenceFrame::Right => build_linear_reverse_overlays(length, base_tracks, kmer_sizes),
+        ReferenceFrame::PerEnd => build_per_end_overlays(length, base_tracks, kmer_sizes),
+        ReferenceFrame::Nearest => build_nearest_overlays(length, base_tracks, kmer_sizes),
+        ReferenceFrame::Mid => build_mid_overlays(length, base_tracks, kmer_sizes),
     }
 }
 
-fn build_linear_forward_overlays(length: u32, base_tracks: &[Track], orders: &[u8]) -> Vec<Track> {
+fn build_linear_forward_overlays(
+    length: u32,
+    base_tracks: &[Track],
+    kmer_sizes: &[u8],
+) -> Vec<Track> {
     let mut overlays = Vec::new();
-    for &order in orders {
-        let k_len = u32::from(order) + 1;
+    for &kmer_size in kmer_sizes {
+        let k_len = u32::from(kmer_size);
         for track in base_tracks {
             let mut overlay = track.clone();
             overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
@@ -183,10 +187,14 @@ fn build_linear_forward_overlays(length: u32, base_tracks: &[Track], orders: &[u
     overlays
 }
 
-fn build_linear_reverse_overlays(length: u32, base_tracks: &[Track], orders: &[u8]) -> Vec<Track> {
+fn build_linear_reverse_overlays(
+    length: u32,
+    base_tracks: &[Track],
+    kmer_sizes: &[u8],
+) -> Vec<Track> {
     let mut overlays = Vec::new();
-    for &order in orders {
-        let k_len = u32::from(order) + 1;
+    for &kmer_size in kmer_sizes {
+        let k_len = u32::from(kmer_size);
         for track in base_tracks {
             let mut overlay = track.clone();
             overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
@@ -197,10 +205,10 @@ fn build_linear_reverse_overlays(length: u32, base_tracks: &[Track], orders: &[u
     overlays
 }
 
-fn build_per_end_overlays(length: u32, base_tracks: &[Track], orders: &[u8]) -> Vec<Track> {
+fn build_per_end_overlays(length: u32, base_tracks: &[Track], kmer_sizes: &[u8]) -> Vec<Track> {
     let mut overlays = Vec::new();
-    for &order in orders {
-        let k_len = u32::from(order) + 1;
+    for &kmer_size in kmer_sizes {
+        let k_len = u32::from(kmer_size);
         for track in base_tracks {
             let mut overlay = track.clone();
             overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
@@ -215,10 +223,10 @@ fn build_per_end_overlays(length: u32, base_tracks: &[Track], orders: &[u8]) -> 
     overlays
 }
 
-fn build_mid_overlays(length: u32, base_tracks: &[Track], orders: &[u8]) -> Vec<Track> {
+fn build_mid_overlays(length: u32, base_tracks: &[Track], kmer_sizes: &[u8]) -> Vec<Track> {
     let mut overlays = Vec::new();
-    for &order in orders {
-        let k_len = u32::from(order) + 1;
+    for &kmer_size in kmer_sizes {
+        let k_len = u32::from(kmer_size);
         for track in base_tracks {
             let mut overlay = track.clone();
             overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
@@ -229,13 +237,13 @@ fn build_mid_overlays(length: u32, base_tracks: &[Track], orders: &[u8]) -> Vec<
     overlays
 }
 
-fn build_nearest_overlays(length: u32, base_tracks: &[Track], orders: &[u8]) -> Vec<Track> {
+fn build_nearest_overlays(length: u32, base_tracks: &[Track], kmer_sizes: &[u8]) -> Vec<Track> {
     let mut overlays = Vec::new();
     let fragment_track = base_tracks.iter().find(|track| track.name == "fragment");
     let nearest_track = base_tracks.iter().find(|track| track.name == "nearest");
 
-    for &order in orders {
-        let k_len = u32::from(order) + 1;
+    for &kmer_size in kmer_sizes {
+        let k_len = u32::from(kmer_size);
         if let Some(fragment) = fragment_track {
             let mut overlay = fragment.clone();
             overlay.name = format!("fragment k-mer starts (k={})", k_len);

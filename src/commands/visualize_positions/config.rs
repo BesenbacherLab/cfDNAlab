@@ -60,10 +60,10 @@ pub struct VisualizePositionsConfig {
     )]
     pub length_range: Option<String>,
 
-    /// Optional transition orders to preview midpoint guarding `[integers >= 1]`.
+    /// Optional k-mer sizes to preview guarding of k-mer starting points `[integers >= 1]`.
     ///
     /// Provide the same list you would pass to the counting commands so folded tracks illustrate
-    /// which bases survive the midpoint guard at each k-mer length.
+    /// which bases survive the start point guards at each k-mer length.
     #[cfg_attr(
         feature = "cli",
         arg(
@@ -73,7 +73,7 @@ pub struct VisualizePositionsConfig {
             help_heading = "Visualization"
         )
     )]
-    pub orders: Option<Vec<u8>>,
+    pub kmer_sizes: Option<Vec<u8>>,
 
     /// Rendering backend for the diagram `[ascii|svg]`.
     ///
@@ -193,7 +193,7 @@ impl VisualizePositionsConfig {
             step,
             bases: self.position_selection.bases_from,
             mismatch_bases_from: self.position_selection.mismatch_bases_from,
-            orders: self.orders.clone(),
+            kmer_sizes: self.kmer_sizes.clone(),
             fragment_lengths,
             style: self.style,
             width,

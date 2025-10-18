@@ -56,14 +56,14 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
             config.bases.as_str(),
             config.mismatch_bases_from.as_str()
         );
-        if let Some(orders) = &config.orders {
-            if !orders.is_empty() {
-                let list = orders
+        if let Some(kmer_sizes) = &config.kmer_sizes {
+            if !kmer_sizes.is_empty() {
+                let list = kmer_sizes
                     .iter()
-                    .map(|order| order.to_string())
+                    .map(|s| s.to_string())
                     .collect::<Vec<_>>()
                     .join(",");
-                write!(header, " | orders={}", list).ok();
+                write!(header, " | kmer sizes={}", list).ok();
             }
         }
         writeln!(

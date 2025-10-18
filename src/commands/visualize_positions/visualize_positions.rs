@@ -27,11 +27,11 @@ pub fn run(cfg: &VisualizePositionsConfig) -> Result<()> {
             clamp_mode,
         );
 
-        if let Some(orders) = &viz_cfg.orders {
-            if !orders.is_empty() {
+        if let Some(kmer_sizes) = &viz_cfg.kmer_sizes {
+            if !kmer_sizes.is_empty() {
                 let base_tracks = viz.tracks.clone();
                 let overlays =
-                    build_kmer_start_overlays(viz_cfg.frame, length, &base_tracks, orders);
+                    build_kmer_start_overlays(viz_cfg.frame, length, &base_tracks, kmer_sizes);
                 viz.tracks.extend(overlays);
             }
         }
