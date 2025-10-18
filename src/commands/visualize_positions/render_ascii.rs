@@ -254,33 +254,23 @@ fn build_track_bar(track: &Track, config: &VizConfig) -> String {
 
     let axis_start = track.axis.start as f64;
     let axis_end = track.axis.end as f64;
-    let mut seen_columns = Vec::new();
-    for &index in &track.selected_indices {
-        let column = value_to_column(index as f64, axis_start, axis_end, config.width);
-        if column < cells.len() {
-            cells[column] = '#';
-            seen_columns.push(column);
+    let mut previous_column: Option<usize> = None;
+    let mut previous_value: Option<i32> = None;
+    for &value in &track.selected_indices {
+        let column = value_to_column(value as f64, axis_start, axis_end, config.width);
+        if column >= cells.len() {
+            continue;
         }
-    }
-
-    if domain_length > 0 && !seen_columns.is_empty() {
-        let mut unique_columns = seen_columns.clone();
-        unique_columns.sort_unstable();
-        unique_columns.dedup();
-        if unique_columns.len() == cells.len() && track.selected_indices.len() < domain_length {
-            cells.fill('.');
-            for (idx, column) in unique_columns.iter().enumerate() {
-                if idx % 2 == 0 {
-                    cells[*column] = '#';
-                }
-            }
-            if cells.iter().all(|&ch| ch == '.') {
-                for column in unique_columns {
-                    cells[column] = '#';
-                    break;
+        if let (Some(prev_col), Some(prev_val)) = (previous_column, previous_value) {
+            if value == prev_val + 1 && column > prev_col {
+                for fill_col in (prev_col + 1)..=column {
+                    cells[fill_col] = '#';
                 }
             }
         }
+        cells[column] = '#';
+        previous_column = Some(column);
+        previous_value = Some(value);
     }
 
     cells.into_iter().collect()
