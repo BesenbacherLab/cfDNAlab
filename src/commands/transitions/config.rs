@@ -18,6 +18,8 @@ use crate::{
 /// Pipeline: A) **Count** k-mers of size `order + 1` (e.g. 2-mers for first-order transitions) per specified position.
 /// B) Calculate position-wise frequencies of all k-mers.
 ///
+/// Use `cfdna visualize-positions` to check what bases are counted at with various position selection settings.
+///
 /// ## Example
 ///
 /// ```rust,ignore

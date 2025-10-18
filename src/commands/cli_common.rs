@@ -381,7 +381,8 @@ pub struct FragmentPositionSelectionArgs {
     ///   The `step` start can differ per side.
     ///
     /// - **`nearest`** folds the fragment around the midpoint so distances grow away from the nearest end.
-    ///   The positional keyword `half` represents the midpoint (and maximum position).
+    ///   The positional keyword `half` represents the midpoint (and maximum position). For odd-sized fragments,
+    ///   the single midpoint is not counted, as both sides count up-to it.
     ///   Bases contributed by the reverse 5' side are complemented.
     ///
     /// - **`mid`** centers the axis on the midpoint, allowing selections around zero with negative/positive offsets.

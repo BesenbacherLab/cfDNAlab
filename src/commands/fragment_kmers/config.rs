@@ -249,8 +249,10 @@ impl FragmentKmersSharedArgs {
 
 /// Count k-mers within the fragments in a BAM-file.
 ///
-/// Whereas the `cfdna ends` tool extracts end-motifs, this tool extracts all k-mers
-/// in a sliding window across the fragment.
+/// Whereas the `cfdna ends` tool extracts end-motifs, this tool extracts k-mers
+/// from all the **selected positions** in the fragment.
+///
+/// Use `cfdna visualize-positions` to check what bases are counted at with various position selection settings.
 ///
 /// ## Always-on exclusion criteria
 ///
