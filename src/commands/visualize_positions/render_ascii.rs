@@ -254,12 +254,45 @@ fn build_track_bar(track: &Track, config: &VizConfig) -> String {
 
     let axis_start = track.axis.start as f64;
     let axis_end = track.axis.end as f64;
-    for &value in &track.selected_indices {
-        let column = value_to_column(value as f64, axis_start, axis_end, config.width);
-        if column < cells.len() {
-            cells[column] = '#';
+    let mut iter = track
+        .selected_indices
+        .iter()
+        .copied()
+        .filter(|&value| value > 0);
+
+    let Some(mut run_start) = iter.next() else {
+        return cells.into_iter().collect();
+    };
+    let mut run_end = run_start;
+
+    for value in iter {
+        if value <= run_end {
+            continue;
+        }
+        if value == run_end + 1 {
+            run_end = value;
+        } else {
+            fill_run_columns(
+                &mut cells,
+                run_start,
+                run_end,
+                axis_start,
+                axis_end,
+                config.width,
+            );
+            run_start = value;
+            run_end = value;
         }
     }
+
+    fill_run_columns(
+        &mut cells,
+        run_start,
+        run_end,
+        axis_start,
+        axis_end,
+        config.width,
+    );
 
     cells.into_iter().collect()
 }
@@ -320,6 +353,31 @@ pub fn value_to_column(value: f64, axis_start: f64, axis_end: f64, width: usize)
     let max_index = (width - 1) as f64;
     let scaled = ratio * max_index;
     scaled.round().clamp(0.0, max_index) as usize
+}
+
+fn fill_run_columns(
+    cells: &mut [char],
+    run_start: i32,
+    run_end: i32,
+    axis_start: f64,
+    axis_end: f64,
+    width: usize,
+) {
+    if width == 0 {
+        return;
+    }
+    let start_col = value_to_column(run_start as f64, axis_start, axis_end, width);
+    let end_col = value_to_column(run_end as f64, axis_start, axis_end, width);
+    let (low, high) = if start_col <= end_col {
+        (start_col, end_col)
+    } else {
+        (end_col, start_col)
+    };
+    for column in low..=high {
+        if column < cells.len() {
+            cells[column] = '#';
+        }
+    }
 }
 
 fn axis_label_for_track(track: &Track, config: &VizConfig) -> String {

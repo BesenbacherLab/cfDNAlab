@@ -1,5 +1,7 @@
 use std::num::NonZeroUsize;
 
+use crate::shared::kmers::nearest_guard::nearest_guard_bounds;
+
 use super::model::{
     AxisBounds, LengthVisualization, LinearRange, MidRange, NearestRange, PositionsSpec,
     ReferenceFrame, Track,
@@ -247,14 +249,16 @@ fn build_nearest_overlays(length: u32, base_tracks: &[Track], kmer_sizes: &[u8])
         if let Some(fragment) = fragment_track {
             let mut overlay = fragment.clone();
             overlay.name = format!("fragment k-mer starts (k={})", k_len);
-            overlay.selected_indices = nearest_fragment_starts(fragment, length, k_len);
+            let fragment_starts = nearest_fragment_starts(fragment, length, k_len);
+            overlay.selected_indices = fragment_starts.clone();
             overlays.push(overlay);
-        }
-        if let Some(nearest) = nearest_track {
-            let mut overlay = nearest.clone();
-            overlay.name = format!("nearest k-mer starts (k={})", k_len);
-            overlay.selected_indices = nearest_folded_starts(nearest, length, k_len);
-            overlays.push(overlay);
+            if let Some(nearest) = nearest_track {
+                let folded = folded_distances_from_fragment(&fragment_starts, length);
+                let mut overlay = nearest.clone();
+                overlay.name = format!("nearest k-mer starts (k={})", k_len);
+                overlay.selected_indices = folded;
+                overlays.push(overlay);
+            }
         }
     }
 
@@ -315,105 +319,48 @@ fn mid_starts(track: &Track, length: u32, k_len: u32) -> Vec<i32> {
 }
 
 fn nearest_fragment_starts(track: &Track, length: u32, k_len: u32) -> Vec<i32> {
-    if k_len == 0 || length == 0 {
+    if k_len == 0 || length == 0 || k_len > length {
         return Vec::new();
     }
+    let Some(bounds) = nearest_guard_bounds(length, k_len) else {
+        return Vec::new();
+    };
     let len = length as u64;
-    let k_span = k_len as u64;
-    let half = len / 2;
-    let (left_max_start_1b, right_min_anchor_1b) = nearest_fragment_thresholds(len, k_span);
+    let span = k_len as u64;
+    let min_reverse_start = bounds.min_reverse_start(k_len);
+    let half = (length / 2) as u32;
 
-    let half_1b = half as u32;
     let mut starts: Vec<i32> = Vec::new();
     for &idx in &track.selected_indices {
         if idx <= 0 {
             continue;
         }
         let idx_u32 = idx as u32;
-        if idx_u32 <= half_1b {
-            if idx_u32 <= left_max_start_1b && idx_u32 + k_len - 1 <= length {
+        if idx_u32 <= half {
+            let start_0 = (idx_u32 - 1) as u64;
+            debug_assert!(start_0 + span <= len);
+            if start_0 <= bounds.max_forward_start {
                 starts.push(idx);
             }
         } else {
-            if idx_u32 < right_min_anchor_1b || idx_u32 < k_len {
+            let anchor = (idx_u32 - 1) as u64;
+            if anchor < bounds.min_reverse_anchor {
                 continue;
             }
-            let start = idx_u32.saturating_sub(k_len - 1);
-            if start >= 1 && start <= length {
-                starts.push(start as i32);
+            let start_0 = anchor.saturating_sub(span.saturating_sub(1));
+            debug_assert!(start_0 + span <= len);
+            if start_0 < min_reverse_start {
+                continue;
+            }
+            let start_1 = (start_0 + 1) as i32;
+            if start_1 > 0 && start_1 <= length as i32 {
+                starts.push(start_1);
             }
         }
     }
     starts.sort_unstable();
     starts.dedup();
     starts
-}
-
-fn nearest_folded_starts(track: &Track, length: u32, k_len: u32) -> Vec<i32> {
-    if k_len == 0 {
-        return Vec::new();
-    }
-    let max_distance = nearest_max_distance_for_k(length, k_len);
-    if max_distance == 0 {
-        return Vec::new();
-    }
-    track
-        .selected_indices
-        .iter()
-        .copied()
-        .filter(|&idx| idx > 0 && (idx as u32) <= max_distance)
-        .collect()
-}
-
-fn nearest_fragment_thresholds(len: u64, k_span: u64) -> (u32, u32) {
-    if len == 0 {
-        return (0, u32::MAX);
-    }
-    let half = len / 2;
-    let (left_max_start, right_min_anchor) = if (len % 2) == 1 {
-        (half.saturating_sub(k_span), half.saturating_add(k_span))
-    } else {
-        (
-            half.saturating_sub(k_span),
-            half.saturating_add(k_span.saturating_sub(1)),
-        )
-    };
-
-    let left_max_start_1b = if left_max_start >= len {
-        0
-    } else {
-        (left_max_start + 1) as u32
-    };
-    let right_min_anchor_1b = if right_min_anchor >= len {
-        (len + 1) as u32
-    } else {
-        (right_min_anchor + 1) as u32
-    };
-    (left_max_start_1b, right_min_anchor_1b)
-}
-
-fn nearest_max_distance_for_k(length: u32, k_len: u32) -> u32 {
-    if length == 0 {
-        return 0;
-    }
-    let len = length as u64;
-    let k_span = k_len as u64;
-    let half = len / 2;
-    if half == 0 {
-        return 0;
-    }
-
-    let left_max_start = half.saturating_sub(k_span);
-    let left_max_distance = (left_max_start + 1).min(half);
-
-    let right_min_anchor = if (len % 2) == 1 {
-        half.saturating_add(k_span)
-    } else {
-        half.saturating_add(k_span.saturating_sub(1))
-    };
-    let right_max_distance = len.saturating_sub(right_min_anchor);
-
-    left_max_distance.max(right_max_distance) as u32
 }
 
 fn collect_nearest_indices(half: u32, range: &NearestRange) -> Vec<i32> {
@@ -543,6 +490,32 @@ fn inclusive_range(start: i32, end: i32) -> Vec<i32> {
     } else {
         (start..=end).collect()
     }
+}
+
+fn folded_distances_from_fragment(starts: &[i32], length: u32) -> Vec<i32> {
+    if length == 0 {
+        return Vec::new();
+    }
+    let half = length / 2;
+    let mut distances = Vec::with_capacity(starts.len());
+    for &start in starts {
+        if start <= 0 {
+            continue;
+        }
+        let start_u32 = start as u32;
+        let distance = if start_u32 <= half {
+            start_u32
+        } else {
+            length - start_u32 + 1
+        };
+        if distance > 0 {
+            debug_assert!(distance <= half.max(1));
+            distances.push(distance as i32);
+        }
+    }
+    distances.sort_unstable();
+    distances.dedup();
+    distances
 }
 
 fn clamp_range_to_domain(

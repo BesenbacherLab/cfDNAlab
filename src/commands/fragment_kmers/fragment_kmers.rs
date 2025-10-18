@@ -17,6 +17,7 @@ use crate::{
         io::create_text_writer,
         kmers::{
             kmer_codec::{KmerCodes, KmerSpec, build_kmer_specs, build_left_aligned_codes_per_k},
+            nearest_guard::nearest_guard_bounds,
             process_counts::{DecodedCounts, prepare_decoded_counts, split_and_decode_counts},
             write::write_decoded_counts_matrix,
         },
@@ -631,19 +632,12 @@ pub fn count_kmers_at_positions(
         //     left  boundary = L/2 - 1 (0-based), right boundary = L/2
         //     forward:  start + (k-1) <= left_boundary   -> start <= (L/2) - k
         //     reverse:  start >= right_boundary          -> anchor(offset) >= (L/2) + (k-1)
-        let mut nearest_left_max_start: Option<u64> = None; // inclusive
-        let mut nearest_right_min_anchor: Option<u64> = None; // inclusive
+        let mut nearest_left_max_start: Option<u64> = None; // inclusive start
+        let mut nearest_right_min_anchor: Option<u64> = None; // inclusive anchor
         if matches!(frame, ReferenceFrame::Nearest) {
-            let len = fragment.len() as u64;
-            let half = len / 2; // floor
-            if (len % 2) == 1 {
-                // Odd length: physical midpoint at `half` is excluded
-                nearest_left_max_start = Some(half.saturating_sub(k_span)); // mid - k
-                nearest_right_min_anchor = Some(half.saturating_add(k_span)); // mid + k
-            } else {
-                // Even length: choose base nearest each side's start
-                nearest_left_max_start = Some(half.saturating_sub(k_span)); // (L/2) - k
-                nearest_right_min_anchor = Some(half.saturating_add(k_span.saturating_sub(1))); // (L/2) + (k-1)
+            if let Some(bounds) = nearest_guard_bounds(fragment.len() as u32, k as u32) {
+                nearest_left_max_start = Some(bounds.max_forward_start);
+                nearest_right_min_anchor = Some(bounds.min_reverse_anchor);
             }
         }
 
