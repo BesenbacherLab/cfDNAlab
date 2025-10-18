@@ -32,17 +32,12 @@ pub fn nearest_guard_bounds(length: u32, k_span: u32) -> Option<NearestGuardBoun
     let span = k_span as u64;
     let half = len / 2;
 
-    let mut max_forward_start = half.saturating_sub(span);
-    let mut min_reverse_anchor = if len % 2 == 1 {
+    let max_forward_start = half.saturating_sub(span);
+    let min_reverse_anchor = if len % 2 == 1 {
         half.saturating_add(span)
     } else {
         half.saturating_add(span.saturating_sub(1))
     };
-
-    // Clamp to valid domain.
-    let latest_start = len.saturating_sub(span);
-    max_forward_start = max_forward_start.min(latest_start);
-    min_reverse_anchor = min_reverse_anchor.min(len.saturating_sub(1));
 
     Some(NearestGuardBounds {
         max_forward_start,
