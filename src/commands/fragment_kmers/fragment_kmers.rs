@@ -5,7 +5,15 @@ use crate::{
             resolve_chromosomes_and_contigs,
         },
         counters::FragmentKmersCounters,
-        fragment_kmers::{config::*, positional_output::*, positions::*, tiling::*, windows::*},
+        fragment_kmers::{
+            config::*,
+            kmer_guard::KmerFrameGuard,
+            positional_output::*,
+            positions::*,
+            selection::{SelectionDecision, evaluate_selection},
+            tiling::*,
+            windows::*,
+        },
         visualize_positions::{BasesFrom, ReferenceFrame, parse_positions},
     },
     shared::{
@@ -17,7 +25,6 @@ use crate::{
         io::create_text_writer,
         kmers::{
             kmer_codec::{KmerCodes, KmerSpec, build_kmer_specs, build_left_aligned_codes_per_k},
-            nearest_guard::nearest_guard_bounds,
             process_counts::{DecodedCounts, prepare_decoded_counts, split_and_decode_counts},
             write::write_decoded_counts_matrix,
         },
@@ -632,14 +639,7 @@ pub fn count_kmers_at_positions(
         //     left  boundary = L/2 - 1 (0-based), right boundary = L/2
         //     forward:  start + (k-1) <= left_boundary   -> start <= (L/2) - k
         //     reverse:  start >= right_boundary          -> anchor(offset) >= (L/2) + (k-1)
-        let mut nearest_left_max_start: Option<u64> = None; // inclusive start
-        let mut nearest_right_min_anchor: Option<u64> = None; // inclusive anchor
-        if matches!(frame, ReferenceFrame::Nearest) {
-            if let Some(bounds) = nearest_guard_bounds(fragment.len() as u32, k as u32) {
-                nearest_left_max_start = Some(bounds.max_forward_start);
-                nearest_right_min_anchor = Some(bounds.min_reverse_anchor);
-            }
-        }
+        let kmer_guard = KmerFrameGuard::new(frame, fragment.len() as u32, k as u32);
 
         // Fragments may be gapped by indels, so we examine each contiguous segment
         // and clip it to the tile coordinates before accepting offsets
@@ -753,25 +753,21 @@ pub fn count_kmers_at_positions(
                     continue;
                 }
 
-                match selection.orientation() {
-                    PositionOrientation::Forward => {
-                        let Some((forward_min, forward_max)) = forward_range else {
-                            idx += 1;
-                            continue;
-                        };
-                        if offset < forward_min || offset > forward_max {
-                            idx += 1;
-                            continue;
-                        }
+                let decision = evaluate_selection(
+                    selection,
+                    &kmer_guard,
+                    k_span,
+                    offset,
+                    forward_range,
+                    reverse_range,
+                );
 
-                        // Nearest-frame guard: keep left-side starts that do NOT cross the midpoint
-                        if let Some(max_start) = nearest_left_max_start {
-                            if offset > max_start {
-                                idx += 1;
-                                continue;
-                            }
-                        }
-
+                match decision {
+                    SelectionDecision::SkipAdvance => {
+                        idx += 1;
+                        continue;
+                    }
+                    SelectionDecision::IncludeForward { .. } => {
                         let start_local = match idx_abs.checked_sub(tile_start) {
                             Some(val) => val as usize,
                             None => {
@@ -801,34 +797,14 @@ pub fn count_kmers_at_positions(
                         };
                         *counts.entry(key).or_insert(0.0) += weight;
                     }
-                    PositionOrientation::Reverse => {
-                        let Some((reverse_min, reverse_max)) = reverse_range else {
-                            idx += 1;
-                            continue;
-                        };
-                        if offset < reverse_min || offset > reverse_max {
-                            idx += 1;
-                            continue;
-                        }
-
-                        let Some(kmer_start_abs) = idx_abs.checked_sub(k_span.saturating_sub(1))
-                        else {
-                            // The reverse kmer would extend past the segment start
-                            idx += 1;
-                            continue;
-                        };
-
+                    SelectionDecision::IncludeReverse {
+                        start_offset_0,
+                        anchor_offset_0,
+                    } => {
+                        let kmer_start_abs = fragment_start + start_offset_0;
                         if kmer_start_abs < tile_start || kmer_start_abs < seg_start {
                             idx += 1;
                             continue;
-                        }
-
-                        // Nearest-frame guard: anchor must be far enough right so the k-mer starts on/right of midpoint
-                        if let Some(min_anchor) = nearest_right_min_anchor {
-                            if offset < min_anchor {
-                                idx += 1;
-                                continue;
-                            }
                         }
 
                         let start_local = match kmer_start_abs.checked_sub(tile_start) {
@@ -838,14 +814,20 @@ pub fn count_kmers_at_positions(
                                 continue;
                             }
                         };
-                        let end_local = (idx_abs - tile_start) as usize;
-                        // Reverse kmers borrow the weight of their terminal base in the tile
+                        let end_local =
+                            match (fragment_start + anchor_offset_0).checked_sub(tile_start) {
+                                Some(val) => val as usize,
+                                None => {
+                                    idx += 1;
+                                    continue;
+                                }
+                            };
+
                         let weight = match weights {
                             Some(w) => unsafe { *w.get_unchecked(end_local) as f64 },
                             None => 1.0,
                         };
 
-                        // Record the reverse-complement code keyed by its true start position
                         let key = CountKey {
                             k,
                             code: codes.get(start_local),

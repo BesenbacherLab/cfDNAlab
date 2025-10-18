@@ -30,8 +30,14 @@ pub fn run(cfg: &VisualizePositionsConfig) -> Result<()> {
         if let Some(kmer_sizes) = &viz_cfg.kmer_sizes {
             if !kmer_sizes.is_empty() {
                 let base_tracks = viz.tracks.clone();
-                let overlays =
-                    build_kmer_start_overlays(viz_cfg.frame, length, &base_tracks, kmer_sizes);
+                let overlays = build_kmer_start_overlays(
+                    viz_cfg.frame,
+                    length,
+                    &viz_cfg.positions,
+                    viz_cfg.step,
+                    &base_tracks,
+                    kmer_sizes,
+                );
                 viz.tracks.extend(overlays);
             }
         }

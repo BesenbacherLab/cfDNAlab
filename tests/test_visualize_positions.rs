@@ -1,12 +1,12 @@
 mod tests_visualize_positions {
     use std::num::NonZeroUsize;
 
+    use cfdnalab::commands::fragment_kmers::positions::{
+        PositionOrientation, PositionSelectionCache,
+    };
     use cfdnalab::commands::visualize_positions::{
         PositionsSpec, RangeParseError, ReadClamp, ReferenceFrame, build_kmer_start_overlays,
         build_tracks_for_length, parse_positions,
-    };
-    use cfdnalab::commands::fragment_kmers::positions::{
-        PositionOrientation, PositionSelectionCache,
     };
     use cfdnalab::shared::kmers::nearest_guard::nearest_guard_bounds;
     use std::collections::BTreeSet;
@@ -199,7 +199,14 @@ mod tests_visualize_positions {
             ReadClamp::None,
         );
         let k = 3u8;
-        let overlays = build_kmer_start_overlays(ReferenceFrame::Left, length, &viz.tracks, &[k]);
+        let overlays = build_kmer_start_overlays(
+            ReferenceFrame::Left,
+            length,
+            &spec,
+            default_step(),
+            &viz.tracks,
+            &[k],
+        );
         let overlay = overlays
             .iter()
             .find(|track| track.name == "left k-mer starts (k=3)")
@@ -224,7 +231,14 @@ mod tests_visualize_positions {
             ReadClamp::None,
         );
         let k = 3u8;
-        let overlays = build_kmer_start_overlays(ReferenceFrame::Right, length, &viz.tracks, &[k]);
+        let overlays = build_kmer_start_overlays(
+            ReferenceFrame::Right,
+            length,
+            &spec,
+            default_step(),
+            &viz.tracks,
+            &[k],
+        );
         let overlay = overlays
             .iter()
             .find(|track| track.name == "right k-mer starts (k=3)")
@@ -260,8 +274,14 @@ mod tests_visualize_positions {
         );
 
         let k = 2u8;
-        let overlays =
-            build_kmer_start_overlays(ReferenceFrame::Nearest, length, &viz.tracks, &[k]);
+        let overlays = build_kmer_start_overlays(
+            ReferenceFrame::Nearest,
+            length,
+            &spec,
+            default_step(),
+            &viz.tracks,
+            &[k],
+        );
         assert_eq!(overlays.len(), 2);
 
         let fragment_overlay = overlays
@@ -302,8 +322,14 @@ mod tests_visualize_positions {
             default_step(),
             ReadClamp::None,
         );
-        let overlays =
-            build_kmer_start_overlays(ReferenceFrame::Nearest, length, &viz.tracks, &[k]);
+        let overlays = build_kmer_start_overlays(
+            ReferenceFrame::Nearest,
+            length,
+            &spec,
+            default_step(),
+            &viz.tracks,
+            &[k],
+        );
         let fragment_overlay = overlays
             .iter()
             .find(|track| track.name == "fragment k-mer starts (k=2)")
@@ -832,8 +858,14 @@ mod tests_ascii_render {
             default_step(),
             ReadClamp::None,
         );
-        let overlays =
-            build_kmer_start_overlays(ReferenceFrame::Nearest, length, &viz.tracks, &[2]);
+        let overlays = build_kmer_start_overlays(
+            ReferenceFrame::Nearest,
+            length,
+            &spec,
+            default_step(),
+            &viz.tracks,
+            &[2],
+        );
         viz.tracks.extend(overlays);
 
         let mut config = base_config(100);
