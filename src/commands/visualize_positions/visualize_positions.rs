@@ -1,8 +1,8 @@
-use crate::commands::visualize_positions::{
-    BasesFrom, LengthVisualization, ReadClamp, ReferenceFrame, Style,
-    build_nearest_guard_overlays, build_tracks_for_length, render_ascii, render_svg,
-};
 use crate::commands::visualize_positions::config::VisualizePositionsConfig;
+use crate::commands::visualize_positions::{
+    BasesFrom, LengthVisualization, ReadClamp, Style, build_kmer_start_overlays,
+    build_tracks_for_length, render_ascii, render_svg,
+};
 use anyhow::Result;
 use std::fs;
 use std::io::{self, Write};
@@ -27,31 +27,12 @@ pub fn run(cfg: &VisualizePositionsConfig) -> Result<()> {
             clamp_mode,
         );
 
-        if viz_cfg.frame == ReferenceFrame::Nearest {
-            if let Some(orders) = &viz_cfg.orders {
-                if !orders.is_empty() {
-                    let fragment_track = viz
-                        .tracks
-                        .iter()
-                        .find(|track| track.name == "fragment")
-                        .cloned();
-                    let nearest_track = viz
-                        .tracks
-                        .iter()
-                        .find(|track| track.name == "nearest")
-                        .cloned();
-                    if let (Some(fragment_track), Some(nearest_track)) =
-                        (fragment_track, nearest_track)
-                    {
-                        let overlays = build_nearest_guard_overlays(
-                            length,
-                            &fragment_track,
-                            &nearest_track,
-                            orders,
-                        );
-                        viz.tracks.extend(overlays);
-                    }
-                }
+        if let Some(orders) = &viz_cfg.orders {
+            if !orders.is_empty() {
+                let base_tracks = viz.tracks.clone();
+                let overlays =
+                    build_kmer_start_overlays(viz_cfg.frame, length, &base_tracks, orders);
+                viz.tracks.extend(overlays);
             }
         }
 

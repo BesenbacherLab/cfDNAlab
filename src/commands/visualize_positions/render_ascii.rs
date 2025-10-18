@@ -18,6 +18,19 @@ pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> Stri
         for static_label in ["axis", "ticks", "index", "note"] {
             label_width = label_width.max(static_label.len());
         }
+        let reference_axis = viz.tracks.first().map(|track| track.axis.clone());
+        if let Some(reference_axis) = &reference_axis {
+            for track in &viz.tracks {
+                if track.axis.start != reference_axis.start || track.axis.end != reference_axis.end
+                {
+                    label_width = label_width.max(axis_label_for_track(track, config).len());
+                    if config.show_index {
+                        label_width = label_width.max(ticks_label_for_track(track).len());
+                        label_width = label_width.max(index_label_for_track(track).len());
+                    }
+                }
+            }
+        }
         write_header(&mut output, viz, config, label_width);
 
         if let Some(first_track) = viz.tracks.first() {
@@ -52,9 +65,23 @@ pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> Stri
         }
 
         for track in &viz.tracks {
+            if let Some(reference_axis) = &reference_axis {
+                if track.axis.start != reference_axis.start || track.axis.end != reference_axis.end
+                {
+                    write_track_axis(&mut output, track, viz.fragment_length, config, label_width);
+                }
+            }
             let bar = build_track_bar(track, config);
             write!(output, "{:>width$}: ", track.name, width = label_width).ok();
             output.push_str(&bar);
+            if config.frame == ReferenceFrame::Nearest && track.name == "nearest" {
+                write!(
+                    output,
+                    " | max distance {}",
+                    track.axis.end.max(track.axis.start)
+                )
+                .ok();
+            }
             output.push('\n');
         }
 
@@ -275,6 +302,46 @@ fn build_track_bar(track: &Track, config: &VizConfig) -> String {
     cells.into_iter().collect()
 }
 
+fn write_track_axis(
+    output: &mut String,
+    track: &Track,
+    fragment_length: u32,
+    config: &VizConfig,
+    label_width: usize,
+) {
+    let label = axis_label_for_track(track, config);
+    let markers = axis_markers(track, fragment_length, config);
+    let marker_columns = marker_columns(track, config.width, &markers);
+
+    let mut axis_chars: Vec<char> = build_ruler(config.width).chars().collect();
+    for &(column, symbol) in &marker_columns {
+        if column < axis_chars.len() {
+            axis_chars[column] = symbol;
+        }
+    }
+    write!(output, "{:>width$}: ", label, width = label_width).ok();
+    output.push_str(&axis_chars.into_iter().collect::<String>());
+    output.push('\n');
+
+    if config.show_index {
+        let (ticks, labels) = build_tick_lines(track, config.width);
+        let mut ticks_chars: Vec<char> = ticks.chars().collect();
+        for &(column, _) in &marker_columns {
+            if column < ticks_chars.len() {
+                ticks_chars[column] = '|';
+            }
+        }
+        let ticks_label = ticks_label_for_track(track);
+        write!(output, "{:>width$}: ", ticks_label, width = label_width).ok();
+        output.push_str(&ticks_chars.into_iter().collect::<String>());
+        output.push('\n');
+        let index_label = index_label_for_track(track);
+        write!(output, "{:>width$}: ", index_label, width = label_width).ok();
+        output.push_str(&labels);
+        output.push('\n');
+    }
+}
+
 pub fn value_to_column(value: f64, axis_start: f64, axis_end: f64, width: usize) -> usize {
     if width == 0 {
         return 0;
@@ -330,6 +397,23 @@ fn fill_run_columns(
             cells[column] = '#';
         }
     }
+}
+
+fn axis_label_for_track(track: &Track, config: &VizConfig) -> String {
+    if config.frame == ReferenceFrame::Nearest && track.name == "nearest" {
+        let max_val = track.axis.end.max(track.axis.start);
+        format!("axis({} max={})", track.name, max_val)
+    } else {
+        format!("axis({})", track.name)
+    }
+}
+
+fn ticks_label_for_track(track: &Track) -> String {
+    format!("ticks({})", track.name)
+}
+
+fn index_label_for_track(track: &Track) -> String {
+    format!("index({})", track.name)
 }
 
 fn axis_markers(track: &Track, fragment_length: u32, config: &VizConfig) -> Vec<(f64, char)> {

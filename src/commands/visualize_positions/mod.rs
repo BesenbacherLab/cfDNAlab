@@ -13,4 +13,4 @@ pub use model::{
 pub use parse::{RangeParseError, parse_lengths, parse_positions};
 pub use render_ascii::render_ascii;
 pub use render_svg::render_svg;
-pub use select::{ReadClamp, build_nearest_guard_overlays, build_tracks_for_length};
+pub use select::{ReadClamp, build_kmer_start_overlays, build_tracks_for_length};

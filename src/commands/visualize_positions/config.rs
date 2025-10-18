@@ -12,8 +12,7 @@ use crate::commands::{
     },
 };
 
-// TODO: Add optional orders arg for showing how nearest does not pass the midpoint! Very important to make sure the visualizer works properly with this!
-// TODO: Ascii spacing when width is not equal fragment length should interpolate instead of becoming #.#.#.# when all bases should be counted at
+const MIN_FRAGMENT_LENGTH: u32 = 10;
 
 /// `fragment-kmers` helper: Draw which fragment bases will be counted for a given frame and range setup.
 ///
@@ -105,9 +104,9 @@ pub struct VisualizePositionsConfig {
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Visualization"))]
     pub label: Option<String>,
 
-    /// Show numeric tick marks alongside the ASCII axis `[flag]`.
+    /// Hide the numeric tick marks alongside the ASCII axis `[flag]`.
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Visualization"))]
-    pub show_index: bool,
+    pub hide_index: bool,
 
     /// Mark the halfway distance (`floor(length/2)` from the frame origin) with `^` on the axis `[flag]`.
     ///
@@ -145,6 +144,14 @@ impl VisualizePositionsConfig {
             return Err(anyhow!(
                 "no fragment lengths provided; use --lengths or --length-range"
             ));
+        }
+        if let Some(&shortest) = fragment_lengths.iter().min() {
+            if shortest < MIN_FRAGMENT_LENGTH {
+                return Err(anyhow!(
+                    "fragment lengths shorter than {min} bp are not supported (got {shortest}); increase --lengths/--length-range",
+                    min = MIN_FRAGMENT_LENGTH
+                ));
+            }
         }
 
         let positions = parse_positions(
@@ -193,7 +200,7 @@ impl VisualizePositionsConfig {
             height,
             output: self.output.clone(),
             label: self.label.clone(),
-            show_index: self.show_index,
+            show_index: !self.hide_index,
             show_half: self.show_half,
             show_mid: !self.hide_mid,
         })

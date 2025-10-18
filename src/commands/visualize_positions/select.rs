@@ -149,41 +149,242 @@ fn build_nearest_tracks(length: u32, range: &NearestRange, step: NonZeroUsize) -
     vec![fragment_track, nearest_track]
 }
 
-/// Build helper tracks that illustrate the midpoint guard applied for each requested order.
-///
-/// The overlays clone the provided nearest fragment and folded tracks, trim them using the same
-/// conditions enforced in the counting pipeline, and rename them to advertise the associated
-/// order and k-mer length.
-pub fn build_nearest_guard_overlays(
+/// Build helper tracks that illustrate the valid k-mer start bases for the requested orders.
+pub fn build_kmer_start_overlays(
+    frame: ReferenceFrame,
     length: u32,
-    fragment_track: &Track,
-    nearest_track: &Track,
+    base_tracks: &[Track],
     orders: &[u8],
 ) -> Vec<Track> {
-    if length == 0 || orders.is_empty() {
+    if length == 0 || orders.is_empty() || base_tracks.is_empty() {
         return Vec::new();
     }
 
-    orders
+    match frame {
+        ReferenceFrame::Left => build_linear_forward_overlays(length, base_tracks, orders),
+        ReferenceFrame::Right => build_linear_reverse_overlays(length, base_tracks, orders),
+        ReferenceFrame::PerEnd => build_per_end_overlays(length, base_tracks, orders),
+        ReferenceFrame::Nearest => build_nearest_overlays(length, base_tracks, orders),
+        ReferenceFrame::Mid => build_mid_overlays(length, base_tracks, orders),
+    }
+}
+
+fn build_linear_forward_overlays(length: u32, base_tracks: &[Track], orders: &[u8]) -> Vec<Track> {
+    let mut overlays = Vec::new();
+    for &order in orders {
+        let k_len = u32::from(order) + 1;
+        for track in base_tracks {
+            let mut overlay = track.clone();
+            overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
+            overlay.selected_indices = linear_forward_starts(track, length, k_len);
+            overlays.push(overlay);
+        }
+    }
+    overlays
+}
+
+fn build_linear_reverse_overlays(length: u32, base_tracks: &[Track], orders: &[u8]) -> Vec<Track> {
+    let mut overlays = Vec::new();
+    for &order in orders {
+        let k_len = u32::from(order) + 1;
+        for track in base_tracks {
+            let mut overlay = track.clone();
+            overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
+            overlay.selected_indices = linear_reverse_starts(track, k_len, length);
+            overlays.push(overlay);
+        }
+    }
+    overlays
+}
+
+fn build_per_end_overlays(length: u32, base_tracks: &[Track], orders: &[u8]) -> Vec<Track> {
+    let mut overlays = Vec::new();
+    for &order in orders {
+        let k_len = u32::from(order) + 1;
+        for track in base_tracks {
+            let mut overlay = track.clone();
+            overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
+            if track.name.eq_ignore_ascii_case("right") {
+                overlay.selected_indices = linear_reverse_starts(track, k_len, length);
+            } else {
+                overlay.selected_indices = linear_forward_starts(track, length, k_len);
+            }
+            overlays.push(overlay);
+        }
+    }
+    overlays
+}
+
+fn build_mid_overlays(length: u32, base_tracks: &[Track], orders: &[u8]) -> Vec<Track> {
+    let mut overlays = Vec::new();
+    for &order in orders {
+        let k_len = u32::from(order) + 1;
+        for track in base_tracks {
+            let mut overlay = track.clone();
+            overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
+            overlay.selected_indices = mid_starts(track, length, k_len);
+            overlays.push(overlay);
+        }
+    }
+    overlays
+}
+
+fn build_nearest_overlays(length: u32, base_tracks: &[Track], orders: &[u8]) -> Vec<Track> {
+    let mut overlays = Vec::new();
+    let fragment_track = base_tracks.iter().find(|track| track.name == "fragment");
+    let nearest_track = base_tracks.iter().find(|track| track.name == "nearest");
+
+    for &order in orders {
+        let k_len = u32::from(order) + 1;
+        if let Some(fragment) = fragment_track {
+            let mut overlay = fragment.clone();
+            overlay.name = format!("fragment k-mer starts (k={})", k_len);
+            overlay.selected_indices = nearest_fragment_starts(fragment, length, k_len);
+            overlays.push(overlay);
+        }
+        if let Some(nearest) = nearest_track {
+            let mut overlay = nearest.clone();
+            overlay.name = format!("nearest k-mer starts (k={})", k_len);
+            overlay.selected_indices = nearest_folded_starts(nearest, length, k_len);
+            overlays.push(overlay);
+        }
+    }
+
+    overlays
+}
+
+fn linear_forward_starts(track: &Track, length: u32, k_len: u32) -> Vec<i32> {
+    if k_len == 0 {
+        return Vec::new();
+    }
+    let max_start = length.saturating_sub(k_len).saturating_add(1);
+    track
+        .selected_indices
         .iter()
-        .map(|order| (*order, u32::from(*order) + 1))
-        .flat_map(|(order, k_len)| {
-            let max_distance = nearest_guard_max_distance(length, k_len);
-            let fragment = build_fragment_guard_overlay(
-                fragment_track,
-                length,
-                max_distance,
-                order,
-                k_len,
-            );
-            let folded =
-                build_folded_guard_overlay(nearest_track, max_distance, order, k_len);
-            vec![fragment, folded]
+        .copied()
+        .filter(|&idx| idx > 0 && (idx as u32) <= max_start)
+        .collect()
+}
+
+fn linear_reverse_starts(track: &Track, k_len: u32, length: u32) -> Vec<i32> {
+    if k_len == 0 {
+        return Vec::new();
+    }
+    let k_span = k_len as i32;
+    track
+        .selected_indices
+        .iter()
+        .copied()
+        .filter_map(|idx| {
+            if idx <= 0 {
+                return None;
+            }
+            let start = idx - (k_span - 1);
+            if start >= 1 && (start as u32) <= length {
+                Some(start)
+            } else {
+                None
+            }
         })
         .collect()
 }
 
-fn nearest_guard_max_distance(length: u32, k_len: u32) -> u32 {
+fn mid_starts(track: &Track, length: u32, k_len: u32) -> Vec<i32> {
+    if k_len == 0 || length == 0 {
+        return Vec::new();
+    }
+    let center = (length / 2) as i64;
+    let max_start = length.saturating_sub(k_len) as i64;
+    track
+        .selected_indices
+        .iter()
+        .copied()
+        .filter(|&idx| {
+            let offset = center + idx as i64;
+            offset >= 0 && offset <= max_start
+        })
+        .collect()
+}
+
+fn nearest_fragment_starts(track: &Track, length: u32, k_len: u32) -> Vec<i32> {
+    if k_len == 0 || length == 0 {
+        return Vec::new();
+    }
+    let len = length as u64;
+    let k_span = k_len as u64;
+    let half = len / 2;
+    let (left_max_start_1b, right_min_anchor_1b) = nearest_fragment_thresholds(len, k_span);
+
+    let half_1b = half as u32;
+    let mut starts: Vec<i32> = Vec::new();
+    for &idx in &track.selected_indices {
+        if idx <= 0 {
+            continue;
+        }
+        let idx_u32 = idx as u32;
+        if idx_u32 <= half_1b {
+            if idx_u32 <= left_max_start_1b && idx_u32 + k_len - 1 <= length {
+                starts.push(idx);
+            }
+        } else {
+            if idx_u32 < right_min_anchor_1b || idx_u32 < k_len {
+                continue;
+            }
+            let start = idx_u32.saturating_sub(k_len - 1);
+            if start >= 1 && start <= length {
+                starts.push(start as i32);
+            }
+        }
+    }
+    starts.sort_unstable();
+    starts.dedup();
+    starts
+}
+
+fn nearest_folded_starts(track: &Track, length: u32, k_len: u32) -> Vec<i32> {
+    if k_len == 0 {
+        return Vec::new();
+    }
+    let max_distance = nearest_max_distance_for_k(length, k_len);
+    if max_distance == 0 {
+        return Vec::new();
+    }
+    track
+        .selected_indices
+        .iter()
+        .copied()
+        .filter(|&idx| idx > 0 && (idx as u32) <= max_distance)
+        .collect()
+}
+
+fn nearest_fragment_thresholds(len: u64, k_span: u64) -> (u32, u32) {
+    if len == 0 {
+        return (0, u32::MAX);
+    }
+    let half = len / 2;
+    let (left_max_start, right_min_anchor) = if (len % 2) == 1 {
+        (half.saturating_sub(k_span), half.saturating_add(k_span))
+    } else {
+        (
+            half.saturating_sub(k_span),
+            half.saturating_add(k_span.saturating_sub(1)),
+        )
+    };
+
+    let left_max_start_1b = if left_max_start >= len {
+        0
+    } else {
+        (left_max_start + 1) as u32
+    };
+    let right_min_anchor_1b = if right_min_anchor >= len {
+        (len + 1) as u32
+    } else {
+        (right_min_anchor + 1) as u32
+    };
+    (left_max_start_1b, right_min_anchor_1b)
+}
+
+fn nearest_max_distance_for_k(length: u32, k_len: u32) -> u32 {
     if length == 0 {
         return 0;
     }
@@ -205,63 +406,6 @@ fn nearest_guard_max_distance(length: u32, k_len: u32) -> u32 {
     let right_max_distance = len.saturating_sub(right_min_anchor);
 
     left_max_distance.max(right_max_distance) as u32
-}
-
-fn build_fragment_guard_overlay(
-    template: &Track,
-    length: u32,
-    max_distance: u32,
-    order: u8,
-    k_len: u32,
-) -> Track {
-    let mut track = template.clone();
-    track.name = format!("fragment order {} (k-mer {})", order, k_len);
-    if max_distance == 0 {
-        track.selected_indices.clear();
-        return track;
-    }
-
-    let limit = max_distance as i64;
-    let fragment_len = length as i64;
-    track.selected_indices = template
-        .selected_indices
-        .iter()
-        .copied()
-        .filter(|&idx| {
-            if idx <= 0 {
-                return false;
-            }
-            let idx = idx as i64;
-            let dist_left = idx;
-            let dist_right = fragment_len - idx + 1;
-            let nearest = dist_left.min(dist_right);
-            nearest > 0 && nearest <= limit
-        })
-        .collect();
-    track
-}
-
-fn build_folded_guard_overlay(
-    template: &Track,
-    max_distance: u32,
-    order: u8,
-    k_len: u32,
-) -> Track {
-    let mut track = template.clone();
-    track.name = format!("nearest order {} (k-mer {})", order, k_len);
-    if max_distance == 0 {
-        track.selected_indices.clear();
-        return track;
-    }
-
-    let limit = max_distance as i32;
-    track.selected_indices = template
-        .selected_indices
-        .iter()
-        .copied()
-        .filter(|&idx| idx > 0 && idx <= limit)
-        .collect();
-    track
 }
 
 fn collect_nearest_indices(half: u32, range: &NearestRange) -> Vec<i32> {
