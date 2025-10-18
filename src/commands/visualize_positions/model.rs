@@ -127,6 +127,7 @@ pub struct VizConfig {
     pub step: NonZeroUsize,
     pub bases: BasesFrom,
     pub mismatch_bases_from: MismatchBasesFrom,
+    pub kmer_sizes: Option<Vec<u8>>,
     pub fragment_lengths: Vec<u32>,
     pub style: Style,
     pub width: usize,

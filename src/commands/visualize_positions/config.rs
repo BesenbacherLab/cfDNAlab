@@ -12,6 +12,8 @@ use crate::commands::{
     },
 };
 
+const MIN_FRAGMENT_LENGTH: u32 = 10;
+
 /// `fragment-kmers` helper: Draw which fragment bases will be counted for a given frame and range setup.
 ///
 /// Use this helper to prototype the “where to count” arguments (`--frame`, `--positions`, `--step`, `--bases-from`, `--mismatch-bases-from`),
@@ -58,6 +60,21 @@ pub struct VisualizePositionsConfig {
     )]
     pub length_range: Option<String>,
 
+    /// Optional k-mer sizes to preview guarding of k-mer starting points `[integers >= 1]`.
+    ///
+    /// Provide the same list you would pass to the counting commands so folded tracks illustrate
+    /// which bases survive the start point guards at each k-mer length.
+    #[cfg_attr(
+        feature = "cli",
+        arg(
+            long,
+            num_args = 1..,
+            value_parser = clap::value_parser!(u8).range(1..27),
+            help_heading = "Visualization"
+        )
+    )]
+    pub kmer_sizes: Option<Vec<u8>>,
+
     /// Rendering backend for the diagram `[ascii|svg]`.
     ///
     /// ASCII is compact and stdout-friendly. SVG produces a figure for slides or docs.
@@ -87,9 +104,9 @@ pub struct VisualizePositionsConfig {
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Visualization"))]
     pub label: Option<String>,
 
-    /// Show numeric tick marks alongside the ASCII axis `[flag]`.
+    /// Hide the numeric tick marks alongside the ASCII axis `[flag]`.
     #[cfg_attr(feature = "cli", arg(long, help_heading = "Visualization"))]
-    pub show_index: bool,
+    pub hide_index: bool,
 
     /// Mark the halfway distance (`floor(length/2)` from the frame origin) with `^` on the axis `[flag]`.
     ///
@@ -127,6 +144,14 @@ impl VisualizePositionsConfig {
             return Err(anyhow!(
                 "no fragment lengths provided; use --lengths or --length-range"
             ));
+        }
+        if let Some(&shortest) = fragment_lengths.iter().min() {
+            if shortest < MIN_FRAGMENT_LENGTH {
+                return Err(anyhow!(
+                    "fragment lengths shorter than {min} bp are not supported (got {shortest}); increase --lengths/--length-range",
+                    min = MIN_FRAGMENT_LENGTH
+                ));
+            }
         }
 
         let positions = parse_positions(
@@ -168,13 +193,14 @@ impl VisualizePositionsConfig {
             step,
             bases: self.position_selection.bases_from,
             mismatch_bases_from: self.position_selection.mismatch_bases_from,
+            kmer_sizes: self.kmer_sizes.clone(),
             fragment_lengths,
             style: self.style,
             width,
             height,
             output: self.output.clone(),
             label: self.label.clone(),
-            show_index: self.show_index,
+            show_index: !self.hide_index,
             show_half: self.show_half,
             show_mid: !self.hide_mid,
         })

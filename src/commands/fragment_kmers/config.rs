@@ -11,25 +11,10 @@ use crate::{
     shared::{blacklist::BlacklistStrategy, indel_mode::IndelMode},
 };
 
-// TODO: Add minimum or min mean base quality filtering!
-
-/// Count kmers within the fragments in a BAM-file.
-///
-/// Whereas the `cfdna ends` tool extracts end-motifs, this tool extracts all kmers
-/// in a sliding window across the fragment.
-///
-/// ## Always-on exclusion criteria
-///
-/// The following criteria always exclude a read:
-///
-/// The read or mate read is unmapped.
-/// The read is mapped to a different `tid` than the mate.
-/// The read is secondary, supplementary or duplicate.
-/// The read failed quality check.
-/// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
+/// Commands that are shared with `transitions``
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[derive(Clone)]
-pub struct FragmentKmersConfig {
+#[derive(Debug, Clone)]
+pub struct FragmentKmersSharedArgs {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
 
@@ -62,20 +47,7 @@ pub struct FragmentKmersConfig {
         clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
     pub tile_size: u32,
 
-    /// List of K-mer sizes [integer].
-    ///
-    /// When counting for many kmer-sizes (>8), consider splitting
-    /// into multiple runs to reduce memory consumption at a time.
-    ///
-    /// Example: `--kmer-sizes 3 5 11`
-    #[cfg_attr(
-        feature = "cli",
-        clap(short = 'k', long, num_args = 1.., value_parser = clap::value_parser!(u8).range(1..28), required=true, help_heading="Core"))]
-    pub kmer_sizes: Vec<u8>,
-
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub position_selection: FragmentPositionSelectionArgs,
-
+    // TODO: Is it still correct that scaling weights use the full reference span? 5th last line
     /// How to handle insertions and deletions in fragments `[string]`
     ///
     /// Deletions: Both 'D' and 'N' in the cigar string are considered deletions.
@@ -87,7 +59,7 @@ pub struct FragmentKmersConfig {
     ///   Kmers are extracted for the full/offset fragment span from the reference genome.
     ///
     /// - `"adjust"`:
-    ///   Adjust the counts by excluding kmers overlapping positions with observed insertions and deletions in the
+    ///   Adjust the counts by excluding k-mers overlapping positions with observed insertions and deletions in the
     ///   observed bases (we cannot adjust in mate-gaps).
     ///   Outside the mate-overlap, all indels and deletions are adjusted for.
     ///   **Overlap**: In the mate-overlap, both reads must agree on the position-level.
@@ -115,25 +87,8 @@ pub struct FragmentKmersConfig {
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub ignore_gap: bool,
 
-    /// Collapse each kmer with its reverse-complement. [flag]
-    ///
-    /// Odd-sized kmers are collapsed such that the middle base is `A` or `C`.
-    /// Even-sized kmers are collapsed to the lexicographically lowest motif.
-    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
-    pub canonical: bool,
-
-    /// Enable positional counting based on --frame/--positions `[flag]`
-    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
-    pub positional_counts: bool,
-
-    /// Save counts as sparse-array. [flag]
-    ///
-    /// For large kmer-sizes, we cannot save dense arrays with all motifs
-    /// unless we have a LOT of RAM and storage space. Enable this
-    /// flag to save as a COO sparse array that can be opened in
-    /// python via `scipy.sparse.load_npz()`.
-    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
-    pub save_sparse: bool,
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub position_selection: FragmentPositionSelectionArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub windows: WindowsArgs,
@@ -164,7 +119,7 @@ pub struct FragmentKmersConfig {
     /// Optional BED file(s) with blacklisted regions `[path]`
     ///
     /// Two levels of filtering are performed. First, all blacklisted regions are assigned
-    /// the N-"base" to exclude kmers that include the positions. Then, depending on the `--blacklist-strategy`,
+    /// the N-"base" to exclude k-mers that include the positions. Then, depending on the `--blacklist-strategy`,
     /// fragments overlapping blacklisted regions with some fraction are excluded.
     #[cfg_attr(
         feature = "cli", clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading = "Filtering"))]
@@ -199,21 +154,20 @@ pub struct FragmentKmersConfig {
         )
     )]
     pub blacklist_strategy: BlacklistStrategy,
-    // #[cfg_attr(feature = "cli", clap(flatten))]
-    // gc: GCArgs,
-
-    // #[cfg_attr(feature = "cli", clap(flatten))]
-    // two_bit: TwoBitArgs,
 }
 
-impl FragmentKmersConfig {
-    pub fn new(ioc: IOCArgs, ref_genome: Ref2BitRequiredArgs, chromosomes: ChromosomeArgs) -> Self {
+impl FragmentKmersSharedArgs {
+    pub fn new(
+        ioc: IOCArgs,
+        ref_genome: Ref2BitRequiredArgs,
+        chromosomes: ChromosomeArgs,
+        output_prefix: String,
+    ) -> Self {
         Self {
             ioc,
             ref_genome,
-            output_prefix: "fragment_kmers".to_string(),
+            output_prefix: output_prefix,
             tile_size: 20_000_000,
-            kmer_sizes: vec![3u8],
             position_selection: FragmentPositionSelectionArgs {
                 frame: ReferenceFrame::Left,
                 positions: "..".to_string(),
@@ -223,9 +177,6 @@ impl FragmentKmersConfig {
             },
             indel_mode: IndelMode::Ignore,
             ignore_gap: false,
-            canonical: false,
-            positional_counts: false,
-            save_sparse: false,
             windows: WindowsArgs::default(),
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
@@ -245,12 +196,20 @@ impl FragmentKmersConfig {
         self.output_prefix = output_prefix;
     }
 
-    pub fn set_tile_size(&mut self, tile_size: u32) {
-        self.tile_size = tile_size;
+    pub fn set_blacklist(&mut self, blacklist: Option<Vec<PathBuf>>) {
+        self.blacklist = blacklist;
     }
 
-    pub fn set_kmer_sizes(&mut self, kmer_sizes: Vec<u8>) {
-        self.kmer_sizes = kmer_sizes;
+    pub fn set_blacklist_min_size(&mut self, blacklist_min_size: u64) {
+        self.blacklist_min_size = blacklist_min_size;
+    }
+
+    pub fn set_blacklist_strategy(&mut self, blacklist_strategy: BlacklistStrategy) {
+        self.blacklist_strategy = blacklist_strategy;
+    }
+
+    pub fn set_tile_size(&mut self, tile_size: u32) {
+        self.tile_size = tile_size;
     }
 
     pub fn set_position_selection(&mut self, position_selection: FragmentPositionSelectionArgs) {
@@ -259,18 +218,6 @@ impl FragmentKmersConfig {
 
     pub fn set_ignore_gap(&mut self, ignore_gap: bool) {
         self.ignore_gap = ignore_gap;
-    }
-
-    pub fn set_canonical(&mut self, canonical: bool) {
-        self.canonical = canonical;
-    }
-
-    pub fn set_positional_counts(&mut self, positional: bool) {
-        self.positional_counts = positional;
-    }
-
-    pub fn set_save_sparse(&mut self, save_sparse: bool) {
-        self.save_sparse = save_sparse;
     }
 
     pub fn set_indel_mode(&mut self, indel_mode: IndelMode) {
@@ -295,5 +242,152 @@ impl FragmentKmersConfig {
 
     pub fn set_require_proper_pair(&mut self, require: bool) {
         self.require_proper_pair = require;
+    }
+}
+
+// TODO: Add minimum or min mean base quality filtering!
+
+/// Count k-mers within the fragments in a BAM-file.
+///
+/// Whereas the `cfdna ends` tool extracts end-motifs, this tool extracts k-mers
+/// from all the **selected positions** in the fragment.
+///
+/// Use `cfdna visualize-positions` to check what bases are counted at with various position selection settings.
+///
+/// ## Always-on exclusion criteria
+///
+/// The following criteria always exclude a read:
+///
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
+/// The read is secondary, supplementary or duplicate.
+/// The read failed quality check.
+/// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Clone)]
+pub struct FragmentKmersConfig {
+    /// Args shared with downstream tools like `transitions`
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub shared_args: FragmentKmersSharedArgs,
+
+    /// List of K-mer sizes [integer].
+    ///
+    /// When counting for many kmer-sizes (>8), consider splitting
+    /// into multiple runs to reduce memory consumption at a time.
+    ///
+    /// Example: `--kmer-sizes 3 5 11`
+    #[cfg_attr(
+        feature = "cli",
+        clap(short = 'k', long, num_args = 1.., value_parser = clap::value_parser!(u8).range(1..28), required=true, help_heading="Core"))]
+    pub kmer_sizes: Vec<u8>,
+
+    /// Collapse each kmer with its reverse-complement. [flag]
+    ///
+    /// Odd-sized k-mers are collapsed such that the middle base is `A` or `C`.
+    /// Even-sized k-mers are collapsed to the lexicographically lowest motif.
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
+    pub canonical: bool,
+
+    /// Enable positional counting based on --frame/--positions `[flag]`
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
+    pub positional_counts: bool,
+
+    /// Save counts as sparse-array. [flag]
+    ///
+    /// For large kmer-sizes, we cannot save dense arrays with all motifs
+    /// unless we have a LOT of RAM and storage space. Enable this
+    /// flag to save as a COO sparse array that can be opened in
+    /// python via `scipy.sparse.load_npz()`.
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
+    pub save_sparse: bool,
+    // #[cfg_attr(feature = "cli", clap(flatten))]
+    // gc: GCArgs,
+
+    // #[cfg_attr(feature = "cli", clap(flatten))]
+    // two_bit: TwoBitArgs,
+}
+
+impl FragmentKmersConfig {
+    pub fn new(ioc: IOCArgs, ref_genome: Ref2BitRequiredArgs, chromosomes: ChromosomeArgs) -> Self {
+        Self {
+            shared_args: FragmentKmersSharedArgs::new(
+                ioc,
+                ref_genome,
+                chromosomes,
+                "fragment_kmers".to_string(),
+            ),
+            kmer_sizes: vec![3u8],
+            canonical: false,
+            positional_counts: false,
+            save_sparse: false,
+        }
+    }
+
+    pub fn set_output_prefix(&mut self, output_prefix: String) {
+        self.shared_args.set_output_prefix(output_prefix);
+    }
+
+    pub fn set_blacklist(&mut self, blacklist: Option<Vec<PathBuf>>) {
+        self.shared_args.set_blacklist(blacklist);
+    }
+
+    pub fn set_blacklist_min_size(&mut self, blacklist_min_size: u64) {
+        self.shared_args.set_blacklist_min_size(blacklist_min_size);
+    }
+
+    pub fn set_blacklist_strategy(&mut self, blacklist_strategy: BlacklistStrategy) {
+        self.shared_args.set_blacklist_strategy(blacklist_strategy);
+    }
+
+    pub fn set_tile_size(&mut self, tile_size: u32) {
+        self.shared_args.set_tile_size(tile_size);
+    }
+
+    pub fn set_kmer_sizes(&mut self, kmer_sizes: Vec<u8>) {
+        self.kmer_sizes = kmer_sizes;
+    }
+
+    pub fn set_position_selection(&mut self, position_selection: FragmentPositionSelectionArgs) {
+        self.shared_args.set_position_selection(position_selection);
+    }
+
+    pub fn set_ignore_gap(&mut self, ignore_gap: bool) {
+        self.shared_args.set_ignore_gap(ignore_gap);
+    }
+
+    pub fn set_canonical(&mut self, canonical: bool) {
+        self.canonical = canonical;
+    }
+
+    pub fn set_positional_counts(&mut self, positional: bool) {
+        self.positional_counts = positional;
+    }
+
+    pub fn set_save_sparse(&mut self, save_sparse: bool) {
+        self.save_sparse = save_sparse;
+    }
+
+    pub fn set_indel_mode(&mut self, indel_mode: IndelMode) {
+        self.shared_args.set_indel_mode(indel_mode);
+    }
+
+    pub fn set_windows(&mut self, windows: WindowsArgs) {
+        self.shared_args.set_windows(windows);
+    }
+
+    pub fn set_scale_genome(&mut self, scale: ScaleGenomeArgs) {
+        self.shared_args.set_scale_genome(scale);
+    }
+
+    pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
+        self.shared_args.fragment_lengths_mut()
+    }
+
+    pub fn set_min_mapq(&mut self, min_mapq: u8) {
+        self.shared_args.set_min_mapq(min_mapq);
+    }
+
+    pub fn set_require_proper_pair(&mut self, require: bool) {
+        self.shared_args.set_require_proper_pair(require);
     }
 }

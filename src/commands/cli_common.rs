@@ -95,7 +95,7 @@ pub struct FragmentLengthArgs {
     /// Minimum fragment length to include `[integer]`
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "20", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
+        clap(long, default_value = "20", value_parser = clap::value_parser!(u32).range(10..), help_heading="Filtering"))]
     pub min_fragment_length: u32,
 
     /// Maximum fragment length to include `[integer]`
@@ -363,13 +363,13 @@ pub struct ScaleGenomeArgs {
     pub scaling_factors: Option<PathBuf>,
 }
 
+// TODO: Is "nearest" clear enough in all usecases?
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
 pub struct FragmentPositionSelectionArgs {
     /// Choose the reference frame that interprets every other region selection argument `[left|right|per-end|nearest|mid]`.
     ///
     /// Note: `--positions` describe positions to count at relative to the chosen frame.
-    /// Some frames are only relevant when `fragment-kmers` return positionally indexed counts.
     ///
     /// - **`left`** counts bases from the forward 5' end. Indices increase along the fragment and
     ///   k-mers are counted in the forward-orientation.
@@ -381,14 +381,15 @@ pub struct FragmentPositionSelectionArgs {
     ///   The `step` start can differ per side.
     ///
     /// - **`nearest`** folds the fragment around the midpoint so distances grow away from the nearest end.
-    ///   The positional keyword `half` represents the midpoint (and maximum position).
+    ///   The positional keyword `half` represents the midpoint (and maximum position). For odd-sized fragments,
+    ///   the single midpoint is not counted, as both sides count up-to it.
     ///   Bases contributed by the reverse 5' side are complemented.
     ///
     /// - **`mid`** centers the axis on the midpoint, allowing selections around zero with negative/positive offsets.
     ///   K-mers are counted in the forward-orientation.
     #[cfg_attr(
         feature = "cli",
-        arg(
+        clap(
             long,
             value_enum,
             default_value = "left",
@@ -415,7 +416,7 @@ pub struct FragmentPositionSelectionArgs {
     /// - **`mid`** (centered at 0): use `..` for the entire axis, `-M..N`, `-M..`, or `..N`. E.g. `-10..10` for the 20 bases around the midpoint.
     #[cfg_attr(
         feature = "cli",
-        arg(
+        clap(
             long,
             help_heading = "Region Selection",
             default_value = "..",
@@ -435,7 +436,7 @@ pub struct FragmentPositionSelectionArgs {
     /// (`-2*step`, `-step`, `0`, `step`, `2*step`, ...). Ranges that exclude the origin fall back to the default stride.
     #[cfg_attr(
         feature = "cli",
-        arg(long, default_value_t = 1, help_heading = "Region Selection")
+        clap(long, default_value_t = 1, help_heading = "Region Selection")
     )]
     pub step: usize,
 
@@ -452,7 +453,7 @@ pub struct FragmentPositionSelectionArgs {
     ///   left/forward read for the `left` frame).
     #[cfg_attr(
         feature = "cli",
-        arg(
+        clap(
             long,
             value_enum,
             default_value = "reference",
@@ -470,7 +471,7 @@ pub struct FragmentPositionSelectionArgs {
     /// - `reference`: Ignore the reads and fall back to the reference base for that coordinate.
     #[cfg_attr(
         feature = "cli",
-        arg(
+        clap(
             long,
             value_enum,
             default_value = "nearest-read",

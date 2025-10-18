@@ -2,9 +2,14 @@ mod tests_visualize_positions {
     use std::num::NonZeroUsize;
 
     use cfdnalab::commands::visualize_positions::{
-        PositionsSpec, RangeParseError, ReadClamp, ReferenceFrame, build_tracks_for_length,
-        parse_positions,
+        PositionsSpec, RangeParseError, ReadClamp, ReferenceFrame, build_kmer_start_overlays,
+        build_tracks_for_length, parse_positions,
     };
+    use cfdnalab::commands::fragment_kmers::positions::{
+        PositionOrientation, PositionSelectionCache,
+    };
+    use cfdnalab::shared::kmers::nearest_guard::nearest_guard_bounds;
+    use std::collections::BTreeSet;
 
     fn default_step() -> NonZeroUsize {
         NonZeroUsize::new(1).unwrap()
@@ -183,6 +188,56 @@ mod tests_visualize_positions {
     }
 
     #[test]
+    fn left_overlay_trims_tail_for_kmer_length() {
+        let length = 30;
+        let spec = parse_positions(ReferenceFrame::Left, "..").unwrap();
+        let viz = build_tracks_for_length(
+            length,
+            ReferenceFrame::Left,
+            &spec,
+            default_step(),
+            ReadClamp::None,
+        );
+        let k = 3u8;
+        let overlays = build_kmer_start_overlays(ReferenceFrame::Left, length, &viz.tracks, &[k]);
+        let overlay = overlays
+            .iter()
+            .find(|track| track.name == "left k-mer starts (k=3)")
+            .expect("missing overlay for left frame");
+        assert_eq!(overlay.selected_indices.first().copied(), Some(1));
+        let expected_last = (length - u32::from(k) + 1) as i32;
+        assert_eq!(
+            overlay.selected_indices.last().copied(),
+            Some(expected_last)
+        );
+    }
+
+    #[test]
+    fn right_overlay_shifts_to_start_coordinates() {
+        let length = 30;
+        let spec = parse_positions(ReferenceFrame::Right, "..").unwrap();
+        let viz = build_tracks_for_length(
+            length,
+            ReferenceFrame::Right,
+            &spec,
+            default_step(),
+            ReadClamp::None,
+        );
+        let k = 3u8;
+        let overlays = build_kmer_start_overlays(ReferenceFrame::Right, length, &viz.tracks, &[k]);
+        let overlay = overlays
+            .iter()
+            .find(|track| track.name == "right k-mer starts (k=3)")
+            .expect("missing overlay for right frame");
+        assert_eq!(overlay.selected_indices.first().copied(), Some(1));
+        let expected_last = (length - u32::from(k) + 1) as i32;
+        assert_eq!(
+            overlay.selected_indices.last().copied(),
+            Some(expected_last)
+        );
+    }
+
+    #[test]
     fn nearest_center_double_count_guard() {
         let spec = parse_positions(ReferenceFrame::Nearest, "..half").unwrap();
         let tracks = take_linear_indices(100, ReferenceFrame::Nearest, &spec, default_step());
@@ -190,6 +245,136 @@ mod tests_visualize_positions {
         assert_eq!(tracks[1].iter().filter(|&&v| v == 50).count(), 1);
         assert!(tracks[0].contains(&1));
         assert!(tracks[0].contains(&100));
+    }
+
+    #[test]
+    fn nearest_guard_overlays_obey_midpoint_limits() {
+        let length = 100;
+        let spec = parse_positions(ReferenceFrame::Nearest, "..").unwrap();
+        let viz = build_tracks_for_length(
+            length,
+            ReferenceFrame::Nearest,
+            &spec,
+            default_step(),
+            ReadClamp::None,
+        );
+
+        let k = 2u8;
+        let overlays =
+            build_kmer_start_overlays(ReferenceFrame::Nearest, length, &viz.tracks, &[k]);
+        assert_eq!(overlays.len(), 2);
+
+        let fragment_overlay = overlays
+            .iter()
+            .find(|track| track.name == "fragment k-mer starts (k=2)")
+            .expect("missing fragment overlay");
+        let nearest_overlay = overlays
+            .iter()
+            .find(|track| track.name == "nearest k-mer starts (k=2)")
+            .expect("missing nearest overlay");
+
+        let expected_last = (length - u32::from(k) + 1) as i32;
+        assert!(fragment_overlay.selected_indices.contains(&1));
+        assert!(fragment_overlay.selected_indices.contains(&expected_last));
+        assert!(
+            !fragment_overlay
+                .selected_indices
+                .contains(&((length / 2) as i32)),
+            "midpoint start should be excluded"
+        );
+        assert_eq!(nearest_overlay.selected_indices.first().copied(), Some(1));
+        let expected_distance = (length / 2) as i32;
+        assert_eq!(
+            nearest_overlay.selected_indices.last().copied(),
+            Some(expected_distance)
+        );
+    }
+
+    #[test]
+    fn nearest_overlay_matches_fragment_kmers_positions() {
+        let length = 100;
+        let k = 2u8;
+        let spec = parse_positions(ReferenceFrame::Nearest, "..").unwrap();
+        let viz = build_tracks_for_length(
+            length,
+            ReferenceFrame::Nearest,
+            &spec,
+            default_step(),
+            ReadClamp::None,
+        );
+        let overlays =
+            build_kmer_start_overlays(ReferenceFrame::Nearest, length, &viz.tracks, &[k]);
+        let fragment_overlay = overlays
+            .iter()
+            .find(|track| track.name == "fragment k-mer starts (k=2)")
+            .expect("missing fragment overlay");
+        let nearest_overlay = overlays
+            .iter()
+            .find(|track| track.name == "nearest k-mer starts (k=2)")
+            .expect("missing nearest overlay");
+
+        let cache = PositionSelectionCache::new(
+            ReferenceFrame::Nearest,
+            &spec,
+            default_step(),
+            length,
+            length,
+        )
+        .expect("failed to build selection cache");
+        let selections = cache
+            .offsets(length)
+            .expect("no selections for nearest frame length");
+
+        let mut expected_starts = BTreeSet::new();
+        let bounds = nearest_guard_bounds(length, u32::from(k))
+            .expect("missing guard bounds for nearest frame");
+
+        let span = u32::from(k);
+        for selection in selections {
+            match selection.orientation() {
+                PositionOrientation::Forward => {
+                    let start0 = u64::from(selection.offset());
+                    if start0 > bounds.max_forward_start {
+                        continue;
+                    }
+                    if start0 + u64::from(span) > u64::from(length) {
+                        continue;
+                    }
+                    expected_starts.insert((start0 + 1) as i32);
+                }
+                PositionOrientation::Reverse => {
+                    let anchor = u64::from(selection.offset());
+                    if anchor < bounds.min_reverse_anchor {
+                        continue;
+                    }
+                    if anchor + 1 < u64::from(span) {
+                        continue;
+                    }
+                    let start0 = anchor - u64::from(span - 1);
+                    if start0 + u64::from(span) > u64::from(length) {
+                        continue;
+                    }
+                    expected_starts.insert((start0 + 1) as i32);
+                }
+            }
+        }
+
+        let fragment_starts: BTreeSet<i32> =
+            fragment_overlay.selected_indices.iter().copied().collect();
+        assert_eq!(fragment_starts, expected_starts);
+
+        let expected_distances: BTreeSet<i32> = expected_starts
+            .iter()
+            .map(|start| {
+                let start_u32 = *start as u32;
+                let left_distance = start_u32;
+                let right_distance = length - start_u32 + 1;
+                (left_distance.min(right_distance)) as i32
+            })
+            .collect();
+        let nearest_distances: BTreeSet<i32> =
+            nearest_overlay.selected_indices.iter().copied().collect();
+        assert_eq!(nearest_distances, expected_distances);
     }
 
     #[test]
@@ -342,12 +527,13 @@ mod tests_visualize_positions_config {
             },
             lengths: Some(vec![120]),
             length_range: None,
+            kmer_sizes: None,
             style: Style::Ascii,
             width: None,
             height: None,
             output: None,
             label: None,
-            show_index: false,
+            hide_index: false,
             show_half: false,
             hide_mid: false,
         };
@@ -377,12 +563,13 @@ mod tests_visualize_positions_config {
             },
             lengths: Some(vec![90, 120]),
             length_range: None,
+            kmer_sizes: None,
             style: Style::Svg,
             width: Some(140),
             height: Some(200),
             output: None,
             label: Some("test".to_string()),
-            show_index: true,
+            hide_index: false,
             show_half: true,
             hide_mid: true,
         };
@@ -414,12 +601,13 @@ mod tests_visualize_positions_config {
             },
             lengths: Some(vec![150]),
             length_range: None,
+            kmer_sizes: None,
             style: Style::Svg,
             width: None,
             height: None,
             output: None,
             label: None,
-            show_index: false,
+            hide_index: true,
             show_half: false,
             hide_mid: false,
         };
@@ -440,18 +628,46 @@ mod tests_visualize_positions_config {
             },
             lengths: Some(vec![100]),
             length_range: None,
+            kmer_sizes: None,
             style: Style::Ascii,
             width: None,
             height: None,
             output: None,
             label: None,
-            show_index: false,
+            hide_index: true,
             show_half: false,
             hide_mid: false,
         };
 
         let err = cfg.build().expect_err("step of zero must error");
         assert!(err.to_string().contains("--step must be at least 1"));
+    }
+
+    #[test]
+    fn build_rejects_fragments_shorter_than_minimum() {
+        let cfg = VisualizePositionsConfig {
+            position_selection: FragmentPositionSelectionArgs {
+                frame: ReferenceFrame::Left,
+                positions: "1..5".to_string(),
+                step: 1,
+                bases_from: BasesFrom::PreferReads,
+                mismatch_bases_from: MismatchBasesFrom::NearestRead,
+            },
+            lengths: Some(vec![9]),
+            length_range: None,
+            kmer_sizes: None,
+            style: Style::Ascii,
+            width: None,
+            height: None,
+            output: None,
+            label: None,
+            hide_index: true,
+            show_half: false,
+            hide_mid: false,
+        };
+
+        let err = cfg.build().expect_err("length < 10 should fail");
+        assert!(err.to_string().contains("10"));
     }
 
     #[test]
@@ -466,12 +682,13 @@ mod tests_visualize_positions_config {
             },
             lengths: Some(vec![100]),
             length_range: None,
+            kmer_sizes: None,
             style: Style::Ascii,
             width: None,
             height: None,
             output: None,
             label: None,
-            show_index: false,
+            hide_index: true,
             show_half: false,
             hide_mid: false,
         };
@@ -482,6 +699,162 @@ mod tests_visualize_positions_config {
         assert!(
             err.to_string()
                 .contains("`--bases-from nearest-read` is incompatible")
+        );
+    }
+}
+
+mod tests_ascii_render {
+    use std::num::NonZeroUsize;
+
+    use cfdnalab::commands::visualize_positions::model::AxisBounds;
+    use cfdnalab::commands::visualize_positions::{
+        BasesFrom, LengthVisualization, LinearRange, MismatchBasesFrom, PositionsSpec, ReadClamp,
+        ReferenceFrame, Style, Track, VizConfig, build_kmer_start_overlays,
+        build_tracks_for_length, parse_positions, render_ascii,
+    };
+
+    fn base_config(width: usize) -> VizConfig {
+        VizConfig {
+            frame: ReferenceFrame::Left,
+            positions: PositionsSpec::Linear(LinearRange::All),
+            positions_input: "..".to_string(),
+            step: NonZeroUsize::new(1).unwrap(),
+            bases: BasesFrom::Reference,
+            mismatch_bases_from: MismatchBasesFrom::NearestRead,
+            kmer_sizes: None,
+            fragment_lengths: vec![100],
+            style: Style::Ascii,
+            width,
+            height: 120,
+            output: None,
+            label: None,
+            show_index: false,
+            show_half: false,
+            show_mid: true,
+        }
+    }
+
+    fn default_step() -> NonZeroUsize {
+        NonZeroUsize::new(1).unwrap()
+    }
+
+    #[test]
+    fn fills_contiguous_columns_when_width_small() {
+        let track = Track {
+            name: "fragment".to_string(),
+            axis: AxisBounds::new(1, 100),
+            selected_indices: (1..=100).collect(),
+        };
+        let viz = LengthVisualization {
+            fragment_length: 100,
+            tracks: vec![track],
+        };
+        let config = base_config(12);
+
+        let ascii = render_ascii(&[viz], &config);
+        let fragment_line = ascii
+            .lines()
+            .find(|line| line.starts_with("fragment"))
+            .expect("missing fragment row");
+        let bar = fragment_line
+            .split(": ")
+            .nth(1)
+            .expect("missing bar segment");
+        assert!(
+            bar.chars().all(|ch| ch == '#'),
+            "expected full coverage, got {}",
+            bar
+        );
+    }
+
+    #[test]
+    fn preserves_gaps_for_sparse_selection() {
+        let track = Track {
+            name: "fragment".to_string(),
+            axis: AxisBounds::new(1, 100),
+            selected_indices: vec![1, 20, 40, 60, 80, 100],
+        };
+        let viz = LengthVisualization {
+            fragment_length: 100,
+            tracks: vec![track],
+        };
+        let config = base_config(12);
+
+        let ascii = render_ascii(&[viz], &config);
+        let fragment_line = ascii
+            .lines()
+            .find(|line| line.starts_with("fragment"))
+            .expect("missing fragment row");
+        let bar = fragment_line
+            .split(": ")
+            .nth(1)
+            .expect("missing bar segment");
+        assert!(
+            bar.chars().any(|ch| ch == '.'),
+            "sparse selection should leave gaps, got {}",
+            bar
+        );
+        assert!(bar.chars().any(|ch| ch == '#'));
+    }
+
+    #[test]
+    fn nearest_row_includes_max_distance_annotation() {
+        let fragment = Track {
+            name: "fragment".to_string(),
+            axis: AxisBounds::new(1, 100),
+            selected_indices: (1..=100).collect(),
+        };
+        let nearest = Track {
+            name: "nearest".to_string(),
+            axis: AxisBounds::new(1, 50),
+            selected_indices: (1..=50).collect(),
+        };
+        let viz = LengthVisualization {
+            fragment_length: 100,
+            tracks: vec![fragment, nearest],
+        };
+        let mut config = base_config(100);
+        config.frame = ReferenceFrame::Nearest;
+
+        let ascii = render_ascii(&[viz], &config);
+        assert!(ascii.contains("max distance 50"));
+        assert!(ascii.contains("axis(nearest max=50)"));
+    }
+
+    #[test]
+    fn nearest_ascii_overlay_marks_terminal_start() {
+        let length = 100;
+        let spec = parse_positions(ReferenceFrame::Nearest, "..").unwrap();
+        let mut viz = build_tracks_for_length(
+            length,
+            ReferenceFrame::Nearest,
+            &spec,
+            default_step(),
+            ReadClamp::None,
+        );
+        let overlays =
+            build_kmer_start_overlays(ReferenceFrame::Nearest, length, &viz.tracks, &[2]);
+        viz.tracks.extend(overlays);
+
+        let mut config = base_config(100);
+        config.frame = ReferenceFrame::Nearest;
+        config.kmer_sizes = Some(vec![2]);
+
+        let ascii = render_ascii(&[viz], &config);
+        let fragment_line = ascii
+            .lines()
+            .find(|line| line.trim_start().starts_with("fragment k-mer starts (k=2)"))
+            .expect("missing fragment overlay line");
+        let bar = fragment_line
+            .split(": ")
+            .nth(1)
+            .expect("missing bar segment");
+        assert_eq!(bar.chars().last(), Some('#'));
+        let mid_col = (length / 2 - 1) as usize;
+        assert_eq!(
+            bar.chars().nth(mid_col),
+            Some('.'),
+            "midpoint start should remain unfilled"
         );
     }
 }

@@ -1,7 +1,7 @@
 use crate::commands::visualize_positions::config::VisualizePositionsConfig;
 use crate::commands::visualize_positions::{
-    BasesFrom, LengthVisualization, ReadClamp, Style, build_tracks_for_length, render_ascii,
-    render_svg,
+    BasesFrom, LengthVisualization, ReadClamp, Style, build_kmer_start_overlays,
+    build_tracks_for_length, render_ascii, render_svg,
 };
 use anyhow::Result;
 use std::fs;
@@ -19,13 +19,23 @@ pub fn run(cfg: &VisualizePositionsConfig) -> Result<()> {
     };
 
     for &length in &viz_cfg.fragment_lengths {
-        let viz = build_tracks_for_length(
+        let mut viz = build_tracks_for_length(
             length,
             viz_cfg.frame,
             &viz_cfg.positions,
             viz_cfg.step,
             clamp_mode,
         );
+
+        if let Some(kmer_sizes) = &viz_cfg.kmer_sizes {
+            if !kmer_sizes.is_empty() {
+                let base_tracks = viz.tracks.clone();
+                let overlays =
+                    build_kmer_start_overlays(viz_cfg.frame, length, &base_tracks, kmer_sizes);
+                viz.tracks.extend(overlays);
+            }
+        }
+
         results.push(viz);
     }
 

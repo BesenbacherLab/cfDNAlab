@@ -42,6 +42,8 @@ The following commands are currently available:
 | `cfdna fcoverage`        | Count *fragment* coverage per position or aggregated in windows                                                                                                                                                           |
 | `cfdna profile-groups`   | Count fragment *midpoint* coverage in fixed-size intervals, collapsed by groups across the genome.<br />E.g. transcription factor binding sites, aggregated per transcription factor.<br />Fast alternative to *Griffin*. |
 | `cfdna lengths`          | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)` for inwardly directed pairs only                                                                                                                  |
+| `cfdna fragment-kmers`   | Count fragment k-mers with highly flexible specification of positions                                                                                                                                                     |
+| `cfdna transitions`      | Extract nth-order transition probabilities in specifiable parts of the fragments                                                                                                                                          |
 | **Normalization**        | Precompute normalization/correction factors to enable their use in the main commands                                                                                                                                      |
 | `cfdna coverage-weights` | Calculate scaling factors for normalizing/smoothing coverage across the genome                                                                                                                                            |
  
@@ -75,6 +77,8 @@ cfdna lengths \
    - We define the *fragment* as the bases from the start of the forward read till the end of the reverse read (`[start(forward), end(reverse))`) for *inwardly directed* pairs only (i.e., where `start(forward) <= start(reverse)`), as suggested by Wang, H. et al. 2025. Some methods exclude deletions and skipped-regions.
  - Should I order the BAM files differently to allow pairing of reads into fragments?
    - We expect BAM files to be *coordinate-sorted* and indexed.
+ - How did you use LLMs (AI) in this project?
+   - OpenAI's GPT5 thinking models were used for pair programming to speed up development and testing. All released code have been validated by us.
 
 ## TODO
 

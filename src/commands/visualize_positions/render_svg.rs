@@ -12,6 +12,15 @@ const LABEL_BAND: f64 = 12.0;
 const LABEL_COLUMN_PADDING: f64 = 60.0;
 const FRAGMENT_PADDING: f64 = 30.0;
 
+fn svg_track_label(track: &Track, config: &VizConfig) -> String {
+    if config.frame == ReferenceFrame::Nearest && track.name == "nearest" {
+        let max_val = track.axis.end.max(track.axis.start);
+        format!("{} (max distance {})", track.name, max_val)
+    } else {
+        track.name.clone()
+    }
+}
+
 /// Render the visualization as an SVG string.
 pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String {
     let width = config.width as f64;
@@ -38,7 +47,7 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
 
     let mut y_cursor = 30.0;
     for viz in results {
-        let header = format!(
+        let mut header = format!(
             "L={} | frame={} | positions={} | step={} | bases={} | mismatches={}",
             viz.fragment_length,
             config.frame.as_str(),
@@ -47,6 +56,16 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
             config.bases.as_str(),
             config.mismatch_bases_from.as_str()
         );
+        if let Some(kmer_sizes) = &config.kmer_sizes {
+            if !kmer_sizes.is_empty() {
+                let list = kmer_sizes
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                write!(header, " | k-mer-sizes={}", list).ok();
+            }
+        }
         writeln!(
             svg,
             r##"<text x="12" y="{:.1}" fill="#111">{}</text>"##,
@@ -68,7 +87,7 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
         let max_label_chars = viz
             .tracks
             .iter()
-            .map(|track| track.name.chars().count())
+            .map(|track| svg_track_label(track, config).chars().count())
             .max()
             .unwrap_or(0);
 
@@ -111,7 +130,8 @@ fn draw_track_svg(
     baseline_y: f64,
     label_char_width: usize,
 ) -> f64 {
-    let effective_chars = label_char_width.max(track.name.chars().count());
+    let track_label = svg_track_label(track, config);
+    let effective_chars = label_char_width.max(track_label.chars().count());
     let label_space = effective_chars as f64 * CHAR_WIDTH + LABEL_COLUMN_PADDING;
     let max_margin = (full_width * 0.4).max(LABEL_COLUMN_PADDING);
     let margin_right = 16.0;
@@ -128,7 +148,7 @@ fn draw_track_svg(
         svg,
         r##"<text x="12" y="{:.1}" fill="#111">{}</text>"##,
         bar_top + bar_height - 2.0,
-        track.name
+        track_label
     )
     .ok();
 

@@ -1,4 +1,7 @@
+use std::convert::TryFrom;
 use std::num::NonZeroUsize;
+
+use crate::shared::kmers::nearest_guard::nearest_guard_bounds;
 
 use super::model::{
     AxisBounds, LengthVisualization, LinearRange, MidRange, NearestRange, PositionsSpec,
@@ -149,6 +152,226 @@ fn build_nearest_tracks(length: u32, range: &NearestRange, step: NonZeroUsize) -
     vec![fragment_track, nearest_track]
 }
 
+/// Build helper tracks that illustrate the valid k-mer start bases for the requested kmer_sizes.
+pub fn build_kmer_start_overlays(
+    frame: ReferenceFrame,
+    length: u32,
+    base_tracks: &[Track],
+    kmer_sizes: &[u8],
+) -> Vec<Track> {
+    if length == 0 || kmer_sizes.is_empty() || base_tracks.is_empty() {
+        return Vec::new();
+    }
+
+    match frame {
+        ReferenceFrame::Left => build_linear_forward_overlays(length, base_tracks, kmer_sizes),
+        ReferenceFrame::Right => build_linear_reverse_overlays(length, base_tracks, kmer_sizes),
+        ReferenceFrame::PerEnd => build_per_end_overlays(length, base_tracks, kmer_sizes),
+        ReferenceFrame::Nearest => build_nearest_overlays(length, base_tracks, kmer_sizes),
+        ReferenceFrame::Mid => build_mid_overlays(length, base_tracks, kmer_sizes),
+    }
+}
+
+fn build_linear_forward_overlays(
+    length: u32,
+    base_tracks: &[Track],
+    kmer_sizes: &[u8],
+) -> Vec<Track> {
+    let mut overlays = Vec::new();
+    for &kmer_size in kmer_sizes {
+        let k_len = u32::from(kmer_size);
+        for track in base_tracks {
+            let mut overlay = track.clone();
+            overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
+            overlay.selected_indices = linear_forward_starts(track, length, k_len);
+            overlays.push(overlay);
+        }
+    }
+    overlays
+}
+
+fn build_linear_reverse_overlays(
+    length: u32,
+    base_tracks: &[Track],
+    kmer_sizes: &[u8],
+) -> Vec<Track> {
+    let mut overlays = Vec::new();
+    for &kmer_size in kmer_sizes {
+        let k_len = u32::from(kmer_size);
+        for track in base_tracks {
+            let mut overlay = track.clone();
+            overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
+            overlay.selected_indices = linear_reverse_starts(track, k_len, length);
+            overlays.push(overlay);
+        }
+    }
+    overlays
+}
+
+fn build_per_end_overlays(length: u32, base_tracks: &[Track], kmer_sizes: &[u8]) -> Vec<Track> {
+    let mut overlays = Vec::new();
+    for &kmer_size in kmer_sizes {
+        let k_len = u32::from(kmer_size);
+        for track in base_tracks {
+            let mut overlay = track.clone();
+            overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
+            if track.name.eq_ignore_ascii_case("right") {
+                overlay.selected_indices = linear_reverse_starts(track, k_len, length);
+            } else {
+                overlay.selected_indices = linear_forward_starts(track, length, k_len);
+            }
+            overlays.push(overlay);
+        }
+    }
+    overlays
+}
+
+fn build_mid_overlays(length: u32, base_tracks: &[Track], kmer_sizes: &[u8]) -> Vec<Track> {
+    let mut overlays = Vec::new();
+    for &kmer_size in kmer_sizes {
+        let k_len = u32::from(kmer_size);
+        for track in base_tracks {
+            let mut overlay = track.clone();
+            overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
+            overlay.selected_indices = mid_starts(track, length, k_len);
+            overlays.push(overlay);
+        }
+    }
+    overlays
+}
+
+fn build_nearest_overlays(length: u32, base_tracks: &[Track], kmer_sizes: &[u8]) -> Vec<Track> {
+    let mut overlays = Vec::new();
+    let fragment_track = base_tracks.iter().find(|track| track.name == "fragment");
+    let nearest_track = base_tracks.iter().find(|track| track.name == "nearest");
+
+    for &kmer_size in kmer_sizes {
+        let k_len = u32::from(kmer_size);
+        if let Some(fragment) = fragment_track {
+            let mut overlay = fragment.clone();
+            overlay.name = format!("fragment k-mer starts (k={})", k_len);
+            let fragment_starts = nearest_fragment_starts(fragment, length, k_len);
+            overlay.selected_indices = fragment_starts.clone();
+            if let Some(max_start) = length
+                .checked_sub(u32::from(k_len))
+                .and_then(|value| value.checked_add(1))
+            {
+                if let Ok(max_start_i32) = i32::try_from(max_start) {
+                    overlay.axis.end = overlay.axis.end.min(max_start_i32);
+                }
+            }
+            overlays.push(overlay);
+            if let Some(nearest) = nearest_track {
+                let folded = folded_distances_from_fragment(&fragment_starts, length);
+                let mut overlay = nearest.clone();
+                overlay.name = format!("nearest k-mer starts (k={})", k_len);
+                overlay.selected_indices = folded;
+                overlays.push(overlay);
+            }
+        }
+    }
+
+    overlays
+}
+
+fn linear_forward_starts(track: &Track, length: u32, k_len: u32) -> Vec<i32> {
+    if k_len == 0 {
+        return Vec::new();
+    }
+    let max_start = length.saturating_sub(k_len).saturating_add(1);
+    track
+        .selected_indices
+        .iter()
+        .copied()
+        .filter(|&idx| idx > 0 && (idx as u32) <= max_start)
+        .collect()
+}
+
+fn linear_reverse_starts(track: &Track, k_len: u32, length: u32) -> Vec<i32> {
+    if k_len == 0 {
+        return Vec::new();
+    }
+    let k_span = k_len as i32;
+    track
+        .selected_indices
+        .iter()
+        .copied()
+        .filter_map(|idx| {
+            if idx <= 0 {
+                return None;
+            }
+            let start = idx - (k_span - 1);
+            if start >= 1 && (start as u32) <= length {
+                Some(start)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn mid_starts(track: &Track, length: u32, k_len: u32) -> Vec<i32> {
+    if k_len == 0 || length == 0 {
+        return Vec::new();
+    }
+    let center = (length / 2) as i64;
+    let max_start = length.saturating_sub(k_len) as i64;
+    track
+        .selected_indices
+        .iter()
+        .copied()
+        .filter(|&idx| {
+            let offset = center + idx as i64;
+            offset >= 0 && offset <= max_start
+        })
+        .collect()
+}
+
+fn nearest_fragment_starts(track: &Track, length: u32, k_len: u32) -> Vec<i32> {
+    if k_len == 0 || length == 0 || k_len > length {
+        return Vec::new();
+    }
+    let Some(bounds) = nearest_guard_bounds(length, k_len) else {
+        return Vec::new();
+    };
+    let len = length as u64;
+    let span = k_len as u64;
+    let min_reverse_start = bounds.min_reverse_start(k_len);
+    let half = (length / 2) as u32;
+
+    let mut starts: Vec<i32> = Vec::new();
+    for &idx in &track.selected_indices {
+        if idx <= 0 {
+            continue;
+        }
+        let idx_u32 = idx as u32;
+        if idx_u32 <= half {
+            let start_0 = (idx_u32 - 1) as u64;
+            debug_assert!(start_0 + span <= len);
+            if start_0 <= bounds.max_forward_start {
+                starts.push(idx);
+            }
+        } else {
+            let anchor = (idx_u32 - 1) as u64;
+            if anchor < bounds.min_reverse_anchor {
+                continue;
+            }
+            let start_0 = anchor.saturating_sub(span.saturating_sub(1));
+            debug_assert!(start_0 + span <= len);
+            if start_0 < min_reverse_start {
+                continue;
+            }
+            let start_1 = (start_0 + 1) as i32;
+            if start_1 > 0 && start_1 <= length as i32 {
+                starts.push(start_1);
+            }
+        }
+    }
+    starts.sort_unstable();
+    starts.dedup();
+    starts
+}
+
 fn collect_nearest_indices(half: u32, range: &NearestRange) -> Vec<i32> {
     if half == 0 {
         return Vec::new();
@@ -276,6 +499,32 @@ fn inclusive_range(start: i32, end: i32) -> Vec<i32> {
     } else {
         (start..=end).collect()
     }
+}
+
+fn folded_distances_from_fragment(starts: &[i32], length: u32) -> Vec<i32> {
+    if length == 0 {
+        return Vec::new();
+    }
+    let half = length / 2;
+    let mut distances = Vec::with_capacity(starts.len());
+    for &start in starts {
+        if start <= 0 {
+            continue;
+        }
+        let start_u32 = start as u32;
+        let distance = if start_u32 <= half {
+            start_u32
+        } else {
+            length - start_u32 + 1
+        };
+        if distance > 0 {
+            debug_assert!(distance <= half.max(1));
+            distances.push(distance as i32);
+        }
+    }
+    distances.sort_unstable();
+    distances.dedup();
+    distances
 }
 
 fn clamp_range_to_domain(

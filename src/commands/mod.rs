@@ -9,4 +9,5 @@ pub mod lengths;
 pub mod prepare_windows;
 pub mod profile_groups;
 pub mod reference_gc;
+pub mod transitions;
 pub mod visualize_positions;
