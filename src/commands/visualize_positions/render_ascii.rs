@@ -254,30 +254,10 @@ fn build_track_bar(track: &Track, config: &VizConfig) -> String {
 
     let axis_start = track.axis.start as f64;
     let axis_end = track.axis.end as f64;
-    let mut previous_column: Option<usize> = None;
-    let mut previous_value: Option<i32> = None;
     for &value in &track.selected_indices {
         let column = value_to_column(value as f64, axis_start, axis_end, config.width);
-        if column >= cells.len() {
-            continue;
-        }
-        cells[column] = '#';
-        if let (Some(prev_col), Some(prev_val)) = (previous_column, previous_value) {
-            if value == prev_val + 1 && column > prev_col + 1 {
-                for fill_col in (prev_col + 1)..column {
-                    cells[fill_col] = '#';
-                }
-            }
-        }
-        previous_column = Some(column);
-        previous_value = Some(value);
-    }
-
-    if cells.len() >= 3 {
-        for idx in 1..cells.len() - 1 {
-            if cells[idx] == '.' && cells[idx - 1] == '#' && cells[idx + 1] == '#' {
-                cells[idx] = '#';
-            }
+        if column < cells.len() {
+            cells[column] = '#';
         }
     }
 
