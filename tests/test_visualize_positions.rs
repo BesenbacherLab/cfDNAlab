@@ -193,15 +193,17 @@ mod tests_visualize_positions {
             default_step(),
             ReadClamp::None,
         );
-        let overlays = build_kmer_start_overlays(ReferenceFrame::Left, length, &viz.tracks, &[2]);
+        let k = 3u8;
+        let overlays = build_kmer_start_overlays(ReferenceFrame::Left, length, &viz.tracks, &[k]);
         let overlay = overlays
             .iter()
             .find(|track| track.name == "left k-mer starts (k=3)")
             .expect("missing overlay for left frame");
         assert_eq!(overlay.selected_indices.first().copied(), Some(1));
+        let expected_last = (length - u32::from(k) + 1) as i32;
         assert_eq!(
             overlay.selected_indices.last().copied(),
-            Some((length - 2) as i32)
+            Some(expected_last)
         );
     }
 
@@ -216,13 +218,18 @@ mod tests_visualize_positions {
             default_step(),
             ReadClamp::None,
         );
-        let overlays = build_kmer_start_overlays(ReferenceFrame::Right, length, &viz.tracks, &[2]);
+        let k = 3u8;
+        let overlays = build_kmer_start_overlays(ReferenceFrame::Right, length, &viz.tracks, &[k]);
         let overlay = overlays
             .iter()
             .find(|track| track.name == "right k-mer starts (k=3)")
             .expect("missing overlay for right frame");
         assert_eq!(overlay.selected_indices.first().copied(), Some(1));
-        assert_eq!(overlay.selected_indices.last().copied(), Some(28));
+        let expected_last = (length - u32::from(k) + 1) as i32;
+        assert_eq!(
+            overlay.selected_indices.last().copied(),
+            Some(expected_last)
+        );
     }
 
     #[test]
@@ -248,7 +255,7 @@ mod tests_visualize_positions {
         );
 
         let overlays =
-            build_kmer_start_overlays(ReferenceFrame::Nearest, length, &viz.tracks, &[2]);
+            build_kmer_start_overlays(ReferenceFrame::Nearest, length, &viz.tracks, &[3]);
         assert_eq!(overlays.len(), 2);
 
         let fragment_overlay = overlays
@@ -456,7 +463,7 @@ mod tests_visualize_positions_config {
             height: None,
             output: None,
             label: None,
-            hide_index: true,
+            hide_index: false,
             show_half: false,
             hide_mid: false,
         };
@@ -576,7 +583,7 @@ mod tests_visualize_positions_config {
                 bases_from: BasesFrom::PreferReads,
                 mismatch_bases_from: MismatchBasesFrom::NearestRead,
             },
-            lengths: Some(vec![19]),
+            lengths: Some(vec![9]),
             length_range: None,
             kmer_sizes: None,
             style: Style::Ascii,
@@ -589,8 +596,8 @@ mod tests_visualize_positions_config {
             hide_mid: false,
         };
 
-        let err = cfg.build().expect_err("length < 20 should fail");
-        assert!(err.to_string().contains("20"));
+        let err = cfg.build().expect_err("length < 10 should fail");
+        assert!(err.to_string().contains("10"));
     }
 
     #[test]

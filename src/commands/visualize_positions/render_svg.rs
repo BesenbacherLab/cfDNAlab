@@ -63,7 +63,7 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
                     .map(|s| s.to_string())
                     .collect::<Vec<_>>()
                     .join(",");
-                write!(header, " | kmer sizes={}", list).ok();
+                write!(header, " | k-mer-sizes={}", list).ok();
             }
         }
         writeln!(
