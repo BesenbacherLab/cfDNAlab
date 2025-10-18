@@ -2,8 +2,8 @@ mod tests_visualize_positions {
     use std::num::NonZeroUsize;
 
     use cfdnalab::commands::visualize_positions::{
-        PositionsSpec, RangeParseError, ReadClamp, ReferenceFrame, build_tracks_for_length,
-        parse_positions,
+        PositionsSpec, RangeParseError, ReadClamp, ReferenceFrame, build_nearest_guard_overlays,
+        build_tracks_for_length, parse_positions,
     };
 
     fn default_step() -> NonZeroUsize {
@@ -193,6 +193,65 @@ mod tests_visualize_positions {
     }
 
     #[test]
+    fn nearest_guard_overlays_obey_midpoint_limits() {
+        let length = 101;
+        let spec = parse_positions(ReferenceFrame::Nearest, "..").unwrap();
+        let viz = build_tracks_for_length(
+            length,
+            ReferenceFrame::Nearest,
+            &spec,
+            default_step(),
+            ReadClamp::None,
+        );
+
+        let fragment_track = viz
+            .tracks
+            .iter()
+            .find(|track| track.name == "fragment")
+            .cloned()
+            .expect("missing fragment track");
+        let nearest_track = viz
+            .tracks
+            .iter()
+            .find(|track| track.name == "nearest")
+            .cloned()
+            .expect("missing nearest track");
+
+        let overlays = build_nearest_guard_overlays(length, &fragment_track, &nearest_track, &[2]);
+        assert_eq!(overlays.len(), 2);
+
+        let fragment_overlay = overlays
+            .iter()
+            .find(|track| track.name.starts_with("fragment order 2"))
+            .expect("missing fragment overlay");
+        let nearest_overlay = overlays
+            .iter()
+            .find(|track| track.name.starts_with("nearest order 2"))
+            .expect("missing nearest overlay");
+
+        assert!(
+            fragment_overlay
+                .selected_indices
+                .iter()
+                .all(|&pos| {
+                    if pos <= 0 {
+                        return false;
+                    }
+                    let dist_left = pos as i64;
+                    let dist_right = length as i64 - pos as i64 + 1;
+                    let nearest = dist_left.min(dist_right);
+                    nearest <= 48
+                }),
+            "fragment overlay contains positions that cross the midpoint guard"
+        );
+        assert_eq!(nearest_overlay.selected_indices.last().copied(), Some(48));
+        assert!(
+            !nearest_overlay.selected_indices.contains(&49),
+            "folded overlay should stop before distance 49"
+        );
+    }
+
+    #[test]
     fn selects_full_axis_when_positions_is_all_for_nearest_frame() {
         let length = 21;
         let spec = parse_positions(ReferenceFrame::Nearest, "..").unwrap();
@@ -342,6 +401,7 @@ mod tests_visualize_positions_config {
             },
             lengths: Some(vec![120]),
             length_range: None,
+            orders: None,
             style: Style::Ascii,
             width: None,
             height: None,
@@ -377,6 +437,7 @@ mod tests_visualize_positions_config {
             },
             lengths: Some(vec![90, 120]),
             length_range: None,
+            orders: None,
             style: Style::Svg,
             width: Some(140),
             height: Some(200),
@@ -414,6 +475,7 @@ mod tests_visualize_positions_config {
             },
             lengths: Some(vec![150]),
             length_range: None,
+            orders: None,
             style: Style::Svg,
             width: None,
             height: None,
@@ -440,6 +502,7 @@ mod tests_visualize_positions_config {
             },
             lengths: Some(vec![100]),
             length_range: None,
+            orders: None,
             style: Style::Ascii,
             width: None,
             height: None,
@@ -466,6 +529,7 @@ mod tests_visualize_positions_config {
             },
             lengths: Some(vec![100]),
             length_range: None,
+            orders: None,
             style: Style::Ascii,
             width: None,
             height: None,
@@ -483,5 +547,95 @@ mod tests_visualize_positions_config {
             err.to_string()
                 .contains("`--bases-from nearest-read` is incompatible")
         );
+    }
+}
+
+mod tests_ascii_render {
+    use std::num::NonZeroUsize;
+
+    use cfdnalab::commands::visualize_positions::model::AxisBounds;
+    use cfdnalab::commands::visualize_positions::{
+        BasesFrom, LengthVisualization, LinearRange, MismatchBasesFrom, PositionsSpec,
+        ReferenceFrame, Style, Track, VizConfig, render_ascii,
+    };
+
+    fn base_config(width: usize) -> VizConfig {
+        VizConfig {
+            frame: ReferenceFrame::Left,
+            positions: PositionsSpec::Linear(LinearRange::All),
+            positions_input: "..".to_string(),
+            step: NonZeroUsize::new(1).unwrap(),
+            bases: BasesFrom::Reference,
+            mismatch_bases_from: MismatchBasesFrom::NearestRead,
+            orders: None,
+            fragment_lengths: vec![100],
+            style: Style::Ascii,
+            width,
+            height: 120,
+            output: None,
+            label: None,
+            show_index: false,
+            show_half: false,
+            show_mid: true,
+        }
+    }
+
+    #[test]
+    fn fills_contiguous_columns_when_width_small() {
+        let track = Track {
+            name: "fragment".to_string(),
+            axis: AxisBounds::new(1, 100),
+            selected_indices: (1..=100).collect(),
+        };
+        let viz = LengthVisualization {
+            fragment_length: 100,
+            tracks: vec![track],
+        };
+        let config = base_config(12);
+
+        let ascii = render_ascii(&[viz], &config);
+        let fragment_line = ascii
+            .lines()
+            .find(|line| line.starts_with("fragment"))
+            .expect("missing fragment row");
+        let bar = fragment_line
+            .split(": ")
+            .nth(1)
+            .expect("missing bar segment");
+        assert!(
+            bar.chars().all(|ch| ch == '#'),
+            "expected full coverage, got {}",
+            bar
+        );
+    }
+
+    #[test]
+    fn preserves_gaps_for_sparse_selection() {
+        let track = Track {
+            name: "fragment".to_string(),
+            axis: AxisBounds::new(1, 100),
+            selected_indices: (1..=100).step_by(3).collect(),
+        };
+        let viz = LengthVisualization {
+            fragment_length: 100,
+            tracks: vec![track],
+        };
+        let config = base_config(12);
+
+        let ascii = render_ascii(&[viz], &config);
+        let fragment_line = ascii
+            .lines()
+            .find(|line| line.starts_with("fragment"))
+            .expect("missing fragment row");
+        let bar = fragment_line
+            .split(": ")
+            .nth(1)
+            .expect("missing bar segment");
+        assert!(
+            bar.chars().any(|ch| ch == '.'),
+            "sparse selection should leave gaps, got {}",
+            bar
+        );
+        assert!(bar.chars().any(|ch| ch == '#'));
     }
 }

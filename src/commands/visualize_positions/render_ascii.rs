@@ -91,6 +91,16 @@ fn write_header(
         config.mismatch_bases_from.as_str()
     )
     .ok();
+    if let Some(orders) = &config.orders {
+        if !orders.is_empty() {
+            let list = orders
+                .iter()
+                .map(|order| order.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            write!(line, "  orders={}", list).ok();
+        }
+    }
     if let Some(label) = &config.label {
         write!(line, "  label={}", label).ok();
     }
@@ -201,13 +211,65 @@ fn build_track_bar(track: &Track, config: &VizConfig) -> String {
         return String::new();
     }
     let mut cells = vec!['.'; config.width];
+    if track.selected_indices.is_empty() {
+        return cells.into_iter().collect();
+    }
+
+    if config.width == 1 {
+        cells[0] = '#';
+        return cells.into_iter().collect();
+    }
+
     let axis_start = track.axis.start as f64;
     let axis_end = track.axis.end as f64;
-    for &index in &track.selected_indices {
-        let column = value_to_column(index as f64, axis_start, axis_end, config.width);
-        if column < cells.len() {
-            cells[column] = '#';
+    if axis_end <= axis_start {
+        for &index in &track.selected_indices {
+            let column = value_to_column(index as f64, axis_start, axis_end, config.width);
+            if column < cells.len() {
+                cells[column] = '#';
+            }
         }
+        return cells.into_iter().collect();
+    }
+
+    let mut run_start: Option<i32> = None;
+    let mut previous_value: Option<i32> = None;
+    for &value in &track.selected_indices {
+        if run_start.is_none() {
+            run_start = Some(value);
+            previous_value = Some(value);
+            continue;
+        }
+        if let Some(prev) = previous_value {
+            if value <= prev {
+                fill_run_columns(
+                    &mut cells,
+                    run_start.unwrap(),
+                    prev,
+                    axis_start,
+                    axis_end,
+                    config.width,
+                );
+                run_start = Some(value);
+            } else if value == prev + 1 {
+                // Continue the current contiguous run
+            } else {
+                fill_run_columns(
+                    &mut cells,
+                    run_start.unwrap(),
+                    prev,
+                    axis_start,
+                    axis_end,
+                    config.width,
+                );
+                run_start = Some(value);
+            }
+        }
+        previous_value = Some(value);
+    }
+
+    if let (Some(start), Some(end)) = (run_start, previous_value) {
+        fill_run_columns(&mut cells, start, end, axis_start, axis_end, config.width);
     }
 
     cells.into_iter().collect()
@@ -229,6 +291,45 @@ pub fn value_to_column(value: f64, axis_start: f64, axis_end: f64, width: usize)
     let max_index = (width - 1) as f64;
     let scaled = ratio * max_index;
     scaled.round().clamp(0.0, max_index) as usize
+}
+
+fn fill_run_columns(
+    cells: &mut [char],
+    run_start: i32,
+    run_end: i32,
+    axis_start: f64,
+    axis_end: f64,
+    width: usize,
+) {
+    if width == 0 {
+        return;
+    }
+    let start = run_start.min(run_end);
+    let end = run_start.max(run_end);
+    if width == 1 {
+        cells[0] = '#';
+        return;
+    }
+    if axis_end <= axis_start {
+        let column = value_to_column(start as f64, axis_start, axis_end, width);
+        if column < cells.len() {
+            cells[column] = '#';
+        }
+        return;
+    }
+
+    let start_col = value_to_column(start as f64, axis_start, axis_end, width);
+    let end_col = value_to_column(end as f64, axis_start, axis_end, width);
+    let (lower, upper) = if start_col <= end_col {
+        (start_col, end_col)
+    } else {
+        (end_col, start_col)
+    };
+    for column in lower..=upper {
+        if column < cells.len() {
+            cells[column] = '#';
+        }
+    }
 }
 
 fn axis_markers(track: &Track, fragment_length: u32, config: &VizConfig) -> Vec<(f64, char)> {

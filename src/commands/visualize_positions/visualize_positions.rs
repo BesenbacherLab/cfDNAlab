@@ -1,8 +1,8 @@
-use crate::commands::visualize_positions::config::VisualizePositionsConfig;
 use crate::commands::visualize_positions::{
-    BasesFrom, LengthVisualization, ReadClamp, Style, build_tracks_for_length, render_ascii,
-    render_svg,
+    BasesFrom, LengthVisualization, ReadClamp, ReferenceFrame, Style,
+    build_nearest_guard_overlays, build_tracks_for_length, render_ascii, render_svg,
 };
+use crate::commands::visualize_positions::config::VisualizePositionsConfig;
 use anyhow::Result;
 use std::fs;
 use std::io::{self, Write};
@@ -19,13 +19,42 @@ pub fn run(cfg: &VisualizePositionsConfig) -> Result<()> {
     };
 
     for &length in &viz_cfg.fragment_lengths {
-        let viz = build_tracks_for_length(
+        let mut viz = build_tracks_for_length(
             length,
             viz_cfg.frame,
             &viz_cfg.positions,
             viz_cfg.step,
             clamp_mode,
         );
+
+        if viz_cfg.frame == ReferenceFrame::Nearest {
+            if let Some(orders) = &viz_cfg.orders {
+                if !orders.is_empty() {
+                    let fragment_track = viz
+                        .tracks
+                        .iter()
+                        .find(|track| track.name == "fragment")
+                        .cloned();
+                    let nearest_track = viz
+                        .tracks
+                        .iter()
+                        .find(|track| track.name == "nearest")
+                        .cloned();
+                    if let (Some(fragment_track), Some(nearest_track)) =
+                        (fragment_track, nearest_track)
+                    {
+                        let overlays = build_nearest_guard_overlays(
+                            length,
+                            &fragment_track,
+                            &nearest_track,
+                            orders,
+                        );
+                        viz.tracks.extend(overlays);
+                    }
+                }
+            }
+        }
+
         results.push(viz);
     }
 

@@ -38,7 +38,7 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
 
     let mut y_cursor = 30.0;
     for viz in results {
-        let header = format!(
+        let mut header = format!(
             "L={} | frame={} | positions={} | step={} | bases={} | mismatches={}",
             viz.fragment_length,
             config.frame.as_str(),
@@ -47,6 +47,16 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
             config.bases.as_str(),
             config.mismatch_bases_from.as_str()
         );
+        if let Some(orders) = &config.orders {
+            if !orders.is_empty() {
+                let list = orders
+                    .iter()
+                    .map(|order| order.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                write!(header, " | orders={}", list).ok();
+            }
+        }
         writeln!(
             svg,
             r##"<text x="12" y="{:.1}" fill="#111">{}</text>"##,
