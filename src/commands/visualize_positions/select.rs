@@ -1,3 +1,4 @@
+use std::convert::TryFrom;
 use std::num::NonZeroUsize;
 
 use crate::shared::kmers::nearest_guard::nearest_guard_bounds;
@@ -251,6 +252,14 @@ fn build_nearest_overlays(length: u32, base_tracks: &[Track], kmer_sizes: &[u8])
             overlay.name = format!("fragment k-mer starts (k={})", k_len);
             let fragment_starts = nearest_fragment_starts(fragment, length, k_len);
             overlay.selected_indices = fragment_starts.clone();
+            if let Some(max_start) = length
+                .checked_sub(u32::from(k_len))
+                .and_then(|value| value.checked_add(1))
+            {
+                if let Ok(max_start_i32) = i32::try_from(max_start) {
+                    overlay.axis.end = overlay.axis.end.min(max_start_i32);
+                }
+            }
             overlays.push(overlay);
             if let Some(nearest) = nearest_track {
                 let folded = folded_distances_from_fragment(&fragment_starts, length);

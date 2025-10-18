@@ -5,6 +5,11 @@ mod tests_visualize_positions {
         PositionsSpec, RangeParseError, ReadClamp, ReferenceFrame, build_kmer_start_overlays,
         build_tracks_for_length, parse_positions,
     };
+    use cfdnalab::commands::fragment_kmers::positions::{
+        PositionOrientation, PositionSelectionCache,
+    };
+    use cfdnalab::shared::kmers::nearest_guard::nearest_guard_bounds;
+    use std::collections::BTreeSet;
 
     fn default_step() -> NonZeroUsize {
         NonZeroUsize::new(1).unwrap()
@@ -277,13 +282,99 @@ mod tests_visualize_positions {
                 .contains(&((length / 2) as i32)),
             "midpoint start should be excluded"
         );
-
         assert_eq!(nearest_overlay.selected_indices.first().copied(), Some(1));
         let expected_distance = (length / 2) as i32;
         assert_eq!(
             nearest_overlay.selected_indices.last().copied(),
             Some(expected_distance)
         );
+    }
+
+    #[test]
+    fn nearest_overlay_matches_fragment_kmers_positions() {
+        let length = 100;
+        let k = 2u8;
+        let spec = parse_positions(ReferenceFrame::Nearest, "..").unwrap();
+        let viz = build_tracks_for_length(
+            length,
+            ReferenceFrame::Nearest,
+            &spec,
+            default_step(),
+            ReadClamp::None,
+        );
+        let overlays =
+            build_kmer_start_overlays(ReferenceFrame::Nearest, length, &viz.tracks, &[k]);
+        let fragment_overlay = overlays
+            .iter()
+            .find(|track| track.name == "fragment k-mer starts (k=2)")
+            .expect("missing fragment overlay");
+        let nearest_overlay = overlays
+            .iter()
+            .find(|track| track.name == "nearest k-mer starts (k=2)")
+            .expect("missing nearest overlay");
+
+        let cache = PositionSelectionCache::new(
+            ReferenceFrame::Nearest,
+            &spec,
+            default_step(),
+            length,
+            length,
+        )
+        .expect("failed to build selection cache");
+        let selections = cache
+            .offsets(length)
+            .expect("no selections for nearest frame length");
+
+        let mut expected_starts = BTreeSet::new();
+        let bounds = nearest_guard_bounds(length, u32::from(k))
+            .expect("missing guard bounds for nearest frame");
+
+        let span = u32::from(k);
+        for selection in selections {
+            match selection.orientation() {
+                PositionOrientation::Forward => {
+                    let start0 = u64::from(selection.offset());
+                    if start0 > bounds.max_forward_start {
+                        continue;
+                    }
+                    if start0 + u64::from(span) > u64::from(length) {
+                        continue;
+                    }
+                    expected_starts.insert((start0 + 1) as i32);
+                }
+                PositionOrientation::Reverse => {
+                    let anchor = u64::from(selection.offset());
+                    if anchor < bounds.min_reverse_anchor {
+                        continue;
+                    }
+                    if anchor + 1 < u64::from(span) {
+                        continue;
+                    }
+                    let start0 = anchor - u64::from(span - 1);
+                    if start0 + u64::from(span) > u64::from(length) {
+                        continue;
+                    }
+                    expected_starts.insert((start0 + 1) as i32);
+                }
+            }
+        }
+
+        let fragment_starts: BTreeSet<i32> =
+            fragment_overlay.selected_indices.iter().copied().collect();
+        assert_eq!(fragment_starts, expected_starts);
+
+        let expected_distances: BTreeSet<i32> = expected_starts
+            .iter()
+            .map(|start| {
+                let start_u32 = *start as u32;
+                let left_distance = start_u32;
+                let right_distance = length - start_u32 + 1;
+                (left_distance.min(right_distance)) as i32
+            })
+            .collect();
+        let nearest_distances: BTreeSet<i32> =
+            nearest_overlay.selected_indices.iter().copied().collect();
+        assert_eq!(nearest_distances, expected_distances);
     }
 
     #[test]
@@ -752,7 +843,7 @@ mod tests_ascii_render {
         let ascii = render_ascii(&[viz], &config);
         let fragment_line = ascii
             .lines()
-            .find(|line| line.starts_with("fragment k-mer starts (k=2)"))
+            .find(|line| line.trim_start().starts_with("fragment k-mer starts (k=2)"))
             .expect("missing fragment overlay line");
         let bar = fragment_line
             .split(": ")
