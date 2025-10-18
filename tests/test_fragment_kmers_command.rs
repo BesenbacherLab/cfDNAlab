@@ -1230,7 +1230,7 @@ mod tests_fragment_kmer_positions {
             ReferenceFrame::Nearest,
         );
 
-        let expected = expected_counts(
+        let expected = expected_counts_nearest(
             selections,
             context.fragment.len() as usize,
             &context.positional_codes_by_k[&context.k],
@@ -1323,6 +1323,81 @@ mod tests_fragment_kmer_positions {
                     }
                     let start = offset + 1 - k;
                     if start + k > fragment_len {
+                        continue;
+                    }
+                    let code = codes.get(start);
+                    let key = CountKey {
+                        k: k as u8,
+                        code,
+                        position: Some(selection.offset() as i32),
+                        group: selection.group(),
+                    };
+                    *expected.entry(key).or_insert(0.0) += 1.0;
+                }
+            }
+        }
+        expected
+    }
+
+    fn expected_counts_nearest(
+        selections: &[PositionSelection],
+        fragment_len: usize,
+        codes: &KmerCodes,
+        k: usize,
+    ) -> FxHashMap<CountKey, f64> {
+        let mut expected = FxHashMap::default();
+        let len = fragment_len as u64;
+        let k_span = k as u64;
+        let half = len / 2; // floor
+
+        // Midpoint guards that mirror count_kmers_at_positions(… ReferenceFrame::Nearest …)
+        let (left_max_start, right_min_anchor) = if (len % 2) == 1 {
+            // Odd: exclude the physical midpoint at `half`
+            // Forward start <= half - k
+            // Reverse anchor (offset) >= half + k
+            (half.saturating_sub(k_span), half.saturating_add(k_span))
+        } else {
+            // Even: choose base nearest each side's start
+            // Forward start <= (L/2) - k
+            // Reverse anchor (offset) >= (L/2) + (k-1)
+            (
+                half.saturating_sub(k_span),
+                half.saturating_add(k_span.saturating_sub(1)),
+            )
+        };
+
+        for selection in selections {
+            let offset = selection.offset() as u64;
+            match selection.orientation() {
+                cfdnalab::commands::fragment_kmers::positions::PositionOrientation::Forward => {
+                    // Reject if it crosses midpoint
+                    if offset > left_max_start {
+                        continue;
+                    }
+                    // Usual bounds
+                    if offset.saturating_add(k_span) > len {
+                        continue;
+                    }
+                    let start = offset as usize;
+                    let code = codes.get(start);
+                    let key = CountKey {
+                        k: k as u8,
+                        code,
+                        position: Some(selection.offset() as i32),
+                        group: selection.group(),
+                    };
+                    *expected.entry(key).or_insert(0.0) += 1.0;
+                }
+                cfdnalab::commands::fragment_kmers::positions::PositionOrientation::Reverse => {
+                    // Anchor must be far enough right so k-mer starts on/right of the right half
+                    if offset < right_min_anchor {
+                        continue;
+                    }
+                    if offset + 1 < k_span || offset >= len {
+                        continue;
+                    }
+                    let start = (offset + 1 - k_span) as usize;
+                    if (start as u64).saturating_add(k_span) > len {
                         continue;
                     }
                     let code = codes.get(start);
