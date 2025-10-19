@@ -1,29 +1,26 @@
 use crate::commands::visualize_positions::ReferenceFrame;
 use crate::shared::kmers::nearest_guard::nearest_guard_bounds;
 
+/// Midpoint guard used by the `nearest` frame to prevent k-mers from straddling the fold.
 #[derive(Debug, Clone, Copy)]
-pub struct KmerFrameGuard {
+pub struct NearestFrameGuard {
     forward_max_start: u64,
     reverse_min_anchor: u64,
     reverse_min_start: u64,
 }
 
-impl KmerFrameGuard {
-    pub fn new(frame: ReferenceFrame, fragment_length: u32, k_span: u32) -> Self {
+impl NearestFrameGuard {
+    pub fn for_frame(frame: ReferenceFrame, fragment_length: u32, k_span: u32) -> Option<Self> {
         if matches!(frame, ReferenceFrame::Nearest) {
             if let Some(bounds) = nearest_guard_bounds(fragment_length, k_span) {
-                return Self {
+                return Some(Self {
                     forward_max_start: bounds.max_forward_start,
                     reverse_min_anchor: bounds.min_reverse_anchor,
                     reverse_min_start: bounds.min_reverse_start(k_span),
-                };
+                });
             }
         }
-        Self {
-            forward_max_start: u64::MAX,
-            reverse_min_anchor: 0,
-            reverse_min_start: 0,
-        }
+        None
     }
 
     #[inline]

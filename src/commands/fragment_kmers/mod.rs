@@ -1,6 +1,6 @@
 pub mod config;
 pub mod fragment_kmers;
-pub mod kmer_guard;
+pub mod nearest_frame_guard;
 pub mod positional_output;
 pub mod positions;
 pub mod selection;

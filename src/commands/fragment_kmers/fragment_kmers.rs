@@ -7,7 +7,7 @@ use crate::{
         counters::FragmentKmersCounters,
         fragment_kmers::{
             config::*,
-            kmer_guard::KmerFrameGuard,
+            nearest_frame_guard::NearestFrameGuard,
             positional_output::*,
             positions::*,
             selection::{SelectionDecision, evaluate_selection},
@@ -639,7 +639,7 @@ pub fn count_kmers_at_positions(
         //     left  boundary = L/2 - 1 (0-based), right boundary = L/2
         //     forward:  start + (k-1) <= left_boundary   -> start <= (L/2) - k
         //     reverse:  start >= right_boundary          -> anchor(offset) >= (L/2) + (k-1)
-        let kmer_guard = KmerFrameGuard::new(frame, fragment.len() as u32, k as u32);
+        let nearest_guard = NearestFrameGuard::for_frame(frame, fragment.len() as u32, k as u32);
 
         // Fragments may be gapped by indels, so we examine each contiguous segment
         // and clip it to the tile coordinates before accepting offsets
@@ -755,7 +755,7 @@ pub fn count_kmers_at_positions(
 
                 let decision = evaluate_selection(
                     selection,
-                    &kmer_guard,
+                    nearest_guard.as_ref(),
                     k_span,
                     offset,
                     forward_range,

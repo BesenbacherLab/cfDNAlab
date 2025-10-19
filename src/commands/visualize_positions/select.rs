@@ -1,6 +1,6 @@
 use std::num::NonZeroUsize;
 
-use crate::commands::fragment_kmers::kmer_guard::KmerFrameGuard;
+use crate::commands::fragment_kmers::nearest_frame_guard::NearestFrameGuard;
 use crate::commands::fragment_kmers::positions::{
     PositionGroup, PositionSelection, PositionSelectionCache,
 };
@@ -315,7 +315,7 @@ fn default_ranges(length: u32, k_len: u32) -> (Option<(u64, u64)>, Option<(u64, 
 
 fn left_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec<i32> {
     let k_len = u32::from(k);
-    let guard = KmerFrameGuard::new(ReferenceFrame::Left, length, k_len);
+    let guard = NearestFrameGuard::for_frame(ReferenceFrame::Left, length, k_len);
     let span = k_len as u64;
     let (forward_range, reverse_range) = default_ranges(length, k_len);
     selections
@@ -324,7 +324,7 @@ fn left_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec
         .filter_map(|sel| {
             match evaluate_selection(
                 *sel,
-                &guard,
+                guard.as_ref(),
                 span,
                 sel.offset() as u64,
                 forward_range,
@@ -341,7 +341,7 @@ fn left_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec
 
 fn right_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec<i32> {
     let k_len = u32::from(k);
-    let guard = KmerFrameGuard::new(ReferenceFrame::Right, length, k_len);
+    let guard = NearestFrameGuard::for_frame(ReferenceFrame::Right, length, k_len);
     let span = k_len as u64;
     let (forward_range, reverse_range) = default_ranges(length, k_len);
     selections
@@ -350,7 +350,7 @@ fn right_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Ve
         .filter_map(|sel| {
             match evaluate_selection(
                 *sel,
-                &guard,
+                guard.as_ref(),
                 span,
                 sel.offset() as u64,
                 forward_range,
@@ -372,7 +372,7 @@ fn right_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Ve
 
 fn nearest_fragment_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec<i32> {
     let k_len = u32::from(k);
-    let guard = KmerFrameGuard::new(ReferenceFrame::Nearest, length, k_len);
+    let guard = NearestFrameGuard::for_frame(ReferenceFrame::Nearest, length, k_len);
     let span = k_len as u64;
     let (forward_range, reverse_range) = default_ranges(length, k_len);
     selections
@@ -380,7 +380,7 @@ fn nearest_fragment_kmer_starts(length: u32, selections: &[PositionSelection], k
         .filter_map(|sel| {
             match evaluate_selection(
                 *sel,
-                &guard,
+                guard.as_ref(),
                 span,
                 sel.offset() as u64,
                 forward_range,
@@ -398,7 +398,7 @@ fn nearest_fragment_kmer_starts(length: u32, selections: &[PositionSelection], k
 
 fn mid_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec<i32> {
     let k_len = u32::from(k);
-    let guard = KmerFrameGuard::new(ReferenceFrame::Mid, length, k_len);
+    let guard = NearestFrameGuard::for_frame(ReferenceFrame::Mid, length, k_len);
     let span = k_len as u64;
     let (forward_range, reverse_range) = default_ranges(length, k_len);
     let center = (length as i64) / 2;
@@ -408,7 +408,7 @@ fn mid_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec<
         .filter_map(|sel| {
             match evaluate_selection(
                 *sel,
-                &guard,
+                guard.as_ref(),
                 span,
                 sel.offset() as u64,
                 forward_range,

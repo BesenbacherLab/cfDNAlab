@@ -213,8 +213,8 @@ mod tests_fragment_kmer_command {
 
     #[test]
     fn counts_dinucleotides_in_global_window() -> Result<()> {
-        let bam = simple_inward_bam()?;
-        let reference = simple_reference_twobit()?;
+        let bam = crate::fixtures::simple_inward_bam()?;
+        let reference = crate::fixtures::simple_reference_twobit()?;
         let out_dir = TempDir::new()?;
 
         let mut cfg = FragmentKmersConfig::new(
@@ -1415,6 +1415,7 @@ mod tests_fragment_kmer_positions {
     }
 }
 mod revcomp_tests {
+    use crate::fixtures::{simple_inward_bam, simple_reference_twobit};
     use crate::tests_fragment_kmer_command::{
         assert_count_map_matches, base_chromosomes, build_revcomp_assets, load_counts_from_output,
         load_positional_group_counts, manual_kmer_counts, manual_offset_counts,
@@ -1424,8 +1425,11 @@ mod revcomp_tests {
         FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs,
     };
     use cfdnalab::commands::fragment_kmers::config::FragmentKmersConfig;
-    use cfdnalab::commands::fragment_kmers::fragment_kmers::run;
+    use cfdnalab::commands::fragment_kmers::fragment_kmers::{run, run_inner};
     use cfdnalab::commands::visualize_positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
+    use cfdnalab::shared::fragment::segment_kmer_fragment::FragmentWithKmerSegments;
+    use cfdnalab::shared::fragment_iterator::fragments_with_kmer_segments_from_bam;
+    use cfdnalab::shared::read::default_include_read;
     use tempfile::TempDir;
 
     #[test]
@@ -1687,5 +1691,286 @@ mod revcomp_tests {
         assert_count_map_matches(&per_end_right, &expected_half, "per-end right");
 
         Ok(())
+    }
+
+    #[test]
+    fn run_inner_positions_match_counts() -> Result<()> {
+        use ndarray::{Array2, Array3};
+        use rust_htslib::bam::{Read, Reader};
+        use std::collections::{HashMap, HashSet};
+
+        let bam = simple_inward_bam()?;
+        let reference = simple_reference_twobit()?;
+
+        let positional_dir = TempDir::new()?;
+        let counts_dir = TempDir::new()?;
+
+        let k_sizes = vec![2u8];
+        let k = k_sizes[0];
+        let positional_prefix = "pos_reconstruct";
+        let counts_prefix = "agg_reconstruct";
+
+        let configure = |cfg: &mut FragmentKmersConfig, output_prefix: &str, positional: bool| {
+            cfg.set_output_prefix(output_prefix.to_string());
+            cfg.set_kmer_sizes(k_sizes.clone());
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            cfg.set_ignore_gap(false);
+            cfg.set_canonical(false);
+            cfg.set_positional_counts(positional);
+            cfg.set_position_selection(FragmentPositionSelectionArgs {
+                frame: ReferenceFrame::Nearest,
+                positions: "..".to_string(),
+                step: 1,
+                bases_from: BasesFrom::Reference,
+                mismatch_bases_from: MismatchBasesFrom::NearestRead,
+            });
+            let lengths = cfg.fragment_lengths_mut();
+            lengths.min_fragment_length = 20;
+            lengths.max_fragment_length = 120;
+        };
+
+        let mut positional_cfg = FragmentKmersConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: positional_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            Ref2BitRequiredArgs {
+                ref_2bit: reference.path.clone(),
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        configure(&mut positional_cfg, positional_prefix, true);
+
+        let mut aggregate_cfg = FragmentKmersConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: counts_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            Ref2BitRequiredArgs {
+                ref_2bit: reference.path.clone(),
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        configure(&mut aggregate_cfg, counts_prefix, false);
+
+        run_inner(&aggregate_cfg)?;
+        run_inner(&positional_cfg)?;
+
+        let aggregate_counts_path = counts_dir
+            .path()
+            .join(format!("{counts_prefix}.k{k}_counts.npy"));
+        let aggregate_motifs_path = counts_dir
+            .path()
+            .join(format!("{counts_prefix}.k{k}_motifs.txt"));
+
+        let aggregate_counts: Array2<f64> = ndarray_npy::read_npy(&aggregate_counts_path)?;
+        let aggregate_motifs: Vec<String> = std::fs::read_to_string(&aggregate_motifs_path)?
+            .lines()
+            .map(|line| line.to_string())
+            .collect();
+        assert_eq!(
+            aggregate_counts.shape()[1],
+            aggregate_motifs.len(),
+            "motif list should align with aggregate matrix columns"
+        );
+
+        let n_windows = aggregate_counts.shape()[0];
+
+        let total_aggregate: f64 = aggregate_counts.iter().copied().sum();
+        let mut aggregate_totals_by_motif: HashMap<String, f64> = HashMap::new();
+        for (motif_idx, motif) in aggregate_motifs.iter().enumerate() {
+            let total = (0..n_windows)
+                .map(|w| aggregate_counts[[w, motif_idx]])
+                .sum::<f64>();
+            aggregate_totals_by_motif.insert(motif.clone(), total);
+        }
+
+        let mut groups: Vec<String> = std::fs::read_dir(positional_dir.path())?
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                let prefix_with_dot = format!("{positional_prefix}.");
+                if let Some(rest) = name.strip_prefix(&prefix_with_dot) {
+                    if let Some(group) = rest.strip_suffix("_positions.txt") {
+                        return Some(group.to_string());
+                    }
+                }
+                None
+            })
+            .collect();
+        groups.sort();
+        groups.dedup();
+
+        let mut positional_totals_by_motif: HashMap<String, f64> = HashMap::new();
+        let mut positional_total = 0.0f64;
+        let mut processed_groups = 0usize;
+        for group in groups {
+            let counts_path = positional_dir
+                .path()
+                .join(format!("{positional_prefix}.k{k}_{group}_counts.npy"));
+            if !counts_path.exists() {
+                continue;
+            }
+            processed_groups += 1;
+
+            let offsets_path = positional_dir
+                .path()
+                .join(format!("{positional_prefix}.{group}_positions.txt"));
+            let offsets: Vec<i32> = std::fs::read_to_string(&offsets_path)?
+                .lines()
+                .map(|line| line.trim().parse::<i32>().expect("offset"))
+                .collect();
+            assert!(
+                !offsets.is_empty(),
+                "expected positional metadata for group {group}"
+            );
+
+            let counts: Array3<f64> = ndarray_npy::read_npy(&counts_path)?;
+            assert_eq!(
+                counts.shape()[1],
+                offsets.len(),
+                "axis 1 should mirror stored positions for group {group}"
+            );
+            assert_eq!(
+                counts.shape()[0],
+                n_windows,
+                "window axis must match aggregate counts"
+            );
+
+            let motifs_path = positional_dir
+                .path()
+                .join(format!("{positional_prefix}.k{k}_{group}_motifs.txt"));
+            let group_motifs: Vec<String> = std::fs::read_to_string(&motifs_path)?
+                .lines()
+                .map(|line| line.to_string())
+                .collect();
+            assert_eq!(
+                counts.shape()[2],
+                group_motifs.len(),
+                "motif axis should mirror motif list for group {group}"
+            );
+
+            let mut observed_offsets = HashSet::new();
+            for (pos_idx, offset) in offsets.iter().enumerate() {
+                let mut has_signal = false;
+                for window_idx in 0..n_windows {
+                    for (motif_idx, motif) in group_motifs.iter().enumerate() {
+                        let value = counts[[window_idx, pos_idx, motif_idx]];
+                        if value > 0.0 {
+                            has_signal = true;
+                            *positional_totals_by_motif
+                                .entry(motif.clone())
+                                .or_insert(0.0) += value;
+                            positional_total += value;
+                        }
+                    }
+                }
+                if has_signal {
+                    observed_offsets.insert(*offset);
+                }
+            }
+
+            let expected_offsets: HashSet<i32> = offsets.into_iter().collect();
+            assert_eq!(
+                observed_offsets, expected_offsets,
+                "positions reconstructed from counts differed for group {group}"
+            );
+        }
+        assert!(
+            processed_groups > 0,
+            "expected at least one positional group with counts"
+        );
+
+        use anyhow::Error;
+        let require_proper_pair = positional_cfg.shared_args.require_proper_pair;
+        let min_mapq = positional_cfg.shared_args.min_mapq;
+        let indel_mode = positional_cfg.shared_args.indel_mode;
+        let include_gap = !positional_cfg.shared_args.ignore_gap;
+        let length_filter = positional_cfg.shared_args.fragment_lengths.clone();
+
+        let include_read = move |rec: &rust_htslib::bam::Record| {
+            default_include_read(rec, require_proper_pair, min_mapq)
+        };
+        let fragment_filter =
+            move |fragment: &FragmentWithKmerSegments| length_filter.contains(fragment.len());
+
+        let mut reader = Reader::from_path(&bam.bam)?;
+        let fragments: Vec<FragmentWithKmerSegments> = fragments_with_kmer_segments_from_bam(
+            reader.records().map(|r| r.map_err(Error::from)),
+            include_read,
+            indel_mode,
+            include_gap,
+            0,
+            fragment_filter,
+        )
+        .collect::<Result<Vec<_>>>()?;
+        assert!(
+            !fragments.is_empty(),
+            "expected at least one fragment after filtering"
+        );
+
+        let expected_total: f64 = fragments
+            .iter()
+            .map(|fragment| expected_nearest_positions_for_length(fragment.len(), k as u32) as f64)
+            .sum();
+        assert!(
+            expected_total > 0.0,
+            "expected at least one counted position"
+        );
+
+        let tolerance = 1e-6f64;
+        assert!(
+            (total_aggregate - positional_total).abs() < tolerance,
+            "aggregate total {} mismatched positional total {}",
+            total_aggregate,
+            positional_total
+        );
+        assert!(
+            (total_aggregate - expected_total).abs() < tolerance,
+            "aggregate total {} mismatched expected positional count {}",
+            total_aggregate,
+            expected_total
+        );
+        assert!(
+            (positional_total - expected_total).abs() < tolerance,
+            "positional total {} mismatched expected positional count {}",
+            positional_total,
+            expected_total
+        );
+
+        for (motif, aggregate) in &aggregate_totals_by_motif {
+            let positional = positional_totals_by_motif
+                .get(motif)
+                .copied()
+                .unwrap_or_default();
+            assert!(
+                (aggregate - positional).abs() < tolerance,
+                "motif {motif} aggregate {aggregate} positional {positional}"
+            );
+        }
+        for (motif, positional) in &positional_totals_by_motif {
+            let aggregate = aggregate_totals_by_motif
+                .get(motif)
+                .copied()
+                .unwrap_or_default();
+            assert!(
+                (aggregate - positional).abs() < tolerance,
+                "motif {motif} aggregate {aggregate} positional {positional}"
+            );
+        }
+
+        Ok(())
+    }
+
+    fn expected_nearest_positions_for_length(length: u32, k: u32) -> u64 {
+        if k == 0 || length < k {
+            return 0;
+        }
+        let even_length = if length % 2 == 1 { length - 1 } else { length };
+        even_length.saturating_sub(2 * (k - 1)) as u64
     }
 }

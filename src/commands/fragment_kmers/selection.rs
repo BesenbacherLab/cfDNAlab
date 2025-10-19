@@ -1,4 +1,4 @@
-use crate::commands::fragment_kmers::kmer_guard::KmerFrameGuard;
+use crate::commands::fragment_kmers::nearest_frame_guard::NearestFrameGuard;
 use crate::commands::fragment_kmers::positions::{PositionOrientation, PositionSelection};
 
 #[derive(Debug, Clone)]
@@ -15,7 +15,7 @@ pub enum SelectionDecision {
 
 pub fn evaluate_selection(
     selection: PositionSelection,
-    guard: &KmerFrameGuard,
+    guard: Option<&NearestFrameGuard>,
     k_span: u64,
     offset: u64,
     forward_range: Option<(u64, u64)>,
@@ -29,8 +29,10 @@ pub fn evaluate_selection(
             if offset < forward_min || offset > forward_max {
                 return SelectionDecision::SkipAdvance;
             }
-            if !guard.allows_forward(offset) {
-                return SelectionDecision::SkipAdvance;
+            if let Some(guard) = guard {
+                if !guard.allows_forward(offset) {
+                    return SelectionDecision::SkipAdvance;
+                }
             }
             SelectionDecision::IncludeForward {
                 start_offset_0: offset,
@@ -43,12 +45,16 @@ pub fn evaluate_selection(
             if offset < reverse_min || offset > reverse_max {
                 return SelectionDecision::SkipAdvance;
             }
-            if !guard.allows_reverse_anchor(offset) {
-                return SelectionDecision::SkipAdvance;
+            if let Some(guard) = guard {
+                if !guard.allows_reverse_anchor(offset) {
+                    return SelectionDecision::SkipAdvance;
+                }
             }
             let start_offset_0 = offset.saturating_sub(k_span.saturating_sub(1));
-            if !guard.allows_reverse_start(start_offset_0) {
-                return SelectionDecision::SkipAdvance;
+            if let Some(guard) = guard {
+                if !guard.allows_reverse_start(start_offset_0) {
+                    return SelectionDecision::SkipAdvance;
+                }
             }
             SelectionDecision::IncludeReverse {
                 start_offset_0,
