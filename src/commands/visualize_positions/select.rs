@@ -582,8 +582,52 @@ fn apply_read_clamp(
 
 fn clamp_track_nearest(track: &mut Track, frame: ReferenceFrame, half: i32, right_start: i32) {
     match frame {
-        ReferenceFrame::Left => track.selected_indices.retain(|&idx| idx <= half),
-        ReferenceFrame::Right => track.selected_indices.retain(|&idx| idx >= right_start),
+        ReferenceFrame::Nearest => {
+            if track.name == "fragment" {
+                if let Some(&idx) = track
+                    .selected_indices
+                    .iter()
+                    .find(|&&idx| !(idx <= half || idx >= right_start))
+                {
+                    panic!(
+                        "Nearest-read clamp detected nearest fragment track index {} outside <= {} or >= {}.",
+                        idx, half, right_start
+                    );
+                }
+                track
+                    .selected_indices
+                    .retain(|&idx| idx <= half || idx >= right_start);
+            } else if track.name == "left" {
+                if let Some(&idx) = track.selected_indices.iter().find(|&&idx| idx > half) {
+                    panic!(
+                        "Nearest-read clamp detected nearest left track index {} outside <= {}.",
+                        idx, half
+                    );
+                }
+                track.selected_indices.retain(|&idx| idx <= half);
+            } else if track.name == "right" {
+                if let Some(&idx) = track
+                    .selected_indices
+                    .iter()
+                    .find(|&&idx| idx < right_start)
+                {
+                    panic!(
+                        "Nearest-read clamp detected nearest right track index {} outside >= {}.",
+                        idx, right_start
+                    );
+                }
+                track.selected_indices.retain(|&idx| idx >= right_start);
+            }
+        }
+        ReferenceFrame::Mid => {
+            track.selected_indices.retain(|&idx| idx.abs() <= half);
+        }
+        ReferenceFrame::Left => {
+            track.selected_indices.retain(|&idx| idx <= half);
+        }
+        ReferenceFrame::Right => {
+            track.selected_indices.retain(|&idx| idx >= right_start);
+        }
         ReferenceFrame::PerEnd => {
             if track.name == "left" {
                 track.selected_indices.retain(|&idx| idx <= half);
@@ -591,25 +635,53 @@ fn clamp_track_nearest(track: &mut Track, frame: ReferenceFrame, half: i32, righ
                 track.selected_indices.retain(|&idx| idx >= right_start);
             }
         }
+    }
+}
+
+
+
+fn clamp_track_both_reads(track: &mut Track, frame: ReferenceFrame, half: i32, right_start: i32) {
+    match frame {
         ReferenceFrame::Nearest => {
             if track.name == "fragment" {
+                if let Some(&idx) = track
+                    .selected_indices
+                    .iter()
+                    .find(|&&idx| !(idx <= half || idx >= right_start))
+                {
+                    panic!(
+                        "Both-read clamp detected nearest fragment track index {} outside <= {} or >= {}.",
+                        idx, half, right_start
+                    );
+                }
                 track
                     .selected_indices
                     .retain(|&idx| idx <= half || idx >= right_start);
             } else if track.name == "left" {
+                if let Some(&idx) = track.selected_indices.iter().find(|&&idx| idx > half) {
+                    panic!(
+                        "Both-read clamp detected nearest left track index {} outside <= {}.",
+                        idx, half
+                    );
+                }
                 track.selected_indices.retain(|&idx| idx <= half);
             } else if track.name == "right" {
+                if let Some(&idx) = track
+                    .selected_indices
+                    .iter()
+                    .find(|&&idx| idx < right_start)
+                {
+                    panic!(
+                        "Both-read clamp detected nearest right track index {} outside >= {}.",
+                        idx, right_start
+                    );
+                }
                 track.selected_indices.retain(|&idx| idx >= right_start);
             }
         }
         ReferenceFrame::Mid => {
             track.selected_indices.retain(|&idx| idx.abs() <= half);
         }
-    }
-}
-
-fn clamp_track_both_reads(track: &mut Track, frame: ReferenceFrame, half: i32, right_start: i32) {
-    match frame {
         ReferenceFrame::Left | ReferenceFrame::Right => {
             track
                 .selected_indices
@@ -622,15 +694,8 @@ fn clamp_track_both_reads(track: &mut Track, frame: ReferenceFrame, half: i32, r
                 track.selected_indices.retain(|&idx| idx >= right_start);
             }
         }
-        ReferenceFrame::Nearest => {
-            if track.name == "fragment" {
-                track
-                    .selected_indices
-                    .retain(|&idx| idx <= half || idx >= right_start);
-            }
-        }
-        ReferenceFrame::Mid => {
-            track.selected_indices.retain(|&idx| idx.abs() <= half);
-        }
     }
 }
+
+
+

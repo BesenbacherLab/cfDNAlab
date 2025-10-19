@@ -10,7 +10,7 @@ use crate::commands::visualize_positions::model::{
 };
 use crate::commands::visualize_positions::select::ReadClamp;
 use crate::commands::visualize_positions::{BasesFrom, render_ascii, render_svg};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use ndarray::Array3;
 use ndarray_npy::read_npy;
 use rust_htslib::bam::{self, Writer, header::HeaderRecord, record::Cigar, record::CigarString};
@@ -93,6 +93,7 @@ fn compute_visualizations(
             window.length,
             clamp_mode,
             &window_counts.offsets,
+            &window_counts.coverage,
         );
 
         if let Some(kmer_sizes) = viz_cfg.kmer_sizes.as_ref() {
@@ -421,6 +422,7 @@ fn run_fragment_kmers(
 struct WindowCounts {
     offsets: HashMap<PositionGroup, BTreeSet<i32>>,
     offsets_by_k: BTreeMap<u8, HashMap<PositionGroup, BTreeSet<i32>>>,
+    coverage: HashMap<PositionGroup, BTreeSet<i32>>,
 }
 
 impl WindowCounts {
@@ -428,6 +430,7 @@ impl WindowCounts {
         Self {
             offsets: HashMap::new(),
             offsets_by_k: BTreeMap::new(),
+            coverage: HashMap::new(),
         }
     }
 }
@@ -438,6 +441,8 @@ fn collect_counts(
     kmer_sizes: &[u8],
     windows: &[FragmentWindow],
 ) -> Result<Vec<WindowCounts>> {
+    ensure!(!kmer_sizes.is_empty(), "k-mer size list must be non-empty");
+    let base_k = kmer_sizes[0];
     let mut results: Vec<WindowCounts> = windows.iter().map(|_| WindowCounts::new()).collect();
 
     let groups = [
@@ -500,6 +505,48 @@ fn collect_counts(
                     for motif_idx in 0..shape[2] {
                         if counts[[window_idx, pos_idx, motif_idx]] > 0.0 {
                             has_signal = true;
+                            if k == base_k {
+                                let cov_set = results[window_idx]
+                                    .coverage
+                                    .entry(group)
+                                    .or_default();
+                                let k_len = k as i32;
+                                match group {
+                                    PositionGroup::Left => {
+                                        let start = offset + 1;
+                                        for delta in 0..k_len {
+                                            let idx = start + delta;
+                                            if idx > windows[window_idx].length as i32 {
+                                                panic!(
+                                                    "Left coverage index {idx} exceeds fragment length {}",
+                                                    windows[window_idx].length
+                                                );
+                                            }
+                                            cov_set.insert(idx);
+                                        }
+                                    }
+                                    PositionGroup::Right => {
+                                        let start = windows[window_idx].length as i32 - offset;
+                                        for delta in 0..k_len {
+                                            let idx = start - delta;
+                                            if idx < 1 {
+                                                panic!(
+                                                    "Right coverage index {idx} fell below 1 for fragment length {}",
+                                                    windows[window_idx].length
+                                                );
+                                            }
+                                            cov_set.insert(idx);
+                                        }
+                                    }
+                                    PositionGroup::Mid => {
+                                        let start = offset + 1;
+                                        for delta in 0..k_len {
+                                            let idx = start + delta;
+                                            cov_set.insert(idx);
+                                        }
+                                    }
+                                }
+                            }
                             break;
                         }
                     }
@@ -530,14 +577,20 @@ fn build_tracks_from_counts(
     length: u32,
     clamp: ReadClamp,
     offsets: &HashMap<PositionGroup, BTreeSet<i32>>,
+    coverage: &HashMap<PositionGroup, BTreeSet<i32>>,
 ) -> LengthVisualization {
     let mut tracks = match frame {
         ReferenceFrame::Left => {
-            let mut indices = offsets
+            let indices = coverage
                 .get(&PositionGroup::Left)
-                .map(|set| set.iter().map(|offset| offset + 1).collect())
-                .unwrap_or_else(Vec::new);
-            indices.sort_unstable();
+                .map(|set| set.iter().copied().collect())
+                .unwrap_or_else(|| {
+                    map_linear_positions(
+                        length,
+                        offsets.get(&PositionGroup::Left),
+                        PositionGroup::Left,
+                    )
+                });
             vec![Track {
                 name: "left".to_string(),
                 axis: AxisBounds::new(1, length as i32),
@@ -545,11 +598,16 @@ fn build_tracks_from_counts(
             }]
         }
         ReferenceFrame::Right => {
-            let mut indices = offsets
+            let indices = coverage
                 .get(&PositionGroup::Right)
-                .map(|set| set.iter().map(|offset| (length as i32) - *offset).collect())
-                .unwrap_or_else(Vec::new);
-            indices.sort_unstable();
+                .map(|set| set.iter().copied().collect())
+                .unwrap_or_else(|| {
+                    map_linear_positions(
+                        length,
+                        offsets.get(&PositionGroup::Right),
+                        PositionGroup::Right,
+                    )
+                });
             vec![Track {
                 name: "right".to_string(),
                 axis: AxisBounds::new(1, length as i32),
@@ -557,16 +615,26 @@ fn build_tracks_from_counts(
             }]
         }
         ReferenceFrame::PerEnd => {
-            let mut left_indices = offsets
+            let left_indices = coverage
                 .get(&PositionGroup::Left)
-                .map(|set| set.iter().map(|offset| offset + 1).collect())
-                .unwrap_or_else(Vec::new);
-            left_indices.sort_unstable();
-            let mut right_indices = offsets
+                .map(|set| set.iter().copied().collect())
+                .unwrap_or_else(|| {
+                    map_linear_positions(
+                        length,
+                        offsets.get(&PositionGroup::Left),
+                        PositionGroup::Left,
+                    )
+                });
+            let right_indices = coverage
                 .get(&PositionGroup::Right)
-                .map(|set| set.iter().map(|offset| (length as i32) - *offset).collect())
-                .unwrap_or_else(Vec::new);
-            right_indices.sort_unstable();
+                .map(|set| set.iter().copied().collect())
+                .unwrap_or_else(|| {
+                    map_linear_positions(
+                        length,
+                        offsets.get(&PositionGroup::Right),
+                        PositionGroup::Right,
+                    )
+                });
             vec![
                 Track {
                     name: "left".to_string(),
@@ -581,9 +649,26 @@ fn build_tracks_from_counts(
             ]
         }
         ReferenceFrame::Nearest => {
-            let left_positions = map_linear_positions(length, offsets.get(&PositionGroup::Left), PositionGroup::Left);
-            let right_positions =
-                map_linear_positions(length, offsets.get(&PositionGroup::Right), PositionGroup::Right);
+            let left_positions = coverage
+                .get(&PositionGroup::Left)
+                .map(|set| set.iter().copied().collect::<Vec<_>>())
+                .unwrap_or_else(|| {
+                    map_linear_positions(
+                        length,
+                        offsets.get(&PositionGroup::Left),
+                        PositionGroup::Left,
+                    )
+                });
+            let right_positions = coverage
+                .get(&PositionGroup::Right)
+                .map(|set| set.iter().copied().collect::<Vec<_>>())
+                .unwrap_or_else(|| {
+                    map_linear_positions(
+                        length,
+                        offsets.get(&PositionGroup::Right),
+                        PositionGroup::Right,
+                    )
+                });
             let mut fragment_positions = left_positions.clone();
             fragment_positions.extend(right_positions.iter().copied());
             fragment_positions.sort_unstable();
@@ -602,6 +687,14 @@ fn build_tracks_from_counts(
                 },
             ];
             if !left_positions.is_empty() {
+                let half = ((length + 1) / 2) as i32;
+                if let Some(&idx) = left_positions.iter().find(|&&idx| idx > half) {
+                    panic!(
+                        "Nearest left track received index {} beyond half {}. \
+This indicates fragment-kmers emitted starts past the nearest-read boundary.",
+                        idx, half
+                    );
+                }
                 tracks.push(Track {
                     name: "left".to_string(),
                     axis: AxisBounds::new(1, length as i32),
@@ -609,6 +702,15 @@ fn build_tracks_from_counts(
                 });
             }
             if !right_positions.is_empty() {
+                let half = ((length + 1) / 2) as i32;
+                let right_start = (length as i32 + 1) - half;
+                if let Some(&idx) = right_positions.iter().find(|&&idx| idx < right_start) {
+                    panic!(
+                        "Nearest right track received index {} below start {}. \
+This indicates fragment-kmers emitted starts past the nearest-read boundary.",
+                        idx, right_start
+                    );
+                }
                 tracks.push(Track {
                     name: "right".to_string(),
                     axis: AxisBounds::new(1, length as i32),
@@ -889,8 +991,12 @@ fn map_linear_positions(
     let mut values: Vec<i32> = offsets
         .iter()
         .filter_map(|offset| match group {
-            PositionGroup::Left | PositionGroup::Right => {
-                let value = offset.saturating_add(1);
+            PositionGroup::Left => {
+                let value = offset + 1;
+                (value > 0 && value <= length as i32).then_some(value)
+            }
+            PositionGroup::Right => {
+                let value = length as i32 - offset;
                 (value > 0 && value <= length as i32).then_some(value)
             }
             PositionGroup::Mid => None,
@@ -925,36 +1031,52 @@ fn apply_read_clamp_local(
 
 fn clamp_track_nearest(track: &mut Track, frame: ReferenceFrame, half: i32, right_start: i32) {
     match frame {
-        ReferenceFrame::Left => track.selected_indices.retain(|&idx| idx <= half),
-        ReferenceFrame::Right => track.selected_indices.retain(|&idx| idx >= right_start),
-        ReferenceFrame::PerEnd => {
-            if track.name == "left" {
-                track.selected_indices.retain(|&idx| idx <= half);
-            } else if track.name == "right" {
-                track.selected_indices.retain(|&idx| idx >= right_start);
-            }
-        }
         ReferenceFrame::Nearest => {
             if track.name == "fragment" {
+                if let Some(&idx) = track
+                    .selected_indices
+                    .iter()
+                    .find(|&&idx| !(idx <= half || idx >= right_start))
+                {
+                    panic!(
+                        "Nearest-read clamp detected nearest fragment track index {} outside <= {} or >= {}.",
+                        idx, half, right_start
+                    );
+                }
                 track
                     .selected_indices
                     .retain(|&idx| idx <= half || idx >= right_start);
             } else if track.name == "left" {
+                if let Some(&idx) = track.selected_indices.iter().find(|&&idx| idx > half) {
+                    panic!(
+                        "Nearest-read clamp detected nearest left track index {} outside <= {}.",
+                        idx, half
+                    );
+                }
                 track.selected_indices.retain(|&idx| idx <= half);
             } else if track.name == "right" {
+                if let Some(&idx) = track
+                    .selected_indices
+                    .iter()
+                    .find(|&&idx| idx < right_start)
+                {
+                    panic!(
+                        "Nearest-read clamp detected nearest right track index {} outside >= {}.",
+                        idx, right_start
+                    );
+                }
                 track.selected_indices.retain(|&idx| idx >= right_start);
             }
         }
         ReferenceFrame::Mid => {
             track.selected_indices.retain(|&idx| idx.abs() <= half);
         }
-    }
-}
-
-fn clamp_track_both_reads(track: &mut Track, frame: ReferenceFrame, half: i32, right_start: i32) {
-    match frame {
-        ReferenceFrame::Left => track.selected_indices.retain(|&idx| idx <= half),
-        ReferenceFrame::Right => track.selected_indices.retain(|&idx| idx >= right_start),
+        ReferenceFrame::Left => {
+            track.selected_indices.retain(|&idx| idx <= half);
+        }
+        ReferenceFrame::Right => {
+            track.selected_indices.retain(|&idx| idx >= right_start);
+        }
         ReferenceFrame::PerEnd => {
             if track.name == "left" {
                 track.selected_indices.retain(|&idx| idx <= half);
@@ -962,12 +1084,68 @@ fn clamp_track_both_reads(track: &mut Track, frame: ReferenceFrame, half: i32, r
                 track.selected_indices.retain(|&idx| idx >= right_start);
             }
         }
-        ReferenceFrame::Nearest => {}
+    }
+}
+
+
+fn clamp_track_both_reads(track: &mut Track, frame: ReferenceFrame, half: i32, right_start: i32) {
+    match frame {
+        ReferenceFrame::Nearest => {
+            if track.name == "fragment" {
+                if let Some(&idx) = track
+                    .selected_indices
+                    .iter()
+                    .find(|&&idx| !(idx <= half || idx >= right_start))
+                {
+                    panic!(
+                        "Both-read clamp detected nearest fragment track index {} outside <= {} or >= {}.",
+                        idx, half, right_start
+                    );
+                }
+                track
+                    .selected_indices
+                    .retain(|&idx| idx <= half || idx >= right_start);
+            } else if track.name == "left" {
+                if let Some(&idx) = track.selected_indices.iter().find(|&&idx| idx > half) {
+                    panic!(
+                        "Both-read clamp detected nearest left track index {} outside <= {}.",
+                        idx, half
+                    );
+                }
+                track.selected_indices.retain(|&idx| idx <= half);
+            } else if track.name == "right" {
+                if let Some(&idx) = track
+                    .selected_indices
+                    .iter()
+                    .find(|&&idx| idx < right_start)
+                {
+                    panic!(
+                        "Both-read clamp detected nearest right track index {} outside >= {}.",
+                        idx, right_start
+                    );
+                }
+                track.selected_indices.retain(|&idx| idx >= right_start);
+            }
+        }
         ReferenceFrame::Mid => {
             track.selected_indices.retain(|&idx| idx.abs() <= half);
         }
+        ReferenceFrame::Left => {
+            track.selected_indices.retain(|&idx| idx <= half);
+        }
+        ReferenceFrame::Right => {
+            track.selected_indices.retain(|&idx| idx >= right_start);
+        }
+        ReferenceFrame::PerEnd => {
+            if track.name == "left" {
+                track.selected_indices.retain(|&idx| idx <= half);
+            } else if track.name == "right" {
+                track.selected_indices.retain(|&idx| idx >= right_start);
+            }
+        }
     }
 }
+
 
 fn mid_axis_bounds(length: u32) -> AxisBounds {
     let half = (length / 2) as i32;
