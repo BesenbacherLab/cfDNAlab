@@ -514,11 +514,19 @@ fn collect_counts(
                                 match group {
                                     PositionGroup::Left => {
                                         let start = offset + 1;
+                                        if start < 1 {
+                                            panic!(
+                                                "Left coverage start {} fell below 1 for fragment length {}",
+                                                start,
+                                                windows[window_idx].length
+                                            );
+                                        }
                                         for delta in 0..k_len {
                                             let idx = start + delta;
                                             if idx > windows[window_idx].length as i32 {
                                                 panic!(
-                                                    "Left coverage index {idx} exceeds fragment length {}",
+                                                    "Left coverage index {} exceeds fragment length {}",
+                                                    idx,
                                                     windows[window_idx].length
                                                 );
                                             }
@@ -526,12 +534,20 @@ fn collect_counts(
                                         }
                                     }
                                     PositionGroup::Right => {
-                                        let start = windows[window_idx].length as i32 - offset;
+                                        let start = offset + 1;
+                                        if start < 1 {
+                                            panic!(
+                                                "Right coverage start {} fell below 1 for fragment length {}",
+                                                start,
+                                                windows[window_idx].length
+                                            );
+                                        }
                                         for delta in 0..k_len {
-                                            let idx = start - delta;
-                                            if idx < 1 {
+                                            let idx = start + delta;
+                                            if idx > windows[window_idx].length as i32 {
                                                 panic!(
-                                                    "Right coverage index {idx} fell below 1 for fragment length {}",
+                                                    "Right coverage index {} exceeds fragment length {}",
+                                                    idx,
                                                     windows[window_idx].length
                                                 );
                                             }
@@ -540,6 +556,13 @@ fn collect_counts(
                                     }
                                     PositionGroup::Mid => {
                                         let start = offset + 1;
+                                        if start < 1 {
+                                            panic!(
+                                                "Mid coverage start {} fell below 1 for fragment length {}",
+                                                start,
+                                                windows[window_idx].length
+                                            );
+                                        }
                                         for delta in 0..k_len {
                                             let idx = start + delta;
                                             cov_set.insert(idx);
@@ -991,12 +1014,8 @@ fn map_linear_positions(
     let mut values: Vec<i32> = offsets
         .iter()
         .filter_map(|offset| match group {
-            PositionGroup::Left => {
+            PositionGroup::Left | PositionGroup::Right => {
                 let value = offset + 1;
-                (value > 0 && value <= length as i32).then_some(value)
-            }
-            PositionGroup::Right => {
-                let value = length as i32 - offset;
                 (value > 0 && value <= length as i32).then_some(value)
             }
             PositionGroup::Mid => None,
