@@ -24,10 +24,24 @@ const MIN_FRAGMENT_LENGTH: u32 = 10;
 /// Describe your selections with the **1-based inclusive** grammar (`A..B`, `A..-B`, `..half`, `5..half-3`,
 /// `-60..60` (`mid`-frame-only), and friends) and the diagram will show the regions counted by
 /// `cfdna fragment-kmers`, assuming the same arguments are passed.
+///
+/// To ensure the exact same positional and filtering logic is shared between this visualizer
+/// and `fragment-kmers`, we synthesize fragments of the specified lengths, run it through
+/// `fragment-kmers` with positional counting, and, finally, reconstruct the counted positions.
 #[cfg_attr(feature = "cli", derive(Parser, Clone))]
 pub struct VisualizePositionsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub position_selection: FragmentPositionSelectionArgs,
+
+    /// Working directory used to stage synthetic inputs and fragment-kmers outputs `[path]`.
+    ///
+    /// The command creates a temporary sub-directory inside this folder,
+    /// which is removed again upon completion.
+    #[cfg_attr(
+        feature = "cli",
+        arg(long, value_parser, required = true, help_heading = "Visualization")
+    )]
+    pub work_dir: PathBuf,
 
     /// Explicit fragment lengths to sketch (comma-separated) `[integers]`.
     ///

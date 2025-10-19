@@ -540,9 +540,11 @@ mod tests_visualize_positions_config {
     use cfdnalab::commands::visualize_positions::{
         BasesFrom, MismatchBasesFrom, ReferenceFrame, Style,
     };
+    use tempfile::tempdir;
 
     #[test]
     fn build_uses_expected_defaults() {
+        let tempdir = tempdir().expect("tempdir");
         let cfg = VisualizePositionsConfig {
             position_selection: FragmentPositionSelectionArgs {
                 frame: ReferenceFrame::Left,
@@ -551,6 +553,7 @@ mod tests_visualize_positions_config {
                 bases_from: BasesFrom::PreferReads,
                 mismatch_bases_from: MismatchBasesFrom::NearestRead,
             },
+            work_dir: tempdir.path().to_path_buf(),
             lengths: Some(vec![120]),
             length_range: None,
             kmer_sizes: None,
@@ -579,6 +582,7 @@ mod tests_visualize_positions_config {
 
     #[test]
     fn build_applies_overrides() {
+        let tempdir = tempdir().expect("tempdir");
         let cfg = VisualizePositionsConfig {
             position_selection: FragmentPositionSelectionArgs {
                 frame: ReferenceFrame::Right,
@@ -587,6 +591,7 @@ mod tests_visualize_positions_config {
                 bases_from: BasesFrom::NearestRead,
                 mismatch_bases_from: MismatchBasesFrom::BaseQuality,
             },
+            work_dir: tempdir.path().to_path_buf(),
             lengths: Some(vec![90, 120]),
             length_range: None,
             kmer_sizes: None,
@@ -617,6 +622,7 @@ mod tests_visualize_positions_config {
 
     #[test]
     fn svg_default_width_is_wider() {
+        let tempdir = tempdir().expect("tempdir");
         let cfg = VisualizePositionsConfig {
             position_selection: FragmentPositionSelectionArgs {
                 frame: ReferenceFrame::Left,
@@ -625,6 +631,7 @@ mod tests_visualize_positions_config {
                 bases_from: BasesFrom::Reference,
                 mismatch_bases_from: MismatchBasesFrom::NearestRead,
             },
+            work_dir: tempdir.path().to_path_buf(),
             lengths: Some(vec![150]),
             length_range: None,
             kmer_sizes: None,
@@ -644,6 +651,7 @@ mod tests_visualize_positions_config {
 
     #[test]
     fn build_rejects_zero_step() {
+        let tempdir = tempdir().expect("tempdir");
         let cfg = VisualizePositionsConfig {
             position_selection: FragmentPositionSelectionArgs {
                 frame: ReferenceFrame::Left,
@@ -652,6 +660,7 @@ mod tests_visualize_positions_config {
                 bases_from: BasesFrom::PreferReads,
                 mismatch_bases_from: MismatchBasesFrom::NearestRead,
             },
+            work_dir: tempdir.path().to_path_buf(),
             lengths: Some(vec![100]),
             length_range: None,
             kmer_sizes: None,
@@ -671,6 +680,7 @@ mod tests_visualize_positions_config {
 
     #[test]
     fn build_rejects_fragments_shorter_than_minimum() {
+        let tempdir = tempdir().expect("tempdir");
         let cfg = VisualizePositionsConfig {
             position_selection: FragmentPositionSelectionArgs {
                 frame: ReferenceFrame::Left,
@@ -679,6 +689,7 @@ mod tests_visualize_positions_config {
                 bases_from: BasesFrom::PreferReads,
                 mismatch_bases_from: MismatchBasesFrom::NearestRead,
             },
+            work_dir: tempdir.path().to_path_buf(),
             lengths: Some(vec![9]),
             length_range: None,
             kmer_sizes: None,
@@ -698,6 +709,7 @@ mod tests_visualize_positions_config {
 
     #[test]
     fn build_rejects_mid_with_nearest_read() {
+        let tempdir = tempdir().expect("tempdir");
         let cfg = VisualizePositionsConfig {
             position_selection: FragmentPositionSelectionArgs {
                 frame: ReferenceFrame::Mid,
@@ -706,6 +718,7 @@ mod tests_visualize_positions_config {
                 bases_from: BasesFrom::NearestRead,
                 mismatch_bases_from: MismatchBasesFrom::NearestRead,
             },
+            work_dir: tempdir.path().to_path_buf(),
             lengths: Some(vec![100]),
             length_range: None,
             kmer_sizes: None,
@@ -888,5 +901,71 @@ mod tests_ascii_render {
             Some('.'),
             "midpoint start should remain unfilled"
         );
+    }
+}
+
+mod tests_visualize_positions_command {
+    use anyhow::Result;
+    use std::fs;
+    use tempfile::tempdir;
+
+    use cfdnalab::commands::cli_common::FragmentPositionSelectionArgs;
+    use cfdnalab::commands::visualize_positions::config::VisualizePositionsConfig;
+    use cfdnalab::commands::visualize_positions::model::{
+        BasesFrom, MismatchBasesFrom, ReferenceFrame, Style,
+    };
+    use cfdnalab::commands::visualize_positions::visualize_positions::run as run_visualizer;
+
+    #[test]
+    fn run_visualizer_counts_positions() -> Result<()> {
+        let tempdir = tempdir()?;
+        let output_path = tempdir.path().join("viz_ascii.txt");
+
+        let cfg = VisualizePositionsConfig {
+            position_selection: FragmentPositionSelectionArgs {
+                frame: ReferenceFrame::Left,
+                positions: "1..5".to_string(),
+                step: 1,
+                bases_from: BasesFrom::Reference,
+                mismatch_bases_from: MismatchBasesFrom::NearestRead,
+            },
+            work_dir: tempdir.path().to_path_buf(),
+            lengths: Some(vec![60]),
+            length_range: None,
+            kmer_sizes: Some(vec![3]),
+            style: Style::Ascii,
+            width: Some(60),
+            height: None,
+            output: Some(output_path.clone()),
+            label: None,
+            hide_index: true,
+            show_half: false,
+            hide_mid: false,
+        };
+
+        run_visualizer(&cfg)?;
+
+        let ascii = fs::read_to_string(&output_path)?;
+        let left_line = ascii
+            .lines()
+            .find(|line| line.trim_start().starts_with("left:"))
+            .expect("missing left track");
+        let left_bar = left_line.split(": ").nth(1).expect("missing left bar");
+        assert!(left_bar.starts_with("#####"), "left bar: {left_bar}");
+
+        let overlay_line = ascii
+            .lines()
+            .find(|line| line.trim_start().starts_with("left k-mer starts (k=3)"))
+            .expect("missing overlay track");
+        let overlay_bar = overlay_line
+            .split(": ")
+            .nth(1)
+            .expect("missing overlay bar");
+        assert!(
+            overlay_bar.starts_with("#####"),
+            "overlay bar: {overlay_bar}"
+        );
+
+        Ok(())
     }
 }

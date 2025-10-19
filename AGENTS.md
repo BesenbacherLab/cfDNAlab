@@ -18,7 +18,7 @@ In-line comments start with title-cased first word and does not have a terminal 
 
 Never use "…" or similar non-ascii symbols. They don't work in the terminal. Use "...", "->", ">=", etc.
 
-Adapt to my language. If I use "center", don't use "centre".
+Adapt to my language. If I use "center", don't use "centre". Don't use words that humans rarely use when unnecessary, like "emit".
 
 **Order**
 1. **Summary (pedagogical):** What this does and when to use it.
