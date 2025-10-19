@@ -40,7 +40,7 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow, bail};
 use fxhash::FxHashMap;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{convert::TryInto, io::Write, num::NonZeroUsize, path::Path, sync::Arc, time::Instant};
@@ -68,35 +68,37 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
     let start_time = Instant::now();
     let global_counter = run_inner(opt)?;
 
-    println!("");
-    println!("Statistics");
-    println!("----------");
+    if !opt.shared_args.quiet {
+        println!();
+        println!("Statistics");
+        println!("----------");
 
-    // Print summary statistics and execution time
-    let elapsed = start_time.elapsed();
-    println!("  Total reads: {}", global_counter.base.total_reads);
-    println!(
-        "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
-        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
-            / global_counter.base.total_reads as f64
-            * 100.0,
-        global_counter.base.accepted_forward,
-        global_counter.base.accepted_reverse
-    );
-    println!(
-        "  Blacklist-excluded fragments: {}",
-        global_counter.blacklisted_fragments
-    );
-    // if opt.gc.bin_by_gc {
-    //     println!("GC-excluded reads: {}", global_counter.base.gc_excl);
-    // }
-    println!(
-        "  Fragments counted one or more times: {}",
-        global_counter.base.counted_fragments
-    );
-    println!("----------");
-    println!("Elapsed time: {:.2?}", elapsed);
+        // Print summary statistics and execution time
+        let elapsed = start_time.elapsed();
+        println!("  Total reads: {}", global_counter.base.total_reads);
+        println!(
+            "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
+            global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
+            (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
+                / global_counter.base.total_reads as f64
+                * 100.0,
+            global_counter.base.accepted_forward,
+            global_counter.base.accepted_reverse
+        );
+        println!(
+            "  Blacklist-excluded fragments: {}",
+            global_counter.blacklisted_fragments
+        );
+        // if opt.gc.bin_by_gc {
+        //     println!("GC-excluded reads: {}", global_counter.base.gc_excl);
+        // }
+        println!(
+            "  Fragments counted one or more times: {}",
+            global_counter.base.counted_fragments
+        );
+        println!("----------");
+        println!("Elapsed time: {:.2?}", elapsed);
+    }
     Ok(())
 }
 
@@ -105,12 +107,13 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
         resolve_chromosomes_and_contigs(&opt.shared_args.chromosomes, &opt.shared_args.ioc)?;
     let window_opt = opt.shared_args.windows.resolve_windows();
     let prefix = opt.shared_args.output_prefix.trim();
+    let quiet = opt.shared_args.quiet;
 
     // Create output directory
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;
 
     // Load blacklist intervals if provided
-    if opt.shared_args.blacklist.is_some() {
+    if opt.shared_args.blacklist.is_some() && !quiet {
         println!("Start: Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
@@ -123,7 +126,9 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            println!("Start: Loading window coordinates");
+            if !quiet {
+                println!("Start: Loading window coordinates");
+            }
             Some(load_windows_from_bed(
                 bed,
                 Some(chromosomes.as_slice()),
@@ -156,7 +161,7 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     };
 
     // Load genomic scaling factors
-    if opt.shared_args.scale_genome.scaling_factors.is_some() {
+    if opt.shared_args.scale_genome.scaling_factors.is_some() && !quiet {
         println!("Start: Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
@@ -206,11 +211,16 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
             .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
             .unwrap(),
     );
+    if quiet {
+        pb.set_draw_target(ProgressDrawTarget::hidden());
+    }
 
     // Configure global thread‐pool size
     init_global_pool(opt.shared_args.ioc.n_threads as usize)?;
 
-    println!("Start: Counting per chromosome");
+    if !quiet {
+        println!("Start: Counting per chromosome");
+    }
 
     pb.set_position(0);
 
@@ -263,9 +273,15 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
         })
         .collect::<Result<_>>()?; // short-circuits on the first Err
 
-    pb.finish_with_message("| Finished counting");
+    if !quiet {
+        pb.finish_with_message("| Finished counting");
+    } else {
+        pb.finish_and_clear();
+    }
 
-    println!("Start: Reducing per-tile counts");
+    if !quiet {
+        println!("Start: Reducing per-tile counts");
+    }
 
     let mut global_counter = FragmentKmersCounters::default();
     let mut tile_results_by_chr: FxHashMap<String, Vec<TileResult>> = FxHashMap::default();
@@ -323,7 +339,9 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
 
         let (_, motifs_by_k) = prepare_decoded_counts(&flattened, opt.canonical, &kmer_specs);
 
-        println!("Start: Writing positional counts to disk");
+        if !quiet {
+            println!("Start: Writing positional counts to disk");
+        }
         write_positional_output(
             &positional_decoded,
             &motifs_by_k,
@@ -340,7 +358,9 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
             prepare_decoded_counts(&all_bins, opt.canonical, &kmer_specs);
 
         // Write final counts to output_dir
-        println!("Start: Writing counts to disk");
+        if !quiet {
+            println!("Start: Writing counts to disk");
+        }
         write_decoded_counts_matrix(
             &prepared_counts,
             &kmer_specs,
@@ -364,7 +384,9 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     // Write window coordinates as BED file to output_dir
     // Write bins BED file
     if !matches!(window_opt, WindowSpec::Global) {
-        println!("Start: Writing window coordinates to disk");
+        if !quiet {
+            println!("Start: Writing window coordinates to disk");
+        }
         let bins_path = opt.shared_args.ioc.output_dir.join("bins.bed");
         let mut bed_writer = create_text_writer(&bins_path).context("Create bed fail")?;
         for (chr, start, end, _, overlap_perc) in &bin_info {

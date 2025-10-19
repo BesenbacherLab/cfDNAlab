@@ -104,6 +104,10 @@ pub struct FragmentKmersSharedArgs {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
 
+    /// Suppress progress reporting and status messages. [internal]
+    #[cfg_attr(feature = "cli", clap(skip))]
+    pub quiet: bool,
+
     /// Minimum mapping quality to include `[integer]`
     #[cfg_attr(
         feature = "cli",
@@ -184,6 +188,7 @@ impl FragmentKmersSharedArgs {
                 min_fragment_length: 20,
                 max_fragment_length: 1000,
             },
+            quiet: false,
             min_mapq: 30,
             require_proper_pair: false,
             blacklist: None,
@@ -381,6 +386,10 @@ impl FragmentKmersConfig {
 
     pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
         self.shared_args.fragment_lengths_mut()
+    }
+
+    pub fn set_quiet(&mut self, quiet: bool) {
+        self.shared_args.quiet = quiet;
     }
 
     pub fn set_min_mapq(&mut self, min_mapq: u8) {

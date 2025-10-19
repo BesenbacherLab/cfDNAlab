@@ -412,6 +412,7 @@ fn run_fragment_kmers(
     let mut windows_args = WindowsArgs::default();
     windows_args.by_bed = Some(inputs.bed.clone());
     cfg.set_windows(windows_args);
+    cfg.set_quiet(true);
 
     run_inner(&cfg).context("running fragment-kmers for visualize-positions")?;
     Ok(())
@@ -580,16 +581,15 @@ fn build_tracks_from_counts(
             ]
         }
         ReferenceFrame::Nearest => {
-            let mut fragment_positions: BTreeSet<i32> = BTreeSet::new();
-            if let Some(left) = offsets.get(&PositionGroup::Left) {
-                fragment_positions.extend(left.iter().map(|offset| offset + 1));
-            }
-            if let Some(right) = offsets.get(&PositionGroup::Right) {
-                fragment_positions.extend(right.iter().map(|offset| offset + 1));
-            }
-            let fragment_positions: Vec<i32> = fragment_positions.into_iter().collect();
+            let left_positions = map_linear_positions(length, offsets.get(&PositionGroup::Left), PositionGroup::Left);
+            let right_positions =
+                map_linear_positions(length, offsets.get(&PositionGroup::Right), PositionGroup::Right);
+            let mut fragment_positions = left_positions.clone();
+            fragment_positions.extend(right_positions.iter().copied());
+            fragment_positions.sort_unstable();
+            fragment_positions.dedup();
             let distances = fold_fragment_positions(length, &fragment_positions);
-            vec![
+            let mut tracks = vec![
                 Track {
                     name: "fragment".to_string(),
                     axis: AxisBounds::new(1, length as i32),
@@ -600,7 +600,22 @@ fn build_tracks_from_counts(
                     axis: AxisBounds::new(1, (length / 2).max(1) as i32),
                     selected_indices: distances,
                 },
-            ]
+            ];
+            if !left_positions.is_empty() {
+                tracks.push(Track {
+                    name: "left".to_string(),
+                    axis: AxisBounds::new(1, length as i32),
+                    selected_indices: left_positions,
+                });
+            }
+            if !right_positions.is_empty() {
+                tracks.push(Track {
+                    name: "right".to_string(),
+                    axis: AxisBounds::new(1, length as i32),
+                    selected_indices: right_positions,
+                });
+            }
+            tracks
         }
         ReferenceFrame::Mid => {
             let center = (length as i64) / 2;
@@ -753,27 +768,28 @@ fn build_overlays_from_counts(
                 Some(track) => track,
                 None => return Vec::new(),
             };
+            let left_base = base_tracks.iter().find(|track| track.name == "left");
+            let right_base = base_tracks.iter().find(|track| track.name == "right");
             let mut overlays = Vec::new();
             for &k in overlay_k_sizes {
                 let Some(group_map) = offsets_by_k.get(&k) else {
                     continue;
                 };
-                let mut fragment_positions: BTreeSet<i32> = BTreeSet::new();
-                if let Some(left) = group_map.get(&PositionGroup::Left) {
-                    fragment_positions.extend(left.iter().map(|offset| offset + 1));
-                }
-                if let Some(right) = group_map.get(&PositionGroup::Right) {
-                    fragment_positions.extend(right.iter().map(|offset| offset + 1));
-                }
-                if fragment_positions.is_empty() {
+                let left_positions =
+                    map_linear_positions(length, group_map.get(&PositionGroup::Left), PositionGroup::Left);
+                let right_positions =
+                    map_linear_positions(length, group_map.get(&PositionGroup::Right), PositionGroup::Right);
+                if left_positions.is_empty() && right_positions.is_empty() {
                     continue;
                 }
-                let fragment_positions: Vec<i32> = fragment_positions.into_iter().collect();
+                let mut fragment_positions = left_positions.clone();
+                fragment_positions.extend(right_positions.iter().copied());
+                fragment_positions.sort_unstable();
+                fragment_positions.dedup();
 
                 let mut fragment_overlay = fragment_base.clone();
                 fragment_overlay.name = format!("{} k-mer starts (k={})", fragment_base.name, k);
                 fragment_overlay.selected_indices = fragment_positions.clone();
-                clamp_overlay_axis(&mut fragment_overlay, length, k);
                 overlays.push(fragment_overlay);
 
                 let mut nearest_overlay = nearest_base.clone();
@@ -781,6 +797,23 @@ fn build_overlays_from_counts(
                 nearest_overlay.selected_indices =
                     fold_fragment_positions(length, &fragment_positions);
                 overlays.push(nearest_overlay);
+
+                if let Some(base) = left_base {
+                    if !left_positions.is_empty() {
+                        let mut overlay = base.clone();
+                        overlay.name = format!("{} k-mer starts (k={})", base.name, k);
+                        overlay.selected_indices = left_positions.clone();
+                        overlays.push(overlay);
+                    }
+                }
+                if let Some(base) = right_base {
+                    if !right_positions.is_empty() {
+                        let mut overlay = base.clone();
+                        overlay.name = format!("{} k-mer starts (k={})", base.name, k);
+                        overlay.selected_indices = right_positions.clone();
+                        overlays.push(overlay);
+                    }
+                }
             }
             overlays
         }
@@ -845,6 +878,29 @@ fn fold_fragment_positions(length: u32, starts: &[i32]) -> Vec<i32> {
     distances
 }
 
+fn map_linear_positions(
+    length: u32,
+    offsets: Option<&BTreeSet<i32>>,
+    group: PositionGroup,
+) -> Vec<i32> {
+    let Some(offsets) = offsets else {
+        return Vec::new();
+    };
+    let mut values: Vec<i32> = offsets
+        .iter()
+        .filter_map(|offset| match group {
+            PositionGroup::Left | PositionGroup::Right => {
+                let value = offset.saturating_add(1);
+                (value > 0 && value <= length as i32).then_some(value)
+            }
+            PositionGroup::Mid => None,
+        })
+        .collect();
+    values.sort_unstable();
+    values.dedup();
+    values
+}
+
 fn apply_read_clamp_local(
     tracks: &mut [Track],
     frame: ReferenceFrame,
@@ -883,6 +939,10 @@ fn clamp_track_nearest(track: &mut Track, frame: ReferenceFrame, half: i32, righ
                 track
                     .selected_indices
                     .retain(|&idx| idx <= half || idx >= right_start);
+            } else if track.name == "left" {
+                track.selected_indices.retain(|&idx| idx <= half);
+            } else if track.name == "right" {
+                track.selected_indices.retain(|&idx| idx >= right_start);
             }
         }
         ReferenceFrame::Mid => {

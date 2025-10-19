@@ -41,19 +41,47 @@ mod tests_visualize_positions {
     #[test]
     fn nearest_open_to_half_small_l() {
         let spec = parse_positions(ReferenceFrame::Nearest, "10..").unwrap();
-        let tracks = take_linear_indices(18, ReferenceFrame::Nearest, &spec, default_step());
-        assert_eq!(tracks.len(), 2);
-        assert!(tracks[1].is_empty());
+        let viz = build_tracks_for_length(
+            18,
+            ReferenceFrame::Nearest,
+            &spec,
+            default_step(),
+            ReadClamp::None,
+        );
+        let nearest_track = viz
+            .tracks
+            .iter()
+            .find(|track| track.name == "nearest")
+            .expect("missing nearest track");
+        assert!(nearest_track.selected_indices.is_empty());
     }
 
     #[test]
     fn nearest_half_minus_k() {
         let spec = parse_positions(ReferenceFrame::Nearest, "5..half-3").unwrap();
-        let tracks = take_linear_indices(151, ReferenceFrame::Nearest, &spec, default_step());
+        let viz = build_tracks_for_length(
+            151,
+            ReferenceFrame::Nearest,
+            &spec,
+            default_step(),
+            ReadClamp::None,
+        );
+        let nearest_track = viz
+            .tracks
+            .iter()
+            .find(|track| track.name == "nearest")
+            .expect("missing nearest track");
         let expected: Vec<i32> = (5..=72).collect();
-        assert_eq!(tracks[1], expected);
-        assert!(tracks[0].contains(&5));
-        assert!(tracks[0].contains(&(151 - 5 + 1)));
+        assert_eq!(nearest_track.selected_indices, expected);
+        let fragment_track = viz
+            .tracks
+            .iter()
+            .find(|track| track.name == "fragment")
+            .expect("missing fragment track");
+        assert!(fragment_track.selected_indices.contains(&5));
+        assert!(fragment_track
+            .selected_indices
+            .contains(&(151 - 5 + 1)));
     }
 
     #[test]
@@ -254,11 +282,34 @@ mod tests_visualize_positions {
     #[test]
     fn nearest_center_double_count_guard() {
         let spec = parse_positions(ReferenceFrame::Nearest, "..half").unwrap();
-        let tracks = take_linear_indices(100, ReferenceFrame::Nearest, &spec, default_step());
-        assert_eq!(tracks[1].last().copied(), Some(50));
-        assert_eq!(tracks[1].iter().filter(|&&v| v == 50).count(), 1);
-        assert!(tracks[0].contains(&1));
-        assert!(tracks[0].contains(&100));
+        let viz = build_tracks_for_length(
+            100,
+            ReferenceFrame::Nearest,
+            &spec,
+            default_step(),
+            ReadClamp::None,
+        );
+        let nearest_track = viz
+            .tracks
+            .iter()
+            .find(|track| track.name == "nearest")
+            .expect("missing nearest track");
+        assert_eq!(nearest_track.selected_indices.last().copied(), Some(50));
+        assert_eq!(
+            nearest_track
+                .selected_indices
+                .iter()
+                .filter(|&&v| v == 50)
+                .count(),
+            1
+        );
+        let fragment_track = viz
+            .tracks
+            .iter()
+            .find(|track| track.name == "fragment")
+            .expect("missing fragment track");
+        assert!(fragment_track.selected_indices.contains(&1));
+        assert!(fragment_track.selected_indices.contains(&100));
     }
 
     #[test]
@@ -282,7 +333,6 @@ mod tests_visualize_positions {
             &viz.tracks,
             &[k],
         );
-        assert_eq!(overlays.len(), 2);
 
         let fragment_overlay = overlays
             .iter()
@@ -308,6 +358,17 @@ mod tests_visualize_positions {
             nearest_overlay.selected_indices.last().copied(),
             Some(expected_distance)
         );
+
+        let left_overlay = overlays
+            .iter()
+            .find(|track| track.name == "left k-mer starts (k=2)")
+            .expect("missing left overlay");
+        let right_overlay = overlays
+            .iter()
+            .find(|track| track.name == "right k-mer starts (k=2)")
+            .expect("missing right overlay");
+        assert!(left_overlay.selected_indices.contains(&1));
+        assert!(right_overlay.selected_indices.contains(&expected_last));
     }
 
     #[test]
@@ -791,6 +852,7 @@ mod tests_ascii_render {
         let config = base_config(12);
 
         let ascii = render_ascii(&[viz], &config);
+        println!("{}", ascii);
         let fragment_line = ascii
             .lines()
             .find(|line| line.starts_with("fragment"))
@@ -871,19 +933,20 @@ mod tests_ascii_render {
             default_step(),
             ReadClamp::None,
         );
+        let k = 2u8;
         let overlays = build_kmer_start_overlays(
             ReferenceFrame::Nearest,
             length,
             &spec,
             default_step(),
             &viz.tracks,
-            &[2],
+            &[k],
         );
         viz.tracks.extend(overlays);
 
         let mut config = base_config(100);
         config.frame = ReferenceFrame::Nearest;
-        config.kmer_sizes = Some(vec![2]);
+        config.kmer_sizes = Some(vec![k]);
 
         let ascii = render_ascii(&[viz], &config);
         let fragment_line = ascii
@@ -894,7 +957,9 @@ mod tests_ascii_render {
             .split(": ")
             .nth(1)
             .expect("missing bar segment");
-        assert_eq!(bar.chars().last(), Some('#'));
+        let terminal_idx = length as usize - usize::from(k);
+        assert_eq!(bar.chars().nth(terminal_idx), Some('#'));
+        assert_eq!(bar.chars().last(), Some('.'));
         let mid_col = (length / 2 - 1) as usize;
         assert_eq!(
             bar.chars().nth(mid_col),
