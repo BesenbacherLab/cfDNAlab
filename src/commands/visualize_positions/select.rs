@@ -4,7 +4,7 @@ use super::model::{AxisBounds, LengthVisualization, Track};
 use crate::commands::fragment_kmers::nearest_frame_guard::NearestFrameGuard;
 use crate::commands::fragment_kmers::parse::PositionalSelectionSpec;
 use crate::commands::fragment_kmers::positions::{
-    PositionGroup, PositionSelection, PositionSelectionCache, ReferenceFrame,
+    AllowedWindows, PositionGroup, PositionSelection, PositionSelectionCache, ReferenceFrame,
 };
 use crate::commands::fragment_kmers::selection::{SelectionDecision, evaluate_selection};
 
@@ -188,25 +188,31 @@ pub fn build_kmer_start_overlays(
         Err(_) => return overlay_per_k,
     };
 
-    for k in kmer_sizes {
-        let selections = cache.offsets(length, *k).unwrap_or(&[]);
+    for &k in kmer_sizes {
+        let selections = cache.offsets(length, k).unwrap_or(&[]);
+        let windows = match cache.windows(length, k) {
+            Some(w) => w,
+            None => continue,
+        };
 
         let overlay = match position_selection_spec.frame {
             ReferenceFrame::Left => {
-                build_left_overlays(length, selections, base_tracks, kmer_sizes)
+                build_left_overlays(length, selections, windows, base_tracks, kmer_sizes)
             }
             ReferenceFrame::Right => {
-                build_right_overlays(length, selections, base_tracks, kmer_sizes)
+                build_right_overlays(length, selections, windows, base_tracks, kmer_sizes)
             }
             ReferenceFrame::PerEnd => {
-                build_per_end_overlays(length, selections, base_tracks, kmer_sizes)
+                build_per_end_overlays(length, selections, windows, base_tracks, kmer_sizes)
             }
             ReferenceFrame::Nearest => {
-                build_nearest_overlays(length, selections, base_tracks, kmer_sizes)
+                build_nearest_overlays(length, selections, windows, base_tracks, kmer_sizes)
             }
-            ReferenceFrame::Mid => build_mid_overlays(length, selections, base_tracks, kmer_sizes),
+            ReferenceFrame::Mid => {
+                build_mid_overlays(length, selections, windows, base_tracks, kmer_sizes)
+            }
         };
-        overlay_per_k.insert(*k, overlay);
+        overlay_per_k.insert(k, overlay);
     }
 
     overlay_per_k
@@ -215,6 +221,7 @@ pub fn build_kmer_start_overlays(
 fn build_left_overlays(
     length: u32,
     selections: &[PositionSelection],
+    windows: &AllowedWindows,
     base_tracks: &[Track],
     kmer_sizes: &[u8],
 ) -> Vec<Track> {
@@ -226,7 +233,7 @@ fn build_left_overlays(
     for &k in kmer_sizes {
         let mut overlay = base.clone();
         overlay.name = format!("{} k-mer starts (k={})", base.name, k);
-        overlay.selected_indices = dedup_sorted(left_kmer_starts(length, selections, k));
+        overlay.selected_indices = dedup_sorted(left_kmer_starts(length, selections, windows, k));
         clamp_overlay_axis(&mut overlay, length, k);
         overlays.push(overlay);
     }
@@ -236,6 +243,7 @@ fn build_left_overlays(
 fn build_right_overlays(
     length: u32,
     selections: &[PositionSelection],
+    windows: &AllowedWindows,
     base_tracks: &[Track],
     kmer_sizes: &[u8],
 ) -> Vec<Track> {
@@ -247,7 +255,7 @@ fn build_right_overlays(
     for &k in kmer_sizes {
         let mut overlay = base.clone();
         overlay.name = format!("{} k-mer starts (k={})", base.name, k);
-        overlay.selected_indices = dedup_sorted(right_kmer_starts(length, selections, k));
+        overlay.selected_indices = dedup_sorted(right_kmer_starts(length, selections, windows, k));
         clamp_overlay_axis(&mut overlay, length, k);
         overlays.push(overlay);
     }
@@ -257,6 +265,7 @@ fn build_right_overlays(
 fn build_per_end_overlays(
     length: u32,
     selections: &[PositionSelection],
+    windows: &AllowedWindows,
     base_tracks: &[Track],
     kmer_sizes: &[u8],
 ) -> Vec<Track> {
@@ -272,13 +281,15 @@ fn build_per_end_overlays(
     for &k in kmer_sizes {
         let mut left_overlay = left_base.clone();
         left_overlay.name = format!("{} k-mer starts (k={})", left_base.name, k);
-        left_overlay.selected_indices = dedup_sorted(left_kmer_starts(length, selections, k));
+        left_overlay.selected_indices =
+            dedup_sorted(left_kmer_starts(length, selections, windows, k));
         clamp_overlay_axis(&mut left_overlay, length, k);
         overlays.push(left_overlay);
 
         let mut right_overlay = right_base.clone();
         right_overlay.name = format!("{} k-mer starts (k={})", right_base.name, k);
-        right_overlay.selected_indices = dedup_sorted(right_kmer_starts(length, selections, k));
+        right_overlay.selected_indices =
+            dedup_sorted(right_kmer_starts(length, selections, windows, k));
         clamp_overlay_axis(&mut right_overlay, length, k);
         overlays.push(right_overlay);
     }
@@ -288,6 +299,7 @@ fn build_per_end_overlays(
 fn build_nearest_overlays(
     length: u32,
     selections: &[PositionSelection],
+    windows: &AllowedWindows,
     base_tracks: &[Track],
     kmer_sizes: &[u8],
 ) -> Vec<Track> {
@@ -305,7 +317,7 @@ fn build_nearest_overlays(
     let mut overlays = Vec::new();
     for &k in kmer_sizes {
         let (fragment_starts, left_starts, right_starts) =
-            nearest_fragment_kmer_starts(length, selections, k);
+            nearest_fragment_kmer_starts(length, selections, windows, k);
         if fragment_starts.is_empty() && left_starts.is_empty() && right_starts.is_empty() {
             continue;
         }
@@ -343,6 +355,7 @@ fn build_nearest_overlays(
 fn build_mid_overlays(
     length: u32,
     selections: &[PositionSelection],
+    windows: &AllowedWindows,
     base_tracks: &[Track],
     kmer_sizes: &[u8],
 ) -> Vec<Track> {
@@ -354,7 +367,7 @@ fn build_mid_overlays(
     for &k in kmer_sizes {
         let mut overlay = base.clone();
         overlay.name = format!("{} k-mer starts (k={})", base.name, k);
-        overlay.selected_indices = dedup_sorted(mid_kmer_starts(length, selections, k));
+        overlay.selected_indices = dedup_sorted(mid_kmer_starts(length, selections, windows, k));
         overlays.push(overlay);
     }
     overlays
@@ -390,7 +403,12 @@ fn default_ranges(length: u32, k_len: u32) -> (Option<(u64, u64)>, Option<(u64, 
     (forward, reverse)
 }
 
-fn left_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec<i32> {
+fn left_kmer_starts(
+    length: u32,
+    selections: &[PositionSelection],
+    windows: &AllowedWindows,
+    k: u8,
+) -> Vec<i32> {
     let k_len = u32::from(k);
     let span = k_len as u64;
     let (forward_range, reverse_range) = default_ranges(length, k_len);
@@ -400,6 +418,7 @@ fn left_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec
         .filter_map(|sel| {
             match evaluate_selection(
                 *sel,
+                windows,
                 None,
                 span,
                 sel.offset() as u64,
@@ -415,7 +434,12 @@ fn left_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec
         .collect()
 }
 
-fn right_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec<i32> {
+fn right_kmer_starts(
+    length: u32,
+    selections: &[PositionSelection],
+    windows: &AllowedWindows,
+    k: u8,
+) -> Vec<i32> {
     let k_len = u32::from(k);
     let span = k_len as u64;
     let (forward_range, reverse_range) = default_ranges(length, k_len);
@@ -425,6 +449,7 @@ fn right_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Ve
         .filter_map(|sel| {
             match evaluate_selection(
                 *sel,
+                windows,
                 None,
                 span,
                 sel.offset() as u64,
@@ -448,6 +473,7 @@ fn right_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Ve
 fn nearest_fragment_kmer_starts(
     length: u32,
     selections: &[PositionSelection],
+    windows: &AllowedWindows,
     k: u8,
 ) -> (Vec<i32>, Vec<i32>, Vec<i32>) {
     let k_len = u32::from(k);
@@ -459,6 +485,7 @@ fn nearest_fragment_kmer_starts(
     for sel in selections {
         let start = match evaluate_selection(
             *sel,
+            windows,
             guard.as_ref(),
             span,
             sel.offset() as u64,
@@ -494,7 +521,12 @@ fn nearest_fragment_kmer_starts(
     (fragment, left, right)
 }
 
-fn mid_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec<i32> {
+fn mid_kmer_starts(
+    length: u32,
+    selections: &[PositionSelection],
+    windows: &AllowedWindows,
+    k: u8,
+) -> Vec<i32> {
     let k_len = u32::from(k);
     let span = k_len as u64;
     let (forward_range, reverse_range) = default_ranges(length, k_len);
@@ -505,6 +537,7 @@ fn mid_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec<
         .filter_map(|sel| {
             match evaluate_selection(
                 *sel,
+                windows,
                 None,
                 span,
                 sel.offset() as u64,
