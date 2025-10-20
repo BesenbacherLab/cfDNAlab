@@ -393,12 +393,14 @@ pub struct FragmentPositionSelectionArgs {
     ///
     /// - **`mid`** centers the axis on the midpoint, allowing selections around zero with negative/positive offsets.
     ///   K-mers are counted in the forward-orientation.
+    /// 
+    /// Pass multiple frames as e.g.: `--frame mid --frame left`.
     #[cfg_attr(
         feature = "cli",
         clap(
             long,
             value_enum,
-            num_args = 1..=ReferenceFrame::COUNT, 
+            num_args = 1, 
             action = clap::ArgAction::Append,
             default_values = ["left"],
             help_heading = "Region Selection"
@@ -424,12 +426,14 @@ pub struct FragmentPositionSelectionArgs {
     ///   Forms like `10..-10` are rejected for this frame.
     ///
     /// - **`mid`** (centered at 0): use `..` for the entire axis, `-M..N`, `-M..`, or `..N`. E.g. `-10..10` for the 20 bases around the midpoint.
+    /// 
+    /// Pass multiple strings as e.g.: `--positions '-50..50' --positions '10..-10'`.
     #[cfg_attr(
         feature = "cli",
         clap(
             long,
             help_heading = "Region Selection",
-            num_args = 1..=3, 
+            num_args = 1, 
             action = clap::ArgAction::Append,
             default_values = [".."],
             required = false,
@@ -449,9 +453,11 @@ pub struct FragmentPositionSelectionArgs {
     /// For the `mid` frame, zero is treated as the origin of the stride: when the chosen range includes the
     /// midpoint, it is always retained and every `step`th offset is kept symmetrically
     /// (`-2*step`, `-step`, `0`, `step`, `2*step`, ...). Ranges that exclude the origin fall back to the default stride.
+    /// 
+    /// Pass multiple steps as e.g.: `--step 1 --step 2`.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_values_t = [1usize], help_heading = "Region Selection")
+        clap(long, default_values_t = [1usize], num_args = 1, help_heading = "Region Selection")
     )]
     pub step: Vec<usize>,
 }

@@ -10,7 +10,6 @@ use clap::ValueEnum;
 use crate::commands::fragment_kmers::parse::PositionalSelectionSpec;
 use crate::commands::visualize_positions::Track;
 use crate::commands::visualize_positions::model::AxisBounds;
-use crate::shared::kmers::kmer_codec::KmerSpec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PositionOrientation {
