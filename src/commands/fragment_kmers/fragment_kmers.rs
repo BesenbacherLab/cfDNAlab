@@ -537,7 +537,7 @@ fn process_tile(
 
         let cache = position_cache.as_ref();
         let (first, last) = cache
-            // Use smallest possible k to include all positions in interval for overlap!
+            // Use smallest possible k to include all positions in interval for overlap
             .bounds(fragment.len(), cache.offsets.keys().copied().min().unwrap())
             .expect("non-empty offsets must have bounds");
         let interval_start = fragment.start as u64 + first as u64;
@@ -651,8 +651,14 @@ pub fn count_kmers_at_positions(
         };
         if selections.is_empty() {
             // Some frames filter out every position for a fragment of a given length
-            return;
+            continue;
         }
+
+        // In count_kmers_at_positions, fetch windows once per k/fragment length
+        let windows = match cache.windows(fragment.len(), k) {
+            Some(w) => w,
+            None => continue,
+        };
 
         // Selections are sorted by offset. We stream through them once per k
         // using a single cursor so the overall complexity stays linear in the number
@@ -785,6 +791,7 @@ pub fn count_kmers_at_positions(
 
                 let decision = evaluate_selection(
                     selection,
+                    windows,
                     nearest_guard.as_ref(),
                     k_span,
                     offset,

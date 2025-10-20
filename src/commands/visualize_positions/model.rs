@@ -5,7 +5,7 @@ use clap::ValueEnum;
 
 use crate::commands::fragment_kmers::{
     parse::PositionalSelectionSpec,
-    positions::{BasesFrom, MismatchBasesFrom, PositionsSpec, ReferenceFrame},
+    positions::{BasesFrom, MismatchBasesFrom},
 };
 
 /// Available rendering backends for the CLI.

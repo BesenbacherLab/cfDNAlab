@@ -172,6 +172,79 @@ impl ReferenceFrame {
     }
 }
 
+/* Final windows */
+
+#[derive(Debug, Clone)]
+pub struct AllowedWindows {
+    // Inclusive ranges in left-based coordinates
+    pub forward_starts: Vec<(u32, u32)>, // usable forward START indices
+    pub reverse_anchors: Vec<(u32, u32)>, // usable reverse ANCHOR indices
+}
+
+// Helpers to make/shrink runs (keep private)
+fn runs_from_sorted_points(mut points: Vec<u32>) -> Vec<(u32, u32)> {
+    if points.is_empty() {
+        return Vec::new();
+    }
+    points.sort_unstable();
+    points.dedup();
+    let mut runs = Vec::new();
+    let mut start = points[0];
+    let mut prev = points[0];
+    for &x in &points[1..] {
+        if x == prev + 1 {
+            prev = x;
+        } else {
+            runs.push((start, prev));
+            start = x;
+            prev = x;
+        }
+    }
+    runs.push((start, prev));
+    runs
+}
+
+fn shrink_forward_runs(runs: Vec<(u32, u32)>, k: u8) -> Vec<(u32, u32)> {
+    if k <= 1 {
+        return runs;
+    }
+    let back = (k - 1) as u32;
+    runs.into_iter()
+        .filter_map(|(s, e)| {
+            if e < s + back {
+                None
+            } else {
+                Some((s, e - back))
+            }
+        })
+        .collect()
+}
+
+fn shrink_reverse_runs(runs: Vec<(u32, u32)>, k: u8) -> Vec<(u32, u32)> {
+    if k <= 1 {
+        return runs;
+    }
+    let back = (k - 1) as u32;
+    runs.into_iter()
+        .filter_map(|(s, e)| {
+            if s + back > e {
+                None
+            } else {
+                Some((s + back, e))
+            }
+        })
+        .collect()
+}
+
+#[inline]
+pub fn in_any_run(x: u64, runs: &[(u32, u32)]) -> bool {
+    // Runs are few. Linear scan is fine
+    runs.iter()
+        .any(|&(s, e)| (s as u64) <= x && x <= (e as u64))
+}
+
+/* */
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PositionSelection {
     offset: u32,
@@ -201,6 +274,7 @@ pub struct PositionSelectionCache {
     pub offsets: FxHashMap<u8, Vec<Vec<PositionSelection>>>,
     pub present_frames: FxHashSet<ReferenceFrame>,
     pub main_frame: ReferenceFrame,
+    pub windows: FxHashMap<u8, Vec<AllowedWindows>>,
 }
 
 impl PositionSelectionCache {
@@ -217,8 +291,11 @@ impl PositionSelectionCache {
 
         let mut offsets: FxHashMap<u8, Vec<Vec<PositionSelection>>> =
             FxHashMap::with_capacity_and_hasher(kmer_sizes.len(), Default::default());
+        let mut windows_map: FxHashMap<u8, Vec<AllowedWindows>> =
+            FxHashMap::with_capacity_and_hasher(kmer_sizes.len(), Default::default());
         for &k in kmer_sizes {
             offsets.insert(k, Vec::with_capacity((max_len - min_len + 1) as usize));
+            windows_map.insert(k, Vec::with_capacity((max_len - min_len + 1) as usize));
         }
 
         for length in min_len..=max_len {
@@ -267,8 +344,32 @@ impl PositionSelectionCache {
                     other => other,
                 });
 
+                let mut fwd_points: Vec<u32> = intersected_values
+                    .iter()
+                    .filter(|ps| ps.orientation() == PositionOrientation::Forward)
+                    .map(|ps| ps.offset())
+                    .collect();
+                let mut rev_points: Vec<u32> = intersected_values
+                    .iter()
+                    .filter(|ps| ps.orientation() == PositionOrientation::Reverse)
+                    .map(|ps| ps.offset()) // anchor indices
+                    .collect();
+
+                let fwd_runs = runs_from_sorted_points(std::mem::take(&mut fwd_points));
+                let rev_runs = runs_from_sorted_points(std::mem::take(&mut rev_points));
+
+                let windows = AllowedWindows {
+                    forward_starts: shrink_forward_runs(fwd_runs, k),
+                    reverse_anchors: shrink_reverse_runs(rev_runs, k),
+                };
+
                 let k_offsets = offsets.get_mut(&k).unwrap();
                 k_offsets.push(intersected_values);
+
+                windows_map
+                    .entry(k)
+                    .or_insert_with(|| Vec::with_capacity((max_len - min_len + 1) as usize))
+                    .push(windows);
             }
         }
 
@@ -281,6 +382,7 @@ impl PositionSelectionCache {
             offsets,
             present_frames,
             main_frame,
+            windows: windows_map,
         })
     }
 
@@ -293,6 +395,7 @@ impl PositionSelectionCache {
         self.offsets.get(&k)?.get(idx).map(|v| v.as_slice())
     }
 
+    /// Get *extreme* bounds. For window bounds, see `.windows()`.
     #[inline]
     pub fn bounds(&self, length: u32, k: u8) -> Option<(u32, u32)> {
         let selections = self.offsets(length, k)?;
@@ -303,6 +406,15 @@ impl PositionSelectionCache {
             let last = selections.last()?.offset();
             Some((first, last))
         }
+    }
+
+    #[inline]
+    pub fn windows(&self, length: u32, k: u8) -> Option<&AllowedWindows> {
+        if length < self.min_length {
+            return None;
+        }
+        let idx = (length - self.min_length) as usize;
+        self.windows.get(&k)?.get(idx)
     }
 }
 

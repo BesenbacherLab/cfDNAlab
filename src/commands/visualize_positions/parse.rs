@@ -3,9 +3,9 @@ use std::fmt;
 
 use anyhow::{Context, Result, anyhow};
 
-const LINEAR_EXAMPLE: &str = "--positions 1..10";
-const NEAREST_EXAMPLE: &str = "--positions ..half";
-const MID_EXAMPLE: &str = "--positions -10..10";
+// const LINEAR_EXAMPLE: &str = "--positions 1..10";
+// const NEAREST_EXAMPLE: &str = "--positions ..half";
+// const MID_EXAMPLE: &str = "--positions -10..10";
 
 /// Error type used when the range grammar does not match expectations.
 #[derive(Debug)]

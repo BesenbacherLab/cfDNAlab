@@ -1,5 +1,7 @@
 use crate::commands::fragment_kmers::nearest_frame_guard::NearestFrameGuard;
-use crate::commands::fragment_kmers::positions::{PositionOrientation, PositionSelection};
+use crate::commands::fragment_kmers::positions::{
+    AllowedWindows, PositionOrientation, PositionSelection, in_any_run,
+};
 
 #[derive(Debug, Clone)]
 pub enum SelectionDecision {
@@ -15,6 +17,7 @@ pub enum SelectionDecision {
 
 pub fn evaluate_selection(
     selection: PositionSelection,
+    windows: &AllowedWindows,
     guard: Option<&NearestFrameGuard>,
     k_span: u64,
     offset: u64,
@@ -23,6 +26,9 @@ pub fn evaluate_selection(
 ) -> SelectionDecision {
     match selection.orientation() {
         PositionOrientation::Forward => {
+            if !in_any_run(offset, &windows.forward_starts) {
+                return SelectionDecision::SkipAdvance;
+            }
             let Some((forward_min, forward_max)) = forward_range else {
                 return SelectionDecision::SkipAdvance;
             };
@@ -39,6 +45,9 @@ pub fn evaluate_selection(
             }
         }
         PositionOrientation::Reverse => {
+            if !in_any_run(offset, &windows.reverse_anchors) {
+                return SelectionDecision::SkipAdvance;
+            }
             let Some((reverse_min, reverse_max)) = reverse_range else {
                 return SelectionDecision::SkipAdvance;
             };

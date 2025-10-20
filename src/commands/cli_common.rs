@@ -7,7 +7,6 @@ use anyhow::{bail, ensure, Context, Result};
 use fxhash::FxHashMap;
 use std::path::Path;
 use std::{path::PathBuf, str::FromStr};
-use strum::EnumCount;
 
 /// Args for in-/output and core (threads).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
