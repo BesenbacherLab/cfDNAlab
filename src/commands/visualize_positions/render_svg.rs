@@ -1,7 +1,9 @@
 use std::cmp::Ordering;
 use std::fmt::Write;
 
-use super::model::{LengthVisualization, ReferenceFrame, Track, VizConfig};
+use crate::commands::fragment_kmers::positions::ReferenceFrame;
+
+use super::model::{LengthVisualization, Track, VizConfig};
 
 const CHAR_WIDTH: f64 = 7.0;
 const MARKER_BAND: f64 = 12.0;
@@ -13,7 +15,7 @@ const LABEL_COLUMN_PADDING: f64 = 60.0;
 const FRAGMENT_PADDING: f64 = 30.0;
 
 fn svg_track_label(track: &Track, config: &VizConfig) -> String {
-    if config.frame == ReferenceFrame::Nearest && track.name == "nearest" {
+    if config.position_specs[0].frame == ReferenceFrame::Nearest && track.name == "nearest" {
         let max_val = track.axis.end.max(track.axis.start);
         format!("{} (max distance {})", track.name, max_val)
     } else {
@@ -50,9 +52,24 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
         let mut header = format!(
             "L={} | frame={} | positions={} | step={} | bases={} | mismatches={}",
             viz.fragment_length,
-            config.frame.as_str(),
-            config.positions_input,
-            config.step.get(),
+            config
+                .position_specs
+                .iter()
+                .map(|ps| ps.frame.as_str().to_string())
+                .collect::<Vec<String>>()
+                .join(","),
+            config
+                .position_specs
+                .iter()
+                .map(|ps| ps.positions_string.clone())
+                .collect::<Vec<String>>()
+                .join(","),
+            config
+                .position_specs
+                .iter()
+                .map(|ps| ps.step.get().to_string())
+                .collect::<Vec<String>>()
+                .join(","),
             config.bases.as_str(),
             config.mismatch_bases_from.as_str()
         );
@@ -352,7 +369,7 @@ fn tick_priority(value: i32, start: i32, end: i32) -> u8 {
 fn axis_markers(track: &Track, fragment_length: u32, config: &VizConfig) -> Vec<(f64, char)> {
     let mut markers = Vec::new();
     if config.show_half {
-        match config.frame {
+        match config.position_specs[0].frame {
             ReferenceFrame::Nearest => {
                 let half = (fragment_length / 2) as f64;
                 if half > 0.0 {
@@ -369,7 +386,7 @@ fn axis_markers(track: &Track, fragment_length: u32, config: &VizConfig) -> Vec<
         }
     }
     if config.show_mid {
-        let mid = match config.frame {
+        let mid = match config.position_specs[0].frame {
             ReferenceFrame::Mid => Some(0.0),
             ReferenceFrame::Nearest => Some((fragment_length / 2) as f64),
             ReferenceFrame::Left | ReferenceFrame::Right | ReferenceFrame::PerEnd => {

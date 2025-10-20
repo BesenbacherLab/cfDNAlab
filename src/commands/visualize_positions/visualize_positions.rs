@@ -1,10 +1,9 @@
 use crate::commands::cli_common::{
-    BaseSelectionArgs, ChromosomeArgs, FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs,
-    WindowsArgs,
+    ChromosomeArgs, FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs, WindowsArgs,
 };
 use crate::commands::fragment_kmers::config::FragmentKmersConfig;
 use crate::commands::fragment_kmers::fragment_kmers::run_inner;
-use crate::commands::fragment_kmers::positions::{BasesFrom, PositionGroup};
+use crate::commands::fragment_kmers::positions::{BasesFrom, PositionGroup, ReferenceFrame};
 use crate::commands::visualize_positions::config::VisualizePositionsConfig;
 use crate::commands::visualize_positions::model::{
     AxisBounds, LengthVisualization, Style, Track, VizConfig,
@@ -32,12 +31,7 @@ pub fn run(cfg: &VisualizePositionsConfig) -> Result<()> {
     fs::create_dir_all(&cfg.work_dir)
         .with_context(|| format!("creating work directory {}", cfg.work_dir.display()))?;
 
-    let results = compute_visualizations(
-        &viz_cfg,
-        &cfg.position_selection,
-        &cfg.base_selection,
-        &cfg.work_dir,
-    )?;
+    let results = compute_visualizations(&viz_cfg, &cfg.position_selection, &cfg.work_dir)?;
 
     let rendered = match viz_cfg.style {
         Style::Ascii => render_ascii(&results, &viz_cfg),
@@ -60,7 +54,6 @@ pub fn run(cfg: &VisualizePositionsConfig) -> Result<()> {
 fn compute_visualizations(
     viz_cfg: &VizConfig,
     position_args: &FragmentPositionSelectionArgs,
-    base_args: &BaseSelectionArgs,
     work_dir: &Path,
 ) -> Result<Vec<LengthVisualization>> {
     let temp_dir = TempDirBuilder::new()
@@ -85,6 +78,8 @@ fn compute_visualizations(
         prefix,
     )?;
 
+    let main_positional_spec = viz_cfg.position_specs[0].clone();
+
     let counts = collect_counts(temp_dir.path(), prefix, &run_k_sizes, &synthetic.windows)?;
 
     let clamp_mode = match viz_cfg.bases {
@@ -96,7 +91,7 @@ fn compute_visualizations(
     let mut results = Vec::with_capacity(synthetic.windows.len());
     for (window, window_counts) in synthetic.windows.iter().zip(counts.into_iter()) {
         let mut viz = build_tracks_from_counts(
-            viz_cfg.frame,
+            main_positional_spec.frame,
             window.length,
             clamp_mode,
             &window_counts.offsets,
@@ -106,7 +101,7 @@ fn compute_visualizations(
         if let Some(kmer_sizes) = viz_cfg.kmer_sizes.as_ref() {
             if !kmer_sizes.is_empty() {
                 let overlays = build_overlays_from_counts(
-                    viz_cfg.frame,
+                    main_positional_spec.frame,
                     window.length,
                     &viz.tracks,
                     kmer_sizes,

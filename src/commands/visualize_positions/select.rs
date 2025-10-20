@@ -1,12 +1,12 @@
-use std::num::NonZeroUsize;
-
-use crate::commands::fragment_kmers::nearest_frame_guard::NearestFrameGuard;
-use crate::commands::fragment_kmers::positions::{
-    PositionGroup, PositionSelection, PositionSelectionCache, PositionsSpec, ReferenceFrame
-};
-use crate::commands::fragment_kmers::selection::{SelectionDecision, evaluate_selection};
+use fxhash::FxHashMap;
 
 use super::model::{AxisBounds, LengthVisualization, Track};
+use crate::commands::fragment_kmers::nearest_frame_guard::NearestFrameGuard;
+use crate::commands::fragment_kmers::parse::PositionalSelectionSpec;
+use crate::commands::fragment_kmers::positions::{
+    PositionGroup, PositionSelection, PositionSelectionCache, ReferenceFrame,
+};
+use crate::commands::fragment_kmers::selection::{SelectionDecision, evaluate_selection};
 
 /// How aggressively the visualization should clamp selections to read coverage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,13 +22,19 @@ pub enum ReadClamp {
 /// Build the set of tracks for a single fragment length.
 pub fn build_tracks_for_length(
     length: u32,
+    position_selection_spec: &PositionalSelectionSpec,
     read_clamp: ReadClamp,
 ) -> LengthVisualization {
-    let cache = PositionSelectionCache::new(length, length)
-        .expect("failed to build position cache");
-    let selections = cache.offsets(length).unwrap_or(&[]);
+    let cache = PositionSelectionCache::new(
+        vec![position_selection_spec.clone()],
+        &[0u8],
+        length,
+        length,
+    )
+    .expect("failed to build position cache");
+    let selections = cache.offsets(length, 1u8).unwrap_or(&[]);
 
-    let mut tracks = match frame {
+    let mut tracks = match position_selection_spec.frame {
         ReferenceFrame::Left => {
             let indices = selections
                 .iter()
@@ -82,14 +88,18 @@ pub fn build_tracks_for_length(
                 selections
                     .iter()
                     .filter(|sel| sel.group() == PositionGroup::Left)
-                    .filter_map(|sel| map_linear_position(length, sel.offset(), PositionGroup::Left))
+                    .filter_map(|sel| {
+                        map_linear_position(length, sel.offset(), PositionGroup::Left)
+                    })
                     .collect(),
             );
             let right_positions = dedup_sorted(
                 selections
                     .iter()
                     .filter(|sel| sel.group() == PositionGroup::Right)
-                    .filter_map(|sel| map_linear_position(length, sel.offset(), PositionGroup::Right))
+                    .filter_map(|sel| {
+                        map_linear_position(length, sel.offset(), PositionGroup::Right)
+                    })
                     .collect(),
             );
             let fragment_positions = dedup_sorted({
@@ -143,7 +153,12 @@ pub fn build_tracks_for_length(
         }
     };
 
-    apply_read_clamp(&mut tracks, frame, length, read_clamp);
+    apply_read_clamp(
+        &mut tracks,
+        position_selection_spec.frame,
+        length,
+        read_clamp,
+    );
 
     LengthVisualization {
         fragment_length: length,
@@ -153,35 +168,50 @@ pub fn build_tracks_for_length(
 
 /// Build helper tracks that illustrate the valid k-mer start bases for the requested kmer_sizes.
 pub fn build_kmer_start_overlays(
-    frame: ReferenceFrame,
+    position_selection_spec: &PositionalSelectionSpec,
     length: u32,
-    positions: &PositionsSpec,
-    step: NonZeroUsize,
     base_tracks: &[Track],
     kmer_sizes: &[u8],
-) -> Vec<Track> {
+) -> FxHashMap<u8, Vec<Track>> {
+    let mut overlay_per_k: FxHashMap<u8, Vec<Track>> = FxHashMap::default();
     if length == 0 || kmer_sizes.is_empty() || base_tracks.is_empty() {
-        return Vec::new();
+        return overlay_per_k;
     }
 
-    let cache = match PositionSelectionCache::new(frame, positions, step, length, length) {
+    let cache = match PositionSelectionCache::new(
+        vec![position_selection_spec.clone()],
+        kmer_sizes,
+        length,
+        length,
+    ) {
         Ok(cache) => cache,
-        Err(_) => return Vec::new(),
+        Err(_) => return overlay_per_k,
     };
-    let selections = cache.offsets(length).unwrap_or(&[]);
 
-    match frame {
-        ReferenceFrame::Left => build_left_overlays(length, selections, base_tracks, kmer_sizes),
-        ReferenceFrame::Right => build_right_overlays(length, selections, base_tracks, kmer_sizes),
-        ReferenceFrame::PerEnd => {
-            build_per_end_overlays(length, selections, base_tracks, kmer_sizes)
-        }
-        ReferenceFrame::Nearest => {
-            build_nearest_overlays(length, selections, base_tracks, kmer_sizes)
-        }
-        ReferenceFrame::Mid => build_mid_overlays(length, selections, base_tracks, kmer_sizes),
+    for k in kmer_sizes {
+        let selections = cache.offsets(length, *k).unwrap_or(&[]);
+
+        let overlay = match position_selection_spec.frame {
+            ReferenceFrame::Left => {
+                build_left_overlays(length, selections, base_tracks, kmer_sizes)
+            }
+            ReferenceFrame::Right => {
+                build_right_overlays(length, selections, base_tracks, kmer_sizes)
+            }
+            ReferenceFrame::PerEnd => {
+                build_per_end_overlays(length, selections, base_tracks, kmer_sizes)
+            }
+            ReferenceFrame::Nearest => {
+                build_nearest_overlays(length, selections, base_tracks, kmer_sizes)
+            }
+            ReferenceFrame::Mid => build_mid_overlays(length, selections, base_tracks, kmer_sizes),
+        };
+        overlay_per_k.insert(*k, overlay);
     }
+
+    overlay_per_k
 }
+
 fn build_left_overlays(
     length: u32,
     selections: &[PositionSelection],
@@ -362,7 +392,6 @@ fn default_ranges(length: u32, k_len: u32) -> (Option<(u64, u64)>, Option<(u64, 
 
 fn left_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec<i32> {
     let k_len = u32::from(k);
-    let guard = NearestFrameGuard::for_frame(ReferenceFrame::Left, length, k_len);
     let span = k_len as u64;
     let (forward_range, reverse_range) = default_ranges(length, k_len);
     selections
@@ -371,7 +400,7 @@ fn left_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec
         .filter_map(|sel| {
             match evaluate_selection(
                 *sel,
-                guard.as_ref(),
+                None,
                 span,
                 sel.offset() as u64,
                 forward_range,
@@ -388,7 +417,6 @@ fn left_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec
 
 fn right_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec<i32> {
     let k_len = u32::from(k);
-    let guard = NearestFrameGuard::for_frame(ReferenceFrame::Right, length, k_len);
     let span = k_len as u64;
     let (forward_range, reverse_range) = default_ranges(length, k_len);
     selections
@@ -397,7 +425,7 @@ fn right_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Ve
         .filter_map(|sel| {
             match evaluate_selection(
                 *sel,
-                guard.as_ref(),
+                None,
                 span,
                 sel.offset() as u64,
                 forward_range,
@@ -423,7 +451,7 @@ fn nearest_fragment_kmer_starts(
     k: u8,
 ) -> (Vec<i32>, Vec<i32>, Vec<i32>) {
     let k_len = u32::from(k);
-    let guard = NearestFrameGuard::for_frame(ReferenceFrame::Nearest, length, k_len);
+    let guard = NearestFrameGuard::by_flag(true, length, k_len);
     let span = k_len as u64;
     let (forward_range, reverse_range) = default_ranges(length, k_len);
     let mut left = Vec::new();
@@ -468,7 +496,6 @@ fn nearest_fragment_kmer_starts(
 
 fn mid_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec<i32> {
     let k_len = u32::from(k);
-    let guard = NearestFrameGuard::for_frame(ReferenceFrame::Mid, length, k_len);
     let span = k_len as u64;
     let (forward_range, reverse_range) = default_ranges(length, k_len);
     let center = (length as i64) / 2;
@@ -478,7 +505,7 @@ fn mid_kmer_starts(length: u32, selections: &[PositionSelection], k: u8) -> Vec<
         .filter_map(|sel| {
             match evaluate_selection(
                 *sel,
-                guard.as_ref(),
+                None,
                 span,
                 sel.offset() as u64,
                 forward_range,
@@ -635,8 +662,6 @@ fn clamp_track_nearest(track: &mut Track, frame: ReferenceFrame, half: i32, righ
     }
 }
 
-
-
 fn clamp_track_both_reads(track: &mut Track, frame: ReferenceFrame, half: i32, right_start: i32) {
     match frame {
         ReferenceFrame::Nearest => {
@@ -693,6 +718,3 @@ fn clamp_track_both_reads(track: &mut Track, frame: ReferenceFrame, half: i32, r
         }
     }
 }
-
-
-

@@ -155,9 +155,11 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
             .map(|ps| parse_positions(ps))
             .collect::<Result<Vec<_>, _>>()?;
 
+        let kmer_sizes: Vec<u8> = kmer_specs.keys().cloned().collect();
+
         Arc::new(PositionSelectionCache::new(
             position_specs,
-            &kmer_specs,
+            &kmer_sizes,
             opt.shared_args.fragment_lengths.min_fragment_length,
             opt.shared_args.fragment_lengths.max_fragment_length,
         )?)

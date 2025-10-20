@@ -208,7 +208,7 @@ impl PositionSelectionCache {
     /// Build a cache of selected offsets (0-based) for every fragment length in `[min_len, max_len]`.
     pub fn new(
         position_specs: Vec<PositionalSelectionSpec>,
-        kmer_specs: &FxHashMap<u8, KmerSpec>,
+        kmer_sizes: &[u8],
         min_len: u32,
         max_len: u32,
     ) -> Result<Self> {
@@ -217,8 +217,8 @@ impl PositionSelectionCache {
         }
 
         let mut offsets: FxHashMap<u8, Vec<Vec<PositionSelection>>> =
-            FxHashMap::with_capacity_and_hasher(kmer_specs.len(), Default::default());
-        for (&k, _) in kmer_specs {
+            FxHashMap::with_capacity_and_hasher(kmer_sizes.len(), Default::default());
+        for &k in kmer_sizes {
             offsets.insert(k, Vec::with_capacity((max_len - min_len + 1) as usize));
         }
 
@@ -228,7 +228,7 @@ impl PositionSelectionCache {
                 .map(|ps| offsets_for_length(length, ps))
                 .collect::<Result<Vec<_>, _>>()?;
 
-            for (&k, _) in kmer_specs {
+            for &k in kmer_sizes {
                 let first_pairs: Vec<(u32, PositionSelection)> = per_spec_offsets[0]
                     .iter()
                     .filter_map(|ps| start_index_for_selection(k, ps).map(|s| (s, *ps)))

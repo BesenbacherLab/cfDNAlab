@@ -42,6 +42,7 @@ impl Error for RangeParseError {}
 pub struct PositionalSelectionSpec {
     pub frame: ReferenceFrame,
     pub positions: PositionsSpec,
+    pub positions_string: String,
     pub step: NonZeroUsize,
 }
 
@@ -64,6 +65,7 @@ pub fn parse_positions(
     Ok(PositionalSelectionSpec {
         frame: position_spec.frame,
         positions: positions_spec,
+        positions_string: position_spec.positions.clone(),
         step: step,
     })
 }
