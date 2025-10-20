@@ -1,58 +1,12 @@
-use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 #[cfg(feature = "cli")]
 use clap::ValueEnum;
 
-/// Enumeration of the available coordinate frames used to interpret positional selections.
-#[cfg_attr(feature = "cli", derive(ValueEnum))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ReferenceFrame {
-    #[default]
-    Left,
-    Right,
-    PerEnd,
-    Nearest,
-    Mid,
-}
-
-impl ReferenceFrame {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ReferenceFrame::Left => "left",
-            ReferenceFrame::Right => "right",
-            ReferenceFrame::PerEnd => "per-end",
-            ReferenceFrame::Nearest => "nearest",
-            ReferenceFrame::Mid => "mid",
-        }
-    }
-}
-
-/// Whether the user wants to reason about read or reference coordinates.
-#[cfg_attr(feature = "cli", derive(ValueEnum))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BasesFrom {
-    /// Always use reference positions regardless of read coverage.
-    #[default]
-    Reference,
-    /// Prefer observed read coordinates, but fall back to the reference span when a read is missing.
-    PreferReads,
-    /// Only include positions covered by either read. Inferred mate gaps are skipped.
-    Reads,
-    /// Clamp to the read nearest to the frame origin.
-    NearestRead,
-}
-
-impl BasesFrom {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            BasesFrom::Reference => "reference",
-            BasesFrom::PreferReads => "prefer-reads",
-            BasesFrom::Reads => "reads",
-            BasesFrom::NearestRead => "nearest-read",
-        }
-    }
-}
+use crate::commands::fragment_kmers::{
+    parse::PositionalSelectionSpec,
+    positions::{BasesFrom, MismatchBasesFrom, PositionsSpec, ReferenceFrame},
+};
 
 /// Available rendering backends for the CLI.
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
@@ -121,10 +75,7 @@ impl LengthVisualization {
 /// Parsed representation of the CLI configuration.
 #[derive(Debug, Clone)]
 pub struct VizConfig {
-    pub frame: ReferenceFrame,
-    pub positions: PositionsSpec,
-    pub positions_input: String,
-    pub step: NonZeroUsize,
+    pub position_specs: Vec<PositionalSelectionSpec>,
     pub bases: BasesFrom,
     pub mismatch_bases_from: MismatchBasesFrom,
     pub kmer_sizes: Option<Vec<u8>>,
@@ -137,89 +88,4 @@ pub struct VizConfig {
     pub show_index: bool,
     pub show_half: bool,
     pub show_mid: bool,
-}
-
-/// How to resolve overlapping read mismatches when choosing read-backed bases.
-#[cfg_attr(feature = "cli", derive(ValueEnum))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MismatchBasesFrom {
-    #[default]
-    NearestRead,
-    BaseQuality,
-    Reference,
-}
-
-impl MismatchBasesFrom {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            MismatchBasesFrom::NearestRead => "nearest-read",
-            MismatchBasesFrom::BaseQuality => "base-quality",
-            MismatchBasesFrom::Reference => "reference",
-        }
-    }
-}
-
-/// Range grammar for frames that index strictly from one end.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LinearRange {
-    /// Entire fragment axis.
-    All,
-    /// Closed inclusive range `A..B`.
-    Closed { start: u32, end: u32 },
-    /// Open-right range `A:`.
-    From { start: u32 },
-    /// Open-left range `:B`.
-    To { end: u32 },
-    /// Opposite-end trimmed range `A..-B`.
-    TrimOtherEnd { start: u32, other_end_trim: u32 },
-    /// Range reaching up to the fragment half (`..half[-K]`).
-    ToHalf { minus: u32 },
-    /// Range starting at a fixed offset up to the fragment half (`A..half[-K]`).
-    FromToHalf { start: u32, minus: u32 },
-}
-
-/// Range grammar used with the `nearest` frame.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NearestRange {
-    /// Entire folded axis.
-    All,
-    Closed {
-        start: u32,
-        end: u32,
-    },
-    From {
-        start: u32,
-    },
-    ToHalf {
-        minus: u32,
-    },
-    FromToHalf {
-        start: u32,
-        minus: u32,
-    },
-}
-
-/// Range grammar used with the `mid` frame.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MidRange {
-    /// Entire symmetric axis.
-    All,
-    Closed {
-        neg: u32,
-        pos: u32,
-    },
-    LeftOpen {
-        neg: u32,
-    },
-    RightOpen {
-        pos: u32,
-    },
-}
-
-/// The position specification tagged to allow frame-specific dispatch.
-#[derive(Debug, Clone)]
-pub enum PositionsSpec {
-    Linear(LinearRange),
-    Nearest(NearestRange),
-    Mid(MidRange),
 }

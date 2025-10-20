@@ -1,15 +1,16 @@
 use crate::commands::cli_common::{
-    ChromosomeArgs, FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs, WindowsArgs,
+    BaseSelectionArgs, ChromosomeArgs, FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs,
+    WindowsArgs,
 };
 use crate::commands::fragment_kmers::config::FragmentKmersConfig;
 use crate::commands::fragment_kmers::fragment_kmers::run_inner;
-use crate::commands::fragment_kmers::positions::PositionGroup;
+use crate::commands::fragment_kmers::positions::{BasesFrom, PositionGroup};
 use crate::commands::visualize_positions::config::VisualizePositionsConfig;
 use crate::commands::visualize_positions::model::{
-    AxisBounds, LengthVisualization, ReferenceFrame, Style, Track, VizConfig,
+    AxisBounds, LengthVisualization, Style, Track, VizConfig,
 };
 use crate::commands::visualize_positions::select::ReadClamp;
-use crate::commands::visualize_positions::{BasesFrom, render_ascii, render_svg};
+use crate::commands::visualize_positions::{render_ascii, render_svg};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use ndarray::Array3;
 use ndarray_npy::read_npy;
@@ -31,7 +32,12 @@ pub fn run(cfg: &VisualizePositionsConfig) -> Result<()> {
     fs::create_dir_all(&cfg.work_dir)
         .with_context(|| format!("creating work directory {}", cfg.work_dir.display()))?;
 
-    let results = compute_visualizations(&viz_cfg, &cfg.position_selection, &cfg.work_dir)?;
+    let results = compute_visualizations(
+        &viz_cfg,
+        &cfg.position_selection,
+        &cfg.base_selection,
+        &cfg.work_dir,
+    )?;
 
     let rendered = match viz_cfg.style {
         Style::Ascii => render_ascii(&results, &viz_cfg),
@@ -54,6 +60,7 @@ pub fn run(cfg: &VisualizePositionsConfig) -> Result<()> {
 fn compute_visualizations(
     viz_cfg: &VizConfig,
     position_args: &FragmentPositionSelectionArgs,
+    base_args: &BaseSelectionArgs,
     work_dir: &Path,
 ) -> Result<Vec<LengthVisualization>> {
     let temp_dir = TempDirBuilder::new()
@@ -506,10 +513,8 @@ fn collect_counts(
                         if counts[[window_idx, pos_idx, motif_idx]] > 0.0 {
                             has_signal = true;
                             if k == base_k {
-                                let cov_set = results[window_idx]
-                                    .coverage
-                                    .entry(group)
-                                    .or_default();
+                                let cov_set =
+                                    results[window_idx].coverage.entry(group).or_default();
                                 let span = coverage_span(
                                     windows[window_idx].length,
                                     *offset,
@@ -850,10 +855,16 @@ fn build_overlays_from_counts(
                 let Some(group_map) = offsets_by_k.get(&k) else {
                     continue;
                 };
-                let left_positions =
-                    map_linear_positions(length, group_map.get(&PositionGroup::Left), PositionGroup::Left);
-                let right_positions =
-                    map_linear_positions(length, group_map.get(&PositionGroup::Right), PositionGroup::Right);
+                let left_positions = map_linear_positions(
+                    length,
+                    group_map.get(&PositionGroup::Left),
+                    PositionGroup::Left,
+                );
+                let right_positions = map_linear_positions(
+                    length,
+                    group_map.get(&PositionGroup::Right),
+                    PositionGroup::Right,
+                );
                 if left_positions.is_empty() && right_positions.is_empty() {
                     continue;
                 }
@@ -1018,16 +1029,14 @@ fn coverage_span(length: u32, offset: i32, k_len: i32, group: PositionGroup) -> 
             if start < 1 {
                 panic!(
                     "Right coverage start {} fell below 1 for fragment length {}",
-                    start,
-                    length
+                    start, length
                 );
             }
             let end = start - (k_len - 1);
             if end < 1 {
                 panic!(
                     "Right coverage index {} fell below 1 for fragment length {}",
-                    end,
-                    length
+                    end, length
                 );
             }
             (0..k_len).map(|delta| start - delta).collect()
@@ -1115,7 +1124,6 @@ fn clamp_track_nearest(track: &mut Track, frame: ReferenceFrame, half: i32, righ
     }
 }
 
-
 fn clamp_track_both_reads(track: &mut Track, frame: ReferenceFrame, half: i32, right_start: i32) {
     match frame {
         ReferenceFrame::Nearest => {
@@ -1174,7 +1182,6 @@ fn clamp_track_both_reads(track: &mut Track, frame: ReferenceFrame, half: i32, r
     }
 }
 
-
 fn mid_axis_bounds(length: u32) -> AxisBounds {
     let half = (length / 2) as i32;
     if length % 2 == 0 {
@@ -1210,7 +1217,10 @@ mod coverage_tests {
 
     #[test]
     fn expands_left_span_from_offset_zero() {
-        assert_eq!(sorted(coverage_span(10, 0, 3, PositionGroup::Left)), vec![1, 2, 3]);
+        assert_eq!(
+            sorted(coverage_span(10, 0, 3, PositionGroup::Left)),
+            vec![1, 2, 3]
+        );
     }
 
     #[test]

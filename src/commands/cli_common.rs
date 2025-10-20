@@ -1,12 +1,13 @@
-use crate::commands::visualize_positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
+use crate::commands::fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 use crate::shared::bam::bam_header_contigs;
 use crate::shared::bam::{Contigs, bam_contigs_info};
 use crate::shared::blacklist::load_blacklists;
 use crate::shared::scale_genome::load_scaling_factors_tsv;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, ensure, Context, Result};
 use fxhash::FxHashMap;
 use std::path::Path;
 use std::{path::PathBuf, str::FromStr};
+use strum::EnumCount;
 
 /// Args for in-/output and core (threads).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
@@ -369,6 +370,11 @@ pub struct ScaleGenomeArgs {
 pub struct FragmentPositionSelectionArgs {
     /// Choose the reference frame that interprets every other region selection argument `[left|right|per-end|nearest|mid]`.
     ///
+    /// When multiple frames are supplied (matching the same number of `positions` strings), the intersection of positions are used. 
+    /// The first frame+positions(+step) combination determines the output type.
+    /// Using multiple specification allows selecting e.g., the `-N..N` bases around the fragment midpoint 
+    /// while limiting the distance to the fragment ends.
+    /// 
     /// Note: `--positions` describe positions to count at relative to the chosen frame.
     ///
     /// - **`left`** counts bases from the forward 5' end. Indices increase along the fragment and
@@ -392,16 +398,20 @@ pub struct FragmentPositionSelectionArgs {
         clap(
             long,
             value_enum,
-            default_value = "left",
+            num_args = 1..=ReferenceFrame::COUNT, 
+            action = clap::ArgAction::Append,
+            default_values = ["left"],
             help_heading = "Region Selection"
         )
     )]
-    pub frame: ReferenceFrame,
+    pub frame: Vec<ReferenceFrame>,
 
     /// Describe which positions to count at relative to the selected frame `[string]`.
     ///
     /// Indices are **1-based inclusive**, why e.g. `1..10` would start at the first position and end at the tenth position (included).
     ///
+    /// When multiple specifications are supplied (matching the same number of `frame`s), the intersection of positions are used.
+    /// 
     /// The allowed shapes depend on `--frame`:
     ///
     /// - **`left`**, **`right`**, **`per-end`**: use `..` for the full span or `A..B`, `A..`, `..B`, `A..-B`, `..half`, `A..half-K`.
@@ -419,15 +429,20 @@ pub struct FragmentPositionSelectionArgs {
         clap(
             long,
             help_heading = "Region Selection",
-            default_value = "..",
+            num_args = 1..=3, 
+            action = clap::ArgAction::Append,
+            default_values = [".."],
             required = false,
             allow_hyphen_values = true
         )
     )]
-    pub positions: String,
+    pub positions: Vec<String>,
 
     /// Downsample after selection by keeping every Nth index `[integer >= 1]`.
     ///
+    /// When multiple `frame` and `positions` specifications are set, provide either a single step 
+    /// to use in all of them or a step per specification.
+    /// 
     /// Applied independently to each track in frame order (e.g., per-end left and right both stride through
     /// their own selections). Leave at 1 to keep every base.
     ///
@@ -436,10 +451,86 @@ pub struct FragmentPositionSelectionArgs {
     /// (`-2*step`, `-step`, `0`, `step`, `2*step`, ...). Ranges that exclude the origin fall back to the default stride.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value_t = 1, help_heading = "Region Selection")
+        clap(long, default_values_t = [1usize], help_heading = "Region Selection")
     )]
-    pub step: usize,
+    pub step: Vec<usize>,
+}
 
+
+pub struct UnparsedPositionalSelectionSpec {
+    pub frame: ReferenceFrame,
+    pub positions: String,
+    pub step: usize,
+}
+
+impl std::fmt::Display for UnparsedPositionalSelectionSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "frame={}, positions=\"{}\", step={}",
+            self.frame.as_str(),
+            self.positions,
+            self.step
+        )
+    }
+}
+
+impl FragmentPositionSelectionArgs {
+    /// Check the selection args and convert to vec of specifications
+    /// 
+    /// Each specification has one `frame`, `positions`, and `step`.
+    pub fn into_positional_specs(self) -> Result<Vec<UnparsedPositionalSelectionSpec>> {
+
+        // Destructure to get the fields as variables
+        let FragmentPositionSelectionArgs { frame, positions, step } = self;
+
+        // Number of specifications
+        let n = frame.len();
+
+        ensure!(
+            n == positions.len(),
+            "--frame and --positions must have the same number of values (got {} vs {})",
+            n,
+            positions.len()
+        );
+
+        // Enforce each frame appears at most once without requiring Hash/Ord
+        for i in 0..n {
+            if frame[..i].contains(&frame[i]) {
+                bail!("--frame contains a duplicate value: {:?}", frame[i]);
+            }
+        }
+
+        // Resolve step: either one value reused or exactly n values
+        let resolved_step = match step.len() {
+            1 => vec![step[0]; n],
+            len if len == n => step,
+            other => bail!(
+                "--step must be provided once or exactly {} times (got {})",
+                n,
+                other
+            ),
+        };
+
+        // Basic sanity: steps must be >= 1
+        if let Some(&bad) = resolved_step.iter().find(|&&s| s == 0) {
+            bail!("--step must be >= 1 (found {})", bad);
+        }
+
+        Ok(frame
+            .into_iter()
+            .zip(positions.into_iter())
+            .zip(resolved_step.into_iter())
+            .map(|((frame, positions), step)| UnparsedPositionalSelectionSpec { frame, positions, step })
+            .collect())
+        
+    }
+
+}
+
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Debug, Clone, Default)]
+pub struct BaseSelectionArgs {
     /// Choose which coordinate source defines the counted positions `[reference|prefer-reads|reads|nearest-read]`.
     ///
     /// - `reference`: Always use the reference span, even when reads do not cover those bases.
@@ -480,6 +571,7 @@ pub struct FragmentPositionSelectionArgs {
     )]
     pub mismatch_bases_from: MismatchBasesFrom,
 }
+
 
 // Common loaders
 

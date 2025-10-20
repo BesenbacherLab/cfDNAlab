@@ -2,11 +2,11 @@ use std::num::NonZeroUsize;
 
 use crate::commands::fragment_kmers::nearest_frame_guard::NearestFrameGuard;
 use crate::commands::fragment_kmers::positions::{
-    PositionGroup, PositionSelection, PositionSelectionCache,
+    PositionGroup, PositionSelection, PositionSelectionCache, PositionsSpec, ReferenceFrame
 };
 use crate::commands::fragment_kmers::selection::{SelectionDecision, evaluate_selection};
 
-use super::model::{AxisBounds, LengthVisualization, PositionsSpec, ReferenceFrame, Track};
+use super::model::{AxisBounds, LengthVisualization, Track};
 
 /// How aggressively the visualization should clamp selections to read coverage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,12 +22,9 @@ pub enum ReadClamp {
 /// Build the set of tracks for a single fragment length.
 pub fn build_tracks_for_length(
     length: u32,
-    frame: ReferenceFrame,
-    positions: &PositionsSpec,
-    step: NonZeroUsize,
     read_clamp: ReadClamp,
 ) -> LengthVisualization {
-    let cache = PositionSelectionCache::new(frame, positions, step, length, length)
+    let cache = PositionSelectionCache::new(length, length)
         .expect("failed to build position cache");
     let selections = cache.offsets(length).unwrap_or(&[]);
 

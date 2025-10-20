@@ -8,13 +8,13 @@ use crate::{
         fragment_kmers::{
             config::*,
             nearest_frame_guard::NearestFrameGuard,
+            parse::*,
             positional_output::*,
             positions::*,
             selection::{SelectionDecision, evaluate_selection},
             tiling::*,
             windows::*,
         },
-        visualize_positions::{BasesFrom, ReferenceFrame, parse_positions},
     },
     shared::{
         bam::create_chromosome_reader,
@@ -38,12 +38,12 @@ use crate::{
         },
     },
 };
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{convert::TryInto, io::Write, num::NonZeroUsize, path::Path, sync::Arc, time::Instant};
+use std::{convert::TryInto, io::Write, path::Path, sync::Arc, time::Instant};
 
 /// Execute the fragment kmers counting pipeline end-to-end.
 ///
@@ -106,6 +106,11 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.shared_args.chromosomes, &opt.shared_args.ioc)?;
     let window_opt = opt.shared_args.windows.resolve_windows();
+    let position_specs = opt
+        .shared_args
+        .position_selection
+        .clone()
+        .into_positional_specs()?;
     let prefix = opt.shared_args.output_prefix.trim();
     let quiet = opt.shared_args.quiet;
 
@@ -141,20 +146,18 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     let kmer_specs: FxHashMap<u8, KmerSpec> = build_kmer_specs(&opt.kmer_sizes)?;
 
     let positional_cache = {
-        if opt.shared_args.position_selection.bases_from != BasesFrom::Reference {
+        if opt.shared_args.base_selection.bases_from != BasesFrom::Reference {
             bail!("position selection currently supports bases-from=reference only");
         }
-        let positions_spec = parse_positions(
-            opt.shared_args.position_selection.frame,
-            &opt.shared_args.position_selection.positions,
-        )
-        .context("failed to parse --positions for fragment-kmers")?;
-        let step = NonZeroUsize::new(opt.shared_args.position_selection.step)
-            .ok_or_else(|| anyhow!("--step must be at least 1"))?;
+        // Parse each positions specification
+        let position_specs = position_specs
+            .iter()
+            .map(|ps| parse_positions(ps))
+            .collect::<Result<Vec<_>, _>>()?;
+
         Arc::new(PositionSelectionCache::new(
-            opt.shared_args.position_selection.frame,
-            &positions_spec,
-            step,
+            position_specs,
+            &kmer_specs,
             opt.shared_args.fragment_lengths.min_fragment_length,
             opt.shared_args.fragment_lengths.max_fragment_length,
         )?)
@@ -508,6 +511,9 @@ fn process_tile(
     let mut counter = FragmentKmersCounters::default();
 
     let store_positions = opt.positional_counts;
+    let has_nearest_frame = position_cache
+        .present_frames
+        .contains(&ReferenceFrame::Nearest);
 
     // Iterate fragments and add coverage
     for fragment_res in iter.by_ref() {
@@ -528,14 +534,9 @@ fn process_tile(
         }
 
         let cache = position_cache.as_ref();
-        let selected_offsets = match cache.offsets(fragment.len()) {
-            Some(slice) if !slice.is_empty() => slice,
-            _ => {
-                continue;
-            }
-        };
         let (first, last) = cache
-            .bounds(fragment.len())
+            // Use smallest possible k to include all positions in interval for overlap!
+            .bounds(fragment.len(), 1u8)
             .expect("non-empty offsets must have bounds");
         let interval_start = fragment.start as u64 + first as u64;
         let interval_end = fragment.start as u64 + last as u64 + 1;
@@ -572,7 +573,7 @@ fn process_tile(
                 .or_insert_with(FxHashMap::default);
             count_kmers_at_positions(
                 &fragment,
-                selected_offsets,
+                cache,
                 store_positions,
                 &positional_codes_by_k,
                 kmer_specs,
@@ -580,7 +581,7 @@ fn process_tile(
                 positional_scaling_weights.as_deref(),
                 tile.core_start,
                 tile.core_end,
-                opt.shared_args.position_selection.frame,
+                has_nearest_frame,
             );
         }
     }
@@ -617,7 +618,7 @@ fn process_tile(
 
 pub fn count_kmers_at_positions(
     fragment: &FragmentWithKmerSegments,
-    selections: &[PositionSelection],
+    cache: &PositionSelectionCache,
     store_positions: bool,
     positional_codes_by_k: &FxHashMap<u8, KmerCodes>,
     kmer_specs: &FxHashMap<u8, KmerSpec>,
@@ -625,14 +626,8 @@ pub fn count_kmers_at_positions(
     weights: Option<&[f32]>,
     tile_core_start: u32,
     tile_core_end: u32,
-    frame: ReferenceFrame,
+    apply_nearest_guard: bool,
 ) {
-    if selections.is_empty() {
-        // Some frames filter out every position for a fragment of a given length
-        // Abandon early so we do not waste time on segment bookkeeping
-        return;
-    }
-
     // We perform comparisons in absolute genome coordinates first, then translate
     // back to fragment-relative offsets only after clipping
     let fragment_start = fragment.start as u64;
@@ -646,6 +641,16 @@ pub fn count_kmers_at_positions(
             .get(&k)
             .expect("missing positional codes for requested k");
         let k_span = k as u64;
+        let selections = match cache.offsets(fragment.len(), k) {
+            Some(slice) if !slice.is_empty() => slice,
+            _ => {
+                continue;
+            }
+        };
+        if selections.is_empty() {
+            // Some frames filter out every position for a fragment of a given length
+            return;
+        }
 
         // Selections are sorted by offset. We stream through them once per k
         // using a single cursor so the overall complexity stays linear in the number
@@ -661,7 +666,8 @@ pub fn count_kmers_at_positions(
         //     left  boundary = L/2 - 1 (0-based), right boundary = L/2
         //     forward:  start + (k-1) <= left_boundary   -> start <= (L/2) - k
         //     reverse:  start >= right_boundary          -> anchor(offset) >= (L/2) + (k-1)
-        let nearest_guard = NearestFrameGuard::for_frame(frame, fragment.len() as u32, k as u32);
+        let nearest_guard =
+            NearestFrameGuard::by_flag(apply_nearest_guard, fragment.len() as u32, k as u32);
 
         // Fragments may be gapped by indels, so we examine each contiguous segment
         // and clip it to the tile coordinates before accepting offsets
@@ -810,6 +816,7 @@ pub fn count_kmers_at_positions(
                             Some(w) => unsafe { *w.get_unchecked(start_local) as f64 },
                             None => 1.0,
                         };
+
                         // Record the forward kmer code emitted at this start position
                         let key = CountKey {
                             k,
@@ -836,6 +843,7 @@ pub fn count_kmers_at_positions(
                                 continue;
                             }
                         };
+
                         let end_local =
                             match (fragment_start + anchor_offset_0).checked_sub(tile_start) {
                                 Some(val) => val as usize,

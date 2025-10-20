@@ -1,16 +1,16 @@
-use std::num::NonZeroUsize;
-use std::path::PathBuf;
-
+use crate::commands::{
+    cli_common::{BaseSelectionArgs, FragmentPositionSelectionArgs},
+    fragment_kmers::{
+        parse::parse_positions,
+        positions::{BasesFrom, ReferenceFrame},
+    },
+    visualize_positions::{Style, VizConfig, parse::parse_lengths},
+};
 use anyhow::{Context, Result, anyhow};
 #[cfg(feature = "cli")]
 use clap::Parser;
-
-use crate::commands::{
-    cli_common::FragmentPositionSelectionArgs,
-    visualize_positions::{
-        BasesFrom, ReferenceFrame, Style, VizConfig, parse_lengths, parse_positions,
-    },
-};
+use fxhash::FxHashSet;
+use std::path::PathBuf;
 
 const MIN_FRAGMENT_LENGTH: u32 = 10;
 
@@ -32,6 +32,9 @@ const MIN_FRAGMENT_LENGTH: u32 = 10;
 pub struct VisualizePositionsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub position_selection: FragmentPositionSelectionArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub base_selection: BaseSelectionArgs,
 
     /// Working directory used to stage synthetic inputs and fragment-kmers outputs `[path]`.
     ///
@@ -144,8 +147,7 @@ pub struct VisualizePositionsConfig {
 
 impl VisualizePositionsConfig {
     pub fn build(&self) -> Result<VizConfig> {
-        let step = NonZeroUsize::new(self.position_selection.step)
-            .ok_or_else(|| anyhow!("--step must be at least 1 (example: --step 3)"))?;
+        let position_specs = self.position_selection.clone().into_positional_specs()?;
 
         let fragment_lengths = if let Some(list) = &self.lengths {
             list.clone()
@@ -168,20 +170,26 @@ impl VisualizePositionsConfig {
             }
         }
 
-        let positions = parse_positions(
-            self.position_selection.frame,
-            &self.position_selection.positions,
-        )
-        .with_context(|| {
-            format!(
-                "invalid --positions \"{}\" for frame {}",
-                self.position_selection.positions,
-                self.position_selection.frame.as_str()
-            )
-        })?;
+        let position_specs = position_specs
+            .iter()
+            .map(|ps| parse_positions(ps))
+            .collect::<Result<Vec<_>, _>>()
+            .with_context(|| {
+                format!(
+                    "invalid --positions in one of the specifications \"{}\"",
+                    position_specs
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                )
+            })?;
 
-        if self.position_selection.frame == ReferenceFrame::Mid
-            && self.position_selection.bases_from == BasesFrom::NearestRead
+        let present_frames: FxHashSet<ReferenceFrame> =
+            position_specs.iter().map(|ps| ps.frame).collect();
+
+        if present_frames.contains(&ReferenceFrame::Mid)
+            && self.base_selection.bases_from == BasesFrom::NearestRead
         {
             return Err(anyhow!(
                 "`--bases-from nearest-read` is incompatible with the `mid` frame. Choose a different bases-from mode."
@@ -201,12 +209,9 @@ impl VisualizePositionsConfig {
         }
 
         Ok(VizConfig {
-            frame: self.position_selection.frame,
-            positions,
-            positions_input: self.position_selection.positions.clone(),
-            step,
-            bases: self.position_selection.bases_from,
-            mismatch_bases_from: self.position_selection.mismatch_bases_from,
+            position_specs,
+            bases: self.base_selection.bases_from,
+            mismatch_bases_from: self.base_selection.mismatch_bases_from,
             kmer_sizes: self.kmer_sizes.clone(),
             fragment_lengths,
             style: self.style,

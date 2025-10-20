@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use crate::{
     commands::{
         cli_common::{
-            ChromosomeArgs, FragmentLengthArgs, FragmentPositionSelectionArgs, IOCArgs,
-            Ref2BitRequiredArgs, ScaleGenomeArgs, WindowsArgs,
+            BaseSelectionArgs, ChromosomeArgs, FragmentLengthArgs, FragmentPositionSelectionArgs,
+            IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs, WindowsArgs,
         },
-        visualize_positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame},
+        fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame},
     },
     shared::{blacklist::BlacklistStrategy, indel_mode::IndelMode},
 };
@@ -91,6 +91,9 @@ pub struct FragmentKmersSharedArgs {
     pub position_selection: FragmentPositionSelectionArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
+    pub base_selection: BaseSelectionArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
     pub windows: WindowsArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
@@ -173,9 +176,11 @@ impl FragmentKmersSharedArgs {
             output_prefix: output_prefix,
             tile_size: 20_000_000,
             position_selection: FragmentPositionSelectionArgs {
-                frame: ReferenceFrame::Left,
-                positions: "..".to_string(),
-                step: 1,
+                frame: vec![ReferenceFrame::Left],
+                positions: vec!["..".to_string()],
+                step: vec![1],
+            },
+            base_selection: BaseSelectionArgs {
                 bases_from: BasesFrom::Reference,
                 mismatch_bases_from: MismatchBasesFrom::NearestRead,
             },
@@ -219,6 +224,10 @@ impl FragmentKmersSharedArgs {
 
     pub fn set_position_selection(&mut self, position_selection: FragmentPositionSelectionArgs) {
         self.position_selection = position_selection;
+    }
+
+    pub fn set_base_selection(&mut self, base_selection: BaseSelectionArgs) {
+        self.base_selection = base_selection;
     }
 
     pub fn set_ignore_gap(&mut self, ignore_gap: bool) {
@@ -354,6 +363,10 @@ impl FragmentKmersConfig {
 
     pub fn set_position_selection(&mut self, position_selection: FragmentPositionSelectionArgs) {
         self.shared_args.set_position_selection(position_selection);
+    }
+
+    pub fn set_base_selection(&mut self, base_selection: BaseSelectionArgs) {
+        self.shared_args.set_base_selection(base_selection);
     }
 
     pub fn set_ignore_gap(&mut self, ignore_gap: bool) {
