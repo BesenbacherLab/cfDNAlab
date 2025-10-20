@@ -538,7 +538,7 @@ fn process_tile(
         let cache = position_cache.as_ref();
         let (first, last) = cache
             // Use smallest possible k to include all positions in interval for overlap!
-            .bounds(fragment.len(), 1u8)
+            .bounds(fragment.len(), cache.offsets.keys().copied().min().unwrap())
             .expect("non-empty offsets must have bounds");
         let interval_start = fragment.start as u64 + first as u64;
         let interval_end = fragment.start as u64 + last as u64 + 1;
