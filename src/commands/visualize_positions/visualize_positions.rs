@@ -510,64 +510,14 @@ fn collect_counts(
                                     .coverage
                                     .entry(group)
                                     .or_default();
-                                let k_len = k as i32;
-                                match group {
-                                    PositionGroup::Left => {
-                                        let start = offset + 1;
-                                        if start < 1 {
-                                            panic!(
-                                                "Left coverage start {} fell below 1 for fragment length {}",
-                                                start,
-                                                windows[window_idx].length
-                                            );
-                                        }
-                                        for delta in 0..k_len {
-                                            let idx = start + delta;
-                                            if idx > windows[window_idx].length as i32 {
-                                                panic!(
-                                                    "Left coverage index {} exceeds fragment length {}",
-                                                    idx,
-                                                    windows[window_idx].length
-                                                );
-                                            }
-                                            cov_set.insert(idx);
-                                        }
-                                    }
-                                    PositionGroup::Right => {
-                                        let start = offset + 1;
-                                        if start < 1 {
-                                            panic!(
-                                                "Right coverage start {} fell below 1 for fragment length {}",
-                                                start,
-                                                windows[window_idx].length
-                                            );
-                                        }
-                                        for delta in 0..k_len {
-                                            let idx = start + delta;
-                                            if idx > windows[window_idx].length as i32 {
-                                                panic!(
-                                                    "Right coverage index {} exceeds fragment length {}",
-                                                    idx,
-                                                    windows[window_idx].length
-                                                );
-                                            }
-                                            cov_set.insert(idx);
-                                        }
-                                    }
-                                    PositionGroup::Mid => {
-                                        let start = offset + 1;
-                                        if start < 1 {
-                                            panic!(
-                                                "Mid coverage start {} fell below 1 for fragment length {}",
-                                                start,
-                                                windows[window_idx].length
-                                            );
-                                        }
-                                        for delta in 0..k_len {
-                                            let idx = start + delta;
-                                            cov_set.insert(idx);
-                                        }
-                                    }
+                                let span = coverage_span(
+                                    windows[window_idx].length,
+                                    *offset,
+                                    k as i32,
+                                    group,
+                                );
+                                for idx in span {
+                                    cov_set.insert(idx);
                                 }
                             }
                             break;
@@ -1014,8 +964,12 @@ fn map_linear_positions(
     let mut values: Vec<i32> = offsets
         .iter()
         .filter_map(|offset| match group {
-            PositionGroup::Left | PositionGroup::Right => {
+            PositionGroup::Left => {
                 let value = offset + 1;
+                (value > 0 && value <= length as i32).then_some(value)
+            }
+            PositionGroup::Right => {
+                let value = length as i32 - offset;
                 (value > 0 && value <= length as i32).then_some(value)
             }
             PositionGroup::Mid => None,
@@ -1024,6 +978,61 @@ fn map_linear_positions(
     values.sort_unstable();
     values.dedup();
     values
+}
+
+fn coverage_span(length: u32, offset: i32, k_len: i32, group: PositionGroup) -> Vec<i32> {
+    assert!(k_len > 0, "k-mer length must be positive");
+    let fragment_len = length as i32;
+    match group {
+        PositionGroup::Left | PositionGroup::Mid => {
+            let start = offset + 1;
+            if start < 1 {
+                panic!(
+                    "{} coverage start {} fell below 1 for fragment length {}",
+                    match group {
+                        PositionGroup::Left => "Left",
+                        PositionGroup::Mid => "Mid",
+                        _ => unreachable!(),
+                    },
+                    start,
+                    length
+                );
+            }
+            let end = start + k_len - 1;
+            if end > fragment_len {
+                panic!(
+                    "{} coverage index {} exceeds fragment length {}",
+                    match group {
+                        PositionGroup::Left => "Left",
+                        PositionGroup::Mid => "Mid",
+                        _ => unreachable!(),
+                    },
+                    end,
+                    length
+                );
+            }
+            (0..k_len).map(|delta| start + delta).collect()
+        }
+        PositionGroup::Right => {
+            let start = fragment_len - offset;
+            if start < 1 {
+                panic!(
+                    "Right coverage start {} fell below 1 for fragment length {}",
+                    start,
+                    length
+                );
+            }
+            let end = start - (k_len - 1);
+            if end < 1 {
+                panic!(
+                    "Right coverage index {} fell below 1 for fragment length {}",
+                    end,
+                    length
+                );
+            }
+            (0..k_len).map(|delta| start - delta).collect()
+        }
+    }
 }
 
 fn apply_read_clamp_local(
@@ -1186,5 +1195,57 @@ fn clamp_overlay_axis(overlay: &mut Track, length: u32, k: u8) {
             max_start as i32
         };
         overlay.axis.end = overlay.axis.end.min(max_start_i32);
+    }
+}
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+
+    fn sorted(span: Vec<i32>) -> Vec<i32> {
+        let mut s = span;
+        s.sort_unstable();
+        s
+    }
+
+    #[test]
+    fn expands_left_span_from_offset_zero() {
+        assert_eq!(sorted(coverage_span(10, 0, 3, PositionGroup::Left)), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn expands_left_span_at_tail() {
+        assert_eq!(
+            sorted(coverage_span(10, 7, 3, PositionGroup::Left)),
+            vec![8, 9, 10]
+        );
+    }
+
+    #[test]
+    fn expands_right_span_near_end() {
+        assert_eq!(
+            sorted(coverage_span(10, 0, 3, PositionGroup::Right)),
+            vec![8, 9, 10]
+        );
+    }
+
+    #[test]
+    fn expands_right_span_away_from_end() {
+        assert_eq!(
+            sorted(coverage_span(10, 5, 2, PositionGroup::Right)),
+            vec![4, 5]
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn panics_when_right_span_underflows() {
+        let _ = coverage_span(5, 4, 3, PositionGroup::Right);
+    }
+
+    #[test]
+    #[should_panic]
+    fn panics_when_left_span_overflows() {
+        let _ = coverage_span(5, 4, 3, PositionGroup::Left);
     }
 }
