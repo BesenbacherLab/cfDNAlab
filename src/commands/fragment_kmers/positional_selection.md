@@ -76,13 +76,13 @@ Each frame turns its positions string into **eligible bases** (k-independent). E
 
 * **Mid**
   Works in signed offsets around the middle. Counting is performed in the forward direction (left -> right).
-  Let **center** be `floor(fragment length / 2)`.
-  For **odd** lengths, index `center` is the physical middle.
-  For **even** lengths (L = 2m), there is no single middle base; the center lies between indices `m-1` and `m`. We define the `Mid` frame so that:
-    * Offset `0` maps to index `m` (the base right of center),
-    * Offset `-1` maps to index `m-1`,
-    * Offset `+1` maps to index `m+1`,
-    * In general, offset `d` maps to index `m + d`.
+  - Let **center** be `floor(fragment length / 2)`.
+  - For **odd** lengths, index `center` is the physical middle.
+  - For **even** lengths (L = 2m), there is no single middle base; the center lies between indices `m-1` and `m`. We define the `Mid` frame so that:
+    - Offset `0` maps to index `m` (the base right of center),
+    - Offset `-1` maps to index `m-1`,
+    - Offset `+1` maps to index `m+1`,
+    - In general, offset `d` maps to index `m + d`.
   <br />**Stepping origin** when `Mid` is first frame: offset `0`; stepping is symmetric (..., −step, 0, +step, ...).
 
 ---
