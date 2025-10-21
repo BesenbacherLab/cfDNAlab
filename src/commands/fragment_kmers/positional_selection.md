@@ -30,10 +30,12 @@ This "filter -> make runs -> final step -> check k-mer fit" model keeps behavior
 
 A fragment contains two inward-directed reads (one forward, one reverse) and starts at the left 5' start (forward.pos) and ends at the right 5' start (reverse.end).
 
+```text
 Reference 5' >>>>>>>>>>>>>>> '3
 Fragment     |-------------|
 Forward   5' |>>>>>>>| 3'     
 Reverse        3' |<<<<<<<<| '5 
+```
 
 ---
 
@@ -50,20 +52,20 @@ Each frame turns its positions string into **eligible bases** (k-independent). E
 
 * **Left**
   Interprets the specified positions from left 5' start (start of fragment) to the right '5 start (end of fragment).
-  **Stepping origin** when `Left` is first frame: index `0` at the left 5' end.
+  \n**Stepping origin** when `Left` is first frame: index `0` at the left 5' end.
 
 * **Right**
   Interprets the specified positions from right 5' start (end of fragment) to the left '5 start (start of fragment).
-  **Stepping origin** when `Right` is first frame: index `0` measured from the right end (we map this consistently to left-based indices).
+  \n**Stepping origin** when `Right` is first frame: index `0` measured from the right end (we map this consistently to left-based indices).
 
 * **Per-end**
   Eligible bases are the **union** eligible bases from `Left` and `Right`.
-  **Stepping origin** when `Per-end` is first frame: reflects left and right origins separately.
+  \n**Stepping origin** when `Per-end` is first frame: reflects left and right origins separately.
 
 * **Nearest**
   Works in "distance from the nearest end". For each distance, include **both** fragment indices (one on each side).
   For odd fragment lengths, the exact middle base is **excluded** (both sides count up to, but not including, the center).
-  **Stepping origin** when `Nearest` is first frame: distance `0`, mirrored to both sides.
+  \n**Stepping origin** when `Nearest` is first frame: distance `0`, mirrored to both sides.
   
   Fragment:
   Origins:   .           .
@@ -81,7 +83,7 @@ Each frame turns its positions string into **eligible bases** (k-independent). E
     * Offset `-1` maps to index `m-1`,
     * Offset `+1` maps to index `m+1`,
     * In general, offset `d` maps to index `m + d`.
-  **Stepping origin** when `Mid` is first frame: offset `0`; stepping is symmetric (..., −step, 0, +step, ...).
+  \n**Stepping origin** when `Mid` is first frame: offset `0`; stepping is symmetric (..., −step, 0, +step, ...).
 
 ---
 
