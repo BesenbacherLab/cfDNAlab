@@ -17,7 +17,7 @@ This document explains how we turn the selection specs into the exact positions 
    Turn the surviving bases into **contiguous windows** ("runs"), e.g. `[start ... end]`.
 
 4. **Final step (k-independent):**
-   Apply a single `--step` **after** intersection, using the **first spec’s frame** as the stepping origin. This does not change the runs, it only marks every Nth eligible base as candidate k-mer start/anchor positions. Still no k-mer length involved.
+   Apply a single `--step` **after** intersection, using the **first spec’s frame** as the stepping origin. This does not change the runs, it only marks every Nth eligible base as a candidate count start site position. Still no k-mer length involved.
 
 5. **k-mer fit (k-dependent):**
    For each requested k, count only if the full k-mer fits **entirely inside a run** and **inside the fragment’s current segment and tile**. This is the only k-dependent stage.
@@ -51,11 +51,11 @@ Reverse        3' |<<<<<<<<| '5
 Each frame turns its positions string into **eligible bases** (k-independent). Eligible bases are those that can be part of a counted k-mer.
 
 * **Left**
-  Interprets the specified positions from left 5' start (start of fragment) to the right '5 start (end of fragment).
+  Interprets the specified positions from the left 5' start (start of fragment) to the right '5 start (end of fragment).
   <br />**Stepping origin** when `Left` is first frame: index `0` at the left 5' end.
 
 * **Right**
-  Interprets the specified positions from right 5' start (end of fragment) to the left '5 start (start of fragment).
+  Interprets the specified positions from the right 5' start (end of fragment) to the left '5 start (start of fragment).
   <br />**Stepping origin** when `Right` is first frame: index `0` measured from the right end (we map this consistently to left-based indices).
 
 * **Per-end**
@@ -78,12 +78,12 @@ Each frame turns its positions string into **eligible bases** (k-independent). E
   Works in signed offsets around the middle. Counting is performed in the forward direction (left -> right).
   - Let **center** be `floor(fragment length / 2)`.
   - For **odd** lengths, index `center` is the physical middle.
-  - For **even** lengths (L = 2m), there is no single middle base; the center lies between indices `m-1` and `m`. We define the `Mid` frame so that:
-    - Offset `0` maps to index `m` (the base right of center),
-    - Offset `-1` maps to index `m-1`,
-    - Offset `+1` maps to index `m+1`,
-    - In general, offset `d` maps to index `m + d`.
-  <br />**Stepping origin** when `Mid` is first frame: offset `0`; stepping is symmetric (..., −step, 0, +step, ...).
+  - For **even** lengths (L = 2m), there are two central bases: `m-1` and `m`. To avoid a 1bp bias and to keep windows the same size as for odd-length fragments, we **choose which central base is offset `0` per fragment** using a stable hash of the fragment (deterministic, no random state). The other central base becomes `+1` or `-1` accordingly.
+  
+  **Stepping origin** when `Mid` is first frame: offset `0`; stepping is symmetric (..., −step, 0, +step, ...).
+  
+  Mid does **not** forbid k-mers from crossing the midpoint.
+
 
 ---
 
@@ -118,7 +118,7 @@ Runs encode all frame constraints and are respected by the final step and by the
 `--step N` is applied **once**, after runs are formed, using the **first spec’s frame** as the origin. We:
 
 * Determine the stepping origin from the first frame (`Left`: index 0, `Right`’s right-origin, `Mid`’s offset 0 with symmetry, `Nearest`’s zero-distance mirrored, `Per-end`’s per-side origin).
-* Do not alter the runs. Instead, within those runs, treat only the bases that land on the step lattice as candidate k-mer start/anchor positions.
+* Do not alter the runs. Instead, within those runs, treat only the bases that land on the step lattice as candidate count start site positions.
 
 Why one final step instead of per-spec steps?
 
@@ -167,7 +167,7 @@ Command:
 2. **Intersection:** keep only bases present in **both** sets; typically two lobes near the middle.
 3. **Runs:** compress those lobes into `[start ... end]` windows.
 4. **Final step:** first frame is `Mid`, mark every Nth base (using `Mid`’s origin, symmetrically) as count site candidates.
-5. **k-mer fit:** for k=5, we trim 4 bases from forward run ends (since `Mid` counts in the forward direction). The **runs themselves do not change** with k.
+5. **k-mer fit:** for k=5, we trim 4 bases from forward run ends (since `Mid` counts in the forward direction). The **runs themselves do not change** with k. We further ensure the k-mer span fits inside the segment/tile.
 
 ---
 
@@ -177,7 +177,12 @@ Command:
 * Only the k-mer fit step depends on k.
 * The first spec controls labeling and stepping origin; later specs only filter.
 * If no bases remain after intersection and stepping, nothing is counted for that fragment length and k.
-* Runs are never modified by --step; step only selects candidate positions within runs.
+* Runs are never modified by `--step`; step only selects candidate positions within runs.
+
+### Opportunities
+
+Some offsets have fewer chances to receive counts, e.g. when a window is bigger than some fragments. To allow normalization even when using weighted counts, we also output **opportunities** per offset, per k: the number of feasible k-mer spans that passed all geometric checks at that offset. Rates can be derived as `counts / opportunities` when desired.
+
 
 ---
 
