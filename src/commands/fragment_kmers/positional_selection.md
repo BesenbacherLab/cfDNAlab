@@ -17,7 +17,8 @@ This document explains how we turn the selection specs into the exact positions 
    Turn the surviving bases into **contiguous windows** ("runs"), e.g. `[start ... end]`.
 
 4. **Final step (k-independent):**
-   Apply a single `--step` **after** intersection, using the **first spec’s frame** as the stepping origin. This does not change the runs, it only marks every Nth eligible base as a candidate count start site position. Still no k-mer length involved.
+   Apply a single `--step` **after** intersection, using the **first spec’s frame** as the stepping origin. This does not change the runs, it only marks every Nth eligible base as a candidate count site: in forward orientation the k-mer starts at that base; in reverse orientation the k-mer spans backward from that base by k−1 bases. 
+   <br />Still no k-mer length involved.
 
 5. **k-mer fit (k-dependent):**
    For each requested k, count only if the full k-mer fits **entirely inside a run** and **inside the fragment’s current segment and tile**. This is the only k-dependent stage.
@@ -31,10 +32,10 @@ This "filter -> make runs -> final step -> check k-mer fit" model keeps behavior
 A fragment contains two inward-directed reads (one forward, one reverse) and starts at the left 5' start (forward.pos) and ends at the right 5' start (reverse.end).
 
 ```text
-Reference 5' >>>>>>>>>>>>>>> '3
+Reference 5' >>>>>>>>>>>>>>> 3'
 Fragment     |-------------|
 Forward   5' |>>>>>>>| 3'     
-Reverse        3' |<<<<<<<<| '5 
+Reverse        3' |<<<<<<<<| 5' 
 ```
 
 ---
@@ -51,11 +52,11 @@ Reverse        3' |<<<<<<<<| '5
 Each frame turns its positions string into **eligible bases** (k-independent). Eligible bases are those that can be part of a counted k-mer.
 
 * **Left**
-  Interprets the specified positions from the left 5' start (start of fragment) to the right '5 start (end of fragment).
+  Interprets the specified positions from the left 5' start (start of fragment) to the right 5' start (end of fragment).
   <br />**Stepping origin** when `Left` is first frame: index `0` at the left 5' end.
 
 * **Right**
-  Interprets the specified positions from the right 5' start (end of fragment) to the left '5 start (start of fragment).
+  Interprets the specified positions from the right 5' start (end of fragment) to the left 5' start (start of fragment).
   <br />**Stepping origin** when `Right` is first frame: index `0` measured from the right end (we map this consistently to left-based indices).
 
 * **Per-end**
@@ -166,7 +167,7 @@ Command:
    * `Left`: bases at least 10bp from both ends.
 2. **Intersection:** keep only bases present in **both** sets; typically two lobes near the middle.
 3. **Runs:** compress those lobes into `[start ... end]` windows.
-4. **Final step:** first frame is `Mid`, mark every Nth base (using `Mid`’s origin, symmetrically) as count site candidates.
+4. **Final step:** first frame is `Mid`, mark every Nth base (using `Mid`’s origin, symmetrically) as a candidate counting site: in forward orientation the k-mer starts at that base; in reverse orientation the k-mer spans backward from that base by k−1 bases.
 5. **k-mer fit:** for k=5, we trim 4 bases from forward run ends (since `Mid` counts in the forward direction). The **runs themselves do not change** with k. We further ensure the k-mer span fits inside the segment/tile.
 
 ---
@@ -181,7 +182,7 @@ Command:
 
 ### Opportunities
 
-Some offsets have fewer chances to receive counts, e.g. when a window is bigger than some fragments. To allow normalization even when using weighted counts, we also output **opportunities** per offset, per k: the number of feasible k-mer spans that passed all geometric checks at that offset. Rates can be derived as `counts / opportunities` when desired.
+Some offsets have fewer chances to receive counts, e.g. when a window selection is bigger than a given fragment. To allow normalization even when using weighted counts, we also output **opportunities** per offset, per k: the number of times a k-mer could have been counted at that offset after intersection, run formation, final step, k-span fit, and segment clipping. Rates can be derived as `counts / opportunities` when desired.
 
 
 ---
