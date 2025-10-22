@@ -363,17 +363,9 @@ pub struct PrepareConfig {
 
     /// Policy for identical near-interval edges `[string]`
     ///
-    /// Identical edges are records on the same chromosome with the same `(start, end, (`--near-edge`-dependent) strand)`.
+    /// Identical edges are records on the same chromosome with the same `(start, end, (--near-edge-dependent) strand)`.
+    ///
     /// Multiple groups at the exact same site create an ambiguous "nearest" unless resolved.
-    ///
-    /// - "error": Fail with a descriptive message (default).
-    ///
-    /// - "keep-first": Keep the first record in each identical-edges run; drop the rest.
-    ///
-    /// - "drop-all": Drop the entire run (no record kept) when duplicates are present.
-    ///
-    /// - "merge": Merge all groups at that site into one record; group names are
-    ///            joined with `__` in stable input order, duplicates removed. Missing groups are ignored.
     ///
     /// Key used to detect “identical edges” depends on `--near-edge`:
     ///
@@ -429,11 +421,11 @@ pub struct PrepareConfig {
     ///
     /// ```text
     ///
-    /// coordinates:  100   120  140         200   220   240
+    /// | coordinates:  100   120  140         200   220   240
     ///
-    ///               |#####|----|===========|-----|#####|
+    /// |               |#####|----|===========|-----|#####|
     ///
-    ///   upstream (-) ^^^^^         near           ^^^^^ downstream (+)
+    /// |   upstream (-) ^^^^^         near           ^^^^^ downstream (+)
     ///     
     /// ```
     ///
@@ -441,11 +433,11 @@ pub struct PrepareConfig {
     ///
     /// ```text
     ///
-    /// coordinates:  100   120  140         200   220   240
+    /// | coordinates:  100   120  140         200   220   240
     ///
-    ///               |#####|----|===========|-----|#####|
+    /// |               |#####|----|===========|-----|#####|
     ///
-    /// downstream (+) ^^^^^         near           ^^^^^ upstream (-)
+    /// | downstream (+) ^^^^^         near           ^^^^^ upstream (-)
     ///     
     /// ```
     ///
@@ -453,11 +445,11 @@ pub struct PrepareConfig {
     ///     
     /// ```text
     ///
-    /// coordinates:  100   120             200
+    /// | coordinates:  100   120             200
     ///
-    ///               |--###|===========###====|
+    /// |               |--###|===========###====|
     ///
-    ///        touch (=) ^^^    near    ^^^ overlap (=)
+    /// |        touch (=) ^^^    near    ^^^ overlap (=)
     ///
     /// ```
     ///
