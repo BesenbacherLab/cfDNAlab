@@ -318,7 +318,6 @@ pub struct PrepareConfig {
             value_enum,
             default_value = "nearest",
             ignore_case = true,
-            hide_possible_values = true,
             help_heading = "Distance to near intervals"
         )
     )]
@@ -390,7 +389,6 @@ pub struct PrepareConfig {
             value_enum,
             default_value = "error",
             ignore_case = true,
-            hide_possible_values = true,
             help_heading = "Distance to near intervals"
         )
     )]
@@ -744,14 +742,19 @@ pub enum MissingScore {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum NearEdge {
+    #[cfg_attr(feature = "cli", value(help = ""))]
     /// Use left genomic edge only.
     Left,
+    #[cfg_attr(feature = "cli", value(help = ""))]
     /// Use right genomic edge only.
     Right,
+    #[cfg_attr(feature = "cli", value(help = ""))]
     /// Use whichever genomic edge is closer.
     Nearest,
+    #[cfg_attr(feature = "cli", value(help = ""))]
     /// Use the edge that is upstream of the near interval given its annotated strand orientation.
     Upstream,
+    #[cfg_attr(feature = "cli", value(help = ""))]
     /// Use the edge that is downstream of the near interval given its annotated strand orientation.
     Downstream,
 }
