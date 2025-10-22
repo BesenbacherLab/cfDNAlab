@@ -71,16 +71,12 @@ pub enum Strand {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum NearDuplicatesPolicy {
-    #[cfg_attr(feature = "cli", value(help = ""))]
     /// Fail on identical (chrom,start,end) edges with a descriptive message.
     Error,
-    #[cfg_attr(feature = "cli", value(help = ""))]
     /// Keep the first record in each run of duplicates. Drop the rest.
     KeepFirst,
-    #[cfg_attr(feature = "cli", value(help = ""))]
     /// Drop the entire set of duplicates.
     DropAll,
-    #[cfg_attr(feature = "cli", value(help = ""))]
     /// Merge groups across identical edges (and sometimes strands) into one record.
     ///
     /// Group names are joined with "`__`" in stable input order, with duplicates removed. Missing groups are ignored.
