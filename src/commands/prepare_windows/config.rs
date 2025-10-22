@@ -76,11 +76,11 @@ pub struct PrepareConfig {
 
     /// Header presence in input `[string]`
     ///
-    /// - `auto`: Infer from first line.
+    /// - `"auto"`: Infer from first line.
     ///
-    /// - `present`: First line is a header line with column names.
+    /// - `"present"`: First line is a header line with column names.
     ///
-    /// - `absent`: No header; only indices allowed in `--cols` and related.
+    /// - `"absent"`: No header; only indices allowed in `--cols` and related.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -164,9 +164,9 @@ pub struct PrepareConfig {
 
     /// Behavior for missing scores `[string]`
     ///
-    /// - `keep`: Keep records with missing/invalid scores.
+    /// - `"keep"`: Keep records with missing/invalid scores.
     ///
-    /// - `drop`: Drop records with missing/invalid scores.
+    /// - `"drop"`: Drop records with missing/invalid scores.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -281,11 +281,11 @@ pub struct PrepareConfig {
 
     /// Header presence in the `--near` file `[string]`
     ///
-    /// - `auto`: Infer from first line.
+    /// - `"auto"`: Infer from first line.
     ///
-    /// - `present`: First line is a header line with column names.
+    /// - `"present"`: First line is a header line with column names.
     ///
-    /// - `absent`: No header; only indices allowed when referencing columns from the near file.
+    /// - `"absent"`: No header; only indices allowed when referencing columns from the near file.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -300,15 +300,15 @@ pub struct PrepareConfig {
 
     /// Edge of near-intervals to consider in distance calculation `[string]`
     ///
-    /// - `left`: Use left genomic edge only.
+    /// - `"left"`: Use left genomic edge only.
     ///
-    /// - `right`: Use right genomic edge only.
+    /// - `"right"`: Use right genomic edge only.
     ///
-    /// - `nearest`: Use whichever genomic edge is closer (default).
+    /// - `"nearest"`: Use whichever genomic edge is closer (default).
     ///
-    /// - `upstream`: Use the edge that is upstream of each near interval given its strand (`+` uses left edge, `-` uses right edge).
+    /// - `"upstream"`: Use the edge that is upstream of each near interval given its strand (`+` uses left edge, `-` uses right edge).
     ///
-    /// - `downstream`: Use the edge that is downstream of each near interval given its strand (`+` uses right edge, `-` uses left edge).
+    /// - `"downstream"`: Use the edge that is downstream of each near interval given its strand (`+` uses right edge, `-` uses left edge).
     ///
     /// If a near interval’s strand is unknown (`.`), "upstream"/"downstream" behave like "nearest".
     #[cfg_attr(
@@ -326,11 +326,11 @@ pub struct PrepareConfig {
 
     /// Directionality of distance classification `[string]`
     ///
-    /// - `upstream`: Consider only near intervals that lie upstream (or overlap) relative to each near interval’s strand.
+    /// - `"upstream"`: Consider only near intervals that lie upstream (or overlap) relative to each near interval’s strand.
     ///
-    /// - `downstream`: Consider only near intervals that lie downstream (or overlap) relative to each near interval’s strand.
+    /// - `"downstream"`: Consider only near intervals that lie downstream (or overlap) relative to each near interval’s strand.
     ///
-    /// - `both`: Consider upstream and downstream (default).
+    /// - `"both"`: Consider upstream and downstream (default).
     ///
     /// Overlaps are always allowed, returning zero distance.
     #[cfg_attr(
@@ -347,9 +347,9 @@ pub struct PrepareConfig {
 
     /// How to respond when multiple near intervals tie for the minimum distance `[string]`
     ///
-    /// - `annotate`: keep the window and include both sides in the near label (e.g. `-A/+B`).
+    /// - `"annotate"`: keep the window and include both sides in the near label (e.g. `-A/+B`).
     ///
-    /// - `drop`: discard the window when a tie occurs.
+    /// - `"drop"`: discard the window when a tie occurs.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -368,13 +368,13 @@ pub struct PrepareConfig {
     ///
     /// Multiple groups at the exact same site create an ambiguous "nearest" unless resolved.
     ///
-    ///  - `error`: Fail on identical (chrom,start,end) edges with a descriptive message.
+    ///  - `"error"`: Fail on identical (chrom,start,end) edges with a descriptive message.
     ///
-    /// - `keep-first`: Keep the first record in each run of duplicates. Drop the rest.
+    /// - `"keep-first"`: Keep the first record in each run of duplicates. Drop the rest.
     ///
-    /// - `drop-all`: Drop the entire set of duplicates.
+    /// - `"drop-all"`: Drop the entire set of duplicates.
     ///
-    /// - `merge`: Merge groups across identical edges (and sometimes strands) into one record.
+    /// - `"merge"`: Merge groups across identical edges (and sometimes strands) into one record.
     ///
     /// Group names are joined with "`__`" in stable input order, with duplicates removed. Missing groups are ignored.
     ///
@@ -398,9 +398,9 @@ pub struct PrepareConfig {
 
     /// How to treat the computed distances when binning `[string]`
     ///
-    /// - `absolute`: Use `abs(distance)` for comparisons and thresholds.
+    /// - `"absolute"`: Use `abs(distance)` for comparisons and thresholds.
     ///
-    /// - `signed`: Use signed distances.
+    /// - `"signed"`: Use signed distances.
     ///
     /// **Distance sign (when `--distance-sign signed`):**
     ///
@@ -563,11 +563,11 @@ pub struct PrepareConfig {
 
     /// Policy for windows going out of bounds after transform `[string]`
     ///
-    /// - `drop`: Drop out-of-bounds windows (default).
+    /// - `"drop"`: Drop out-of-bounds windows (default).
     ///
-    /// - `trim`: Trim to chromosome bounds.
+    /// - `"trim"`: Trim to chromosome bounds.
     ///
-    /// - `allow`: Allow out-of-bounds (unsafe).
+    /// - `"allow"`: Allow out-of-bounds (unsafe).
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -618,13 +618,13 @@ pub struct PrepareConfig {
 
     /// How to resolve distance ties when enforcing `--min-distance-within-group` `[string]`
     ///
-    /// - `keep-first`: Keep the first; skip subsequent windows within distance.
+    /// - `"keep-first"`: Keep the first; skip subsequent windows within distance.
     ///
-    /// - `keep-highest-score`: Prefer higher score (requires `--score-col`).
+    /// - `"keep-highest-score"`: Prefer higher score (requires `--score-col`).
     ///
-    /// - `keep-lowest-score`: Prefer lower score (requires `--score-col`).
+    /// - `"keep-lowest-score"`: Prefer lower score (requires `--score-col`).
     ///
-    /// - `keep-longest`: Prefer longer windows.
+    /// - `"keep-longest"`: Prefer longer windows.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -644,15 +644,15 @@ pub struct PrepareConfig {
     /// `--min-distance-within-group` which considers physical spacing. Use dedup to collapse
     /// duplicated records; use min-distance to enforce spacing.
     ///
-    /// - `none`: No deduplication.
+    /// - `"none"`: No deduplication.
     ///
-    /// - `keep-first`: Keep the first occurrence.
+    /// - `"keep-first"`: Keep the first occurrence.
     ///
-    /// - `keep-highest-score`: Prefer the window with the highest score (requires `--score-col`).
+    /// - `"keep-highest-score"`: Prefer the window with the highest score (requires `--score-col`).
     ///
-    /// - `keep-lowest-score`: Prefer the window with the lowest score (requires `--score-col`).
+    /// - `"keep-lowest-score"`: Prefer the window with the lowest score (requires `--score-col`).
     ///
-    /// - `keep-longest`: Keep the longest.
+    /// - `"keep-longest"`: Keep the longest.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -667,11 +667,11 @@ pub struct PrepareConfig {
 
     /// Merging scope for nearby windows `[string]`
     ///
-    /// - `none`: Do not merge windows.
+    /// - `"none"`: Do not merge windows.
     ///
-    /// - `within`: Merge only windows belonging to the same group.
+    /// - `"within"`: Merge only windows belonging to the same group.
     ///
-    /// - `across`: Merge regardless of group (labels resolved by `--merge-label`).
+    /// - `"across"`: Merge regardless of group (labels resolved by `--merge-label`).
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -700,9 +700,9 @@ pub struct PrepareConfig {
 
     /// Label policy when merging `[string]`
     ///
-    /// - `join`: Join labels with `__` (default).
+    /// - `"join"`: Join labels with `__` (default).
     ///
-    /// - `first`: Keep the first label encountered.
+    /// - `"first"`: Keep the first label encountered.
     #[cfg_attr(
         feature = "cli",
         clap(
