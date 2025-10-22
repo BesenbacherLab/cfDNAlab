@@ -393,21 +393,39 @@ pub struct PrepareConfig {
     ///
     /// Case A: near is `+` strand
     ///
-    ///     > coordinates:  100   120  140         200   220   240
-    ///     >               |#####|----|===========|-----|#####|
-    ///     >   upstream (-) ^^^^^         near           ^^^^^ downstream (+)
+    /// ```text
+    ///
+    /// coordinates:  100   120  140         200   220   240
+    ///
+    ///               |#####|----|===========|-----|#####|
+    ///
+    ///   upstream (-) ^^^^^         near           ^^^^^ downstream (+)
     ///     
+    /// ```
+    ///
     /// Case B: near is `-` strand
     ///
-    ///     > coordinates:  100   120  140         200   220   240
-    ///     >               |#####|----|===========|-----|#####|
-    ///     > downstream (+) ^^^^^         near           ^^^^^ upstream (-)
+    /// ```text
+    ///
+    /// coordinates:  100   120  140         200   220   240
+    ///
+    ///               |#####|----|===========|-----|#####|
+    ///
+    /// downstream (+) ^^^^^         near           ^^^^^ upstream (-)
     ///     
+    /// ```
+    ///
     /// Case C: overlap
     ///     
-    ///     > coordinates:  100   120             200
-    ///     >               |--###|===========###====|
-    ///     >        touch (=) ^^^    near    ^^^ overlap (=)
+    /// ```text
+    ///
+    /// coordinates:  100   120             200
+    ///
+    ///               |--###|===========###====|
+    ///
+    ///        touch (=) ^^^    near    ^^^ overlap (=)
+    ///
+    /// ```
     ///
     /// **Ties and overlaps:**
     ///
@@ -542,10 +560,14 @@ pub struct PrepareConfig {
 
     /// Minimum spacing between windows within the same group (bp) `[integer]`
     ///
-    /// Selection rule: Sort windows by `(chrom, start, end)`. Keep a window if its start
-    /// is at least `min-distance-within-group` bp after the end of the last kept window on
-    /// the same chromosome within the same group; otherwise, drop it. Ties are resolved by
-    /// `--distance-ties`.
+    /// Selection rule:
+    ///
+    /// - Sort windows by `(chrom, start, end)`.
+    ///  
+    /// - Keep a window if its start is at least `min-distance-within-group` bp after the end of the last kept window on
+    /// the same chromosome within the same group; otherwise, drop it.
+    ///
+    /// - Ties are resolved by `--distance-ties`.
     #[cfg_attr(
         feature = "cli",
         clap(

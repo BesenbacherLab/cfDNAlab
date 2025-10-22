@@ -202,7 +202,7 @@ pub fn load_near_index(
             if have_last {
                 if start == last_start && end == last_end {
                     bail!(
-                        "Near validation failed on {}: duplicate edges at [{}, {})",
+                        "Near validation failed on {}: duplicate edges at [{}, {}). This creates an ambiguous 'nearest' site.",
                         chrom,
                         start,
                         end
@@ -210,7 +210,7 @@ pub fn load_near_index(
                 }
                 if start < last_end {
                     bail!(
-                        "Near validation failed on {}: intervals overlap at [{}, {}) and previous ending at {}. This creates an ambiguous 'nearest' site.",
+                        "Near validation failed on {}: intervals overlap at [{}, {}) and previous ending at {}.",
                         chrom,
                         start,
                         end,
