@@ -318,6 +318,7 @@ pub struct PrepareConfig {
             value_enum,
             default_value = "nearest",
             ignore_case = true,
+            hide_possible_values = true,
             help_heading = "Distance to near intervals"
         )
     )]
@@ -367,6 +368,16 @@ pub struct PrepareConfig {
     ///
     /// Multiple groups at the exact same site create an ambiguous "nearest" unless resolved.
     ///
+    ///  - `error`: Fail on identical (chrom,start,end) edges with a descriptive message.
+    ///
+    /// - `keep-first`: Keep the first record in each run of duplicates. Drop the rest.
+    ///
+    /// - `drop-all`: Drop the entire set of duplicates.
+    ///
+    /// - `merge`: Merge groups across identical edges (and sometimes strands) into one record.
+    ///
+    /// Group names are joined with "`__`" in stable input order, with duplicates removed. Missing groups are ignored.
+    ///
     /// Key used to detect “identical edges” depends on `--near-edge`:
     ///
     /// - If `--near-edge` is `upstream` or `downstream`, duplicates are keyed by `(start, end, strand)`.
@@ -379,6 +390,7 @@ pub struct PrepareConfig {
             value_enum,
             default_value = "error",
             ignore_case = true,
+            hide_possible_values = true,
             help_heading = "Distance to near intervals"
         )
     )]
