@@ -1,9 +1,8 @@
+use crate::commands::prepare_windows::config::NearEdge;
 use crate::{commands::prepare_windows::config::NearDirection, shared::io::open_text_reader};
 use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
 use std::{cmp::Ordering, io::BufRead, path::Path};
-
-use crate::commands::prepare_windows::config::NearEdge;
 
 /// Interval from the `--near` set.
 ///
@@ -69,6 +68,19 @@ pub enum Strand {
     Unknown,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+pub enum NearDuplicatesPolicy {
+    /// Error on identical (chrom,start,end) edges.
+    Error,
+    /// Keep first record in each identical-edges run; drop the rest.
+    KeepFirst,
+    /// Drop the entire run (no record kept) when edges are identical.
+    DropAll,
+    /// Merge groups across identical edges into one record (stable, deduped join).
+    Merge,
+}
+
 /// Load and validate the `--near` intervals.
 ///
 /// Validation rules:
@@ -100,6 +112,8 @@ pub fn load_near_index(
     has_header: bool,
     strand_col_present: bool,
     group_col_present: bool,
+    consider_strand_in_dups: bool,
+    near_duplicates: NearDuplicatesPolicy,
 ) -> Result<NearIndex> {
     let mut reader = open_text_reader(path)?;
     let mut line = String::new();
@@ -192,33 +206,25 @@ pub fn load_near_index(
                 })
         });
 
+        // Resolve identical-edge runs per policy before validating overlaps
+        let items =
+            resolve_identical_edges_runs(&items, near_duplicates, consider_strand_in_dups, &chrom)?;
+
         // Validate no overlap and no identical edges per chromosome
         let mut validated: Vec<NearInterval> = Vec::with_capacity(items.len());
         let mut last_end: u32 = 0;
-        let mut last_start: u32 = 0;
         let mut have_last = false;
 
         for (start, end, strand, group_opt) in items.into_iter() {
-            if have_last {
-                if start == last_start && end == last_end {
-                    bail!(
-                        "Near validation failed on {}: duplicate edges at [{}, {}). This creates an ambiguous 'nearest' site.",
-                        chrom,
-                        start,
-                        end
-                    );
-                }
-                if start < last_end {
-                    bail!(
-                        "Near validation failed on {}: intervals overlap at [{}, {}) and previous ending at {}.",
-                        chrom,
-                        start,
-                        end,
-                        last_end
-                    );
-                }
+            if have_last && start < last_end {
+                bail!(
+                    "Near validation failed on {}: intervals overlap at [{}, {}) and previous ending at {}.",
+                    chrom,
+                    start,
+                    end,
+                    last_end
+                );
             }
-            last_start = start;
             last_end = end;
             have_last = true;
 
@@ -520,4 +526,96 @@ pub fn nearest_edge_distance(
             }
         }
     }
+}
+
+#[inline]
+fn resolve_identical_edges_runs(
+    items_sorted: &[(u32, u32, Strand, Option<String>)],
+    policy: NearDuplicatesPolicy,
+    consider_strand_in_dups: bool,
+    chrom: &str,
+) -> Result<Vec<(u32, u32, Strand, Option<String>)>> {
+    let mut out: Vec<(u32, u32, Strand, Option<String>)> = Vec::with_capacity(items_sorted.len());
+    let mut i = 0usize;
+
+    while i < items_sorted.len() {
+        let t = &items_sorted[i];
+        let (start, end, strand) = (t.0, t.1, t.2);
+        let group_opt_ref: Option<&String> = t.3.as_ref();
+
+        // Advance j over the run of identical keys
+        let mut j = i + 1;
+        while j < items_sorted.len() {
+            let t2 = &items_sorted[j];
+            let same_edge = t2.0 == start && t2.1 == end;
+            let same_key = if consider_strand_in_dups {
+                same_edge && t2.2 == strand
+            } else {
+                same_edge
+            };
+            if same_key {
+                j += 1;
+            } else {
+                break;
+            }
+        }
+
+        let run_len = j - i;
+        if run_len == 1 {
+            // No duplicates -> keep as-is
+            out.push((start, end, strand, group_opt_ref.cloned()));
+        } else {
+            match policy {
+                NearDuplicatesPolicy::Error => {
+                    let mut groups: Vec<String> = items_sorted[i..j]
+                        .iter()
+                        .filter_map(|t| t.3.as_ref().cloned())
+                        .collect();
+                    groups.sort();
+                    groups.dedup();
+                    let groups_display = if groups.is_empty() {
+                        ".".to_string()
+                    } else {
+                        groups.join(", ")
+                    };
+                    bail!(
+                        "Near validation failed on {}: duplicate edges at [{}, {}) (strand {:?}). Found groups: {}. Use --near-duplicates to resolve.",
+                        chrom,
+                        start,
+                        end,
+                        strand,
+                        groups_display
+                    );
+                }
+                NearDuplicatesPolicy::KeepFirst => {
+                    out.push((start, end, strand, group_opt_ref.cloned()));
+                }
+                NearDuplicatesPolicy::DropAll => {
+                    // Keep none from this run
+                }
+                NearDuplicatesPolicy::Merge => {
+                    use fxhash::FxHashSet;
+                    let mut seen: FxHashSet<&str> = FxHashSet::default();
+                    let mut merged: Vec<&str> = Vec::new();
+                    for t in &items_sorted[i..j] {
+                        if let Some(name) = t.3.as_deref() {
+                            if seen.insert(name) {
+                                merged.push(name);
+                            }
+                        }
+                    }
+                    let merged_opt = if merged.is_empty() {
+                        None
+                    } else {
+                        Some(merged.join("__"))
+                    };
+                    out.push((start, end, strand, merged_opt));
+                }
+            }
+        }
+
+        i = j;
+    }
+
+    Ok(out)
 }

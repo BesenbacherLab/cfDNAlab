@@ -1,4 +1,7 @@
-use crate::shared::blacklist::BlacklistStrategy;
+use crate::{
+    commands::prepare_windows::near_file::NearDuplicatesPolicy,
+    shared::blacklist::BlacklistStrategy,
+};
 #[cfg(feature = "cli")]
 use clap::{ArgGroup, Parser, ValueEnum};
 use std::path::PathBuf;
@@ -357,6 +360,37 @@ pub struct PrepareConfig {
         )
     )]
     pub near_ties: NearTiePolicy,
+
+    /// Policy for identical near-interval edges `[string]`
+    ///
+    /// Identical edges are records on the same chromosome with the same `(start, end, (`--near-edge`-dependent) strand)`.
+    /// Multiple groups at the exact same site create an ambiguous "nearest" unless resolved.
+    ///
+    /// - "error": Fail with a descriptive message (default).
+    ///
+    /// - "keep-first": Keep the first record in each identical-edges run; drop the rest.
+    ///
+    /// - "drop-all": Drop the entire run (no record kept) when duplicates are present.
+    ///
+    /// - "merge": Merge all groups at that site into one record; group names are
+    ///            joined with `__` in stable input order, duplicates removed. Missing groups are ignored.
+    ///
+    /// Key used to detect “identical edges” depends on `--near-edge`:
+    ///
+    /// - If `--near-edge` is `upstream` or `downstream`, duplicates are keyed by `(start, end, strand)`.
+    ///
+    /// - Otherwise (`left`, `right`, `nearest`), duplicates are keyed by `(start, end)` and `strand` is ignored.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long = "near-duplicates",
+            value_enum,
+            default_value = "error",
+            ignore_case = true,
+            help_heading = "Distance to near intervals"
+        )
+    )]
+    pub near_duplicates: NearDuplicatesPolicy,
 
     /// How to treat the computed distances when binning `[string]`
     ///
@@ -812,6 +846,7 @@ impl Default for PrepareConfig {
             near_edge: NearEdge::Nearest,
             near_direction: NearDirection::Both,
             near_ties: NearTiePolicy::Annotate,
+            near_duplicates: NearDuplicatesPolicy::Error,
             distance_sign: DistSign::Absolute,
             distance_bins: None,
             distance_max: None,

@@ -127,6 +127,8 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             has_header_final,
             strand_col_present,
             group_col_present,
+            matches!(cfg.near_edge, NearEdge::Upstream | NearEdge::Downstream),
+            cfg.near_duplicates,
         )?)
     } else {
         None
