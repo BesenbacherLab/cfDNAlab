@@ -1,13 +1,13 @@
 // Streaming preparation pipeline for BED-like genomic windows.
 //
 // This module implements a memory-bounded, chromosome-streaming pipeline that:
-// 1) Validates and loads a `near` interval set (non-overlapping, unique edges).
-// 2) Loads and coalesces blacklist intervals (with halo).
-// 3) Streams the primary input by chromosome in chunks, applying early filters,
-//    nearest-distance binning (with `-/+/=` prefixes that reflect direction), spacing,
-//    merging, and deduplication.
-// 4) Writes per-chromosome temporary files and finally concatenates them,
-//    enforcing `min_per_group` in a final pass.
+// - Validates and loads a `near` interval set (non-overlapping, unique edges).
+// - Loads and combines blacklist intervals (with an optional halo).
+// - Streams the BAM file by chromosome in chunks, applying early filters,
+//   nearest-distance binning (with `-/+/=` prefixes that reflect direction), spacing,
+//   merging, and deduplication.
+// - Writes per-chromosome temporary files and concatenates them,
+//   enforcing `min_per_group` in a final pass.
 //
 // The implementation favors determinism, clear rules, and low memory usage. It
 // assumes input is sorted by (chrom, start). If it is not, you should either
@@ -118,11 +118,14 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             HeaderMode::Absent => false,
             HeaderMode::Auto => detect_header(path, cfg.sep).unwrap_or(false),
         };
-        let group_col_present = true; // TODO: configure as optional group
+
+        let strand_col_present = true; // TODO: configure as optional
+        let group_col_present = true; // TODO: configure as optional
         Some(load_near_index(
             path,
             cfg.sep,
             has_header_final,
+            strand_col_present,
             group_col_present,
         )?)
     } else {
@@ -320,6 +323,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             continue;
         };
 
+        // TODO: Get the cursor along with the chromosome sizes to avoid 1B get_mut calls (hashing)
         // Blacklist pre-check on pre-merge full-size coordinates
         if let Some(cursor) = blacklist_cursors.get_mut(&chrom) {
             if !cursor.intervals.is_empty()
@@ -507,7 +511,7 @@ fn add_near_group_annotation(
         return Some(input_group.to_owned());
     };
 
-    // Compose a side-prefixed label for a single hit.
+    // Compose label for the near group (+, -, =) where +/- reflect strand-relative upstream/downstream
     let make_side_label = |hit: &NearHit| -> String {
         let side_prefix = match hit.side {
             NearSide::Upstream => "-",
@@ -529,6 +533,7 @@ fn add_near_group_annotation(
             if !within_max_distance(hit.distance) {
                 return None;
             }
+
             // Normalize for binning/output according to cfg.distance_sign
             hit.distance = normalize_for_binning(hit.distance);
 

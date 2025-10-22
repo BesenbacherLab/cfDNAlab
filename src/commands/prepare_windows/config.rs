@@ -34,8 +34,8 @@ use std::path::PathBuf;
 ///
 /// - Blacklist checks run on the final window span using the halo you configure.
 ///
-/// - “Nearest distance” refers to the closest edge of the comparison interval. NOTE:
-///   For TSS-only distances, pass 1 bp intervals centred on the strand-specific start.
+/// - "Nearest distance" refers to the closest edge of the comparison interval. NOTE:
+///   For point features (e.g., TSS), provide 1-bp intervals at the strand-specific coordinate.
 ///
 /// - Output is sorted by `(chrom, start, end, group)`.
 #[cfg_attr(feature = "cli", derive(Parser, Clone))]
@@ -74,7 +74,9 @@ pub struct PrepareConfig {
     /// Header presence in input `[string]`
     ///
     /// - "auto": Infer from first line.
+    ///
     /// - "present": First line is a header line with column names.
+    ///
     /// - "absent": No header; only indices allowed in `--cols` and related.
     #[cfg_attr(
         feature = "cli",
@@ -123,6 +125,7 @@ pub struct PrepareConfig {
     /// concatenated using `__` into the single `group` output column.
     ///
     /// If omitted, the `group` will be derived from later subdivision steps (e.g. `--distance-bins`).
+    ///
     /// If no subdivision occurs, no group column is written to the output.
     ///
     /// Example: `--group-cols 3`
@@ -159,6 +162,7 @@ pub struct PrepareConfig {
     /// Behavior for missing scores `[string]`
     ///
     /// - "keep": Keep records with missing/invalid scores.
+    ///
     /// - "drop": Drop records with missing/invalid scores.
     #[cfg_attr(
         feature = "cli",
@@ -204,9 +208,13 @@ pub struct PrepareConfig {
     /// Strategy for determining when a window is blacklisted `[string]`
     ///
     /// Possible values:
+    ///
     /// - `"any"`: Any overlap > 0 with a blacklist interval (after halo).
+    ///
     /// - `"all"`: Window is fully contained within a blacklist interval.
+    ///
     /// - `"midpoint"`: Window midpoint lies inside a blacklist interval.
+    ///
     /// - `"proportion=<threshold>"`: Overlap proportion with respect to the window is ≥ threshold.
     ///
     /// Example: `--blacklist-strategy proportion=0.2`
@@ -228,19 +236,39 @@ pub struct PrepareConfig {
     /// BED-like file with target intervals to compute nearest distance to `[path]`
     ///
     /// Expected columns:
-    ///   `chromosome`, `start`, `end`, and optionally `group`. Header handling follows `--near-header`.
+    ///   `chromosome`, `start`, `end`, optional `strand`, optional `group`.
     ///
-    /// Distance: If the window overlaps a target interval, distance = 0. Otherwise uses the minimum
-    /// distance from either window edge to the nearest considered target interval edge.
+    /// - `strand` is one of `+`, `-`, or `.` (unknown). If absent, `+` is assumed.
+    ///
+    /// - Intervals must be half-open, non-overlapping, and have unique edges per chromosome.
+    ///
+    /// Distance:
+    ///
+    ///   - Overlap: Distance is `0`.
+    ///
+    ///   - Otherwise: Distance is the minimum from the window’s edges to the selected
+    ///     target edge(s) (see `--near-edge`).
+    ///
+    /// Strand semantics:
+    ///
+    ///   - "Upstream/Downstream" are defined **relative to the near interval’s annotated strand**.
+    ///
+    ///   - If `strand` is unknown (`.`), upstream/downstream edge selection falls back to genomic-nearest.
+    ///
+    /// Header handling follows `--near-header`.
     ///
     /// If you require e.g., TSS distances, provide 1-bp intervals at the strand-specific TSS.
     ///
     /// When `--distance-bins` is used, the output group combines the original group (from
     /// `--group-cols`, if any), the nearest record’s group (if present in the near file),
     /// and the bin label:
+    ///
     /// - With both: `{input_group}.{near_group}.{bin_label}`
+    ///
     /// - Only input group: `{input_group}.{bin_label}`
+    ///
     /// - Only near group: `{near_group}.{bin_label}`
+    ///
     /// - Neither: `{bin_label}`
     #[cfg_attr(
         feature = "cli",
@@ -251,7 +279,9 @@ pub struct PrepareConfig {
     /// Header presence in the `--near` file `[string]`
     ///
     /// - "auto": Infer from first line.
+    ///
     /// - "present": First line is a header line with column names.
+    ///
     /// - "absent": No header; only indices allowed when referencing columns from the near file.
     #[cfg_attr(
         feature = "cli",
@@ -267,9 +297,17 @@ pub struct PrepareConfig {
 
     /// Edge of near-intervals to consider in distance calculation `[string]`
     ///
-    /// - "left": Use left edge of target interval only.
-    /// - "right": Use right edge target interval only.
-    /// - "nearest": Use whichever edge is closer (default).
+    /// - "left": Use left genomic edge only.
+    ///
+    /// - "right": Use right genomic edge only.
+    ///
+    /// - "nearest": Use whichever genomic edge is closer (default).
+    ///
+    /// - "upstream": Use the edge that is upstream of each near interval given its strand (`+` uses left edge, `-` uses right edge).
+    ///
+    /// - "downstream": Use the edge that is downstream of each near interval given its strand (`+` uses right edge, `-` uses left edge).
+    ///
+    /// If a near interval’s strand is unknown (`.`), "upstream"/"downstream" behave like "nearest".
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -284,9 +322,13 @@ pub struct PrepareConfig {
 
     /// Directionality of distance classification `[string]`
     ///
-    /// - "upstream": Only consider distance to nearest upstream targets (negative genomic distance).
-    /// - "downstream": Only consider distance to nearest downstream targets (positive genomic distance).
-    /// - "both": Keep all windows regardless of sign (use with `--distance-sign absolute` to ignore sign).
+    /// - "upstream": Consider only near intervals that lie upstream (or overlap) relative to each near interval’s strand.
+    ///
+    /// - "downstream": Consider only near intervals that lie downstream (or overlap) relative to each near interval’s strand.
+    ///
+    /// - "both": Consider upstream and downstream (default).
+    ///
+    /// Overlaps are always allowed, returning zero distance.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -302,6 +344,7 @@ pub struct PrepareConfig {
     /// How to respond when multiple near intervals tie for the minimum distance `[string]`
     ///
     /// - "annotate": keep the window and include both sides in the near label (e.g. `-A/+B`).
+    ///
     /// - "drop": discard the window when a tie occurs.
     #[cfg_attr(
         feature = "cli",
@@ -318,24 +361,62 @@ pub struct PrepareConfig {
     /// How to treat the computed distances when binning `[string]`
     ///
     /// - "absolute": Use `abs(distance)` for comparisons and thresholds.
+    ///
     /// - "signed": Use signed distances.
     ///
-    /// **Distance sign**:
-    /// If the window is upstream (left) of the near-interval, the distance is **positive**.
-    /// If the window is downstream (right) of the near-interval, the distance is **negative**.
+    /// **Distance sign (when `--distance-sign signed`):**
     ///
-    /// E.g.:
+    /// - Upstream of the near interval -> **negative** distance.
     ///
+    /// - Downstream of the near interval -> **positive** distance.
+    ///
+    /// - Overlap/touch -> `0` distance.
+    ///
+    /// **Upstream/Downstream definition (strand-aware):**
+    ///
+    /// - For a `+` near interval: upstream is to the left (smaller genomic coordinates); downstream is to the right.
+    ///
+    /// - For a `-` near interval: upstream is to the right (larger genomic coordinates); downstream is to the left.
+    ///
+    /// - For an unknown strand (`.`): upstream/downstream are derived from genomic placement to the chosen target edge(s)
+    ///   (falls back to genomic-nearest semantics).
+    ///
+    /// **Group label prefix (always emitted):**
+    ///
+    /// `-` = upstream, `+` = downstream, `=` = overlap.
+    ///   
+    /// Prefixes are included even when using `--distance-sign absolute`, so the side remains visible.
+    ///
+    /// **Examples:**
+    ///
+    /// Legend: '=' near interval, '#' window, '-' empty span. Signs are relative to the near interval’s strand.
+    ///
+    /// Case A: near is `+` strand
     /// ```text
-    /// windows:      [1]       [2]
-    ///            <--
-    /// near:   [A]         [B] [C]
-    /// ```
-    /// Here, `window 1` is closest to `A` with a **negative** distance and `window 2` is inside `C` so has a distance of `0`.
+    /// coordinates:  100   120  140         200   220   240
+    ///               |#####|----|===========|-----|#####|
+    ///   upstream (-) ^^^^^         near           ^^^^^ downstream (+)
     ///
-    /// The emitted near label always carries a prefix that mirrors the relative placement:
-    /// `-` for negative distances, `+` for positive distances, and `=` when the window overlaps the interval.
-    /// This prefix is present even when you request absolute distances so you can still tell which side was nearest.
+    /// ```
+    /// Case B: near is `-` strand
+    /// ```text
+    /// coordinates:  100   120  140         200   220   240
+    ///               |#####|----|===========|-----|#####|
+    /// downstream (+) ^^^^^         near           ^^^^^ upstream (-)
+    /// ```
+    /// Case C: overlap
+    /// ```text
+    /// coordinates:  100   120             200
+    ///               |--###|===========###====|
+    ///        touch (=) ^^^    near    ^^^ overlap (=)
+    /// ```
+    ///
+    /// **Ties and overlaps:**
+    ///
+    /// - Overlap yields distance 0 and label prefix `=`.
+    ///
+    /// - If upstream/downstream tie and `--near-ties annotate`, both sides are reported,
+    ///   e.g. `-GeneA/+GeneB`.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -354,8 +435,10 @@ pub struct PrepareConfig {
     /// Expression forms: `<N`, `<=N`, `A-B`, `>=N`, `>N` (N in bp).
     ///
     /// Examples:
+    ///
     /// - `--distance-bins 'prox:<500' 'mid:500-2000' 'dist:>2000'`
-    /// - `--distance-bins 'upstream:<0' 'downstream:>0'` (when using `--distance-sign signed`)
+    ///
+    /// - `--distance-bins 'upstream:<0' 'at:0-0' 'downstream:>0'` (when using `--distance-sign signed`)
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -427,7 +510,9 @@ pub struct PrepareConfig {
     /// Policy for windows going out of bounds after transform `[string]`
     ///
     /// - "drop": Drop out-of-bounds windows (default).
+    ///
     /// - "trim": Trim to chromosome bounds.
+    ///
     /// - "allow": Allow out-of-bounds (unsafe).
     #[cfg_attr(
         feature = "cli",
@@ -476,8 +561,11 @@ pub struct PrepareConfig {
     /// How to resolve distance ties when enforcing `--min-distance-within-group` `[string]`
     ///
     /// - "keep-first": Keep the first; skip subsequent windows within distance.
+    ///
     /// - "keep-highest-score": Prefer higher score (requires `--score-col`).
+    ///
     /// - "keep-lowest-score": Prefer lower score (requires `--score-col`).
+    ///
     /// - "keep-longest": Prefer longer windows.
     #[cfg_attr(
         feature = "cli",
@@ -499,9 +587,13 @@ pub struct PrepareConfig {
     /// duplicated records; use min-distance to enforce spacing.
     ///
     /// - "none": No deduplication.
+    ///
     /// - "keep-first": Keep the first occurrence.
+    ///
     /// - "keep-highest-score": Prefer the window with the highest score (requires `--score-col`).
+    ///
     /// - "keep-lowest-score": Prefer the window with the lowest score (requires `--score-col`).
+    ///
     /// - "keep-longest": Keep the longest.
     #[cfg_attr(
         feature = "cli",
@@ -518,7 +610,9 @@ pub struct PrepareConfig {
     /// Merging scope for nearby windows `[string]`
     ///
     /// - "none": Do not merge windows.
+    ///
     /// - "within": Merge only windows belonging to the same group.
+    ///
     /// - "across": Merge regardless of group (labels resolved by `--merge-label`).
     #[cfg_attr(
         feature = "cli",
@@ -549,6 +643,7 @@ pub struct PrepareConfig {
     /// Label policy when merging `[string]`
     ///
     /// - "join": Join labels with `__` (default).
+    ///
     /// - "first": Keep the first label encountered.
     #[cfg_attr(
         feature = "cli",
@@ -591,9 +686,16 @@ pub enum MissingScore {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
 pub enum NearEdge {
+    /// Use left genomic edge only.
     Left,
+    /// Use right genomic edge only.
     Right,
+    /// Use whichever genomic edge is closer.
     Nearest,
+    /// Use the edge that is upstream of the near interval given its annotated strand orientation.
+    Upstream,
+    /// Use the edge that is downstream of the near interval given its annotated strand orientation.
+    Downstream,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

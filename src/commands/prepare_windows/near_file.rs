@@ -13,6 +13,7 @@ pub struct NearInterval {
     pub start: u32,
     pub end: u32,
     pub group_id: Option<u32>,
+    pub strand: Strand,
 }
 
 /// Per-chromosome near intervals, sorted and validated.
@@ -61,6 +62,13 @@ pub enum NearestResult {
     Tie(NearTie),
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum Strand {
+    Plus,
+    Minus,
+    Unknown,
+}
+
 /// Load and validate the `--near` intervals.
 ///
 /// Validation rules:
@@ -77,8 +85,10 @@ pub enum NearestResult {
 ///     Field separator character.
 /// - has_header:
 ///     Whether the near file has a header line.
+/// - strand_col_present:
+///     Whether the strand column is present (fourth column).
 /// - group_col_present:
-///     Whether a `group` column is present (fourth column).
+///     Whether a `group` column is present (fourth or fifth column).
 ///
 /// Returns
 /// -------
@@ -88,6 +98,7 @@ pub fn load_near_index(
     path: &Path,
     separator: char,
     has_header: bool,
+    strand_col_present: bool,
     group_col_present: bool,
 ) -> Result<NearIndex> {
     let mut reader = open_text_reader(path)?;
@@ -98,7 +109,8 @@ pub fn load_near_index(
         reader.read_line(&mut line)?; // discard header
     }
 
-    let mut raw_by_chrom: FxHashMap<String, Vec<(u32, u32, Option<String>)>> = FxHashMap::default();
+    let mut raw_by_chrom: FxHashMap<String, Vec<(u32, u32, Strand, Option<String>)>> =
+        FxHashMap::default();
 
     for (lineno, line_res) in reader.lines().enumerate() {
         let line = line_res?;
@@ -134,6 +146,21 @@ pub fn load_near_index(
             );
         }
 
+        let strand = if strand_col_present {
+            match it.next().map(|s| s.trim()) {
+                Some("+") => Strand::Plus,
+                Some("-") => Strand::Minus,
+                Some(".") | None => Strand::Unknown,
+                Some(other) => bail!(
+                    "Near parse error at line {}: invalid strand '{}'",
+                    lineno + 1,
+                    other
+                ),
+            }
+        } else {
+            Strand::Plus // Default when not provided
+        };
+
         let group = if group_col_present {
             it.next()
                 .map(|s| s.trim().to_string())
@@ -145,18 +172,19 @@ pub fn load_near_index(
         raw_by_chrom
             .entry(chrom)
             .or_default()
-            .push((start, end, group));
+            .push((start, end, strand, group));
     }
 
     // Validate and intern groups
     let mut index = NearIndex::default();
 
     for (chrom, mut items) in raw_by_chrom {
-        // Sort by (start, end, group)
+        // Sort by (start, end, strand, group)
         items.sort_unstable_by(|a, b| {
             a.0.cmp(&b.0)
-                .then(a.1.cmp(&b.1))
-                .then_with(|| match (&a.2, &b.2) {
+                .then_with(|| a.1.cmp(&b.1))
+                .then_with(|| a.2.cmp(&b.2))
+                .then_with(|| match (&a.3, &b.3) {
                     (Some(ga), Some(gb)) => ga.cmp(gb),
                     (None, Some(_)) => Ordering::Less,
                     (Some(_), None) => Ordering::Greater,
@@ -170,7 +198,7 @@ pub fn load_near_index(
         let mut last_start: u32 = 0;
         let mut have_last = false;
 
-        for (start, end, group_opt) in items.into_iter() {
+        for (start, end, strand, group_opt) in items.into_iter() {
             if have_last {
                 if start < last_end {
                     bail!(
@@ -213,6 +241,7 @@ pub fn load_near_index(
                 start,
                 end,
                 group_id,
+                strand,
             });
         }
 
@@ -316,7 +345,7 @@ pub fn nearest_edge_distance(
         }
     }
 
-    // Helper: evaluate the chosen edge(s) of `iv` against both window edges and
+    // Helper: Evaluate the chosen edge(s) of `iv` against both window edges and
     // return the signed distance and side for the closest pairing
     #[inline]
     fn edge_distance(
@@ -363,31 +392,82 @@ pub fn nearest_edge_distance(
                 consider_edge(interval.start as i32);
                 consider_edge(interval.end as i32);
             }
+            // Use the edge that is upstream of the near interval given its annotated strand orientation.
+            NearEdge::Upstream => match interval.strand {
+                Strand::Plus => consider_edge(interval.start as i32),
+                Strand::Minus => consider_edge(interval.end as i32),
+                Strand::Unknown => {
+                    // Fall back to genomic-nearest when strand is unknown
+                    consider_edge(interval.start as i32);
+                    consider_edge(interval.end as i32);
+                }
+            },
+            // Use the edge that is downstream of the near interval given its annotated strand orientation.
+            NearEdge::Downstream => match interval.strand {
+                Strand::Plus => consider_edge(interval.end as i32),
+                Strand::Minus => consider_edge(interval.start as i32),
+                Strand::Unknown => {
+                    // Fall back to genomic-nearest when strand is unknown
+                    consider_edge(interval.start as i32);
+                    consider_edge(interval.end as i32);
+                }
+            },
         }
 
         (best_signed_distance, best_side)
+    }
+
+    // Helper: Orient genomic distance/side into strand-relative space using iv.strand
+    #[inline]
+    fn orient_by_strand(
+        genomic_side: NearSide,
+        genomic_dist: i32,
+        iv_strand: Strand,
+        signed: bool,
+    ) -> (NearSide, i32) {
+        let (side, dist) = match iv_strand {
+            Strand::Plus | Strand::Unknown => (genomic_side, genomic_dist),
+            Strand::Minus => {
+                let flipped_side = match genomic_side {
+                    NearSide::Upstream => NearSide::Downstream,
+                    NearSide::Downstream => NearSide::Upstream,
+                    NearSide::Overlap => NearSide::Overlap,
+                };
+                (flipped_side, -genomic_dist)
+            }
+        };
+        if signed {
+            (side, dist)
+        } else {
+            (side, dist.abs())
+        }
     }
 
     // Build at most two candidates: upstream and downstream.
     let mut upstream_hit: Option<NearHit> = None;
     if let Some(ui) = upstream_idx {
         let iv = near_chrom.intervals[ui];
-        let (mut dist, side) = edge_distance(&iv, which_edge, window_start, window_end);
+        let (genomic_distance, genomic_side) =
+            edge_distance(&iv, which_edge, window_start, window_end);
+        let (strand_relative_side, strand_relative_distance) =
+            orient_by_strand(genomic_side, genomic_distance, iv.strand, signed);
 
         // Filter by requested direction(s). Overlap would have returned already.
         let from_considered_side = match directions {
             NearDirection::Both => true,
-            NearDirection::Upstream => matches!(side, NearSide::Upstream | NearSide::Overlap),
-            NearDirection::Downstream => matches!(side, NearSide::Downstream | NearSide::Overlap),
+            NearDirection::Upstream => {
+                matches!(strand_relative_side, NearSide::Upstream | NearSide::Overlap)
+            }
+            NearDirection::Downstream => matches!(
+                strand_relative_side,
+                NearSide::Downstream | NearSide::Overlap
+            ),
         };
         if from_considered_side {
-            if !signed {
-                dist = dist.abs();
-            }
             upstream_hit = Some(NearHit {
-                distance: dist,
+                distance: strand_relative_distance,
                 group_id: iv.group_id,
-                side,
+                side: strand_relative_side,
             });
         }
     }
@@ -395,21 +475,26 @@ pub fn nearest_edge_distance(
     let mut downstream_hit: Option<NearHit> = None;
     if let Some(di) = downstream_idx {
         let iv = near_chrom.intervals[di];
-        let (mut dist, side) = edge_distance(&iv, which_edge, window_start, window_end);
+        let (genomic_distance, genomic_side) =
+            edge_distance(&iv, which_edge, window_start, window_end);
+        let (strand_relative_side, strand_relative_distance) =
+            orient_by_strand(genomic_side, genomic_distance, iv.strand, signed);
 
         let from_considered_side = match directions {
             NearDirection::Both => true,
-            NearDirection::Upstream => matches!(side, NearSide::Upstream | NearSide::Overlap),
-            NearDirection::Downstream => matches!(side, NearSide::Downstream | NearSide::Overlap),
+            NearDirection::Upstream => {
+                matches!(strand_relative_side, NearSide::Upstream | NearSide::Overlap)
+            }
+            NearDirection::Downstream => matches!(
+                strand_relative_side,
+                NearSide::Downstream | NearSide::Overlap
+            ),
         };
         if from_considered_side {
-            if !signed {
-                dist = dist.abs();
-            }
             downstream_hit = Some(NearHit {
-                distance: dist,
+                distance: strand_relative_distance,
                 group_id: iv.group_id,
-                side,
+                side: strand_relative_side,
             });
         }
     }
