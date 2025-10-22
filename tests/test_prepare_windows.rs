@@ -1080,20 +1080,22 @@ mod tests_near_file {
     use cfdnalab::commands::prepare_windows::{
         config::{NearDirection, NearEdge},
         near_file::{
-            NearChrom, NearHit, NearInterval, NearSide, NearestResult, load_near_index,
+            NearChrom, NearHit, NearInterval, NearSide, NearestResult, Strand, load_near_index,
             nearest_edge_distance,
         },
     };
     use tempfile::TempDir;
 
+    // TODO: Test strand: Strand::Minus and strand: Strand::Unknown!
+
     #[test]
-    fn load_near_index_parses_groups() -> anyhow::Result<()> {
+    fn load_near_index_parses_groups_no_strand() -> anyhow::Result<()> {
         let dir = TempDir::new()?;
         let path = dir.path().join("near.tsv");
         let mut file = File::create(&path)?;
         writeln!(file, "chr1\t0\t10\tSiteA")?;
         writeln!(file, "chr1\t20\t30\tSiteB")?;
-        let index = load_near_index(&path, '\t', false, true)?;
+        let index = load_near_index(&path, '\t', false, false, true)?;
         let chrom = index.per_chrom.get("chr1").expect("chrom");
         assert_eq!(chrom.intervals.len(), 2);
         assert_eq!(index.group_id_to_name.len(), 2);
@@ -1107,7 +1109,7 @@ mod tests_near_file {
         let mut file = File::create(&path)?;
         writeln!(file, "chr1\t0\t10")?;
         writeln!(file, "chr1\t5\t12")?;
-        let err = load_near_index(&path, '\t', false, false).unwrap_err();
+        let err = load_near_index(&path, '\t', false, false, false).unwrap_err();
         assert!(format!("{err}").contains("intervals overlap"));
         Ok(())
     }
@@ -1119,6 +1121,7 @@ mod tests_near_file {
                 start: 10,
                 end: 20,
                 group_id: Some(0),
+                strand: Strand::Plus,
             }],
             cursor: 0,
         };
@@ -1184,6 +1187,7 @@ mod tests_near_file {
                 start: 10,
                 end: 20,
                 group_id: Some(0),
+                strand: Strand::Plus,
             }],
             cursor: 0,
         };
@@ -1213,7 +1217,7 @@ mod tests_near_file {
         let mut file = File::create(&path)?;
         writeln!(file, "chrom\tstart\tend")?;
         writeln!(file, "chr1\t0\t5")?;
-        let index = load_near_index(&path, '\t', true, false)?;
+        let index = load_near_index(&path, '\t', true, false, false)?;
         assert_eq!(index.per_chrom.get("chr1").unwrap().intervals.len(), 1);
         Ok(())
     }
@@ -1244,6 +1248,7 @@ mod tests_near_file {
                 start: 10,
                 end: 20,
                 group_id: Some(1),
+                strand: Strand::Plus,
             }],
             cursor: 0,
         };
@@ -1274,11 +1279,13 @@ mod tests_near_file {
                     start: 0,
                     end: 5,
                     group_id: Some(1),
+                    strand: Strand::Plus,
                 },
                 NearInterval {
                     start: 25,
                     end: 30,
                     group_id: Some(2),
+                    strand: Strand::Plus,
                 },
             ],
             cursor: 0,

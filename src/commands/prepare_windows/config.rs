@@ -392,24 +392,22 @@ pub struct PrepareConfig {
     /// Legend: '=' near interval, '#' window, '-' empty span. Signs are relative to the near interval’s strand.
     ///
     /// Case A: near is `+` strand
-    /// ```text
-    /// coordinates:  100   120  140         200   220   240
-    ///               |#####|----|===========|-----|#####|
-    ///   upstream (-) ^^^^^         near           ^^^^^ downstream (+)
     ///
-    /// ```
+    ///     > coordinates:  100   120  140         200   220   240
+    ///     >               |#####|----|===========|-----|#####|
+    ///     >   upstream (-) ^^^^^         near           ^^^^^ downstream (+)
+    ///     
     /// Case B: near is `-` strand
-    /// ```text
-    /// coordinates:  100   120  140         200   220   240
-    ///               |#####|----|===========|-----|#####|
-    /// downstream (+) ^^^^^         near           ^^^^^ upstream (-)
-    /// ```
+    ///
+    ///     > coordinates:  100   120  140         200   220   240
+    ///     >               |#####|----|===========|-----|#####|
+    ///     > downstream (+) ^^^^^         near           ^^^^^ upstream (-)
+    ///     
     /// Case C: overlap
-    /// ```text
-    /// coordinates:  100   120             200
-    ///               |--###|===========###====|
-    ///        touch (=) ^^^    near    ^^^ overlap (=)
-    /// ```
+    ///     
+    ///     > coordinates:  100   120             200
+    ///     >               |--###|===========###====|
+    ///     >        touch (=) ^^^    near    ^^^ overlap (=)
     ///
     /// **Ties and overlaps:**
     ///

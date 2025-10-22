@@ -201,6 +201,7 @@ pub fn load_near_index(
         for (start, end, strand, group_opt) in items.into_iter() {
             if have_last {
                 if start < last_end {
+                    eprintln!("Last start: {}, end: {}", last_start, last_end);
                     bail!(
                         "Near validation failed on {}: intervals overlap at [{}, {}) and previous ending at {}",
                         chrom,
