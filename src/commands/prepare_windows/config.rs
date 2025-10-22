@@ -88,6 +88,7 @@ pub struct PrepareConfig {
             value_enum,
             default_value = "auto",
             ignore_case = true,
+            hide_possible_values = true,
             help_heading = "Core"
         )
     )]
@@ -174,6 +175,7 @@ pub struct PrepareConfig {
             value_enum,
             default_value = "keep",
             ignore_case = true,
+            hide_possible_values = true,
             help_heading = "Score filtering"
         )
     )]
@@ -228,6 +230,7 @@ pub struct PrepareConfig {
             alias = "bl-strategy",
             default_value = "any",
             ignore_case = true,
+            hide_possible_values = true,
             help_heading = "Blacklist"
         )
     )]
@@ -254,7 +257,7 @@ pub struct PrepareConfig {
     ///
     /// Strand semantics:
     ///
-    ///   - `Upstream/Downstream" are defined **relative to the near interval’s annotated strand**.
+    ///   - `Upstream/Downstream` are defined **relative to the near interval’s annotated strand**.
     ///
     ///   - If `strand` is unknown (`.`), upstream/downstream edge selection falls back to genomic-nearest.
     ///
@@ -293,6 +296,7 @@ pub struct PrepareConfig {
             value_enum,
             default_value = "auto",
             ignore_case = true,
+            hide_possible_values = true,
             help_heading = "Distance to near intervals"
         )
     )]
@@ -340,6 +344,7 @@ pub struct PrepareConfig {
             value_enum,
             default_value = "both",
             ignore_case = true,
+            hide_possible_values = true,
             help_heading = "Distance to near intervals"
         )
     )]
@@ -357,6 +362,7 @@ pub struct PrepareConfig {
             value_enum,
             default_value = "annotate",
             ignore_case = true,
+            hide_possible_values = true,
             help_heading = "Distance to near intervals"
         )
     )]
@@ -575,6 +581,7 @@ pub struct PrepareConfig {
             value_enum,
             default_value = "drop",
             ignore_case = true,
+            hide_possible_values = true,
             help_heading = "Resizing / flanking"
         )
     )]
@@ -632,6 +639,7 @@ pub struct PrepareConfig {
             value_enum,
             default_value = "keep-first",
             ignore_case = true,
+            hide_possible_values = true,
             help_heading = "Group-wise filters"
         )
     )]
@@ -660,6 +668,7 @@ pub struct PrepareConfig {
             value_enum,
             default_value = "none",
             ignore_case = true,
+            hide_possible_values = true,
             help_heading = "Group-wise filters"
         )
     )]
@@ -679,6 +688,7 @@ pub struct PrepareConfig {
             value_enum,
             default_value = "none",
             ignore_case = true,
+            hide_possible_values = true,
             help_heading = "Group-wise filters"
         )
     )]
@@ -710,6 +720,7 @@ pub struct PrepareConfig {
             value_enum,
             default_value = "join",
             ignore_case = true,
+            hide_possible_values = true,
             help_heading = "Group-wise filters"
         )
     )]
