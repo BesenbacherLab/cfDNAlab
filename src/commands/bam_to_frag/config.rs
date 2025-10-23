@@ -6,12 +6,17 @@ use std::path::PathBuf;
 ///
 /// Information in the `.frag.tsv` file:
 ///
-///  - Chromosome
-///  - Start: forward.pos
-///  - End: reverse.end
-///  - MapQ: Minimum mapping quality for the two reads
-///  - Strand: The strand alignment of read1
+///  - **Chromosome**
+/// 
+///  - **Start**: forward.pos
+/// 
+///  - **End**: reverse.end
+/// 
+///  - **MapQ**: Minimum mapping quality for the two reads
+/// 
+///  - **Strand**: The strand alignment of read1
 ///
+/// 
 /// ## Always-on exclusion criteria
 ///
 /// The following criteria always exclude a read:

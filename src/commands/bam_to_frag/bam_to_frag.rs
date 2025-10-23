@@ -6,7 +6,10 @@ use std::{fs, io::Write, path::PathBuf, sync::Arc, time::Instant};
 
 use crate::{
     commands::{
-        bam_to_frag::{concat::concat_frag_zst_to_gzip, config::BamToFragConfig},
+        bam_to_frag::{
+            concat::concat_frag_zst_to_gzip, config::BamToFragConfig,
+            sorted_writer::Entry as WindowEntry, sorted_writer::WindowSorter,
+        },
         cli_common::{ensure_output_dir, load_blacklist_map, resolve_chromosomes_and_contigs},
         counters::BamToFragCounters,
     },
@@ -185,7 +188,10 @@ fn process_chrom(
 
     let mut writer = open_zstd_auto_writer(&out_path, 3, Some(1))?;
 
-    // Iterate fragments and add coverage
+    // Write using a bounded window sorter to ensure (start,end)-sorted output
+    let mut sorter = WindowSorter::new(opt.fragment_lengths.max_fragment_length);
+
+    // Iterate fragments
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
 
@@ -205,11 +211,19 @@ fn process_chrom(
 
         counter.base.counted_fragments += 1;
 
-        // Write to temp file for chromosome
-        writeln!(
-            writer,
-            "{}\t{}\t{}\t{}\t{}",
+        // Push into windowed sorter
+        // That flushes the previous (sorted) entries on the fly
+        let line = format!(
+            "{}\t{}\t{}\t{}\t{}\n",
             chr, fragment.start, fragment.end, fragment.min_mapq, fragment.read1_strand
+        );
+        sorter.push(
+            WindowEntry {
+                start: fragment.start,
+                end: fragment.end,
+                line,
+            },
+            &mut writer,
         )?;
     }
 
