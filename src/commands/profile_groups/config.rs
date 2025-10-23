@@ -131,7 +131,7 @@ pub struct ProfileGroupsConfig {
     /// The fragment positions that should overlap blacklisted regions for it to be excluded `[string]`
     ///
     /// Possible values:
-    ///     "any", "all", "midpoint", or "proportion=<threshold>"
+    ///     `"any"`, `"all"`, `"midpoint"`, or `"proportion=<threshold>"`
     ///
     /// Example of proportion: `--blacklist-strategy proportion=0.2` (no space around `=`)
     #[cfg_attr(
