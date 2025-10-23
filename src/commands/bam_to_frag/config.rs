@@ -16,6 +16,7 @@ use std::path::PathBuf;
 ///
 ///  - **Strand**: The strand alignment of read1
 ///
+/// Fragments are sorted by `(chromosome, start, end)`, using the chromosome order in `--chromosomes`.
 ///
 /// ## Always-on exclusion criteria
 ///
