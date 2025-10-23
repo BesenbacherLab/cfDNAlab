@@ -7,16 +7,16 @@ use std::path::PathBuf;
 /// Information in the `.frag.tsv` file:
 ///
 ///  - **Chromosome**
-/// 
+///
 ///  - **Start**: forward.pos
-/// 
+///
 ///  - **End**: reverse.end
-/// 
+///
 ///  - **MapQ**: Minimum mapping quality for the two reads
-/// 
+///
 ///  - **Strand**: The strand alignment of read1
 ///
-/// 
+///
 /// ## Always-on exclusion criteria
 ///
 /// The following criteria always exclude a read:
@@ -40,7 +40,7 @@ pub struct BamToFragConfig {
     ///   `<prefix>.frag.tsv.gz`,
     #[cfg_attr(
         feature = "cli",
-        clap(long, short = 'x', default_value = "coverage", help_heading = "Core")
+        clap(long, short = 'x', default_value = "fragments", help_heading = "Core")
     )]
     pub output_prefix: String,
 
@@ -60,9 +60,10 @@ pub struct BamToFragConfig {
 
     /// Only count properly paired reads `[flag]`
     ///
-    /// This is NOT recommended by default as it trims the tails of the length distribution.
-    /// It may useful to match the files in FinaleDB, which do have proper pair filtering.
-    /// Note that we only keep inward-directed fragments within a specified length range, so
+    /// This is NOT recommended by default, as it trims the tails of the length distribution.
+    /// It may be useful to match the files in FinaleDB.
+    ///
+    /// Note, that we only keep inward-directed fragments within a specified length range, so
     /// there's no real need for proper-pair filtering.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,

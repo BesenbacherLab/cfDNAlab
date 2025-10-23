@@ -227,7 +227,7 @@ pub struct AssignToWindowArgs {
     /// OR the option to count the fraction of overlapping bases `[string]`
     ///
     /// Possible values:
-    ///     "count-overlap", "any", "all", "midpoint", or "proportion=<threshold>"
+    ///     `"count-overlap"`, `"any"`, `"all"`, `"midpoint"`, or `"proportion=<threshold>"`
     ///
     /// `'count-overlap'`: Count up the fraction of overlapping fragment bases.
     ///
