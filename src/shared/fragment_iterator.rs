@@ -67,6 +67,9 @@ use rust_htslib::bam::Record;
 
 use crate::shared::{
     fragment::{
+        frag_file_fragment::{
+            FragFileFragment, FragReadInfo, collect_fragment_with_frag_file_info,
+        },
         indel_counting_fragment::{
             FragmentWithIndelCounts, IndelReadInfo, collect_fragment_with_indel_counts,
         },
@@ -492,4 +495,61 @@ where
     let mapped = frags.map(|res| res.map(InputItem::Fragment));
 
     PairingAdapter::new(mapped, None::<WithIndelCountsPairer>).with_fragment_filter(fragment_filter)
+}
+
+/* For frag files pairing */
+
+pub struct WithFragInfoPairer;
+
+impl Pairer for WithFragInfoPairer {
+    type Read = FragReadInfo;
+    type Output = FragFileFragment;
+
+    fn pair(&self, a: &Self::Read, b: &Self::Read) -> Option<Self::Output> {
+        collect_fragment_with_frag_file_info(a, b)
+    }
+}
+
+/// From BAM: pair reads into `FragFileFragment`.
+pub fn fragments_with_frag_file_info_from_bam<RIter, PF>(
+    records: RIter,
+    include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
+    fragment_filter: PF,
+) -> PairingAdapter<
+    impl Iterator<Item = Result<InputItem<FragFileFragment>>>,
+    WithFragInfoPairer,
+    FragReadInfo,
+    FragFileFragment,
+>
+where
+    RIter: Iterator<Item = Result<Record>>,
+    PF: Fn(&FragFileFragment) -> bool + Send + Sync + 'static,
+{
+    let pairer = WithFragInfoPairer {};
+
+    // Map BAM records -> InputItem::Read, converting errors to anyhow with context.
+    let mapped = records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord));
+
+    PairingAdapter::new(mapped, Some(pairer))
+        .with_bam_filter_and_mapper(include_read, |rec| FragReadInfo::from(rec))
+        .with_fragment_filter(fragment_filter)
+}
+
+/// From an iterator of ready-made `FragFileFragment` (e.g., BED-like source).
+pub fn fragments_with_frag_file_info_from_iter<I, PF>(
+    frags: I,
+    fragment_filter: PF,
+) -> PairingAdapter<
+    impl Iterator<Item = Result<InputItem<FragFileFragment>>>,
+    WithFragInfoPairer,
+    FragReadInfo,
+    FragFileFragment,
+>
+where
+    I: Iterator<Item = Result<FragFileFragment>>,
+    PF: Fn(&FragFileFragment) -> bool + Send + Sync + 'static,
+{
+    let mapped = frags.map(|res| res.map(InputItem::Fragment));
+
+    PairingAdapter::new(mapped, None::<WithFragInfoPairer>).with_fragment_filter(fragment_filter)
 }

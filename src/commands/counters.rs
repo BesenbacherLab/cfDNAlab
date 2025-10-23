@@ -99,3 +99,5 @@ counter_struct!(LengthsCounters;
 counter_struct!(ProfileGroupsCounters;
     blacklisted_fragments: u64
 );
+
+counter_struct!(BamToFragCounters; blacklisted_fragments: u64);

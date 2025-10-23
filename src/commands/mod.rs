@@ -1,3 +1,4 @@
+pub mod bam_to_frag;
 pub mod cli_common;
 mod counters;
 pub mod coverage_weights;

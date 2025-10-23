@@ -252,6 +252,8 @@ pub struct AssignToWindowArgs {
 
 /* Chromosome selection */
 
+// TODO: Standardize whether lists should be comma-sep or space-sep
+
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[cfg_attr(
     feature = "cli",

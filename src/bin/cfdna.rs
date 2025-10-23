@@ -1,3 +1,4 @@
+use cfdnalab::commands::bam_to_frag::config::BamToFragConfig;
 use cfdnalab::commands::coverage_weights::config::CoverageWeightsConfig;
 use cfdnalab::commands::fcoverage::config::FCoverageConfig;
 use cfdnalab::commands::fragment_kmers::config::FragmentKmersConfig;
@@ -28,6 +29,7 @@ enum Cmd {
     FragmentKmers(FragmentKmersConfig),
     PrepWindows(PrepareConfig),
     VisualizePositions(VisualizePositionsConfig),
+    BamToFrag(BamToFragConfig),
     // Ends(EndsConfig),
 }
 
@@ -62,6 +64,7 @@ fn main() {
         Cmd::VisualizePositions(cfg) => {
             cfdnalab::commands::visualize_positions::visualize_positions::run(&cfg)
         }
+        Cmd::BamToFrag(cfg) => cfdnalab::commands::bam_to_frag::bam_to_frag::run(&cfg),
     };
 
     if let Err(e) = res {
