@@ -46,7 +46,7 @@ The following commands are currently available:
 | `cfdna transitions`      | Extract nth-order transition probabilities in specifiable parts of the fragments                                                                                                                                          |
 | **Normalization**        | Precompute normalization/correction factors to enable their use in the main commands                                                                                                                                      |
 | `cfdna coverage-weights` | Calculate scaling factors for normalizing/smoothing coverage across the genome                                                                                                                                            |
- 
+
 
 ### Common options
 
@@ -72,13 +72,27 @@ cfdna lengths \
 ## FAQ
 
  - How is *fragment* coverage different from the outputs of similar tools like `mosdepth` and `samtools`?
-   - `mosdepth` counts the coverage of aligned bases per *read* independently. `fcoverage` instead first collects the paired reads into a fragment and then counts the coverage of the aligned bases and (optionally) the gap between mate reads.  (TODO on samtools!).
+   - `mosdepth` counts the coverage of aligned bases per *read*, independently. `fcoverage` instead first collects the paired reads into a fragment and then counts the coverage of the aligned bases and (optionally) the gap between mate reads.  (TODO on samtools!).
+ 
  - How do you define a "fragment"?
    - We define the *fragment* as the bases from the start of the forward read till the end of the reverse read (`[start(forward), end(reverse))`) for *inwardly directed* pairs only (i.e., where `start(forward) <= start(reverse)`), as suggested by Wang, H. et al. 2025. Some methods exclude deletions and skipped-regions.
+
+  Fragment visualization:
+
+  ```text
+  Reference 5' >>>>>>>>>>>>>>> 3'
+  Fragment     |-------------|
+  Forward   5' |>>>>>>>| 3'     
+  Reverse        3' |<<<<<<<<| 5' 
+  ``` 
+ 
  - Should I order the BAM files differently to allow pairing of reads into fragments?
    - We expect BAM files to be *coordinate-sorted* and indexed.
+ 
  - How did you use LLMs (AI) in this project?
    - OpenAI's GPT5 thinking models were used for pair programming to speed up development and testing. All released code have been validated by us.
+
+---
 
 ## TODO
 
@@ -86,6 +100,8 @@ cfdna lengths \
     - Add GC correction tools and implementations.
     - Allow input BED files to be compressed.
     - Check / optimize RAM usage in `cfdna coverage-weights`.
+
+---
 
 ## References
 
