@@ -21,13 +21,19 @@ const FLAG_MATE_REVERSE: u16 = 0x20;
 
 #[derive(Debug, Clone, PartialEq)]
 struct WpsRun {
+    chromosome: String,
     start: u32,
     end: u32,
     value: f32,
 }
 
-fn wps_run(start: u32, end: u32, value: f32) -> WpsRun {
-    WpsRun { start, end, value }
+fn wps_run(chr: &str, start: u32, end: u32, value: f32) -> WpsRun {
+    WpsRun {
+        chromosome: chr.to_string(),
+        start,
+        end,
+        value,
+    }
 }
 
 fn fragment_spec(start: u32, end: u32) -> FragmentSpec {
@@ -121,14 +127,10 @@ fn make_config(
 }
 
 fn run_wps(cfg: &WPSConfig) -> Result<Vec<WpsRun>> {
-    let rows = run_wps_with_chrom(cfg)?;
-    Ok(rows
-        .into_iter()
-        .map(|(_, start, end, value)| wps_run(start, end, value))
-        .collect())
+    run_wps_with_chrom(cfg)
 }
 
-fn run_wps_with_chrom(cfg: &WPSConfig) -> Result<Vec<(String, u32, u32, f32)>> {
+fn run_wps_with_chrom(cfg: &WPSConfig) -> Result<Vec<WpsRun>> {
     run_fn(cfg)?;
     let prefix = cfg.output_prefix.trim();
     let bedgraph_path = cfg
@@ -166,52 +168,17 @@ fn run_wps_with_chrom(cfg: &WPSConfig) -> Result<Vec<(String, u32, u32, f32)>> {
             .parse::<f32>()
             .with_context(|| format!("invalid value '{value_str}'"))?;
 
-        runs.push((chromosome.to_string(), start, end, value));
+        runs.push(WpsRun {
+            chromosome: chromosome.to_string(),
+            start,
+            end,
+            value,
+        });
     }
 
     Ok(runs)
 }
 
-fn assert_runs_equal(actual: &[WpsRun], expected: &[WpsRun]) {
-    assert_eq!(
-        actual.len(),
-        expected.len(),
-        "expected {expected:?}, got {actual:?}"
-    );
-    for (idx, (act, exp)) in actual.iter().zip(expected.iter()).enumerate() {
-        assert_eq!(
-            act.start, exp.start,
-            "run {idx} start mismatch: expected {exp:?}, got {act:?}"
-        );
-        assert_eq!(
-            act.end, exp.end,
-            "run {idx} end mismatch: expected {exp:?}, got {act:?}"
-        );
-        assert!(
-            (act.value - exp.value).abs() < EPSILON,
-            "run {idx} value mismatch: expected {exp:?}, got {act:?}"
-        );
-    }
-}
-
-fn clip_runs(runs: &[WpsRun], max_end: u32) -> Vec<WpsRun> {
-    let mut out = Vec::new();
-    for run in runs {
-        if run.start >= max_end {
-            break;
-        }
-        let end = run.end.min(max_end);
-        out.push(WpsRun {
-            start: run.start,
-            end,
-            value: run.value,
-        });
-        if run.end >= max_end {
-            break;
-        }
-    }
-    out
-}
 
 #[test]
 fn single_fragment_produces_central_plateau() -> Result<()> {
@@ -228,9 +195,9 @@ fn single_fragment_produces_central_plateau() -> Result<()> {
     //   * The right endpoint at 22 affects centres 21, 22 -> run [21, 23) at -1.
     // - All remaining centres stay at zero and are omitted because keep_zero_runs=false.
     let expected = vec![
-        wps_run(9, 12, -1.0),
-        wps_run(12, 20, 1.0),
-        wps_run(21, 23, -1.0),
+        wps_run("chr1", 9, 12, -1.0),
+        wps_run("chr1", 12, 20, 1.0),
+        wps_run("chr1", 21, 23, -1.0),
     ];
 
     let actual = run_wps(&cfg)?;
@@ -260,11 +227,11 @@ fn overlapping_fragments_stack_scores() -> Result<()> {
     //     * [13, 18) at +1 once only the long fragment remains.
     //     * [19, 21) at -1 from the long fragment’s right endpoint.
     let expected = vec![
-        wps_run(2, 3, 1.0),
-        wps_run(6, 10, 2.0),
-        wps_run(10, 11, 1.0),
-        wps_run(13, 18, 1.0),
-        wps_run(19, 21, -1.0),
+        wps_run("chr1", 2, 3, 1.0),
+        wps_run("chr1", 6, 10, 2.0),
+        wps_run("chr1", 10, 11, 1.0),
+        wps_run("chr1", 13, 18, 1.0),
+        wps_run("chr1", 19, 21, -1.0),
     ];
 
     let actual = run_wps(&cfg)?;
@@ -284,12 +251,12 @@ fn keep_zero_runs_emits_flat_segments() -> Result<()> {
     // - Leading zeros from the first valid centre (2) up to the first penalty at 9.
     // - Trailing zeros that stretch beyond the region of interest; we assert up to c = 30.
     let expected = vec![
-        wps_run(2, 9, 0.0),
-        wps_run(9, 12, -1.0),
-        wps_run(12, 20, 1.0),
-        wps_run(20, 21, 0.0),
-        wps_run(21, 23, -1.0),
-        wps_run(23, 30, 0.0),
+        wps_run("chr1", 2, 9, 0.0),
+        wps_run("chr1", 9, 12, -1.0),
+        wps_run("chr1", 12, 20, 1.0),
+        wps_run("chr1", 20, 21, 0.0),
+        wps_run("chr1", 21, 23, -1.0),
+        wps_run("chr1", 23, 30, 0.0),
     ];
 
     let actual = run_wps(&cfg)?;
@@ -311,7 +278,10 @@ fn fragment_equal_to_window_removes_central_signal() -> Result<()> {
     //     * Left endpoint at 10 subtracts for c = 9, 10, 11.
     //     * Right endpoint at 14 subtracts for c = 12, 13, 14.
     // - Net result: two -1 dips flanking the zeroed centre at 12; no positive plateau remains.
-    let expected = vec![wps_run(9, 12, -1.0), wps_run(13, 15, -1.0)];
+    let expected = vec![
+        wps_run("chr1", 9, 12, -1.0),
+        wps_run("chr1", 13, 15, -1.0),
+    ];
 
     let actual = run_wps(&cfg)?;
 
@@ -323,36 +293,35 @@ fn fragment_equal_to_window_removes_central_signal() -> Result<()> {
 fn empty_bam_emits_single_zero_run_per_chromosome() -> Result<()> {
     // Chromosomes long enough to admit two tiles each.
     let chrom_defs = vec![("chr1".to_string(), 400u32), ("chr2".to_string(), 400u32)];
+    let tile_bp = 200u32;
     let fixture = bam_from_specs(chrom_defs.clone(), Vec::new(), Vec::new(), "wps_empty")?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = make_config(4, true, &fixture.bam, out_dir.path(), "empty_two_chr");
     cfg.chromosomes.chromosomes = Some(vec!["chr1".to_string(), "chr2".to_string()]);
-    cfg.set_tile_size(200);
-
-    let window_size = cfg.window_size;
-    let left_span = window_size / 2;
-    let right_span = window_size - left_span;
+    cfg.set_tile_size(tile_bp);
 
     let runs = run_wps_with_chrom(&cfg)?;
 
+    // Each chromosome spans two tiles; we intentionally expose the uncrossed tile boundaries to
+    // keep merge_positional_tiles fast (simple stream copy). Expect one zero-valued run per tile.
     ensure!(
-        runs.len() == 2,
-        "expected exactly 2 runs (one per chromosome), got {runs:?}"
+        runs.len() == 4,
+        "expected exactly 4 runs (two per chromosome), got {runs:?}"
     );
 
-    for (chr, start, end, value) in runs {
-        let chrom_len = chrom_defs
-            .iter()
-            .find(|(name, _)| name == &chr)
-            .map(|(_, len)| *len as u32)
-            .with_context(|| format!("unexpected chromosome {chr} in output"))?;
-        let expected_start = left_span;
-        let expected_end = chrom_len - right_span + 1;
+    let mut expected = Vec::new();
+    for (chr, len) in &chrom_defs {
+        let first_end = tile_bp.min(*len);
+        expected.push((chr.clone(), 0u32, first_end, 0.0f32));
+        expected.push((chr.clone(), first_end, *len, 0.0f32));
+    }
+
+    for (run, exp) in runs.iter().zip(expected.drain(..)) {
         assert_eq!(
-            (start, end, value),
-            (expected_start, expected_end, 0.0),
-            "unexpected run for {chr}"
+            (&run.chromosome, run.start, run.end, run.value),
+            (&exp.0, exp.1, exp.2, exp.3),
+            "unexpected run"
         );
     }
 
@@ -388,4 +357,49 @@ fn empty_bam_without_keep_zero_runs_outputs_nothing() -> Result<()> {
     );
 
     Ok(())
+}
+fn assert_runs_equal(actual: &[WpsRun], expected: &[WpsRun]) {
+    assert_eq!(
+        actual.len(),
+        expected.len(),
+        "expected {expected:?}, got {actual:?}"
+    );
+    for (idx, (act, exp)) in actual.iter().zip(expected.iter()).enumerate() {
+        assert_eq!(
+            act.chromosome, exp.chromosome,
+            "run {idx} chromosome mismatch: expected {exp:?}, got {act:?}"
+        );
+        assert_eq!(
+            act.start, exp.start,
+            "run {idx} start mismatch: expected {exp:?}, got {act:?}"
+        );
+        assert_eq!(
+            act.end, exp.end,
+            "run {idx} end mismatch: expected {exp:?}, got {act:?}"
+        );
+        assert!(
+            (act.value - exp.value).abs() < EPSILON,
+            "run {idx} value mismatch: expected {exp:?}, got {act:?}"
+        );
+    }
+}
+
+fn clip_runs(runs: &[WpsRun], max_end: u32) -> Vec<WpsRun> {
+    let mut out = Vec::new();
+    for run in runs {
+        if run.start >= max_end {
+            break;
+        }
+        let end = run.end.min(max_end);
+        out.push(WpsRun {
+            chromosome: run.chromosome.clone(),
+            start: run.start,
+            end,
+            value: run.value,
+        });
+        if run.end >= max_end {
+            break;
+        }
+    }
+    out
 }

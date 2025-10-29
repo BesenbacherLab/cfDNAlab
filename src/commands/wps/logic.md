@@ -44,7 +44,7 @@ This ensures a fragment can never be counted both as "fully spanning" and "endin
 - For each fragment `[start, end)` and weight `w` (already clipped to the halo span):
 - **Full-window span:** The window centred at `c` lies entirely inside the fragment whenever `start <= c - left_span` *and* `c + right_span <= end`. For integer centres this describes the inclusive range `[start + left_span, end - right_span]`, which we encode by adding `+w` at `start + left_span` and `-w` at `end - right_span + 1`.
 - **Left endpoint contribution:** To count the left endpoint we require `c - left_span < start` (window start lies strictly before the endpoint) and `start < c + right_span` (endpoint sits strictly inside the upper bound). This is the open interval `(start - right_span, start + left_span)`, represented as `[start - right_span + 1, start + left_span)` in zero-based indices.
-- **Right endpoint contribution:** The fragment interval is half-open, so the right endpoint sits at `end - 1`. We subtract when `end - right_span < c` and `c + left_span < end`, which maps to `(end - right_span, end + left_span)` and becomes `[end - right_span + 1, end + left_span)` in the diff buffer.
+- **Right endpoint contribution:** The fragment interval is half-open, so the right endpoint sits at `end - 1`. We subtract when `end - right_span < c` and `c + left_span < end`, which maps to `(end - right_span, end + left_span - 1)` and becomes `[end - right_span, end + left_span - 1)` in the diff buffer.
 - Illustration (window size 120 -> `left_span = right_span = 60`):
 
   ```text
@@ -60,9 +60,9 @@ This ensures a fragment can never be counted both as "fully spanning" and "endin
       end_diff[41]  += w
       end_diff[160] -= w
 
-  Right endpoint p = 249 (centres 191..310)
-      end_diff[191] += w
-      end_diff[310] -= w
+  Right endpoint p = 249 (centres 190..309)
+      end_diff[190] += w
+      end_diff[309] -= w
 
   ```
 

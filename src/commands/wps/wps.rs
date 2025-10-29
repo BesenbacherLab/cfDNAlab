@@ -662,8 +662,8 @@ fn process_tile(
             &mut end_diff,
             dilated_start_i64,
             dilated_end_i64,
-            fragment_end - right_span_i64 + 1,
-            fragment_end + left_span_i64,
+            fragment_end - right_span_i64,
+            fragment_end + left_span_i64 - 1,
             1.0,
         );
     }
