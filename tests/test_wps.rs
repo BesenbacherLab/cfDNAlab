@@ -186,7 +186,6 @@ fn assert_runs_equal(actual: &[WpsRun], expected: &[WpsRun]) {
     }
 }
 
-#[ignore = "Awaiting implementation of wps::run_inner"]
 #[test]
 fn single_fragment_produces_central_plateau() -> Result<()> {
     let fixture = make_fixture("wps_single_fragment", &[(10, 22)])?;
@@ -221,7 +220,6 @@ fn single_fragment_produces_central_plateau() -> Result<()> {
     Ok(())
 }
 
-#[ignore = "Awaiting implementation of wps::run_inner"]
 #[test]
 fn overlapping_fragments_stack_scores() -> Result<()> {
     let fixture = make_fixture("wps_overlapping", &[(0, 20), (4, 12)])?;
@@ -254,7 +252,6 @@ fn overlapping_fragments_stack_scores() -> Result<()> {
     Ok(())
 }
 
-#[ignore = "Awaiting implementation of wps::run_inner"]
 #[test]
 fn keep_zero_runs_emits_flat_segments() -> Result<()> {
     let fixture = make_fixture("wps_keep_zero", &[(10, 22)])?;
@@ -280,7 +277,6 @@ fn keep_zero_runs_emits_flat_segments() -> Result<()> {
     Ok(())
 }
 
-#[ignore = "Awaiting implementation of wps::run_inner"]
 #[test]
 fn fragment_equal_to_window_removes_central_signal() -> Result<()> {
     let fixture = make_fixture("wps_equal_window", &[(10, 14)])?;
