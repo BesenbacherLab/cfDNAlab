@@ -26,6 +26,10 @@ struct WpsRun {
     value: f32,
 }
 
+fn wps_run(start: u32, end: u32, value: f32) -> WpsRun {
+    WpsRun { start, end, value }
+}
+
 fn fragment_spec(start: u32, end: u32) -> FragmentSpec {
     let length = end - start;
     let read_len = max(length / 2, 2);
@@ -124,9 +128,7 @@ fn run_wps(cfg: &WPSConfig) -> Result<Vec<WpsRun>> {
         .collect())
 }
 
-fn run_wps_with_chrom(
-    cfg: &WPSConfig,
-) -> Result<Vec<(String, u32, u32, f32)>> {
+fn run_wps_with_chrom(cfg: &WPSConfig) -> Result<Vec<(String, u32, u32, f32)>> {
     run_fn(cfg)?;
     let prefix = cfg.output_prefix.trim();
     let bedgraph_path = cfg
@@ -360,11 +362,21 @@ fn empty_bam_emits_single_zero_run_per_chromosome() -> Result<()> {
 #[test]
 fn empty_bam_without_keep_zero_runs_outputs_nothing() -> Result<()> {
     let chrom_defs = vec![("chr1".to_string(), 400u32), ("chr2".to_string(), 400u32)];
-    let fixture =
-        bam_from_specs(chrom_defs.clone(), Vec::new(), Vec::new(), "wps_empty_nozeros")?;
+    let fixture = bam_from_specs(
+        chrom_defs.clone(),
+        Vec::new(),
+        Vec::new(),
+        "wps_empty_nozeros",
+    )?;
     let out_dir = TempDir::new()?;
 
-    let mut cfg = make_config(4, false, &fixture.bam, out_dir.path(), "empty_two_chr_nozeros");
+    let mut cfg = make_config(
+        4,
+        false,
+        &fixture.bam,
+        out_dir.path(),
+        "empty_two_chr_nozeros",
+    );
     cfg.chromosomes.chromosomes = Some(vec!["chr1".to_string(), "chr2".to_string()]);
     cfg.set_tile_size(200);
 
