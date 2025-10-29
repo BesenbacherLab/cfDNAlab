@@ -4,12 +4,9 @@ use crate::commands::cli_common::ScaleGenomeArgs;
 use crate::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 
-/// Calculate positional windowed protections scores (WPS) across the genome.
+/// Calculate positional windowed protection scores (WPS) across the genome.
 ///
 /// Only paired-end fragments with both reads present are considered.
-///
-/// Tip: Use a minimum fragment length that matches the WPS `window_size`,
-/// so no fragments have both ends in the WPS window.
 ///
 /// ## Windowing (by-bed or by-size)
 ///
@@ -104,7 +101,6 @@ pub struct WPSConfig {
         clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
     pub tile_size: u32,
 
-    // TODO: Ensure a value is specified when windowing is enabled! indexed-positions would be the best default but that is --by-bed only?
     /// What to return per window `[string]`
     ///
     /// Possible values:
@@ -122,18 +118,12 @@ pub struct WPSConfig {
     /// - `"total"`: Get the total coverage per window.
     ///
     /// **NOTE**: Ignored when no windows are specified.
+    /// Required when `--by-bed` or `--by-size` is provided.
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser, ignore_case = true, help_heading = "Core")
     )]
-    pub per_window: CoverageWindowAction,
-
-    /// Ignore inter-mate gap `[flag]`
-    ///
-    /// Disable counting of the gap between reads (i.e., `[forward.end, reverse.start)`)
-    /// when the two reads do not overlap.
-    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
-    pub ignore_gap: bool,
+    pub per_window: Option<CoverageWindowAction>,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub windows: WindowsArgs,
@@ -184,7 +174,7 @@ impl WPSConfig {
     pub fn new(
         ioc: IOCArgs,
         chromosomes: ChromosomeArgs,
-        per_window: CoverageWindowAction,
+        per_window: Option<CoverageWindowAction>,
     ) -> Self {
         Self {
             ioc,
@@ -194,7 +184,6 @@ impl WPSConfig {
             keep_zero_runs: false,
             tile_size: 20_000_000,
             per_window: per_window,
-            ignore_gap: false,
             windows: WindowsArgs::default(),
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
@@ -226,12 +215,8 @@ impl WPSConfig {
         self.tile_size = tile_size;
     }
 
-    pub fn set_per_window(&mut self, action: CoverageWindowAction) {
+    pub fn set_per_window(&mut self, action: Option<CoverageWindowAction>) {
         self.per_window = action;
-    }
-
-    pub fn set_ignore_gap(&mut self, ignore: bool) {
-        self.ignore_gap = ignore;
     }
 
     pub fn set_windows(&mut self, windows: WindowsArgs) {

@@ -106,7 +106,7 @@ fn make_config(
     let mut cfg = WPSConfig::new(
         ioc,
         chroms,
-        CoverageWindowAction::OnlyIncludeThesePositionsUnique, // No genomic windowing so doesn't currently matter
+        Some(CoverageWindowAction::OnlyIncludeThesePositionsUnique), // No genomic windowing so doesn't currently matter
     );
     cfg.set_output_prefix(prefix);
     cfg.set_window_size(window_size);

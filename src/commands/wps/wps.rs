@@ -75,6 +75,13 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         opt.max_fragment_length
     );
 
+    let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
+    ensure!(
+        !windowed || opt.per_window.is_some(),
+        "when using --by-bed/--by-size, please also specify --per-window"
+    );
+    let per_window_action = opt.per_window;
+
     // Create output directory
     ensure_output_dir(&opt.ioc.output_dir)?;
 
@@ -93,8 +100,8 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             println!("Start: Loading window coordinates");
             let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None)?;
             if matches!(
-                opt.per_window,
-                CoverageWindowAction::OnlyIncludeThesePositionsUnique
+                per_window_action,
+                Some(CoverageWindowAction::OnlyIncludeThesePositionsUnique)
             ) {
                 // Merge in-place to avoid double memory-usage
                 println!("Start: Merging overlapping/touching windows");
@@ -128,16 +135,14 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
         load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
 
-    // Decide mode once
-    let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
     let has_scaling = opt.scale_genome.scaling_factors.is_some();
 
     // Some actions cannot be used with `--by-size`
     if matches!(window_opt, WindowSpec::Size(_))
         && matches!(
-            opt.per_window,
-            CoverageWindowAction::OnlyIncludeThesePositionsUnique
-                | CoverageWindowAction::OnlyIncludeThesePositionsIndexed
+            per_window_action,
+            Some(CoverageWindowAction::OnlyIncludeThesePositionsUnique)
+                | Some(CoverageWindowAction::OnlyIncludeThesePositionsIndexed)
         )
     {
         anyhow::bail!("in --by-size mode, --per-window can only be 'average' or 'total'");
@@ -182,7 +187,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
 
     // Get decimals to use
     let decimals_to_use: i32 = if windowed {
-        match opt.per_window {
+        match per_window_action.expect("per-window action required when windowed") {
             CoverageWindowAction::Average | CoverageWindowAction::Total => opt.decimals as i32,
             CoverageWindowAction::OnlyIncludeThesePositionsUnique
             | CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
@@ -238,7 +243,9 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
 
             // Decide tile mode and file name
             let (action_prefix, extensions) = if windowed {
-                match opt.per_window {
+                let action =
+                    per_window_action.expect("per-window action required when windowed");
+                match action {
                     // We need
                     CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
                         (positional_prefix, "tsv.zst")
@@ -289,7 +296,10 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     indexed: false,
                 }
             } else {
-                match (&window_opt, opt.per_window) {
+                match (
+                    &window_opt,
+                    per_window_action.expect("per-window action required when windowed"),
+                ) {
                     (WindowSpec::Bed(_), CoverageWindowAction::OnlyIncludeThesePositionsUnique) => {
                         TileMode::Positional {
                             windows: windows_chr,
@@ -372,7 +382,8 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             final_bedgraph_pos_name.as_str(),
         )?
     } else {
-        match opt.per_window {
+        let action = per_window_action.expect("per-window action required when windowed");
+        match action {
             CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
                 // Windowed positional (unique and non-indexed)
                 merge_positional_tiles(
@@ -395,14 +406,14 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             }
             CoverageWindowAction::Average | CoverageWindowAction::Total => {
                 // Per-chrom reduce of partials into final aggregates
-                let final_path = opt.ioc.output_dir.join(match opt.per_window {
+                let final_path = opt.ioc.output_dir.join(match action {
                     CoverageWindowAction::Average => final_avg_name.as_str(),
                     CoverageWindowAction::Total => final_total_name.as_str(),
                     _ => unreachable!(),
                 });
 
                 // Header value-column name
-                let value_col = match opt.per_window {
+                let value_col = match action {
                     CoverageWindowAction::Average => "avg_coverage",
                     CoverageWindowAction::Total => "total_coverage",
                     _ => unreachable!(),
@@ -433,7 +444,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                                     partials_prefix,
                                     wchr.as_slice(),
                                     true,
-                                    opt.per_window,
+                                    action,
                                     decimals_to_use,
                                     &mut positional_writer,
                                 )?;
@@ -448,7 +459,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                                 &opt.ioc.output_dir,
                                 &chromosomes,
                                 finals_prefix,
-                                match opt.per_window {
+                                match action {
                                     CoverageWindowAction::Average => final_avg_name.as_str(),
                                     CoverageWindowAction::Total => final_total_name.as_str(),
                                     _ => unreachable!(),
@@ -476,7 +487,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                                     &temp_dir,
                                     partials_prefix,
                                     true,
-                                    opt.per_window,
+                                    action,
                                     chrom_len,
                                     decimals_to_use,
                                     &mut positional_writer,
@@ -548,6 +559,8 @@ fn process_tile(
     // Open a fresh BAM reader for this thread
     let (mut reader, tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
     debug_assert!(tid_check == tile.tid as u32);
+
+    let per_window_action = opt.per_window;
 
     let mut counter = FCoverageCounters::default();
 
@@ -837,6 +850,8 @@ fn process_tile(
             cross_idx_out,
             guaranteed_aligned,
         } => {
+            let action =
+                per_window_action.expect("per-window action required when using aggregates");
             let masked_mode = mask_slice.is_some();
             let ps_all_slice = {
                 if prefix_all_cache.is_none() {
@@ -899,7 +914,7 @@ fn process_tile(
                         allowed,
                         unmasked_span_bp,
                         masked_mode,
-                        &opt.per_window,
+                        &action,
                     );
                     let value = round_to(value, decimals);
 
