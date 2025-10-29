@@ -26,7 +26,6 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 /// ## Blacklisting
 ///
 /// Positions in blacklisted regions are set to `f32::NaN` (and thus not included in sums or averages).
-/// Set `--nan-policy` to change how these positions are handled in the output (positional WPS outputs only).
 ///
 /// ## Scaling
 ///
