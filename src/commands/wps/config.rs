@@ -25,10 +25,10 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 ///
 /// ## Blacklisting
 ///
-/// Positions where the `--window_size` window overlap a (dilated) blacklisted region are set to `f32::NaN` (and thus not included in sums or averages).
+/// Positions where the `--window_size` window overlaps a (dilated) blacklisted region are set to `f32::NaN` (and thus not included in sums or averages).
 ///
 /// **Dilation**: We want to avoid any WPS scores being biased by neighbouring blacklisted intervals,
-/// which can lead to an unreasonably high number of overlapping fragments.
+/// which can have an unreasonably high number of overlapping fragments.
 /// Hence, we increase all blacklist intervals by the maximum fragment length + half the `--window_size`.
 ///
 /// ## Scaling
