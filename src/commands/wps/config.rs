@@ -29,7 +29,7 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 ///
 /// **Dilation**: We want to avoid any WPS scores being biased by neighbouring blacklisted intervals,
 /// which can have an unreasonably high number of overlapping fragments.
-/// Hence, we increase all blacklist intervals by the maximum fragment length + half the `--window_size`.
+/// Hence, we increase all blacklist intervals by the maximum fragment length + half the `--window_size` on both sides.
 ///
 /// ## Scaling
 ///
