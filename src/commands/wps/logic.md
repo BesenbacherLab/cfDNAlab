@@ -4,8 +4,8 @@
 
 The original Snyder et al. definition treats the two WPS components as disjoint groups. When `cfdna wps` evaluates a window centred at position `c`, a fragment:
 
- - Contributes to the **protected** count only when its start lies *strictly before* the window start and its end lies *strictly after* the window end. In other words, the fragment spans the full window without placing either endpoint inside it.
- - Contributes to the **end-within** count when either endpoint falls inside the window (respecting the half-open convention we use for fragments).
+- Contributes to the **protected** count when the window start lies at or to the right of the fragment start *and* the window end lies at or to the left of the fragment end. Exact edge alignment therefore still counts as "fully covered".
+- Contributes to the **end-within** count only when an endpoint falls strictly inside the window (respecting the half-open convention we use for fragments). Endpoints that coincide with the window boundary are ignored.
 
 This ensures a fragment can never be counted both as "fully spanning" and "ending inside" the same window, mirroring the reference implementation from the shendurelab `cfDNA` toolkit.
 
@@ -18,8 +18,8 @@ This ensures a fragment can never be counted both as "fully spanning" and "endin
   ```
   WPS(c) = fragments_fully_covering_window(c) - fragment_ends_inside_window(c)
   ```
-  - A fragment fully covers the window only when the window start lies strictly after the fragment start *and* the window end lies strictly before the fragment end.
-  - A fragment contributes to the "ends inside" term when either endpoint lies inside the window.
+- A fragment fully covers the window when the window start is at or to the right of the fragment start *and* the window end is at or to the left of the fragment end.
+- A fragment contributes to the "ends inside" term only when either endpoint sits strictly inside the window.
 
 ## Fragment Length Constraints
 - Enforce `min_fragment_length >= window_size` to ensure every fragment can, in principle, span the full window.
@@ -42,9 +42,9 @@ This ensures a fragment can never be counted both as "fully spanning" and "endin
   2. `end_diff`: tracks how many fragment ends fall inside the window centred at each base.
 - Range updates use the standard "difference array" trick: to add weight `w` to every index `i` in `[a, b)`, increment `diff[a] += w` and decrement `diff[b] -= w`. A later prefix sum turns these markers into the per-base totals.
 - For each fragment `[start, end)` and weight `w` (already clipped to the halo span):
-  - **Full-window span:** The window centred at `c` fits strictly inside the fragment only when `start < c - left_span` *and* `c + right_span < end`. Rearranged for integer centres, this corresponds to the half-open range `(start + left_span, end - right_span)`, which we encode by adding `+w` at `start + left_span + 1` and `-w` at `end - right_span`.
-  - **Left endpoint contribution:** To include the left endpoint we need both `c - left_span <= start` (the window starts before the endpoint) and `start < c + right_span` (the endpoint sits strictly inside the window's upper bound). Combined, this becomes `start - right_span < c <= start + left_span`. For integer centres that is precisely the set `{start - right_span + 1, ..., start + left_span}`, which we encode as `[start - right_span + 1, start + left_span + 1)` after clipping to the tile.
-  - **Right endpoint contribution:** The fragment interval is half-open, so the right endpoint lives at `end - 1`. The same reasoning gives `end - right_span <= c < end + left_span`, which maps to `[end - right_span, end + left_span)` in `end_diff` once clipped.
+- **Full-window span:** The window centred at `c` lies entirely inside the fragment whenever `start <= c - left_span` *and* `c + right_span <= end`. For integer centres this describes the inclusive range `[start + left_span, end - right_span]`, which we encode by adding `+w` at `start + left_span` and `-w` at `end - right_span + 1`.
+- **Left endpoint contribution:** To count the left endpoint we require `c - left_span < start` (window start lies strictly before the endpoint) and `start < c + right_span` (endpoint sits strictly inside the upper bound). This is the open interval `(start - right_span, start + left_span)`, represented as `[start - right_span + 1, start + left_span)` in zero-based indices.
+- **Right endpoint contribution:** The fragment interval is half-open, so the right endpoint sits at `end - 1`. We subtract when `end - right_span < c` and `c + left_span < end`, which maps to `(end - right_span, end + left_span)` and becomes `[end - right_span + 1, end + left_span)` in the diff buffer.
 - Illustration (window size 120 -> `left_span = right_span = 60`):
 
   ```text
@@ -52,21 +52,21 @@ This ensures a fragment can never be counted both as "fully spanning" and "endin
   Fragment start = 100, fragment end = 250
   Window centred at c spans [c - 60, c + 60)
 
-  Fully covered centres: c in [161, 190) (integers 161..189)
-      overlap_diff[161] += w
-      overlap_diff[190] -= w
+  Fully covered centres: c in [160, 191) (integers 160..190)
+      overlap_diff[160] += w
+      overlap_diff[191] -= w
 
   Left endpoint p = 100 (centres 41..160)
       end_diff[41]  += w
-      end_diff[161] -= w
+      end_diff[160] -= w
 
-  Right endpoint p = 249 (centres 190..309)
-      end_diff[190] += w
+  Right endpoint p = 249 (centres 191..310)
+      end_diff[191] += w
       end_diff[310] -= w
 
   ```
 
-- Why `[41, 161)` instead of `[40, 160)`? With half-open windows `[c - left_span, c + right_span)`, the upper bound is excluded. At `c = 40` the window is `[-20, 100)`, so the base at 100 falls just outside. Starting at `c = 41` gives `[-19, 101)`, which genuinely contains 100. The interval `[41, 161)` therefore lists the 120 valid centre positions (161 - 41) for a 120 bp window.
+- Why `[41, 160)` instead of `[40, 160)`? With half-open windows `[c - left_span, c + right_span)`, the upper bound is excluded. At `c = 40` the window is `[-20, 100)`, so the base at 100 falls just outside. Starting at `c = 41` gives `[-19, 101)`, which genuinely contains 100. The interval `[41, 160)` therefore lists the 119 centres whose windows strictly contain the left endpoint; the centre at `c = 160` is excluded because the endpoint now sits on the boundary and is treated as fully covered.
 
 - After all fragments have been processed for the tile, take a prefix sum over each diff buffer to recover the per-centre counts, then compute `wps = overlap_counts - end_counts`.
 

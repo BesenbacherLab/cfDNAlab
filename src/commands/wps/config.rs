@@ -7,6 +7,9 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 /// Calculate positional windowed protection scores (WPS) across the genome.
 ///
 /// Only paired-end fragments with both reads present are considered.
+/// 
+/// WPS: Number of fragments fully overlapping the window, minus the number of fragments ending strictly inside the window.
+/// Fragments that both start and end at the exact window edges are considered fully overlapping.
 ///
 /// ## Windowing (by-bed or by-size)
 ///

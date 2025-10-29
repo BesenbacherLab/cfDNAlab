@@ -1,6 +1,6 @@
 mod fixtures;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs};
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
 use cfdnalab::commands::wps::config::WPSConfig;
@@ -24,10 +24,6 @@ struct WpsRun {
     start: u32,
     end: u32,
     value: f32,
-}
-
-fn wps_run(start: u32, end: u32, value: f32) -> WpsRun {
-    WpsRun { start, end, value }
 }
 
 fn fragment_spec(start: u32, end: u32) -> FragmentSpec {
@@ -121,6 +117,16 @@ fn make_config(
 }
 
 fn run_wps(cfg: &WPSConfig) -> Result<Vec<WpsRun>> {
+    let rows = run_wps_with_chrom(cfg)?;
+    Ok(rows
+        .into_iter()
+        .map(|(_, start, end, value)| wps_run(start, end, value))
+        .collect())
+}
+
+fn run_wps_with_chrom(
+    cfg: &WPSConfig,
+) -> Result<Vec<(String, u32, u32, f32)>> {
     run_fn(cfg)?;
     let prefix = cfg.output_prefix.trim();
     let bedgraph_path = cfg
@@ -141,7 +147,7 @@ fn run_wps(cfg: &WPSConfig) -> Result<Vec<WpsRun>> {
             continue;
         }
         let mut cols = line.split('\t');
-        let _chromosome = cols
+        let chromosome = cols
             .next()
             .context("missing chromosome column in WPS output")?;
         let start_str = cols.next().context("missing start column in WPS output")?;
@@ -158,7 +164,7 @@ fn run_wps(cfg: &WPSConfig) -> Result<Vec<WpsRun>> {
             .parse::<f32>()
             .with_context(|| format!("invalid value '{value_str}'"))?;
 
-        runs.push(WpsRun { start, end, value });
+        runs.push((chromosome.to_string(), start, end, value));
     }
 
     Ok(runs)
@@ -186,6 +192,25 @@ fn assert_runs_equal(actual: &[WpsRun], expected: &[WpsRun]) {
     }
 }
 
+fn clip_runs(runs: &[WpsRun], max_end: u32) -> Vec<WpsRun> {
+    let mut out = Vec::new();
+    for run in runs {
+        if run.start >= max_end {
+            break;
+        }
+        let end = run.end.min(max_end);
+        out.push(WpsRun {
+            start: run.start,
+            end,
+            value: run.value,
+        });
+        if run.end >= max_end {
+            break;
+        }
+    }
+    out
+}
+
 #[test]
 fn single_fragment_produces_central_plateau() -> Result<()> {
     let fixture = make_fixture("wps_single_fragment", &[(10, 22)])?;
@@ -193,25 +218,17 @@ fn single_fragment_produces_central_plateau() -> Result<()> {
     let cfg = make_config(4, false, &fixture.bam, out_dir.path(), "single_fragment");
 
     // Manual expectations:
-    // - Window size 4 gives left_span = right_span = 2, so each WPS sample is centred at c and
-    //   covers [c - 2, c + 2). A fragment satisfies the geometric test for full coverage when
-    //   c is between 12 and 20 inclusive, but centres 12 and 20 still see an endpoint, leaving
-    //   only 13..=19 with a lasting +1.
-    // - Each fragment end subtracts 1 wherever the window still contains that endpoint.
-    //   * Left end at 10 affects centres 9..=12 (windows [7,11), [8,12), [9,13), [10,14)), so
-    //     centre 12 receives both +1 (full span) and -1 (left end) -> net 0.
-    //   * Right end at 21 affects centres 20..=23 (windows [18,22), [19,23), [20,24), [21,25)),
-    //     and centre 20 again cancels to 0.
-    // - Putting it together: 9-12 and 20-23 carry -1 (only endpoint contribution), 13-19 carries
-    //   +1 (full coverage without endpoints), and all other centres remain 0. In BED form the
-    //   positive plateau therefore emits [13,20) (centres 13..=19) and the right-side dip starts
-    //   at [20,24), because centre 20 cancels to 0. Centre 8 does NOT include base 10 because its
-    //   window is [6,10) -- the upper bound is exclusive -- so the left-end penalty begins exactly
-    //   at 9.
+    // - Window size 4 gives left_span = right_span = 2. A fragment counts as fully covering a
+    //   centre when the window [c-2, c+2) stays within [10, 22).
+    //   This happens for c = 12..=19, yielding the +1 plateau [12, 20).
+    // - Endpoints only subtract when they fall strictly inside the window:
+    //   * The left endpoint at 10 affects centres 9, 10, 11 -> run [9, 12) at -1.
+    //   * The right endpoint at 22 affects centres 21, 22 -> run [21, 23) at -1.
+    // - All remaining centres stay at zero and are omitted because keep_zero_runs=false.
     let expected = vec![
-        wps_run(9, 13, -1.0),
-        wps_run(13, 20, 1.0),
-        wps_run(20, 24, -1.0),
+        wps_run(9, 12, -1.0),
+        wps_run(12, 20, 1.0),
+        wps_run(21, 23, -1.0),
     ];
 
     let actual = run_wps(&cfg)?;
@@ -228,22 +245,24 @@ fn overlapping_fragments_stack_scores() -> Result<()> {
 
     // Manual expectations for two fragments:
     // - Fragment F1: [0, 20), fragment F2: [4, 12); window size 4 keeps left_span = right_span = 2.
-    // - Strict full-span rule means:
-    //     * F1 contributes +1 only for centres 3..=17 (window strictly inside [0,20)).
-    //     * F2 contributes +1 only for centres 7..=9 (window strictly inside [4,12)).
+    // - Full-span contributions:
+    //     * F1 covers c = 2..=18.
+    //     * F2 covers c = 6..=10.
     // - Endpoint penalties:
-    //     * F1 left end at 0 hits centres -1..=2; right end at 19 hits 18..=21.
-    //     * F2 left end at 4 hits centres 3..=6; right end at 11 hits 10..=13.
-    // - Net behaviour across 0..24:
-    //     * 0-3: only left-end penalties -> -1.
-    //     * 7-10: both fragments span -> +2.
-    //     * 14-18: only F1 spans -> +1.
-    //     * 18-22: only right-end penalties remain -> -1.
+    //     * F1 endpoints reduce centres c = 19, 20.
+    //     * F2 endpoints reduce centres c = 4, 5 and c = 10, 11, 12.
+    // - Combining both fragments yields the visible runs:
+    //     * [2, 3) at +1 from the long fragment.
+    //     * [6, 10) at +2 where both fragments span the window.
+    //     * [10, 11) at +1 after the shorter fragment loses its right edge.
+    //     * [13, 18) at +1 once only the long fragment remains.
+    //     * [19, 21) at -1 from the long fragment’s right endpoint.
     let expected = vec![
-        wps_run(0, 3, -1.0),
-        wps_run(7, 10, 2.0),
-        wps_run(14, 18, 1.0),
-        wps_run(18, 22, -1.0),
+        wps_run(2, 3, 1.0),
+        wps_run(6, 10, 2.0),
+        wps_run(10, 11, 1.0),
+        wps_run(13, 18, 1.0),
+        wps_run(19, 21, -1.0),
     ];
 
     let actual = run_wps(&cfg)?;
@@ -260,20 +279,21 @@ fn keep_zero_runs_emits_flat_segments() -> Result<()> {
 
     // Same geometry as the single-fragment test, but keep_zero_runs=true means we retain zero
     // plateaus between non-zero segments:
-    // - Leading zeros before the first penalty (0-9).
-    // - Trailing zeros (24-30).
-    // Non-zero spans follow the strict-span expectations from the first test.
+    // - Leading zeros from the first valid centre (2) up to the first penalty at 9.
+    // - Trailing zeros that stretch beyond the region of interest; we assert up to c = 30.
     let expected = vec![
-        wps_run(0, 9, 0.0),
-        wps_run(9, 13, -1.0),
-        wps_run(13, 20, 1.0),
-        wps_run(20, 24, -1.0),
-        wps_run(24, 30, 0.0),
+        wps_run(2, 9, 0.0),
+        wps_run(9, 12, -1.0),
+        wps_run(12, 20, 1.0),
+        wps_run(20, 21, 0.0),
+        wps_run(21, 23, -1.0),
+        wps_run(23, 30, 0.0),
     ];
 
     let actual = run_wps(&cfg)?;
 
-    assert_runs_equal(&actual, &expected);
+    let clipped = clip_runs(&actual, 30);
+    assert_runs_equal(&clipped, &expected);
     Ok(())
 }
 
@@ -284,15 +304,76 @@ fn fragment_equal_to_window_removes_central_signal() -> Result<()> {
     let cfg = make_config(4, false, &fixture.bam, out_dir.path(), "equal_window");
 
     // Fragment length exactly matches the window (4 bp):
-    // - No centre achieves full coverage, because the window span cannot sit strictly inside the
-    //   fragment once both edges must remain within [10,14).
-    // - Both fragment ends still subtract wherever the window contains them. With left_span/right_span=2,
-    //   the affected centres are 9..=11 for the left end at 10 and 13..=15 for the right end at 13.
-    // - The overlapping penalties merge into the single continuous dip 9-16 at -1, with zeros elsewhere.
-    let expected = vec![wps_run(9, 16, -1.0)];
+    // - Centre c = 12 is fully covered (edge-aligned) so contributes +1.
+    // - Endpoints reduce windows that contain them strictly:
+    //     * Left endpoint at 10 subtracts for c = 9, 10, 11.
+    //     * Right endpoint at 14 subtracts for c = 12, 13, 14.
+    // - Net result: two -1 dips flanking the zeroed centre at 12; no positive plateau remains.
+    let expected = vec![wps_run(9, 12, -1.0), wps_run(13, 15, -1.0)];
 
     let actual = run_wps(&cfg)?;
 
     assert_runs_equal(&actual, &expected);
+    Ok(())
+}
+
+#[test]
+fn empty_bam_emits_single_zero_run_per_chromosome() -> Result<()> {
+    // Chromosomes long enough to admit two tiles each.
+    let chrom_defs = vec![("chr1".to_string(), 400u32), ("chr2".to_string(), 400u32)];
+    let fixture = bam_from_specs(chrom_defs.clone(), Vec::new(), Vec::new(), "wps_empty")?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = make_config(4, true, &fixture.bam, out_dir.path(), "empty_two_chr");
+    cfg.chromosomes.chromosomes = Some(vec!["chr1".to_string(), "chr2".to_string()]);
+    cfg.set_tile_size(200);
+
+    let window_size = cfg.window_size;
+    let left_span = window_size / 2;
+    let right_span = window_size - left_span;
+
+    let runs = run_wps_with_chrom(&cfg)?;
+
+    ensure!(
+        runs.len() == 2,
+        "expected exactly 2 runs (one per chromosome), got {runs:?}"
+    );
+
+    for (chr, start, end, value) in runs {
+        let chrom_len = chrom_defs
+            .iter()
+            .find(|(name, _)| name == &chr)
+            .map(|(_, len)| *len as u32)
+            .with_context(|| format!("unexpected chromosome {chr} in output"))?;
+        let expected_start = left_span;
+        let expected_end = chrom_len - right_span + 1;
+        assert_eq!(
+            (start, end, value),
+            (expected_start, expected_end, 0.0),
+            "unexpected run for {chr}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn empty_bam_without_keep_zero_runs_outputs_nothing() -> Result<()> {
+    let chrom_defs = vec![("chr1".to_string(), 400u32), ("chr2".to_string(), 400u32)];
+    let fixture =
+        bam_from_specs(chrom_defs.clone(), Vec::new(), Vec::new(), "wps_empty_nozeros")?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = make_config(4, false, &fixture.bam, out_dir.path(), "empty_two_chr_nozeros");
+    cfg.chromosomes.chromosomes = Some(vec!["chr1".to_string(), "chr2".to_string()]);
+    cfg.set_tile_size(200);
+
+    let runs = run_wps_with_chrom(&cfg)?;
+
+    ensure!(
+        runs.is_empty(),
+        "expected no runs when keep_zero_runs=false, got {runs:?}"
+    );
+
     Ok(())
 }

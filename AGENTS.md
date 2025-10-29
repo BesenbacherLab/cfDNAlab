@@ -79,6 +79,8 @@ Leave the codebase clearer than you found it: tidy TODOs (once solved), improve 
 
 Place tests in tests/ with clear, isolated fixtures. Prefer deterministic tests.
 
+Derive expectations by hand, do not adjust them to match current output!
+
 Include at least:
 
  - Happy-path tests (expected inputs).

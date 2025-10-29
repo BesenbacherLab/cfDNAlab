@@ -639,13 +639,13 @@ fn process_tile(
         let fragment_start = fragment.start as i64;
         let fragment_end = fragment.end as i64;
 
-        // Strict-span contribution: start < window_start and end > window_end
+        // Full-span contribution: window stays entirely inside the fragment (edges may align)
         push_range(
             &mut span_diff,
             dilated_start_i64,
             dilated_end_i64,
-            fragment_start + left_span_i64 + 1,
-            fragment_end - right_span_i64,
+            fragment_start + left_span_i64,
+            fragment_end - right_span_i64 + 1,
             1.0,
         );
         // Left endpoint contribution: window must still contain the fragment start
@@ -654,15 +654,15 @@ fn process_tile(
             dilated_start_i64,
             dilated_end_i64,
             fragment_start - right_span_i64 + 1,
-            fragment_start + left_span_i64 + 1,
+            fragment_start + left_span_i64,
             1.0,
         );
-        // Right endpoint contribution: window must still contain fragment_end-1
+        // Right endpoint contribution: window must still contain the fragment end (exclusive)
         push_range(
             &mut end_diff,
             dilated_start_i64,
             dilated_end_i64,
-            fragment_end - right_span_i64,
+            fragment_end - right_span_i64 + 1,
             fragment_end + left_span_i64,
             1.0,
         );
