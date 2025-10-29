@@ -81,6 +81,8 @@ Place tests in tests/ with clear, isolated fixtures. Prefer deterministic tests.
 
 Derive expectations by hand, do not adjust them to match current output!
 
+IMPORTANT! When developing new tests, do NOT run the tests before you've finished writing your expectations. Always write your reasoned expectations, then stop and ask if you should run the tests.
+
 Include at least:
 
  - Happy-path tests (expected inputs).

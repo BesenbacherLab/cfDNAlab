@@ -189,14 +189,14 @@ fn single_fragment_produces_central_plateau() -> Result<()> {
     // Manual expectations:
     // - Window size 4 gives left_span = right_span = 2. A fragment counts as fully covering a
     //   centre when the window [c-2, c+2) stays within [10, 22).
-    //   This happens for c = 12..=19, yielding the +1 plateau [12, 20).
+    //   This happens for c = 12..=20, yielding the +1 plateau [12, 21).
     // - Endpoints only subtract when they fall strictly inside the window:
     //   * The left endpoint at 10 affects centres 9, 10, 11 -> run [9, 12) at -1.
     //   * The right endpoint at 22 affects centres 21, 22 -> run [21, 23) at -1.
     // - All remaining centres stay at zero and are omitted because keep_zero_runs=false.
     let expected = vec![
         wps_run("chr1", 9, 12, -1.0),
-        wps_run("chr1", 12, 20, 1.0),
+        wps_run("chr1", 12, 21, 1.0),
         wps_run("chr1", 21, 23, -1.0),
     ];
 
@@ -219,18 +219,16 @@ fn overlapping_fragments_stack_scores() -> Result<()> {
     //     * F2 covers c = 6..=10.
     // - Endpoint penalties:
     //     * F1 endpoints reduce centres c = 19, 20.
-    //     * F2 endpoints reduce centres c = 4, 5 and c = 10, 11, 12.
+    //     * F2 endpoints reduce centres c = 3, 4, 5 on the left and c = 11, 12 on the right.
     // - Combining both fragments yields the visible runs:
     //     * [2, 3) at +1 from the long fragment.
-    //     * [6, 10) at +2 where both fragments span the window.
-    //     * [10, 11) at +1 after the shorter fragment loses its right edge.
-    //     * [13, 18) at +1 once only the long fragment remains.
+    //     * [6, 11) at +2 where both fragments span the window.
+    //     * [13, 19) at +1 once only the long fragment remains.
     //     * [19, 21) at -1 from the long fragment’s right endpoint.
     let expected = vec![
         wps_run("chr1", 2, 3, 1.0),
-        wps_run("chr1", 6, 10, 2.0),
-        wps_run("chr1", 10, 11, 1.0),
-        wps_run("chr1", 13, 18, 1.0),
+        wps_run("chr1", 6, 11, 2.0),
+        wps_run("chr1", 13, 19, 1.0),
         wps_run("chr1", 19, 21, -1.0),
     ];
 
@@ -253,8 +251,7 @@ fn keep_zero_runs_emits_flat_segments() -> Result<()> {
     let expected = vec![
         wps_run("chr1", 2, 9, 0.0),
         wps_run("chr1", 9, 12, -1.0),
-        wps_run("chr1", 12, 20, 1.0),
-        wps_run("chr1", 20, 21, 0.0),
+        wps_run("chr1", 12, 21, 1.0),
         wps_run("chr1", 21, 23, -1.0),
         wps_run("chr1", 23, 30, 0.0),
     ];
@@ -276,16 +273,42 @@ fn fragment_equal_to_window_removes_central_signal() -> Result<()> {
     // - Centre c = 12 is fully covered (edge-aligned) so contributes +1.
     // - Endpoints reduce windows that contain them strictly:
     //     * Left endpoint at 10 subtracts for c = 9, 10, 11.
-    //     * Right endpoint at 14 subtracts for c = 12, 13, 14.
-    // - Net result: two -1 dips flanking the zeroed centre at 12; no positive plateau remains.
+    //     * Right endpoint at 14 subtracts for c = 13, 14, 15.
+    // - Net result: shoulders at -1 on either side with the midpoint staying at +1.
     let expected = vec![
         wps_run("chr1", 9, 12, -1.0),
+        wps_run("chr1", 12, 13, 1.0),
         wps_run("chr1", 13, 15, -1.0),
     ];
 
     let actual = run_wps(&cfg)?;
 
     assert_runs_equal(&actual, &expected);
+    Ok(())
+}
+
+#[test]
+fn fragment_equal_to_window_with_zero_runs_emits_shoulders() -> Result<()> {
+    let fixture = make_fixture("wps_equal_window_zero_runs", &[(10, 14)])?;
+    let out_dir = TempDir::new()?;
+    let cfg = make_config(4, true, &fixture.bam, out_dir.path(), "equal_window_zero_runs");
+
+    // Fragment length equals window size:
+    // - Full coverage contributes +1 at centre 12.
+    // - Endpoint windows carry -1 shoulders on both sides.
+    // - Remaining centres stay at 0 and are kept because keep_zero_runs=true.
+    let expected = vec![
+        wps_run("chr1", 2, 9, 0.0),
+        wps_run("chr1", 9, 12, -1.0),
+        wps_run("chr1", 12, 13, 1.0),
+        wps_run("chr1", 13, 15, -1.0),
+        wps_run("chr1", 15, 30, 0.0),
+    ];
+
+    let actual = run_wps(&cfg)?;
+
+    let clipped = clip_runs(&actual, 30);
+    assert_runs_equal(&clipped, &expected);
     Ok(())
 }
 
