@@ -22,7 +22,68 @@ impl PartialOrd for Entry {
     }
 }
 
-/// Sorts an almost-sorted fragment stream using a bounded coordinate window.
+/// Maintains a bounded in-memory buffer to emit fragments in strict (start, end, line) order
+/// from an almost-sorted stream whose disorder is limited by `max_window_bp`.
+///
+/// This sorter uses `BinaryHeap<Reverse<Entry>>` as a min-heap so that `peek()` and `pop()` yield
+/// the smallest entry by the chosen ordering. A `BinaryHeap` is not a fully sorted container.
+/// After `push`, the heap only guarantees the extremum at the top. Iterating the heap does not
+/// produce sorted order. Sorted output is obtained by repeatedly popping the heap.
+///
+/// The algorithm buffers incoming entries and flushes anything that is safely behind a moving
+/// coordinate window. Let `max_seen_start` be the largest `start` observed so far. Any entry with
+/// `start <= max_seen_start - max_window_bp` cannot be preceded by future entries under the bounded
+/// disorder assumption, so it can be written out immediately. At end of stream, the remaining
+/// tail is at most `max_window_bp` wide and is finished with a small in-memory `Vec::sort`.
+///
+/// Parameters
+/// ----------
+/// - max_window_bp:
+///     Maximum coordinate displacement the input stream can exhibit. Set this to the maximum
+///     fragment length so that no future fragment starts more than `max_window_bp` bases behind
+///     the current maximum start.
+///
+/// Behavior
+/// --------
+/// - Push:
+///     Updates `max_seen_start`, inserts into the min-heap, then repeatedly flushes the heap
+///     top while `top.start <= max_seen_start - max_window_bp`.
+/// - Flush all:
+///     Drains the residual heap, sorts that small tail, and writes it out to complete ordering.
+/// - Ordering:
+///     Emits entries strictly ordered by `(start, end, line)` within a chromosome stream.
+/// - Memory bound:
+///     Heap size is bounded by the number of fragments whose starts fall within the last
+///     `max_window_bp` bases, not by total input size.
+///
+/// Complexity
+/// ----------
+/// - Each `push` is `O(log k)` where `k` is the current heap size within the window.
+/// - Final tail sort is `O(k log k)` with `k` limited by the window, typically small.
+///
+/// Correctness rationale
+/// ---------------------
+/// - Under the bounded disorder assumption, for any observed `max_seen_start`, no unseen entry
+///   can have `start < max_seen_start - max_window_bp`.
+/// - Therefore any entry with `start <= max_seen_start - max_window_bp` is globally minimal among
+///   the buffered entries and safe to flush without violating sorted order.
+///
+/// Limitations
+/// -----------
+/// - If the stream violates the bounded disorder assumption, output order is not guaranteed.
+/// - Sorting keys are `(start, end, line)`. Extend the `Entry` ordering if additional keys
+///   or stability guarantees are required.
+///
+/// Example
+/// -------
+/// ```rust
+/// let mut sorter = WindowSorter::new(max_fragment_length);
+/// // Stream fragments:
+/// sorter.push(Entry { start, end, line }, &mut writer)?;
+/// // End of stream:
+/// sorter.flush_all(&mut writer)?;
+/// ```
+
 pub struct WindowSorter {
     pub heap: BinaryHeap<Reverse<Entry>>,
     pub max_window_bp: u32, // Look-back (max fragment length)

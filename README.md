@@ -37,15 +37,16 @@ $ target/release/cfdna --help
 ## Commands
 The following commands are currently available:
 
-| Command                  | Description                                                                                                                                                                                                               |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cfdna fcoverage`        | Count *fragment* coverage per position or aggregated in windows                                                                                                                                                           |
-| `cfdna profile-groups`   | Count fragment *midpoint* coverage in fixed-size intervals, collapsed by groups across the genome.<br />E.g. transcription factor binding sites, aggregated per transcription factor.<br />Fast alternative to *Griffin*. |
-| `cfdna lengths`          | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)` for inwardly directed pairs only                                                                                                                  |
-| `cfdna fragment-kmers`   | Count fragment k-mers with highly flexible specification of positions                                                                                                                                                     |
-| `cfdna transitions`      | Extract nth-order transition probabilities in specifiable parts of the fragments                                                                                                                                          |
-| **Normalization**        | Precompute normalization/correction factors to enable their use in the main commands                                                                                                                                      |
-| `cfdna coverage-weights` | Calculate scaling factors for normalizing/smoothing coverage across the genome                                                                                                                                            |
+| Command                  | Description                                                                                                                                                                                                            |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cfdna fcoverage`        | Count *fragment* coverage per position or aggregated in windows                                                                                                                                                        |
+| `cfdna profile-groups`   | Count fragment *midpoint* coverage in fixed-size intervals, collapsed by groups across the genome<br />E.g. transcription factor binding sites, aggregated per transcription factor<br />Fast alternative to *Griffin* |
+| `cfdna lengths`          | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)` for inwardly directed pairs only                                                                                                               |
+| `cfdna fragment-kmers`   | Count fragment k-mers with highly flexible specification of positions                                                                                                                                                  |
+| `cfdna transitions`      | Extract nth-order transition probabilities in specifiable parts of the fragments                                                                                                                                       |
+| `cfdna wps`              | Calculate windowed protection scores per position                                                                                                                                                                      |
+| **Normalization**        | Precompute normalization/correction factors to enable their use in the main commands                                                                                                                                   |
+| `cfdna coverage-weights` | Calculate scaling factors for normalizing/smoothing coverage across the genome                                                                                                                                         |
 
 
 ### Common options
