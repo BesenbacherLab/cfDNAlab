@@ -304,20 +304,23 @@ fn empty_bam_emits_single_zero_run_per_chromosome() -> Result<()> {
     let runs = run_wps_with_chrom(&cfg)?;
 
     // Each chromosome spans two tiles; we intentionally expose the uncrossed tile boundaries to
-    // keep merge_positional_tiles fast (simple stream copy). Expect one zero-valued run per tile.
+    // keep merge_positional_tiles fast (simple stream copy).
+    // Valid centers start 2 bp in and stop at 399, so every zero run begins at 2 and ends at 399 (exclusive)
     ensure!(
         runs.len() == 4,
         "expected exactly 4 runs (two per chromosome), got {runs:?}"
     );
 
-    let mut expected = Vec::new();
-    for (chr, len) in &chrom_defs {
-        let first_end = tile_bp.min(*len);
-        expected.push((chr.clone(), 0u32, first_end, 0.0f32));
-        expected.push((chr.clone(), first_end, *len, 0.0f32));
-    }
+    // Chromosomes are 400 bp and the 4 bp window means valid centers start at 2 and stop before 399 (exclusive)
+    // Each 200 bp tile is emitted separately so every chromosome contributes two zero runs
+    let expected = vec![
+        ("chr1".to_string(), 2, 200, 0.0f32),
+        ("chr1".to_string(), 200, 399, 0.0f32),
+        ("chr2".to_string(), 2, 200, 0.0f32),
+        ("chr2".to_string(), 200, 399, 0.0f32),
+    ];
 
-    for (run, exp) in runs.iter().zip(expected.drain(..)) {
+    for (run, exp) in runs.iter().zip(expected.into_iter()) {
         assert_eq!(
             (&run.chromosome, run.start, run.end, run.value),
             (&exp.0, exp.1, exp.2, exp.3),
