@@ -5,19 +5,19 @@ mod tests_bam_to_frag {
     use flate2::read::GzDecoder;
     use rust_htslib::bam::index;
     use rust_htslib::bam::{
-        self, Format, HeaderView, Read, Writer,
+        self, Format, HeaderView, Writer,
         header::Header,
         record::{Cigar, Record},
     };
     use std::{
         fs::{self, File},
-        io::{BufRead, BufReader, Read as _},
-        path::{Path, PathBuf},
+        io::Read as _,
+        path::Path,
     };
     use tempfile::tempdir;
 
     // Bring your crate items into scope.
-    use cfdnalab::commands::bam_to_frag::{config::BamToFragConfig, run_inner};
+    use cfdnalab::commands::bam_to_frag::{bam_to_frag::run_inner, config::BamToFragConfig};
     use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs};
 
     #[test]
@@ -229,7 +229,7 @@ mod tests_bam_to_frag {
         mpos: i64,
     ) -> Record {
         let mut rec = Record::new();
-        rec.set(qname, None, cigar, seq, qual);
+        rec.set(qname, cigar, seq, qual);
 
         let mut flags: u16 = 0;
         flags |= 0x1; // paired
