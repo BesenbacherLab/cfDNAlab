@@ -9,7 +9,7 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::{
     emit_bedgraph_runs, emit_windowed_runs, write_final_row,
 };
-use crate::commands::wps::config::WPSConfig;
+use crate::commands::wps_peaks::config::WPSConfig;
 use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment_iterator::fragments_from_bam;

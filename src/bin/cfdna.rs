@@ -9,7 +9,7 @@ use cfdnalab::commands::profile_groups::config::ProfileGroupsConfig;
 use cfdnalab::commands::reference_gc::config::RefGCConfig;
 use cfdnalab::commands::visualize_positions::config::VisualizePositionsConfig;
 #[cfg(feature = "cli")]
-use cfdnalab::commands::wps::config::WPSConfig;
+use cfdnalab::commands::wps_peaks::config::WPSConfig;
 
 #[cfg(feature = "cli")]
 #[cfg_attr(feature = "cli", derive(clap::Parser))]
@@ -27,7 +27,7 @@ enum Cmd {
     CoverageWeights(CoverageWeightsConfig),
     Lengths(LengthsConfig),
     Fcoverage(FCoverageConfig),
-    WPS(WPSConfig),
+    WPSPeaks(WPSConfig),
     Midpoints(ProfileGroupsConfig),
     FragmentKmers(FragmentKmersConfig),
     PrepWindows(PrepareConfig),
@@ -61,7 +61,7 @@ fn main() {
         }
         Cmd::Lengths(cfg) => cfdnalab::commands::lengths::lengths::run(&cfg),
         Cmd::Fcoverage(cfg) => cfdnalab::commands::fcoverage::fcoverage::run(&cfg),
-        Cmd::WPS(cfg) => cfdnalab::commands::wps::wps::run(&cfg),
+        Cmd::WPSPeaks(cfg) => cfdnalab::commands::wps_peaks::wps_peaks::run(&cfg),
         Cmd::Midpoints(cfg) => cfdnalab::commands::profile_groups::profile_groups::run(&cfg),
         Cmd::FragmentKmers(cfg) => cfdnalab::commands::fragment_kmers::fragment_kmers::run(&cfg),
         Cmd::PrepWindows(cfg) => cfdnalab::commands::prepare_windows::prepare_windows::run(&cfg), // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg),

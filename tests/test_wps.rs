@@ -3,8 +3,8 @@ mod fixtures;
 use anyhow::{Context, Result, ensure};
 use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs};
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
-use cfdnalab::commands::wps::config::WPSConfig;
-use cfdnalab::commands::wps::wps::run as run_fn;
+use cfdnalab::commands::wps_peaks::config::WPSConfig;
+use cfdnalab::commands::wps_peaks::wps_peaks::run as run_fn;
 use fixtures::{BamFixture, FragmentSpec, ReadSpec, bam_from_specs};
 use std::cmp::max;
 use std::fs::File;
@@ -132,8 +132,9 @@ fn run_wps(cfg: &WPSConfig) -> Result<Vec<WpsRun>> {
 
 fn run_wps_with_chrom(cfg: &WPSConfig) -> Result<Vec<WpsRun>> {
     run_fn(cfg)?;
-    let prefix = cfg.output_prefix.trim();
+    let prefix = cfg.shared_args.output_prefix.trim();
     let bedgraph_path = cfg
+        .shared_args
         .ioc
         .output_dir
         .join(format!("{prefix}.wps.per_position.bedgraph.zst"));
@@ -178,7 +179,6 @@ fn run_wps_with_chrom(cfg: &WPSConfig) -> Result<Vec<WpsRun>> {
 
     Ok(runs)
 }
-
 
 #[test]
 fn single_fragment_produces_central_plateau() -> Result<()> {
@@ -291,7 +291,13 @@ fn fragment_equal_to_window_removes_central_signal() -> Result<()> {
 fn fragment_equal_to_window_with_zero_runs_emits_shoulders() -> Result<()> {
     let fixture = make_fixture("wps_equal_window_zero_runs", &[(10, 14)])?;
     let out_dir = TempDir::new()?;
-    let cfg = make_config(4, true, &fixture.bam, out_dir.path(), "equal_window_zero_runs");
+    let cfg = make_config(
+        4,
+        true,
+        &fixture.bam,
+        out_dir.path(),
+        "equal_window_zero_runs",
+    );
 
     // Fragment length equals window size:
     // - Full coverage contributes +1 at centre 12.
@@ -321,7 +327,7 @@ fn empty_bam_emits_single_zero_run_per_chromosome() -> Result<()> {
     let out_dir = TempDir::new()?;
 
     let mut cfg = make_config(4, true, &fixture.bam, out_dir.path(), "empty_two_chr");
-    cfg.chromosomes.chromosomes = Some(vec!["chr1".to_string(), "chr2".to_string()]);
+    cfg.shared_args.chromosomes.chromosomes = Some(vec!["chr1".to_string(), "chr2".to_string()]);
     cfg.set_tile_size(tile_bp);
 
     let runs = run_wps_with_chrom(&cfg)?;
@@ -372,7 +378,7 @@ fn empty_bam_without_keep_zero_runs_outputs_nothing() -> Result<()> {
         out_dir.path(),
         "empty_two_chr_nozeros",
     );
-    cfg.chromosomes.chromosomes = Some(vec!["chr1".to_string(), "chr2".to_string()]);
+    cfg.shared_args.chromosomes.chromosomes = Some(vec!["chr1".to_string(), "chr2".to_string()]);
     cfg.set_tile_size(200);
 
     let runs = run_wps_with_chrom(&cfg)?;
