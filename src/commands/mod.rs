@@ -13,3 +13,4 @@ pub mod reference_gc;
 pub mod transitions;
 pub mod visualize_positions;
 pub mod wps_peaks;
+pub mod wps;

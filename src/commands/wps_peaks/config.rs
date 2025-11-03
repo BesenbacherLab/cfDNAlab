@@ -1,13 +1,23 @@
-use std::path::PathBuf;
-
 use crate::commands::cli_common::ScaleGenomeArgs;
 use crate::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
+use crate::commands::wps::config::WPSSharedConfig;
 
-/// Calculate positional windowed protection scores (WPS) across the genome.
+/*
+What do we actually want?
+
+WPS: Scores per position etc. Similar to coverage but in a way that allows calculating metrics yourself, etc. Perhaps bigwig files are better for that? Check for libs and size of such a file.
+
+Peaks: Positions and stats? Just always give everything? Well, unique-positions, index-positions, stats, then allow setting multiple? For by-size, probably stats is the one to use?
+
+*/
+
+/// Detect nucleosome peaks via windowed protection scores (WPS) across the genome.
 ///
 /// Only paired-end fragments with both reads present are considered.
-/// 
+///
+/// NOTE: To extract just the WPS, see `cfdna wps` instead.
+///
 /// WPS: Number of fragments fully overlapping the window, minus the number of fragments ending strictly inside the window.
 /// Fragments that both start and end at the exact window edges are considered fully overlapping.
 ///
@@ -54,171 +64,77 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 /// The read is secondary, supplementary or duplicate.
 /// The read failed quality check.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
+///
+/// ## Examples
+///
+/// ```rust,ignore
+///
+/// // Extract peaks (these arguments are always specified, hence `...` below)
+/// cfdna wps-peaks --bam <> --output-dir <> -n-threads <>
+///
+/// // Extract peaks in windows
+/// cfdna wps-peaks ... --by-bed <> --per-window "unique-positions"
+///
+/// // Extract statistics about the peaks (e.g., inter-peak distances) in windows
+/// cfdna wps-peaks ... --by-bed <> --per-window "stats"
+///
+/// ```
+///
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
-pub struct WPSConfig {
+pub struct WPSPeaksConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub ioc: IOCArgs,
+    pub shared_args: WPSSharedConfig,
 
-    /// Prefix for output files (e.g., a sample name) `[string]`
-    ///
-    /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
-    ///
-    /// Examples produce files like:
-    ///   `<prefix>.wps.per_position.bedgraph.zst`,
-    ///   `<prefix>.wps.per_position_per_window.tsv.zst`,
-    ///   `<prefix>.wps.avg.tsv.zst`, or
-    ///   `<prefix>.wps.total.tsv.zst`.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, short = 'x', default_value = "coverage", help_heading = "Core")
-    )]
-    pub output_prefix: String,
-
-    /// Window size `[integer]`
-    ///
-    /// Size of the window to calculate WPS scores from.
-    /// Should be small enough that some fragments can fully overlap the window.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, short='s', default_value = "120", value_parser = clap::value_parser!(u32).range(3..), help_heading="Core"))]
-    pub window_size: u32,
-
-    /// Decimals to round coverage to when writing `[integer]`
-    ///
-    /// **NOTE**: When floating point precision is not needed,
-    /// all values are integers, why we remove all decimal points!
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "2", value_parser = clap::value_parser!(u8).range(0..), help_heading="Core"))]
-    pub decimals: u8,
-
-    /// Output zero-WPS runs in positional coverage outputs `[flag]`
-    ///
-    /// By default, only positions with non-zero values are written to the output.
-    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
-    pub keep_zero_runs: bool,
-
-    /// Size of tiles to parallelize over `[integer]`
-    ///
-    /// Chromosomes are processed in tiles of this size to reduce memory usage.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
-    pub tile_size: u32,
-
-    /// What to return per window `[string]`
+    // TODO: Make anti-dependent on skip-peaks?
+    // TODO: Allow setting multiple of these? E.g. both count and average-distance? Or just "stats" for multiple peak stats? Look up what metrics people often use?
+    /// What to return for peaks per window `[string]`
     ///
     /// Possible values:
     ///
-    /// - `"unique-positions"`: Get the positional coverage for the included windows only (`--by-bed` *only*).
+    /// - `"unique-positions"`: Get the peak positions for the included windows only (`--by-bed` *only*).
     ///   Overlapping windows are merged to avoid duplicate positions.
     ///   Excludes all positions that do not overlap a window from the output.
     ///
-    /// - `"indexed-positions"`: Get the positional coverage for the included windows only (`--by-bed` *only*).
+    /// - `"indexed-positions"`: Get the peak positions for the included windows only (`--by-bed` *only*).
     ///   Adds the original window index as an output column and keeps duplicate positions.
     ///   Excludes all positions that do not overlap a window from the output.
     ///
-    /// - `"average"`: Get the average coverage per window.
+    /// - `"count"`: Get the number of peaks per window.
     ///
-    /// - `"total"`: Get the total coverage per window.
+    /// - `"average-distance"`: Get the average distance between peaks per window. Windows with less than 2 peaks will get a `f32::NaN` distance.
     ///
     /// **NOTE**: Ignored when no windows are specified.
-    /// Required when `--by-bed` or `--by-size` is provided.
+    /// Required when either `--by-bed` or `--by-size` are provided and `--skip-peaks` is NOT specified.
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser, ignore_case = true, help_heading = "Core")
     )]
     pub per_window: Option<CoverageWindowAction>,
-
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub windows: WindowsArgs,
-
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub chromosomes: ChromosomeArgs,
-
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub scale_genome: ScaleGenomeArgs,
-
-    /// Minimum fragment length to include `[integer]`
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "120", value_parser = clap::value_parser!(u32).range(10..), help_heading="Filtering"))]
-    pub min_fragment_length: u32,
-
-    /// Maximum fragment length to include `[integer]`
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "180", value_parser = clap::value_parser!(u32).range(10..), help_heading="Filtering"))]
-    pub max_fragment_length: u32,
-
-    /// Minimum mapping quality to include `[integer]`
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, alias = "mq", default_value = "30", value_parser = clap::value_parser!(u8).range(0..), help_heading="Filtering"))]
-    pub min_mapq: u8,
-
-    /// Only count properly paired reads `[flag]`
-    ///
-    /// Not recommended, as we already select only inward-directed read pairs within fragment length bounds.
-    #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
-    pub require_proper_pair: bool,
-
-    // TODO: Consider whether blacklist is "filtering" in tools like this?
-    /// Optional BED file(s) with blacklisted regions `[path]`
-    #[cfg_attr(
-        feature = "cli", clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading = "Filtering"))]
-    pub blacklist: Option<Vec<PathBuf>>,
-    // #[cfg_attr(feature = "cli", clap(flatten))]
-    // gc: GCArgs,
-
-    // #[cfg_attr(feature = "cli", clap(flatten))]
-    // two_bit: TwoBitArgs,
 }
 
-impl WPSConfig {
+impl WPSPeaksConfig {
     pub fn new(
         ioc: IOCArgs,
         chromosomes: ChromosomeArgs,
         per_window: Option<CoverageWindowAction>,
     ) -> Self {
         Self {
-            ioc,
-            output_prefix: "coverage".into(),
-            window_size: 120,
-            decimals: 2,
-            keep_zero_runs: false,
-            tile_size: 20_000_000,
+            shared_args: WPSSharedConfig::new(ioc, chromosomes, "wps_peaks"),
             per_window: per_window,
-            windows: WindowsArgs::default(),
-            chromosomes,
-            scale_genome: ScaleGenomeArgs::default(),
-            min_fragment_length: 120,
-            max_fragment_length: 180,
-            min_mapq: 30,
-            require_proper_pair: false,
-            blacklist: None,
         }
     }
 
-    pub fn set_output_prefix<S: Into<String>>(&mut self, prefix: S) {
-        self.output_prefix = prefix.into();
-    }
-
     pub fn set_window_size(&mut self, window_size: u32) {
-        self.window_size = window_size;
+        self.shared_args.set_window_size(window_size);
     }
 
     pub fn set_decimals(&mut self, decimals: u8) {
-        self.decimals = decimals;
-    }
-
-    pub fn set_keep_zero_runs(&mut self, keep: bool) {
-        self.keep_zero_runs = keep;
+        self.shared_args.set_decimals(decimals);
     }
 
     pub fn set_tile_size(&mut self, tile_size: u32) {
-        self.tile_size = tile_size;
+        self.shared_args.set_tile_size(tile_size);
     }
 
     pub fn set_per_window(&mut self, action: Option<CoverageWindowAction>) {
@@ -226,26 +142,28 @@ impl WPSConfig {
     }
 
     pub fn set_windows(&mut self, windows: WindowsArgs) {
-        self.windows = windows;
+        self.shared_args.set_windows(windows);
     }
 
     pub fn set_min_fragment_length(&mut self, min_fragment_length: u32) {
-        self.min_fragment_length = min_fragment_length;
+        self.shared_args
+            .set_min_fragment_length(min_fragment_length);
     }
 
     pub fn set_max_fragment_length(&mut self, max_fragment_length: u32) {
-        self.max_fragment_length = max_fragment_length;
+        self.shared_args
+            .set_max_fragment_length(max_fragment_length);
     }
 
     pub fn set_min_mapq(&mut self, min_mapq: u8) {
-        self.min_mapq = min_mapq;
+        self.shared_args.set_min_mapq(min_mapq);
     }
 
     pub fn set_require_proper_pair(&mut self, require: bool) {
-        self.require_proper_pair = require;
+        self.shared_args.set_require_proper_pair(require);
     }
 
     pub fn set_scale_genome(&mut self, scale: ScaleGenomeArgs) {
-        self.scale_genome = scale;
+        self.shared_args.set_scale_genome(scale);
     }
 }
