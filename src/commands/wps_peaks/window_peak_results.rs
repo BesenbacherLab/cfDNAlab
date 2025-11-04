@@ -34,7 +34,7 @@ impl FromStr for PeaksWindowAction {
 pub struct PeakStats {
     pub count: u32,
     pub avg_distance: f32,
-    pub median_distance: u32
+    pub median_distance: u32,
 }
 
 /// Per-window payload
@@ -75,6 +75,7 @@ pub enum PeaksOutput {
     },
 }
 
+// TODO: This is not implemented
 /// Compute peak outputs for windows or whole-chromosome positions
 ///
 /// Parameters

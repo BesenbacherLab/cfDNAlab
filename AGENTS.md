@@ -21,7 +21,7 @@ Never use "…" or similar non-ascii symbols. They don't work in the terminal. U
 Adapt to my language. If I use "center", don't use "centre". Don't use words that humans rarely use when unnecessary, like "emit".
 
 **Order**
-1. **Summary (pedagogical):** What this does and when to use it.
+1. **Summary (pedagogical):** What this does and when to use it. (The pedagogical part is implicit, not explicit, don't add "friendly summary" etc.)
 2. **Technical details:** Key behavior, assumptions, edge cases, complexity notes.
 3. **Parameters**
 4. **Returns**
@@ -77,7 +77,7 @@ Leave the codebase clearer than you found it: tidy TODOs (once solved), improve 
 
 **Be thorough.** If an output is meaningful, test its content/values—not just that it exists or runs.
 
-Place tests in tests/ with clear, isolated fixtures. Prefer deterministic tests.
+Place tests in `tests/` with clear, isolated fixtures. Prefer deterministic tests. Do not add tests inline, they go in modules in test*.rs scripts in the tests directory.
 
 Derive expectations by hand, do not adjust them to match current output!
 

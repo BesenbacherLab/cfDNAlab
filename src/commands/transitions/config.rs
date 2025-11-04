@@ -25,7 +25,7 @@ use crate::{
 /// ```rust,ignore
 /// // First-order transition probabilities in the 10 first bases from each 5'
 /// // NOTE: To reproduce the features in `Ji et al. 2025` (https://doi.org/10.1101/2025.09.09.25335450),
-/// // you can calculate the **initial probabilities** from the first transition dimension 
+/// // you can calculate the **initial probabilities** from the first transition dimension
 /// // by summing all motifs that share the same set of K-1 motifs (e.g. freq_AA = sum(AAA, AAT, AAC, AAG)).
 /// cfdna transitions --bam <> --output-dir <> --ref-2bit <> --n-threads 12 --orders 1 --frame nearest --positions '..10' --indel-mode adjust
 /// ```

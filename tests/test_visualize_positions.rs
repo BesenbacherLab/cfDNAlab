@@ -79,9 +79,7 @@ mod tests_visualize_positions {
             .find(|track| track.name == "fragment")
             .expect("missing fragment track");
         assert!(fragment_track.selected_indices.contains(&5));
-        assert!(fragment_track
-            .selected_indices
-            .contains(&(151 - 5 + 1)));
+        assert!(fragment_track.selected_indices.contains(&(151 - 5 + 1)));
     }
 
     #[test]

@@ -3,7 +3,7 @@ use crate::shared::bam::bam_header_contigs;
 use crate::shared::bam::{Contigs, bam_contigs_info};
 use crate::shared::blacklist::load_blacklists;
 use crate::shared::scale_genome::load_scaling_factors_tsv;
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
 use std::path::Path;
 use std::{path::PathBuf, str::FromStr};
@@ -371,11 +371,11 @@ pub struct ScaleGenomeArgs {
 pub struct FragmentPositionSelectionArgs {
     /// Choose the reference frame that interprets every other region selection argument `[left|right|per-end|nearest|mid]`.
     ///
-    /// When multiple frames are supplied (matching the same number of `positions` strings), the intersection of positions are used. 
+    /// When multiple frames are supplied (matching the same number of `positions` strings), the intersection of positions are used.
     /// The first frame+positions(+step) combination determines the output type.
-    /// Using multiple specification allows selecting e.g., the `-N..N` bases around the fragment midpoint 
+    /// Using multiple specification allows selecting e.g., the `-N..N` bases around the fragment midpoint
     /// while limiting the distance to the fragment ends.
-    /// 
+    ///
     /// Note: `--positions` describe positions to count at relative to the chosen frame.
     ///
     /// - **`left`** counts bases from the forward 5' end. Indices increase along the fragment and
@@ -394,7 +394,7 @@ pub struct FragmentPositionSelectionArgs {
     ///
     /// - **`mid`** centers the axis on the midpoint, allowing selections around zero with negative/positive offsets.
     ///   K-mers are counted in the forward-orientation.
-    /// 
+    ///
     /// Pass multiple frames as e.g.: `--frame mid --frame left`.
     #[cfg_attr(
         feature = "cli",
@@ -414,7 +414,7 @@ pub struct FragmentPositionSelectionArgs {
     /// Indices are **1-based inclusive**, why e.g. `1..10` would start at the first position and end at the tenth position (included).
     ///
     /// When multiple specifications are supplied (matching the same number of `frame`s), the intersection of positions are used.
-    /// 
+    ///
     /// The allowed shapes depend on `--frame`:
     ///
     /// - **`left`**, **`right`**, **`per-end`**: use `..` for the full span or `A..B`, `A..`, `..B`, `A..-B`, `..half`, `A..half-K`.
@@ -427,7 +427,7 @@ pub struct FragmentPositionSelectionArgs {
     ///   Forms like `10..-10` are rejected for this frame.
     ///
     /// - **`mid`** (centered at 0): use `..` for the entire axis, `-M..N`, `-M..`, or `..N`. E.g. `-10..10` for the 20 bases around the midpoint.
-    /// 
+    ///
     /// Pass multiple strings as e.g.: `--positions '-50..50' --positions '10..-10'`.
     #[cfg_attr(
         feature = "cli",
@@ -445,16 +445,16 @@ pub struct FragmentPositionSelectionArgs {
 
     /// Downsample after selection by keeping every Nth index `[integer >= 1]`.
     ///
-    /// When multiple `frame` and `positions` specifications are set, provide either a single step 
+    /// When multiple `frame` and `positions` specifications are set, provide either a single step
     /// to use in all of them or a step per specification.
-    /// 
+    ///
     /// Applied independently to each track in frame order (e.g., per-end left and right both stride through
     /// their own selections). Leave at 1 to keep every base.
     ///
     /// For the `mid` frame, zero is treated as the origin of the stride: when the chosen range includes the
     /// midpoint, it is always retained and every `step`th offset is kept symmetrically
     /// (`-2*step`, `-step`, `0`, `step`, `2*step`, ...). Ranges that exclude the origin fall back to the default stride.
-    /// 
+    ///
     /// Pass multiple steps as e.g.: `--step 1 --step 2`.
     #[cfg_attr(
         feature = "cli",
@@ -462,7 +462,6 @@ pub struct FragmentPositionSelectionArgs {
     )]
     pub step: Vec<usize>,
 }
-
 
 pub struct UnparsedPositionalSelectionSpec {
     pub frame: ReferenceFrame,
@@ -484,12 +483,15 @@ impl std::fmt::Display for UnparsedPositionalSelectionSpec {
 
 impl FragmentPositionSelectionArgs {
     /// Check the selection args and convert to vec of specifications
-    /// 
+    ///
     /// Each specification has one `frame`, `positions`, and `step`.
     pub fn into_positional_specs(self) -> Result<Vec<UnparsedPositionalSelectionSpec>> {
-
         // Destructure to get the fields as variables
-        let FragmentPositionSelectionArgs { frame, positions, step } = self;
+        let FragmentPositionSelectionArgs {
+            frame,
+            positions,
+            step,
+        } = self;
 
         // Number of specifications
         let n = frame.len();
@@ -528,11 +530,15 @@ impl FragmentPositionSelectionArgs {
             .into_iter()
             .zip(positions.into_iter())
             .zip(resolved_step.into_iter())
-            .map(|((frame, positions), step)| UnparsedPositionalSelectionSpec { frame, positions, step })
+            .map(
+                |((frame, positions), step)| UnparsedPositionalSelectionSpec {
+                    frame,
+                    positions,
+                    step,
+                },
+            )
             .collect())
-        
     }
-
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
@@ -578,7 +584,6 @@ pub struct BaseSelectionArgs {
     )]
     pub mismatch_bases_from: MismatchBasesFrom,
 }
-
 
 // Common loaders
 

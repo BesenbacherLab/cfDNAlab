@@ -36,6 +36,12 @@ Peaks: Positions and stats? Just always give everything? Well, unique-positions,
 ///
 /// Without windowing, positional WPS are outputted for the selected chromosomes.
 ///
+/// ## Smoothing
+///
+/// The WPS values are smoothed with a Savitzky-Golar filter (second order polynomial, 21bp window filter), as used in Snyder et al.
+///
+/// All masked positions are edges to the smoother. [**TODO**: Explain more]
+///
 /// ## Blacklisting
 ///
 /// Positions where the `--window_size` window overlaps a (dilated) blacklisted region are set to `f32::NaN` (and thus not included in sums or averages).
@@ -111,6 +117,15 @@ pub struct WPSPeaksConfig {
         clap(long, value_parser, ignore_case = true, help_heading = "Core")
     )]
     pub per_window: Option<CoverageWindowAction>,
+
+    /// Size of window for normalizing the WPS values before smoothing `[integer]`
+    ///
+    /// [**TODO**: Describe normalization]
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "1000", value_parser = clap::value_parser!(u32).range(100..),  help_heading = "Core")
+    )]
+    pub normalize_bp: u32,
 }
 
 impl WPSPeaksConfig {
@@ -122,6 +137,7 @@ impl WPSPeaksConfig {
         Self {
             shared_args: WPSSharedConfig::new(ioc, chromosomes, "wps_peaks"),
             per_window: per_window,
+            normalize_bp: 1000,
         }
     }
 
