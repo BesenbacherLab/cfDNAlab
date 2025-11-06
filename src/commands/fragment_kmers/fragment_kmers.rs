@@ -1,3 +1,8 @@
+//! Runner for fragment-kmers extraction from a BAM file.
+//!
+//! The intended positional selection logic is specified in the
+//! `positional_selection_logic.md` document.
+
 use crate::{
     commands::{
         cli_common::{

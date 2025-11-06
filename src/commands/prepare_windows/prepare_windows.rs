@@ -1,17 +1,19 @@
-// Streaming preparation pipeline for BED-like genomic windows.
-//
-// This module implements a memory-bounded, chromosome-streaming pipeline that:
-// - Validates and loads a `near` interval set (non-overlapping, unique edges).
-// - Loads and combines blacklist intervals (with an optional halo).
-// - Streams the BAM file by chromosome in chunks, applying early filters,
-//   nearest-distance binning (with `-/+/=` prefixes that reflect direction), spacing,
-//   merging, and deduplication.
-// - Writes per-chromosome temporary files and concatenates them,
-//   enforcing `min_per_group` in a final pass.
-//
-// The implementation favors determinism, clear rules, and low memory usage. It
-// assumes input is sorted by (chrom, start). If it is not, you should either
-// sort upstream or add an explicit sort prepass.
+//! Streaming preparation pipeline for BED-like genomic windows.
+//!
+//! The intended labeling and filtering logic is specified in the `label_and_filter_logic.md` document.
+//!
+//!  This module implements a memory-bounded, chromosome-streaming pipeline that:
+//!  - Validates and loads a `near` interval set (non-overlapping, unique edges).
+//!  - Loads and combines blacklist intervals (with an optional halo).
+//!  - Streams the BAM file by chromosome in chunks, applying early filters,
+//!    nearest-distance binning (with `-/+/=` prefixes that reflect direction), spacing,
+//!    merging, and deduplication.
+//!  - Writes per-chromosome temporary files and concatenates them,
+//!    enforcing `min_per_group` in a final pass.
+//!
+//!  The implementation favors determinism, clear rules, and low memory usage. It
+//!  assumes input is sorted by (chrom, start). If it is not, you should either
+//!  sort upstream or add an explicit sort prepass.
 
 use crate::commands::prepare_windows::chunk::{flush_chromosome, process_and_write_chunk};
 use crate::commands::prepare_windows::config::*;
