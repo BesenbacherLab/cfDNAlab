@@ -4,7 +4,7 @@ Ultra-fast command-line tools for analysis of cell-free DNA. Extract the *fragme
 
 Written in rust for *speed*. Built for *paired-end* sequencing data.
 
-To enable a wide set of usecases, the commands are highly flexible with many options and good default settings. See [recipes](#recipes) for examples.
+To enable a wide set of usecases, the commands are highly flexible with many options and good default settings. See [recipes](#recipes) in the end of this README for usage examples.
 
 Suggest a tool or feature [here](https://github.com/LudvigOlsen/cfDNAlab/issues/new/choose)!
 
@@ -178,12 +178,12 @@ The below does not show the midpoint profiles. See the separate examples above.
 
 ```bash
 
-$BAM = ... # ?
-$OUT = ... # sample specific
-$BLACKLIST = ... # ?
-$THREADS = 12 #?
-$MINLENGTH = 20
-$MAXLENGTH = 600
+BAM="..." # ?
+OUT="..." # sample specific
+BLACKLIST="..." # ?
+THREADS=12
+MINLENGTH=20
+MAXLENGTH=600
 
 # Coverage weights for genomic smoothing
 cfdna coverage-weights --bam $BAM --output-dir $OUT/coverage_weights --min-fragment-length $MINLENGTH --max-fragment-length $$MAXLENGTH --n-threads $THREADS 
@@ -195,7 +195,7 @@ cfdna gc-bias --bam $BAM --output-dir $OUT/gc_bias --min-fragment-length $MINLEN
 cfdna fcoverage --bam $BAM --output-dir $OUT/coverage --min-fragment-length $MINLENGTH --max-fragment-length $$MAXLENGTH --gc $OUT/gc_bias --scale-genome $OUT/coverage_weights --blacklist $BLACKLIST --n-threads $THREADS 
 
 # Fragment lengths (global)
-cfdna lengths --bam $BAM --output-dir $OUT/lengths_$MINLENGTH_$MAXLENGTH --min-fragment-length $MINLENGTH --max-fragment-length $$MAXLENGTH --gc $OUT/gc_bias --scale-genome $OUT/coverage_weights --blacklist $BLACKLIST --n-threads $THREADS 
+cfdna lengths --bam $BAM --output-dir $OUT/lengths_$(MINLENGTH)_$(MAXLENGTH) --min-fragment-length $MINLENGTH --max-fragment-length $$MAXLENGTH --gc $OUT/gc_bias --scale-genome $OUT/coverage_weights --blacklist $BLACKLIST --n-threads $THREADS 
 
 # Fragment lengths in 5Mb bins 
 # E.g., to calculate short/long ratios from (100-150bp, 151-220bp)

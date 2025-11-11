@@ -3,9 +3,9 @@ mod fixtures;
 use anyhow::{Context, Result, ensure};
 use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs};
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
-use cfdnalab::commands::wps_peaks::config::WPSConfig;
-use cfdnalab::commands::wps_peaks::wps_peaks::run as run_fn;
-use fixtures::{BamFixture, FragmentSpec, ReadSpec, bam_from_specs};
+use cfdnalab::commands::wps::config::WPSConfig;
+use cfdnalab::commands::wps::wps::run as run_fn;
+use fixtures::{BamFixture, FragmentSpec, ReadSpec, bam_from_specs, long_fragment_bam};
 use std::cmp::max;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -18,6 +18,7 @@ const FLAG_FIRST_MATE: u16 = 0x40;
 const FLAG_SECOND_MATE: u16 = 0x80;
 const FLAG_PROPER_PAIR: u16 = 0x2;
 const FLAG_MATE_REVERSE: u16 = 0x20;
+const WPS_WINDOW_SIZE_BP: u32 = 120;
 
 #[derive(Debug, Clone, PartialEq)]
 struct WpsRun {
@@ -114,7 +115,7 @@ fn make_config(
         chroms,
         Some(CoverageWindowAction::OnlyIncludeThesePositionsUnique), // No genomic windowing so doesn't currently matter
     );
-    cfg.set_output_prefix(prefix);
+    cfg.set_output_prefix(prefix.to_string());
     cfg.set_window_size(window_size);
     cfg.set_keep_zero_runs(keep_zero_runs);
     cfg.set_min_fragment_length(window_size);
@@ -388,6 +389,53 @@ fn empty_bam_without_keep_zero_runs_outputs_nothing() -> Result<()> {
         "expected no runs when keep_zero_runs=false, got {runs:?}"
     );
 
+    Ok(())
+}
+
+#[test]
+fn long_fragment_fixture_produces_expected_wps_runs() -> Result<()> {
+    let fixture = long_fragment_bam("wps_long_fragment_fixture")?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = make_config(
+        WPS_WINDOW_SIZE_BP,
+        true,
+        &fixture.bam,
+        out_dir.path(),
+        "long_fragment_wps",
+    );
+    // Allow the 600bp inserts from the shared fixture.
+    cfg.set_max_fragment_length(1_000);
+
+    // Manual expectations (window size 120 -> left_span = right_span = 60):
+    // - A fragment contributes +1 wherever the 120bp window fits entirely inside it,
+    //   meaning centres [start+60, end-60). The first fragment therefore yields
+    //   [60, 341) at +1.
+    // - When two fragments are 400bp apart, their full-coverage bands overlap for
+    //   81 bases, so the combined run reaches +2 (e.g., [460, 541)).
+    // - Between fragments we see 0 plateaus once the left fragment ends and before
+    //   the next one begins.
+    // - We assert only the leading repeats because the pattern continues across
+    //   the contig with the same spacings.
+    let runs = run_wps(&cfg)?;
+    let expected = vec![
+        wps_run("chr1", 60, 341, 1.0),
+        wps_run("chr1", 341, 460, 0.0),
+        wps_run("chr1", 460, 541, 2.0),
+        wps_run("chr1", 541, 659, 0.0),
+        wps_run("chr1", 659, 741, 1.0),
+        wps_run("chr1", 741, 860, 0.0),
+        wps_run("chr1", 860, 941, 2.0),
+        wps_run("chr1", 941, 1000, 0.0),
+    ];
+
+    assert!(
+        runs.len() >= expected.len(),
+        "expected at least {} runs, got {}",
+        expected.len(),
+        runs.len()
+    );
+    let prefix: Vec<WpsRun> = runs.iter().take(expected.len()).cloned().collect();
+    assert_runs_equal(&prefix, &expected);
     Ok(())
 }
 fn assert_runs_equal(actual: &[WpsRun], expected: &[WpsRun]) {

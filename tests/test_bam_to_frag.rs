@@ -7,7 +7,7 @@ mod tests_bam_to_frag {
     use rust_htslib::bam::{
         self, Format, HeaderView, Writer,
         header::Header,
-        record::{Cigar, Record},
+        record::{Cigar, CigarString, Record},
     };
     use std::{
         fs::{self, File},
@@ -42,7 +42,7 @@ mod tests_bam_to_frag {
         index::build(
             bam_path.to_str().unwrap(),
             None,
-            index::Type::BAI,
+            index::Type::Bai,
             1, // n_threads for indexing
         )
         .context("build BAI")?;
@@ -55,9 +55,8 @@ mod tests_bam_to_frag {
             n_threads: 2,
         };
 
-        // NOTE: if ChromosomeArgs has a different constructor in your crate, adjust this.
-        // The intent here is "process all chromosomes".
-        let chromosomes = default_chromosome_args();
+        // Limit to the contigs we wrote into the BAM so ChromosomeArgs resolution does not fail.
+        let chromosomes = fixed_chromosome_args();
 
         let mut cfg = BamToFragConfig::new(ioc, chromosomes);
         cfg.set_output_prefix("sample");
@@ -125,10 +124,11 @@ mod tests_bam_to_frag {
         Ok(lines)
     }
 
-    fn default_chromosome_args() -> ChromosomeArgs {
-        // Adjust if your ChromosomeArgs differs; the goal is to include all contigs.
-        // Many codebases implement Default for this.
-        ChromosomeArgs::default()
+    fn fixed_chromosome_args() -> ChromosomeArgs {
+        ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string(), "chr2".to_string()]),
+            chromosomes_file: None,
+        }
     }
 
     /// Build a tiny BAM with two contigs and three inward-directed pairs, coordinate-sorted.
@@ -153,7 +153,7 @@ mod tests_bam_to_frag {
         );
 
         // Create BAM writer
-        let mut writer = Writer::from_path(path, &hdr, Format::BAM).context("create BAM writer")?;
+        let mut writer = Writer::from_path(path, &hdr, Format::Bam).context("create BAM writer")?;
         let header_view = HeaderView::from_header(&hdr);
 
         // Convenience closures
@@ -170,28 +170,28 @@ mod tests_bam_to_frag {
         let seq = b"ACGTN".repeat(10); // 50bp
         let qual = vec![30u8; 50];
 
-        // ---- chr1 pair A: R1 forward @10002 (MAPQ 60), R2 reverse @10090 (MAPQ 60) ----
+        // chr1 pair A: R1 forward @10002 (MAPQ 60), R2 reverse @10090 (MAPQ 60)
         let r1_a = make_rec(
-            q1, tid_chr1, 10002, false, 60, &cigar, &seq, &qual, true, tid_chr1, 10090,
+            q1, tid_chr1, 10002, false, 60, &cigar, &seq, &qual, true, tid_chr1, 10090, true,
         );
         let r2_a = make_rec(
-            q1, tid_chr1, 10090, true, 60, &cigar, &seq, &qual, false, tid_chr1, 10002,
+            q1, tid_chr1, 10090, true, 60, &cigar, &seq, &qual, false, tid_chr1, 10002, false,
         );
 
-        // ---- chr1 pair B: R1 forward @10003 (MAPQ 0), R2 reverse @10087 (MAPQ 0) ----
+        // chr1 pair B: R1 forward @10003 (MAPQ 0), R2 reverse @10087 (MAPQ 0)
         let r1_b = make_rec(
-            q2, tid_chr1, 10003, false, 0, &cigar, &seq, &qual, true, tid_chr1, 10087,
+            q2, tid_chr1, 10003, false, 0, &cigar, &seq, &qual, true, tid_chr1, 10087, true,
         );
         let r2_b = make_rec(
-            q2, tid_chr1, 10087, true, 0, &cigar, &seq, &qual, false, tid_chr1, 10003,
+            q2, tid_chr1, 10087, true, 0, &cigar, &seq, &qual, false, tid_chr1, 10003, false,
         );
 
-        // ---- chr2 pair C: R1 reverse @20090 (MAPQ 30), R2 forward @20000 (MAPQ 40) ----
+        // chr2 pair C: R1 reverse @20090 (MAPQ 30), R2 forward @20000 (MAPQ 40)
         let r1_c = make_rec(
-            q3, tid_chr2, 20090, true, 30, &cigar, &seq, &qual, true, tid_chr2, 20000,
+            q3, tid_chr2, 20090, true, 30, &cigar, &seq, &qual, true, tid_chr2, 20000, false,
         );
         let r2_c = make_rec(
-            q3, tid_chr2, 20000, false, 40, &cigar, &seq, &qual, false, tid_chr2, 20090,
+            q3, tid_chr2, 20000, false, 40, &cigar, &seq, &qual, false, tid_chr2, 20090, true,
         );
 
         // Write in coordinate order
@@ -201,7 +201,6 @@ mod tests_bam_to_frag {
         writer.write(&r2_a)?;
         writer.write(&r2_c)?;
         writer.write(&r1_c)?;
-        writer.finish()?;
 
         Ok(())
     }
@@ -215,6 +214,7 @@ mod tests_bam_to_frag {
     /// - `cigar`, `seq`, `qual`: alignment, bases, quals
     /// - `is_first_in_template`: true for R1, false for R2
     /// - `mtid`, `mpos`: mate reference and 0-based pos
+    /// - `mate_is_reverse`: strand flag for the mate (sets FLAG_MATE_REVERSE)
     fn make_rec(
         qname: &[u8],
         tid: i32,
@@ -227,9 +227,11 @@ mod tests_bam_to_frag {
         is_first_in_template: bool,
         mtid: i32,
         mpos: i64,
+        mate_is_reverse: bool,
     ) -> Record {
         let mut rec = Record::new();
-        rec.set(qname, cigar, seq, qual);
+        let cigar_string = CigarString(cigar.to_vec());
+        rec.set(qname, Some(&cigar_string), seq, qual);
 
         let mut flags: u16 = 0;
         flags |= 0x1; // paired
@@ -240,6 +242,9 @@ mod tests_bam_to_frag {
         }
         if is_rev {
             flags |= 0x10;
+        }
+        if mate_is_reverse {
+            flags |= 0x20;
         }
         // No secondary/supplementary/duplicate/fail flags set.
 

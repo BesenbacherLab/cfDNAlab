@@ -60,8 +60,16 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     let start_time = Instant::now();
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.shared_args.chromosomes, &opt.shared_args.ioc)?;
-    let window_opt = opt.shared_args.windows.resolve_windows();
     let prefix = opt.shared_args.output_prefix.trim();
+    let window_opt = opt.shared_args.windows.resolve_windows();
+    let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
+
+    if windowed {
+        ensure!(
+            opt.per_window.is_some(),
+            "when using --by-bed/--by-size, please also specify --per-window"
+        );
+    }
 
     ensure!(
         opt.shared_args.min_fragment_length >= opt.shared_args.window_size,
@@ -69,6 +77,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         opt.shared_args.min_fragment_length,
         opt.shared_args.window_size
     );
+
     ensure!(
         opt.shared_args.window_size <= opt.shared_args.max_fragment_length,
         "window-size ({}) must be <= max-fragment-length ({})",
@@ -76,11 +85,6 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         opt.shared_args.max_fragment_length
     );
 
-    let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
-    ensure!(
-        !windowed || opt.per_window.is_some(),
-        "when using --by-bed/--by-size, please also specify --per-window"
-    );
     let per_window_wps_action = opt.per_window;
 
     // Create output directory
@@ -238,8 +242,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
 
     let mut global_counter = FCoverageCounters::default();
 
-    println!("Start: Counting per tile");
-
+    println!("Start: Calculating WPS per tile");
     pb.set_position(0);
 
     let tile_window_spans_for_threads = tile_window_spans.clone();
@@ -377,6 +380,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                 scaling_chr,
                 mode,
                 decimals_to_use,
+                0,
                 false,
             )?;
             pb.inc(1);
@@ -583,6 +587,7 @@ pub fn wps_for_tile(
     scaling_chr: &[(u64, u64, f32)],
     mode: TileMode,
     decimals: i32,
+    extra_halo_bp: u32,
     return_wps_instead: bool, // Don't save and aggregate, just return the WPS values
 ) -> Result<(FCoverageCounters, Option<Vec<f32>>, Option<Vec<u8>>)> {
     // Open a fresh BAM reader for this thread
@@ -604,17 +609,19 @@ pub fn wps_for_tile(
         .context(format!("fetch {} {}-{}", &tile.chr, fetch_from, fetch_to))?;
 
     let window_size = opt.window_size;
-    let left_span = window_size / 2;
-    let right_span = window_size - left_span;
-    let left_span_i64 = left_span as i64;
-    let right_span_i64 = right_span as i64;
+    let window_left = window_size / 2;
+    let window_right = window_size - window_left;
+    let context_left = window_left.saturating_add(extra_halo_bp);
+    let context_right = window_right.saturating_add(extra_halo_bp);
+    let window_left_i64 = window_left as i64;
+    let window_right_i64 = window_right as i64;
 
     // Dilate the tile core so edge positions have full contexts
     // Outputs are trimmed back to the core
     // The difference buffers live on a dilated span that guarantees each core position
     // sees a complete window. We later trim the outputs back to the original core
-    let dilated_start_abs = tile.core_start.saturating_sub(left_span);
-    let dilated_end_abs = ((tile.core_end as u64) + right_span as u64).min(chrom_len) as u32;
+    let dilated_start_abs = tile.core_start.saturating_sub(context_left);
+    let dilated_end_abs = ((tile.core_end as u64) + context_right as u64).min(chrom_len) as u32;
     if dilated_start_abs >= dilated_end_abs {
         return Ok((counter, None, None));
     }
@@ -671,8 +678,8 @@ pub fn wps_for_tile(
             &mut span_diff,
             dilated_start_i64,
             dilated_end_i64,
-            fragment_start + left_span_i64,
-            fragment_end - right_span_i64 + 1,
+            fragment_start + window_left_i64,
+            fragment_end - window_right_i64 + 1,
             1.0,
         );
         // Left endpoint contribution: window must still contain the fragment start
@@ -680,8 +687,8 @@ pub fn wps_for_tile(
             &mut end_diff,
             dilated_start_i64,
             dilated_end_i64,
-            fragment_start - right_span_i64 + 1,
-            fragment_start + left_span_i64,
+            fragment_start - window_right_i64 + 1,
+            fragment_start + window_left_i64,
             1.0,
         );
         // Right endpoint contribution: window must still contain the fragment end (exclusive)
@@ -689,8 +696,8 @@ pub fn wps_for_tile(
             &mut end_diff,
             dilated_start_i64,
             dilated_end_i64,
-            fragment_end - right_span_i64 + 1,
-            fragment_end + left_span_i64 - 1,
+            fragment_end - window_right_i64 + 1,
+            fragment_end + window_left_i64 - 1,
             1.0,
         );
     }
@@ -714,8 +721,8 @@ pub fn wps_for_tile(
         dilated_end_abs,
         blacklist_chr,
         chrom_len,
-        left_span,
-        right_span,
+        window_left,
+        window_right,
     );
     let mask_slice = mask.as_deref();
 

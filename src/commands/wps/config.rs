@@ -235,6 +235,10 @@ impl WPSSharedConfig {
         }
     }
 
+    pub fn set_output_prefix(&mut self, prefix: String) {
+        self.output_prefix = prefix;
+    }
+
     pub fn set_window_size(&mut self, window_size: u32) {
         self.window_size = window_size;
     }
@@ -283,6 +287,10 @@ impl WPSConfig {
             keep_zero_runs: false,
             per_window: per_window,
         }
+    }
+
+    pub fn set_output_prefix(&mut self, prefix: String) {
+        self.shared_args.set_output_prefix(prefix);
     }
 
     pub fn set_window_size(&mut self, window_size: u32) {

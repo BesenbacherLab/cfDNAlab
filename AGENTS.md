@@ -7,6 +7,10 @@
 - **No inline tests.** Unit and regression tests live under `tests/`—not in production modules or scripts.
 - **Descriptive variable names.** Variables should have descriptive names so the code is readable. Never use single-letter variables. E.g. a "window start" position can be called "window_start", "win_start", but never "ws" or "s".
 
+## CLI help
+
+Help strings are defined via docstrings in the config files. This needs to be useful for any newcomer or experienced user.
+
 ## Docstrings
 Docstrings should read like a short tutorial, then details, then structured sections. You may also add examples when they are relevant.
 

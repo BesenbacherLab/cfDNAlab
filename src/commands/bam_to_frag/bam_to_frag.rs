@@ -227,6 +227,8 @@ fn process_chrom(
         )?;
     }
 
+    // Flush any fragments still buffered in the sorter tail
+    sorter.flush_all(&mut writer)?;
     writer.flush()?;
 
     // Get counters from iterator

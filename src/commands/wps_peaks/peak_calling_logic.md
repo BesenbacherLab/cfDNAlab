@@ -1,6 +1,9 @@
 # Peak Calling Logic
 
 This document explains how the `wps-peaks` command detects nucleosome peaks. It is written for future maintainers, reviewers, and anyone who needs to reason about the implementation without reverse engineering the original Snyder script. The goal is to keep the default behavior aligned with Snyder while making it straightforward to experiment with improved heuristics.
+This document should not contain any non-ascii symbols.
+
+NOTE: If present, the `snyder_code.md` file contains the Snyder implementation we want to mirror in many aspects. Read it.
 
 ## Overview
 
@@ -28,9 +31,9 @@ Terminology used throughout the code:
 
 - `raw_wps`: raw WPS value at `center_index`.
 
-- `baseline_window`: the 1,000 bp neighborhood centered on `center_index`, covering 500 bp upstream and 500 bp downstream (matching Snyder's fixed window size).
+- `baseline_window`: the 1,000 bp (by default) neighborhood centered on `center_index`, covering 500 bp upstream and 500 bp downstream (matching Snyder's fixed window size).
 
-- `residual_wps`: adjusted value after smoothing (if enabled) and baseline subtraction.
+- `residual_wps`: baseline-adjusted WPS for that position. It equals the (optionally smoothed) WPS minus the local median, so positive values mean "this base shows more fragment protection than its neighborhood" and negative values mean the opposite.
 
 ### 2. Optional Savitzky-Golay Smoothing
 
@@ -44,13 +47,13 @@ Snyder applies a Savitzky-Golay filter with a 21 bp window and a quadratic polyn
 
 The smoothing flag is enabled by default and can be disabled (`--no-smoothing`) for experiments that require raw WPS.
 
-### 3. Baseline Subtraction via Rolling Median (1,000 bp window)
+### 3. Baseline Subtraction via Rolling Median (1,000 bp window by default)
 
-To highlight local enrichments and suppress long-range trends, we subtract the median WPS from the surrounding 1,000 bp baseline window (500 bp on each side of the center). Snyder used the median instead of the mean because it resists outliers. We keep the same choice to stay compatible with Snyder's behavior. It works even when future versions introduce floating point corrections, such as GC scaling.
+To highlight local enrichments and suppress long-range trends, we subtract the median WPS from the surrounding baseline window. Snyder fixed the span at 1,000 bp (500 bp on each side), which we keep as the default via `--normalize-bp`. Our implementation additionally requires a minimum number of usable bases before trusting the median. By default `--min-unmasked` is 400 (roughly two nucleosomes) so dilated blacklist gaps do not dominate the window, but callers can pick a different threshold. One subtlety is that the `wps` command masks everything outside the tile core, while `wps-peaks` uses additional dilation to give the necessary context across tiles, and this part of the halo should not be masked out!
 
 Implementation details:
 
-1. Maintain a sliding multiset (e.g., two heaps or a balanced tree) over the 1,000 bp window.
+1. Maintain a sliding multiset (e.g., two heaps or a balanced tree) over the baseline window.
 
 2. For each `center_index`, compute the median of the raw WPS values in the window.
 
@@ -74,25 +77,27 @@ Each run tracks its genomic start and end, the sum of positive residuals, and th
 
 ### 5. Peak Selection Within Runs
 
-Snyder enforces domain-specific constraints on run lengths (50-150 bp, or 50-150 bp segments carved out of longer runs) and keeps only the strongest sub-interval. We replicate this logic:
+Snyder enforces domain-specific constraints on run lengths (50-150 bp, or 50-150 bp segments carved out of longer runs) and filters residuals using a single run-level median:
 
-1. If the run length is < 50 bp or > 150 bp x 3, discard it.
+1. If the run length is < 50 bp or > 3 x 150 bp, discard it.
 
-2. If the run length is between 150 bp and 450 bp, split it into overlapping 150 bp windows sliding by one base, evaluate each, and keep sub-runs that satisfy the minimum length requirement. These sub-windows can overlap, but a later step picks at most one representative interval per parent run.
+2. Compute the median residual across the entire run and keep only bases whose residual is greater than or equal to that median. This trims away the "average" portion of the run and retains only the parts that clearly stand above the run's own baseline.
 
-3. For each sub-run, compute its median residual. Only positions whose residual >= median are kept; the rest of the sub-run is ignored. If nothing survives the threshold, the sub-run is discarded and the parent run does not produce a peak at that offset.
+3. Collapse adjacent retained positions into intervals.
 
-4. Collapse adjacent retained positions into peak intervals.
+4. If the original run length is <= 150 bp, select the interval whose cumulative residual sum is the largest and emit that single peak.
 
-5. For each interval compute:
+5. If the run length is between 150 bp and 450 bp, emit every contiguous interval whose length falls within 50-150 bp and whose `peak_height` exceeds the Snyder cutoff described below. Multiple intervals can survive from one run in this case, matching the Snyder script.
+
+6. For each emitted interval record:
 
    - `peak_height`: maximum residual inside the interval.
 
-   - `peak_sum`: sum of residuals. This is the discrete area under the adjusted curve that Snyder maximizes, and it favors peaks that are both tall and wide without averaging away intensity.
+   - `peak_position`: genomic coordinate where that maximum residual occurs (0-based).
 
-   - Genomic `start` and `end` coordinates (inclusive start, exclusive end).
+   - Genomic `start` and `end` coordinates (inclusive start, exclusive end). The peak width is `end - start`.
 
-6. Keep the interval with the highest `peak_sum` as the representative peak for the parent run. This matches Snyder's final filter that emits the strongest sub-window and prevents duplicate peaks from a single run.
+Finally, a peak is only kept if its maximum residual (its tallest baseline-adjusted WPS value) exceeds a user-set amplitude threshold. The flag `--min-peak-height` controls this minimum residual height (default `3.0`). Lowering the threshold keeps weaker peaks, which is often necessary for 1-3x cfDNA coverage, while raising it filters aggressively for high-confidence peaks. This is the same role the historical "variCutoff" constant played in Snyder's script, but it is now explicit (TODO: tune the default empirically).
 
 ### 6. Outputs
 
@@ -106,7 +111,9 @@ For each chosen peak we output:
 
 - Peak height (float).
 
-Additional statistics, such as peak width (computed as `end - start`) or peak area, are retained in memory so window-level summaries can be generated. Peaks outside the requested windows are ignored. Chromosomes without windows produce no output so windowed analyses are restricted to the provided intervals.
+- Peak position (0-based coordinate of the maximum residual inside the peak).
+
+Peaks outside the requested windows are ignored. Chromosomes without windows produce no output so windowed analyses are restricted to the provided intervals.
 
 ## Reproducibility and Flexibility
 

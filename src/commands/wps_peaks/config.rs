@@ -1,7 +1,7 @@
 use crate::commands::cli_common::ScaleGenomeArgs;
 use crate::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
-use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::wps::config::WPSSharedConfig;
+use crate::commands::wps_peaks::window_peak_results::PeaksWindowAction;
 
 /*
 What do we actually want?
@@ -40,7 +40,9 @@ Peaks: Positions and stats? Just always give everything? Well, unique-positions,
 ///
 /// The WPS values are smoothed with a Savitzky-Golar filter (second order polynomial, 21bp window filter), as used in Snyder et al.
 ///
-/// All masked positions are edges to the smoother. [**TODO**: Explain more]
+/// All masked positions are edges to the smoother. [TODO: Describe this edge part (and masking, reference blacklisting)]
+///
+/// Disable smoothing with `--no-smoothing` if you want to keep the raw WPS values.
 ///
 /// ## Blacklisting
 ///
@@ -92,52 +94,92 @@ pub struct WPSPeaksConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub shared_args: WPSSharedConfig,
 
-    // TODO: Make anti-dependent on skip-peaks?
     // TODO: Allow setting multiple of these? E.g. both count and average-distance? Or just "stats" for multiple peak stats? Look up what metrics people often use?
     /// What to return for peaks per window `[string]`
     ///
     /// Possible values:
     ///
-    /// - `"unique-positions"`: Get the peak positions for the included windows only (`--by-bed` *only*).
-    ///   Overlapping windows are merged to avoid duplicate positions.
+    /// - `"unique-positions"`: Get the distinct peak coordinates inside the provided windows (`--by-bed` only).
+    ///   Overlapping windows are merged before processing to avoid duplicate rows.
     ///   Excludes all positions that do not overlap a window from the output.
     ///
-    /// - `"indexed-positions"`: Get the peak positions for the included windows only (`--by-bed` *only*).
-    ///   Adds the original window index as an output column and keeps duplicate positions.
+    /// - `"indexed-positions"`: Emit all peak coordinates inside the provided windows together
+    ///   with the original window index (`--by-bed` only). Overlapping windows keep duplicates so each window is
+    ///   reported independently.
     ///   Excludes all positions that do not overlap a window from the output.
     ///
-    /// - `"count"`: Get the number of peaks per window.
+    /// - `"stats"`: Emit peak counts as well as average and median distances between peaks per
+    ///   window.
     ///
-    /// - `"average-distance"`: Get the average distance between peaks per window. Windows with less than 2 peaks will get a `f32::NaN` distance.
-    ///
-    /// **NOTE**: Ignored when no windows are specified.
-    /// Required when either `--by-bed` or `--by-size` are provided and `--skip-peaks` is NOT specified.
+    /// Ignored when no windows are supplied. Required whenever `--by-bed` or `--by-size` are
+    /// provided.
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser, ignore_case = true, help_heading = "Core")
     )]
-    pub per_window: Option<CoverageWindowAction>,
+    pub per_window: Option<PeaksWindowAction>,
 
     /// Size of window for normalizing the WPS values before smoothing `[integer]`
     ///
-    /// [**TODO**: Describe normalization]
+    /// A rolling median of this width is subtracted from the (optionally smoothed) WPS signal.
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "1000", value_parser = clap::value_parser!(u32).range(100..),  help_heading = "Core")
     )]
     pub normalize_bp: u32,
+
+    /// Minimum usable bases required inside the normalization window `[integer]`
+    ///
+    /// Windows with fewer valid bases yield `NaN` after normalization.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long = "min-unmasked", default_value = "400", value_parser = clap::value_parser!(u32).range(1..), help_heading = "Core")
+    )]
+    pub min_unmasked: u32,
+
+    /// Disable Savitzky-Golay smoothing of the WPS signal `[flag]`
+    ///
+    /// Smoothing is enabled by default to reproduce Snyder et al.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long = "no-smoothing", action, help_heading = "Core")
+    )]
+    pub no_smoothing: bool,
+
+    // TODO: revisit default after empirical tuning
+    /// Minimum residual height required to keep a peak `[float]`
+    ///
+    /// Any peak whose baseline-adjusted WPS height (residual) is smaller than this value
+    /// is discarded. Lower values keep weaker peaks (useful for low-coverage cfDNA), higher values keep only stronger peaks.
+    ///
+    /// NOTE: To make this more sequencing depth agnostic, use genomic smoothing (`--scaling-factors`) to
+    /// make the average coverage `~1.0` and then tune this minimum to that value. This should
+    /// generalize better across samples.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long = "min-peak-height",
+            default_value = "3.0",
+            value_parser = parse_nonnegative_f32,
+            help_heading = "Core"
+        )
+    )]
+    pub min_peak_height: f32,
 }
 
 impl WPSPeaksConfig {
     pub fn new(
         ioc: IOCArgs,
         chromosomes: ChromosomeArgs,
-        per_window: Option<CoverageWindowAction>,
+        per_window: Option<PeaksWindowAction>,
     ) -> Self {
         Self {
             shared_args: WPSSharedConfig::new(ioc, chromosomes, "wps_peaks"),
             per_window: per_window,
             normalize_bp: 1000,
+            min_unmasked: 400,
+            no_smoothing: false,
+            min_peak_height: 3.0,
         }
     }
 
@@ -153,7 +195,7 @@ impl WPSPeaksConfig {
         self.shared_args.set_tile_size(tile_size);
     }
 
-    pub fn set_per_window(&mut self, action: Option<CoverageWindowAction>) {
+    pub fn set_per_window(&mut self, action: Option<PeaksWindowAction>) {
         self.per_window = action;
     }
 
@@ -181,5 +223,29 @@ impl WPSPeaksConfig {
 
     pub fn set_scale_genome(&mut self, scale: ScaleGenomeArgs) {
         self.shared_args.set_scale_genome(scale);
+    }
+
+    pub fn set_min_unmasked(&mut self, min_unmasked: u32) {
+        self.min_unmasked = min_unmasked;
+    }
+
+    pub fn set_no_smoothing(&mut self, no_smoothing: bool) {
+        self.no_smoothing = no_smoothing;
+    }
+
+    pub fn set_min_peak_height(&mut self, min_peak_height: f32) {
+        self.min_peak_height = min_peak_height;
+    }
+}
+
+#[cfg_attr(not(feature = "cli"), allow(dead_code))]
+fn parse_nonnegative_f32(input: &str) -> Result<f32, String> {
+    let value: f32 = input
+        .parse()
+        .map_err(|err: std::num::ParseFloatError| err.to_string())?;
+    if value < 0.0 {
+        Err("min-peak-height must be non-negative".into())
+    } else {
+        Ok(value)
     }
 }

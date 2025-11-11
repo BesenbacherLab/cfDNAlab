@@ -16,6 +16,11 @@ const FLAG_SECOND_MATE: u16 = 0x80;
 const FLAG_PROPER_PAIR: u16 = 0x2;
 const FLAG_MATE_REVERSE: u16 = 0x20;
 
+pub const LONG_FRAGMENT_LENGTH: i64 = 600;
+pub const LONG_FRAGMENT_READ_LENGTH: i64 = 100;
+pub const LONG_FRAGMENT_STARTS: [i64; 10] =
+    [0, 400, 800, 1_200, 1_600, 2_000, 2_400, 2_800, 3_200, 3_600];
+
 #[derive(Debug)]
 pub struct BamFixture {
     _tempdir: TempDir,
@@ -31,6 +36,74 @@ impl BamFixture {
             bai,
         }
     }
+}
+
+/// Build a paired-end fragment from a start position plus fragment/read lengths.
+pub fn paired_fragment(start: i64, fragment_len: i64, read_len: i64) -> FragmentSpec {
+    let reverse_start = start + fragment_len - read_len;
+    let insert_size = fragment_len;
+    let forward = ReadSpec {
+        tid: 0,
+        pos: start,
+        cigar: vec![('M', read_len as u32)],
+        seq: vec![b'A'; read_len as usize],
+        qual: 40,
+        is_reverse: false,
+        mapq: 60,
+        flags: FLAG_FIRST_MATE | FLAG_MATE_REVERSE | FLAG_PROPER_PAIR,
+        mate_tid: Some(0),
+        mate_pos: Some(reverse_start),
+        insert_size,
+    };
+    let reverse = ReadSpec {
+        tid: 0,
+        pos: reverse_start,
+        cigar: vec![('M', read_len as u32)],
+        seq: vec![b'T'; read_len as usize],
+        qual: 40,
+        is_reverse: true,
+        mapq: 60,
+        flags: FLAG_SECOND_MATE | FLAG_PROPER_PAIR,
+        mate_tid: Some(0),
+        mate_pos: Some(start),
+        insert_size: -insert_size,
+    };
+    FragmentSpec { forward, reverse }
+}
+
+/// Create a BAM fixture from evenly described fragment starts.
+pub fn bam_from_fragment_starts(
+    name: &str,
+    starts: &[i64],
+    fragment_len: i64,
+    read_len: i64,
+) -> Result<BamFixture> {
+    let max_end = starts
+        .iter()
+        .map(|start| start + fragment_len)
+        .max()
+        .unwrap_or(0);
+    let chrom_len = (max_end + 500).max(1_000) as u32;
+    let fragments: Vec<FragmentSpec> = starts
+        .iter()
+        .map(|&start| paired_fragment(start, fragment_len, read_len))
+        .collect();
+    bam_from_specs(
+        vec![("chr1".to_string(), chrom_len)],
+        fragments,
+        Vec::new(),
+        name,
+    )
+}
+
+/// Convenience helper for the shared 10-fragment, 600bp scenario used by WPS tests.
+pub fn long_fragment_bam(name: &str) -> Result<BamFixture> {
+    bam_from_fragment_starts(
+        name,
+        &LONG_FRAGMENT_STARTS,
+        LONG_FRAGMENT_LENGTH,
+        LONG_FRAGMENT_READ_LENGTH,
+    )
 }
 
 #[derive(Debug)]
