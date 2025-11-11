@@ -23,6 +23,7 @@ use anyhow::{anyhow, ensure, Context, Result};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fs::{remove_dir_all, File};
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
@@ -425,6 +426,8 @@ pub struct WindowStatsContribution {
     pub count: u32,
     pub first_peak: Option<u64>,
     pub last_peak: Option<u64>,
+    pub first_segment: Option<u64>,
+    pub last_segment: Option<u64>,
     pub distance_sum: f64,
     pub distance_histogram: BTreeMap<u32, u32>,
 }
@@ -480,6 +483,7 @@ where
             end,
             peak_position,
             height,
+            segment_id: 0,
         })?;
     }
     Ok(())
@@ -749,32 +753,25 @@ pub fn peaks_for_tile(
         mask.resize(wps_values.len(), 0);
     }
 
-    let smoothed = if opt.no_smoothing {
-        wps_values.clone()
-    } else {
-        smoothe_wps(&wps_values, Some(&mask))
-    };
-
-    let normalized = normalize_wps(
-        &smoothed,
-        &wps_values,
-        Some(&mask), // TODO: will never be None due to the dilation?
-        opt.normalize_bp as usize,
-        1,
-        opt.min_unmasked as usize,
-    );
-
     let half_window = opt.shared_args.window_size / 2;
     let left_span = half_window.saturating_add(extra_halo);
     let dilated_start = tile.core_start.saturating_sub(left_span) as u64;
+    let initial_segment_marker = last_mask_end_before(blacklist_chr, dilated_start);
 
+    let processing_opts = PeakSignalProcessingOptions {
+        smoothing: !opt.no_smoothing,
+        normalization_bp: Some(opt.normalize_bp as usize),
+        min_unmasked: opt.min_unmasked as usize,
+        min_peak_height,
+        initial_segment_marker,
+    };
     let mut peaks = Vec::new();
-    let peaks_all = call_peaks(
+    let peaks_all = peaks_from_wps_values(
         &tile.chr,
         dilated_start,
-        &normalized,
-        &mask,
-        min_peak_height,
+        &wps_values,
+        Some(&mask),
+        &processing_opts,
     );
 
     for mut peak in peaks_all {
@@ -814,23 +811,27 @@ pub fn compute_window_stats_contributions(
             // TODO: Why btreemap instead of fxhashmap? No hashing?
             let mut histogram = BTreeMap::new();
             let mut distance_sum = 0.0;
-            let mut prev: Option<u64> = None;
+            let mut prev: Option<(u64, u64)> = None;
             for peak in slice {
-                if let Some(previous) = prev {
-                    let distance = (peak.peak_position - previous) as u32;
-                    distance_sum += distance as f64;
-                    let _ = histogram
-                        .entry(distance)
-                        .and_modify(|freq| *freq += 1)
-                        .or_insert(1);
+                if let Some((previous, previous_segment)) = prev {
+                    if previous_segment == peak.segment_id {
+                        let distance = (peak.peak_position - previous) as u32;
+                        distance_sum += distance as f64;
+                        let _ = histogram
+                            .entry(distance)
+                            .and_modify(|freq| *freq += 1)
+                            .or_insert(1);
+                    }
                 }
-                prev = Some(peak.peak_position);
+                prev = Some((peak.peak_position, peak.segment_id));
             }
             Some(WindowStatsContribution {
                 window_idx: idx,
                 count: slice.len() as u32,
                 first_peak: slice.first().map(|p| p.peak_position),
                 last_peak: slice.last().map(|p| p.peak_position),
+                first_segment: slice.first().map(|p| p.segment_id),
+                last_segment: slice.last().map(|p| p.segment_id),
                 distance_sum,
                 distance_histogram: histogram,
             })
@@ -863,6 +864,20 @@ fn build_fixed_size_windows_for_tile(
     windows
 }
 
+fn last_mask_end_before(intervals: &[(u64, u64)], position: u64) -> u64 {
+    intervals
+        .iter()
+        .rev()
+        .find_map(|&(_, end)| {
+            if end <= position {
+                Some(end.saturating_sub(1))
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0)
+}
+
 /// Tracks windows currently spanned by the active tile and accumulates per-window outputs.
 pub struct WindowAccumulator {
     kind: WindowAccumulatorKind,
@@ -884,6 +899,74 @@ pub struct WindowState {
     data: WindowStateData,
 }
 
+/// Configuration for running the smoothing/normalization + peak calling pipeline on an
+/// in-memory WPS signal.
+#[derive(Debug, Clone)]
+pub struct PeakSignalProcessingOptions {
+    /// Whether Savitzky-Golay smoothing should be applied before normalization.
+    pub smoothing: bool,
+    /// Size of the rolling-median window used for baseline subtraction. When `None`, the
+    /// incoming values are treated as residuals.
+    pub normalization_bp: Option<usize>,
+    /// Minimum usable bases required inside the normalization window.
+    pub min_unmasked: usize,
+    /// Minimum residual height required to keep a peak.
+    pub min_peak_height: f32,
+    /// Segment marker inherited from upstream tiles (usually the end of the last masked region).
+    pub initial_segment_marker: u64,
+}
+
+/// Process an in-memory WPS signal (with optional mask) and emit Snyder-style peaks.
+///
+/// This helper mirrors the per-tile pipeline executed by `peaks_for_tile`, but skips all BAM IO.
+/// It enables unit tests to exercise the smoothing + normalization + peak-calling logic using
+/// synthetic fixtures.
+pub fn peaks_from_wps_values(
+    chromosome: &str,
+    start_offset: u64,
+    wps_values: &[f32],
+    mask: Option<&[u8]>,
+    options: &PeakSignalProcessingOptions,
+) -> Vec<PeakCall> {
+    if let Some(mask_slice) = mask {
+        assert_eq!(
+            mask_slice.len(),
+            wps_values.len(),
+            "mask length must match WPS series length"
+        );
+    }
+    let mask_cow: Cow<[u8]> = match mask {
+        Some(existing) => Cow::Borrowed(existing),
+        None => Cow::Owned(vec![0u8; wps_values.len()]),
+    };
+    let mask_slice: &[u8] = mask_cow.as_ref();
+    let smoothed = if options.smoothing {
+        smoothe_wps(wps_values, Some(mask_slice))
+    } else {
+        wps_values.to_vec()
+    };
+    let residuals = if let Some(window_bp) = options.normalization_bp {
+        normalize_wps(
+            &smoothed,
+            wps_values,
+            Some(mask_slice),
+            window_bp,
+            1,
+            options.min_unmasked,
+        )
+    } else {
+        smoothed
+    };
+    call_peaks(
+        chromosome,
+        start_offset,
+        &residuals,
+        mask_slice,
+        options.min_peak_height,
+        options.initial_segment_marker,
+    )
+}
+
 enum WindowStateData {
     Unique(BTreeMap<u64, f32>),
     Indexed(Vec<PeakCall>),
@@ -891,6 +974,8 @@ enum WindowStateData {
         count: u32,
         first_peak: Option<u64>,
         last_peak: Option<u64>,
+        first_segment: Option<u64>,
+        last_segment: Option<u64>,
         distance_sum: f64,
         distance_histogram: BTreeMap<u32, u32>,
     },
@@ -931,7 +1016,9 @@ impl WindowAccumulator {
                 WindowAccumulatorKind::Stats => WindowStateData::Stats {
                     count: 0,
                     first_peak: None,
+                    first_segment: None,
                     last_peak: None,
+                    last_segment: None,
                     distance_sum: 0.0,
                     distance_histogram: BTreeMap::new(),
                 },
@@ -995,22 +1082,28 @@ impl WindowAccumulator {
                         count,
                         first_peak,
                         last_peak,
+                        first_segment,
+                        last_segment,
                         distance_sum,
                         distance_histogram,
                     } => {
                         if first_peak.is_none() {
                             *first_peak = Some(peak.peak_position);
+                            *first_segment = Some(peak.segment_id);
                         }
-                        if let Some(last) = *last_peak {
-                            let distance = (peak.peak_position - last) as u32;
-                            *distance_sum += distance as f64;
-                            let _ = distance_histogram
-                                .entry(distance)
-                                .and_modify(|freq| *freq += 1)
-                                .or_insert(1);
+                        if let (Some(last), Some(last_seg)) = (*last_peak, *last_segment) {
+                            if last_seg == peak.segment_id {
+                                let distance = (peak.peak_position - last) as u32;
+                                *distance_sum += distance as f64;
+                                let _ = distance_histogram
+                                    .entry(distance)
+                                    .and_modify(|freq| *freq += 1)
+                                    .or_insert(1);
+                            }
                         }
                         *count += 1;
                         *last_peak = Some(peak.peak_position);
+                        *last_segment = Some(peak.segment_id);
                     }
                 }
             }
@@ -1078,12 +1171,24 @@ impl WindowAccumulator {
             WindowStateData::Stats {
                 count,
                 first_peak,
+                first_segment,
                 last_peak,
+                last_segment,
                 distance_sum,
                 distance_histogram,
             } => {
-                if let (Some(prev_last), Some(first)) = (*last_peak, contribution.first_peak) {
-                    if first >= prev_last {
+                if let (
+                    Some(prev_last),
+                    Some(prev_segment),
+                    Some(first),
+                    Some(first_segment_contrib),
+                ) = (
+                    *last_peak,
+                    *last_segment,
+                    contribution.first_peak,
+                    contribution.first_segment,
+                ) {
+                    if prev_segment == first_segment_contrib && first >= prev_last {
                         let distance = first - prev_last;
                         *distance_sum += distance as f64;
                         let _ = distance_histogram
@@ -1094,6 +1199,7 @@ impl WindowAccumulator {
                 }
                 if first_peak.is_none() {
                     *first_peak = contribution.first_peak;
+                    *first_segment = contribution.first_segment;
                 }
                 *count += contribution.count;
                 *distance_sum += contribution.distance_sum;
@@ -1103,8 +1209,9 @@ impl WindowAccumulator {
                         .and_modify(|existing| *existing += *freq)
                         .or_insert(*freq);
                 }
-                if let Some(last) = contribution.last_peak.or(contribution.first_peak) {
-                    *last_peak = Some(last);
+                if contribution.last_peak.is_some() {
+                    *last_peak = contribution.last_peak;
+                    *last_segment = contribution.last_segment;
                 }
                 Ok(())
             }

@@ -13,6 +13,7 @@ pub struct PeakCall {
     pub end: u64,
     pub peak_position: u64,
     pub height: f32,
+    pub segment_id: u64,
 }
 
 /// Call peaks on a normalized Snyder residual trace.
@@ -29,11 +30,14 @@ pub fn call_peaks(
     normalized_wps_values: &[f32],
     mask: &[u8],
     min_peak_height: f32,
+    initial_segment_marker: u64,
 ) -> Vec<PeakCall> {
     let mut peaks: Vec<PeakCall> = Vec::new();
     let mut positions: Vec<u64> = Vec::new();
     let mut values: Vec<f32> = Vec::new();
     let mut last_positive: Option<u64> = None;
+    let mut barrier_marker: u64 = initial_segment_marker;
+    let mut run_segment_id: Option<u64> = None;
 
     for (idx, &value) in normalized_wps_values.iter().enumerate() {
         let masked = mask.get(idx).copied().unwrap_or(0) != 0;
@@ -46,7 +50,10 @@ pub fn call_peaks(
                 &mut positions,
                 &mut values,
                 min_peak_height,
+                run_segment_id,
             );
+            run_segment_id = None;
+            barrier_marker = absolute_pos;
             last_positive = None;
             continue;
         }
@@ -61,7 +68,9 @@ pub fn call_peaks(
                         &mut positions,
                         &mut values,
                         min_peak_height,
+                        run_segment_id,
                     );
+                    run_segment_id = None;
                 } else {
                     for step in 1..=gap {
                         positions.push(last + step);
@@ -75,12 +84,17 @@ pub fn call_peaks(
                     &mut positions,
                     &mut values,
                     min_peak_height,
+                    run_segment_id,
                 );
+                run_segment_id = None;
             }
 
             positions.push(absolute_pos);
             values.push(value);
             last_positive = Some(absolute_pos);
+            if run_segment_id.is_none() {
+                run_segment_id = Some(barrier_marker);
+            }
         }
     }
 
@@ -90,6 +104,7 @@ pub fn call_peaks(
         &mut positions,
         &mut values,
         min_peak_height,
+        run_segment_id,
     );
     peaks
 }
@@ -101,6 +116,7 @@ fn finalize_run(
     positions: &mut Vec<u64>,
     values: &mut Vec<f32>,
     min_peak_height: f32,
+    segment_id: Option<u64>,
 ) {
     if positions.is_empty() {
         return;
@@ -116,6 +132,7 @@ fn finalize_run(
         positions.as_slice(),
         values.as_slice(),
         min_peak_height,
+        segment_id.unwrap_or(0),
     );
     peaks.extend(peaks_from_run);
     positions.clear();
@@ -128,6 +145,7 @@ fn evaluate_run(
     positions: &[u64],
     values: &[f32],
     min_peak_height: f32,
+    segment_id: u64,
 ) -> Vec<PeakCall> {
     let len = positions.len();
     if len < MIN_LENGTH {
@@ -162,6 +180,7 @@ fn evaluate_run(
                     end: best.end + 1,
                     peak_position: best.peak_position,
                     height: best.max_value,
+                    segment_id,
                 });
             }
         }
@@ -175,6 +194,7 @@ fn evaluate_run(
                     end: window.end + 1,
                     peak_position: window.peak_position,
                     height: window.max_value,
+                    segment_id,
                 });
             }
         }

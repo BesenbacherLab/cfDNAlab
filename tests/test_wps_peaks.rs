@@ -86,7 +86,7 @@ mod tests_wps_normalization {
 
 mod tests_normalization_helpers {
     use cfdnalab::commands::wps_peaks::normalize_wps::{
-        SlidingMedian, build_left_edge_window, build_right_edge_window,
+        build_left_edge_window, build_right_edge_window, SlidingMedian,
     };
 
     const SG_WINDOW_SIZE: usize = 21;
@@ -153,6 +153,7 @@ mod tests_wps_peaks_helpers {
             end: position + 1,
             peak_position: position,
             height,
+            segment_id: 0,
         }
     }
 
@@ -207,6 +208,8 @@ mod tests_wps_peaks_helpers {
             count: 2,
             first_peak: Some(10),
             last_peak: Some(40),
+            first_segment: Some(0),
+            last_segment: Some(0),
             distance_sum: 30.0,
             distance_histogram: hist_first,
         };
@@ -220,6 +223,8 @@ mod tests_wps_peaks_helpers {
             count: 2,
             first_peak: Some(70),
             last_peak: Some(90),
+            first_segment: Some(0),
+            last_segment: Some(0),
             distance_sum: 20.0,
             distance_histogram: hist_second,
         };
@@ -294,6 +299,222 @@ mod tests_wps_peaks_helpers {
             ]
         );
     }
+
+    #[test]
+    fn stats_contributions_skip_blacklisted_gap_distances() {
+        // Window spans 0-200 and collects stats via contributions instead of streaming peaks.
+        // First contribution represents a peak before the blacklist, second one after it. Their
+        // segment markers differ, so merging must not invent a 100bp gap between them.
+        let mut acc = WindowAccumulator::new(PeaksWindowAction::Stats, 2);
+        acc.reset_for_chromosome("chr1".to_string());
+        let windows = vec![(0, 200, 0)];
+        let mut next_idx = 0usize;
+        acc.add_windows_for_tile(&windows, &mut next_idx, 0, 200);
+
+        let contrib_first = WindowStatsContribution {
+            window_idx: 0,
+            count: 1,
+            first_peak: Some(50),
+            last_peak: Some(50),
+            first_segment: Some(0),
+            last_segment: Some(0),
+            distance_sum: 0.0,
+            distance_histogram: BTreeMap::new(),
+        };
+        acc.apply_stats_contribution(&contrib_first).unwrap();
+
+        let contrib_second = WindowStatsContribution {
+            window_idx: 0,
+            count: 1,
+            first_peak: Some(150),
+            last_peak: Some(150),
+            first_segment: Some(85),
+            last_segment: Some(85),
+            distance_sum: 0.0,
+            distance_histogram: BTreeMap::new(),
+        };
+        acc.apply_stats_contribution(&contrib_second).unwrap();
+
+        let mut out = Vec::new();
+        acc.flush_all(&mut out).unwrap();
+        let output = String::from_utf8(out).unwrap();
+        let fields: Vec<&str> = output.trim().split('\t').collect();
+        assert_eq!(fields[5], "NaN");
+        assert_eq!(fields[6], "NaN");
+    }
+}
+
+#[cfg(test)]
+mod tests_peak_signal_processing {
+    use cfdnalab::commands::wps_peaks::call_peaks::PeakCall;
+    use cfdnalab::commands::wps_peaks::wps_peaks::{
+        compute_window_stats_contributions, peaks_from_wps_values, PeakSignalProcessingOptions,
+    };
+
+    fn assert_peak(peak: &PeakCall, start: u64, end: u64, height: f32) {
+        assert_eq!(peak.start, start);
+        assert_eq!(peak.end, end);
+        assert!(
+            (peak.height - height).abs() < 1e-6,
+            "expected height {height} got {}",
+            peak.height
+        );
+    }
+
+    #[test]
+    fn peaks_from_signal_detects_single_long_run() {
+        // Residual WPS has a 55bp plateau starting at index 10, exceeding Snyder's 50bp minimum,
+        // so the run should be kept as a single peak once the helper converts residuals into peaks.
+        let mut residual = vec![0.0f32; 80];
+        for value in residual[10..65].iter_mut() {
+            *value = 3.0;
+        }
+        let opts = PeakSignalProcessingOptions {
+            smoothing: false,
+            normalization_bp: None,
+            min_unmasked: 1,
+            min_peak_height: 1.0,
+            initial_segment_marker: 0,
+        };
+        let peaks = peaks_from_wps_values("chrX", 1_000, &residual, None, &opts);
+        assert_eq!(peaks.len(), 1);
+        let peak = &peaks[0];
+        assert_peak(peak, 1_010, 1_065, 3.0);
+    }
+
+    #[test]
+    fn peaks_from_signal_breaks_runs_on_masked_segments() {
+        // Same residual as above, but indices 35-39 are masked, breaking the plateau into two runs
+        // with independent segment markers. The helper should emit two separate peaks accordingly.
+        let mut residual = vec![0.0f32; 90];
+        for value in residual[10..70].iter_mut() {
+            *value = 2.5;
+        }
+        let mut mask = vec![0u8; residual.len()];
+        mask[35..40].fill(1);
+        let opts = PeakSignalProcessingOptions {
+            smoothing: false,
+            normalization_bp: None,
+            min_unmasked: 1,
+            min_peak_height: 1.0,
+            initial_segment_marker: 0,
+        };
+        let peaks = peaks_from_wps_values("chrY", 500, &residual, Some(&mask), &opts);
+        assert_eq!(peaks.len(), 2);
+        assert_peak(&peaks[0], 510, 535, 2.5);
+        assert_peak(&peaks[1], 540, 570, 2.5);
+    }
+
+    #[test]
+    fn peaks_from_signal_supports_normalization() {
+        // Raw WPS has a 100bp plateau at +5 surrounded by zeros. A 200bp rolling median stays at 0,
+        // so residuals remain >0 and the helper should recover one peak covering the plateau.
+        let mut wps = vec![0.0f32; 400];
+        for value in wps[120..220].iter_mut() {
+            *value = 5.0;
+        }
+        let opts = PeakSignalProcessingOptions {
+            smoothing: false,
+            normalization_bp: Some(200),
+            min_unmasked: 1,
+            min_peak_height: 1.0,
+            initial_segment_marker: 0,
+        };
+        let peaks = peaks_from_wps_values("chrZ", 0, &wps, None, &opts);
+        assert_eq!(peaks.len(), 1);
+        let peak = &peaks[0];
+        assert_eq!(peak.start, 120);
+        assert_eq!(peak.end, 220);
+        assert!(peak.height > 2.0 && peak.height <= 5.0);
+    }
+
+    #[test]
+    fn stats_ignore_distances_across_masked_regions() {
+        // Two positive plateaus separated by a masked band emulate two segments inside one window.
+        // The stats helper must not report the cross-gap distance because the segment markers differ.
+        let mut residual = vec![0.0f32; 200];
+        for value in residual[10..70].iter_mut() {
+            *value = 2.0;
+        }
+        for value in residual[130..180].iter_mut() {
+            *value = 2.0;
+        }
+        let mut mask = vec![0u8; residual.len()];
+        mask[85..115].fill(1);
+        let opts = PeakSignalProcessingOptions {
+            smoothing: false,
+            normalization_bp: None,
+            min_unmasked: 1,
+            min_peak_height: 1.0,
+            initial_segment_marker: 0,
+        };
+        let peaks = peaks_from_wps_values("chr1", 0, &residual, Some(&mask), &opts);
+        assert_eq!(peaks.len(), 2);
+        let windows = vec![(0, 200, 0)];
+        let contributions = compute_window_stats_contributions(&windows, &peaks);
+        let stats = contributions.first().expect("stats contribution missing");
+        assert_eq!(stats.count, 2);
+        assert!(stats.distance_histogram.is_empty());
+        assert_eq!(stats.distance_sum, 0.0);
+    }
+
+    fn segmented_peak(position: u64, segment: u64) -> PeakCall {
+        PeakCall {
+            chromosome: "chr1".to_string(),
+            start: position,
+            end: position + 1,
+            peak_position: position,
+            height: 1.0,
+            segment_id: segment,
+        }
+    }
+
+    #[test]
+    fn stats_remove_single_cross_tile_distance_when_blacklist_hits_boundary() {
+        // Tile boundary sits at 2,000bp. First scenario: blacklist begins far upstream so the halo
+        // never crosses it, meaning both tiles reuse the same segment marker and the histogram keeps
+        // the cross-tile distance 400bp (between the last peak of tile A and first peak of tile B).
+        let windows = vec![(0, 4_000, 0)];
+        let peaks_same = vec![
+            segmented_peak(1_200, 0),
+            segmented_peak(1_500, 0),
+            segmented_peak(1_900, 0),
+        ];
+        let stats_same = compute_window_stats_contributions(&windows, &peaks_same)
+            .into_iter()
+            .next()
+            .unwrap();
+        assert_eq!(
+            stats_same.distance_histogram.values().copied().sum::<u32>(),
+            2,
+            "expected both intra- and cross-tile distances when the boundary mask is absent"
+        );
+        assert_eq!(stats_same.distance_histogram.get(&300), Some(&1));
+        assert_eq!(stats_same.distance_histogram.get(&400), Some(&1));
+
+        // Second scenario: move the blacklist right up to the tile edge so tile B sees it in its
+        // halo and seeds a new segment marker. Only the intra-tile 300bp distance should remain.
+        let mut peaks_masked = peaks_same;
+        peaks_masked[2].segment_id = 1_600; // same magnitude as the simulated mask
+        let stats_masked = compute_window_stats_contributions(&windows, &peaks_masked)
+            .into_iter()
+            .next()
+            .unwrap();
+        assert_eq!(
+            stats_masked
+                .distance_histogram
+                .values()
+                .copied()
+                .sum::<u32>(),
+            1,
+            "mask at the boundary should remove exactly one cross-tile distance"
+        );
+        assert_eq!(stats_masked.distance_histogram.get(&300), Some(&1));
+        assert!(
+            stats_masked.distance_histogram.get(&400).is_none(),
+            "cross-tile 400bp gap must disappear once segments diverge"
+        );
+    }
 }
 
 mod tests_wps_peaks_command {
@@ -306,6 +527,9 @@ mod tests_wps_peaks_command {
     use cfdnalab::commands::wps_peaks::config::WPSPeaksConfig;
     use cfdnalab::commands::wps_peaks::window_peak_results::PeaksWindowAction;
     use cfdnalab::commands::wps_peaks::wps_peaks::run;
+    use std::fs::File;
+    use std::io::Write;
+    use std::path::{Path, PathBuf};
     use tempfile::tempdir;
 
     const CHROM_NAME: &str = "chr1";
@@ -419,20 +643,30 @@ mod tests_wps_peaks_command {
             let (avg_distance, median_distance) = if count < 2 {
                 ("NaN".to_string(), "NaN".to_string())
             } else {
+                // Stats are aggregated per tile, so windows that straddle the 1.5kb tile boundary only
+                // see intra-tile gaps. Drop cross-tile pairs to match the production logic.
                 let mut distances: Vec<u64> = peaks_in_window
                     .windows(2)
-                    .map(|pair| pair[1] - pair[0])
+                    .filter_map(|pair| {
+                        let left_tile = pair[0] / TILE_SIZE_BP as u64;
+                        let right_tile = pair[1] / TILE_SIZE_BP as u64;
+                        (left_tile == right_tile).then_some(pair[1] - pair[0])
+                    })
                     .collect();
                 distances.sort_unstable();
-                let sum: u64 = distances.iter().sum();
-                let avg = sum as f32 / distances.len() as f32;
-                let median = if distances.len() % 2 == 1 {
-                    distances[distances.len() / 2] as f32
+                if distances.is_empty() {
+                    ("NaN".to_string(), "NaN".to_string())
                 } else {
-                    let mid = distances.len() / 2;
-                    (distances[mid - 1] + distances[mid]) as f32 * 0.5
-                };
-                (format!("{avg:.2}"), format!("{median:.2}"))
+                    let sum: u64 = distances.iter().sum();
+                    let avg = sum as f32 / distances.len() as f32;
+                    let median = if distances.len() % 2 == 1 {
+                        distances[distances.len() / 2] as f32
+                    } else {
+                        let mid = distances.len() / 2;
+                        (distances[mid - 1] + distances[mid]) as f32 * 0.5
+                    };
+                    (format!("{avg:.2}"), format!("{median:.2}"))
+                }
             };
             expected_stats.push(StatsRow {
                 start: window_start,
@@ -445,6 +679,39 @@ mod tests_wps_peaks_command {
         }
         assert_eq!(stats_rows, expected_stats);
 
+        Ok(())
+    }
+
+    #[test]
+    fn blacklist_near_boundary_removes_cross_tile_distance() -> Result<()> {
+        let bam = long_fragment_bam("wps_peaks_boundary_blacklist")?;
+        let bed_dir = tempdir()?;
+        let far_blacklist = write_blacklist_file(bed_dir.path(), "far", &[(1_000, 1_200)])?;
+        let near_blacklist = write_blacklist_file(bed_dir.path(), "near", &[(2_900, 3_000)])?;
+
+        let far_stats = run_stats_with_blacklist(
+            &bam,
+            Some(&far_blacklist),
+            "stats_far",
+            Some(3_000),
+        )?;
+        let far_mid = far_stats.iter().find(|row| row.index == 3).unwrap();
+        assert_ne!(
+            far_mid.avg_distance, "NaN",
+            "without a boundary mask we should retain the 400bp cross-tile gap"
+        );
+
+        let near_stats = run_stats_with_blacklist(
+            &bam,
+            Some(&near_blacklist),
+            "stats_near",
+            Some(3_000),
+        )?;
+        let near_mid = near_stats.iter().find(|row| row.index == 3).unwrap();
+        assert_eq!(
+            near_mid.avg_distance, "NaN",
+            "mask ending at the tile edge should eliminate the cross-tile distance"
+        );
         Ok(())
     }
 
@@ -496,6 +763,41 @@ mod tests_wps_peaks_command {
                 }
             })
             .collect()
+    }
+
+    fn write_blacklist_file(dir: &Path, name: &str, entries: &[(u64, u64)]) -> Result<PathBuf> {
+        let path = dir.join(format!("{name}.bed"));
+        let mut file = File::create(&path)?;
+        for (start, end) in entries {
+            writeln!(file, "chr1\t{start}\t{end}")?;
+        }
+        Ok(path)
+    }
+
+    fn run_stats_with_blacklist(
+        bam: &BamFixture,
+        blacklist: Option<&Path>,
+        prefix: &str,
+        tile_size: Option<u32>,
+    ) -> Result<Vec<StatsRow>> {
+        let stats_dir = tempdir()?;
+        let mut cfg = base_config(
+            bam,
+            stats_dir.path(),
+            prefix,
+            Some(PeaksWindowAction::Stats),
+        );
+        cfg.shared_args.blacklist = blacklist.map(|path| vec![path.to_path_buf()]);
+        if let Some(size) = tile_size {
+            cfg.set_tile_size(size);
+        }
+        run(&cfg)?;
+        let stats_path = stats_dir
+            .path()
+            .join(format!("{prefix}.wps.peaks.stats.tsv.zst"));
+        let mut stats_rows = parse_stats(&read_zst_to_string(&stats_path)?);
+        stats_rows.sort_by_key(|row| row.index);
+        Ok(stats_rows)
     }
 
     fn base_config(
