@@ -161,7 +161,7 @@ pub struct WPSPeaksConfig {
         feature = "cli",
         clap(
             long = "min-peak-height",
-            default_value = "3.0",
+            default_value = "5.0",
             value_parser = parse_nonnegative_f32,
             help_heading = "Core"
         )
@@ -181,7 +181,7 @@ impl WPSPeaksConfig {
             normalize_bp: 1000,
             min_unmasked: 400,
             no_smoothing: false,
-            min_peak_height: 3.0,
+            min_peak_height: 5.0,
         }
     }
 

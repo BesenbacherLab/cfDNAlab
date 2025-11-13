@@ -3,14 +3,6 @@ use crate::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use std::path::PathBuf;
 
-/*
-What do we actually want?
-
-WPS: Scores per position etc. Similar to coverage but in a way that allows calculating metrics yourself, etc. Perhaps bigwig files are better for that? Check for libs and size of such a file.
-
-Peaks: Positions and stats? Just always give everything? Well, unique-positions, index-positions, stats, then allow setting multiple? For by-size, probably stats is the one to use?
-
-*/
 
 /// Calculate positional windowed protection scores (WPS) across the genome.
 /// 
