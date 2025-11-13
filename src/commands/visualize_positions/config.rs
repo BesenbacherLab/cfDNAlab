@@ -15,6 +15,8 @@ use std::path::PathBuf;
 const MIN_FRAGMENT_LENGTH: u32 = 10;
 
 /// `fragment-kmers` helper: Draw which fragment bases will be counted for a given frame and range setup.
+/// 
+/// **Experimental**: enable via `--features cmd_fragment_kmers cmd_visualize_positions` during `cargo build/install`.
 ///
 /// Use this helper to prototype the “where to count” arguments (`--frame`, `--positions`, `--step`, `--bases-from`, `--mismatch-bases-from`),
 /// before you run `cfdna fragment-kmers` on a BAM file. For every fragment length you request, the selected

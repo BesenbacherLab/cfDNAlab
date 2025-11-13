@@ -8,15 +8,11 @@ default = [
     "cmd_bam_to_frag",
     "cmd_coverage_weights",
     "cmd_fcoverage",
-    "cmd_fragment_kmers",
     "cmd_gc_bias",
     "cmd_lengths",
     "cmd_prepare_windows",
-    "cmd_profile_groups",
+    "cmd_midpoints",
     "cmd_reference_gc",
-    "cmd_visualize_positions",
-    "cmd_wps",
-    "cmd_wps_peaks",
 ]
 cli = ["clap"]
 cmd_bam_to_frag = []
@@ -27,7 +23,7 @@ cmd_fragment_kmers_tests = ["cmd_fragment_kmers"]
 cmd_gc_bias = []
 cmd_lengths = []
 cmd_prepare_windows = []
-cmd_profile_groups = []
+cmd_midpoints = []
 cmd_reference_gc = []
 cmd_visualize_positions = ["cmd_fragment_kmers"]
 cmd_visualize_positions_tests = ["cmd_visualize_positions"]

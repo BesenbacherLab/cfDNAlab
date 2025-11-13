@@ -14,7 +14,7 @@ pub mod gc_bias;
 pub mod lengths;
 #[cfg(feature = "cmd_prepare_windows")]
 pub mod prepare_windows;
-#[cfg(feature = "cmd_profile_groups")]
+#[cfg(feature = "cmd_midpoints")]
 pub mod profile_groups;
 #[cfg(feature = "cmd_reference_gc")]
 pub mod reference_gc;

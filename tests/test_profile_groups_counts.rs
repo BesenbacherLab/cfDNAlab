@@ -1,4 +1,4 @@
-#![cfg(feature = "cmd_profile_groups")]
+#![cfg(feature = "cmd_midpoints")]
 
 #[cfg(test)]
 mod tests {
