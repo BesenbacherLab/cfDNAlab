@@ -888,14 +888,16 @@ mod tests_peak_signal_processing {
 
     #[test]
     fn peaks_from_signal_breaks_runs_on_masked_segments() {
-        // Same residual as above, but indices 35-39 are masked, breaking the plateau into two runs
-        // with independent segment markers. The helper should emit two separate peaks accordingly.
-        let mut residual = vec![0.0f32; 90];
-        for value in residual[10..70].iter_mut() {
+        // Same plateau shape, but we mask a 10bp band (indices 90-99). Snyder requires >=50bp runs,
+        // so we extend the positive segments to 10..89 and 100..169 (80bp and 70bp respectively)
+        // to stay above the cutoff after the mask splits the trace. Each unmasked run therefore
+        // forms its own peak.
+        let mut residual = vec![0.0f32; 200];
+        for value in residual[10..170].iter_mut() {
             *value = 2.5;
         }
         let mut mask = vec![0u8; residual.len()];
-        mask[35..40].fill(1);
+        mask[90..100].fill(1);
         let opts = PeakSignalProcessingOptions {
             smoothing: false,
             normalization_bp: None,
@@ -905,8 +907,8 @@ mod tests_peak_signal_processing {
         };
         let peaks = peaks_from_wps_values("chrY", 500, &residual, Some(&mask), &opts);
         assert_eq!(peaks.len(), 2);
-        assert_peak(&peaks[0], 510, 535, 2.5);
-        assert_peak(&peaks[1], 540, 570, 2.5);
+        assert_peak(&peaks[0], 510, 590, 2.5);
+        assert_peak(&peaks[1], 600, 670, 2.5);
     }
 
     #[test]
