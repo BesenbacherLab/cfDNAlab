@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 use anyhow::{Context, Result, anyhow};
+use cfdnalab::commands::cli_common::{BaseSelectionArgs, FragmentPositionSelectionArgs};
+use cfdnalab::commands::fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 use rust_htslib::bam::{self, header::HeaderRecord, record::Cigar, record::CigarString};
 use std::{
     fs::{File, OpenOptions},
@@ -169,6 +171,28 @@ fn write_fasta<P: AsRef<Path>>(path: P, sequences: &[(String, String)]) -> Resul
 pub fn simple_reference_twobit() -> Result<TwoBitFixture> {
     let chr1 = ("chr1".to_string(), "ACGT".repeat(64));
     twobit_from_sequences("simple_reference", vec![chr1])
+}
+
+pub fn single_position_selection(
+    frame: ReferenceFrame,
+    positions: &str,
+    step: usize,
+) -> FragmentPositionSelectionArgs {
+    FragmentPositionSelectionArgs {
+        frame: vec![frame],
+        positions: vec![positions.to_string()],
+        step: vec![step],
+    }
+}
+
+pub fn build_base_selection(
+    bases_from: BasesFrom,
+    mismatch_bases_from: MismatchBasesFrom,
+) -> BaseSelectionArgs {
+    BaseSelectionArgs {
+        bases_from,
+        mismatch_bases_from,
+    }
 }
 
 fn repeat_pattern(pattern: &[u8], len: usize) -> String {

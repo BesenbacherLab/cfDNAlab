@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_coverage_weights")]
+
 mod fixtures;
 
 use anyhow::Result;

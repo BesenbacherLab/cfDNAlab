@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_bam_to_frag")]
+
 mod tests_bam_to_frag {
     // tests/bam_to_frag_integration.rs
 

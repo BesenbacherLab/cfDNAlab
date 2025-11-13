@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_wps_peaks")]
+
 mod tests_wps_normalization {
     use cfdnalab::commands::wps_peaks::normalize_wps::{normalize_wps, smoothe_wps};
 

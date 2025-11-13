@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_wps")]
+
 mod fixtures;
 
 use anyhow::{Context, Result, ensure};

@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_lengths")]
+
 mod fixtures;
 
 use anyhow::Result;

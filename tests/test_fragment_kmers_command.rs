@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_fragment_kmers_tests")]
+
 mod fixtures;
 
 mod tests_fragment_kmer_command {
@@ -7,16 +9,16 @@ mod tests_fragment_kmer_command {
     use crate::fixtures::{
         FragmentSpec, ReadSpec, bam_from_specs, fragment_kmers_edge_bam,
         fragment_kmers_edge_reference, simple_inward_bam, simple_reference_twobit,
-        twobit_from_sequences, write_bed, write_scaling_factors,
+        single_position_selection, twobit_from_sequences, write_bed, write_scaling_factors,
     };
     use anyhow::{Context, Result, bail};
     use cfdnalab::commands::cli_common::{
-        ChromosomeArgs, FragmentLengthArgs, FragmentPositionSelectionArgs, IOCArgs,
-        Ref2BitRequiredArgs, ScaleGenomeArgs, WindowsArgs,
+        ChromosomeArgs, FragmentLengthArgs, IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
+        WindowsArgs,
     };
     use cfdnalab::commands::fragment_kmers::config::FragmentKmersConfig;
     use cfdnalab::commands::fragment_kmers::fragment_kmers::run;
-    use cfdnalab::commands::visualize_positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
+    use cfdnalab::commands::visualize_positions::ReferenceFrame;
     use cfdnalab::shared::base::make_canonical;
     use cfdnalab::shared::blacklist::BlacklistStrategy;
     use cfdnalab::shared::indel_mode::IndelMode;
@@ -306,13 +308,7 @@ mod tests_fragment_kmer_command {
         cfg.set_require_proper_pair(false);
         cfg.set_canonical(false);
         cfg.set_positional_counts(true);
-        cfg.set_position_selection(FragmentPositionSelectionArgs {
-            frame: ReferenceFrame::Left,
-            positions: "1..1".to_string(),
-            step: 1,
-            bases_from: BasesFrom::Reference,
-            mismatch_bases_from: MismatchBasesFrom::NearestRead,
-        });
+        cfg.set_position_selection(single_position_selection(ReferenceFrame::Left, "1..1", 1));
 
         run(&cfg)?;
 
@@ -549,14 +545,7 @@ mod tests_fragment_kmer_command {
         cfg_base.set_canonical(false);
         cfg_base.set_ignore_gap(true);
         cfg_base.set_positional_counts(true);
-        cfg_base.set_position_selection(FragmentPositionSelectionArgs {
-            frame: ReferenceFrame::Left,
-            //positions: "2..-1".to_string(),
-            positions: "2..".to_string(),
-            step: 1,
-            bases_from: BasesFrom::Reference,
-            mismatch_bases_from: MismatchBasesFrom::NearestRead,
-        });
+        cfg_base.set_position_selection(single_position_selection(ReferenceFrame::Left, "2..", 1));
         {
             let fl = cfg_base.fragment_lengths_mut();
             fl.min_fragment_length = fragment_lengths.min_fragment_length;
@@ -779,13 +768,7 @@ mod tests_fragment_kmer_command {
         cfg_base.set_canonical(false);
         cfg_base.set_ignore_gap(true);
         cfg_base.set_positional_counts(true);
-        cfg_base.set_position_selection(FragmentPositionSelectionArgs {
-            frame: ReferenceFrame::Right, // Mirror: count from the RIGHT end
-            positions: "2..".to_string(), // skip the fragment’s last base
-            step: 1,
-            bases_from: BasesFrom::Reference,
-            mismatch_bases_from: MismatchBasesFrom::NearestRead,
-        });
+        cfg_base.set_position_selection(single_position_selection(ReferenceFrame::Right, "2..", 1));
         {
             let fl = cfg_base.fragment_lengths_mut();
             fl.min_fragment_length = fragment_lengths.min_fragment_length;
@@ -1415,18 +1398,16 @@ mod tests_fragment_kmer_positions {
     }
 }
 mod revcomp_tests {
-    use crate::fixtures::{simple_inward_bam, simple_reference_twobit};
+    use crate::fixtures::{simple_inward_bam, simple_reference_twobit, single_position_selection};
     use crate::tests_fragment_kmer_command::{
         assert_count_map_matches, base_chromosomes, build_revcomp_assets, load_counts_from_output,
         load_positional_group_counts, manual_kmer_counts, manual_offset_counts,
     };
     use anyhow::Result;
-    use cfdnalab::commands::cli_common::{
-        FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs,
-    };
+    use cfdnalab::commands::cli_common::{IOCArgs, Ref2BitRequiredArgs};
     use cfdnalab::commands::fragment_kmers::config::FragmentKmersConfig;
     use cfdnalab::commands::fragment_kmers::fragment_kmers::{run, run_inner};
-    use cfdnalab::commands::visualize_positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
+    use cfdnalab::commands::visualize_positions::ReferenceFrame;
     use cfdnalab::shared::fragment::segment_kmer_fragment::FragmentWithKmerSegments;
     use cfdnalab::shared::fragment_iterator::fragments_with_kmer_segments_from_bam;
     use cfdnalab::shared::read::default_include_read;
@@ -1465,13 +1446,11 @@ mod revcomp_tests {
         baseline_cfg.set_require_proper_pair(false);
         baseline_cfg.set_ignore_gap(true);
         baseline_cfg.set_canonical(false);
-        baseline_cfg.set_position_selection(FragmentPositionSelectionArgs {
-            frame: ReferenceFrame::Left,
-            positions: "..".to_string(),
-            step: 1,
-            bases_from: BasesFrom::Reference,
-            mismatch_bases_from: MismatchBasesFrom::NearestRead,
-        });
+        baseline_cfg.set_position_selection(single_position_selection(
+            ReferenceFrame::Left,
+            "..",
+            1,
+        ));
         {
             let lengths = baseline_cfg.fragment_lengths_mut();
             lengths.min_fragment_length = left_fragment_len;
@@ -1500,13 +1479,11 @@ mod revcomp_tests {
         combined_cfg.set_require_proper_pair(false);
         combined_cfg.set_ignore_gap(true);
         combined_cfg.set_canonical(false);
-        combined_cfg.set_position_selection(FragmentPositionSelectionArgs {
-            frame: ReferenceFrame::Nearest,
-            positions: "..".to_string(),
-            step: 1,
-            bases_from: BasesFrom::Reference,
-            mismatch_bases_from: MismatchBasesFrom::NearestRead,
-        });
+        combined_cfg.set_position_selection(single_position_selection(
+            ReferenceFrame::Nearest,
+            "..",
+            1,
+        ));
         {
             let lengths = combined_cfg.fragment_lengths_mut();
             lengths.min_fragment_length = combined_fragment_len;
@@ -1560,13 +1537,11 @@ mod revcomp_tests {
         baseline_cfg.set_ignore_gap(true);
         baseline_cfg.set_canonical(false);
         baseline_cfg.set_positional_counts(true);
-        baseline_cfg.set_position_selection(FragmentPositionSelectionArgs {
-            frame: ReferenceFrame::Left,
-            positions: "1..3".to_string(),
-            step: 1,
-            bases_from: BasesFrom::Reference,
-            mismatch_bases_from: MismatchBasesFrom::NearestRead,
-        });
+        baseline_cfg.set_position_selection(single_position_selection(
+            ReferenceFrame::Left,
+            "1..3",
+            1,
+        ));
         {
             let lengths = baseline_cfg.fragment_lengths_mut();
             lengths.min_fragment_length = left_fragment_len;
@@ -1601,13 +1576,11 @@ mod revcomp_tests {
         combined_cfg.set_ignore_gap(true);
         combined_cfg.set_canonical(false);
         combined_cfg.set_positional_counts(true);
-        combined_cfg.set_position_selection(FragmentPositionSelectionArgs {
-            frame: ReferenceFrame::Nearest,
-            positions: "1..3".to_string(),
-            step: 1,
-            bases_from: BasesFrom::Reference,
-            mismatch_bases_from: MismatchBasesFrom::NearestRead,
-        });
+        combined_cfg.set_position_selection(single_position_selection(
+            ReferenceFrame::Nearest,
+            "1..3",
+            1,
+        ));
         {
             let lengths = combined_cfg.fragment_lengths_mut();
             lengths.min_fragment_length = combined_fragment_len;
@@ -1671,13 +1644,7 @@ mod revcomp_tests {
         cfg.set_ignore_gap(true);
         cfg.set_canonical(false);
         cfg.set_positional_counts(true);
-        cfg.set_position_selection(FragmentPositionSelectionArgs {
-            frame: ReferenceFrame::PerEnd,
-            positions: "..4".to_string(),
-            step: 1,
-            bases_from: BasesFrom::Reference,
-            mismatch_bases_from: MismatchBasesFrom::NearestRead,
-        });
+        cfg.set_position_selection(single_position_selection(ReferenceFrame::PerEnd, "..4", 1));
         {
             let lengths = cfg.fragment_lengths_mut();
             lengths.min_fragment_length = combined_fragment_len;
@@ -1718,13 +1685,7 @@ mod revcomp_tests {
             cfg.set_ignore_gap(false);
             cfg.set_canonical(false);
             cfg.set_positional_counts(positional);
-            cfg.set_position_selection(FragmentPositionSelectionArgs {
-                frame: ReferenceFrame::Nearest,
-                positions: "..".to_string(),
-                step: 1,
-                bases_from: BasesFrom::Reference,
-                mismatch_bases_from: MismatchBasesFrom::NearestRead,
-            });
+            cfg.set_position_selection(single_position_selection(ReferenceFrame::Nearest, "..", 1));
             let lengths = cfg.fragment_lengths_mut();
             lengths.min_fragment_length = 20;
             lengths.max_fragment_length = 120;

@@ -1,16 +1,26 @@
+#[cfg(feature = "cmd_bam_to_frag")]
 pub mod bam_to_frag;
 pub mod cli_common;
 mod counters;
+#[cfg(feature = "cmd_coverage_weights")]
 pub mod coverage_weights;
 pub mod ends;
+#[cfg(feature = "cmd_fcoverage")]
 pub mod fcoverage;
 pub mod fragment_kmers;
+#[cfg(feature = "cmd_gc_bias")]
 pub mod gc_bias;
+#[cfg(feature = "cmd_lengths")]
 pub mod lengths;
+#[cfg(feature = "cmd_prepare_windows")]
 pub mod prepare_windows;
+#[cfg(feature = "cmd_profile_groups")]
 pub mod profile_groups;
+#[cfg(feature = "cmd_reference_gc")]
 pub mod reference_gc;
 pub mod transitions;
 pub mod visualize_positions;
+#[cfg(feature = "cmd_wps")]
 pub mod wps;
+#[cfg(feature = "cmd_wps_peaks")]
 pub mod wps_peaks;

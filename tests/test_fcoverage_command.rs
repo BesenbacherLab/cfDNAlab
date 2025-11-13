@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_fcoverage")]
+
 mod fixtures;
 
 use anyhow::Result;

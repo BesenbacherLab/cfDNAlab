@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_profile_groups")]
+
 #[cfg(test)]
 mod tests {
     use anyhow::Result;

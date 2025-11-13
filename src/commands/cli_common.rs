@@ -401,7 +401,7 @@ pub struct FragmentPositionSelectionArgs {
         clap(
             long,
             value_enum,
-            num_args = 1, 
+            num_args = 1,
             action = clap::ArgAction::Append,
             default_values = ["left"],
             help_heading = "Region Selection"
@@ -434,7 +434,7 @@ pub struct FragmentPositionSelectionArgs {
         clap(
             long,
             help_heading = "Region Selection",
-            num_args = 1, 
+            num_args = 1,
             action = clap::ArgAction::Append,
             default_values = [".."],
             required = false,

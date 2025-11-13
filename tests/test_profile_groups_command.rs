@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_profile_groups")]
+
 mod fixtures;
 
 use anyhow::Result;

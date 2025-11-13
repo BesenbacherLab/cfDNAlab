@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_prepare_windows")]
+
 mod tests_prepare_windows_pipeline {
 
     use anyhow::Result;
@@ -1080,8 +1082,8 @@ mod tests_near_file {
     use cfdnalab::commands::prepare_windows::{
         config::{NearDirection, NearEdge},
         near_file::{
-            NearChrom, NearHit, NearInterval, NearSide, NearestResult, Strand, load_near_index,
-            nearest_edge_distance,
+            NearChrom, NearDuplicatesPolicy, NearHit, NearInterval, NearSide, NearestResult,
+            Strand, load_near_index, nearest_edge_distance,
         },
     };
     use tempfile::TempDir;
@@ -1095,7 +1097,15 @@ mod tests_near_file {
         let mut file = File::create(&path)?;
         writeln!(file, "chr1\t0\t10\tSiteA")?;
         writeln!(file, "chr1\t20\t30\tSiteB")?;
-        let index = load_near_index(&path, '\t', false, false, true)?;
+        let index = load_near_index(
+            &path,
+            '\t',
+            false,
+            false,
+            true,
+            false,
+            NearDuplicatesPolicy::Error,
+        )?;
         let chrom = index.per_chrom.get("chr1").expect("chrom");
         assert_eq!(chrom.intervals.len(), 2);
         assert_eq!(index.group_id_to_name.len(), 2);
@@ -1109,7 +1119,16 @@ mod tests_near_file {
         let mut file = File::create(&path)?;
         writeln!(file, "chr1\t0\t10")?;
         writeln!(file, "chr1\t5\t12")?;
-        let err = load_near_index(&path, '\t', false, false, false).unwrap_err();
+        let err = load_near_index(
+            &path,
+            '\t',
+            false,
+            false,
+            false,
+            false,
+            NearDuplicatesPolicy::Error,
+        )
+        .unwrap_err();
         assert!(format!("{err}").contains("intervals overlap"));
         Ok(())
     }
@@ -1217,7 +1236,15 @@ mod tests_near_file {
         let mut file = File::create(&path)?;
         writeln!(file, "chrom\tstart\tend")?;
         writeln!(file, "chr1\t0\t5")?;
-        let index = load_near_index(&path, '\t', true, false, false)?;
+        let index = load_near_index(
+            &path,
+            '\t',
+            true,
+            false,
+            false,
+            false,
+            NearDuplicatesPolicy::Error,
+        )?;
         assert_eq!(index.per_chrom.get("chr1").unwrap().intervals.len(), 1);
         Ok(())
     }

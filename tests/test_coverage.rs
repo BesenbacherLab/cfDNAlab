@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_fcoverage")]
+
 // TODO: Check manually - generated but not validated!
 
 #[cfg(test)]

@@ -78,14 +78,14 @@ mod tests_transitions_frequency_calculations {
 }
 
 mod transitions_command_tests {
-    use crate::fixtures::{FragmentSpec, ReadSpec, bam_from_specs, twobit_from_sequences};
-    use anyhow::{Context, Result};
-    use cfdnalab::commands::cli_common::{
-        ChromosomeArgs, FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs,
+    use crate::fixtures::{
+        FragmentSpec, ReadSpec, bam_from_specs, single_position_selection, twobit_from_sequences,
     };
+    use anyhow::{Context, Result};
+    use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, Ref2BitRequiredArgs};
     use cfdnalab::commands::transitions::config::TransitionsConfig;
     use cfdnalab::commands::transitions::transitions::run as run_transitions;
-    use cfdnalab::commands::visualize_positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
+    use cfdnalab::commands::visualize_positions::ReferenceFrame;
     use ndarray::{Array3, s};
     use ndarray_npy::read_npy;
     use std::collections::HashMap;
@@ -188,13 +188,7 @@ mod transitions_command_tests {
         cfg.set_save_sparse(false);
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        cfg.set_position_selection(FragmentPositionSelectionArgs {
-            frame: ReferenceFrame::Left,
-            positions: "1..3".to_string(), // Capture offsets 0, 1, and 2 relative to forward read start
-            step: 1,
-            bases_from: BasesFrom::Reference,
-            mismatch_bases_from: MismatchBasesFrom::NearestRead,
-        });
+        cfg.set_position_selection(single_position_selection(ReferenceFrame::Left, "1..3", 1));
         {
             let lengths = cfg.fragment_lengths_mut();
             lengths.min_fragment_length = 4;

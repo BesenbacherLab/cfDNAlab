@@ -1,15 +1,46 @@
+#[cfg(feature = "cmd_bam_to_frag")]
 use cfdnalab::commands::bam_to_frag::config::BamToFragConfig;
+#[cfg(feature = "cmd_coverage_weights")]
 use cfdnalab::commands::coverage_weights::config::CoverageWeightsConfig;
+#[cfg(feature = "cmd_fcoverage")]
 use cfdnalab::commands::fcoverage::config::FCoverageConfig;
+#[cfg(feature = "cmd_fragment_kmers")]
 use cfdnalab::commands::fragment_kmers::config::FragmentKmersConfig;
+#[cfg(feature = "cmd_gc_bias")]
 use cfdnalab::commands::gc_bias::config::GCConfig;
+#[cfg(feature = "cmd_lengths")]
 use cfdnalab::commands::lengths::config::LengthsConfig;
+#[cfg(feature = "cmd_prepare_windows")]
 use cfdnalab::commands::prepare_windows::config::PrepareConfig;
+#[cfg(feature = "cmd_profile_groups")]
 use cfdnalab::commands::profile_groups::config::ProfileGroupsConfig;
+#[cfg(feature = "cmd_reference_gc")]
 use cfdnalab::commands::reference_gc::config::RefGCConfig;
+#[cfg(feature = "cmd_visualize_positions")]
 use cfdnalab::commands::visualize_positions::config::VisualizePositionsConfig;
+#[cfg(feature = "cmd_wps")]
 use cfdnalab::commands::wps::config::WPSConfig;
+#[cfg(feature = "cmd_wps_peaks")]
 use cfdnalab::commands::wps_peaks::config::WPSPeaksConfig;
+
+#[cfg(all(
+    feature = "cli",
+    not(any(
+        feature = "cmd_bam_to_frag",
+        feature = "cmd_coverage_weights",
+        feature = "cmd_fcoverage",
+        feature = "cmd_fragment_kmers",
+        feature = "cmd_gc_bias",
+        feature = "cmd_lengths",
+        feature = "cmd_prepare_windows",
+        feature = "cmd_profile_groups",
+        feature = "cmd_reference_gc",
+        feature = "cmd_visualize_positions",
+        feature = "cmd_wps",
+        feature = "cmd_wps_peaks"
+    ))
+))]
+compile_error!("Building the CLI requires enabling at least one cmd_* feature.");
 
 #[cfg(feature = "cli")]
 #[cfg_attr(feature = "cli", derive(clap::Parser))]
@@ -22,17 +53,29 @@ struct Cli {
 #[cfg(feature = "cli")]
 #[cfg_attr(feature = "cli", derive(clap::Subcommand))]
 enum Cmd {
+    #[cfg(feature = "cmd_gc_bias")]
     GCBias(GCConfig),
+    #[cfg(feature = "cmd_reference_gc")]
     ReferenceGC(RefGCConfig), // Extract reference GC counts
+    #[cfg(feature = "cmd_coverage_weights")]
     CoverageWeights(CoverageWeightsConfig),
+    #[cfg(feature = "cmd_lengths")]
     Lengths(LengthsConfig),
+    #[cfg(feature = "cmd_fcoverage")]
     Fcoverage(FCoverageConfig),
+    #[cfg(feature = "cmd_wps")]
     WPS(WPSConfig),
+    #[cfg(feature = "cmd_wps_peaks")]
     WPSPeaks(WPSPeaksConfig),
+    #[cfg(feature = "cmd_profile_groups")]
     Midpoints(ProfileGroupsConfig),
+    #[cfg(feature = "cmd_fragment_kmers")]
     FragmentKmers(FragmentKmersConfig),
+    #[cfg(feature = "cmd_prepare_windows")]
     PrepWindows(PrepareConfig),
+    #[cfg(feature = "cmd_visualize_positions")]
     VisualizePositions(VisualizePositionsConfig),
+    #[cfg(feature = "cmd_bam_to_frag")]
     BamToFrag(BamToFragConfig),
     // Ends(EndsConfig),
 }
@@ -55,21 +98,33 @@ fn main() {
 
     // Run selected subcommand and capture its Result (no `?` in main).
     let res: anyhow::Result<()> = match cli.cmd {
+        #[cfg(feature = "cmd_gc_bias")]
         Cmd::GCBias(cfg) => cfdnalab::commands::gc_bias::gc_bias::run(&cfg),
+        #[cfg(feature = "cmd_reference_gc")]
         Cmd::ReferenceGC(cfg) => cfdnalab::commands::reference_gc::reference_gc::run(&cfg),
+        #[cfg(feature = "cmd_coverage_weights")]
         Cmd::CoverageWeights(cfg) => {
             cfdnalab::commands::coverage_weights::coverage_weights::run(&cfg)
         }
+        #[cfg(feature = "cmd_lengths")]
         Cmd::Lengths(cfg) => cfdnalab::commands::lengths::lengths::run(&cfg),
+        #[cfg(feature = "cmd_fcoverage")]
         Cmd::Fcoverage(cfg) => cfdnalab::commands::fcoverage::fcoverage::run(&cfg),
+        #[cfg(feature = "cmd_wps")]
         Cmd::WPS(cfg) => cfdnalab::commands::wps::wps::run(&cfg),
+        #[cfg(feature = "cmd_wps_peaks")]
         Cmd::WPSPeaks(cfg) => cfdnalab::commands::wps_peaks::wps_peaks::run(&cfg),
+        #[cfg(feature = "cmd_profile_groups")]
         Cmd::Midpoints(cfg) => cfdnalab::commands::profile_groups::profile_groups::run(&cfg),
+        #[cfg(feature = "cmd_fragment_kmers")]
         Cmd::FragmentKmers(cfg) => cfdnalab::commands::fragment_kmers::fragment_kmers::run(&cfg),
+        #[cfg(feature = "cmd_prepare_windows")]
         Cmd::PrepWindows(cfg) => cfdnalab::commands::prepare_windows::prepare_windows::run(&cfg), // Cmd::Ends(cfg) => cfdnalab::ends::run(cfg),
+        #[cfg(feature = "cmd_visualize_positions")]
         Cmd::VisualizePositions(cfg) => {
             cfdnalab::commands::visualize_positions::visualize_positions::run(&cfg)
         }
+        #[cfg(feature = "cmd_bam_to_frag")]
         Cmd::BamToFrag(cfg) => cfdnalab::commands::bam_to_frag::bam_to_frag::run(&cfg),
     };
 

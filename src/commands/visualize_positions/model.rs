@@ -3,9 +3,9 @@ use std::path::PathBuf;
 #[cfg(feature = "cli")]
 use clap::ValueEnum;
 
-use crate::commands::fragment_kmers::{
-    parse::PositionalSelectionSpec,
-    positions::{BasesFrom, MismatchBasesFrom},
+use crate::commands::fragment_kmers::parse::PositionalSelectionSpec;
+pub use crate::commands::fragment_kmers::positions::{
+    BasesFrom, MismatchBasesFrom, ReferenceFrame,
 };
 
 /// Available rendering backends for the CLI.

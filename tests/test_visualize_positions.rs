@@ -1,3 +1,7 @@
+#![cfg(feature = "cmd_visualize_positions_tests")]
+
+mod fixtures;
+
 mod tests_visualize_positions {
     use std::num::NonZeroUsize;
 
@@ -594,7 +598,7 @@ mod tests_ticks {
 }
 
 mod tests_visualize_positions_config {
-    use cfdnalab::commands::cli_common::FragmentPositionSelectionArgs;
+    use crate::fixtures::{build_base_selection, single_position_selection};
     use cfdnalab::commands::visualize_positions::config::VisualizePositionsConfig;
     use cfdnalab::commands::visualize_positions::{
         BasesFrom, MismatchBasesFrom, ReferenceFrame, Style,
@@ -605,13 +609,19 @@ mod tests_visualize_positions_config {
     fn build_uses_expected_defaults() {
         let tempdir = tempdir().expect("tempdir");
         let cfg = VisualizePositionsConfig {
-            position_selection: FragmentPositionSelectionArgs {
-                frame: ReferenceFrame::Left,
-                positions: "1..5".to_string(),
-                step: 1,
-                bases_from: BasesFrom::PreferReads,
-                mismatch_bases_from: MismatchBasesFrom::NearestRead,
-            },
+            position_selection: single_position_selection(ReferenceFrame::Left, "1..5", 1),
+            base_selection: build_base_selection(
+                BasesFrom::PreferReads,
+                MismatchBasesFrom::NearestRead,
+            ),
+            base_selection: build_base_selection(
+                BasesFrom::Reference,
+                MismatchBasesFrom::NearestRead,
+            ),
+            base_selection: build_base_selection(
+                BasesFrom::PreferReads,
+                MismatchBasesFrom::NearestRead,
+            ),
             work_dir: tempdir.path().to_path_buf(),
             lengths: Some(vec![120]),
             length_range: None,
@@ -643,13 +653,11 @@ mod tests_visualize_positions_config {
     fn build_applies_overrides() {
         let tempdir = tempdir().expect("tempdir");
         let cfg = VisualizePositionsConfig {
-            position_selection: FragmentPositionSelectionArgs {
-                frame: ReferenceFrame::Right,
-                positions: "..half".to_string(),
-                step: 3,
-                bases_from: BasesFrom::NearestRead,
-                mismatch_bases_from: MismatchBasesFrom::BaseQuality,
-            },
+            position_selection: single_position_selection(ReferenceFrame::Right, "..half", 3),
+            base_selection: build_base_selection(
+                BasesFrom::NearestRead,
+                MismatchBasesFrom::BaseQuality,
+            ),
             work_dir: tempdir.path().to_path_buf(),
             lengths: Some(vec![90, 120]),
             length_range: None,
@@ -683,13 +691,7 @@ mod tests_visualize_positions_config {
     fn svg_default_width_is_wider() {
         let tempdir = tempdir().expect("tempdir");
         let cfg = VisualizePositionsConfig {
-            position_selection: FragmentPositionSelectionArgs {
-                frame: ReferenceFrame::Left,
-                positions: "1..5".to_string(),
-                step: 1,
-                bases_from: BasesFrom::Reference,
-                mismatch_bases_from: MismatchBasesFrom::NearestRead,
-            },
+            position_selection: single_position_selection(ReferenceFrame::Left, "1..5", 1),
             work_dir: tempdir.path().to_path_buf(),
             lengths: Some(vec![150]),
             length_range: None,
@@ -712,13 +714,11 @@ mod tests_visualize_positions_config {
     fn build_rejects_zero_step() {
         let tempdir = tempdir().expect("tempdir");
         let cfg = VisualizePositionsConfig {
-            position_selection: FragmentPositionSelectionArgs {
-                frame: ReferenceFrame::Left,
-                positions: "1..5".to_string(),
-                step: 0,
-                bases_from: BasesFrom::PreferReads,
-                mismatch_bases_from: MismatchBasesFrom::NearestRead,
-            },
+            position_selection: single_position_selection(ReferenceFrame::Left, "1..5", 0),
+            base_selection: build_base_selection(
+                BasesFrom::PreferReads,
+                MismatchBasesFrom::NearestRead,
+            ),
             work_dir: tempdir.path().to_path_buf(),
             lengths: Some(vec![100]),
             length_range: None,
@@ -741,13 +741,7 @@ mod tests_visualize_positions_config {
     fn build_rejects_fragments_shorter_than_minimum() {
         let tempdir = tempdir().expect("tempdir");
         let cfg = VisualizePositionsConfig {
-            position_selection: FragmentPositionSelectionArgs {
-                frame: ReferenceFrame::Left,
-                positions: "1..5".to_string(),
-                step: 1,
-                bases_from: BasesFrom::PreferReads,
-                mismatch_bases_from: MismatchBasesFrom::NearestRead,
-            },
+            position_selection: single_position_selection(ReferenceFrame::Left, "1..5", 1),
             work_dir: tempdir.path().to_path_buf(),
             lengths: Some(vec![9]),
             length_range: None,
@@ -770,13 +764,11 @@ mod tests_visualize_positions_config {
     fn build_rejects_mid_with_nearest_read() {
         let tempdir = tempdir().expect("tempdir");
         let cfg = VisualizePositionsConfig {
-            position_selection: FragmentPositionSelectionArgs {
-                frame: ReferenceFrame::Mid,
-                positions: "-5..5".to_string(),
-                step: 1,
-                bases_from: BasesFrom::NearestRead,
-                mismatch_bases_from: MismatchBasesFrom::NearestRead,
-            },
+            position_selection: single_position_selection(ReferenceFrame::Mid, "-5..5", 1),
+            base_selection: build_base_selection(
+                BasesFrom::NearestRead,
+                MismatchBasesFrom::NearestRead,
+            ),
             work_dir: tempdir.path().to_path_buf(),
             lengths: Some(vec![100]),
             length_range: None,
@@ -972,7 +964,7 @@ mod tests_visualize_positions_command {
     use std::fs;
     use tempfile::tempdir;
 
-    use cfdnalab::commands::cli_common::FragmentPositionSelectionArgs;
+    use crate::fixtures::{build_base_selection, single_position_selection};
     use cfdnalab::commands::visualize_positions::config::VisualizePositionsConfig;
     use cfdnalab::commands::visualize_positions::model::{
         BasesFrom, MismatchBasesFrom, ReferenceFrame, Style,
@@ -985,13 +977,11 @@ mod tests_visualize_positions_command {
         let output_path = tempdir.path().join("viz_ascii.txt");
 
         let cfg = VisualizePositionsConfig {
-            position_selection: FragmentPositionSelectionArgs {
-                frame: ReferenceFrame::Left,
-                positions: "1..5".to_string(),
-                step: 1,
-                bases_from: BasesFrom::Reference,
-                mismatch_bases_from: MismatchBasesFrom::NearestRead,
-            },
+            position_selection: single_position_selection(ReferenceFrame::Left, "1..5", 1),
+            base_selection: build_base_selection(
+                BasesFrom::Reference,
+                MismatchBasesFrom::NearestRead,
+            ),
             work_dir: tempdir.path().to_path_buf(),
             lengths: Some(vec![60]),
             length_range: None,
