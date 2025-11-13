@@ -86,7 +86,7 @@ mod tests_wps_normalization {
 
 mod tests_normalization_helpers {
     use cfdnalab::commands::wps_peaks::normalize_wps::{
-        build_left_edge_window, build_right_edge_window, SlidingMedian,
+        SlidingMedian, build_left_edge_window, build_right_edge_window,
     };
 
     const SG_WINDOW_SIZE: usize = 21;
@@ -144,7 +144,11 @@ mod tests_wps_peaks_helpers {
     use cfdnalab::commands::wps_peaks::call_peaks::*;
     use cfdnalab::commands::wps_peaks::window_peak_results::PeaksWindowAction;
     use cfdnalab::commands::wps_peaks::wps_peaks::*;
+    use cfdnalab::shared::tiled_run::Tile;
     use std::collections::BTreeMap;
+    use std::io::Write;
+    use std::path::{Path, PathBuf};
+    use tempfile::NamedTempFile;
 
     fn make_peak(chr: &str, position: u64, height: f32) -> PeakCall {
         PeakCall {
@@ -191,6 +195,28 @@ mod tests_wps_peaks_helpers {
         hist.insert(20, 1);
         let median = histogram_median(&hist);
         assert!((median - 15.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn stats_distance_summary_returns_nan_without_distances() {
+        let hist = BTreeMap::new();
+        let (avg, median) = stats_distance_summary(0.0, &hist);
+        assert!(avg.is_nan());
+        assert!(median.is_nan());
+    }
+
+    #[test]
+    fn stats_distance_summary_reports_average_and_median() {
+        let mut hist = BTreeMap::new();
+        hist.insert(25, 2);
+        hist.insert(50, 1);
+        let (avg, median) = stats_distance_summary(100.0, &hist);
+        let expected_avg = (100.0 / 3.0) as f32;
+        assert!(
+            (avg - expected_avg).abs() < 1e-6,
+            "avg {avg} expected {expected_avg}"
+        );
+        assert_eq!(median, 25.0);
     }
 
     #[test]
@@ -342,13 +368,491 @@ mod tests_wps_peaks_helpers {
         assert_eq!(fields[5], "NaN");
         assert_eq!(fields[6], "NaN");
     }
+
+    #[test]
+    fn aligned_and_buffered_unique_outputs_match() {
+        let data = fixed_size_test_data();
+        let peak_file = write_peaks_file(&data.peaks);
+
+        let buffered = buffered_unique_rows(
+            &data.tile,
+            data.windows.as_slice(),
+            peak_file.path(),
+            data.decimals,
+        );
+        let aligned = aligned_unique_rows(data.tile.chr.as_str(), peak_file.path(), data.decimals);
+
+        assert_eq!(aligned.trim_end(), buffered.trim_end());
+    }
+
+    #[test]
+    fn aligned_and_buffered_stats_outputs_match() {
+        let data = fixed_size_test_data();
+        let peak_file = write_peaks_file(&data.peaks);
+        let contributions =
+            compute_window_stats_contributions(data.windows.as_slice(), &data.peaks);
+
+        let buffered = buffered_stats_rows(
+            &data.tile,
+            data.windows.as_slice(),
+            peak_file.path(),
+            data.decimals,
+        );
+        let aligned = aligned_stats_rows(
+            data.tile.chr.as_str(),
+            data.windows.as_slice(),
+            contributions.as_slice(),
+            data.decimals,
+        );
+
+        assert_eq!(aligned.trim_end(), buffered.trim_end());
+    }
+
+    #[test]
+    fn aligned_and_buffered_unique_outputs_match_across_tiles() {
+        let data = two_tile_test_data();
+        let peak_files = write_peak_files(&data.peaks_by_tile);
+        let paths: Vec<PathBuf> = peak_files
+            .iter()
+            .map(|file| file.path().to_path_buf())
+            .collect();
+
+        let buffered = buffered_unique_rows_multi(
+            &data.tiles,
+            data.all_windows.as_slice(),
+            paths.as_slice(),
+            data.decimals,
+        );
+        let aligned = aligned_unique_rows_multi(&data.tiles, paths.as_slice(), data.decimals);
+
+        assert_eq!(aligned.trim_end(), buffered.trim_end());
+    }
+
+    #[test]
+    fn aligned_and_buffered_stats_outputs_match_across_tiles() {
+        let data = two_tile_test_data();
+        let peak_files = write_peak_files(&data.peaks_by_tile);
+        let paths: Vec<PathBuf> = peak_files
+            .iter()
+            .map(|file| file.path().to_path_buf())
+            .collect();
+
+        let buffered = buffered_stats_rows_multi(
+            &data.tiles,
+            data.all_windows.as_slice(),
+            paths.as_slice(),
+            data.decimals,
+        );
+
+        let aligned = aligned_stats_rows_multi(
+            &data.tiles,
+            data.bin_size,
+            data.chrom_len,
+            &data.peaks_by_tile,
+            data.decimals,
+        );
+
+        assert_eq!(aligned.trim_end(), buffered.trim_end());
+    }
+
+    struct FixedSizeTestData {
+        tile: Tile,
+        peaks: Vec<PeakCall>,
+        windows: Vec<(u64, u64, u64)>,
+        decimals: usize,
+    }
+
+    struct MultiTileTestData {
+        tiles: Vec<Tile>,
+        peaks_by_tile: Vec<Vec<PeakCall>>,
+        all_windows: Vec<(u64, u64, u64)>,
+        bin_size: u64,
+        chrom_len: u64,
+        decimals: usize,
+    }
+
+    fn fixed_size_test_data() -> FixedSizeTestData {
+        let bin_size = 50;
+        let chrom_len = 500;
+        let tile = Tile {
+            chr: "chrSim".to_string(),
+            tid: 0,
+            index: 0,
+            core_start: 0,
+            core_end: 200,
+            fetch_start: 0,
+            fetch_end: 260,
+        };
+        let peaks = vec![
+            make_peak("chrSim", 10, 2.5),
+            make_peak("chrSim", 35, 4.0),
+            make_peak("chrSim", 70, 6.5),
+            make_peak("chrSim", 115, 5.0),
+            make_peak("chrSim", 160, 7.5),
+        ];
+        let windows = build_fixed_windows(
+            bin_size,
+            chrom_len,
+            tile.core_start as u64,
+            tile.core_end as u64,
+        );
+
+        FixedSizeTestData {
+            tile,
+            peaks,
+            windows,
+            decimals: 2,
+        }
+    }
+
+    fn two_tile_test_data() -> MultiTileTestData {
+        let bin_size = 60;
+        let chrom_len = 360;
+        let tiles = vec![
+            Tile {
+                chr: "chrSim".to_string(),
+                tid: 0,
+                index: 0,
+                core_start: 0,
+                core_end: 180,
+                fetch_start: 0,
+                fetch_end: 210,
+            },
+            Tile {
+                chr: "chrSim".to_string(),
+                tid: 0,
+                index: 1,
+                core_start: 180,
+                core_end: 360,
+                fetch_start: 150,
+                fetch_end: 390,
+            },
+        ];
+
+        let peaks_by_tile = vec![
+            vec![
+                make_peak("chrSim", 15, 2.0),
+                make_peak("chrSim", 65, 4.5),
+                make_peak("chrSim", 145, 6.0),
+                make_peak("chrSim", 175, 5.5),
+            ],
+            vec![
+                make_peak("chrSim", 185, 3.5),
+                make_peak("chrSim", 225, 4.0),
+                make_peak("chrSim", 245, 7.0),
+                make_peak("chrSim", 305, 8.0),
+            ],
+        ];
+
+        let all_windows = build_fixed_windows(bin_size, chrom_len, 0, chrom_len);
+
+        MultiTileTestData {
+            tiles,
+            peaks_by_tile,
+            all_windows,
+            bin_size,
+            chrom_len,
+            decimals: 2,
+        }
+    }
+
+    fn buffered_unique_rows(
+        tile: &Tile,
+        windows: &[(u64, u64, u64)],
+        peak_path: &Path,
+        decimals: usize,
+    ) -> String {
+        let mut accumulator =
+            WindowAccumulator::new(PeaksWindowAction::OnlyIncludeThesePositionsUnique, decimals);
+        accumulator.reset_for_chromosome(tile.chr.clone());
+        let mut next_idx = 0usize;
+        accumulator.add_windows_for_tile(
+            windows,
+            &mut next_idx,
+            tile.core_start as u64,
+            tile.core_end as u64,
+        );
+        stream_tile_peaks(peak_path, |peak| {
+            accumulator.push_peak(&peak);
+            Ok(())
+        })
+        .expect("stream peaks for buffered path");
+        let mut out = Vec::new();
+        accumulator
+            .flush_all(&mut out)
+            .expect("flush buffered unique windows");
+        String::from_utf8(out).expect("buffered unique rows valid utf8")
+    }
+
+    fn aligned_unique_rows(chr: &str, peak_path: &Path, decimals: usize) -> String {
+        let best = WindowOutputWriter::collect_aligned_unique_peaks(peak_path)
+            .expect("collect aligned unique peaks");
+        let mut out = String::new();
+        for (pos, height) in best {
+            out.push_str(&format!(
+                "{}\t{}\t{}\t{}\n",
+                chr,
+                pos,
+                pos + 1,
+                format_number(height, decimals)
+            ));
+        }
+        out
+    }
+
+    fn buffered_unique_rows_multi(
+        tiles: &[Tile],
+        windows: &[(u64, u64, u64)],
+        peak_paths: &[PathBuf],
+        decimals: usize,
+    ) -> String {
+        assert_eq!(tiles.len(), peak_paths.len());
+        if tiles.is_empty() {
+            return String::new();
+        }
+        let mut accumulator =
+            WindowAccumulator::new(PeaksWindowAction::OnlyIncludeThesePositionsUnique, decimals);
+        accumulator.reset_for_chromosome(tiles[0].chr.clone());
+        let mut next_idx = 0usize;
+        let mut out = Vec::new();
+
+        for (tile, path) in tiles.iter().zip(peak_paths.iter()) {
+            accumulator.add_windows_for_tile(
+                windows,
+                &mut next_idx,
+                tile.core_start as u64,
+                tile.core_end as u64,
+            );
+            stream_tile_peaks(path, |peak| {
+                accumulator.push_peak(&peak);
+                Ok(())
+            })
+            .expect("stream peaks for buffered multi unique");
+            accumulator
+                .flush_completed_windows(tile.core_end as u64, &mut out)
+                .expect("flush completed multi unique windows");
+        }
+        accumulator
+            .flush_all(&mut out)
+            .expect("flush remaining multi unique windows");
+        String::from_utf8(out).expect("buffered multi unique utf8")
+    }
+
+    fn aligned_unique_rows_multi(
+        tiles: &[Tile],
+        peak_paths: &[PathBuf],
+        decimals: usize,
+    ) -> String {
+        assert_eq!(tiles.len(), peak_paths.len());
+        let mut out = String::new();
+        for (tile, path) in tiles.iter().zip(peak_paths.iter()) {
+            let best = WindowOutputWriter::collect_aligned_unique_peaks(path)
+                .expect("collect aligned unique peaks multi");
+            for (pos, height) in best {
+                out.push_str(&format!(
+                    "{}\t{}\t{}\t{}\n",
+                    tile.chr,
+                    pos,
+                    pos + 1,
+                    format_number(height, decimals)
+                ));
+            }
+        }
+        out
+    }
+
+    fn buffered_stats_rows(
+        tile: &Tile,
+        windows: &[(u64, u64, u64)],
+        peak_path: &Path,
+        decimals: usize,
+    ) -> String {
+        let mut accumulator = WindowAccumulator::new(PeaksWindowAction::Stats, decimals);
+        accumulator.reset_for_chromosome(tile.chr.clone());
+        let mut next_idx = 0usize;
+        accumulator.add_windows_for_tile(
+            windows,
+            &mut next_idx,
+            tile.core_start as u64,
+            tile.core_end as u64,
+        );
+        stream_tile_peaks(peak_path, |peak| {
+            accumulator.push_peak(&peak);
+            Ok(())
+        })
+        .expect("stream peaks for stats");
+        let mut out = Vec::new();
+        accumulator
+            .flush_completed_windows(tile.core_end as u64, &mut out)
+            .expect("flush completed stat windows");
+        accumulator
+            .flush_all(&mut out)
+            .expect("flush remaining stat windows");
+        String::from_utf8(out).expect("buffered stats rows valid utf8")
+    }
+
+    fn aligned_stats_rows(
+        chr: &str,
+        windows: &[(u64, u64, u64)],
+        contributions: &[WindowStatsContribution],
+        decimals: usize,
+    ) -> String {
+        let mut lookup: BTreeMap<u64, &WindowStatsContribution> = BTreeMap::new();
+        for contribution in contributions {
+            lookup.insert(contribution.window_idx, contribution);
+        }
+        let mut out = String::new();
+        for &(start, end, idx) in windows {
+            if let Some(contribution) = lookup.get(&idx) {
+                let (avg, median) = stats_distance_summary(
+                    contribution.distance_sum,
+                    &contribution.distance_histogram,
+                );
+                out.push_str(&format!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                    chr,
+                    start,
+                    end,
+                    idx,
+                    contribution.count,
+                    format_number(avg, decimals),
+                    format_number(median, decimals)
+                ));
+            } else {
+                out.push_str(&format!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                    chr,
+                    start,
+                    end,
+                    idx,
+                    0,
+                    format_number(f32::NAN, decimals),
+                    format_number(f32::NAN, decimals)
+                ));
+            }
+        }
+        out
+    }
+
+    fn buffered_stats_rows_multi(
+        tiles: &[Tile],
+        windows: &[(u64, u64, u64)],
+        peak_paths: &[PathBuf],
+        decimals: usize,
+    ) -> String {
+        assert_eq!(tiles.len(), peak_paths.len());
+        if tiles.is_empty() {
+            return String::new();
+        }
+        let mut accumulator = WindowAccumulator::new(PeaksWindowAction::Stats, decimals);
+        accumulator.reset_for_chromosome(tiles[0].chr.clone());
+        let mut next_idx = 0usize;
+        let mut out = Vec::new();
+        for (tile, path) in tiles.iter().zip(peak_paths.iter()) {
+            accumulator.add_windows_for_tile(
+                windows,
+                &mut next_idx,
+                tile.core_start as u64,
+                tile.core_end as u64,
+            );
+            stream_tile_peaks(path, |peak| {
+                accumulator.push_peak(&peak);
+                Ok(())
+            })
+            .expect("stream peaks for buffered multi stats");
+            accumulator
+                .flush_completed_windows(tile.core_end as u64, &mut out)
+                .expect("flush completed multi stats windows");
+        }
+        accumulator
+            .flush_all(&mut out)
+            .expect("flush remaining multi stats windows");
+        String::from_utf8(out).expect("buffered multi stats utf8")
+    }
+
+    fn aligned_stats_rows_multi(
+        tiles: &[Tile],
+        bin_size: u64,
+        chrom_len: u64,
+        peaks_by_tile: &[Vec<PeakCall>],
+        decimals: usize,
+    ) -> String {
+        assert_eq!(tiles.len(), peaks_by_tile.len());
+        let mut out = String::new();
+        for (tile, peaks) in tiles.iter().zip(peaks_by_tile.iter()) {
+            let windows = build_fixed_windows(
+                bin_size,
+                chrom_len,
+                tile.core_start as u64,
+                tile.core_end as u64,
+            );
+            let contributions = compute_window_stats_contributions(windows.as_slice(), peaks);
+            out.push_str(&aligned_stats_rows(
+                tile.chr.as_str(),
+                windows.as_slice(),
+                contributions.as_slice(),
+                decimals,
+            ));
+        }
+        out
+    }
+
+    fn build_fixed_windows(
+        bin_size: u64,
+        chrom_len: u64,
+        tile_start: u64,
+        tile_end: u64,
+    ) -> Vec<(u64, u64, u64)> {
+        if bin_size == 0 || tile_start >= chrom_len {
+            return Vec::new();
+        }
+        let mut start = (tile_start / bin_size) * bin_size;
+        let mut windows = Vec::new();
+        while start < tile_end && start < chrom_len {
+            let window_start = start;
+            let end = (start + bin_size).min(chrom_len);
+            let idx = window_start / bin_size;
+            windows.push((window_start, end, idx));
+            start = start.saturating_add(bin_size);
+        }
+        windows
+    }
+
+    fn write_peaks_file(peaks: &[PeakCall]) -> NamedTempFile {
+        let mut temp = NamedTempFile::new().expect("create temp peaks file");
+        for peak in peaks {
+            writeln!(
+                temp,
+                "{}\t{}\t{}\t{}\t{}",
+                peak.chromosome, peak.start, peak.end, peak.peak_position, peak.height
+            )
+            .expect("write peak line");
+        }
+        temp.flush().expect("flush peak file");
+        temp
+    }
+
+    fn write_peak_files(peaks_by_tile: &[Vec<PeakCall>]) -> Vec<NamedTempFile> {
+        peaks_by_tile
+            .iter()
+            .map(|peaks| write_peaks_file(peaks))
+            .collect()
+    }
+
+    fn format_number(value: f32, decimals: usize) -> String {
+        if value.is_nan() {
+            "NaN".to_string()
+        } else {
+            format!("{:.*}", decimals, value)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests_peak_signal_processing {
     use cfdnalab::commands::wps_peaks::call_peaks::PeakCall;
     use cfdnalab::commands::wps_peaks::wps_peaks::{
-        compute_window_stats_contributions, peaks_from_wps_values, PeakSignalProcessingOptions,
+        PeakSignalProcessingOptions, compute_window_stats_contributions, peaks_from_wps_values,
     };
 
     fn assert_peak(peak: &PeakCall, start: u64, end: u64, height: f32) {
@@ -519,8 +1023,8 @@ mod tests_peak_signal_processing {
 
 mod tests_wps_peaks_command {
     use crate::fixtures::{
-        long_fragment_bam, read_zst_to_string, BamFixture, LONG_FRAGMENT_LENGTH,
-        LONG_FRAGMENT_STARTS,
+        BamFixture, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, long_fragment_bam,
+        read_zst_to_string,
     };
     use anyhow::Result;
     use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
@@ -689,24 +1193,16 @@ mod tests_wps_peaks_command {
         let far_blacklist = write_blacklist_file(bed_dir.path(), "far", &[(1_000, 1_200)])?;
         let near_blacklist = write_blacklist_file(bed_dir.path(), "near", &[(2_900, 3_000)])?;
 
-        let far_stats = run_stats_with_blacklist(
-            &bam,
-            Some(&far_blacklist),
-            "stats_far",
-            Some(3_000),
-        )?;
+        let far_stats =
+            run_stats_with_blacklist(&bam, Some(&far_blacklist), "stats_far", Some(3_000))?;
         let far_mid = far_stats.iter().find(|row| row.index == 3).unwrap();
         assert_ne!(
             far_mid.avg_distance, "NaN",
             "without a boundary mask we should retain the 400bp cross-tile gap"
         );
 
-        let near_stats = run_stats_with_blacklist(
-            &bam,
-            Some(&near_blacklist),
-            "stats_near",
-            Some(3_000),
-        )?;
+        let near_stats =
+            run_stats_with_blacklist(&bam, Some(&near_blacklist), "stats_near", Some(3_000))?;
         let near_mid = near_stats.iter().find(|row| row.index == 3).unwrap();
         assert_eq!(
             near_mid.avg_distance, "NaN",

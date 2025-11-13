@@ -1,11 +1,11 @@
 mod fixtures;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result, ensure};
 use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs};
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
 use cfdnalab::commands::wps::config::WPSConfig;
 use cfdnalab::commands::wps::wps::run as run_fn;
-use fixtures::{bam_from_specs, long_fragment_bam, BamFixture, FragmentSpec, ReadSpec};
+use fixtures::{BamFixture, FragmentSpec, ReadSpec, bam_from_specs, long_fragment_bam};
 use std::cmp::max;
 use std::fs::File;
 use std::io::{BufRead, BufReader};

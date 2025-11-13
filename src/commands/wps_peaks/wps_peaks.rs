@@ -3,12 +3,12 @@
 //! The intended logic is specified in the `peak_calling_logic.md` document.
 
 use crate::commands::cli_common::{
-    ensure_output_dir, load_blacklist_map, load_scaling_map, resolve_chromosomes_and_contigs,
-    WindowSpec,
+    WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
+    resolve_chromosomes_and_contigs,
 };
 use crate::commands::counters::FCoverageCounters;
 use crate::commands::wps::wps::wps_for_tile;
-use crate::commands::wps_peaks::call_peaks::{call_peaks, PeakCall};
+use crate::commands::wps_peaks::call_peaks::{PeakCall, call_peaks};
 use crate::commands::wps_peaks::config::WPSPeaksConfig;
 use crate::commands::wps_peaks::normalize_wps::{normalize_wps, smoothe_wps};
 use crate::commands::wps_peaks::window_peak_results::PeaksWindowAction;
@@ -16,16 +16,16 @@ use crate::shared::bam::Contigs;
 use crate::shared::bed::load_windows_from_bed;
 use crate::shared::thread_pool::init_global_pool;
 use crate::shared::tiled_run::{
-    build_tiles, make_temp_dir, precompute_tile_window_spans, Tile, TileMode, TileWindowSpan,
+    Tile, TileMode, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
 };
 use crate::shared::writers::open_zstd_auto_writer;
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{Context, Result, anyhow, ensure};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::fs::{remove_dir_all, File};
+use std::fs::{File, remove_dir_all};
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -275,28 +275,17 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
 
     let mut total_counter = FCoverageCounters::default();
     match opt.per_window {
-        // TODO: If per-window is None, there's no windows, and then tile_and_window_boundaries_align is irrelevant?
         None => {
             let mut writer = GlobalWriter::new(
                 opt.shared_args
                     .ioc
                     .output_dir
                     .join(format!("{prefix}.wps.peaks.tsv.zst")),
-                opt.shared_args.decimals as usize,
                 opt.shared_args.ioc.n_threads as u32,
             )?;
-            if tile_and_window_boundaries_align {
-                for result in &tile_results {
-                    total_counter += result.counter;
-                    writer.write_tile_file(result.peak_file_path.as_path())?;
-                }
-            } else {
-                for result in &tile_results {
-                    total_counter += result.counter;
-                    stream_tile_peaks(result.peak_file_path.as_path(), |peak| {
-                        writer.write_peak(&peak)
-                    })?;
-                }
+            for result in &tile_results {
+                total_counter += result.counter;
+                writer.write_tile_file(result.peak_file_path.as_path())?;
             }
             writer.finish()?;
         }
@@ -314,7 +303,13 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
                     )
                 }
                 WindowSpec::Size(bp) => {
-                    WindowSource::FixedSize(FixedSizeWindows::new(*bp as u64, &contigs))
+                    if tile_and_window_boundaries_align {
+                        WindowSource::FixedSizeAligned(Arc::new(FixedSizeAlignedWindows::new(
+                            *bp as u64, &contigs,
+                        )))
+                    } else {
+                        WindowSource::FixedSizeBuffered(FixedSizeWindows::new(*bp as u64, &contigs))
+                    }
                 }
                 WindowSpec::Global => {
                     anyhow::bail!("per-window outputs require --by-bed or --by-size");
@@ -374,31 +369,13 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
 pub struct GlobalWriter {
     path: PathBuf,
     writer: BufWriter<Box<dyn Write>>,
-    decimals: usize,
 }
 
 impl GlobalWriter {
-    fn new(path: PathBuf, decimals: usize, threads: u32) -> Result<Self> {
+    fn new(path: PathBuf, threads: u32) -> Result<Self> {
         let mut writer = open_zstd_auto_writer(&path, 3, Some(threads))?;
         writeln!(writer, "chromosome\tstart\tend\tpeak_position\theight")?;
-        Ok(Self {
-            path,
-            writer,
-            decimals,
-        })
-    }
-
-    fn write_peak(&mut self, peak: &PeakCall) -> Result<()> {
-        writeln!(
-            self.writer,
-            "{}\t{}\t{}\t{}\t{}",
-            peak.chromosome,
-            peak.start,
-            peak.end,
-            peak.peak_position,
-            format_float(peak.height, self.decimals)
-        )?;
-        Ok(())
+        Ok(Self { path, writer })
     }
 
     fn write_tile_file(&mut self, path: &Path) -> Result<()> {
@@ -497,13 +474,19 @@ enum WindowOutputMode {
 
 enum WindowSource {
     Bed(FxHashMap<String, Vec<(u64, u64, u64)>>),
-    FixedSize(FixedSizeWindows),
+    FixedSizeBuffered(FixedSizeWindows),
+    FixedSizeAligned(Arc<FixedSizeAlignedWindows>),
 }
 
 struct FixedSizeWindows {
     size: u64,
     chrom_lengths: FxHashMap<String, u64>,
     progress: FxHashMap<String, FixedChromProgress>,
+}
+
+struct FixedSizeAlignedWindows {
+    size: u64,
+    chrom_lengths: FxHashMap<String, u64>,
 }
 
 #[derive(Default)]
@@ -563,6 +546,26 @@ impl FixedSizeWindows {
     }
 }
 
+impl FixedSizeAlignedWindows {
+    fn new(size: u64, contigs: &Contigs) -> Self {
+        let mut chrom_lengths = FxHashMap::default();
+        for (chr, (_, len)) in contigs.contigs.iter() {
+            chrom_lengths.insert(chr.clone(), *len as u64);
+        }
+        Self {
+            size,
+            chrom_lengths,
+        }
+    }
+
+    fn chrom_len(&self, chr: &str) -> Result<u64> {
+        self.chrom_lengths
+            .get(chr)
+            .copied()
+            .ok_or_else(|| anyhow!("missing contig length for {}", chr))
+    }
+}
+
 impl From<PeaksWindowAction> for WindowOutputMode {
     fn from(action: PeaksWindowAction) -> Self {
         match action {
@@ -582,6 +585,7 @@ pub struct WindowOutputWriter {
     current_chr: Option<String>,
     next_idx: usize,
     mode: WindowOutputMode,
+    decimals: usize,
 }
 
 impl WindowOutputWriter {
@@ -627,6 +631,7 @@ impl WindowOutputWriter {
             current_chr: None,
             next_idx: 0,
             mode,
+            decimals,
         })
     }
 
@@ -636,6 +641,16 @@ impl WindowOutputWriter {
         path: &Path,
         contributions: Option<&[WindowStatsContribution]>,
     ) -> Result<()> {
+        let aligned_source = if let WindowSource::FixedSizeAligned(aligned) = &self.window_source {
+            Some(Arc::clone(aligned))
+        } else {
+            None
+        };
+        if let Some(aligned) = aligned_source {
+            self.process_aligned_fixed_size_tile(tile, path, contributions, aligned.as_ref())?;
+            return Ok(());
+        }
+
         self.ensure_chromosome(tile)?;
 
         match &mut self.window_source {
@@ -648,7 +663,7 @@ impl WindowOutputWriter {
                     tile.core_end as u64,
                 );
             }
-            WindowSource::FixedSize(fixed) => {
+            WindowSource::FixedSizeBuffered(fixed) => {
                 fixed.add_windows_for_tile(
                     &tile.chr,
                     &mut self.accumulator,
@@ -656,6 +671,7 @@ impl WindowOutputWriter {
                     tile.core_end as u64,
                 )?;
             }
+            WindowSource::FixedSizeAligned(_) => unreachable!("aligned windows handled earlier"),
         }
 
         match self.mode {
@@ -684,6 +700,134 @@ impl WindowOutputWriter {
         Ok(())
     }
 
+    fn process_aligned_fixed_size_tile(
+        &mut self,
+        tile: &Tile,
+        path: &Path,
+        contributions: Option<&[WindowStatsContribution]>,
+        fixed: &FixedSizeAlignedWindows,
+    ) -> Result<()> {
+        if self.current_chr.as_deref() != Some(tile.chr.as_str()) {
+            self.current_chr = Some(tile.chr.clone());
+        }
+
+        match self.mode {
+            WindowOutputMode::Unique => {
+                self.write_aligned_unique(path, tile.chr.as_str())?;
+            }
+            WindowOutputMode::Indexed => {
+                self.write_aligned_indexed(path, fixed.size)?;
+            }
+            WindowOutputMode::Stats => {
+                let chrom_len = fixed.chrom_len(tile.chr.as_str())?;
+                let windows = build_fixed_size_windows_for_tile(
+                    fixed.size,
+                    chrom_len,
+                    tile.core_start as u64,
+                    tile.core_end as u64,
+                );
+                self.write_aligned_stats(
+                    tile.chr.as_str(),
+                    &windows,
+                    contributions.unwrap_or(&[]),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn write_aligned_unique(&mut self, path: &Path, chr: &str) -> Result<()> {
+        let best_by_position = Self::collect_aligned_unique_peaks(path)?;
+        for (pos, height) in best_by_position {
+            writeln!(
+                self.writer,
+                "{}\t{}\t{}\t{}",
+                chr,
+                pos,
+                pos + 1,
+                format_float(height, self.decimals)
+            )?;
+        }
+        Ok(())
+    }
+
+    fn write_aligned_indexed(&mut self, path: &Path, bin_size: u64) -> Result<()> {
+        stream_tile_peaks(path, |peak| {
+            let idx = peak.peak_position / bin_size;
+            writeln!(
+                self.writer,
+                "{}\t{}\t{}\t{}\t{}\t{}",
+                peak.chromosome,
+                peak.start,
+                peak.end,
+                peak.peak_position,
+                format_float(peak.height, self.decimals),
+                idx
+            )?;
+            Ok(())
+        })
+    }
+
+    fn write_aligned_stats(
+        &mut self,
+        chr: &str,
+        windows: &[(u64, u64, u64)],
+        contributions: &[WindowStatsContribution],
+    ) -> Result<()> {
+        let mut contrib_lookup: FxHashMap<u64, &WindowStatsContribution> =
+            FxHashMap::with_capacity_and_hasher(contributions.len(), Default::default());
+        for contribution in contributions {
+            contrib_lookup.insert(contribution.window_idx, contribution);
+        }
+
+        for &(start, end, idx) in windows {
+            if let Some(contribution) = contrib_lookup.get(&idx) {
+                let (avg, median) = stats_distance_summary(
+                    contribution.distance_sum,
+                    &contribution.distance_histogram,
+                );
+                writeln!(
+                    self.writer,
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    chr,
+                    start,
+                    end,
+                    idx,
+                    contribution.count,
+                    format_float(avg, self.decimals),
+                    format_float(median, self.decimals)
+                )?;
+            } else {
+                writeln!(
+                    self.writer,
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    chr,
+                    start,
+                    end,
+                    idx,
+                    0,
+                    format_float(f32::NAN, self.decimals),
+                    format_float(f32::NAN, self.decimals)
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn collect_aligned_unique_peaks(path: &Path) -> Result<BTreeMap<u64, f32>> {
+        let mut best_by_position = BTreeMap::<u64, f32>::new();
+        stream_tile_peaks(path, |peak| {
+            let entry = best_by_position
+                .entry(peak.peak_position)
+                .or_insert(peak.height);
+            if peak.height > *entry {
+                *entry = peak.height;
+            }
+            Ok(())
+        })?;
+        Ok(best_by_position)
+    }
+
     fn finish(&mut self) -> Result<()> {
         self.accumulator.flush_all(&mut self.writer)?;
         self.writer.flush()?;
@@ -704,9 +848,10 @@ impl WindowOutputWriter {
             self.current_chr = Some(tile.chr.clone());
             self.accumulator.reset_for_chromosome(tile.chr.clone());
             self.next_idx = 0;
-            if let WindowSource::FixedSize(fixed) = &mut self.window_source {
-                fixed.ensure_progress(tile.chr.as_str());
-            }
+            match &mut self.window_source {
+                WindowSource::FixedSizeBuffered(fixed) => fixed.ensure_progress(tile.chr.as_str()),
+                _ => {}
+            };
         }
         Ok(())
     }
@@ -794,49 +939,53 @@ pub fn compute_window_stats_contributions(
         return Vec::new();
     }
 
-    // TODO: How do we handle distances between peaks of neighbouring tiles? They should be considered in stats as well
+    let mut contributions = Vec::new();
+    let mut start_idx = 0usize;
+    let mut end_idx;
 
-    // TODO: We need to handle by-size windows
-
-    windows
-        .iter()
-        .filter_map(|&(start, end, idx)| {
-            // TODO: Unacceptable not to use index pointers for this
-            let start_idx = peaks.partition_point(|peak| peak.peak_position < start);
-            let end_idx = peaks.partition_point(|peak| peak.peak_position < end);
-            let slice = &peaks[start_idx..end_idx];
-            if slice.is_empty() {
-                return None;
-            }
-            // TODO: Why btreemap instead of fxhashmap? No hashing?
-            let mut histogram = BTreeMap::new();
-            let mut distance_sum = 0.0;
-            let mut prev: Option<(u64, u64)> = None;
-            for peak in slice {
-                if let Some((previous, previous_segment)) = prev {
-                    if previous_segment == peak.segment_id {
-                        let distance = (peak.peak_position - previous) as u32;
-                        distance_sum += distance as f64;
-                        let _ = histogram
-                            .entry(distance)
-                            .and_modify(|freq| *freq += 1)
-                            .or_insert(1);
-                    }
+    // Windows arrive sorted by start (they may overlap), so `start_idx` can increase monotonically
+    for &(start, end, idx) in windows {
+        while start_idx < peaks.len() && peaks[start_idx].peak_position < start {
+            start_idx += 1;
+        }
+        end_idx = start_idx.clone();
+        while end_idx < peaks.len() && peaks[end_idx].peak_position < end {
+            end_idx += 1;
+        }
+        if start_idx == end_idx {
+            continue;
+        }
+        let slice = &peaks[start_idx..end_idx];
+        // BTreeMap keeps distances sorted deterministically so medians/formatting stay stable
+        let mut histogram = BTreeMap::new();
+        let mut distance_sum = 0.0;
+        let mut prev: Option<(u64, u64)> = None;
+        for peak in slice {
+            if let Some((previous, previous_segment)) = prev {
+                if previous_segment == peak.segment_id {
+                    let distance = (peak.peak_position - previous) as u32;
+                    distance_sum += distance as f64;
+                    let _ = histogram
+                        .entry(distance)
+                        .and_modify(|freq| *freq += 1)
+                        .or_insert(1);
                 }
-                prev = Some((peak.peak_position, peak.segment_id));
             }
-            Some(WindowStatsContribution {
-                window_idx: idx,
-                count: slice.len() as u32,
-                first_peak: slice.first().map(|p| p.peak_position),
-                last_peak: slice.last().map(|p| p.peak_position),
-                first_segment: slice.first().map(|p| p.segment_id),
-                last_segment: slice.last().map(|p| p.segment_id),
-                distance_sum,
-                distance_histogram: histogram,
-            })
-        })
-        .collect()
+            prev = Some((peak.peak_position, peak.segment_id));
+        }
+        contributions.push(WindowStatsContribution {
+            window_idx: idx,
+            count: slice.len() as u32,
+            first_peak: slice.first().map(|p| p.peak_position),
+            last_peak: slice.last().map(|p| p.peak_position),
+            first_segment: slice.first().map(|p| p.segment_id),
+            last_segment: slice.last().map(|p| p.segment_id),
+            distance_sum,
+            distance_histogram: histogram,
+        });
+    }
+
+    contributions
 }
 
 fn build_fixed_size_windows_for_tile(
@@ -1254,13 +1403,7 @@ impl WindowAccumulator {
                 ref distance_histogram,
                 ..
             } => {
-                let total_distances: u32 = distance_histogram.values().copied().sum();
-                let avg = if total_distances == 0 {
-                    f32::NAN
-                } else {
-                    (distance_sum / total_distances as f64) as f32
-                };
-                let median = histogram_median(distance_histogram);
+                let (avg, median) = stats_distance_summary(distance_sum, distance_histogram);
                 writeln!(
                     writer,
                     "{}\t{}\t{}\t{}\t{}\t{}\t{}",
@@ -1286,31 +1429,62 @@ fn format_float(value: f32, decimals: usize) -> String {
     }
 }
 
-// TODO: Make this function readable with proper variable names and comments
+/// Compute the median distance recorded in a histogram.
+///
+/// The histogram is expected to store monotonically increasing distance keys.
+/// We traverse the bins once, tracking cumulative rank until we reach the lower and upper median
+/// targets (needed for even-sized samples), then average those values. Empty histograms produce
+/// `NaN`, signaling the caller that no distances were recorded.
+///
+/// Parameters
+/// ----------
+/// - `hist`:
+///     BTreeMap keyed by distance (in bp) with frequencies as values.
+///
+/// Returns
+/// -------
+/// - `f32`:
+///     Median distance in base pairs, or `NaN` if the histogram has no entries.
 pub fn histogram_median(hist: &BTreeMap<u32, u32>) -> f32 {
-    let total: u32 = hist.values().copied().sum();
-    if total == 0 {
+    let total_count: u32 = hist.values().copied().sum();
+    if total_count == 0 {
         return f32::NAN;
     }
-    let target1 = (total + 1) / 2;
-    let target2 = (total + 2) / 2;
-    let mut cumulative = 0u32;
-    // TODO: m1/m2 are terrible variable names. Fix
-    let mut m1: Option<u32> = None;
-    let mut m2: Option<u32> = None;
-    for (distance, freq) in hist {
-        cumulative += *freq;
-        if cumulative >= target1 && m1.is_none() {
-            m1 = Some(*distance);
+
+    // Even counts require the average of the middle pair, so capture both ranks.
+    let lower_target_rank = (total_count + 1) / 2;
+    let upper_target_rank = (total_count + 2) / 2;
+
+    let mut cumulative_rank = 0u32;
+    let mut lower_median_value: Option<u32> = None;
+    let mut upper_median_value: Option<u32> = None;
+
+    for (distance_bp, frequency) in hist {
+        cumulative_rank += *frequency;
+        if cumulative_rank >= lower_target_rank && lower_median_value.is_none() {
+            lower_median_value = Some(*distance_bp);
         }
-        if cumulative >= target2 {
-            m2 = Some(*distance);
+        if cumulative_rank >= upper_target_rank {
+            upper_median_value = Some(*distance_bp);
             break;
         }
     }
-    match (m1, m2) {
-        (Some(d1), Some(d2)) => (d1 as f32 + d2 as f32) * 0.5,
-        (Some(d), None) | (None, Some(d)) => d as f32,
+
+    match (lower_median_value, upper_median_value) {
+        (Some(lower), Some(upper)) => (lower as f32 + upper as f32) * 0.5,
+        (Some(value), None) | (None, Some(value)) => value as f32,
         _ => f32::NAN,
+    }
+}
+
+pub fn stats_distance_summary(distance_sum: f64, histogram: &BTreeMap<u32, u32>) -> (f32, f32) {
+    let total_distances: u32 = histogram.values().copied().sum();
+    if total_distances == 0 {
+        (f32::NAN, f32::NAN)
+    } else {
+        (
+            (distance_sum / total_distances as f64) as f32,
+            histogram_median(histogram),
+        )
     }
 }

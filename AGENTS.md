@@ -214,3 +214,7 @@ Minimal inputs via builders; tiny fixtures; no hidden globals.
 Public API oriented; no assertions on private internals.
 
 For regressions: fails before fix, passes after.
+
+## Additionals
+
+Don't spend time reordering imports manually. Just let autoformatting do that for us.
