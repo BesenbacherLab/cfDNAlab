@@ -109,7 +109,7 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
 
 pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     let (chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.shared_args.chromosomes, &opt.shared_args.ioc)?;
+        resolve_chromosomes_and_contigs(&opt.shared_args.chromosomes, &opt.shared_args.ioc.bam.as_path())?;
     let window_opt = opt.shared_args.windows.resolve_windows();
     let position_specs = opt
         .shared_args

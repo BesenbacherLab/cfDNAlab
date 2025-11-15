@@ -52,7 +52,8 @@ use std::{io::Write, sync::Arc, time::Instant};
 ///   the first failure.
 pub fn run(opt: &LengthsConfig) -> Result<()> {
     let start_time = Instant::now();
-    let (chromosomes, contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc)?;
+    let (chromosomes, contigs) =
+        resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
     pb.set_style(

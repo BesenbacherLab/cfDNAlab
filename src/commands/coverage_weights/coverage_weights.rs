@@ -36,7 +36,7 @@ use std::{
 ///   and fragment counts.
 ///
 /// Parameters:
-/// - `opt`: Fully resolved configuration for the `normalize-genome` command.
+/// - `opt`: Fully resolved configuration for the `coverage-weights` command.
 ///
 /// Returns:
 /// - `Ok(())` when the scaling-factor TSV is written successfully.
@@ -46,7 +46,7 @@ use std::{
 ///   cannot be created.
 pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
     let start_time = Instant::now();
-    let (chromosomes, _contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc)?;
+    let (chromosomes, _contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
     opt.check_bin_sizes()?;
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
     pb.set_style(

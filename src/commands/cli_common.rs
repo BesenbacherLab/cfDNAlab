@@ -333,7 +333,7 @@ impl ChromosomeArgs {
 pub struct ScaleGenomeArgs {
     /// Optional path to *non-negative* scaling factors for normalizing/smoothing the genome `[path]`
     ///
-    /// `.tsv` file as produced by `cfdna normalize-genome` containing a scaling factor to *multipy* by per **scaling-bin**.
+    /// `.tsv` file as produced by `cfdna coverage-weights` containing a scaling factor to *multipy* by per **scaling-bin**.
     ///
     /// The scaling-bin-overlapping parts of the fragments are counted as the scaling factor of the bin (`w=sf`).
     ///
@@ -606,12 +606,12 @@ pub struct BaseSelectionArgs {
 ///   the requested contigs.
 pub fn resolve_chromosomes_and_contigs(
     chrom_args: &ChromosomeArgs,
-    ioc: &IOCArgs,
+    bam_path: &Path,
 ) -> Result<(Vec<String>, Contigs)> {
     let chromosomes = chrom_args
-        .resolve_chromosomes(Some(ioc.bam.as_path()))
+        .resolve_chromosomes(Some(bam_path))
         .context("resolve chromosomes")?;
-    let contigs = bam_contigs_info(&ioc.bam, &chromosomes).context("fetch contig metadata")?;
+    let contigs = bam_contigs_info(&bam_path, &chromosomes).context("fetch contig metadata")?;
     Ok((chromosomes, contigs))
 }
 

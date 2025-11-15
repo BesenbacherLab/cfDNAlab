@@ -59,7 +59,7 @@ use std::{sync::Arc, time::Instant};
 pub fn run(opt: &WPSConfig) -> Result<()> {
     let start_time = Instant::now();
     let (chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.shared_args.chromosomes, &opt.shared_args.ioc)?;
+        resolve_chromosomes_and_contigs(&opt.shared_args.chromosomes, &opt.shared_args.ioc.bam.as_path())?;
     let prefix = opt.shared_args.output_prefix.trim();
     let window_opt = opt.shared_args.windows.resolve_windows();
     let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
