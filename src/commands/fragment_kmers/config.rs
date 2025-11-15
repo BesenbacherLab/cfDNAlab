@@ -262,7 +262,7 @@ impl FragmentKmersSharedArgs {
 // TODO: Add minimum or min mean base quality filtering!
 
 /// Count k-mers within the fragments in a BAM-file.
-/// 
+///
 /// **Experimental**: enable via `--features cmd_fragment_kmers` during `cargo build/install`.
 ///
 /// Whereas the `cfdna ends` tool extracts end-motifs, this tool extracts k-mers

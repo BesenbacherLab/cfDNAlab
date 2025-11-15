@@ -3,9 +3,8 @@ use crate::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use std::path::PathBuf;
 
-
 /// Calculate positional windowed protection scores (WPS) across the genome.
-/// 
+///
 /// **Experimental**: enable via `--features cmd_wps` during `cargo build/install`.
 ///
 /// Only paired-end fragments with both reads present are considered.

@@ -13,7 +13,7 @@ Peaks: Positions and stats? Just always give everything? Well, unique-positions,
 */
 
 /// Detect nucleosome peaks via windowed protection scores (WPS) across the genome.
-/// 
+///
 /// **Experimental**: enable via `--features cmd_wps_peaks cmd_wps` during `cargo build/install`.
 ///
 /// Only paired-end fragments with both reads present are considered.

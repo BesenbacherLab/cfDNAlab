@@ -59,7 +59,8 @@ use crate::{
 ///   outputs fails.
 pub fn run(opt: &ProfileGroupsConfig) -> Result<()> {
     let start_time = Instant::now();
-    let (chromosomes, contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
+    let (chromosomes, contigs) =
+        resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
     let prefix = opt.output_prefix.trim();
 
     // Create output directory

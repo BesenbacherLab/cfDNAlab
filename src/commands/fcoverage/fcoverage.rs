@@ -59,7 +59,8 @@ use std::{sync::Arc, time::Instant};
 ///   fails at any stage.
 pub fn run(opt: &FCoverageConfig) -> Result<()> {
     let start_time = Instant::now();
-    let (chromosomes, contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
+    let (chromosomes, contigs) =
+        resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
     let prefix = opt.output_prefix.trim();
 

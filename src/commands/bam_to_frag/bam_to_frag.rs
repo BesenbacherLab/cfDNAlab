@@ -70,7 +70,8 @@ pub fn run(opt: &BamToFragConfig) -> Result<()> {
 }
 
 pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
-    let (chromosomes, _) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
+    let (chromosomes, _) =
+        resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
     let prefix = opt.output_prefix.trim();
 
     let quiet = false;
