@@ -1,3 +1,5 @@
+#[cfg(feature = "cmd_bam_to_bam")]
+pub mod bam_to_bam;
 #[cfg(feature = "cmd_bam_to_frag")]
 pub mod bam_to_frag;
 pub mod cli_common;

@@ -80,6 +80,10 @@ use crate::shared::{
         segment_kmer_fragment::{
             FragmentWithKmerSegments, KmerSegmentedReadInfo, collect_fragment_with_kmer_segments,
         },
+        with_records_fragment::{
+            WithRecordReadInfo, WithRecordsFragment, collect_fragment_with_records,
+            collect_fragment_with_records_from_records,
+        },
     },
     indel_mode::IndelMode,
     iterator_counter::{
@@ -553,3 +557,61 @@ where
 
     PairingAdapter::new(mapped, None::<WithFragInfoPairer>).with_fragment_filter(fragment_filter)
 }
+
+/* For with-records read pairing */
+
+pub struct WithRecordReadInfoPairer;
+
+impl Pairer for WithRecordReadInfoPairer {
+    type Read = WithRecordReadInfo;
+    type Output = WithRecordsFragment;
+
+    fn pair(&self, a: &Self::Read, b: &Self::Read) -> Option<Self::Output> {
+        collect_fragment_with_records(a, b)
+    }
+}
+
+/// From BAM: pair reads into `FragFileFragment`.
+pub fn fragments_with_records_from_bam<RIter, PF>(
+    records: RIter,
+    include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
+    fragment_filter: PF,
+) -> PairingAdapter<
+    impl Iterator<Item = Result<InputItem<WithRecordsFragment>>>,
+    WithRecordReadInfoPairer,
+    WithRecordReadInfo,
+    WithRecordsFragment,
+>
+where
+    RIter: Iterator<Item = Result<Record>>,
+    PF: Fn(&WithRecordsFragment) -> bool + Send + Sync + 'static,
+{
+    let pairer = WithRecordReadInfoPairer {};
+
+    // Map BAM records -> InputItem::Read, converting errors to anyhow with context.
+    let mapped = records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord));
+
+    PairingAdapter::new(mapped, Some(pairer))
+        .with_bam_filter_and_mapper(include_read, |rec| WithRecordReadInfo::from(rec))
+        .with_fragment_filter(fragment_filter)
+}
+
+// /// From an iterator of ready-made `WithRecordsFragment` (e.g., BED-like source).
+// pub fn fragments_with_records_from_iter<I, PF>(
+//     frags: I,
+//     fragment_filter: PF,
+// ) -> PairingAdapter<
+//     impl Iterator<Item = Result<InputItem<WithRecordsFragment>>>,
+//     WithRecordReadInfoPairer,
+//     WithRecordReadInfo,
+//     WithRecordsFragment,
+// >
+// where
+//     I: Iterator<Item = Result<WithRecordsFragment>>,
+//     PF: Fn(&WithRecordsFragment) -> bool + Send + Sync + 'static,
+// {
+//     let mapped = frags.map(|res| res.map(InputItem::Fragment));
+
+//     PairingAdapter::new(mapped, None::<WithRecordReadInfoPairer>)
+//         .with_fragment_filter(fragment_filter)
+// }

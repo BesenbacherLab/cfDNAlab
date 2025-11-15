@@ -5,6 +5,7 @@ edition = "2024"
 
 [features]
 default = [
+    "cmd_bam_to_bam",
     "cmd_bam_to_frag",
     "cmd_coverage_weights",
     "cmd_fcoverage",
@@ -15,6 +16,7 @@ default = [
     "cmd_reference_gc",
 ]
 cli = ["clap"]
+cmd_bam_to_bam = []
 cmd_bam_to_frag = []
 cmd_coverage_weights = []
 cmd_fcoverage = []

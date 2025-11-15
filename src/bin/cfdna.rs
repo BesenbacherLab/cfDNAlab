@@ -1,3 +1,5 @@
+#[cfg(feature = "cmd_bam_to_bam")]
+use cfdnalab::commands::bam_to_bam::config::BamToBamConfig;
 #[cfg(feature = "cmd_bam_to_frag")]
 use cfdnalab::commands::bam_to_frag::config::BamToFragConfig;
 #[cfg(feature = "cmd_coverage_weights")]
@@ -26,6 +28,7 @@ use cfdnalab::commands::wps_peaks::config::WPSPeaksConfig;
 #[cfg(all(
     feature = "cli",
     not(any(
+        feature = "cmd_bam_to_bam",
         feature = "cmd_bam_to_frag",
         feature = "cmd_coverage_weights",
         feature = "cmd_fcoverage",
@@ -75,6 +78,8 @@ enum Cmd {
     PrepWindows(PrepareConfig),
     #[cfg(feature = "cmd_visualize_positions")]
     VisualizePositions(VisualizePositionsConfig),
+    #[cfg(feature = "cmd_bam_to_bam")]
+    BamToBam(BamToBamConfig),
     #[cfg(feature = "cmd_bam_to_frag")]
     BamToFrag(BamToFragConfig),
     // Ends(EndsConfig),
@@ -124,6 +129,8 @@ fn main() {
         Cmd::VisualizePositions(cfg) => {
             cfdnalab::commands::visualize_positions::visualize_positions::run(&cfg)
         }
+        #[cfg(feature = "cmd_bam_to_bam")]
+        Cmd::BamToBam(cfg) => cfdnalab::commands::bam_to_bam::bam_to_bam::run(&cfg),
         #[cfg(feature = "cmd_bam_to_frag")]
         Cmd::BamToFrag(cfg) => cfdnalab::commands::bam_to_frag::bam_to_frag::run(&cfg),
     };
