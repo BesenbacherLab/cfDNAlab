@@ -1,4 +1,6 @@
-use ndarray::Array3;
+use core::f64;
+
+use ndarray::{Array2, Array3, s};
 
 /// Prefix sums (cumsum) to compute GC and AT fractions while excluding Ns.
 /// `gc[i]`   = # of G/C in seq[0..i)
@@ -34,7 +36,7 @@ pub fn build_gc_prefixes(seq: &[u8]) -> GCPrefixes {
 /// `min_acgt_count`: Minimum number of actual ACGT bases counted in the window.
 ///   E.g. if most of the window is blacklisted or Ns.
 ///
-/// Returns None if the window has no A/T/G/C bases.
+/// Returns `None` if the window has too few A/T/G/C bases.
 #[inline]
 pub fn get_gc_fraction_in_window(
     prefixes: &GCPrefixes,
@@ -50,6 +52,7 @@ pub fn get_gc_fraction_in_window(
         end,
         prefixes.gc.len() - 1
     );
+
     let gc = prefixes.gc[end] - prefixes.gc[start];
     let acgt = prefixes.acgt[end] - prefixes.acgt[start];
     let length = end - start;
@@ -57,22 +60,27 @@ pub fn get_gc_fraction_in_window(
     if acgt == 0 || acgt < min_acgt_count || (acgt as f32 / length as f32) < min_acgt_fraction {
         return None;
     }
+
     let gc_frac = gc as f32 / acgt as f32;
     Some(gc_frac)
 }
 
 /// Count matrix for fragment coverage across GC fraction bins and fragment lengths.
 ///
-/// The matrix is two-dimensional:
-/// - Rows correspond to fragment lengths.
-/// - Columns correspond to GC fraction bins (0–100).
+/// While counting, the counts matrix is flattened (for contiguous memory).
+/// Use `.as_array2()` to get a 2-dimensional Array where:
+/// - Rows correspond to fragment lengths .
+/// - Columns correspond to GC fraction bins.
 #[derive(Debug, Clone)]
 pub struct GCCounts {
-    pub counts: Vec<Vec<u64>>,
+    counts: Vec<f64>,
     pub gc_min: usize,
     pub gc_max: usize,
     pub length_min: usize,
     pub length_max: usize,
+    num_lengths: usize,
+    num_gc_bins: usize,
+    pub num_acgt_out_of: (u64, u64),
 }
 
 impl GCCounts {
@@ -88,21 +96,32 @@ impl GCCounts {
     ///     Minimum fragment length (inclusive).
     /// length_max: usize
     ///     Maximum fragment length (inclusive).
+    /// num_acgt_out_of:
+    ///     Number of ACGT bases and the total number of positions.
     ///
     /// Returns
     /// -------
     /// counts: GCCounts
     ///     A `GCCounts` object with all counts initialized to zero.
-    pub fn new(gc_min: usize, gc_max: usize, length_min: usize, length_max: usize) -> Self {
+    pub fn new(
+        gc_min: usize,
+        gc_max: usize,
+        length_min: usize,
+        length_max: usize,
+        num_acgt_out_of: (u64, u64),
+    ) -> Self {
         let num_gc_bins = gc_max - gc_min + 1;
         let num_lengths = length_max - length_min + 1;
-        let counts = vec![vec![0u64; num_gc_bins]; num_lengths];
+        let counts = vec![0f64; num_gc_bins * num_lengths];
         Self {
             counts,
             gc_min,
             gc_max,
             length_min,
             length_max,
+            num_lengths,
+            num_gc_bins,
+            num_acgt_out_of,
         }
     }
 
@@ -125,7 +144,8 @@ impl GCCounts {
             && (self.gc_min..=self.gc_max).contains(&gc)
     }
 
-    /// Compute row/column indices for `(length, gc)` if in bounds.
+    /// Compute row/column indices in `Array2` (see `.as_array2()`)
+    /// output for `(length, gc)` if in bounds.
     ///
     /// Parameters
     /// ----------
@@ -147,6 +167,18 @@ impl GCCounts {
         }
     }
 
+    /// Get index in the raw (flattened) counts for a given fragment length and gc.
+    #[inline]
+    pub fn flat_index(&self, length: usize, gc: usize) -> Option<usize> {
+        if self.in_bounds(length, gc) {
+            let row = length - self.length_min;
+            let col = gc - self.gc_min;
+            Some(row * self.num_gc_bins + col)
+        } else {
+            None
+        }
+    }
+
     /// Increment the counter for a given fragment length and GC bin.
     ///
     /// Parameters
@@ -156,12 +188,28 @@ impl GCCounts {
     /// gc: usize
     ///     GC bin (absolute).
     pub fn incr(&mut self, length: usize, gc: usize) {
-        if let Some((r, c)) = self.index_of(length, gc) {
-            self.counts[r][c] = self.counts[r][c].saturating_add(1);
+        if let Some(idx) = self.flat_index(length, gc) {
+            self.counts[idx] += 1.0;
         }
     }
 
-    // Get the count at a given fragment length and GC bin.
+    /// Increment the counter by a weight for a given fragment length and GC bin.
+    ///
+    /// Parameters
+    /// ----------
+    /// length: usize
+    ///     Fragment length (absolute).
+    /// gc: usize
+    ///     GC bin (absolute).
+    /// weight: f64
+    ///     Weight to count up.
+    pub fn incr_weighted(&mut self, length: usize, gc: usize, weight: f64) {
+        if let Some(idx) = self.flat_index(length, gc) {
+            self.counts[idx] += weight;
+        }
+    }
+
+    /// Get the count at a given fragment length and GC bin.
     ///
     /// Parameters
     /// ----------
@@ -172,10 +220,53 @@ impl GCCounts {
     ///
     /// Returns
     /// -------
-    /// count: Option<u32>
+    /// count: Option<f64>
     ///     The count if indices are in range, otherwise `None`.
-    pub fn get(&self, length: usize, gc: usize) -> Option<u64> {
-        self.index_of(length, gc).map(|(r, c)| self.counts[r][c])
+    pub fn get(&self, length: usize, gc: usize) -> Option<f64> {
+        self.flat_index(length, gc).map(|idx| self.counts[idx])
+    }
+
+    /// Set the count at a given fragment length and GC bin.
+    ///
+    /// Parameters
+    /// ----------
+    /// length: usize
+    ///     Fragment length (absolute).
+    /// gc: usize
+    ///     GC bin (absolute).
+    /// count: f64
+    ///     Value to set as count.
+    pub fn set(&mut self, length: usize, gc: usize, count: f64) {
+        if let Some(idx) = self.flat_index(length, gc) {
+            self.counts[idx] = count;
+        }
+    }
+
+    /// Borrow the raw counts (flattened vector). Non-mutable borrow.
+    ///
+    /// Parameters
+    /// ----------
+    /// length: usize
+    ///     Fragment length (absolute).
+    /// gc: usize
+    ///     GC bin (absolute).
+    ///
+    /// Returns
+    /// -------
+    /// count: Option<f64>
+    ///     The count if indices are in range, otherwise `None`.
+    pub fn borrow_raw_counts(&self) -> &Vec<f64> {
+        &self.counts
+    }
+
+    /// Get the counts as an `Array2` object.
+    ///
+    /// Returns
+    /// -------
+    /// counts: Array2<f64>
+    pub fn to_array2(&self) -> Array2<f64> {
+        Array2::from_shape_vec((self.num_lengths, self.num_gc_bins), self.counts.clone())
+            .expect("inconsistent row lengths")
     }
 
     /// Number of length rows.
@@ -186,7 +277,7 @@ impl GCCounts {
     ///     Count of length bins.
     #[inline]
     pub fn n_lengths(&self) -> usize {
-        self.length_max - self.length_min + 1
+        self.num_lengths
     }
 
     /// Number of GC columns.
@@ -197,7 +288,23 @@ impl GCCounts {
     ///     Count of GC bins.
     #[inline]
     pub fn n_gc_bins(&self) -> usize {
-        self.gc_max - self.gc_min + 1
+        self.num_gc_bins
+    }
+
+    /// Get the percentage of `ACGT` bases in the observed positions.
+    /// I.e., the percentage of positions that are not blacklisted or ambiguous (`N`).
+    ///
+    /// Returns
+    /// -------
+    /// percentage: f64
+    ///     Number of observed ACGT bases divided by total number of observed bases.
+    ///     When no positions are observed, it returns `f64::NAN`.
+    pub fn pct_acgt(&self) -> f64 {
+        if self.num_acgt_out_of.1 == 0 {
+            f64::NAN
+        } else {
+            100.0 * (self.num_acgt_out_of.0 as f64 / self.num_acgt_out_of.1 as f64)
+        }
     }
 
     /// Create a zero-initialized `GCCounts` with the same ranges and shape as `self`.
@@ -208,14 +315,15 @@ impl GCCounts {
     ///     New object with all counts set to zero and identical configuration.
     #[inline]
     pub fn zeroed_like(&self) -> Self {
-        let n_len = self.n_lengths();
-        let n_gc = self.n_gc_bins();
         Self {
-            counts: vec![vec![0u64; n_gc]; n_len],
+            counts: vec![0f64; self.num_gc_bins * self.num_lengths],
             gc_min: self.gc_min,
             gc_max: self.gc_max,
             length_min: self.length_min,
             length_max: self.length_max,
+            num_gc_bins: self.num_gc_bins,
+            num_lengths: self.num_lengths,
+            num_acgt_out_of: (0, 0),
         }
     }
 
@@ -259,12 +367,12 @@ impl GCCounts {
                 other
             ));
         }
-        for (r, row_other) in other.counts.iter().enumerate() {
-            let row_self = &mut self.counts[r];
-            for (c, &v) in row_other.iter().enumerate() {
-                row_self[c] = row_self[c].saturating_add(v);
-            }
+        for (idx, other_count) in other.borrow_raw_counts().iter().enumerate() {
+            self.counts[idx] += other_count;
         }
+        self.num_acgt_out_of.0 += other.num_acgt_out_of.0;
+        self.num_acgt_out_of.1 += other.num_acgt_out_of.1;
+
         Ok(())
     }
 
@@ -308,7 +416,7 @@ impl GCCounts {
 impl Default for GCCounts {
     /// Create an empty default `GCCounts` (0–100 GC, 20–600 length).
     fn default() -> Self {
-        Self::new(0, 100, 20, 600)
+        Self::new(0, 100, 20, 600, (0, 0))
     }
 }
 
@@ -316,39 +424,35 @@ impl std::fmt::Display for GCCounts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "GCCounts(gc:[{}..={}], len:[{}..={}], dims:({},{}) )",
+            "GCCounts(gc:[{}..={}], len:[{}..={}], dims:({},{}), pct_acgt:({}) )",
             self.gc_min,
             self.gc_max,
             self.length_min,
             self.length_max,
             self.n_lengths(),
-            self.n_gc_bins()
+            self.n_gc_bins(),
+            self.pct_acgt(),
         )
     }
 }
 
 /// Stack counts from vector of `GCCounts` to a single 3d array.
-pub fn stack_gc_counts(all_counts: &Vec<GCCounts>) -> Array3<u64> {
-    // Assume all GCCounts.counts have the same dimensions
+pub fn stack_gc_counts(all_counts: &[GCCounts]) -> Array3<f64> {
     let n = all_counts.len();
     let l = all_counts[0].n_lengths();
     let g = all_counts[0].n_gc_bins();
 
-    let mut arr = Array3::<u64>::zeros((n, l, g));
+    let mut arr = Array3::<f64>::zeros((n, l, g));
     for (i, gcc) in all_counts.iter().enumerate() {
         assert_eq!(gcc.n_lengths(), l, "mismatched length bins at {}", i);
         assert_eq!(gcc.n_gc_bins(), g, "mismatched GC bins at {}", i);
-        for (li, row) in gcc.counts.iter().enumerate() {
-            // row: Vec<u64> over GC bins
-            for (gi, &val) in row.iter().enumerate() {
-                arr[(i, li, gi)] = val;
-            }
-        }
+
+        let window = gcc.to_array2();
+        arr.slice_mut(s![i, .., ..]).assign(&window);
     }
 
     arr
 }
-
 /// Count reference GC per fragment length for every window on one chromosome.
 ///
 /// For each window `[start, end)` and each given start position `s` within that

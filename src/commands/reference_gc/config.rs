@@ -2,9 +2,9 @@ use crate::commands::cli_common::*;
 use std::path::PathBuf;
 
 /// Count GC fraction per fragment length at a sampled number of starting positions in the reference genome.
-/// This 2D count distribution can serve as the expected GC bias.
+/// This 2D count distribution can serve as the expected GC bias in GC correction.
 ///
-/// How: A number (default: 100M) of starting positions are uniformly sampled across the reference
+/// How: A number (default: 150M) of starting positions are uniformly sampled across the reference
 /// genome. For each position, we count the GC fraction for every possible fragment length (default: 20-1000bp).
 ///
 /// Intervals (the possible fragments) with too few ACGT bases after blacklist masking are discarded
@@ -49,12 +49,14 @@ pub struct RefGCConfig {
     /// with the GC of each fragment length being counted from
     /// those same starting positions.
     ///
-    /// NOTE: Sampling is independent of windowing and blacklisting!
+    /// **NOTE**: Sampling is independent of windowing and blacklisting!
     /// The per-length-sum of the output counts may thus be significantly
     /// lower than the specified `n_positions` and different between lengths.
+    /// **TIP**: Add 20% extra starting positions than you think you need,
+    /// since blacklisting likely removes a big chunk of them.
     #[cfg_attr(
         feature = "cli",
-        clap(short = 't', long, default_value = "100000000", help_heading = "Core")
+        clap(short = 't', long, default_value = "150000000", help_heading = "Core")
     )]
     pub n_positions: usize,
 

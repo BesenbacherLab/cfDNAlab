@@ -68,7 +68,7 @@ impl LengthCounts {
         }
     }
 
-    /// Increment the counter by `1.0` for a given fragment length and GC bin.
+    /// Increment the counter by `1.0` for a given fragment length.
     ///
     /// Parameters
     /// ----------
@@ -80,7 +80,7 @@ impl LengthCounts {
         }
     }
 
-    /// Increment the counter by a weight for a given fragment length and GC bin.
+    /// Increment the counter by a weight for a given fragment length.
     ///
     /// Parameters
     /// ----------
@@ -213,7 +213,7 @@ impl LengthCounts {
 }
 
 impl Default for LengthCounts {
-    /// Create an empty default `LengthCounts` (0–100 GC, 20–600 length).
+    /// Create an empty default `LengthCounts` (20–600 length).
     fn default() -> Self {
         Self::new(20, 600)
     }

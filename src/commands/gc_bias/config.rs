@@ -3,18 +3,18 @@ use std::{path::PathBuf, str::FromStr};
 
 #[derive(Default, Clone, Debug)]
 pub enum WindowWeightingSchemes {
-    Unweighted,
+    Equal,
     #[default]
     Coverage,
-    Positions,
+    ValidPositions,
 }
 
 impl WindowWeightingSchemes {
     pub fn as_str(self) -> &'static str {
         match self {
-            WindowWeightingSchemes::Unweighted => "unweighted",
+            WindowWeightingSchemes::Equal => "equal",
             WindowWeightingSchemes::Coverage => "coverage",
-            WindowWeightingSchemes::Positions => "positions",
+            WindowWeightingSchemes::ValidPositions => "valid-positions",
         }
     }
 }
@@ -22,14 +22,14 @@ impl WindowWeightingSchemes {
 impl FromStr for WindowWeightingSchemes {
     type Err = String;
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        if s == "unweighted" {
-            Ok(WindowWeightingSchemes::Unweighted)
+        if s == "equal" {
+            Ok(WindowWeightingSchemes::Equal)
         } else if s == "coverage" {
             Ok(WindowWeightingSchemes::Coverage)
-        } else if s == "positions" {
-            Ok(WindowWeightingSchemes::Positions)
+        } else if s == "valid-positions" {
+            Ok(WindowWeightingSchemes::ValidPositions)
         } else {
-            Err("Use 'unweighted', 'coverage', or 'positions'".into())
+            Err("Use 'equal', 'coverage', or 'valid-positions'".into())
         }
     }
 }
@@ -73,15 +73,21 @@ pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
 
-    /// Path to reference GC bias to correct against, calculated with `cfdna reference-gc` `[path]`
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub ref_genome: Ref2BitRequiredArgs,
+
+    /// Path to directory with reference GC bias files to correct against `[path]`
+    ///
+    /// Precompute with `cfdna reference-gc`. The directory must include all files
+    /// created by `cfdna reference-gc`.
     ///
     /// Windowing: When the reference bias is passed in genomic windows, we calculate the
-    /// cfDNA GC bias corrections per window and average them (see --average-by).
+    /// cfDNA GC bias corrections per window and average them (see `--window-weighting`).
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser, required = true, help_heading = "Core")
     )]
-    pub ref_gc: PathBuf,
+    pub ref_gc_dir: PathBuf,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub window_assignment: AssignToWindowArgs,
@@ -90,28 +96,25 @@ pub struct GCConfig {
     ///
     /// One of:
     ///
-    ///  - `"positions"`: Weight windows by how many positions are usable (not blacklisted or `N`).
+    ///  - `"valid-positions"`: Weight windows by how many positions are usable (not blacklisted or `N`).
     ///
     ///  - `"coverage"` (default): Windows are weighted by their average number of observed fragments.
     ///     Compared to a single global window, this approach ensures the local reference bias only
     ///     affects the local correction matrix.
     ///
-    ///  - `"unweighted"``: All windows get the same weight in the final correction matrix, no matter how many positions were blacklisted, etc.
+    ///  - `"equal"``: All windows get the same weight in the final correction matrix, no matter how many positions were blacklisted, etc.
     ///  
     #[cfg_attr(
         feature = "cli",
-        clap(
-            long,
-            value_enum,
-            default_value = "coverage",
-            required = true,
-            help_heading = "Core"
-        )
+        clap(long, value_enum, default_value = "coverage", help_heading = "Core")
     )]
     pub window_weighting: WindowWeightingSchemes,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub chromosomes: ChromosomeArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub scale_genome: ScaleGenomeArgs,
 
     /// Optional BED file(s) with blacklisted regions `[path]`
     ///
@@ -188,22 +191,23 @@ pub struct GCConfig {
     /// On 1 Mb windows, 1000 fragments roughly corresponds to ~0.166x coverage.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "1000",
+        clap(long, default_value = "600",
              value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
     pub min_window_count: u32,
 
-    /// Minimum percentage of usable positions in a window to consider it in the correction calculation `[integer]`
+    /// Minimum percentage of **usable** positions in a window to consider it in the correction calculation `[integer]`
     ///
     /// Positions are usable if they are not blacklisted or `N`.
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "20",
              value_parser = clap::value_parser!(u8).range(0..101), help_heading="Filtering"))]
-    pub min_usable_positions_pct: u8,
+    pub min_window_positions_pct: u8,
 
-    /// Minimum **percentage** of ACGT bases in a fragment after blacklist masking `[integer]`
+    /// Minimum **percentage** of ACGT bases in a fragment after blacklist masking and end offsets `[integer]`
     ///
     /// Fragments where a lower percentage of bases are ACGT (not blacklisted or 'N') are ignored.
+    /// When specifying `--end-offset`, the ends are excluded before this calculation.
     ///
     /// When both `min_acgt_*` arguments are specified, both thresholds must be met. E.g.,
     /// you may want at least 50% ACGT remaining but also at least 20 bases for a proper
@@ -215,12 +219,123 @@ pub struct GCConfig {
              value_parser = clap::value_parser!(u8).range(0..101), help_heading="Minimum ACGT (select 0-2 args)"))]
     pub min_acgt_pct: u8,
 
-    /// Minimum **count** of ACGT bases in a fragment after blacklist masking `[integer]`
+    /// Minimum **count** of ACGT bases in a fragment after blacklist masking and end offsets `[integer]`
     ///
     /// Fragments where fewer bases are ACGT (not blacklisted or 'N') are ignored.
+    /// When specifying `--end-offset`, the ends are excluded before this calculation.
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "20", group = "min_acgt", 
              value_parser = clap::value_parser!(u8).range(0..), help_heading="Minimum ACGT (select 0-2 args)"))]
     pub min_acgt_count: u8,
+}
+
+impl GCConfig {
+    pub fn new(
+        ioc: IOCArgs,
+        ref_2bit: PathBuf,
+        ref_gc_dir: PathBuf,
+        chromosomes: ChromosomeArgs,
+    ) -> Self {
+        Self {
+            ioc,
+            ref_genome: Ref2BitRequiredArgs { ref_2bit },
+            ref_gc_dir,
+            window_assignment: AssignToWindowArgs::default(),
+            window_weighting: WindowWeightingSchemes::default(),
+            chromosomes,
+            scale_genome: ScaleGenomeArgs::default(),
+            blacklist: None,
+            min_mapq: 30,
+            require_proper_pair: false,
+            fragment_lengths: FragmentLengthArgs {
+                min_fragment_length: 20,
+                max_fragment_length: 1000,
+            },
+            gc_min_pct: 0,
+            gc_max_pct: 100,
+            end_offset: 0,
+            min_bin_count: 2,
+            min_window_count: 600,
+            min_window_positions_pct: 20,
+            min_acgt_pct: 90,
+            min_acgt_count: 20,
+        }
+    }
+
+    pub fn set_ioc(&mut self, ioc: IOCArgs) {
+        self.ioc = ioc;
+    }
+
+    pub fn set_ref_gc_dir(&mut self, ref_gc_dir: PathBuf) {
+        self.ref_gc_dir = ref_gc_dir;
+    }
+
+    pub fn set_window_assignment(&mut self, assignment: AssignToWindowArgs) {
+        self.window_assignment = assignment;
+    }
+
+    pub fn set_window_weighting(&mut self, weighting: WindowWeightingSchemes) {
+        self.window_weighting = weighting;
+    }
+
+    pub fn set_chromosomes(&mut self, chromosomes: ChromosomeArgs) {
+        self.chromosomes = chromosomes;
+    }
+
+    pub fn set_scaling_factors(&mut self, scaling_factors: Option<PathBuf>) {
+        self.scale_genome.scaling_factors = scaling_factors;
+    }
+
+    pub fn set_blacklist(&mut self, blacklist: Option<Vec<PathBuf>>) {
+        self.blacklist = blacklist;
+    }
+
+    pub fn set_min_mapq(&mut self, min_mapq: u8) {
+        self.min_mapq = min_mapq;
+    }
+
+    pub fn set_require_proper_pair(&mut self, require: bool) {
+        self.require_proper_pair = require;
+    }
+
+    pub fn set_fragment_lengths(&mut self, fragment_lengths: FragmentLengthArgs) {
+        self.fragment_lengths = fragment_lengths;
+    }
+
+    pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
+        &mut self.fragment_lengths
+    }
+
+    pub fn set_gc_min_pct(&mut self, gc_min_pct: u8) {
+        self.gc_min_pct = gc_min_pct;
+    }
+
+    pub fn set_gc_max_pct(&mut self, gc_max_pct: u8) {
+        self.gc_max_pct = gc_max_pct;
+    }
+
+    pub fn set_end_offset(&mut self, end_offset: u8) {
+        self.end_offset = end_offset;
+    }
+
+    pub fn set_min_bin_count(&mut self, min_bin_count: u32) {
+        self.min_bin_count = min_bin_count;
+    }
+
+    pub fn set_min_window_count(&mut self, min_window_count: u32) {
+        self.min_window_count = min_window_count;
+    }
+
+    pub fn set_min_window_positions_pct(&mut self, pct: u8) {
+        self.min_window_positions_pct = pct;
+    }
+
+    pub fn set_min_acgt_pct(&mut self, pct: u8) {
+        self.min_acgt_pct = pct;
+    }
+
+    pub fn set_min_acgt_count(&mut self, count: u8) {
+        self.min_acgt_count = count;
+    }
 }

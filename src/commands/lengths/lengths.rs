@@ -259,7 +259,7 @@ fn process_chrom(
         WindowAssigner::Proportion(p) => p,
     };
 
-    // Replace scaling factor with unused index
+    // Replace scaling factor with unused index (for compatibility with overlap finder)
     let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
         scaling_chr.iter().map(|(s, e, _)| (*s, *e, 0u64)).collect();
 

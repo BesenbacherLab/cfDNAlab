@@ -172,6 +172,10 @@ impl LengthsConfig {
         &mut self.fragment_lengths
     }
 
+    pub fn set_scaling_factors(&mut self, scaling_factors: Option<PathBuf>) {
+        self.scale_genome.scaling_factors = scaling_factors;
+    }
+
     pub fn set_min_mapq(&mut self, min_mapq: u8) {
         self.min_mapq = min_mapq;
     }

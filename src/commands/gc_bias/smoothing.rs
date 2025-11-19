@@ -2,6 +2,8 @@
 
 use ndarray::{Array2, ArrayViewMut2, s};
 
+// TODO: Check what GCParagon does
+
 /// Smoothing along the GC axis (per fragment-length row).
 ///
 /// Apply this **before** normalization. Typically you outlier-handle first
@@ -39,6 +41,7 @@ impl GCSmoother1D {
     }
 }
 
+// TODO: We're not smoothing counts but corrections
 /// NaN-aware boxcar smoothing along columns, applied to each row independently.
 /// Uses prefix sums of (values with NaNs->0) and counts of finite values to get O(1) window means.
 fn boxcar_rows_nan_aware(mut w: ArrayViewMut2<f32>, radius: usize) {

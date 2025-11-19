@@ -133,7 +133,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
     // Write bins BED file
     if !matches!(window_opt, WindowSpec::Global) {
         println!("Start: Writing window coordinates to disk");
-        let bins_path = opt.output_dir.join("bins.bed");
+        let bins_path = opt.output_dir.join("ref_gc_bins.bed");
         let mut bed_writer = create_text_writer(&bins_path).context("Create bed fail")?;
         for (chr, start, end, _, overlap_perc) in &bin_info {
             writeln!(bed_writer, "{}\t{}\t{}\t{}", chr, start, end, overlap_perc)
@@ -185,7 +185,8 @@ fn process_chrom(
             0usize,
             100usize,
             opt.fragment_lengths.min_fragment_length as usize,
-            opt.fragment_lengths.max_fragment_length as usize
+            opt.fragment_lengths.max_fragment_length as usize,
+            (0, 0) // Not used in this command
         );
         num_bins
     ];
@@ -203,6 +204,8 @@ fn process_chrom(
         opt.min_acgt_pct as f32 / 100f32,
         opt.min_acgt_count as u32,
     );
+
+    // TODO: To use this for filtering, we need to know the N-positions as well (we need percentage usable positions)
 
     let bin_info = if let Some(size) = opt.windows.by_size {
         // Build bin information for chromosome
