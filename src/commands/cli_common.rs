@@ -544,7 +544,7 @@ impl FragmentPositionSelectionArgs {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
 pub struct BaseSelectionArgs {
-    /// Choose which coordinate source defines the counted positions `[reference|prefer-reads|reads|nearest-read]`.
+    /// Choose which coordinate source defines the counted positions `[reference|prefer-reads|reads|nearest-read]`
     ///
     /// - `reference`: Always use the reference span, even when reads do not cover those bases.
     ///
@@ -566,7 +566,7 @@ pub struct BaseSelectionArgs {
     )]
     pub bases_from: BasesFrom,
 
-    /// Resolve overlapping read **mismatches** when preferring read bases `[nearest-read|base-quality|reference]`.
+    /// Resolve overlapping read **mismatches** when preferring read bases `[nearest-read|base-quality|reference]`
     ///
     /// - `nearest-read`: Take the base from whichever read is closest to the frame origin. **NOTE**: Incompatible with `--frame mid`.
     ///

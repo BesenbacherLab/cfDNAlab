@@ -252,12 +252,12 @@ pub struct PrepareConfig {
     ///
     ///   - Overlap: Distance is `0`.
     ///
-    ///   - Otherwise: Distance is the minimum from the window’s edges to the selected
+    ///   - Otherwise: Distance is the minimum from the window's edges to the selected
     ///     target edge(s) (see `--near-edge`).
     ///
     /// Strand semantics:
     ///
-    ///   - `Upstream/Downstream` are defined **relative to the near interval’s annotated strand**.
+    ///   - `Upstream/Downstream` are defined **relative to the near interval's annotated strand**.
     ///
     ///   - If `strand` is unknown (`.`), upstream/downstream edge selection falls back to genomic-nearest.
     ///
@@ -266,7 +266,7 @@ pub struct PrepareConfig {
     /// If you require e.g., TSS distances, provide 1-bp intervals at the strand-specific TSS.
     ///
     /// When `--distance-bins` is used, the output group combines the original group (from
-    /// `--group-cols`, if any), the nearest record’s group (if present in the near file),
+    /// `--group-cols`, if any), the nearest record's group (if present in the near file),
     /// and the bin label:
     ///
     /// - With both: `{input_group}.{near_group}.{bin_label}`
@@ -314,7 +314,7 @@ pub struct PrepareConfig {
     ///
     /// - `"downstream"`: Use the edge that is downstream of each near interval given its strand (`+` uses right edge, `-` uses left edge).
     ///
-    /// If a near interval’s strand is unknown (`.`), "upstream"/"downstream" behave like "nearest".
+    /// If a near interval's strand is unknown (`.`), "upstream"/"downstream" behave like "nearest".
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -330,9 +330,9 @@ pub struct PrepareConfig {
 
     /// Directionality of distance classification `[string]`
     ///
-    /// - `"upstream"`: Consider only near intervals that lie upstream (or overlap) relative to each near interval’s strand.
+    /// - `"upstream"`: Consider only near intervals that lie upstream (or overlap) relative to each near interval's strand.
     ///
-    /// - `"downstream"`: Consider only near intervals that lie downstream (or overlap) relative to each near interval’s strand.
+    /// - `"downstream"`: Consider only near intervals that lie downstream (or overlap) relative to each near interval's strand.
     ///
     /// - `"both"`: Consider upstream and downstream (default).
     ///
@@ -433,7 +433,7 @@ pub struct PrepareConfig {
     ///
     /// **Examples:**
     ///
-    /// Legend: '=' near interval, '#' window, '-' empty span. Signs are relative to the near interval’s strand.
+    /// Legend: '=' near interval, '#' window, '-' empty span. Signs are relative to the near interval's strand.
     ///
     /// Case A: near is `+` strand
     ///

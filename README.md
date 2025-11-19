@@ -104,6 +104,16 @@ cfdna coverage-weights \
 
 ```
 
+Calculate the reference GC bias in windows. NOTE: This file can be reused for all samples/subjects!
+
+```bash
+
+cfdna reference-gc \
+  ...
+
+```
+
+
 Calculate the GC bias correction matrix (for using both, see next example instead):
 
 ```bash

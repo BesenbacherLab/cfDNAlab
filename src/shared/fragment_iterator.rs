@@ -82,7 +82,6 @@ use crate::shared::{
         },
         with_records_fragment::{
             WithRecordReadInfo, WithRecordsFragment, collect_fragment_with_records,
-            collect_fragment_with_records_from_records,
         },
     },
     indel_mode::IndelMode,

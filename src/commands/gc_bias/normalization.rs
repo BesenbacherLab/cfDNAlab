@@ -8,7 +8,7 @@ use ndarray::{Array2, s};
 ///   `sum(w[c]*count[c])` equals the original row sum after scaling.
 #[derive(Debug, Clone, Copy)]
 pub enum WeightNormalizer {
-    /// Divide by arithmetic mean -> row’s average weight = 1 (totals may change).
+    /// Divide by arithmetic mean -> row's average weight = 1 (totals may change).
     RowMean,
     /// Scale so `sum(w[c] * count[c]) == row_sum` (totals preserved; counts-weighted).
     CountWeighted,
