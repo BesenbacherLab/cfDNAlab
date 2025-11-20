@@ -251,3 +251,78 @@ mod collapse_bins_tests {
         assert!(result.is_err());
     }
 }
+
+mod binning_tests {
+    use super::*;
+    use cfdnalab::commands::gc_bias::gc_bias::bin_greedily_by_mass;
+
+    #[test]
+    fn bins_all_mass_into_single_bin_when_threshold_is_high() {
+        // Two rows each contribute exactly half the total mass (1 of 2).
+        // Setting min_mass_pct to 99% forces all indices into one bin.
+        let counts = array![[1.0, 0.0], [0.0, 1.0]];
+        let bins = bin_greedily_by_mass(&counts, 0, 99.0).expect("binning should succeed");
+        assert_eq!(bins.num_bins, 1, "All rows must merge into a single bin");
+        assert_eq!(
+            bins.bin_to_indices.get(&0),
+            Some(&vec![0, 1]),
+            "Both indices should map to bin 0"
+        );
+    }
+
+    #[test]
+    fn splits_bins_when_mass_threshold_is_met() {
+        // First three rows contribute exactly 30 units of mass (out of 70 total),
+        // so once row 2 is included the threshold is met and a new bin starts.
+        // The remaining row becomes the second bin.
+        let counts = array![[10.0, 0.0], [0.0, 10.0], [10.0, 0.0], [40.0, 0.0]];
+        let bins = bin_greedily_by_mass(&counts, 0, 30.0).expect("binning should succeed");
+        assert_eq!(bins.num_bins, 2, "Expected two bins");
+        assert_eq!(
+            bins.bin_to_indices.get(&0),
+            Some(&vec![0, 1, 2]),
+            "Indices before crossing the threshold stay in the first bin"
+        );
+        assert_eq!(
+            bins.bin_to_indices.get(&1),
+            Some(&vec![3]),
+            "The remaining index forms the next bin after the threshold is met"
+        );
+    }
+
+    #[test]
+    fn merges_partial_tail_into_previous_bin_when_threshold_not_met() {
+        // First three rows contribute 30 units of mass (out of 71 total ≈42%),
+        // so a new bin befins for the fourht element, which is big enough
+        // to make it's own bin. BUT the last bin is too small so it gets
+        // merged into the second bin instead of being alone.
+        let counts = array![
+            [10.0, 0.0],
+            [0.0, 10.0],
+            [10.0, 0.0],
+            [40.0, 0.0],
+            [10.0, 0.0]
+        ];
+        let bins = bin_greedily_by_mass(&counts, 0, 30.0).expect("binning should succeed");
+        assert_eq!(bins.num_bins, 2, "Expected two bins");
+        assert_eq!(
+            bins.bin_to_indices.get(&0),
+            Some(&vec![0, 1, 2]),
+            "Indices before crossing the threshold stay in the first bin"
+        );
+        assert_eq!(
+            bins.bin_to_indices.get(&1),
+            Some(&vec![3, 4]),
+            "window idx=3 is big enough on its own but idx=4 is too small to be alone so it merged into this window"
+        );
+    }
+
+    #[test]
+    fn handles_zero_total_mass() {
+        let counts = array![[0.0, 0.0], [0.0, 0.0]];
+        let bins = bin_greedily_by_mass(&counts, 0, 10.0).expect("binning should succeed");
+        assert_eq!(bins.num_bins, 0, "No bins should be created for zero mass");
+        assert!(bins.index_to_bin.is_empty());
+        assert!(bins.bin_to_indices.is_empty());
+    }
+}
