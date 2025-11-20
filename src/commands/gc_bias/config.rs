@@ -123,15 +123,15 @@ pub struct GCConfig {
 
     /// Minimum percentage of counts to have in each length bin `[float]`
     ///
-    /// Greater than 0, lower than 100.
+    /// Greater than 0, lower than 100. Default is 0.5% (i.e., a max. of ~200 bins).
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "1.0", value_parser = parse_percentage_within_0_100_f32, help_heading="Binning"))]
+        clap(long, default_value = "0.5", value_parser = parse_percentage_within_0_100_f32, help_heading="Binning"))]
     pub min_length_bin_mass: f32,
 
     /// Minimum percentage of counts to have in each GC contents bin `[float]`
     ///
-    /// Greater than 0, lower than 100.
+    /// Greater than 0, lower than 100. Default is 1% (i.e., a max. of ~100 bins).
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "1.0", value_parser = parse_percentage_within_0_100_f32, help_heading="Binning"))]

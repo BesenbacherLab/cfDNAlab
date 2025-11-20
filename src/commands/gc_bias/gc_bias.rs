@@ -6,7 +6,7 @@ use crate::{
             config::{GCConfig, WindowWeightingSchemes},
             counting::{GCCounts, build_gc_prefixes, get_gc_fraction_in_window},
             load_reference_bias::{ReferenceGcData, load_reference_gc_data},
-            smoothing::{fit_sigma_for_targets, smoothe_counts_gaussian},
+            smoothing::smoothe_counts_gaussian,
         },
     },
     shared::{
@@ -24,7 +24,7 @@ use crate::{
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
-use ndarray::{Array2, ArrayBase, Axis, Data, Ix2, Zip};
+use ndarray::{Array2, ArrayBase, ArrayView2, Axis, Data, Ix2, Zip};
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
@@ -192,9 +192,39 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         smoothe_counts_gaussian(&norm_gc_counts, sigma, radius)
     };
 
-    // TODO: Bin lengths and GCs by mass
-    let binned_gc_counts = smoothed_gc_counts.clone();
-    let binned_ref_counts = avg_norm_ref_counts.clone();
+    // Get greedy bins for lengths and GC
+    // Maps "length -> length bin" and "gc -> gc bin"
+    let length_bins = bin_greedily_by_mass(&smoothed_gc_counts, 0, opt.min_length_bin_mass as f64)?;
+    let gc_bins = bin_greedily_by_mass(&smoothed_gc_counts, 1, opt.min_gc_bin_mass as f64)?;
+
+    // Collapse row-mean-scaled reference counts into the length and GC bins
+    // We *average* the values at the collapsed indices. For length bin collapsing,
+    // we weight the average by the occurence of the lengths in the cfDNA
+    // TODO: Could technically weight these averages by the cfDNA counts?
+    let binned_ref_counts = {
+        let length_binned = collapse_counts_by_bins(
+            &avg_norm_ref_counts,
+            0,
+            &length_bins,
+            CollapseAggregation::Mean,
+            // Weight the average by how common the lengths are in the cfDNA
+            Some(smoothed_gc_counts.view()),
+        )?;
+        collapse_counts_by_bins(&length_binned, 1, &gc_bins, CollapseAggregation::Mean, None)?
+    };
+
+    // Collapse GC counts into the length and GC bins
+    // We sum the values at the collapsed indices
+    let binned_gc_counts = {
+        let length_binned = collapse_counts_by_bins(
+            &smoothed_gc_counts,
+            0,
+            &length_bins,
+            CollapseAggregation::Sum,
+            None,
+        )?;
+        collapse_counts_by_bins(&length_binned, 1, &gc_bins, CollapseAggregation::Sum, None)?
+    };
 
     let norm_gc_counts = mean_scale_per_length_array(&binned_gc_counts, 0.);
     let norm_ref_counts = mean_scale_per_length_array(&binned_ref_counts, 0.);
@@ -577,6 +607,7 @@ where
     // Cast to f64 once and add pseudo-count (Laplace smoothing)
     let ref_counts_f = ref_counts.mapv(|v| 1.0 + v as f64);
     // Row-wise mean-scaling to avoid
+    // TODO: Not sure this is the place for per-length normalization: Does it make it harder to bin??
     let ref_counts_norm = mean_scale_per_length_array(&ref_counts_f, 1.0);
 
     // Weighting one or both count distributions
@@ -674,4 +705,198 @@ fn mean_of_arrays(
     sum_b /= factor;
 
     Some((sum_a, sum_b))
+}
+
+#[derive(Debug, Clone)]
+pub struct BinnedAxis {
+    pub index_to_bin: FxHashMap<usize, usize>,
+    pub bin_to_indices: FxHashMap<usize, Vec<usize>>,
+    pub num_bins: usize,
+}
+
+pub enum CollapseAggregation {
+    Sum,
+    Mean,
+}
+
+pub fn bin_greedily_by_mass<S>(
+    counts: &ArrayBase<S, Ix2>,
+    axis: usize,
+    min_mass_pct: f64,
+) -> Result<BinnedAxis>
+where
+    S: Data<Elem = f64>,
+{
+    ensure!(axis < 2, "axis must be 0 or 1");
+    ensure!(
+        (0.0..=100.0).contains(&min_mass_pct),
+        "min_mass_pct must be within 0..=100"
+    );
+
+    // Sum along the other axis to get per-index mass
+    let masses = match axis {
+        0 => counts.sum_axis(Axis(1)),
+        _ => counts.sum_axis(Axis(0)),
+    };
+
+    let total_mass: f64 = masses.iter().sum();
+    if total_mass == 0.0 {
+        return Ok(BinnedAxis {
+            index_to_bin: FxHashMap::default(),
+            bin_to_indices: FxHashMap::default(),
+            num_bins: 0,
+        });
+    }
+
+    let min_mass = total_mass * (min_mass_pct / 100.0);
+    let mut bins: Vec<Vec<usize>> = Vec::new();
+    let mut running_mass = 0.0;
+    let mut current_bin_indices: Vec<usize> = Vec::new();
+
+    for (idx, &mass) in masses.iter().enumerate() {
+        running_mass += mass;
+        current_bin_indices.push(idx);
+
+        if running_mass >= min_mass {
+            bins.push(current_bin_indices.clone());
+            current_bin_indices.clear();
+            running_mass = 0.0;
+        }
+    }
+
+    if !current_bin_indices.is_empty() {
+        if bins.is_empty() {
+            bins.push(current_bin_indices);
+        } else {
+            bins.last_mut().unwrap().extend(current_bin_indices);
+        }
+    }
+
+    let mut index_to_bin = FxHashMap::default();
+    let mut bin_to_indices = FxHashMap::default();
+
+    for (bin_idx, indices) in bins.iter().enumerate() {
+        bin_to_indices.insert(bin_idx, indices.clone());
+        for &idx in indices {
+            index_to_bin.insert(idx, bin_idx);
+        }
+    }
+
+    let num_bins = bin_to_indices.len();
+
+    Ok(BinnedAxis {
+        index_to_bin,
+        bin_to_indices,
+        num_bins,
+    })
+}
+
+pub fn collapse_counts_by_bins<S>(
+    counts: &ArrayBase<S, Ix2>,
+    axis: usize,
+    bins: &BinnedAxis,
+    agg: CollapseAggregation,
+    mass_counts: Option<ArrayView2<'_, f64>>,
+) -> Result<Array2<f64>>
+where
+    S: Data<Elem = f64>,
+{
+    ensure!(axis < 2, "axis must be 0 or 1");
+    if let Some(mass) = mass_counts.as_ref() {
+        ensure!(
+            mass.dim() == counts.dim(),
+            "mass_counts must have same shape as counts"
+        );
+        if matches!(agg, CollapseAggregation::Sum) {
+            bail!("mass_counts provided for Sum aggregation; weighted sums are unsupported");
+        }
+    }
+
+    let (n_rows, n_cols) = counts.dim();
+    match axis {
+        0 => {
+            let weights = mass_counts.as_ref().map(|m| m.sum_axis(Axis(1)));
+            let mut out = Array2::<f64>::zeros((bins.num_bins, n_cols));
+            for bin_idx in 0..bins.num_bins {
+                if let Some(indices) = bins.bin_to_indices.get(&bin_idx) {
+                    let mut denom = 0.0;
+                    let mut count = 0usize;
+                    for &row_idx in indices {
+                        let source = counts.row(row_idx);
+                        let mut dest = out.row_mut(bin_idx);
+                        match agg {
+                            CollapseAggregation::Sum => {
+                                dest += &source;
+                            }
+                            CollapseAggregation::Mean => {
+                                if let Some(ref weights_vec) = weights {
+                                    let weight = weights_vec[row_idx];
+                                    denom += weight;
+                                    dest.scaled_add(weight, &source);
+                                } else {
+                                    dest += &source;
+                                    count += 1;
+                                }
+                            }
+                        }
+                    }
+                    if matches!(agg, CollapseAggregation::Mean) {
+                        let mut dest = out.row_mut(bin_idx);
+                        if weights.is_some() {
+                            if denom > 0.0 {
+                                dest /= denom;
+                            } else if !indices.is_empty() {
+                                dest /= indices.len() as f64;
+                            }
+                        } else if count > 0 {
+                            dest /= count as f64;
+                        }
+                    }
+                }
+            }
+            Ok(out)
+        }
+        _ => {
+            let weights = mass_counts.as_ref().map(|m| m.sum_axis(Axis(0)));
+            let mut out = Array2::<f64>::zeros((n_rows, bins.num_bins));
+            for bin_idx in 0..bins.num_bins {
+                if let Some(indices) = bins.bin_to_indices.get(&bin_idx) {
+                    let mut denom = 0.0;
+                    let mut count = 0usize;
+                    for &col_idx in indices {
+                        let source = counts.column(col_idx);
+                        let mut dest = out.column_mut(bin_idx);
+                        match agg {
+                            CollapseAggregation::Sum => {
+                                dest += &source;
+                            }
+                            CollapseAggregation::Mean => {
+                                if let Some(ref weights_vec) = weights {
+                                    let weight = weights_vec[col_idx];
+                                    denom += weight;
+                                    dest.scaled_add(weight, &source);
+                                } else {
+                                    dest += &source;
+                                    count += 1;
+                                }
+                            }
+                        }
+                    }
+                    if matches!(agg, CollapseAggregation::Mean) {
+                        let mut dest = out.column_mut(bin_idx);
+                        if let Some(_) = weights {
+                            if denom > 0.0 {
+                                dest /= denom;
+                            } else if !indices.is_empty() {
+                                dest /= indices.len() as f64;
+                            }
+                        } else if count > 0 {
+                            dest /= count as f64;
+                        }
+                    }
+                }
+            }
+            Ok(out)
+        }
+    }
 }
