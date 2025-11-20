@@ -6,6 +6,7 @@ use crate::{
             config::{GCConfig, WindowWeightingSchemes},
             counting::{GCCounts, build_gc_prefixes, get_gc_fraction_in_window},
             load_reference_bias::{ReferenceGcData, load_reference_gc_data},
+            smoothing::{fit_sigma_for_targets, smoothe_counts_gaussian},
         },
     },
     shared::{
@@ -173,14 +174,27 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     let (avg_gc_counts, avg_norm_ref_counts) =
         avg_counts_tuple_opt.expect("avg count matrices should have been produced");
 
-    // TODO: Smoothe the counts (use a pseudo count of 1.0)
-    let smoothed_gc_counts = avg_gc_counts.clone();
+    // Normalize GC counts array by it's mean (just to remove the weighting scaling)
+    let gc_count_mean = avg_gc_counts
+        .mean()
+        .expect("Could not calculate the mean of the average GC counts");
+    if gc_count_mean == 0.0 {
+        bail!("The average GC count was 0");
+    }
+    let norm_gc_counts = avg_gc_counts / gc_count_mean;
+
+    // Smoothe the *normalized* counts
+    let smoothed_gc_counts = {
+        // 5-element kernel (-2...+2)
+        let radius: usize = 2;
+        // Standard deviation (quite sharp so not too smoothed)
+        let sigma = 0.5;
+        smoothe_counts_gaussian(&norm_gc_counts, sigma, radius)
+    };
 
     // TODO: Bin lengths and GCs by mass
     let binned_gc_counts = smoothed_gc_counts.clone();
     let binned_ref_counts = avg_norm_ref_counts.clone();
-
-    // TODO: Outlier detection -> Smoothing
 
     let norm_gc_counts = mean_scale_per_length_array(&binned_gc_counts, 0.);
     let norm_ref_counts = mean_scale_per_length_array(&binned_ref_counts, 0.);
@@ -509,9 +523,11 @@ fn process_chrom(
 /// Scale the GC counts and reference counts
 /// to ensure the averaging follows the weighting scheme.
 ///
-/// 1) Reference counts are normalized (mean-scaled) per fragment length.
+/// 1) Adds pseudo-counts (+1 for all elements) to ensure positivity downstream.
 ///
-/// 2) The two arrays are weighted depending on the weighting scheme:
+/// 2) Reference counts are normalized (mean-scaled) per fragment length.
+///
+/// 3) The two arrays are weighted depending on the weighting scheme:
 ///
 ///     - `Coverage`: The normalized reference counts are multiplied by the overall mean GC count,
 ///       ensuring that GC counts and reference counts are weighted the same in the global matrices after averaging.
@@ -539,19 +555,27 @@ where
     }
 
     // Get counts as 2d array with shape: (n_lengths, n_gc_bins)
-    let counts_mat = gc_counts.to_array2();
+    let mut counts_mat = gc_counts.to_array2();
     let (n_rows, n_cols) = counts_mat.dim();
+    let num_elements = (n_rows * n_cols) as f64;
 
-    let total_count: f64 = counts_mat.sum();
-    let mean_count: f64 = total_count / (n_rows * n_cols) as f64;
+    // Find total counts
+    let mut total_count: f64 = counts_mat.sum();
 
     if total_count == 0.0 {
         return Ok(None);
     }
 
+    // Add pseudo-count of 1 (Laplace smoothing)
+    counts_mat += 1.0;
+    total_count += num_elements;
+
+    // Get mean coverage to scale by
+    let mean_count: f64 = total_count / (n_rows * n_cols) as f64;
+
     // Normalize the reference bias
-    // Cast to f64 once
-    let ref_counts_f = ref_counts.mapv(|v| v as f64);
+    // Cast to f64 once and add pseudo-count (Laplace smoothing)
+    let ref_counts_f = ref_counts.mapv(|v| 1.0 + v as f64);
     // Row-wise mean-scaling to avoid
     let ref_counts_norm = mean_scale_per_length_array(&ref_counts_f, 1.0);
 
