@@ -29,6 +29,8 @@ use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{fs::create_dir_all, sync::Arc, time::Instant};
 
+const CORRECTION_CLAMP_RANGE: (f64, f64) = (0.1, 10.0);
+
 pub fn run(opt: &GCConfig) -> Result<()> {
     let start_time = Instant::now();
     let (chromosomes, contigs) =
@@ -50,7 +52,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     } = load_reference_gc_data(
         &opt.ref_gc_dir,
         Some(&chromosomes),
-        100 - opt.min_window_positions_pct,
+        100 - opt.min_window_acgt_pct,
     )?;
 
     if matches!(window_opt, WindowSpec::Global)
@@ -129,7 +131,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
     // First, we make a map of windows so we can get the correct reference bias windows
     // (not guaranteed to be sorted the same)
-    let global_correction_opt = if let Some(ws_by_chr) = window_indices_by_chr {
+    let avg_counts_tuple_opt = if let Some(ws_by_chr) = window_indices_by_chr {
         let mut window_tuples: Vec<(usize, usize)> = vec![];
         let mut win_idx: usize = 0;
         for chrom in &chromosomes {
@@ -147,9 +149,9 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         pb.set_position(0);
 
         // Run preparation on windows in parallel
-        let window_corrections: Vec<Option<Array2<f64>>> = window_tuples
+        let avg_counts_tuples: Vec<Option<(Array2<f64>, Array2<f64>)>> = window_tuples
             .par_iter()
-            .map(|(count_idx, ref_idx)| -> Result<_> {
+            .map(|(count_idx, ref_idx)| -> Result<_, _> {
                 let gc_counts = &all_bins[*count_idx];
                 let ref_counts_view = reference_counts.index_axis(Axis(0), *ref_idx);
                 let out = process_window(gc_counts, &ref_counts_view, &opt, avg_window_size)?;
@@ -160,7 +162,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
         pb.finish_with_message("| Finished processing");
 
-        mean_of_arrays(&window_corrections)
+        mean_of_arrays(&avg_counts_tuples)
     } else {
         // Global window
         let gc_counts = &all_bins[0];
@@ -168,24 +170,36 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         process_window(gc_counts, &ref_counts_view, &opt, avg_window_size)?
     };
 
-    let global_correction =
-        global_correction_opt.expect("a correction matrix should have been produced");
+    let (avg_gc_counts, avg_norm_ref_counts) =
+        avg_counts_tuple_opt.expect("avg count matrices should have been produced");
+
+    // TODO: Smoothe the counts (use a pseudo count of 1.0)
+    let smoothed_gc_counts = avg_gc_counts.clone();
+
+    // TODO: Bin lengths and GCs by mass
+    let binned_gc_counts = smoothed_gc_counts.clone();
+    let binned_ref_counts = avg_norm_ref_counts.clone();
 
     // TODO: Outlier detection -> Smoothing
+
+    let norm_gc_counts = mean_scale_per_length_array(&binned_gc_counts, 0.);
+    let norm_ref_counts = mean_scale_per_length_array(&binned_ref_counts, 0.);
+
+    // Calculate correction matrix
+    let correction_matrix = norm_gc_counts / norm_ref_counts;
+
+    // Sanity clamp of corrections
+    let correction_matrix =
+        correction_matrix.clamp(CORRECTION_CLAMP_RANGE.0, CORRECTION_CLAMP_RANGE.1);
 
     // TODO: Save info needed to apply correction
 
     // // Write final counts to output_dir
     write_npy(
         &opt.ioc.output_dir.join("gc_bias_correction.npy"),
-        &global_correction,
+        &correction_matrix,
     )
     .context("Write final fail")?;
-
-    // TODO: Create actual correction factor here!
-
-    // println!("Start: Writing mismatch rates to disk");
-    // write_mismatch_rate_tsvs(&prepared_counts, &mismatch_rates_by_k, &opt.ioc.output_dir)?;
 
     println!("");
     println!("Statistics");
@@ -321,7 +335,7 @@ fn process_chrom(
             .fragment_lengths
             .min_fragment_length
             // Minimum length to live up to --min-acgt-count and --end-offset
-            .max(opt.min_acgt_count as u32 + 2 * opt.end_offset as u32);
+            .max(opt.min_fragment_acgt_count as u32 + 2 * opt.end_offset as u32);
         let max_len = opt.fragment_lengths.max_fragment_length;
         move |f: &Fragment| {
             let len = f.len();
@@ -345,8 +359,8 @@ fn process_chrom(
 
     // Convert variables once
     let end_offset_u32 = opt.end_offset as u32;
-    let min_acgt_count_u32 = opt.min_acgt_count as u32;
-    let min_acgt_fraction = opt.min_acgt_pct as f32 / 100f32;
+    let min_fragment_acgt_count_u32 = opt.min_fragment_acgt_count as u32;
+    let min_acgt_fraction = opt.min_fragment_acgt_pct as f32 / 100f32;
 
     // Iterate fragments and count GC
     for fragment_res in iter.by_ref() {
@@ -366,7 +380,7 @@ fn process_chrom(
             gc_window_start as usize,
             gc_window_end as usize,
             min_acgt_fraction,
-            min_acgt_count_u32,
+            min_fragment_acgt_count_u32,
         );
 
         // Unpack GC fraction (or continue)
@@ -492,68 +506,65 @@ fn process_chrom(
     Ok((counts_by_bin, counter))
 }
 
+/// Scale the GC counts and reference counts
+/// to ensure the averaging follows the weighting scheme.
+///
+/// 1) Reference counts are normalized (mean-scaled) per fragment length.
+///
+/// 2) The two arrays are weighted depending on the weighting scheme:
+///
+///     - `Coverage`: The normalized reference counts are multiplied by the overall mean GC count,
+///       ensuring that GC counts and reference counts are weighted the same in the global matrices after averaging.
+///       The GC counts already reflect the coverage.
+///
+///     - `ValidPositions`: The GC counts are divided by the overall mean GC count.
+///       Both arrays are then multiplied by the number of ACGT bases in the window and
+///       divided by the average window size (to avoid exploding the count sizes).
+///
+///     - `Equal`: The GC counts are divided by the overall mean GC count,
+///       ensuring GC counts have the same weight for all windows.
+///       The reference count normalization made those matrices equally weighted.
 fn process_window<S>(
     gc_counts: &GCCounts,
-    ref_bias: &ArrayBase<S, Ix2>,
+    ref_counts: &ArrayBase<S, Ix2>,
     opt: &GCConfig,
     avg_window_size: Option<f64>,
-) -> Result<Option<Array2<f64>>>
+) -> Result<Option<(Array2<f64>, Array2<f64>)>>
 where
     S: Data<Elem = u64>,
 {
-    let pseudo_count = 1.0;
-    let min_bin_count = opt.min_bin_count as f64;
-
-    let counts_mat = gc_counts.to_array2(); // shape: (n_lengths, n_gc_bins)
-    let (n_rows, n_cols) = counts_mat.dim();
-
-    let mut too_sparse_mask = Array2::<bool>::default((n_rows, n_cols));
-
-    let mut total: f64 = 0.0;
-    let mut row_totals = vec![0.0; n_rows];
-
-    for (row_idx, row) in counts_mat.outer_iter().enumerate() {
-        let mut row_sum = 0.0;
-        for (col_idx, &val) in row.iter().enumerate() {
-            let below = val < min_bin_count;
-            too_sparse_mask[(row_idx, col_idx)] = below;
-            row_sum += val;
-            total += val;
-        }
-        row_totals[row_idx] = row_sum;
-    }
-
-    if total < opt.min_window_count as f64 {
+    // Check window has enough valid positions
+    if gc_counts.pct_acgt() < opt.min_window_acgt_pct as f64 {
         return Ok(None);
     }
 
-    // TODO: Should we exclude masked counts from mean here as well?
-    // Normalize each fragment length (row) by mean-scaling
-    let mut mean_scaled = counts_mat.clone();
-    for (row_idx, mut row) in mean_scaled.outer_iter_mut().enumerate() {
-        let row_mean = row_totals[row_idx] / n_cols as f64;
-        let denom = row_mean + pseudo_count * n_cols as f64;
-        row.map_inplace(|v| *v = (*v + pseudo_count) / denom);
+    // Get counts as 2d array with shape: (n_lengths, n_gc_bins)
+    let counts_mat = gc_counts.to_array2();
+    let (n_rows, n_cols) = counts_mat.dim();
+
+    let total_count: f64 = counts_mat.sum();
+    let mean_count: f64 = total_count / (n_rows * n_cols) as f64;
+
+    if total_count == 0.0 {
+        return Ok(None);
     }
 
     // Normalize the reference bias
-
     // Cast to f64 once
-    let ref_bias_f = ref_bias.mapv(|v| v as f64);
-    let ref_bias_norm = mean_scale_per_length_array(&ref_bias_f, pseudo_count);
+    let ref_counts_f = ref_counts.mapv(|v| v as f64);
+    // Row-wise mean-scaling to avoid
+    let ref_counts_norm = mean_scale_per_length_array(&ref_counts_f, 1.0);
 
-    // Calculate the GC bias in this window!
-    let bias = mean_scaled / ref_bias_norm;
-
-    // Row-normalize using only non-masked elements, then set masked to 1.0
-    let masked_scaled_bias = scale_bias_with_mask(&bias, &too_sparse_mask);
-
-    let weighted_bias = match opt.window_weighting {
-        WindowWeightingSchemes::Equal => masked_scaled_bias,
+    // Weighting one or both count distributions
+    let (weighted_counts, weighted_ref_counts) = match opt.window_weighting {
+        WindowWeightingSchemes::Equal => {
+            // Return both arrays normalized
+            let counts_mat_norm = counts_mat / mean_count;
+            (counts_mat_norm, ref_counts_norm)
+        }
         WindowWeightingSchemes::Coverage => {
-            let (n_rows, n_cols) = masked_scaled_bias.dim();
-            let mean_coverage = total / (n_rows * n_cols) as f64;
-            masked_scaled_bias * mean_coverage
+            // Return GC counts as are and scale normalized ref counts by average coverage
+            (counts_mat, ref_counts_norm * mean_count)
         }
         WindowWeightingSchemes::ValidPositions => {
             let num_acgt = gc_counts.num_acgt_out_of.0;
@@ -561,14 +572,18 @@ where
                 // No positions observed
                 return Ok(None);
             }
+            // Use avg window size to "scale the scaling"
+            // So the counts don't explode in size
+            // While keeping the relative scale between windows consistent
             let avg_window_span = avg_window_size.expect("valid-positions needs window spans");
-            masked_scaled_bias * (num_acgt as f64 / avg_window_span)
+            let counts_mat_norm_scaled =
+                counts_mat / mean_count * (num_acgt as f64 / avg_window_span);
+            let ref_counts_norm_scaled = ref_counts_norm * (num_acgt as f64 / avg_window_span);
+            (counts_mat_norm_scaled, ref_counts_norm_scaled)
         }
     };
 
-    // TODO: Per window: Normalizations, Reference div, Scaling, weight-scheme scaling
-
-    Ok(Some(weighted_bias))
+    Ok(Some((weighted_counts, weighted_ref_counts)))
 }
 
 fn mean_scale_per_length_array<S>(x: &ArrayBase<S, Ix2>, pseudo_count: f64) -> Array2<f64>
@@ -595,68 +610,44 @@ where
     num / &denom_2d
 }
 
-/// Scale by row means calculated from non-masked elements
-/// and then set masked elements to 1.0
-fn scale_bias_with_mask<S>(bias: &ArrayBase<S, Ix2>, mask: &Array2<bool>) -> Array2<f64>
-where
-    S: Data<Elem = f64>,
-{
-    let (n_rows, n_cols) = bias.dim();
-    debug_assert_eq!(mask.dim(), (n_rows, n_cols));
-
-    let mut scaled = bias.to_owned();
-
-    for row_idx in 0..n_rows {
-        let bias_row = bias.row(row_idx);
-        let mask_row = mask.row(row_idx);
-
-        let mut sum = 0.0;
-        let mut count = 0usize;
-
-        for col_idx in 0..n_cols {
-            if !mask_row[col_idx] {
-                sum += bias_row[col_idx];
-                count += 1;
-            }
-        }
-
-        let row_mean = if count > 0 { sum / count as f64 } else { 1.0 };
-
-        let mut scaled_row = scaled.row_mut(row_idx);
-        for col_idx in 0..n_cols {
-            scaled_row[col_idx] /= row_mean;
-            if mask_row[col_idx] {
-                scaled_row[col_idx] = 1.0;
-            }
-        }
-    }
-
-    scaled
-}
-
-/// Average the arrays and skip `None`s
-fn mean_of_arrays(arrays: &[Option<Array2<f64>>]) -> Option<Array2<f64>> {
-    // Find first present array to initialize accumulator
+/// Average a list of optional `(matrix_a, matrix_b)` pairs independently.
+///
+/// Each `Some((A, B))` contributes to two separate accumulators: one for every `A`
+/// (the first matrix) and one for every `B` (the second matrix). Entries that are
+/// `None` are skipped entirely. All present matrices within a given slot must share
+/// the same shape; otherwise the function panics in debug builds. Returns `None` if
+/// no `Some` elements exist; otherwise returns the pair of mean matrices.
+fn mean_of_arrays(
+    arrays: &[Option<(Array2<f64>, Array2<f64>)>],
+) -> Option<(Array2<f64>, Array2<f64>)> {
     let mut iter = arrays.iter().filter_map(|opt| opt.as_ref());
 
     let first = iter.next()?;
-    let mut sum = first.clone();
-    let mut count: usize = 1;
+    let mut sum_a = first.0.clone();
+    let mut sum_b = first.1.clone();
+    let mut count = 1usize;
 
-    // Accumulate remaining Some(Array2)
-    for arr in iter {
-        debug_assert_eq!(sum.dim(), arr.dim(), "All arrays must have same shape");
+    for (arr_a, arr_b) in iter {
+        debug_assert_eq!(
+            sum_a.dim(),
+            arr_a.dim(),
+            "All first-array components must share shape"
+        );
+        debug_assert_eq!(
+            sum_b.dim(),
+            arr_b.dim(),
+            "All second-array components must share shape"
+        );
 
-        Zip::from(&mut sum).and(arr).for_each(|s, &v| {
-            *s += v;
-        });
+        Zip::from(&mut sum_a).and(arr_a).for_each(|s, &v| *s += v);
+        Zip::from(&mut sum_b).and(arr_b).for_each(|s, &v| *s += v);
 
         count += 1;
     }
 
-    // Average
     let factor = count as f64;
-    sum /= factor;
+    sum_a /= factor;
+    sum_b /= factor;
 
-    Some(sum)
+    Some((sum_a, sum_b))
 }
