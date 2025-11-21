@@ -621,7 +621,7 @@ fn process_window<S>(
     avg_window_size: Option<f64>,
 ) -> Result<Option<(Array2<f64>, Array2<f64>)>>
 where
-    S: Data<Elem = u64>,
+    S: Data<Elem = f64>,
 {
     // Check window has enough valid positions
     if gc_counts.pct_acgt() < opt.min_window_acgt_pct as f64 {

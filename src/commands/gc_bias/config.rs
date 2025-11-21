@@ -188,7 +188,7 @@ pub struct GCConfig {
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "0",
-             value_parser = clap::value_parser!(u8).range(0..20), help_heading="Filtering"))]
+             value_parser = clap::value_parser!(u8).range(0..20), help_heading="Core"))]
     pub end_offset: u8,
 
     /// Minimum percentage of ACGT positions in a **window** to consider it in the bias estimation `[integer]`

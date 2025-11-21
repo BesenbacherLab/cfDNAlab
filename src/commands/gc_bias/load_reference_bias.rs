@@ -12,7 +12,7 @@ pub struct ReferenceGcData {
     pub window_spec: WindowSpec,
     pub windows_map: Option<FxHashMap<String, Windows>>,
     pub window_indices_by_chr: Option<FxHashMap<String, Vec<u64>>>,
-    pub counts: Array3<u64>,
+    pub counts: Array3<f64>,
     pub avg_window_size: Option<f64>,
 }
 
@@ -24,7 +24,7 @@ pub fn load_reference_gc_data(
     let counts_path = ref_dir.join("all_ref_gc_counts.npy");
     let bins_path = ref_dir.join("ref_gc_bins.bed");
 
-    let counts: Array3<u64> = read_npy(&counts_path)
+    let counts: Array3<f64> = read_npy(&counts_path)
         .with_context(|| format!("Reading reference GC counts from {:?}", counts_path))?;
 
     let window_spec = if counts.dim().0 == 1 && !bins_path.exists() {
