@@ -84,6 +84,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 bed,
                 Some(chromosomes.as_slice()),
                 None,
+                None,
             )?)
         }
         _ => None,

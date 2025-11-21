@@ -79,8 +79,12 @@ pub fn run(opt: &ProfileGroupsConfig) -> Result<()> {
 
     // Load sites from BED file
     println!("Start: Loading fixed-size intervals");
-    let (windows_map, group_idx_to_name) =
-        load_grouped_windows_from_bed(opt.intervals.clone(), &chromosomes, None)?;
+    let (windows_map, group_idx_to_name) = load_grouped_windows_from_bed(
+        opt.intervals.clone(),
+        Some(chromosomes.as_slice()),
+        None,
+        None,
+    )?;
     let num_groups = group_idx_to_name.len();
     let total_windows: usize = windows_map.values().map(|gw| gw.len()).sum();
     println!(

@@ -105,7 +105,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             println!("Start: Loading window coordinates");
-            let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None)?;
+            let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             if matches!(
                 opt.per_window,
                 Some(PeaksWindowAction::OnlyIncludeThesePositionsUnique)

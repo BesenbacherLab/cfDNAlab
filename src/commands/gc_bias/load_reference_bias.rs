@@ -27,15 +27,22 @@ pub fn load_reference_gc_data(
     let counts: Array3<f64> = read_npy(&counts_path)
         .with_context(|| format!("Reading reference GC counts from {:?}", counts_path))?;
 
-    let window_spec = if counts.dim().0 == 1 && !bins_path.exists() {
+    let num_count_windows = counts.dim().0;
+
+    let window_spec = if num_count_windows == 1 && !bins_path.exists() {
         WindowSpec::Global
     } else {
         WindowSpec::Bed(bins_path.clone())
     };
 
     let (windows_map, avg_window_size) = if matches!(window_spec, WindowSpec::Bed(_)) {
-        let mut windows_map = parse_reference_bins(&bins_path, chromosomes, max_blacklisted_pct)
-            .with_context(|| format!("Reading reference GC window coordinates {:?}", bins_path))?;
+        let mut windows_map = parse_reference_bins(
+            &bins_path,
+            chromosomes,
+            max_blacklisted_pct,
+            num_count_windows as u64,
+        )
+        .with_context(|| format!("Reading reference GC window coordinates {:?}", bins_path))?;
 
         // Ensure we keep a Windows object per requested chromosome, even when empty
         if let Some(chroms) = chromosomes {
@@ -58,10 +65,6 @@ pub fn load_reference_gc_data(
             .map(|(_, ws)| ws.as_slice().iter().map(|w| w.1 - w.0).sum::<u64>())
             .sum::<u64>();
         let avg_window_span = sum_of_spans as f64 / total_windows as f64;
-        ensure!(
-            counts.shape()[0] <= total_windows,
-            "Found more reference window coordinates than count distribution windows",
-        );
 
         (Some(windows_map), Some(avg_window_span))
     } else {
@@ -96,6 +99,7 @@ pub fn parse_reference_bins(
     bins_path: impl AsRef<Path>,
     chromosomes: Option<&[String]>,
     max_blacklisted_pct: u8,
+    exp_num_windows: u64,
 ) -> Result<FxHashMap<String, Windows>> {
     let bins_path = bins_path.as_ref();
 
@@ -104,11 +108,15 @@ pub fn parse_reference_bins(
     let filter_windows_fn: &dyn Fn(&str, u64, u64, f64) -> bool =
         &move |_: &str, _: u64, _: u64, pct: f64| pct > threshold;
 
-    let scored_windows_map: FxHashMap<String, Windows> =
-        load_scored_windows_from_bed(bins_path, chromosomes, Some(filter_windows_fn))?
-            .iter()
-            .map(|(chr, ws)| (chr.to_owned(), ws.to_windows()))
-            .collect();
+    let scored_windows_map: FxHashMap<String, Windows> = load_scored_windows_from_bed(
+        bins_path,
+        chromosomes,
+        Some(filter_windows_fn),
+        Some(exp_num_windows),
+    )?
+    .iter()
+    .map(|(chr, ws)| (chr.to_owned(), ws.to_windows()))
+    .collect();
 
     Ok(scored_windows_map)
 }

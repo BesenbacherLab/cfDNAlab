@@ -145,6 +145,7 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
                 bed,
                 Some(chromosomes.as_slice()),
                 None,
+                None,
             )?)
         }
         _ => None,

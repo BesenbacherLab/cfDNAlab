@@ -42,6 +42,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
                 bed,
                 Some(chromosomes.as_slice()),
                 None,
+                None,
             )?)
         }
         _ => None,

@@ -30,7 +30,7 @@ pub fn load_blacklists<P: AsRef<Path>>(
     let mut merged: FxHashMap<String, Vec<(u64, u64)>> = FxHashMap::default();
 
     for bed in beds {
-        let single = load_windows_from_bed(bed, chromosomes, None)?;
+        let single = load_windows_from_bed(bed, chromosomes, None, None)?;
         accumulate_blacklist_windows(&mut merged, single, min_size, halo_bp);
     }
 

@@ -106,6 +106,7 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
                 bed,
                 Some(chromosomes.as_slice()),
                 None,
+                None,
             )?)
         }
         _ => None,
