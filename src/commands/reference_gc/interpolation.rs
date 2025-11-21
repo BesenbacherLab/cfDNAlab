@@ -67,7 +67,24 @@ pub fn fill_zero_bins_with_polynomial(
         }
         let run_end_idx = cursor_idx;
 
+        // Determine anchor bounds for clamping (missing sides default to zero)
+        let left_anchor = if run_start_idx > 0 {
+            histogram[run_start_idx - 1]
+        } else {
+            0.0
+        };
+        let right_anchor = histogram.get(run_end_idx).copied().unwrap_or(0.0);
+        let lower_bound = left_anchor.min(right_anchor);
+        let upper_bound = left_anchor.max(right_anchor);
+
         // Fit once for the entire run and evaluate across the gap
+        let left_anchor = if run_start_idx > 0 {
+            histogram[run_start_idx - 1]
+        } else {
+            histogram.get(run_end_idx).copied().unwrap_or(0.0)
+        };
+        let right_anchor = histogram.get(run_end_idx).copied().unwrap_or(left_anchor);
+
         if let Some(coefficients) = fit_run_polynomial(
             run_start_idx,
             run_end_idx,
@@ -77,9 +94,21 @@ pub fn fill_zero_bins_with_polynomial(
             &anchors,
         ) {
             for target_idx in run_start_idx..run_end_idx {
-                let interpolated_value = evaluate_polynomial(&coefficients, target_idx as f64);
+                let mut interpolated_value = evaluate_polynomial(&coefficients, target_idx as f64);
+                if lower_bound != upper_bound {
+                    interpolated_value = interpolated_value.max(lower_bound).min(upper_bound);
+                } else {
+                    interpolated_value = lower_bound;
+                }
                 histogram[target_idx] = interpolated_value.max(0.0); // Guard against tiny negatives
             }
+
+            // Enforce monotonic slope between the surrounding anchors to avoid wiggles.
+            enforce_monotonic_segment(
+                &mut histogram[run_start_idx..run_end_idx],
+                left_anchor,
+                right_anchor,
+            );
         }
         // Leave untouched when we lack enough neighbours or the fit fails
     }
@@ -103,7 +132,7 @@ fn fit_run_polynomial(
     };
 
     // Gather candidate anchors on each side together with their distance from the run center
-    let mut left_bins: Vec<(f64, f64, f64)> = anchors
+    let mut left_real: Vec<(f64, f64, f64)> = anchors
         .iter()
         .filter(|(bin_idx, _)| *bin_idx < run_start_idx)
         .map(|&(bin_idx, count_value)| {
@@ -111,7 +140,7 @@ fn fit_run_polynomial(
             (bin_idx as f64, count_value, distance)
         })
         .collect();
-    let mut right_bins: Vec<(f64, f64, f64)> = anchors
+    let mut right_real: Vec<(f64, f64, f64)> = anchors
         .iter()
         .filter(|(bin_idx, _)| *bin_idx >= run_end_idx)
         .map(|&(bin_idx, count_value)| {
@@ -121,41 +150,115 @@ fn fit_run_polynomial(
         .collect();
 
     // Prefer the closest true neighbours first to keep interpolation local
-    left_bins.sort_by(|lhs, rhs| lhs.2.partial_cmp(&rhs.2).unwrap());
-    right_bins.sort_by(|lhs, rhs| lhs.2.partial_cmp(&rhs.2).unwrap());
+    left_real.sort_by(|lhs, rhs| lhs.2.partial_cmp(&rhs.2).unwrap());
+    right_real.sort_by(|lhs, rhs| lhs.2.partial_cmp(&rhs.2).unwrap());
+    let left_real_available = !left_real.is_empty();
+    let right_real_available = !right_real.is_empty();
 
-    let left_take = max_neighbours_per_side.min(left_bins.len());
-    let right_take = max_neighbours_per_side.min(right_bins.len());
+    // Take up to the requested number of neighbours on each side
+    let mut left_selected: Vec<(f64, f64, f64)> = left_real
+        .iter()
+        .take(max_neighbours_per_side)
+        .cloned()
+        .collect();
+    let mut right_selected: Vec<(f64, f64, f64)> = right_real
+        .iter()
+        .take(max_neighbours_per_side)
+        .cloned()
+        .collect();
 
-    // Seed the weighted sample set with bounded neighbour lists from both sides
-    let mut weighted_samples: Vec<(f64, f64, f64)> = Vec::with_capacity(left_take + right_take + 2);
-    weighted_samples.extend(left_bins.into_iter().take(left_take).map(
-        |(gc_idx, count_value, distance)| {
-            let weight = 1.0 / (1.0 + distance);
-            (gc_idx, count_value, weight)
-        },
-    ));
-    weighted_samples.extend(right_bins.into_iter().take(right_take).map(
-        |(gc_idx, count_value, distance)| {
-            let weight = 1.0 / (1.0 + distance);
-            (gc_idx, count_value, weight)
-        },
-    ));
+    // Mirror zero-valued pseudo anchors to fill missing slots from the opposite side
+    // When one side is missing, use the left/right boundary values to mirror
+    let left_boundary = anchors
+        .iter()
+        .find(|(idx, _)| *idx < run_start_idx)
+        .map(|(_, v)| *v)
+        .unwrap_or(0.0);
+    let right_boundary = anchors
+        .iter()
+        .find(|(idx, _)| *idx >= run_end_idx)
+        .map(|(_, v)| *v)
+        .unwrap_or(0.0);
 
-    let total_required = required_points.max(min_neighbours);
-    if weighted_samples.len() < total_required {
-        // Zero-pad the missing side so edge gaps still get a gentle slope
-        if left_take == 0 && right_take > 0 {
-            weighted_samples.push((run_start_idx as f64 - 1.0, 0.0, 0.5));
-        } else if right_take == 0 && left_take > 0 {
-            weighted_samples.push((run_end_idx as f64 + 1.0, 0.0, 0.5));
+    if left_selected.len() < max_neighbours_per_side {
+        let needed = max_neighbours_per_side - left_selected.len();
+        for (_, _, distance) in right_real.iter().take(needed) {
+            left_selected.push((run_center - *distance, left_boundary, *distance));
+        }
+    }
+    if right_selected.len() < max_neighbours_per_side {
+        let needed = max_neighbours_per_side - right_selected.len();
+        for (_, _, distance) in left_real.iter().take(needed) {
+            right_selected.push((run_center + *distance, right_boundary, *distance));
         }
     }
 
-    if weighted_samples.len() < total_required {
+    // If we still have gaps (not enough anchors overall),
+    // extend outward with evenly spaced anchors (likely zeros)
+    while left_selected.len() < max_neighbours_per_side {
+        let dist = left_selected
+            .last()
+            .map(|(_, _, distance)| *distance + 1.0)
+            .unwrap_or(1.0);
+        left_selected.push((run_center - dist, left_boundary, dist));
+    }
+    while right_selected.len() < max_neighbours_per_side {
+        let dist = right_selected
+            .last()
+            .map(|(_, _, distance)| *distance + 1.0)
+            .unwrap_or(1.0);
+        right_selected.push((run_center + dist, right_boundary, dist));
+    }
+
+    if left_selected.is_empty() && right_selected.is_empty() {
         return None;
     }
 
+    // Seed the weighted sample set with bounded neighbour lists from both sides
+    let mut weighted_samples: Vec<(f64, f64, f64)> =
+        Vec::with_capacity(left_selected.len() + right_selected.len() + 2);
+    for (gc_idx, count_value, distance) in &left_selected {
+        let weight = 1.0 / (1.0 + (*distance * *distance));
+        weighted_samples.push((*gc_idx, *count_value, weight));
+    }
+    for (gc_idx, count_value, distance) in &right_selected {
+        let weight = 1.0 / (1.0 + (*distance * *distance));
+        weighted_samples.push((*gc_idx, *count_value, weight));
+    }
+
+    // Normalize weights to sum to 1.0 so the solver retains scale sensitivity.
+    let weight_sum: f64 = weighted_samples.iter().map(|(_, _, w)| *w).sum();
+    if weight_sum > 0.0 {
+        for (_, _, w) in &mut weighted_samples {
+            *w /= weight_sum;
+        }
+    }
+
+    let total_required = required_points.max(min_neighbours);
+    if weighted_samples.len() < total_required {
+        // When both sides run out of real/mirrored anchors (e.g., isolated runs),
+        // synthesize evenly spaced zero points moving outward so the polynomial
+        // system remains solvable. The absolute spacing is arbitrary; a linear
+        // step keeps the code simple and biases the fit minimally.
+        let mut extra = 1.0;
+        while weighted_samples.len() < total_required {
+            extra += 1.0;
+            let weight = 1.0 / (1.0 + extra);
+            if right_real_available {
+                weighted_samples.push((run_center - extra, 0.0, weight));
+            }
+            if left_real_available {
+                weighted_samples.push((run_center + extra, 0.0, weight));
+            }
+            if !left_real_available && !right_real_available {
+                weighted_samples.push((run_center - extra, 0.0, weight));
+                if weighted_samples.len() >= total_required {
+                    break;
+                }
+                weighted_samples.push((run_center + extra, 0.0, weight));
+            }
+        }
+    }
     fit_weighted_polynomial(weighted_samples.as_slice(), polynomial_degree)
 }
 
@@ -191,6 +294,30 @@ fn fit_weighted_polynomial(
     }
 
     solve_sym_posdef(&mut normal_matrix, &mut rhs_vector)
+}
+
+pub fn enforce_monotonic_segment(segment: &mut [f64], left_anchor: f64, right_anchor: f64) {
+    if segment.is_empty() || (left_anchor - right_anchor).abs() < f64::EPSILON {
+        return;
+    }
+
+    if left_anchor < right_anchor {
+        let mut prev = left_anchor;
+        for value in segment.iter_mut() {
+            if *value < prev {
+                *value = prev;
+            }
+            prev = *value;
+        }
+    } else if left_anchor > right_anchor {
+        let mut prev = left_anchor;
+        for value in segment.iter_mut() {
+            if *value > prev {
+                *value = prev;
+            }
+            prev = *value;
+        }
+    }
 }
 
 /// Solve a small symmetric positive-definite system via Gauss-Jordan elimination.

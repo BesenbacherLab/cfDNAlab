@@ -448,9 +448,7 @@ pub fn stack_gc_counts(all_counts: &[Array2<f64>]) -> Array3<f64> {
     for (idx, window) in all_counts.iter().enumerate() {
         assert_eq!(window.nrows(), rows, "mismatched length bins at {}", idx);
         assert_eq!(window.ncols(), cols, "mismatched GC bins at {}", idx);
-        stacked
-            .slice_mut(s![idx, .., ..])
-            .assign(window);
+        stacked.slice_mut(s![idx, .., ..]).assign(window);
     }
 
     stacked
