@@ -24,13 +24,19 @@ use crate::{
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
-use ndarray::{Array2, ArrayBase, ArrayView2, Axis, Data, Ix2, Zip};
-use ndarray_npy::write_npy;
+use ndarray::{Array1, Array2, ArrayBase, ArrayView2, Axis, Data, Ix2, Zip};
+use ndarray_npy::{NpzWriter, write_npy};
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
+use std::{
+    fs::{File, create_dir_all},
+    path::PathBuf,
+    sync::Arc,
+    time::Instant,
+};
 
 const CORRECTION_CLAMP_RANGE: (f64, f64) = (0.1, 10.0);
+const GC_CORRECTION_SCHEMA_VERSION: u32 = 1;
 
 pub fn run(opt: &GCConfig) -> Result<()> {
     let start_time = Instant::now();
@@ -273,14 +279,15 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     let correction_matrix =
         correction_matrix.clamp(CORRECTION_CLAMP_RANGE.0, CORRECTION_CLAMP_RANGE.1);
 
-    // TODO: Save info needed to apply correction
-
-    // Write final counts to output_dir
-    write_npy(
-        &opt.ioc.output_dir.join("gc_bias_correction.npy"),
-        &correction_matrix,
-    )
-    .context("Failed to write correction factor")?;
+    // Save reusable correction package with metadata for downstream commands
+    let correction_pkg = GCCorrectionPackage::from_components(
+        GC_CORRECTION_SCHEMA_VERSION,
+        &length_bins,
+        &gc_bins,
+        correction_matrix.clone(),
+        opt,
+    )?;
+    correction_pkg.write_npz(&opt.ioc.output_dir.join("gc_bias_correction.npz"))?;
 
     println!("");
     println!("Statistics");
@@ -979,4 +986,70 @@ impl IntermediateFileSaver {
         }
         Ok(())
     }
+}
+
+pub struct GCCorrectionPackage {
+    pub version: u32,
+    pub end_offset: u32,
+    pub length_edges: Vec<u32>,
+    pub gc_edges: Vec<u32>,
+    pub correction_matrix: Array2<f64>,
+}
+
+impl GCCorrectionPackage {
+    pub fn from_components(
+        version: u32,
+        length_bins: &BinnedAxis,
+        gc_bins: &BinnedAxis,
+        correction_matrix: Array2<f64>,
+        opt: &GCConfig,
+    ) -> Result<Self> {
+        let length_edges = compute_bin_edges(
+            length_bins,
+            opt.fragment_lengths.min_fragment_length as u32,
+            opt.fragment_lengths.max_fragment_length as u32,
+        )?;
+        let gc_edges = compute_bin_edges(gc_bins, opt.gc_min_pct as u32, opt.gc_max_pct as u32)?;
+        Ok(Self {
+            version,
+            end_offset: opt.end_offset as u32,
+            length_edges,
+            gc_edges,
+            correction_matrix,
+        })
+    }
+
+    pub fn write_npz<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
+        let file = File::create(path)?;
+        let mut npz = NpzWriter::new(file);
+        npz.add_array("correction_matrix", &self.correction_matrix)?;
+        npz.add_array("length_edges", &Array1::from(self.length_edges.clone()))?;
+        npz.add_array("gc_edges", &Array1::from(self.gc_edges.clone()))?;
+        npz.add_array("version", &Array1::from(vec![self.version]))?;
+        npz.add_array("end_offset", &Array1::from(vec![self.end_offset]))?;
+        npz.finish()?;
+        Ok(())
+    }
+}
+
+fn compute_bin_edges(bins: &BinnedAxis, start_value: u32, max_value: u32) -> Result<Vec<u32>> {
+    ensure!(
+        bins.num_bins > 0,
+        "Bin definition must contain at least one bin"
+    );
+    let mut edges = Vec::with_capacity(bins.num_bins + 1);
+    for bin_idx in 0..bins.num_bins {
+        let indices = bins
+            .bin_to_indices
+            .get(&bin_idx)
+            .context("Missing indices for bin")?;
+        let min_idx = indices
+            .iter()
+            .min()
+            .copied()
+            .context("Bin indices cannot be empty")?;
+        edges.push(start_value + min_idx as u32);
+    }
+    edges.push(max_value);
+    Ok(edges)
 }
