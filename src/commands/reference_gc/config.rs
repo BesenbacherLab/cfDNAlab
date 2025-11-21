@@ -6,7 +6,7 @@ use std::path::PathBuf;
 /// Count GC fraction per fragment length at a sampled number of starting positions in the reference genome.
 /// This 2D count distribution can serve as the expected GC bias in GC correction.
 ///
-/// How: A number (default: 150M) of starting positions are uniformly sampled across the reference
+/// How: A number (default: 200M) of starting positions are uniformly sampled across the reference
 /// genome. For each position, we count the GC fraction for every possible fragment length (default: 20-1000bp).
 ///
 /// Intervals (the possible fragments) with too few ACGT bases after blacklist masking are discarded
@@ -58,7 +58,7 @@ pub struct RefGCConfig {
     /// since blacklisting likely removes a big chunk of them.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "150000000", help_heading = "Core")
+        clap(long, default_value = "200000000", help_heading = "Core")
     )]
     pub n_positions: usize,
 
