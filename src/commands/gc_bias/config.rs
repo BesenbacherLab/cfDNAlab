@@ -102,8 +102,6 @@ pub struct GCConfig {
     ///    distribution is reweighted, as the cfDNA counts already reflect the coverage.
     ///
     ///  - `"valid-positions"`: Weight windows by how many positions are usable (not blacklisted or `N`).
-    ///    This gives equal weight to all valid positions in the genome covered by the windows
-    ///    (assuming no overlap between windows).
     ///
     ///  - `"equal"`: All windows get the same weight in the final correction matrix,
     ///    no matter how many positions were blacklisted, etc.
@@ -123,7 +121,7 @@ pub struct GCConfig {
 
     /// Minimum percentage of counts to have in each length bin `[float]`
     ///
-    /// Greater than 0, lower than 100. Default is 0.5% (i.e., a max. of ~200 bins).
+    /// Greater than 0, lower than 100. Default is 0.5% (i.e., a max. of 200 bins).
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "0.5", value_parser = parse_percentage_within_0_100_f32, help_heading="Binning"))]
@@ -131,7 +129,7 @@ pub struct GCConfig {
 
     /// Minimum percentage of counts to have in each GC contents bin `[float]`
     ///
-    /// Greater than 0, lower than 100. Default is 1% (i.e., a max. of ~100 bins).
+    /// Greater than 0, lower than 100. Default is 1% (i.e., a max. of 100 bins).
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "1.0", value_parser = parse_percentage_within_0_100_f32, help_heading="Binning"))]
@@ -142,6 +140,7 @@ pub struct GCConfig {
     /// Masking: Blacklisted positions are set to 'N' in the reference sequence
     /// the GC fraction is calculated from. See the `Minimum ACGT` options
     /// for when to ignore a fragment with too few ACGT (non-'N' and non-blacklisted) bases.
+    ///
     /// NOTE: Ensure the same positions were blacklisted when calculating the reference bias (`cfdna reference-gc`).
     #[cfg_attr(
         feature = "cli",
@@ -199,7 +198,7 @@ pub struct GCConfig {
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "10",
-             value_parser = clap::value_parser!(u8).range(0..101), help_heading="Filtering"))]
+             value_parser = clap::value_parser!(u8).range(0..101), help_heading="Minimum ACGT"))]
     pub min_window_acgt_pct: u8,
 
     /// Minimum **percentage** of ACGT bases in a fragment after blacklist masking and end offsets `[integer]`
@@ -214,7 +213,7 @@ pub struct GCConfig {
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "90", group = "min_acgt", 
-             value_parser = clap::value_parser!(u8).range(0..101), help_heading="Minimum ACGT (select 0-2 args)"))]
+             value_parser = clap::value_parser!(u8).range(0..101), help_heading="Minimum ACGT"))]
     pub min_fragment_acgt_pct: u8,
 
     /// Minimum **count** of ACGT bases in a fragment after blacklist masking and end offsets `[integer]`
@@ -224,7 +223,7 @@ pub struct GCConfig {
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "20", group = "min_acgt", 
-             value_parser = clap::value_parser!(u8).range(0..), help_heading="Minimum ACGT (select 0-2 args)"))]
+             value_parser = clap::value_parser!(u8).range(0..), help_heading="Minimum ACGT"))]
     pub min_fragment_acgt_count: u8,
 
     // TODO: specify further when implemented!
