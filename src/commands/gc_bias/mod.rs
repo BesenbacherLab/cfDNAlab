@@ -2,7 +2,6 @@ pub mod config;
 // pub mod correction_builder;
 pub mod counting;
 pub mod gc_bias;
-pub mod interpolation;
 pub mod load_reference_bias;
 // pub mod normalization;
 pub mod outliers;

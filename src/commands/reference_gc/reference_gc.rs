@@ -1,8 +1,11 @@
 use crate::{
-    commands::gc_bias::counting::{
-        GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window, stack_gc_counts,
+    commands::{
+        cli_common::*,
+        gc_bias::counting::{
+            GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window, stack_gc_counts,
+        },
+        reference_gc::{config::RefGCConfig, interpolation::fill_zero_bins_with_polynomial},
     },
-    commands::{cli_common::*, reference_gc::config::RefGCConfig},
     shared::{
         bed::load_windows_from_bed,
         blacklist::{apply_blacklist_mask_to_seq, compute_blacklist_overlap},
@@ -13,6 +16,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
+use ndarray::Array2;
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use std::{fs::create_dir_all, io::Write, sync::Arc, time::Instant};
@@ -102,12 +106,46 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         }
     }
 
-    // Convert to single `GCCounts` for global
-    // Keep wrapped in vector to simplify writer
-    let mut all_bins = if matches!(window_opt, WindowSpec::Global) {
-        vec![GCCounts::collapse(&all_bins)?]
-    } else {
-        all_bins
+    // Combine counts, convert to Array2 and interpolate zero-counts
+    // Nesting to clean up GCCounts version when no longer needed
+    let mut all_bin_arrays = {
+        // Convert to single `GCCounts` for global
+        // Keep wrapped in vector to simplify writer
+        let all_bins = if matches!(window_opt, WindowSpec::Global) {
+            vec![GCCounts::collapse(&all_bins)?]
+        } else {
+            all_bins
+        };
+
+        if !opt.skip_interpolation {
+            println!("Start: Interpolating missing counts");
+        } else {
+            println!("Start: Converting counts to arrays (skipping interpolation)");
+        }
+        pb.reset();
+        pb.set_length(all_bins.len() as u64);
+        pb.set_position(0);
+
+        let all_bin_arrays: Vec<Array2<f64>> = all_bins
+            .par_iter()
+            .map(|gc_counts| -> Result<_> {
+                let mut array = gc_counts.to_array2();
+                if !opt.skip_interpolation {
+                    for mut length_row in array.outer_iter_mut() {
+                        // Rows are contiguous so we can safely borrow a mutable slice for interpolation
+                        let row_slice = length_row
+                            .as_slice_mut()
+                            .expect("GC histogram rows should be contiguous");
+                        fill_zero_bins_with_polynomial(row_slice, 2, 3, 3);
+                    }
+                }
+                pb.inc(1);
+                Ok(array)
+            })
+            .collect::<Result<_>>()?; // short-circuits on the first Err
+
+        pb.finish_with_message("| Finished interpolating missing counts");
+        all_bin_arrays
     };
 
     // Sort by original index (when given a bed file)
@@ -115,19 +153,22 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         println!("Start: Reordering counts by original window index in BED file");
 
         // Zip into a single Vec to allow sorting together
-        let mut paired: Vec<_> = bin_info.into_iter().zip(all_bins.into_iter()).collect(); // (BinInfo, DecodedCounts)
+        let mut paired: Vec<_> = bin_info
+            .into_iter()
+            .zip(all_bin_arrays.into_iter())
+            .collect(); // (bin info, final counts)
 
         // Sort primarily by original window index
         paired.sort_unstable_by_key(|(info, _)| info.3);
 
         // Unzip back out if you need separate Vecs again
-        (bin_info, all_bins) = paired.into_iter().unzip();
+        (bin_info, all_bin_arrays) = paired.into_iter().unzip();
     }
 
     // Write final counts to output_dir
     write_npy(
         &opt.output_dir.join("all_ref_gc_counts.npy"),
-        &stack_gc_counts(&all_bins),
+        &stack_gc_counts(&all_bin_arrays),
     )
     .context("Write final fail")?;
 

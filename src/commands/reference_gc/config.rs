@@ -102,4 +102,15 @@ pub struct RefGCConfig {
         clap(long, default_value = "20", group = "min_acgt", 
              value_parser = clap::value_parser!(u8).range(0..), help_heading="Minimum ACGT (select 0-2 args)"))]
     pub min_acgt_count: u8,
+
+    /// Whether to skip the interpolation of zero-counts `[flag]`
+    ///
+    /// By default, `0`s are interpolated **independently per fragment length**.
+    /// The assumption is that 0s are caused due to the GC content not
+    /// being possible to observe with a given fragment length
+    /// (e.g., a fragment length of 47 can never achieve a 99% GC).
+    /// To avoid errors from this in downstream use, we use polynomial
+    /// interpolation based on the neighbourhood of non-zero counts.
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
+    pub skip_interpolation: bool,
 }

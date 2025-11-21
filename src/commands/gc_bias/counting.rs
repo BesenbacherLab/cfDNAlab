@@ -436,22 +436,24 @@ impl std::fmt::Display for GCCounts {
     }
 }
 
-/// Stack counts from vector of `GCCounts` to a single 3d array.
-pub fn stack_gc_counts(all_counts: &[GCCounts]) -> Array3<f64> {
+/// Stack counts from vector of `Array2` windows to a single 3d array.
+pub fn stack_gc_counts(all_counts: &[Array2<f64>]) -> Array3<f64> {
     let n = all_counts.len();
-    let l = all_counts[0].n_lengths();
-    let g = all_counts[0].n_gc_bins();
+    assert!(n > 0, "stack_gc_counts requires at least one window");
 
-    let mut arr = Array3::<f64>::zeros((n, l, g));
-    for (i, gcc) in all_counts.iter().enumerate() {
-        assert_eq!(gcc.n_lengths(), l, "mismatched length bins at {}", i);
-        assert_eq!(gcc.n_gc_bins(), g, "mismatched GC bins at {}", i);
+    let rows = all_counts[0].nrows();
+    let cols = all_counts[0].ncols();
 
-        let window = gcc.to_array2();
-        arr.slice_mut(s![i, .., ..]).assign(&window);
+    let mut stacked = Array3::<f64>::zeros((n, rows, cols));
+    for (idx, window) in all_counts.iter().enumerate() {
+        assert_eq!(window.nrows(), rows, "mismatched length bins at {}", idx);
+        assert_eq!(window.ncols(), cols, "mismatched GC bins at {}", idx);
+        stacked
+            .slice_mut(s![idx, .., ..])
+            .assign(window);
     }
 
-    arr
+    stacked
 }
 /// Count reference GC per fragment length for every window on one chromosome.
 ///
