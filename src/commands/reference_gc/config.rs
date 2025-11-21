@@ -11,6 +11,14 @@ use std::path::PathBuf;
 ///
 /// Intervals (the possible fragments) with too few ACGT bases after blacklist masking are discarded
 /// (so increase `--n-positions` accordingly).
+///
+/// ## Interpolation
+///
+/// Some GC fractions are unlikely to see with certain fragment lengths,
+/// as only occurence of masked positions will lead to those fractions. Hence, there
+/// will be a lot of 0s in the counts. To enable the use of those GC fractions in
+/// downstream correction of partly masked fragments, we interpolate the zero-counts (only)
+/// using a second-order polynomial with the 3 nearest neighbours on each side.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[cfg_attr(
     feature = "cli",
@@ -61,6 +69,12 @@ pub struct RefGCConfig {
         clap(long, default_value = "200000000", help_heading = "Core")
     )]
     pub n_positions: usize,
+
+    /// Seed for sampling of start positions `[integer]`
+    ///
+    /// Use this to reproduce identical reference GC outputs across runs.
+    #[cfg_attr(feature = "cli", clap(long, value_parser, help_heading = "Core"))]
+    pub seed: Option<u64>,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub windows: WindowsArgs,

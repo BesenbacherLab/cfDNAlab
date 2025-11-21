@@ -18,6 +18,7 @@ use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::Array2;
 use ndarray_npy::write_npy;
+use rand::{SeedableRng, rngs::StdRng};
 use rayon::prelude::*;
 use std::{fs::create_dir_all, io::Write, sync::Arc, time::Instant};
 
@@ -53,7 +54,12 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
     };
 
     let starts_per_chrom = {
-        let mut rng1 = rand::rng();
+        let mut rng1 = if let Some(seed) = opt.seed {
+            StdRng::seed_from_u64(seed)
+        } else {
+            let mut thread_rng = rand::rng();
+            StdRng::from_rng(&mut thread_rng)
+        };
         sample_starts_per_chrom(
             &mut rng1,
             &twobit_contig_lengths(opt.ref_genome.ref_2bit.clone(), &chromosomes)?,
