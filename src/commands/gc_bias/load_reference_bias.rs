@@ -106,7 +106,7 @@ pub fn parse_reference_bins(
     // Filter function for removing windows with high blacklisting
     let threshold = max_blacklisted_pct as f64 / 100.0;
     let filter_windows_fn: &dyn Fn(&str, u64, u64, f64) -> bool =
-        &move |_: &str, _: u64, _: u64, pct: f64| pct > threshold;
+        &move |_: &str, _: u64, _: u64, pct: f64| pct <= threshold;
 
     let scored_windows_map: FxHashMap<String, Windows> = load_scored_windows_from_bed(
         bins_path,

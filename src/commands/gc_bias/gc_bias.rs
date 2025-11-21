@@ -21,7 +21,7 @@ use crate::{
         scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
     },
 };
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array1, Array2, ArrayBase, ArrayView2, Axis, Data, Ix2, Zip};
@@ -140,7 +140,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
     // First, we make a map of windows so we can get the correct reference bias windows
     // (not guaranteed to be sorted the same)
-    let avg_counts_tuple_opt = if let Some(ws_by_chr) = window_indices_by_chr {
+    let avg_counts_tuple = if let Some(ws_by_chr) = window_indices_by_chr {
         let mut window_tuples: Vec<(usize, usize)> = vec![];
         let mut win_idx: usize = 0;
         for chrom in &chromosomes {
@@ -171,16 +171,27 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
         pb.finish_with_message("| Finished processing");
 
-        mean_of_arrays(&avg_counts_tuples)
+        mean_of_arrays(&avg_counts_tuples).ok_or_else(|| {
+            anyhow!(
+                "No GC bias windows produced usable counts. \
+                Check settings such as `--min-window-acgt-pct` relative many positions are blacklisted. \
+                To limited fragment lengths or GC content ranges may also produce this problem."
+            )
+        })?
     } else {
         // Global window
         let gc_counts = &all_bins[0];
         let ref_counts_view = reference_counts.index_axis(Axis(0), 0);
-        process_window(gc_counts, &ref_counts_view, &opt, avg_window_size)?
+        process_window(gc_counts, &ref_counts_view, &opt, avg_window_size)?.ok_or_else(|| {
+            anyhow!(
+                "Produced no usable GC bias counts. \
+                Check settings such as `--min-window-acgt-pct` relative many positions are blacklisted. \
+                To limited fragment lengths or GC content ranges may also produce this problem."
+            )
+        })?
     };
 
-    let (avg_gc_counts, avg_norm_ref_counts) =
-        avg_counts_tuple_opt.expect("avg count matrices should have been produced");
+    let (avg_gc_counts, avg_norm_ref_counts) = avg_counts_tuple;
 
     // Normalize GC counts array by it's mean (just to remove the weighting scaling)
     let gc_count_mean = avg_gc_counts

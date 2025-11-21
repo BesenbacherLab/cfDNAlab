@@ -19,6 +19,7 @@ use std::path::PathBuf;
 /// will be a lot of 0s in the counts. To enable the use of those GC fractions in
 /// downstream correction of partly masked fragments, we interpolate the zero-counts (only)
 /// using a second-order polynomial with the 3 nearest neighbours on each side.
+/// Note: Zeros can still occur at edges.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[cfg_attr(
     feature = "cli",
