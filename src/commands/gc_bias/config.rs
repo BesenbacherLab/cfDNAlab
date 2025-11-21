@@ -226,6 +226,11 @@ pub struct GCConfig {
         clap(long, default_value = "20", group = "min_acgt", 
              value_parser = clap::value_parser!(u8).range(0..), help_heading="Minimum ACGT (select 0-2 args)"))]
     pub min_fragment_acgt_count: u8,
+
+    // TODO: specify further when implemented!
+    /// Whether to save key intermediate files for inspecting the correction process `[flag]`
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
+    pub save_intermediates: bool,
 }
 
 impl GCConfig {
@@ -258,6 +263,7 @@ impl GCConfig {
             min_window_acgt_pct: 10,
             min_fragment_acgt_pct: 90,
             min_fragment_acgt_count: 20,
+            save_intermediates: false,
         }
     }
 
@@ -335,6 +341,10 @@ impl GCConfig {
 
     pub fn set_min_fragment_acgt_count(&mut self, count: u8) {
         self.min_fragment_acgt_count = count;
+    }
+
+    pub fn set_save_intermediates(&mut self, save_intermediates: bool) {
+        self.save_intermediates = save_intermediates;
     }
 }
 

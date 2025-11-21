@@ -28,7 +28,7 @@ use ndarray::{Array2, ArrayBase, ArrayView2, Axis, Data, Ix2, Zip};
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{fs::create_dir_all, sync::Arc, time::Instant};
+use std::{fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
 
 const CORRECTION_CLAMP_RANGE: (f64, f64) = (0.1, 10.0);
 
@@ -36,6 +36,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     let start_time = Instant::now();
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
+    let mut intermediate_saver =
+        IntermediateFileSaver::new(opt.save_intermediates, opt.ioc.output_dir.clone());
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
     pb.set_style(
         ProgressStyle::default_bar()
@@ -183,6 +185,12 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     }
     let norm_gc_counts = avg_gc_counts / gc_count_mean;
 
+    intermediate_saver.save_file(
+        &norm_gc_counts,
+        "normalized_avg_cfdna_counts",
+        "normalized average cfDNA counts",
+    )?;
+
     // Smoothe the *normalized* counts
     let smoothed_gc_counts = {
         // 5-element kernel (-2...+2)
@@ -191,6 +199,12 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         let sigma = 0.5;
         smoothe_counts_gaussian(&norm_gc_counts, sigma, radius)
     };
+
+    intermediate_saver.save_file(
+        &smoothed_gc_counts,
+        "smoothed_cfdna_counts",
+        "smoothed cfDNA counts",
+    )?;
 
     // Get greedy bins for lengths and GC
     // Maps "length -> length bin" and "gc -> gc bin"
@@ -213,6 +227,12 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         collapse_counts_by_bins(&length_binned, 1, &gc_bins, CollapseAggregation::Mean, None)?
     };
 
+    intermediate_saver.save_file(
+        &binned_ref_counts,
+        "binned_ref_counts",
+        "binned reference counts",
+    )?;
+
     // Collapse GC counts into the length and GC bins
     // We sum the values at the collapsed indices
     let binned_gc_counts = {
@@ -226,8 +246,25 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         collapse_counts_by_bins(&length_binned, 1, &gc_bins, CollapseAggregation::Sum, None)?
     };
 
+    intermediate_saver.save_file(
+        &binned_gc_counts,
+        "binned_cfdna_counts",
+        "binned cfDNA counts",
+    )?;
+
     let norm_gc_counts = mean_scale_per_length_array(&binned_gc_counts, 0.);
     let norm_ref_counts = mean_scale_per_length_array(&binned_ref_counts, 0.);
+
+    intermediate_saver.save_file(
+        &norm_gc_counts,
+        "normalized_binned_cfdna_counts",
+        "normalized binned cfDNA counts",
+    )?;
+    intermediate_saver.save_file(
+        &norm_ref_counts,
+        "normalized_binned_ref_counts",
+        "normalized binned reference counts",
+    )?;
 
     // Calculate correction matrix
     let correction_matrix = norm_gc_counts / norm_ref_counts;
@@ -238,12 +275,12 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
     // TODO: Save info needed to apply correction
 
-    // // Write final counts to output_dir
+    // Write final counts to output_dir
     write_npy(
         &opt.ioc.output_dir.join("gc_bias_correction.npy"),
         &correction_matrix,
     )
-    .context("Write final fail")?;
+    .context("Failed to write correction factor")?;
 
     println!("");
     println!("Statistics");
@@ -898,5 +935,48 @@ where
             }
             Ok(out)
         }
+    }
+}
+
+pub struct IntermediateFileSaver {
+    pub save_intermediates: bool,
+    pub out_dir: PathBuf,
+    previously_saved: usize,
+}
+
+impl IntermediateFileSaver {
+    pub fn new(save_intermediates: bool, out_dir: PathBuf) -> Self {
+        IntermediateFileSaver {
+            save_intermediates: save_intermediates,
+            out_dir: out_dir,
+            previously_saved: 0,
+        }
+    }
+
+    pub fn save_file<S>(
+        &mut self,
+        x: &ArrayBase<S, Ix2>,
+        file_tag: &str,
+        msg_tag: &str,
+    ) -> Result<()>
+    where
+        S: Data<Elem = f64>,
+    {
+        if self.save_intermediates {
+            println!("Intermediate file: Saving {}", msg_tag);
+            write_npy(
+                &self.out_dir.join(format!(
+                    "gc_bias.{}.{}.npy",
+                    file_tag, self.previously_saved
+                )),
+                x,
+            )
+            .context(format!(
+                "Failed to write intermediate file {}",
+                self.previously_saved
+            ))?;
+            self.previously_saved += 1;
+        }
+        Ok(())
     }
 }
