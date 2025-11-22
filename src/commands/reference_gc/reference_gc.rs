@@ -310,8 +310,8 @@ fn process_chrom(
     let total_acgt_in_chrom = {
         let mut total_acgt = 0u64;
         for (start, end, _) in windows.iter() {
-            let clamped_end = *end.min(&chrom_len).max(&0);
-            let clamped_start = *start.min(&chrom_len).max(&0);
+            let clamped_end = *end.min(&chrom_len);
+            let clamped_start = *start.min(&chrom_len);
             if clamped_end <= clamped_start {
                 continue;
             }
