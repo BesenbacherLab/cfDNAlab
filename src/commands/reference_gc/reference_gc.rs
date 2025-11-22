@@ -310,7 +310,13 @@ fn process_chrom(
     let total_acgt_in_chrom = {
         let mut total_acgt = 0u64;
         for (start, end, _) in windows.iter() {
-            let acgt = gc_prefixes.acgt[*end as usize] - gc_prefixes.acgt[*start as usize];
+            let clamped_end = *end.min(&chrom_len).max(&0);
+            let clamped_start = *start.min(&chrom_len).max(&0);
+            if clamped_end <= clamped_start {
+                continue;
+            }
+            let acgt =
+                gc_prefixes.acgt[clamped_end as usize] - gc_prefixes.acgt[clamped_start as usize];
             total_acgt += acgt as u64;
         }
         total_acgt
