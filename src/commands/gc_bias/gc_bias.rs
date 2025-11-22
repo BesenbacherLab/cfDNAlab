@@ -244,19 +244,24 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
     // Smoothe the *normalized* counts
     println!("Start: Smoothing counts with 2D Gaussian kernel");
-    let smoothed_gc_counts = {
+    let do_smoothing = false;
+    let smoothed_gc_counts = if do_smoothing {
         // 5-element kernel (-2...+2)
         let radius: usize = 2;
         // Standard deviation (quite sharp so not too smoothed)
         let sigma = 0.5;
         smoothe_counts_gaussian(&norm_gc_counts, sigma, radius)
+    } else {
+        norm_gc_counts
     };
 
-    intermediate_saver.save_file(
-        &smoothed_gc_counts,
-        "smoothed_cfdna_counts",
-        "smoothed cfDNA counts",
-    )?;
+    if do_smoothing {
+        intermediate_saver.save_file(
+            &smoothed_gc_counts,
+            "smoothed_cfdna_counts",
+            "smoothed cfDNA counts",
+        )?;
+    }
 
     // Get greedy bins for lengths and GC
     // Maps "length -> length bin" and "gc -> gc bin"
