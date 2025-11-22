@@ -23,7 +23,7 @@ pub fn load_reference_gc_data(
     max_blacklisted_pct: u8,
 ) -> Result<ReferenceGCData> {
     let counts_path = ref_dir.join("ref_gc_counts.npy");
-    let support_mask_path = ref_dir.join("ref_usage_mask.npy");
+    let support_mask_path = ref_dir.join("ref_support_mask.npy");
     let bins_path = ref_dir.join("ref_gc_bins.bed");
 
     let counts: Array3<f64> = read_npy(&counts_path)

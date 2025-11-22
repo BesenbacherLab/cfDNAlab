@@ -856,7 +856,7 @@ where
 }
 
 // Overall scaling
-// Elements that are marked as `false` in the usage mask are
+// Elements that are marked as `false` in the support mask are
 // still scaled but do not contribute to the mean
 fn mean_scale_array<S, M>(
     x: &ArrayBase<S, Ix2>,

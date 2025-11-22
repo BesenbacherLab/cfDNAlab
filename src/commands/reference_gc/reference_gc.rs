@@ -234,7 +234,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
     // Print execution time
     let elapsed = start_time.elapsed();
     println!(
-        "Total ACGT bases counted at: {}  (may have duplicate positions from overlapping windows)",
+        "Windows covered {} total ACGT bases (may have duplicate positions if windows overlap)",
         total_covered_acgt_positions
     );
     println!("Elapsed time: {:.2?}", elapsed);
