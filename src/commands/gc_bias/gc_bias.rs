@@ -4,7 +4,7 @@ use crate::{
         counters::GCCounters,
         gc_bias::{
             config::{GCConfig, WindowWeightingSchemes},
-            counting::{GCCounts, build_gc_prefixes, get_gc_fraction_in_window},
+            counting::{GCCounts, build_gc_prefixes, get_gc_integer_percentage_for_window},
             load_reference_bias::{ReferenceGCData, load_reference_gc_data},
             smoothing::smoothe_counts_gaussian,
         },
@@ -58,7 +58,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         windows_map,
         window_indices_by_chr,
         counts: reference_counts,
-        support_mask: mut reference_support_mask,
+        unobservables_support_mask: reference_unobservables_support_mask,
+        outliers_support_mask: mut reference_outliers_support_mask,
         avg_window_size,
     } = load_reference_gc_data(
         &opt.ref_gc_dir,
@@ -168,7 +169,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
                 let out = process_window(
                     gc_counts,
                     &ref_counts_view,
-                    &reference_support_mask,
+                    &reference_unobservables_support_mask,
+                    &reference_outliers_support_mask,
                     &opt,
                     avg_window_size,
                 )?;
@@ -190,7 +192,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         // Global window
         let gc_counts = &all_bins[0];
         let ref_counts_view = reference_counts.index_axis(Axis(0), 0);
-        process_window(gc_counts, &ref_counts_view,&reference_support_mask, &opt, avg_window_size)?.ok_or_else(|| {
+        process_window(gc_counts, &ref_counts_view,&reference_unobservables_support_mask,
+                    &reference_outliers_support_mask, &opt, avg_window_size)?.ok_or_else(|| {
             anyhow!(
                 "Produced no usable GC bias counts. \
                 Check settings such as `--min-window-acgt-pct` relative many positions are blacklisted. \
@@ -203,9 +206,10 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
     println!("Start: Normalizing average counts");
     // Normalize GC counts array by its mean (just to remove the weighting scaling)
-    // Ignores unmasked elements when calculating the mean
-    let mut norm_gc_counts = mean_scale_array(&avg_gc_counts, Some(&reference_support_mask))
-        .expect("failed to perform masked mean scaling");
+    // Ignores unsupported elements when calculating the mean
+    let mut norm_gc_counts =
+        mean_scale_array(&avg_gc_counts, Some(&reference_outliers_support_mask))
+            .expect("failed to perform masked mean scaling");
 
     intermediate_saver.save_file(
         &norm_gc_counts,
@@ -214,15 +218,13 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     )?;
 
     // Interpolate counts for the unsupported cells
-    println!(
-        "Start: Interpolating counts for unsupported cells (unobservable GC x fragment length combinations)"
-    );
+    println!("Start: Interpolating counts for unsupported cells (very low reference counts)");
     for (row_idx, mut length_row) in norm_gc_counts.outer_iter_mut().enumerate() {
         // Rows are contiguous so we can safely borrow a mutable slice for interpolation
         let row_slice = length_row
             .as_slice_mut()
             .expect("GC histogram rows should be contiguous");
-        let mut mask_row = reference_support_mask.row_mut(row_idx);
+        let mut mask_row = reference_outliers_support_mask.row_mut(row_idx);
         let mask_slice = mask_row
             .as_slice_mut()
             .expect("Support mask rows should be contiguous");
@@ -528,7 +530,7 @@ fn process_chrom(
         }
 
         // Extract GC fraction in the interval
-        let gc = get_gc_fraction_in_window(
+        let gc_bin = get_gc_integer_percentage_for_window(
             &gc_prefixes,
             gc_window_start as usize,
             gc_window_end as usize,
@@ -537,20 +539,16 @@ fn process_chrom(
         );
 
         // Unpack GC fraction (or continue)
-        let gc = match gc {
+        let gc_bin = match gc_bin {
             Some(v) => v,
             None => continue,
         };
 
-        ensure!(gc.is_finite(), "GC non-finite: {}", gc);
         ensure!(
-            (0.0..=1.0).contains(&gc),
-            "GC fraction out of [0,1]: {}",
-            gc
+            (0..=100).contains(&gc_bin),
+            "GC fraction out of [0,100]: {}",
+            gc_bin
         );
-
-        // Get GC in [0,100] as usize
-        let gc_bin = (gc * 100.0).round() as usize;
 
         // Find all overlapping windows
         let (interval_start, interval_end) = match opt.window_assignment.assign_by {
@@ -658,11 +656,20 @@ fn process_chrom(
 /// Scale the GC counts and reference counts
 /// to ensure the averaging follows the weighting scheme.
 ///
-/// 1) Adds pseudo-counts (+1 for all elements) to ensure positivity downstream.
+/// ## Support masks
 ///
-/// 2) Reference counts are normalized (mean-scaled) per fragment length.
+///  - The unobservables is a theoretical mask. We use it to check that no bins that are in-theory
+///    impossible to observe (based on the combination of GC and length) get non-zero counts.
 ///
-/// 3) The two arrays are weighted depending on the weighting scheme:
+///  - The outliers are very rarely occuring combinations of GC and length that we don't have
+///    enough support for in the reference counts. We avoid these elements when calculating
+///    fragment length means (ref counts) for normalization.
+///
+/// ## Pipeline
+///
+/// * Reference counts are normalized (mean-scaled) per fragment length.
+///
+/// * The two arrays are weighted depending on the weighting scheme:
 ///
 ///     - `Coverage`: The normalized reference counts are multiplied by the overall mean GC count,
 ///       ensuring that GC counts and reference counts are weighted the same in the global matrices after averaging.
@@ -678,7 +685,8 @@ fn process_chrom(
 fn process_window<S, M>(
     gc_counts: &GCCounts,
     ref_counts: &ArrayBase<S, Ix2>,
-    ref_support_mask: &ArrayBase<M, Ix2>,
+    ref_support_mask_unobservables: &ArrayBase<M, Ix2>,
+    ref_support_mask_outliers: &ArrayBase<M, Ix2>,
     opt: &GCConfig,
     avg_window_size: Option<f64>,
 ) -> Result<Option<(Array2<f64>, Array2<f64>)>>
@@ -702,7 +710,8 @@ where
     }
 
     // Get counts and value-sums for supported and unsupported cells
-    let stats_by_support_status = stats_by_support_mask(&counts_mat, &ref_support_mask);
+    let stats_by_support_status =
+        stats_by_support_mask(&counts_mat, &ref_support_mask_unobservables);
 
     // Our assumption is that unsupported bins are impossible to see
     // when all fragment positions have valid ACGT bases (in the reference genome)
@@ -719,7 +728,8 @@ where
     // Cast to f64 once
     let ref_counts_f = ref_counts.mapv(|v| v as f64);
     // Row-wise mean-scaling
-    let ref_counts_norm = mean_scale_per_length_array(&ref_counts_f, 0.0, Some(ref_support_mask));
+    let ref_counts_norm =
+        mean_scale_per_length_array(&ref_counts_f, 0.0, Some(ref_support_mask_outliers));
 
     // Weighting one or both count distributions
     let (weighted_counts, weighted_ref_counts) = match opt.window_weighting {

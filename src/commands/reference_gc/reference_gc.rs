@@ -2,7 +2,8 @@ use crate::{
     commands::{
         cli_common::*,
         gc_bias::counting::{
-            GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window, stack_gc_counts,
+            GCCounts, build_gc_prefixes, calculate_gc_bin, count_reference_gc_and_length_by_window,
+            stack_gc_counts,
         },
         reference_gc::{config::RefGCConfig, interpolation::fill_unsupported_bins_with_polynomial},
     },
@@ -120,7 +121,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
 
     // Combine counts, convert to Array2 and interpolate zero-counts
     // Nesting to clean up GCCounts version when no longer needed
-    let (mut all_bin_arrays, support_mask) = {
+    let (mut all_bin_arrays, outlier_support_mask) = {
         // Convert to single `GCCounts` for global
         // Keep wrapped in vector to simplify writer
         let all_bins = if matches!(window_opt, WindowSpec::Global) {
@@ -149,8 +150,12 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         // for the combination of GC and fragment lengths when
         // all positions are valid ACGT bases
         // NOTE: These are found empirically here but could be calculated theoretically?
-        let mut support_mask =
-            create_support_mask(all_bin_arrays.as_slice()).expect("supporr mask should be created");
+        let mut outlier_support_mask = create_support_mask_threshold_per_mb(
+            all_bin_arrays.as_slice(),
+            total_covered_acgt_positions,
+            2.0,
+        )
+        .expect("support mask should be created");
 
         if !opt.skip_interpolation {
             println!("Start: Interpolating missing counts");
@@ -161,7 +166,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
             for array in all_bin_arrays.iter_mut() {
                 debug_assert_eq!(
                     array.dim(),
-                    support_mask.dim(),
+                    outlier_support_mask.dim(),
                     "Support mask and histograms must match shape"
                 );
                 for (row_idx, mut length_row) in array.outer_iter_mut().enumerate() {
@@ -169,7 +174,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
                     let row_slice = length_row
                         .as_slice_mut()
                         .expect("GC histogram rows should be contiguous");
-                    let mut mask_row = support_mask.row_mut(row_idx);
+                    let mut mask_row = outlier_support_mask.row_mut(row_idx);
                     let mask_slice = mask_row
                         .as_slice_mut()
                         .expect("Support mask rows should be contiguous");
@@ -184,7 +189,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         }
 
         pb.finish_with_message("| Finished interpolating missing counts");
-        (all_bin_arrays, support_mask)
+        (all_bin_arrays, outlier_support_mask)
     };
 
     // Sort by original index (when given a bed file)
@@ -205,8 +210,45 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
     }
 
     // Write support mask to output_dir
-    write_npy(&opt.output_dir.join("ref_support_mask.npy"), &support_mask)
-        .context("Write final fail")?;
+    let unobservable_support_mask = build_theoretical_support_mask(
+        opt.fragment_lengths.min_fragment_length as usize,
+        opt.fragment_lengths.max_fragment_length as usize,
+        0,
+        all_bin_arrays
+            .first()
+            .map(|arr| arr.dim().1 - 1)
+            .expect("at least one GC histogram should exist"),
+    );
+
+    debug_assert_eq!(
+        outlier_support_mask.dim(),
+        unobservable_support_mask.dim(),
+        "Outlier support mask shape {:?} must match unobservable support mask shape {:?}",
+        outlier_support_mask.dim(),
+        unobservable_support_mask.dim()
+    );
+
+    if let Some(first_hist) = all_bin_arrays.first() {
+        debug_assert_eq!(
+            unobservable_support_mask.dim(),
+            first_hist.dim(),
+            "Support mask shape {:?} must match histogram shape {:?}",
+            unobservable_support_mask.dim(),
+            first_hist.dim()
+        );
+    }
+
+    write_npy(
+        &opt.output_dir.join("ref_support_mask.outliers.npy"),
+        &outlier_support_mask,
+    )
+    .context("Writing outlier support mask failed")?;
+
+    write_npy(
+        &opt.output_dir.join("ref_support_mask.unobservables.npy"),
+        &unobservable_support_mask,
+    )
+    .context("Writing unobservables support mask failed")?;
 
     // Write final counts to output_dir
     write_npy(
@@ -397,6 +439,49 @@ pub fn create_support_mask(counts: &[Array2<f64>]) -> Option<Array2<bool>> {
     }
 
     Some(mask)
+}
+
+pub fn build_theoretical_support_mask(
+    length_min: usize,
+    length_max: usize,
+    gc_min: usize,
+    gc_max: usize,
+) -> Array2<bool> {
+    assert!(
+        length_max >= length_min,
+        "length range must be non-empty ({}..={})",
+        length_min,
+        length_max
+    );
+    assert!(
+        gc_max >= gc_min,
+        "GC bin range must be non-empty ({}..={})",
+        gc_min,
+        gc_max
+    );
+
+    let num_lengths = length_max - length_min + 1;
+    let num_gc_bins = gc_max - gc_min + 1;
+    let mut mask = Array2::from_elem((num_lengths, num_gc_bins), false);
+
+    for length in length_min..=length_max {
+        if length == 0 {
+            continue;
+        }
+        let row_idx = length - length_min;
+        let acgt_count = length as u64;
+        for gc_count in 0..=length {
+            // Use the same integer rounding as the reference-gc tool!
+            let gc_bin = calculate_gc_bin(gc_count as u64, acgt_count) as u64;
+            if gc_bin < gc_min as u64 {
+                continue;
+            }
+            let col_idx = (gc_bin as usize) - gc_min;
+            mask[(row_idx, col_idx)] = true;
+        }
+    }
+
+    mask
 }
 
 /// Sum a list of matrices.

@@ -13,7 +13,8 @@ pub struct ReferenceGCData {
     pub windows_map: Option<FxHashMap<String, Windows>>,
     pub window_indices_by_chr: Option<FxHashMap<String, Vec<u64>>>,
     pub counts: Array3<f64>,
-    pub support_mask: Array2<bool>,
+    pub unobservables_support_mask: Array2<bool>,
+    pub outliers_support_mask: Array2<bool>,
     pub avg_window_size: Option<f64>,
 }
 
@@ -23,26 +24,44 @@ pub fn load_reference_gc_data(
     max_blacklisted_pct: u8,
 ) -> Result<ReferenceGCData> {
     let counts_path = ref_dir.join("ref_gc_counts.npy");
-    let support_mask_path = ref_dir.join("ref_support_mask.npy");
+    let unobservables_support_mask_path = ref_dir.join("ref_support_mask.unobservables.npy");
+    let outliers_support_mask_path = ref_dir.join("ref_support_mask.outliers.npy");
     let bins_path = ref_dir.join("ref_gc_bins.bed");
 
     let counts: Array3<f64> = read_npy(&counts_path)
         .with_context(|| format!("Reading reference GC counts from {:?}", counts_path))?;
 
-    let support_mask: Array2<bool> = read_npy(&support_mask_path).with_context(|| {
-        format!(
-            "Reading reference support mask from {:?}",
-            support_mask_path
-        )
-    })?;
+    let unobservables_support_mask: Array2<bool> = read_npy(&unobservables_support_mask_path)
+        .with_context(|| {
+            format!(
+                "Reading reference support mask (unobservables) from {:?}",
+                unobservables_support_mask_path
+            )
+        })?;
+
+    let outliers_support_mask: Array2<bool> =
+        read_npy(&outliers_support_mask_path).with_context(|| {
+            format!(
+                "Reading reference support mask (outliers) from {:?}",
+                outliers_support_mask_path
+            )
+        })?;
+
+    ensure!(
+        unobservables_support_mask.dim() == outliers_support_mask.dim(),
+        "The two support masks must have the same shape. Unobservables ({:?}) != outliers ({:?}).",
+        unobservables_support_mask.dim(),
+        outliers_support_mask.dim(),
+    );
 
     let num_count_windows = counts.dim().0;
 
     ensure!(
-        support_mask.dim().0 == counts.dim().1 && support_mask.dim().1 == counts.dim().2,
-        "Reference counts ({:?}) and support mask ({:?}) had incompatible shapes",
+        unobservables_support_mask.dim().0 == counts.dim().1
+            && unobservables_support_mask.dim().1 == counts.dim().2,
+        "Reference counts ({:?}) and support masks ({:?}) had incompatible shapes",
         counts.dim(),
-        support_mask.dim()
+        unobservables_support_mask.dim()
     );
 
     let window_spec = if num_count_windows == 1 && !bins_path.exists() {
@@ -107,7 +126,8 @@ pub fn load_reference_gc_data(
         windows_map: windows_map,
         window_indices_by_chr: window_indices,
         counts,
-        support_mask,
+        unobservables_support_mask,
+        outliers_support_mask,
         avg_window_size: avg_window_size,
     })
 }

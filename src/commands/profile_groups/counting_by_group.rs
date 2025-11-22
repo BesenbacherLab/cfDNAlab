@@ -34,7 +34,7 @@ pub struct ProfileGroupsCounts {
     pub counts: Vec<f32>,
     pub window_size: usize,
     pub num_groups: usize,
-    /// Sorted bin **edges** (len ≥ 2), strictly increasing.
+    /// Sorted bin **edges** (len >= 2), strictly increasing.
     pub length_bins: Vec<u32>,
     /// Fast mapping from absolute length (bp) -> length_bin_idx,
     /// or usize::MAX if below lower bound.
@@ -46,7 +46,7 @@ impl ProfileGroupsCounts {
     ///
     /// * `window_size`: number of positions per profile (e.g., 2001)
     /// * `num_groups`: number of groups (TFs)
-    /// * `length_bins`: sorted length **edges** (len ≥ 2), strictly increasing
+    /// * `length_bins`: sorted length **edges** (len >= 2), strictly increasing
     pub fn new(window_size: usize, num_groups: usize, length_bins: Vec<u32>) -> Self {
         debug_assert!(
             length_bins.len() >= 2,

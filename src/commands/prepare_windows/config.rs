@@ -220,7 +220,7 @@ pub struct PrepareConfig {
     ///
     /// - `"midpoint"`: Window midpoint lies inside a blacklist interval.
     ///
-    /// - `"proportion=<threshold>"`: Overlap proportion with respect to the window is ≥ threshold.
+    /// - `"proportion=<threshold>"`: Overlap proportion with respect to the window is >= threshold.
     ///
     /// Example: `--blacklist-strategy proportion=0.2`
     #[cfg_attr(

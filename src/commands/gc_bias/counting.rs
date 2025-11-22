@@ -31,20 +31,20 @@ pub fn build_gc_prefixes(seq: &[u8]) -> GCPrefixes {
     GCPrefixes { gc, acgt }
 }
 
-/// Compute the GC fraction for a window [start, end), excluding 'N's.
+/// Compute the GC integer percentage for a window [start, end), excluding 'N's.
 ///
 /// `min_acgt_count`: Minimum number of actual ACGT bases counted in the window.
 ///   E.g. if most of the window is blacklisted or Ns.
 ///
 /// Returns `None` if the window has too few A/T/G/C bases.
 #[inline]
-pub fn get_gc_fraction_in_window(
+pub fn get_gc_integer_percentage_for_window(
     prefixes: &GCPrefixes,
     start: usize,
     end: usize,
     min_acgt_fraction: f32,
     min_acgt_count: u32,
-) -> Option<f32> {
+) -> Option<usize> {
     debug_assert!(
         start < end && end <= prefixes.gc.len() - 1,
         "GC window [{}, {}) out of bounds (len={})",
@@ -61,8 +61,9 @@ pub fn get_gc_fraction_in_window(
         return None;
     }
 
-    let gc_frac = gc as f32 / acgt as f32;
-    Some(gc_frac)
+    // Use the same integer rounding as the reference-gc tool!
+    let gc_percent_bin = calculate_gc_bin(gc as u64, acgt as u64);
+    Some(gc_percent_bin)
 }
 
 /// Count matrix for fragment coverage across GC fraction bins and fragment lengths.
@@ -573,17 +574,7 @@ pub fn count_reference_gc_and_length_by_window(
                     let gc_count = gc_prefix[end_idx] - gc_prefix[start_pos];
 
                     // Round to the nearest percent (**half-up**) using integer math.
-                    // Integer division floors: (100*gc)/acgt would always round down (bias!).
-                    // Trick: add half the denominator before dividing -> values with fractional part ≥ 0.5 round up.
-                    // Formula: round(x/y) = (x + y/2) / y, for y > 0.
-                    // Here: x = 100 * gc_count, y = acgt_count.
-                    // Examples:
-                    //  - gc=1, acgt=3 -> exact 33.33…% -> (100 + 1)/3 = 33
-                    //  - gc=2, acgt=3 -> exact 66.66…% -> (200 + 1)/3 = 67
-                    //  - gc=3, acgt=3 -> exact 100%     -> (300 + 1)/3 = 100 (then clamped to ≤100 below)
-                    let gc_percent_bin = ((gc_count as u64 * 100 + (acgt_count as u64 / 2))
-                        / acgt_count as u64)
-                        .min(100) as usize;
+                    let gc_percent_bin = calculate_gc_bin(gc_count as u64, acgt_count as u64);
 
                     counts_by_bin[win_idx].incr(frag_len, gc_percent_bin);
                 }
@@ -592,4 +583,17 @@ pub fn count_reference_gc_and_length_by_window(
             j += 1;
         }
     }
+}
+
+/// Round to the nearest percent (**half-up**) using integer math.
+/// Integer division floors: (100*gc)/acgt would always round down (bias!).
+/// Trick: add half the denominator before dividing -> values with fractional part >= 0.5 round up.
+/// Formula: round(x/y) = (x + y/2) / y, for y > 0.
+/// Here: x = 100 * gc_count, y = acgt_count.
+/// Examples:
+///  - gc=1, acgt=3 -> exact 33.33…% -> (100 + 1)/3 = 33
+///  - gc=2, acgt=3 -> exact 66.66…% -> (200 + 1)/3 = 67
+///  - gc=3, acgt=3 -> exact 100%     -> (300 + 1)/3 = 100 (then clamped to ≤100 below)
+pub fn calculate_gc_bin(gc_count: u64, acgt_count: u64) -> usize {
+    ((gc_count as u64 * 100 + (acgt_count as u64 / 2)) / acgt_count as u64).min(100) as usize
 }
