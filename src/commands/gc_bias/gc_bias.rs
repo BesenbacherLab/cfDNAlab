@@ -29,6 +29,7 @@ use ndarray_npy::{NpzWriter, write_npy};
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{
+    cmp::Ordering,
     fs::{File, create_dir_all},
     path::PathBuf,
     sync::Arc,
@@ -37,6 +38,8 @@ use std::{
 
 const CORRECTION_CLAMP_RANGE: (f64, f64) = (0.1, 10.0);
 const GC_CORRECTION_SCHEMA_VERSION: u32 = 1;
+const REF_MASK_STD_MULTIPLIER: f64 = 4.0;
+const REF_MASK_RELATIVE_MEDIAN_THRESHOLD: f64 = 0.05;
 
 pub fn run(opt: &GCConfig) -> Result<()> {
     let start_time = Instant::now();
@@ -244,6 +247,15 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         collapse_counts_by_bins(&length_binned, 1, &gc_bins, CollapseAggregation::Mean, None)?
     };
 
+    let ref_valid_mask = identify_reliable_reference_bins(&binned_ref_counts)?;
+    let masked_bins = ref_valid_mask.iter().filter(|&&is_valid| !is_valid).count();
+    if masked_bins > 0 {
+        let pct_masked = masked_bins as f64 / ref_valid_mask.len() as f64 * 100.0;
+        println!(
+            "Masking {masked_bins} low-coverage reference bins ({pct_masked:.2}% of total) before normalization"
+        );
+    }
+
     intermediate_saver.save_file(
         &binned_ref_counts,
         "binned_ref_counts",
@@ -269,8 +281,14 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         "binned cfDNA counts",
     )?;
 
-    let norm_gc_counts = mean_scale_per_length_array(&binned_gc_counts, 0.);
-    let norm_ref_counts = mean_scale_per_length_array(&binned_ref_counts, 0.);
+    let mut norm_gc_counts =
+        mean_scale_per_length_array(&binned_gc_counts, 0., Some(&ref_valid_mask));
+    let mut norm_ref_counts =
+        mean_scale_per_length_array(&binned_ref_counts, 0., Some(&ref_valid_mask));
+    if masked_bins > 0 {
+        set_masked_entries_to_value(&mut norm_gc_counts, &ref_valid_mask, 1.0);
+        set_masked_entries_to_value(&mut norm_ref_counts, &ref_valid_mask, 1.0);
+    }
 
     intermediate_saver.save_file(
         &norm_gc_counts,
@@ -284,7 +302,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     )?;
 
     // Calculate correction matrix
-    let correction_matrix = norm_gc_counts / norm_ref_counts;
+    let correction_matrix = &norm_gc_counts / &norm_ref_counts;
 
     // Sanity clamp of corrections
     let correction_matrix =
@@ -661,9 +679,8 @@ where
     // Normalize the reference bias
     // Cast to f64 once and add pseudo-count (Laplace smoothing)
     let ref_counts_f = ref_counts.mapv(|v| 1.0 + v as f64);
-    // Row-wise mean-scaling to avoid
-    // TODO: Not sure this is the place for per-length normalization: Does it make it harder to bin??
-    let ref_counts_norm = mean_scale_per_length_array(&ref_counts_f, 1.0);
+    // Row-wise mean-scaling
+    let ref_counts_norm = mean_scale_per_length_array(&ref_counts_f, 1.0, None);
 
     // Weighting one or both count distributions
     let (weighted_counts, weighted_ref_counts) = match opt.window_weighting {
@@ -696,28 +713,56 @@ where
     Ok(Some((weighted_counts, weighted_ref_counts)))
 }
 
-fn mean_scale_per_length_array<S>(x: &ArrayBase<S, Ix2>, pseudo_count: f64) -> Array2<f64>
+fn mean_scale_per_length_array<S>(
+    x: &ArrayBase<S, Ix2>,
+    pseudo_count: f64,
+    mask: Option<&Array2<bool>>,
+) -> Array2<f64>
 where
     S: Data<Elem = f64>,
 {
-    let (_, n_cols) = x.dim();
-    let n_cols_f = n_cols as f64;
+    let (n_rows, n_cols) = x.dim();
+    if let Some(m) = mask {
+        assert_eq!(
+            m.dim(),
+            (n_rows, n_cols),
+            "Mask shape {:?} must match counts shape {:?}",
+            m.dim(),
+            (n_rows, n_cols)
+        );
+    }
 
-    // Row means: shape (n_rows,)
-    let row_means = x.mean_axis(Axis(1)).expect("mean_axis on non-empty axis");
+    let mut out = Array2::zeros((n_rows, n_cols));
 
-    // Denominator per row: row_mean + pseudo_count * num_cols
-    // shape (n_rows,)
-    let denom = &row_means + pseudo_count * n_cols_f;
+    for row_idx in 0..n_rows {
+        let (row_sum, valid_count) = if let Some(mask_arr) = mask {
+            let mask_row = mask_arr.row(row_idx);
+            let mut sum = 0.0;
+            let mut count = 0usize;
+            for (value, &is_valid) in x.row(row_idx).iter().zip(mask_row.iter()) {
+                if is_valid {
+                    sum += *value;
+                    count += 1;
+                }
+            }
+            (sum, count)
+        } else {
+            (x.row(row_idx).sum(), n_cols)
+        };
 
-    // Broadcast to (n_rows, 1) so it can divide the full matrix
-    let denom_2d = denom.insert_axis(Axis(1));
+        let denom = if valid_count > 0 {
+            (row_sum / valid_count as f64) + pseudo_count * valid_count as f64
+        } else {
+            1.0
+        };
 
-    // Numerator: value + pseudo_count (elementwise)
-    let num = x + pseudo_count;
+        for (col_idx, value) in x.row(row_idx).iter().enumerate() {
+            let numerator = *value + pseudo_count;
+            out[(row_idx, col_idx)] = numerator / denom;
+        }
+    }
 
-    // Elementwise division with broadcasting
-    num / &denom_2d
+    out
 }
 
 /// Average a list of optional `(matrix_a, matrix_b)` pairs independently.
@@ -760,6 +805,72 @@ fn mean_of_arrays(
     sum_b /= factor;
 
     Some((sum_a, sum_b))
+}
+
+fn identify_reliable_reference_bins(counts: &Array2<f64>) -> Result<Array2<bool>> {
+    let (n_rows, n_cols) = counts.dim();
+    let mut mask = Array2::from_elem((n_rows, n_cols), true);
+
+    for (row_idx, row) in counts.outer_iter().enumerate() {
+        let row_slice = row.as_slice().expect("reference rows contiguous");
+        let mut stats: Vec<f64> = row_slice.iter().copied().collect();
+
+        let median = median_from_values(&mut stats);
+        let mean = stats.iter().sum::<f64>() / stats.len() as f64;
+        let std_dev = std_deviation_from_mean(&stats, mean);
+
+        for (col_idx, &value) in row_slice.iter().enumerate() {
+            if should_mask_reference_value(value, median, std_dev) {
+                mask[(row_idx, col_idx)] = false;
+            }
+        }
+    }
+
+    Ok(mask)
+}
+
+fn set_masked_entries_to_value(matrix: &mut Array2<f64>, mask: &Array2<bool>, fill_value: f64) {
+    Zip::from(matrix).and(mask).for_each(|value, &is_valid| {
+        if !is_valid {
+            *value = fill_value;
+        }
+    });
+}
+
+fn should_mask_reference_value(value: f64, median: f64, std_dev: f64) -> bool {
+    if median > 0.0 && value <= median * REF_MASK_RELATIVE_MEDIAN_THRESHOLD {
+        return true;
+    }
+    if std_dev > 0.0 && (median - value) >= REF_MASK_STD_MULTIPLIER * std_dev {
+        return true;
+    }
+    false
+}
+
+fn median_from_values(values: &mut [f64]) -> f64 {
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+    let len = values.len();
+    let mid = len / 2;
+    if len % 2 == 0 {
+        (values[mid - 1] + values[mid]) / 2.0
+    } else {
+        values[mid]
+    }
+}
+
+fn std_deviation_from_mean(values: &[f64], mean: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let variance = values
+        .iter()
+        .map(|v| {
+            let diff = v - mean;
+            diff * diff
+        })
+        .sum::<f64>()
+        / values.len() as f64;
+    variance.sqrt()
 }
 
 #[derive(Debug, Clone)]
