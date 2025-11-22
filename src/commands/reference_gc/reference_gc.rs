@@ -144,17 +144,13 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
             .collect::<Result<_>>()?; // short-circuits on the first Err
         pb.finish_with_message("| Finished array conversion");
 
-        // Create mask of usable count bins BEFORE interpolation
-        // Zero-counted elements are considered impossible
+        // Create mask of supported count bins BEFORE interpolation
+        // Elements that are zero in all windows are considered impossible
         // for the combination of GC and fragment lengths when
         // all positions are valid ACGT bases
         // NOTE: These are found empirically here but could be calculated theoretically?
-        let mut support_mask = create_usable_mask(
-            all_bin_arrays.as_slice(),
-            total_covered_acgt_positions,
-            1. / (total_covered_acgt_positions as f64 / 1000000. + 1.), // 0 with rounding errors
-        )
-        .expect("usage mask should be created");
+        let mut support_mask =
+            create_support_mask(all_bin_arrays.as_slice()).expect("supporr mask should be created");
 
         if !opt.skip_interpolation {
             println!("Start: Interpolating missing counts");
@@ -208,7 +204,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         (bin_info, all_bin_arrays) = paired.into_iter().unzip();
     }
 
-    // Write usage mask to output_dir
+    // Write support mask to output_dir
     write_npy(&opt.output_dir.join("ref_support_mask.npy"), &support_mask)
         .context("Write final fail")?;
 
@@ -361,7 +357,7 @@ fn process_chrom(
     Ok((counts_by_bin, bin_info, total_acgt_in_chrom))
 }
 
-/// Create mask of usable elements. Elements are usable
+/// Create mask of supported elements. Elements are usable
 /// when they have a count of at least `threshold_per_mb`
 /// per 1Mb of valid ACGT positions in the selected regions
 /// of the genome.
@@ -370,7 +366,7 @@ fn process_chrom(
 /// The idea is that some elements are almost non-existent
 /// (e.g. 100% GC in an 800bp fragment interval), so no matter
 /// the number of sampled starts they will have almost no counts.
-pub fn create_usable_mask(
+pub fn create_support_mask_threshold_per_mb(
     counts: &[Array2<f64>],
     num_acgt_positions: u64,
     threshold_per_mb: f64,
@@ -384,6 +380,20 @@ pub fn create_usable_mask(
     let mut mask = Array2::from_elem(global_counts.dim(), true);
     for ((row, col), &value) in global_counts.indexed_iter() {
         mask[(row, col)] = value >= threshold;
+    }
+
+    Some(mask)
+}
+
+/// Create mask of usable elements. Elements are usable
+/// when they have a non-zero count in any of the windows.
+pub fn create_support_mask(counts: &[Array2<f64>]) -> Option<Array2<bool>> {
+    let global_counts = sum_arrays(counts)?;
+
+    // Create mask of usable elements
+    let mut mask = Array2::from_elem(global_counts.dim(), true);
+    for ((row, col), &value) in global_counts.indexed_iter() {
+        mask[(row, col)] = value >= 0.;
     }
 
     Some(mask)
