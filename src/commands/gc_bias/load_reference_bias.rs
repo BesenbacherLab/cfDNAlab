@@ -4,15 +4,16 @@ use crate::{
 };
 use anyhow::{Context, Result, ensure};
 use fxhash::FxHashMap;
-use ndarray::Array3;
+use ndarray::{Array2, Array3};
 use ndarray_npy::read_npy;
 use std::path::Path;
 
-pub struct ReferenceGcData {
+pub struct ReferenceGCData {
     pub window_spec: WindowSpec,
     pub windows_map: Option<FxHashMap<String, Windows>>,
     pub window_indices_by_chr: Option<FxHashMap<String, Vec<u64>>>,
     pub counts: Array3<f64>,
+    pub support_mask: Array2<bool>,
     pub avg_window_size: Option<f64>,
 }
 
@@ -20,14 +21,29 @@ pub fn load_reference_gc_data(
     ref_dir: &Path,
     chromosomes: Option<&[String]>,
     max_blacklisted_pct: u8,
-) -> Result<ReferenceGcData> {
-    let counts_path = ref_dir.join("all_ref_gc_counts.npy");
+) -> Result<ReferenceGCData> {
+    let counts_path = ref_dir.join("ref_gc_counts.npy");
+    let support_mask_path = ref_dir.join("ref_usage_mask.npy");
     let bins_path = ref_dir.join("ref_gc_bins.bed");
 
     let counts: Array3<f64> = read_npy(&counts_path)
         .with_context(|| format!("Reading reference GC counts from {:?}", counts_path))?;
 
+    let support_mask: Array2<bool> = read_npy(&support_mask_path).with_context(|| {
+        format!(
+            "Reading reference support mask from {:?}",
+            support_mask_path
+        )
+    })?;
+
     let num_count_windows = counts.dim().0;
+
+    ensure!(
+        support_mask.dim().0 == counts.dim().1 && support_mask.dim().1 == counts.dim().2,
+        "Reference counts ({:?}) and support mask ({:?}) had incompatible shapes",
+        counts.dim(),
+        support_mask.dim()
+    );
 
     let window_spec = if num_count_windows == 1 && !bins_path.exists() {
         WindowSpec::Global
@@ -86,11 +102,12 @@ pub fn load_reference_gc_data(
         None
     };
 
-    Ok(ReferenceGcData {
+    Ok(ReferenceGCData {
         window_spec: window_spec,
         windows_map: windows_map,
         window_indices_by_chr: window_indices,
         counts,
+        support_mask,
         avg_window_size: avg_window_size,
     })
 }

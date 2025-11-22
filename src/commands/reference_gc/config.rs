@@ -96,28 +96,6 @@ pub struct RefGCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
 
-    /// Minimum **percentage** of ACGT bases in a kmer after blacklist masking [integer]
-    ///
-    /// Fragments where a lower percentage of bases are ACGT (not blacklisted or 'N') are ignored.
-    ///
-    /// When both `min_acgt_*` arguments are specified, both thresholds must be met. E.g.,
-    /// you may want at least 50% ACGT remaining but also at least 20 bases for a proper
-    /// calculation of GC %. For fragments of size 30bp, 50% is only 15bp why the 20bp threshold kicks in.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "90", group = "min_acgt", 
-             value_parser = clap::value_parser!(u8).range(0..101), help_heading="Minimum ACGT (select 0-2 args)"))]
-    pub min_acgt_pct: u8,
-
-    /// Minimum **count** of ACGT bases in a fragment after blacklist masking [integer]
-    ///
-    /// Fragments where fewer bases are ACGT (not blacklisted or 'N') are ignored.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "20", group = "min_acgt", 
-             value_parser = clap::value_parser!(u8).range(0..), help_heading="Minimum ACGT (select 0-2 args)"))]
-    pub min_acgt_count: u8,
-
     /// Whether to skip the interpolation of zero-counts `[flag]`
     ///
     /// By default, `0`s are interpolated **independently per fragment length**.

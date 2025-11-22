@@ -5,9 +5,10 @@ use crate::{
         gc_bias::{
             config::{GCConfig, WindowWeightingSchemes},
             counting::{GCCounts, build_gc_prefixes, get_gc_fraction_in_window},
-            load_reference_bias::{ReferenceGcData, load_reference_gc_data},
+            load_reference_bias::{ReferenceGCData, load_reference_gc_data},
             smoothing::smoothe_counts_gaussian,
         },
+        reference_gc::interpolation::fill_unsupported_bins_with_polynomial,
     },
     shared::{
         bam::create_chromosome_reader,
@@ -29,7 +30,6 @@ use ndarray_npy::{NpzWriter, write_npy};
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{
-    cmp::Ordering,
     fs::{File, create_dir_all},
     path::PathBuf,
     sync::Arc,
@@ -38,8 +38,6 @@ use std::{
 
 const CORRECTION_CLAMP_RANGE: (f64, f64) = (0.1, 10.0);
 const GC_CORRECTION_SCHEMA_VERSION: u32 = 1;
-const REF_MASK_STD_MULTIPLIER: f64 = 4.0;
-const REF_MASK_RELATIVE_MEDIAN_THRESHOLD: f64 = 0.05;
 
 pub fn run(opt: &GCConfig) -> Result<()> {
     let start_time = Instant::now();
@@ -55,11 +53,12 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     );
 
     println!("Start: Loading reference GC bias");
-    let ReferenceGcData {
+    let ReferenceGCData {
         window_spec: window_opt,
         windows_map,
         window_indices_by_chr,
         counts: reference_counts,
+        support_mask: mut reference_support_mask,
         avg_window_size,
     } = load_reference_gc_data(
         &opt.ref_gc_dir,
@@ -103,7 +102,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
     pb.set_position(0);
 
-    let results: Vec<(Vec<GCCounts>, GCCounters)> = chromosomes
+    let counts_by_window: Vec<(Vec<GCCounts>, GCCounters)> = chromosomes
         .par_iter()
         .map(|chr| -> Result<_, _> {
             let out = process_chrom(
@@ -126,7 +125,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     println!("Start: Processing counts");
 
     // Collect results (in chromosome order) back into the global vectors
-    for (counts_by_bin, counter) in results {
+    for (counts_by_bin, counter) in counts_by_window {
         all_bins.extend(counts_by_bin);
         global_counter += counter;
     }
@@ -166,7 +165,13 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             .map(|(count_idx, ref_idx)| -> Result<_, _> {
                 let gc_counts = &all_bins[*count_idx];
                 let ref_counts_view = reference_counts.index_axis(Axis(0), *ref_idx);
-                let out = process_window(gc_counts, &ref_counts_view, &opt, avg_window_size)?;
+                let out = process_window(
+                    gc_counts,
+                    &ref_counts_view,
+                    &reference_support_mask,
+                    &opt,
+                    avg_window_size,
+                )?;
                 pb.inc(1);
                 Ok(out)
             })
@@ -185,7 +190,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         // Global window
         let gc_counts = &all_bins[0];
         let ref_counts_view = reference_counts.index_axis(Axis(0), 0);
-        process_window(gc_counts, &ref_counts_view, &opt, avg_window_size)?.ok_or_else(|| {
+        process_window(gc_counts, &ref_counts_view,&reference_support_mask, &opt, avg_window_size)?.ok_or_else(|| {
             anyhow!(
                 "Produced no usable GC bias counts. \
                 Check settings such as `--min-window-acgt-pct` relative many positions are blacklisted. \
@@ -196,14 +201,11 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
     let (avg_gc_counts, avg_norm_ref_counts) = avg_counts_tuple;
 
-    // Normalize GC counts array by it's mean (just to remove the weighting scaling)
-    let gc_count_mean = avg_gc_counts
-        .mean()
-        .expect("Could not calculate the mean of the average GC counts");
-    if gc_count_mean == 0.0 {
-        bail!("The average GC count was 0");
-    }
-    let norm_gc_counts = avg_gc_counts / gc_count_mean;
+    println!("Start: Normalizing average counts");
+    // Normalize GC counts array by its mean (just to remove the weighting scaling)
+    // Ignores unmasked elements when calculating the mean
+    let mut norm_gc_counts = mean_scale_array(&avg_gc_counts, Some(&reference_support_mask))
+        .expect("failed to perform masked mean scaling");
 
     intermediate_saver.save_file(
         &norm_gc_counts,
@@ -211,7 +213,35 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         "normalized average cfDNA counts",
     )?;
 
+    // Interpolate counts for the unsupported cells
+    println!(
+        "Start: Interpolating counts for unsupported cells (unobservable GC x fragment length combinations)"
+    );
+    for (row_idx, mut length_row) in norm_gc_counts.outer_iter_mut().enumerate() {
+        // Rows are contiguous so we can safely borrow a mutable slice for interpolation
+        let row_slice = length_row
+            .as_slice_mut()
+            .expect("GC histogram rows should be contiguous");
+        let mut mask_row = reference_support_mask.row_mut(row_idx);
+        let mask_slice = mask_row
+            .as_slice_mut()
+            .expect("Support mask rows should be contiguous");
+        fill_unsupported_bins_with_polynomial(
+            row_slice, mask_slice, 2, 3, 3,
+            // Update mask when cells become supported
+            // (TODO: not currently used downstream but worth having for future checks)
+            true,
+        )?;
+    }
+
+    intermediate_saver.save_file(
+        &norm_gc_counts,
+        "interpolated_cfdna_counts",
+        "interpolated cfDNA counts",
+    )?;
+
     // Smoothe the *normalized* counts
+    println!("Start: Smoothing counts with 2D Gaussian kernel");
     let smoothed_gc_counts = {
         // 5-element kernel (-2...+2)
         let radius: usize = 2;
@@ -247,15 +277,6 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         collapse_counts_by_bins(&length_binned, 1, &gc_bins, CollapseAggregation::Mean, None)?
     };
 
-    let ref_valid_mask = identify_reliable_reference_bins(&binned_ref_counts)?;
-    let masked_bins = ref_valid_mask.iter().filter(|&&is_valid| !is_valid).count();
-    if masked_bins > 0 {
-        let pct_masked = masked_bins as f64 / ref_valid_mask.len() as f64 * 100.0;
-        println!(
-            "Masking {masked_bins} low-coverage reference bins ({pct_masked:.2}% of total) before normalization"
-        );
-    }
-
     intermediate_saver.save_file(
         &binned_ref_counts,
         "binned_ref_counts",
@@ -281,14 +302,13 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         "binned cfDNA counts",
     )?;
 
+    // Mask extreme GC bins to avoid unstable corrections
+    let correction_support_mask =
+        build_extreme_gc_support_mask(binned_gc_counts.dim(), opt.num_extreme_gc_bins as usize);
     let mut norm_gc_counts =
-        mean_scale_per_length_array(&binned_gc_counts, 0., Some(&ref_valid_mask));
+        mean_scale_per_length_array(&binned_gc_counts, 0., Some(&correction_support_mask));
     let mut norm_ref_counts =
-        mean_scale_per_length_array(&binned_ref_counts, 0., Some(&ref_valid_mask));
-    if masked_bins > 0 {
-        set_masked_entries_to_value(&mut norm_gc_counts, &ref_valid_mask, 1.0);
-        set_masked_entries_to_value(&mut norm_ref_counts, &ref_valid_mask, 1.0);
-    }
+        mean_scale_per_length_array(&binned_ref_counts, 0., Some(&correction_support_mask));
 
     intermediate_saver.save_file(
         &norm_gc_counts,
@@ -301,12 +321,34 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         "normalized binned reference counts",
     )?;
 
-    // Calculate correction matrix
-    let correction_matrix = &norm_gc_counts / &norm_ref_counts;
+    // Set extreme GC bins to 1.0 in both arrays to avoid zero-division etc.
+    println!("Start: Setting extreme GC bins to 1.0");
+    if correction_support_mask.iter().any(|&supported| !supported) {
+        set_masked_entries_to_value(&mut norm_gc_counts, &correction_support_mask, 1.0);
+        set_masked_entries_to_value(&mut norm_ref_counts, &correction_support_mask, 1.0);
+    }
 
-    // Sanity clamp of corrections
-    let correction_matrix =
-        correction_matrix.clamp(CORRECTION_CLAMP_RANGE.0, CORRECTION_CLAMP_RANGE.1);
+    // Calculate correction matrix
+    // 1) Divide cfDNA counts by reference counts
+    // 2) Normalize each fragment length to mean=1.0
+    // 3) Set final correction factors for extreme GC bins to 1.0 (no corrections)
+    // 4) Clamp any leftover extreme corrections
+    let correction_matrix = {
+        let raw_correction_matrix = &norm_gc_counts / &norm_ref_counts;
+
+        // Normalize correction matrix per fragment length to be centered around 1.0
+        // Still ignore extreme GC bins in the mean-calculations
+        let mut norm_correction_matrix =
+            mean_scale_per_length_array(&raw_correction_matrix, 0., Some(&correction_support_mask));
+
+        // Refill extreme GC bins to 1.0
+        if correction_support_mask.iter().any(|&supported| !supported) {
+            set_masked_entries_to_value(&mut norm_correction_matrix, &correction_support_mask, 1.0);
+        }
+
+        // Sanity clamp of corrections
+        norm_correction_matrix.clamp(CORRECTION_CLAMP_RANGE.0, CORRECTION_CLAMP_RANGE.1)
+    };
 
     // Save reusable correction package with metadata for downstream commands
     let correction_pkg = GCCorrectionPackage::from_components(
@@ -388,8 +430,8 @@ fn process_chrom(
     // Initialize count arrays
     let mut counts_by_bin = vec![
         GCCounts::new(
-            opt.gc_min_pct as usize,
-            opt.gc_max_pct as usize,
+            0,
+            100,
             opt.fragment_lengths.min_fragment_length as usize,
             opt.fragment_lengths.max_fragment_length as usize,
             (0, 0)
@@ -448,11 +490,7 @@ fn process_chrom(
     // Function for filtering fragments after pairing
     // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
     let fragment_filter = {
-        let min_len = opt
-            .fragment_lengths
-            .min_fragment_length
-            // Minimum length to live up to --min-acgt-count and --end-offset
-            .max(opt.min_fragment_acgt_count as u32 + 2 * opt.end_offset as u32);
+        let min_len = opt.fragment_lengths.min_fragment_length;
         let max_len = opt.fragment_lengths.max_fragment_length;
         move |f: &Fragment| {
             let len = f.len();
@@ -476,8 +514,7 @@ fn process_chrom(
 
     // Convert variables once
     let end_offset_u32 = opt.end_offset as u32;
-    let min_fragment_acgt_count_u32 = opt.min_fragment_acgt_count as u32;
-    let min_acgt_fraction = opt.min_fragment_acgt_pct as f32 / 100f32;
+    let min_acgt_fraction = 1.0f32;
 
     // Iterate fragments and count GC
     for fragment_res in iter.by_ref() {
@@ -497,7 +534,7 @@ fn process_chrom(
             gc_window_start as usize,
             gc_window_end as usize,
             min_acgt_fraction,
-            min_fragment_acgt_count_u32,
+            1, // Fraction is 100% so this is ignored
         );
 
         // Unpack GC fraction (or continue)
@@ -515,10 +552,6 @@ fn process_chrom(
 
         // Get GC in [0,100] as usize
         let gc_bin = (gc * 100.0).round() as usize;
-
-        if gc_bin < opt.gc_min_pct as usize || gc_bin > opt.gc_max_pct as usize {
-            continue;
-        }
 
         // Find all overlapping windows
         let (interval_start, interval_end) = match opt.window_assignment.assign_by {
@@ -643,14 +676,16 @@ fn process_chrom(
 ///     - `Equal`: The GC counts are divided by the overall mean GC count,
 ///       ensuring GC counts have the same weight for all windows.
 ///       The reference count normalization made those matrices equally weighted.
-fn process_window<S>(
+fn process_window<S, M>(
     gc_counts: &GCCounts,
     ref_counts: &ArrayBase<S, Ix2>,
+    ref_support_mask: &ArrayBase<M, Ix2>,
     opt: &GCConfig,
     avg_window_size: Option<f64>,
 ) -> Result<Option<(Array2<f64>, Array2<f64>)>>
 where
     S: Data<Elem = f64>,
+    M: Data<Elem = bool>,
 {
     // Check window has enough valid positions
     if gc_counts.pct_acgt() < opt.min_window_acgt_pct as f64 {
@@ -658,29 +693,34 @@ where
     }
 
     // Get counts as 2d array with shape: (n_lengths, n_gc_bins)
-    let mut counts_mat = gc_counts.to_array2();
-    let (n_rows, n_cols) = counts_mat.dim();
-    let num_elements = (n_rows * n_cols) as f64;
+    let counts_mat = gc_counts.to_array2();
 
     // Find total counts
-    let mut total_count: f64 = counts_mat.sum();
+    let total_count: f64 = counts_mat.sum();
 
     if total_count == 0.0 {
         return Ok(None);
     }
 
-    // Add pseudo-count of 1 (Laplace smoothing)
-    counts_mat += 1.0;
-    total_count += num_elements;
+    // Get counts and value-sums for supported and unsupported cells
+    let stats_by_support_status = stats_by_support_mask(&counts_mat, &ref_support_mask);
 
-    // Get mean coverage to scale by
-    let mean_count: f64 = total_count / (n_rows * n_cols) as f64;
+    // Our assumption is that unsupported bins are impossible to see
+    // when all fragment positions have valid ACGT bases (in the reference genome)
+    // If this is wrong, we need to reconsider these assumptions!
+    if stats_by_support_status.sum_for_unsupported > 0.0 {
+        bail!("Unsupported bins in the count matrix had non-zero coverage. Report please.");
+    }
+
+    // Get mean coverage to scale by (supported cells only)
+    let mean_count: f64 =
+        stats_by_support_status.sum_for_supported / stats_by_support_status.n_supported as f64;
 
     // Normalize the reference bias
-    // Cast to f64 once and add pseudo-count (Laplace smoothing)
-    let ref_counts_f = ref_counts.mapv(|v| 1.0 + v as f64);
+    // Cast to f64 once
+    let ref_counts_f = ref_counts.mapv(|v| v as f64);
     // Row-wise mean-scaling
-    let ref_counts_norm = mean_scale_per_length_array(&ref_counts_f, 1.0, None);
+    let ref_counts_norm = mean_scale_per_length_array(&ref_counts_f, 0.0, Some(ref_support_mask));
 
     // Weighting one or both count distributions
     let (weighted_counts, weighted_ref_counts) = match opt.window_weighting {
@@ -713,16 +753,17 @@ where
     Ok(Some((weighted_counts, weighted_ref_counts)))
 }
 
-fn mean_scale_per_length_array<S>(
+fn mean_scale_per_length_array<S, M>(
     x: &ArrayBase<S, Ix2>,
     pseudo_count: f64,
-    mask: Option<&Array2<bool>>,
+    support_mask: Option<&ArrayBase<M, Ix2>>,
 ) -> Array2<f64>
 where
     S: Data<Elem = f64>,
+    M: Data<Elem = bool>,
 {
     let (n_rows, n_cols) = x.dim();
-    if let Some(m) = mask {
+    if let Some(m) = support_mask {
         assert_eq!(
             m.dim(),
             (n_rows, n_cols),
@@ -735,7 +776,7 @@ where
     let mut out = Array2::zeros((n_rows, n_cols));
 
     for row_idx in 0..n_rows {
-        let (row_sum, valid_count) = if let Some(mask_arr) = mask {
+        let (row_sum, valid_count) = if let Some(mask_arr) = support_mask {
             let mask_row = mask_arr.row(row_idx);
             let mut sum = 0.0;
             let mut count = 0usize;
@@ -763,6 +804,103 @@ where
     }
 
     out
+}
+
+pub struct StatsBySupportMask {
+    pub sum_for_supported: f64,
+    pub sum_for_unsupported: f64,
+    pub n_supported: u64,
+    pub n_unsupported: u64,
+}
+
+/// Get count and value-sums for all supported/unsupported bins.
+pub fn stats_by_support_mask<S, M>(
+    matrix: &ArrayBase<S, Ix2>,
+    support_mask: &ArrayBase<M, Ix2>,
+) -> StatsBySupportMask
+where
+    S: Data<Elem = f64>,
+    M: Data<Elem = bool>,
+{
+    assert_eq!(
+        matrix.dim(),
+        support_mask.dim(),
+        "Mask shape {:?} must match matrix shape {:?}",
+        support_mask.dim(),
+        matrix.dim()
+    );
+
+    let mut total_supported = 0.0;
+    let mut total_unsupported = 0.0;
+    let mut count_supported = 0;
+    let mut count_unsupported = 0;
+
+    Zip::from(matrix)
+        .and(support_mask)
+        .for_each(|value, &is_supported| {
+            if is_supported {
+                total_supported += *value;
+                count_supported += 1;
+            } else {
+                total_unsupported += *value;
+                count_unsupported += 1;
+            }
+        });
+
+    StatsBySupportMask {
+        sum_for_supported: total_supported,
+        sum_for_unsupported: total_unsupported,
+        n_supported: count_supported,
+        n_unsupported: count_unsupported,
+    }
+}
+
+// Overall scaling
+// Elements that are marked as `false` in the usage mask are
+// still scaled but do not contribute to the mean
+fn mean_scale_array<S, M>(
+    x: &ArrayBase<S, Ix2>,
+    support_mask: Option<&ArrayBase<M, Ix2>>,
+) -> Option<Array2<f64>>
+where
+    S: Data<Elem = f64>,
+    M: Data<Elem = bool>,
+{
+    let (n_rows, n_cols) = x.dim();
+    if let Some(m) = support_mask {
+        assert_eq!(
+            m.dim(),
+            (n_rows, n_cols),
+            "Mask shape {:?} must match counts shape {:?}",
+            m.dim(),
+            (n_rows, n_cols)
+        );
+    }
+
+    let mut out = x.to_owned();
+
+    let mean = if let Some(mask) = support_mask {
+        let mut total_val = 0f64;
+        let mut num_elements = 0u64;
+        Zip::from(mask).and(x).for_each(|&use_element, &value| {
+            if use_element {
+                total_val += value;
+                num_elements += 1;
+            }
+        });
+        if num_elements == 0 {
+            return None;
+        }
+        total_val / num_elements as f64
+    } else {
+        x.mean()?
+    };
+
+    if mean == 0.0 {
+        return None;
+    }
+    out /= mean;
+    return Some(out);
 }
 
 /// Average a list of optional `(matrix_a, matrix_b)` pairs independently.
@@ -807,28 +945,6 @@ fn mean_of_arrays(
     Some((sum_a, sum_b))
 }
 
-fn identify_reliable_reference_bins(counts: &Array2<f64>) -> Result<Array2<bool>> {
-    let (n_rows, n_cols) = counts.dim();
-    let mut mask = Array2::from_elem((n_rows, n_cols), true);
-
-    for (row_idx, row) in counts.outer_iter().enumerate() {
-        let row_slice = row.as_slice().expect("reference rows contiguous");
-        let mut stats: Vec<f64> = row_slice.iter().copied().collect();
-
-        let median = median_from_values(&mut stats);
-        let mean = stats.iter().sum::<f64>() / stats.len() as f64;
-        let std_dev = std_deviation_from_mean(&stats, mean);
-
-        for (col_idx, &value) in row_slice.iter().enumerate() {
-            if should_mask_reference_value(value, median, std_dev) {
-                mask[(row_idx, col_idx)] = false;
-            }
-        }
-    }
-
-    Ok(mask)
-}
-
 fn set_masked_entries_to_value(matrix: &mut Array2<f64>, mask: &Array2<bool>, fill_value: f64) {
     Zip::from(matrix).and(mask).for_each(|value, &is_valid| {
         if !is_valid {
@@ -837,40 +953,26 @@ fn set_masked_entries_to_value(matrix: &mut Array2<f64>, mask: &Array2<bool>, fi
     });
 }
 
-fn should_mask_reference_value(value: f64, median: f64, std_dev: f64) -> bool {
-    if median > 0.0 && value <= median * REF_MASK_RELATIVE_MEDIAN_THRESHOLD {
-        return true;
-    }
-    if std_dev > 0.0 && (median - value) >= REF_MASK_STD_MULTIPLIER * std_dev {
-        return true;
-    }
-    false
-}
-
-fn median_from_values(values: &mut [f64]) -> f64 {
-    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-    let len = values.len();
-    let mid = len / 2;
-    if len % 2 == 0 {
-        (values[mid - 1] + values[mid]) / 2.0
-    } else {
-        values[mid]
-    }
-}
-
-fn std_deviation_from_mean(values: &[f64], mean: f64) -> f64 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    let variance = values
-        .iter()
-        .map(|v| {
-            let diff = v - mean;
-            diff * diff
+pub fn build_extreme_gc_support_mask(
+    shape: (usize, usize),
+    extreme_bins_per_side: usize,
+) -> Array2<bool> {
+    let (num_length_bins, num_gc_bins) = shape;
+    let bins_to_mask = extreme_bins_per_side.min(num_gc_bins);
+    let column_is_supported: Vec<bool> = (0..num_gc_bins)
+        .map(|col_idx| {
+            if bins_to_mask == 0 {
+                true
+            } else {
+                let mask_left = col_idx < bins_to_mask;
+                let mask_right = col_idx >= num_gc_bins.saturating_sub(bins_to_mask);
+                !(mask_left || mask_right)
+            }
         })
-        .sum::<f64>()
-        / values.len() as f64;
-    variance.sqrt()
+        .collect();
+    Array2::from_shape_fn((num_length_bins, num_gc_bins), |(_, col_idx)| {
+        column_is_supported[col_idx]
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -1131,7 +1233,7 @@ impl GCCorrectionPackage {
             opt.fragment_lengths.min_fragment_length as u32,
             opt.fragment_lengths.max_fragment_length as u32,
         )?;
-        let gc_edges = compute_bin_edges(gc_bins, opt.gc_min_pct as u32, opt.gc_max_pct as u32)?;
+        let gc_edges = compute_bin_edges(gc_bins, 0, 100)?;
         Ok(Self {
             version,
             end_offset: opt.end_offset as u32,

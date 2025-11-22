@@ -44,6 +44,8 @@ impl FromStr for WindowWeightingSchemes {
 /// Requirements: Please precompute the reference GC bias with `cfdna reference-gc`.
 /// This file can be reused for all samples (aligned to the same assembly).
 ///
+/// The most extreme GC bins get corrections of `1.0` to avoid extreme corrections due to sparsity.
+///
 /// ## Windowing
 ///
 /// Technical GC bias is assumed to be a "global" bias. To control how each region of the genome
@@ -135,6 +137,17 @@ pub struct GCConfig {
         clap(long, default_value = "1.0", value_parser = parse_percentage_within_0_100_f32, help_heading="Binning"))]
     pub min_gc_bin_mass: f32,
 
+    /// Number of extreme GC bins (`--min_gc_bin_mass`) from each side to avoid correcting `[float]`
+    ///
+    /// The most extreme GC fractions are very sparsely observed. This can lead to extreme corrections.
+    /// Set the number of bins from each side where we set the correction weight to 1.0 (no correction).
+    /// The default of 1 should be fine but this can be tuned via visualization of the created
+    /// correction matrix.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "1", value_parser = clap::value_parser!(u8).range(0..10), help_heading="Binning"))]
+    pub num_extreme_gc_bins: u8,
+
     /// Optional BED file(s) with blacklisted regions `[path]`
     ///
     /// Masking: Blacklisted positions are set to 'N' in the reference sequence
@@ -162,25 +175,8 @@ pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
 
-    /// Minimum GC % to consider `[integer]`
-    ///
-    /// Fragments with lower GC % are ignored.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "0", 
-             value_parser = clap::value_parser!(u8).range(0..100), help_heading="Filtering"))]
-    pub gc_min_pct: u8,
-
-    /// Maximum GC % to consider `[integer]`
-    ///
-    /// Fragments with higher GC % are ignored.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "100", 
-             value_parser = clap::value_parser!(u8).range(0..101), help_heading="Filtering"))]
-    pub gc_max_pct: u8,
-
     // TODO: Base this on the original GC paper. Look it up. Perhaps add a reference.
+    // TODO: Need to use this when counting in reference
     /// Number of bases to exclude from each fragment end `[integer]`
     ///
     /// The nucleotides in the fragment ends can reflect biological biases (e.g., DNase activity).
@@ -200,31 +196,6 @@ pub struct GCConfig {
         clap(long, default_value = "10",
              value_parser = clap::value_parser!(u8).range(0..101), help_heading="Minimum ACGT"))]
     pub min_window_acgt_pct: u8,
-
-    /// Minimum **percentage** of ACGT bases in a fragment after blacklist masking and end offsets `[integer]`
-    ///
-    /// Fragments where a lower percentage of bases are ACGT (not blacklisted or 'N') are ignored.
-    /// When specifying `--end-offset`, the ends are excluded before this calculation.
-    ///
-    /// When both `min_acgt_*` arguments are specified, both thresholds must be met. E.g.,
-    /// you may want at least 50% ACGT remaining but also at least 20 bases for a proper
-    /// calculation of GC %. For fragments of size 30bp, 50% is only 15bp, so the 20bp
-    /// absolute threshold kicks in.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "90", group = "min_acgt", 
-             value_parser = clap::value_parser!(u8).range(0..101), help_heading="Minimum ACGT"))]
-    pub min_fragment_acgt_pct: u8,
-
-    /// Minimum **count** of ACGT bases in a fragment after blacklist masking and end offsets `[integer]`
-    ///
-    /// Fragments where fewer bases are ACGT (not blacklisted or 'N') are ignored.
-    /// When specifying `--end-offset`, the ends are excluded before this calculation.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "20", group = "min_acgt", 
-             value_parser = clap::value_parser!(u8).range(0..), help_heading="Minimum ACGT"))]
-    pub min_fragment_acgt_count: u8,
 
     // TODO: specify further when implemented!
     /// Whether to save key intermediate files for inspecting the correction process `[flag]`
@@ -254,14 +225,11 @@ impl GCConfig {
                 min_fragment_length: 20,
                 max_fragment_length: 1000,
             },
-            gc_min_pct: 0,
-            gc_max_pct: 100,
             end_offset: 0,
             min_gc_bin_mass: 1.0,
             min_length_bin_mass: 1.0,
+            num_extreme_gc_bins: 1,
             min_window_acgt_pct: 10,
-            min_fragment_acgt_pct: 90,
-            min_fragment_acgt_count: 20,
             save_intermediates: false,
         }
     }
@@ -310,14 +278,6 @@ impl GCConfig {
         &mut self.fragment_lengths
     }
 
-    pub fn set_gc_min_pct(&mut self, gc_min_pct: u8) {
-        self.gc_min_pct = gc_min_pct;
-    }
-
-    pub fn set_gc_max_pct(&mut self, gc_max_pct: u8) {
-        self.gc_max_pct = gc_max_pct;
-    }
-
     pub fn set_end_offset(&mut self, end_offset: u8) {
         self.end_offset = end_offset;
     }
@@ -330,16 +290,12 @@ impl GCConfig {
         self.min_gc_bin_mass = min_gc_bin_mass;
     }
 
+    pub fn set_num_extreme_gc_bins(&mut self, num_extreme_gc_bins: u8) {
+        self.num_extreme_gc_bins = num_extreme_gc_bins;
+    }
+
     pub fn set_min_window_acgt_pct(&mut self, pct: u8) {
         self.min_window_acgt_pct = pct;
-    }
-
-    pub fn set_min_fragment_acgt_pct(&mut self, pct: u8) {
-        self.min_fragment_acgt_pct = pct;
-    }
-
-    pub fn set_min_fragment_acgt_count(&mut self, count: u8) {
-        self.min_fragment_acgt_count = count;
     }
 
     pub fn set_save_intermediates(&mut self, save_intermediates: bool) {

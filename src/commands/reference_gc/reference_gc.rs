@@ -4,7 +4,7 @@ use crate::{
         gc_bias::counting::{
             GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window, stack_gc_counts,
         },
-        reference_gc::{config::RefGCConfig, interpolation::fill_zero_bins_with_polynomial},
+        reference_gc::{config::RefGCConfig, interpolation::fill_unsupported_bins_with_polynomial},
     },
     shared::{
         bed::load_windows_from_bed,
@@ -16,7 +16,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
-use ndarray::Array2;
+use ndarray::{Array2, Zip};
 use ndarray_npy::write_npy;
 use rand::{SeedableRng, rngs::StdRng};
 use rayon::prelude::*;
@@ -77,14 +77,19 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
     // Prepare per-bin counts and metadata
     let mut all_bins = Vec::new();
     let mut bin_info = Vec::new();
+    let mut total_covered_acgt_positions = 0u64;
 
     println!("Start: Counting per chromosome");
 
     pb.set_position(0);
 
-    let results: Vec<(Vec<GCCounts>, Option<Vec<(String, u64, u64, u64, f64)>>)> = chromosomes
+    let results: Vec<(
+        Vec<GCCounts>,
+        Option<Vec<(String, u64, u64, u64, f64)>>,
+        u64,
+    )> = chromosomes
         .par_iter()
-        .map(|chr| -> Result<(_, _)> {
+        .map(|chr| -> Result<(_, _, _)> {
             let out = process_chrom(
                 &chr,
                 opt,
@@ -105,8 +110,9 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
     println!("Start: Processing counts");
 
     // Collect results (in chromosome order) back into the global vectors
-    for (counts_by_bin, bin_vec) in results {
+    for (counts_by_bin, bin_vec, num_chrom_acgt) in results {
         all_bins.extend(counts_by_bin);
+        total_covered_acgt_positions += num_chrom_acgt;
         if !matches!(window_opt, WindowSpec::Global) {
             bin_info.extend(bin_vec.unwrap());
         }
@@ -114,7 +120,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
 
     // Combine counts, convert to Array2 and interpolate zero-counts
     // Nesting to clean up GCCounts version when no longer needed
-    let mut all_bin_arrays = {
+    let (mut all_bin_arrays, support_mask) = {
         // Convert to single `GCCounts` for global
         // Keep wrapped in vector to simplify writer
         let all_bins = if matches!(window_opt, WindowSpec::Global) {
@@ -123,35 +129,66 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
             all_bins
         };
 
-        if !opt.skip_interpolation {
-            println!("Start: Interpolating missing counts");
-        } else {
-            println!("Start: Converting counts to arrays (skipping interpolation)");
-        }
+        // Convert counts to Array2
+        println!("Start: Converting counts to arrays");
         pb.reset();
         pb.set_length(all_bins.len() as u64);
         pb.set_position(0);
-
-        let all_bin_arrays: Vec<Array2<f64>> = all_bins
+        let mut all_bin_arrays: Vec<Array2<f64>> = all_bins
             .par_iter()
             .map(|gc_counts| -> Result<_> {
-                let mut array = gc_counts.to_array2();
-                if !opt.skip_interpolation {
-                    for mut length_row in array.outer_iter_mut() {
-                        // Rows are contiguous so we can safely borrow a mutable slice for interpolation
-                        let row_slice = length_row
-                            .as_slice_mut()
-                            .expect("GC histogram rows should be contiguous");
-                        fill_zero_bins_with_polynomial(row_slice, 2, 3, 3);
-                    }
-                }
+                let out = gc_counts.to_array2();
                 pb.inc(1);
-                Ok(array)
+                Ok(out)
             })
             .collect::<Result<_>>()?; // short-circuits on the first Err
+        pb.finish_with_message("| Finished array conversion");
+
+        // Create mask of usable count bins BEFORE interpolation
+        // Zero-counted elements are considered impossible
+        // for the combination of GC and fragment lengths when
+        // all positions are valid ACGT bases
+        // NOTE: These are found empirically here but could be calculated theoretically?
+        let mut support_mask = create_usable_mask(
+            all_bin_arrays.as_slice(),
+            total_covered_acgt_positions,
+            1. / (total_covered_acgt_positions as f64 / 1000000. + 1.), // 0 with rounding errors
+        )
+        .expect("usage mask should be created");
+
+        if !opt.skip_interpolation {
+            println!("Start: Interpolating missing counts");
+            pb.reset();
+            pb.set_length(all_bins.len() as u64);
+            pb.set_position(0);
+
+            for array in all_bin_arrays.iter_mut() {
+                debug_assert_eq!(
+                    array.dim(),
+                    support_mask.dim(),
+                    "Support mask and histograms must match shape"
+                );
+                for (row_idx, mut length_row) in array.outer_iter_mut().enumerate() {
+                    // Rows are contiguous so we can safely borrow a mutable slice for interpolation
+                    let row_slice = length_row
+                        .as_slice_mut()
+                        .expect("GC histogram rows should be contiguous");
+                    let mut mask_row = support_mask.row_mut(row_idx);
+                    let mask_slice = mask_row
+                        .as_slice_mut()
+                        .expect("Support mask rows should be contiguous");
+                    fill_unsupported_bins_with_polynomial(
+                        row_slice, mask_slice, 2, 3, 3,
+                        // Do not update mask, we need the raw mask
+                        false,
+                    )?;
+                }
+                pb.inc(1);
+            }
+        }
 
         pb.finish_with_message("| Finished interpolating missing counts");
-        all_bin_arrays
+        (all_bin_arrays, support_mask)
     };
 
     // Sort by original index (when given a bed file)
@@ -171,9 +208,13 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         (bin_info, all_bin_arrays) = paired.into_iter().unzip();
     }
 
+    // Write usage mask to output_dir
+    write_npy(&opt.output_dir.join("ref_support_mask.npy"), &support_mask)
+        .context("Write final fail")?;
+
     // Write final counts to output_dir
     write_npy(
-        &opt.output_dir.join("all_ref_gc_counts.npy"),
+        &opt.output_dir.join("ref_gc_counts.npy"),
         &stack_gc_counts(&all_bin_arrays),
     )
     .context("Write final fail")?;
@@ -192,6 +233,10 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
 
     // Print execution time
     let elapsed = start_time.elapsed();
+    println!(
+        "Total ACGT bases counted at: {}  (may have duplicate positions from overlapping windows)",
+        total_covered_acgt_positions
+    );
     println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
 }
@@ -204,7 +249,11 @@ fn process_chrom(
     // gc_bins: usize,
     blacklist_intervals: &[(u64, u64)],
     start_positions: &[usize],
-) -> anyhow::Result<(Vec<GCCounts>, Option<Vec<(String, u64, u64, u64, f64)>>)> {
+) -> anyhow::Result<(
+    Vec<GCCounts>,
+    Option<Vec<(String, u64, u64, u64, f64)>>,
+    u64,
+)> {
     let mut seq_bytes = read_seq(&opt.ref_genome.ref_2bit, chr)?;
     apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals, 0);
     let chrom_len = seq_bytes.len() as u64;
@@ -249,9 +298,23 @@ fn process_chrom(
         &windows,
         start_positions,
         chrom_len,
-        opt.min_acgt_pct as f32 / 100f32,
-        opt.min_acgt_count as u32,
+        // We only count those where all bases are proper, so non-supported combinations
+        // of GC and fragment lengths are truly 0 (enabling clean interpolation)
+        1.0,
+        1u32,
     );
+
+    // Calculate total number of ACGT positions covered
+    // NOTE: This does not deduplicate positions, so overlaps
+    // count per occurence - but this is okay for normalization
+    let total_acgt_in_chrom = {
+        let mut total_acgt = 0u64;
+        for (start, end, _) in windows.iter() {
+            let acgt = gc_prefixes.acgt[*end as usize] - gc_prefixes.acgt[*start as usize];
+            total_acgt += acgt as u64;
+        }
+        total_acgt
+    };
 
     // TODO: To use this for filtering, we need to know the N-positions as well (we need percentage usable positions)
 
@@ -289,5 +352,51 @@ fn process_chrom(
         None
     };
 
-    Ok((counts_by_bin, bin_info))
+    Ok((counts_by_bin, bin_info, total_acgt_in_chrom))
+}
+
+/// Create mask of usable elements. Elements are usable
+/// when they have a count of at least `threshold_per_mb`
+/// per 1Mb of valid ACGT positions in the selected regions
+/// of the genome.
+///
+/// **NOTE**: This does not consider the number of sampled starts.
+/// The idea is that some elements are almost non-existent
+/// (e.g. 100% GC in an 800bp fragment interval), so no matter
+/// the number of sampled starts they will have almost no counts.
+pub fn create_usable_mask(
+    counts: &[Array2<f64>],
+    num_acgt_positions: u64,
+    threshold_per_mb: f64,
+) -> Option<Array2<bool>> {
+    let global_counts = sum_arrays(counts)?;
+
+    // Need at least a count of `threshold_per_mb` per 1Mb valid positions
+    let threshold = num_acgt_positions as f64 / 1000000 as f64 * threshold_per_mb;
+
+    // Create mask of usable elements
+    let mut mask = Array2::from_elem(global_counts.dim(), true);
+    for ((row, col), &value) in global_counts.indexed_iter() {
+        mask[(row, col)] = value >= threshold;
+    }
+
+    Some(mask)
+}
+
+/// Sum a list of matrices.
+fn sum_arrays(arrays: &[Array2<f64>]) -> Option<Array2<f64>> {
+    let mut iter = arrays.iter();
+
+    let mut sum = iter.next().cloned()?;
+
+    for arr in iter {
+        debug_assert_eq!(
+            sum.dim(),
+            arr.dim(),
+            "All array components must share shape"
+        );
+
+        Zip::from(&mut sum).and(arr).for_each(|s, &v| *s += v);
+    }
+    Some(sum)
 }
