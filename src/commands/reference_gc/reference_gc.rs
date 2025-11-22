@@ -393,7 +393,7 @@ pub fn create_support_mask(counts: &[Array2<f64>]) -> Option<Array2<bool>> {
     // Create mask of usable elements
     let mut mask = Array2::from_elem(global_counts.dim(), true);
     for ((row, col), &value) in global_counts.indexed_iter() {
-        mask[(row, col)] = value >= 0.;
+        mask[(row, col)] = value > 0.;
     }
 
     Some(mask)

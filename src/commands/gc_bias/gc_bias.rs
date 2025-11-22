@@ -264,7 +264,6 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     // Collapse row-mean-scaled reference counts into the length and GC bins
     // We *average* the values at the collapsed indices. For length bin collapsing,
     // we weight the average by the occurence of the lengths in the cfDNA
-    // TODO: Could technically weight these averages by the cfDNA counts?
     let binned_ref_counts = {
         let length_binned = collapse_counts_by_bins(
             &avg_norm_ref_counts,
