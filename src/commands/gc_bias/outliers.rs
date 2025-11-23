@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-/// How to detect outliers in a 1D vector (e.g., one GC row).
+/// How to detect outliers in a 1D vector (e.g., one length row).
 #[derive(Debug, Clone, Copy)]
 pub enum OutlierRule {
     /// No outlier handling.

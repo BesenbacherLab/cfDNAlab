@@ -1,6 +1,6 @@
 use ndarray::array;
 
-use cfdnalab::commands::gc_bias::gc_bias::build_extreme_gc_support_mask;
+use cfdnalab::commands::gc_bias::support_masking::build_extreme_gc_support_mask;
 
 #[test]
 fn masks_extreme_gc_bins_per_side_in_square_matrix() {

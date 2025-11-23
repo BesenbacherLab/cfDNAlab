@@ -1,11 +1,17 @@
 use crate::{
     commands::{
         cli_common::*,
-        gc_bias::counting::{
-            GCCounts, build_gc_prefixes, calculate_gc_bin, count_reference_gc_and_length_by_window,
-            stack_gc_counts,
+        gc_bias::{
+            counting::{
+                GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window,
+                stack_gc_counts,
+            },
+            interpolation::fill_unsupported_bins_with_polynomial,
+            support_masking::{
+                build_theoretical_support_mask, create_support_mask_threshold_per_mb,
+            },
         },
-        reference_gc::{config::RefGCConfig, interpolation::fill_unsupported_bins_with_polynomial},
+        reference_gc::config::RefGCConfig,
     },
     shared::{
         bed::load_windows_from_bed,
@@ -17,7 +23,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
-use ndarray::{Array2, Zip};
+use ndarray::Array2;
 use ndarray_npy::write_npy;
 use rand::{SeedableRng, rngs::StdRng};
 use rayon::prelude::*;
@@ -397,107 +403,4 @@ fn process_chrom(
     };
 
     Ok((counts_by_bin, bin_info, total_acgt_in_chrom))
-}
-
-/// Create mask of supported elements. Elements are usable
-/// when they have a count of at least `threshold_per_mb`
-/// per 1Mb of valid ACGT positions in the selected regions
-/// of the genome.
-///
-/// **NOTE**: This does not consider the number of sampled starts.
-/// The idea is that some elements are almost non-existent
-/// (e.g. 100% GC in an 800bp fragment interval), so no matter
-/// the number of sampled starts they will have almost no counts.
-pub fn create_support_mask_threshold_per_mb(
-    counts: &[Array2<f64>],
-    num_acgt_positions: u64,
-    threshold_per_mb: f64,
-) -> Option<Array2<bool>> {
-    let global_counts = sum_arrays(counts)?;
-
-    // Need at least a count of `threshold_per_mb` per 1Mb valid positions
-    let threshold = num_acgt_positions as f64 / 1000000 as f64 * threshold_per_mb;
-
-    // Create mask of usable elements
-    let mut mask = Array2::from_elem(global_counts.dim(), true);
-    for ((row, col), &value) in global_counts.indexed_iter() {
-        mask[(row, col)] = value >= threshold;
-    }
-
-    Some(mask)
-}
-
-/// Create mask of usable elements. Elements are usable
-/// when they have a non-zero count in any of the windows.
-pub fn create_support_mask(counts: &[Array2<f64>]) -> Option<Array2<bool>> {
-    let global_counts = sum_arrays(counts)?;
-
-    // Create mask of usable elements
-    let mut mask = Array2::from_elem(global_counts.dim(), true);
-    for ((row, col), &value) in global_counts.indexed_iter() {
-        mask[(row, col)] = value > 0.;
-    }
-
-    Some(mask)
-}
-
-pub fn build_theoretical_support_mask(
-    length_min: usize,
-    length_max: usize,
-    gc_min: usize,
-    gc_max: usize,
-) -> Array2<bool> {
-    assert!(
-        length_max >= length_min,
-        "length range must be non-empty ({}..={})",
-        length_min,
-        length_max
-    );
-    assert!(
-        gc_max >= gc_min,
-        "GC bin range must be non-empty ({}..={})",
-        gc_min,
-        gc_max
-    );
-
-    let num_lengths = length_max - length_min + 1;
-    let num_gc_bins = gc_max - gc_min + 1;
-    let mut mask = Array2::from_elem((num_lengths, num_gc_bins), false);
-
-    for length in length_min..=length_max {
-        if length == 0 {
-            continue;
-        }
-        let row_idx = length - length_min;
-        let acgt_count = length as u64;
-        for gc_count in 0..=length {
-            // Use the same integer rounding as the reference-gc tool!
-            let gc_bin = calculate_gc_bin(gc_count as u64, acgt_count) as u64;
-            if gc_bin < gc_min as u64 {
-                continue;
-            }
-            let col_idx = (gc_bin as usize) - gc_min;
-            mask[(row_idx, col_idx)] = true;
-        }
-    }
-
-    mask
-}
-
-/// Sum a list of matrices.
-fn sum_arrays(arrays: &[Array2<f64>]) -> Option<Array2<f64>> {
-    let mut iter = arrays.iter();
-
-    let mut sum = iter.next().cloned()?;
-
-    for arr in iter {
-        debug_assert_eq!(
-            sum.dim(),
-            arr.dim(),
-            "All array components must share shape"
-        );
-
-        Zip::from(&mut sum).and(arr).for_each(|s, &v| *s += v);
-    }
-    Some(sum)
 }

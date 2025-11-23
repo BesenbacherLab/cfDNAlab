@@ -1,4 +1,4 @@
-use cfdnalab::commands::reference_gc::interpolation::{
+use cfdnalab::commands::gc_bias::interpolation::{
     enforce_monotonic_segment, fill_unsupported_bins_with_polynomial,
     fill_zero_bins_with_polynomial,
 };

@@ -3,12 +3,18 @@ use crate::{
         cli_common::*,
         counters::GCCounters,
         gc_bias::{
+            CORRECTION_CLAMP_RANGE, GC_CORRECTION_SCHEMA_VERSION,
+            binning::{CollapseAggregation, bin_greedily_by_mass, collapse_counts_by_bins},
             config::{GCConfig, WindowWeightingSchemes},
             counting::{GCCounts, build_gc_prefixes, get_gc_integer_percentage_for_window},
+            interpolation::fill_unsupported_bins_with_polynomial,
             load_reference_bias::{ReferenceGCData, load_reference_gc_data},
+            package::GCCorrectionPackage,
             smoothing::smoothe_counts_gaussian,
+            support_masking::{
+                build_extreme_gc_support_mask, set_masked_entries_to_value, stats_by_support_mask,
+            },
         },
-        reference_gc::interpolation::fill_unsupported_bins_with_polynomial,
     },
     shared::{
         bam::create_chromosome_reader,
@@ -25,19 +31,11 @@ use crate::{
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
-use ndarray::{Array1, Array2, ArrayBase, ArrayView2, Axis, Data, Ix2, Zip};
-use ndarray_npy::{NpzWriter, write_npy};
+use ndarray::{Array2, ArrayBase, Axis, Data, Ix2, Zip};
+use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{
-    fs::{File, create_dir_all},
-    path::PathBuf,
-    sync::Arc,
-    time::Instant,
-};
-
-const CORRECTION_CLAMP_RANGE: (f64, f64) = (0.1, 10.0);
-const GC_CORRECTION_SCHEMA_VERSION: u32 = 1;
+use std::{fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
 
 pub fn run(opt: &GCConfig) -> Result<()> {
     let start_time = Instant::now();
@@ -820,55 +818,6 @@ where
     out
 }
 
-pub struct StatsBySupportMask {
-    pub sum_for_supported: f64,
-    pub sum_for_unsupported: f64,
-    pub n_supported: u64,
-    pub n_unsupported: u64,
-}
-
-/// Get count and value-sums for all supported/unsupported bins.
-pub fn stats_by_support_mask<S, M>(
-    matrix: &ArrayBase<S, Ix2>,
-    support_mask: &ArrayBase<M, Ix2>,
-) -> StatsBySupportMask
-where
-    S: Data<Elem = f64>,
-    M: Data<Elem = bool>,
-{
-    assert_eq!(
-        matrix.dim(),
-        support_mask.dim(),
-        "Mask shape {:?} must match matrix shape {:?}",
-        support_mask.dim(),
-        matrix.dim()
-    );
-
-    let mut total_supported = 0.0;
-    let mut total_unsupported = 0.0;
-    let mut count_supported = 0;
-    let mut count_unsupported = 0;
-
-    Zip::from(matrix)
-        .and(support_mask)
-        .for_each(|value, &is_supported| {
-            if is_supported {
-                total_supported += *value;
-                count_supported += 1;
-            } else {
-                total_unsupported += *value;
-                count_unsupported += 1;
-            }
-        });
-
-    StatsBySupportMask {
-        sum_for_supported: total_supported,
-        sum_for_unsupported: total_unsupported,
-        n_supported: count_supported,
-        n_unsupported: count_unsupported,
-    }
-}
-
 // Overall scaling
 // Elements that are marked as `false` in the support mask are
 // still scaled but do not contribute to the mean
@@ -959,230 +908,6 @@ fn mean_of_arrays(
     Some((sum_a, sum_b))
 }
 
-fn set_masked_entries_to_value(matrix: &mut Array2<f64>, mask: &Array2<bool>, fill_value: f64) {
-    Zip::from(matrix).and(mask).for_each(|value, &is_valid| {
-        if !is_valid {
-            *value = fill_value;
-        }
-    });
-}
-
-pub fn build_extreme_gc_support_mask(
-    shape: (usize, usize),
-    extreme_bins_per_side: usize,
-) -> Array2<bool> {
-    let (num_length_bins, num_gc_bins) = shape;
-    let bins_to_mask = extreme_bins_per_side.min(num_gc_bins);
-    let column_is_supported: Vec<bool> = (0..num_gc_bins)
-        .map(|col_idx| {
-            if bins_to_mask == 0 {
-                true
-            } else {
-                let mask_left = col_idx < bins_to_mask;
-                let mask_right = col_idx >= num_gc_bins.saturating_sub(bins_to_mask);
-                !(mask_left || mask_right)
-            }
-        })
-        .collect();
-    Array2::from_shape_fn((num_length_bins, num_gc_bins), |(_, col_idx)| {
-        column_is_supported[col_idx]
-    })
-}
-
-#[derive(Debug, Clone)]
-pub struct BinnedAxis {
-    pub index_to_bin: FxHashMap<usize, usize>,
-    pub bin_to_indices: FxHashMap<usize, Vec<usize>>,
-    pub num_bins: usize,
-}
-
-pub enum CollapseAggregation {
-    Sum,
-    Mean,
-}
-
-pub fn bin_greedily_by_mass<S>(
-    counts: &ArrayBase<S, Ix2>,
-    axis: usize,
-    min_mass_pct: f64,
-) -> Result<BinnedAxis>
-where
-    S: Data<Elem = f64>,
-{
-    ensure!(axis < 2, "axis must be 0 or 1");
-    ensure!(
-        (0.0..=100.0).contains(&min_mass_pct),
-        "min_mass_pct must be within 0..=100"
-    );
-
-    // Sum along the other axis to get per-index mass
-    let masses = match axis {
-        0 => counts.sum_axis(Axis(1)),
-        _ => counts.sum_axis(Axis(0)),
-    };
-
-    let total_mass: f64 = masses.iter().sum();
-    if total_mass == 0.0 {
-        return Ok(BinnedAxis {
-            index_to_bin: FxHashMap::default(),
-            bin_to_indices: FxHashMap::default(),
-            num_bins: 0,
-        });
-    }
-
-    let min_mass = total_mass * (min_mass_pct / 100.0);
-    let mut bins: Vec<Vec<usize>> = Vec::new();
-    let mut running_mass = 0.0;
-    let mut current_bin_indices: Vec<usize> = Vec::new();
-
-    for (idx, &mass) in masses.iter().enumerate() {
-        running_mass += mass;
-        current_bin_indices.push(idx);
-
-        if running_mass >= min_mass {
-            bins.push(current_bin_indices.clone());
-            current_bin_indices.clear();
-            running_mass = 0.0;
-        }
-    }
-
-    if !current_bin_indices.is_empty() {
-        if bins.is_empty() {
-            bins.push(current_bin_indices);
-        } else {
-            bins.last_mut().unwrap().extend(current_bin_indices);
-        }
-    }
-
-    let mut index_to_bin = FxHashMap::default();
-    let mut bin_to_indices = FxHashMap::default();
-
-    for (bin_idx, indices) in bins.iter().enumerate() {
-        bin_to_indices.insert(bin_idx, indices.clone());
-        for &idx in indices {
-            index_to_bin.insert(idx, bin_idx);
-        }
-    }
-
-    let num_bins = bin_to_indices.len();
-
-    Ok(BinnedAxis {
-        index_to_bin,
-        bin_to_indices,
-        num_bins,
-    })
-}
-
-pub fn collapse_counts_by_bins<S>(
-    counts: &ArrayBase<S, Ix2>,
-    axis: usize,
-    bins: &BinnedAxis,
-    agg: CollapseAggregation,
-    mass_counts: Option<ArrayView2<'_, f64>>,
-) -> Result<Array2<f64>>
-where
-    S: Data<Elem = f64>,
-{
-    ensure!(axis < 2, "axis must be 0 or 1");
-    if let Some(mass) = mass_counts.as_ref() {
-        ensure!(
-            mass.dim() == counts.dim(),
-            "mass_counts must have same shape as counts"
-        );
-        if matches!(agg, CollapseAggregation::Sum) {
-            bail!("mass_counts provided for Sum aggregation; weighted sums are unsupported");
-        }
-    }
-
-    let (n_rows, n_cols) = counts.dim();
-    match axis {
-        0 => {
-            let weights = mass_counts.as_ref().map(|m| m.sum_axis(Axis(1)));
-            let mut out = Array2::<f64>::zeros((bins.num_bins, n_cols));
-            for bin_idx in 0..bins.num_bins {
-                if let Some(indices) = bins.bin_to_indices.get(&bin_idx) {
-                    let mut denom = 0.0;
-                    let mut count = 0usize;
-                    for &row_idx in indices {
-                        let source = counts.row(row_idx);
-                        let mut dest = out.row_mut(bin_idx);
-                        match agg {
-                            CollapseAggregation::Sum => {
-                                dest += &source;
-                            }
-                            CollapseAggregation::Mean => {
-                                if let Some(ref weights_vec) = weights {
-                                    let weight = weights_vec[row_idx];
-                                    denom += weight;
-                                    dest.scaled_add(weight, &source);
-                                } else {
-                                    dest += &source;
-                                    count += 1;
-                                }
-                            }
-                        }
-                    }
-                    if matches!(agg, CollapseAggregation::Mean) {
-                        let mut dest = out.row_mut(bin_idx);
-                        if weights.is_some() {
-                            if denom > 0.0 {
-                                dest /= denom;
-                            } else if !indices.is_empty() {
-                                dest /= indices.len() as f64;
-                            }
-                        } else if count > 0 {
-                            dest /= count as f64;
-                        }
-                    }
-                }
-            }
-            Ok(out)
-        }
-        _ => {
-            let weights = mass_counts.as_ref().map(|m| m.sum_axis(Axis(0)));
-            let mut out = Array2::<f64>::zeros((n_rows, bins.num_bins));
-            for bin_idx in 0..bins.num_bins {
-                if let Some(indices) = bins.bin_to_indices.get(&bin_idx) {
-                    let mut denom = 0.0;
-                    let mut count = 0usize;
-                    for &col_idx in indices {
-                        let source = counts.column(col_idx);
-                        let mut dest = out.column_mut(bin_idx);
-                        match agg {
-                            CollapseAggregation::Sum => {
-                                dest += &source;
-                            }
-                            CollapseAggregation::Mean => {
-                                if let Some(ref weights_vec) = weights {
-                                    let weight = weights_vec[col_idx];
-                                    denom += weight;
-                                    dest.scaled_add(weight, &source);
-                                } else {
-                                    dest += &source;
-                                    count += 1;
-                                }
-                            }
-                        }
-                    }
-                    if matches!(agg, CollapseAggregation::Mean) {
-                        let mut dest = out.column_mut(bin_idx);
-                        if let Some(_) = weights {
-                            if denom > 0.0 {
-                                dest /= denom;
-                            } else if !indices.is_empty() {
-                                dest /= indices.len() as f64;
-                            }
-                        } else if count > 0 {
-                            dest /= count as f64;
-                        }
-                    }
-                }
-            }
-            Ok(out)
-        }
-    }
-}
-
 pub struct IntermediateFileSaver {
     pub save_intermediates: bool,
     pub out_dir: PathBuf,
@@ -1224,70 +949,4 @@ impl IntermediateFileSaver {
         }
         Ok(())
     }
-}
-
-pub struct GCCorrectionPackage {
-    pub version: u32,
-    pub end_offset: u32,
-    pub length_edges: Vec<u32>,
-    pub gc_edges: Vec<u32>,
-    pub correction_matrix: Array2<f64>,
-}
-
-impl GCCorrectionPackage {
-    pub fn from_components(
-        version: u32,
-        length_bins: &BinnedAxis,
-        gc_bins: &BinnedAxis,
-        correction_matrix: Array2<f64>,
-        opt: &GCConfig,
-    ) -> Result<Self> {
-        let length_edges = compute_bin_edges(
-            length_bins,
-            opt.fragment_lengths.min_fragment_length as u32,
-            opt.fragment_lengths.max_fragment_length as u32,
-        )?;
-        let gc_edges = compute_bin_edges(gc_bins, 0, 100)?;
-        Ok(Self {
-            version,
-            end_offset: opt.end_offset as u32,
-            length_edges,
-            gc_edges,
-            correction_matrix,
-        })
-    }
-
-    pub fn write_npz<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
-        let file = File::create(path)?;
-        let mut npz = NpzWriter::new(file);
-        npz.add_array("correction_matrix", &self.correction_matrix)?;
-        npz.add_array("length_edges", &Array1::from(self.length_edges.clone()))?;
-        npz.add_array("gc_edges", &Array1::from(self.gc_edges.clone()))?;
-        npz.add_array("version", &Array1::from(vec![self.version]))?;
-        npz.add_array("end_offset", &Array1::from(vec![self.end_offset]))?;
-        npz.finish()?;
-        Ok(())
-    }
-}
-
-fn compute_bin_edges(bins: &BinnedAxis, start_value: u32, max_value: u32) -> Result<Vec<u32>> {
-    ensure!(
-        bins.num_bins > 0,
-        "Bin definition must contain at least one bin"
-    );
-    let mut edges = Vec::with_capacity(bins.num_bins + 1);
-    for bin_idx in 0..bins.num_bins {
-        let indices = bins
-            .bin_to_indices
-            .get(&bin_idx)
-            .context("Missing indices for bin")?;
-        let min_idx = indices
-            .iter()
-            .min()
-            .copied()
-            .context("Bin indices cannot be empty")?;
-        edges.push(start_value + min_idx as u32);
-    }
-    edges.push(max_value);
-    Ok(edges)
 }

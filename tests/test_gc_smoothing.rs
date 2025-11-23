@@ -2,7 +2,7 @@ use fxhash::FxHashMap;
 use ndarray::{Array2, array};
 
 use cfdnalab::commands::gc_bias::{
-    gc_bias::{BinnedAxis, CollapseAggregation, collapse_counts_by_bins},
+    binning::{BinnedAxis, CollapseAggregation, collapse_counts_by_bins},
     smoothing::{fit_sigma_for_targets, smoothe_counts_gaussian},
 };
 
@@ -254,7 +254,7 @@ mod collapse_bins_tests {
 
 mod binning_tests {
     use super::*;
-    use cfdnalab::commands::gc_bias::gc_bias::bin_greedily_by_mass;
+    use cfdnalab::commands::gc_bias::binning::bin_greedily_by_mass;
 
     #[test]
     fn bins_all_mass_into_single_bin_when_threshold_is_high() {
