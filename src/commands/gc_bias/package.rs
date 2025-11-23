@@ -8,9 +8,10 @@ use ndarray::{Array1, Array2};
 use ndarray_npy::{NpzReader, NpzWriter};
 use std::fs::File;
 
+#[derive(Clone, Debug)]
 pub struct GCCorrectionPackage {
     pub version: u32,
-    pub end_offset: u32,
+    pub end_offset: u64,
     pub length_edges: Vec<u32>,
     pub gc_edges: Vec<u32>,
     pub correction_matrix: Array2<f64>,
@@ -32,7 +33,7 @@ impl GCCorrectionPackage {
         let gc_edges = compute_bin_edges(gc_bins, 0, 100)?;
         Ok(Self {
             version,
-            end_offset: opt.end_offset as u32,
+            end_offset: opt.end_offset as u64,
             length_edges,
             gc_edges,
             correction_matrix,
@@ -60,7 +61,7 @@ impl GCCorrectionPackage {
         let length_edges_arr: Array1<u32> = reader.by_name("length_edges")?;
         let gc_edges_arr: Array1<u32> = reader.by_name("gc_edges")?;
         let version_arr: Array1<u32> = reader.by_name("version")?;
-        let end_offset_arr: Array1<u32> = reader.by_name("end_offset")?;
+        let end_offset_arr: Array1<u64> = reader.by_name("end_offset")?;
 
         let version = *version_arr
             .iter()

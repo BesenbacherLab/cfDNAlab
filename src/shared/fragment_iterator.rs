@@ -190,6 +190,12 @@ where
     }
 }
 
+// TODO: In tools like fcoverage where we use extra fetch halos, we might end up
+// counting (stats counters) fragments that *fall just outside the tile cores*
+// in multiple tiles! That means we cannot use the stats to say how many reads
+// and fragments were actually present (almost but not completely)
+// We should look into fixing this (although low priority)
+
 impl<I, P, R, F> Iterator for PairingAdapter<I, P, R, F>
 where
     I: Iterator<Item = Result<InputItem<F>>>,

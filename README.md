@@ -233,6 +233,7 @@ cfdna wps-peaks --bam $BAM --output-dir $OUT/wps_peaks_statistics_per_5mb --by-s
     - Add GC correction tools and implementations.
     - Allow input BED files to be compressed.
     - Check / optimize RAM usage in `cfdna coverage-weights`.
+    - Fix double-counting of reads and fragments in stats counters around tile edges (fetch halo-related)
 
 ---
 

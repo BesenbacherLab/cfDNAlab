@@ -10,12 +10,17 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::{
     emit_bedgraph_runs, emit_windowed_runs, write_final_row,
 };
+use crate::commands::gc_bias::correct::GCCorrector;
+use crate::commands::gc_bias::counting::build_gc_prefixes;
+use crate::commands::gc_bias::package::GCCorrectionPackage;
+use crate::shared::blacklist::apply_blacklist_mask_to_seq;
 use crate::shared::coverage::Coverage;
 use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment::segment_fragment::FragmentWithSegments;
 use crate::shared::fragment_iterator::fragments_with_segments_from_bam;
 use crate::shared::read::default_include_read;
+use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
 use crate::shared::tiled_run::{
     Tile, TileMode, TileWindowSpan, build_tiles, make_temp_dir, overlapping_windows_for_tile,
@@ -112,6 +117,14 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     }
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
         load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
+
+    // Load GC correction package if specified
+    let gc_corrector = if let Some(gc_file) = &opt.gc.gc_file {
+        let package = GCCorrectionPackage::from_file(gc_file)?;
+        Some(GCCorrector::from_package(&package)?)
+    } else {
+        None
+    };
 
     // Decide mode once
     let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
@@ -328,6 +341,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
                 tile_span.as_ref(),
                 blacklist_chr,
                 scaling_chr,
+                gc_corrector.clone(), // Quite small memory footprint
                 mode,
                 decimals_to_use,
             )?;
@@ -528,12 +542,31 @@ fn process_tile(
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_chr: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
+    gc_corrector_opt: Option<GCCorrector>,
     mode: TileMode,
     decimals: i32,
 ) -> Result<FCoverageCounters> {
     // Open a fresh BAM reader for this thread
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
     debug_assert!(_tid_check == tile.tid as u32);
+
+    let gc_prefixes_opt = if gc_corrector_opt.is_some() {
+        let ref_2bit = opt
+            .ref_2bit
+            .as_ref()
+            .expect("When GC correction is specified, --ref-2bit must also be specified");
+        let mut seq_bytes = read_seq_in_range(
+            &ref_2bit,
+            &tile.chr,
+            // NOTE: Need for full fetch span to get GC of overlapping fragments!
+            (tile.fetch_start as usize)..(tile.fetch_end as usize),
+        )?;
+        apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_chr, 0);
+
+        Some(build_gc_prefixes(&seq_bytes))
+    } else {
+        None
+    };
 
     // Counters
     let mut counter = FCoverageCounters::default();
@@ -578,12 +611,54 @@ fn process_tile(
     .with_local_counters();
 
     // Iterate fragments and add coverage
-    for fragment_res in iter.by_ref() {
-        let fragment = fragment_res.context("reading fragment")?;
-        counter.base.counted_fragments += 1;
+    // Separate branches for with/without GC correction
+    if let Some(gc_corrector) = gc_corrector_opt {
+        let gc_prefixes =
+            gc_prefixes_opt.expect("When GC correction is enabled, the gc_prefixes should be set");
+        let fetch_start = tile.fetch_start;
+        let fetch_end = tile.fetch_end;
+        for fragment_res in iter.by_ref() {
+            let fragment = fragment_res.context("reading fragment")?;
 
-        // Clip and add to tile core coverage (segments respected)
-        add_fragment_clipped_to_core(&mut cp, &fragment, 1.0, tile.core_start, tile.core_end)?;
+            if fragment.start < fetch_start || fragment.end > fetch_end {
+                // Fragment won't overlap the tile core (assuming correct max_fragment_length halo!)
+                // We don't count fragment that do not overlap the core in the counter
+                // as it wouldn't be included in the other counters
+                // TODO: This is not actually true right now, local counters should only count core-overlapping fragments to avoid double counting!
+                continue;
+            }
+
+            let rel_start = (fragment.start - fetch_start) as u64;
+            let rel_end = (fragment.end - fetch_start) as u64;
+
+            let weight = if let Some(weight) =
+                gc_corrector.correct_fragment(rel_start, rel_end, &gc_prefixes)?
+            {
+                weight
+            } else {
+                counter.gc_excl_fragments += 1;
+                continue;
+            };
+
+            counter.base.counted_fragments += 1;
+
+            // Clip and add to tile core coverage (segments respected)
+            add_fragment_clipped_to_core(
+                &mut cp,
+                &fragment,
+                weight as f32,
+                tile.core_start,
+                tile.core_end,
+            )?;
+        }
+    } else {
+        for fragment_res in iter.by_ref() {
+            let fragment = fragment_res.context("reading fragment")?;
+            counter.base.counted_fragments += 1;
+
+            // Clip and add to tile core coverage (segments respected)
+            add_fragment_clipped_to_core(&mut cp, &fragment, 1.0, tile.core_start, tile.core_end)?;
+        }
     }
 
     // Finalize coverage

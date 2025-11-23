@@ -217,3 +217,55 @@ pub fn compute_bin_edges(bins: &BinnedAxis, start_value: u32, max_value: u32) ->
     edges.push(max_value);
     Ok(edges)
 }
+
+pub fn bins_from_edges(edges: &[u32]) -> Result<BinnedAxis> {
+    ensure!(
+        edges.len() >= 2,
+        "Bin edges must contain at least a start and end entry"
+    );
+    let mut index_to_bin = FxHashMap::default();
+    let mut bin_to_indices = FxHashMap::default();
+    let base = edges[0];
+
+    for (bin_idx, window) in edges.windows(2).enumerate() {
+        let edge_start = window[0];
+        let edge_end = window[1];
+        ensure!(
+            edge_start >= base,
+            "Edge values must be >= the first edge ({}). Found {}",
+            base,
+            edge_start
+        );
+        ensure!(
+            edge_end >= edge_start,
+            "Bin edges must be non-decreasing. Found {} then {}",
+            edge_start,
+            edge_end
+        );
+        let start_idx = (edge_start - base) as usize;
+        let mut end_idx = (edge_end - base) as usize;
+        let is_last_bin = bin_idx == edges.len() - 2;
+        if is_last_bin {
+            // Last edge is inclusive, so add one to get the exclusive bound.
+            end_idx += 1;
+        }
+        ensure!(
+            end_idx > start_idx,
+            "Edge interval [{}, {}{} should contain at least one value",
+            edge_start,
+            edge_end,
+            if is_last_bin { "]" } else { ")" }
+        );
+        let indices: Vec<usize> = (start_idx..end_idx).collect();
+        bin_to_indices.insert(bin_idx, indices.clone());
+        for idx in indices {
+            index_to_bin.insert(idx, bin_idx);
+        }
+    }
+
+    Ok(BinnedAxis {
+        index_to_bin,
+        bin_to_indices,
+        num_bins: edges.len() - 1,
+    })
+}

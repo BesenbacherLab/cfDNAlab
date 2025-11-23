@@ -1,5 +1,6 @@
 pub mod binning;
 pub mod config;
+pub mod correct;
 pub mod counting;
 pub mod gc_bias;
 pub mod interpolation;

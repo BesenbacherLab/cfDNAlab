@@ -69,8 +69,10 @@ pub struct Ref2BitRequiredArgs {
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone)]
-pub struct Ref2BitOptionalArgs {
-    /// 2bit reference genome file [path]
+pub struct Ref2BitOptionalForGCArgs {
+    /// Optional 2bit reference genome file [path]
+    ///
+    /// NOTE: Required for GC correction, otherwise ignored.
     ///
     /// E.g., "hg38.2bit" from UCSC ( https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/hg38.2bit ).
     #[cfg_attr(
@@ -83,7 +85,7 @@ pub struct Ref2BitOptionalArgs {
             help_heading = "Core"
         )
     )]
-    pub ref_2bit: PathBuf,
+    pub ref_2bit: Option<PathBuf>,
 }
 
 /* Min/Max fragment lengths */
@@ -363,6 +365,21 @@ pub struct ScaleGenomeArgs {
         clap(long, value_parser, help_heading = "Normalization")
     )]
     pub scaling_factors: Option<PathBuf>,
+}
+
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Debug, Clone, Default)]
+pub struct ApplyGCArgs {
+    /// Optional path to GC correction file made from the same BAM file with `gc-bias` `[path]`
+    ///
+    /// The file is usually called `gc_bias_correction.npz`.
+    ///
+    /// **NOTE**: Requires specifying the reference genome 2bit file as well.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, value_parser, help_heading = "GC Correction")
+    )]
+    pub gc_file: Option<PathBuf>,
 }
 
 // TODO: Is "nearest" clear enough in all usecases?

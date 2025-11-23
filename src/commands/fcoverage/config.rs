@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::commands::cli_common::ScaleGenomeArgs;
+use crate::commands::cli_common::{ApplyGCArgs, ScaleGenomeArgs};
 use crate::commands::cli_common::{ChromosomeArgs, FragmentLengthArgs, IOCArgs, WindowsArgs};
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 
@@ -153,11 +153,26 @@ pub struct FCoverageConfig {
     #[cfg_attr(
         feature = "cli", clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading = "Filtering"))]
     pub blacklist: Option<Vec<PathBuf>>,
-    // #[cfg_attr(feature = "cli", clap(flatten))]
-    // gc: GCArgs,
 
-    // #[cfg_attr(feature = "cli", clap(flatten))]
-    // two_bit: TwoBitArgs,
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub gc: ApplyGCArgs,
+
+    /// Optional 2bit reference genome file [path]
+    ///
+    /// NOTE: Required for GC correction, otherwise ignored.
+    ///
+    /// E.g., "hg38.2bit" from UCSC ( https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/hg38.2bit ).
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            short = 'r',
+            long,
+            value_parser,
+            required = false,
+            help_heading = "GC Correction"
+        )
+    )]
+    pub ref_2bit: Option<PathBuf>,
 }
 
 impl FCoverageConfig {
@@ -180,6 +195,8 @@ impl FCoverageConfig {
             min_mapq: 30,
             require_proper_pair: false,
             blacklist: None,
+            gc: ApplyGCArgs { gc_file: None },
+            ref_2bit: None,
         }
     }
 
@@ -225,5 +242,13 @@ impl FCoverageConfig {
 
     pub fn set_scale_genome(&mut self, scale: ScaleGenomeArgs) {
         self.scale_genome = scale;
+    }
+
+    pub fn set_gc(&mut self, gc: ApplyGCArgs) {
+        self.gc = gc;
+    }
+
+    pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
+        self.ref_2bit = ref_2bit;
     }
 }
