@@ -31,7 +31,7 @@ use crate::{
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
-use ndarray::{Array2, ArrayBase, Axis, Data, Ix2, Zip};
+use ndarray::{Array2, ArrayBase, Axis, Data, DataMut, Ix2, Zip};
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
@@ -351,7 +351,14 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         }
 
         // Sanity clamp of corrections
-        norm_correction_matrix.clamp(CORRECTION_CLAMP_RANGE.0, CORRECTION_CLAMP_RANGE.1)
+        norm_correction_matrix =
+            norm_correction_matrix.clamp(CORRECTION_CLAMP_RANGE.0, CORRECTION_CLAMP_RANGE.1);
+
+        // Make correction factors multipliers by inverting elements to 1 / x
+        // Zeros remain 0s
+        invert_elementwise_with_zeros_inplace(&mut norm_correction_matrix);
+
+        norm_correction_matrix
     };
 
     // Save reusable correction package with metadata for downstream commands
@@ -906,6 +913,14 @@ fn mean_of_arrays(
     sum_b /= factor;
 
     Some((sum_a, sum_b))
+}
+
+/// Invert elements in an array (x) to `1 / x`, keeping 0s as 0.
+fn invert_elementwise_with_zeros_inplace<S>(x: &mut ArrayBase<S, Ix2>)
+where
+    S: DataMut<Elem = f64>,
+{
+    x.mapv_inplace(|v| if v == 0.0 { 0.0 } else { 1.0 / v });
 }
 
 pub struct IntermediateFileSaver {
