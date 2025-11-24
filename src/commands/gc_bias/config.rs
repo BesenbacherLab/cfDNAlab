@@ -37,14 +37,21 @@ impl FromStr for WindowWeightingSchemes {
 // TODO: Try excluding the first N bases (both ends) from GC fraction calculation to avoid correcting "biochemical cut bias" - the bias we care about is "regional bias"
 // Perhaps do an "end-proximal base composition (p≈1–10) bias" experiment to show how many bases to cut off in ends
 
-/// Count fragments per GC fraction and fragment length in a BAM-file.
+/// Calculate a multiplicative GC correction matrix based on the GC fraction and length of fragments in a BAM-file.
 ///
-/// Fragment length is defined as `end(reverse) - start(forward)`.
+/// The observed distribution of cfDNA fragments is corrected to a precomputed reference bias.
 ///
 /// Requirements: Please precompute the reference GC bias with `cfdna reference-gc`.
 /// This file can be reused for all samples (aligned to the same assembly).
 ///
 /// The most extreme GC bins get corrections of `1.0` to avoid extreme corrections due to sparsity.
+///
+/// Combinations of GC fractions and fragment lengths that are either theoretically unobservable
+/// or *very* rarely observed in the *reference genome* are interpolated from surrounding counts.
+/// Other combinations with zero counts in the *cfDNA* remains zero in the correction matrix.
+/// The final correction matrix thus works for all possible GC x Length combinations.
+///
+/// Fragment length is defined as `end(reverse) - start(forward)`.
 ///
 /// ## Windowing
 ///
@@ -53,6 +60,8 @@ impl FromStr for WindowWeightingSchemes {
 /// we can calculate the bias in genomic windows and combine them via (weighted) averaging.
 ///
 /// The windows are taken from the reference GC bias file from `cfdna reference-gc`.
+///
+/// The output of `cfdna gc-bias` is always a 2D correction matrix.
 ///
 /// ## Always-on exclusion criteria
 ///
@@ -94,7 +103,7 @@ pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub window_assignment: AssignToWindowArgs,
 
-    /// How to weight the windows when averaging the windows `[valid-positions|coverage|equal]`
+    /// How to weight the windows when averaging them `[coverage|valid-positions|equal]`
     ///
     /// One of:
     ///

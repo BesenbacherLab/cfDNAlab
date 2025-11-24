@@ -370,7 +370,7 @@ pub struct ScaleGenomeArgs {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
 pub struct ApplyGCArgs {
-    /// Optional path to GC correction file made from the same BAM file with `gc-bias` `[path]`
+    /// Optional path to GC correction file *made from the same BAM file* with `gc-bias` `[path]`
     ///
     /// The file is usually called `gc_bias_correction.npz`.
     ///

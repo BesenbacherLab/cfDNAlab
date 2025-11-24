@@ -29,6 +29,14 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 ///
 /// Positions in blacklisted regions are set to `f32::NaN` (and thus not included in sums or averages).
 ///
+/// ## GC correction
+/// 
+/// Weight the contribution of each fragment by its length and GC content, using a precomputed
+/// correction matrix (`cfdna gc-bias`). This reduces the global GC bias in the coverage,
+/// which is a common technically-induced bias. 
+/// 
+/// The GC correction matrix should be calculated from the same BAM file, as the bias is sample-specific.
+/// 
 /// ## Temporary files
 ///
 /// We write temporary files to a `<output-dir>/tmp.<output-prefix>.<random>` directory to reduce memory.
