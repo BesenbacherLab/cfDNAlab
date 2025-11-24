@@ -348,6 +348,9 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     println!();
     println!("Statistics");
     println!("----------");
+    println!(
+        "  Note: A few reads/fragments may be counted twice in the statistics (only) around the parallelization tiles."
+    );
     let elapsed = start_time.elapsed();
     println!("  Total reads: {}", total_counter.base.total_reads);
     println!(

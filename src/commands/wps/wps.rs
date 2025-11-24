@@ -558,6 +558,9 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     let elapsed = start_time.elapsed();
     println!("  Total reads: {}", global_counter.base.total_reads);
     println!(
+        "  Note: A few reads/fragments may be counted twice in the statistics (only) around the parallelization tiles."
+    );
+    println!(
         "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
         global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
         (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64

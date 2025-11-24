@@ -241,6 +241,9 @@ pub fn run(opt: &ProfileGroupsConfig) -> Result<()> {
     println!("");
     println!("Statistics");
     println!("----------");
+    println!(
+        "  Note: A few reads/fragments may be counted twice in the statistics (only) around the parallelization tiles."
+    );
 
     // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
