@@ -322,6 +322,8 @@ fn process_chrom(
         }
     };
 
+    let correct_gc = opt.gc.gc_file.is_some();
+
     // Iterate fragments
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
@@ -358,6 +360,10 @@ fn process_chrom(
         };
 
         let gc_weight = get_gc_weight(&fragment)?;
+        if correct_gc && gc_weight.is_none() {
+            counter.gc_excl_fragments += 1;
+            continue;
+        }
 
         // Find all overlapping scaling-factor bins
         // And count up the weight
