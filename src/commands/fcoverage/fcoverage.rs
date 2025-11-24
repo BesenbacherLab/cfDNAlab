@@ -625,9 +625,7 @@ fn process_tile(
 
             if fragment.start < fetch_start || fragment.end > fetch_end {
                 // Fragment won't overlap the tile core (assuming correct max_fragment_length halo!)
-                // We don't count fragment that do not overlap the core in the counter
-                // as it wouldn't be included in the other counters
-                // TODO: This is not actually true right now, local counters should only count core-overlapping fragments to avoid double counting!
+                // Note that more fragments (smaller than max_fragment_length) could be outside the tiles
                 continue;
             }
 
@@ -643,24 +641,35 @@ fn process_tile(
                 continue;
             };
 
-            counter.base.counted_fragments += 1;
-
             // Clip and add to tile core coverage (segments respected)
-            add_fragment_clipped_to_core(
+            let was_counted = add_fragment_clipped_to_core(
                 &mut cp,
                 &fragment,
                 weight as f32,
                 tile.core_start,
                 tile.core_end,
             )?;
+
+            if was_counted {
+                counter.base.counted_fragments += 1;
+            }
         }
     } else {
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
-            counter.base.counted_fragments += 1;
 
             // Clip and add to tile core coverage (segments respected)
-            add_fragment_clipped_to_core(&mut cp, &fragment, 1.0, tile.core_start, tile.core_end)?;
+            let was_counted = add_fragment_clipped_to_core(
+                &mut cp,
+                &fragment,
+                1.0,
+                tile.core_start,
+                tile.core_end,
+            )?;
+
+            if was_counted {
+                counter.base.counted_fragments += 1;
+            }
         }
     }
 
@@ -1026,7 +1035,7 @@ fn add_clipped_blacklist_to_cp(
 /// - `core_end`: Exclusive end of the tile core in absolute coordinates.
 ///
 /// # Returns
-/// `Ok(())` when the contribution is applied successfully, or an error bubbling from the coverage
+/// `Ok(bool)` when the contribution is applied successfully, or an error bubbling from the coverage
 /// accumulator.
 #[inline]
 pub fn add_fragment_clipped_to_core(
@@ -1035,8 +1044,9 @@ pub fn add_fragment_clipped_to_core(
     weight: f32,
     core_start: u32,
     core_end: u32,
-) -> Result<()> {
+) -> Result<bool> {
     // Use explicit segments if present
+    let mut counted = false;
     if let Some(segments) = &fragment.segments {
         for &(seg_start_abs, seg_end_abs) in segments {
             let s = seg_start_abs.max(core_start);
@@ -1050,6 +1060,7 @@ pub fn add_fragment_clipped_to_core(
                     end: e - core_start,
                 };
                 cp.add_fragment_weighted(local, weight)?;
+                counted = true;
             }
         }
     } else {
@@ -1064,8 +1075,10 @@ pub fn add_fragment_clipped_to_core(
                 start: s - core_start,
                 end: e - core_start,
             };
+
             cp.add_fragment_weighted(local, weight)?;
+            counted = true;
         }
     }
-    Ok(())
+    Ok(counted)
 }
