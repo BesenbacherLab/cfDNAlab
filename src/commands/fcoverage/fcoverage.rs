@@ -129,7 +129,8 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     // Decide mode once
     let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
     let masked = opt.blacklist.is_some();
-    let has_scaling = opt.scale_genome.scaling_factors.is_some();
+    let has_scaling_or_correction =
+        opt.scale_genome.scaling_factors.is_some() || opt.gc.gc_file.is_some();
 
     // Some actions cannot be used with `--by-size`
     if matches!(window_opt, WindowSpec::Size(_))
@@ -185,7 +186,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
             CoverageWindowAction::Average | CoverageWindowAction::Total => opt.decimals as i32,
             CoverageWindowAction::OnlyIncludeThesePositionsUnique
             | CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
-                if has_scaling {
+                if has_scaling_or_correction {
                     opt.decimals as i32
                 } else {
                     0
@@ -193,7 +194,11 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
             }
         }
     } else {
-        if has_scaling { opt.decimals as i32 } else { 0 }
+        if has_scaling_or_correction {
+            opt.decimals as i32
+        } else {
+            0
+        }
     };
 
     let total_tiles = tiles.len();
