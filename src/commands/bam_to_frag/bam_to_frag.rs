@@ -1,26 +1,40 @@
-use anyhow::{Context, Result};
+use crate::{
+    commands::{
+        bam_to_frag::{
+            concat::concat_frag_zst_to_gzip,
+            config::BamToFragConfig,
+            sorted_writer::{Entry as WindowEntry, WindowSorter},
+        },
+        cli_common::{
+            WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
+            resolve_chromosomes_and_contigs,
+        },
+        counters::BamToFragCounters,
+        gc_bias::{
+            correct::GCCorrector, counting::build_gc_prefixes, package::GCCorrectionPackage,
+        },
+    },
+    shared::{
+        bam::create_chromosome_reader,
+        bed::load_windows_from_bed,
+        blacklist::{apply_blacklist_mask_to_seq, is_blacklisted},
+        fragment::frag_file_fragment::FragFileFragment,
+        fragment_iterator::fragments_with_frag_file_info_from_bam,
+        overlaps::find_overlapping_windows,
+        read::default_include_read,
+        reference::read_seq,
+        scale_genome::compute_window_scaling_over_fragment,
+        thread_pool::init_global_pool,
+        tiled_run::make_temp_dir,
+        writers::open_zstd_auto_writer,
+    },
+};
+use anyhow::{Context, Result, anyhow};
+use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{fs, io::Write, path::PathBuf, sync::Arc, time::Instant};
-
-use crate::{
-    commands::{
-        bam_to_frag::{
-            concat::concat_frag_zst_to_gzip, config::BamToFragConfig,
-            sorted_writer::Entry as WindowEntry, sorted_writer::WindowSorter,
-        },
-        cli_common::{ensure_output_dir, load_blacklist_map, resolve_chromosomes_and_contigs},
-        counters::BamToFragCounters,
-    },
-    shared::{
-        bam::create_chromosome_reader, blacklist::is_blacklisted,
-        fragment::frag_file_fragment::FragFileFragment,
-        fragment_iterator::fragments_with_frag_file_info_from_bam, read::default_include_read,
-        thread_pool::init_global_pool, tiled_run::make_temp_dir, writers::open_zstd_auto_writer,
-    },
-};
-
 /// Execute the bam-to-frag conversion.
 ///
 /// Parameters:
@@ -70,9 +84,10 @@ pub fn run(opt: &BamToFragConfig) -> Result<()> {
 }
 
 pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
-    let (chromosomes, _) =
+    let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
     let prefix = opt.output_prefix.trim();
+    let window_opt = opt.resolve_windows();
 
     let quiet = false;
 
@@ -90,9 +105,42 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
         &chromosomes,
     )?;
 
+    // Load windows from BED file
+    let windows_map = match &window_opt {
+        WindowSpec::Bed(bed) => {
+            println!("Start: Loading window coordinates");
+            Some(load_windows_from_bed(
+                bed,
+                Some(chromosomes.as_slice()),
+                None,
+                None,
+            )?)
+        }
+        _ => None,
+    };
+
+    // Load genomic scaling factors
+    if opt.scale_genome.scaling_factors.is_some() {
+        println!("Start: Loading scaling factors");
+    }
+    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
+        load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
+
+    // Load GC correction package if specified
+    if opt.gc.gc_file.is_some() {
+        println!("Start: Loading GC correction matrix");
+    }
+    let gc_corrector = if let Some(gc_file) = &opt.gc.gc_file {
+        let package = GCCorrectionPackage::from_file(gc_file)?;
+        Some(GCCorrector::from_package(&package)?)
+    } else {
+        None
+    };
+
     // Build temporary directory
     let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
     let output_file: PathBuf = opt.ioc.output_dir.join(format!("{prefix}.frag.tsv.gz"));
+    let output_header_file: PathBuf = opt.ioc.output_dir.join(format!("{prefix}.frag.header.tsv"));
 
     // Create progress bar
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
@@ -121,7 +169,12 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
                 &chr,
                 opt,
                 &temp_dir,
+                windows_map
+                    .as_ref()
+                    .and_then(|m| m.get(chr).map(|v| v.as_slice())),
                 blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
+                scaling_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
+                gc_corrector.clone(),
             )?;
             pb.inc(1);
             Ok(out)
@@ -140,10 +193,36 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     }
 
     // Concatenate chromosome-wise temp files
+    if !quiet {
+        println!("Start: Concatenating chromosome-wise frag files");
+    }
     concat_frag_zst_to_gzip(&chromosome_paths, &output_file, false)?;
 
     // Remove temporary directory once final outputs are written
     fs::remove_dir_all(&temp_dir).context("remove temp directory")?;
+
+    // Create text line
+    if !quiet {
+        println!("Start: Writing a header file");
+    }
+    let header = match (
+        opt.gc.gc_file.is_some(),
+        opt.scale_genome.scaling_factors.is_some(),
+    ) {
+        (true, true) => {
+            "chromosome\tstart\tend\tmin_mapq\tread1_strand\tgc_weight\tscaling_weight\n"
+        }
+        (true, false) => "chromosome\tstart\tend\tmin_mapq\tread1_strand\tgc_weight\n",
+        (false, true) => "chromosome\tstart\tend\tmin_mapq\tread1_strand\tscaling_weight\n",
+        (false, false) => "chromosome\tstart\tend\tmin_mapq\tread1_strand\n",
+    };
+
+    fs::write(&output_header_file, header).with_context(|| {
+        format!(
+            "Failed writing fragment header to {}",
+            output_header_file.display()
+        )
+    })?;
 
     Ok(global_counter)
 }
@@ -152,15 +231,50 @@ fn process_chrom(
     chr: &str,
     opt: &BamToFragConfig,
     temp_dir: &PathBuf,
+    windows: Option<&[(u64, u64, u64)]>,
     blacklist_intervals: &[(u64, u64)],
+    scaling_chr: &[(u64, u64, f32)],
+    gc_corrector_opt: Option<GCCorrector>,
 ) -> anyhow::Result<(PathBuf, BamToFragCounters)> {
     // Open a fresh BAM reader for this thread
-    let (mut reader, tid, _) = create_chromosome_reader(&opt.ioc.bam, chr)?;
+    let (mut reader, tid, chrom_len) = create_chromosome_reader(&opt.ioc.bam, chr)?;
 
     // Initialize counters (default -> 0s)
     let mut counter = BamToFragCounters::default();
 
-    reader.fetch(tid).context(format!("fetch {}", chr))?;
+    // TODO: Consider tiling the function to decrease memory from the prefixes
+    let gc_prefixes_opt = if gc_corrector_opt.is_some() {
+        let ref_2bit = opt.ref_2bit.as_ref().ok_or_else(|| {
+            anyhow!("When GC correction is specified, --ref-2bit must also be specified")
+        })?;
+        let mut seq_bytes = read_seq(&ref_2bit, chr)?;
+        apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals, 0);
+
+        Some(build_gc_prefixes(&seq_bytes))
+    } else {
+        None
+    };
+
+    // Replace scaling factor with unused index
+    let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
+        scaling_chr.iter().map(|(s, e, _)| (*s, *e, 0u64)).collect();
+
+    // Get coordinates to fetch reads from and to
+    let (fetch_from, fetch_to) = if windows.is_some() {
+        let wn = windows.unwrap();
+        let fetch_start = wn[0].0 as i64;
+        let fetch_end = wn.iter().map(|w| w.1).max().unwrap() as i64;
+        (
+            (fetch_start - opt.fragment_lengths.max_fragment_length as i64).max(0i64),
+            (fetch_end + opt.fragment_lengths.max_fragment_length as i64).min(chrom_len as i64),
+        )
+    } else {
+        (0i64, chrom_len as i64)
+    };
+
+    reader
+        .fetch((tid, fetch_from, fetch_to))
+        .context(format!("fetch {}", chr))?;
 
     // Function for filtering fragments after pairing
     // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
@@ -183,7 +297,10 @@ fn process_chrom(
     )
     .with_local_counters();
 
+    // Streaming pointers
     let mut bl_ptr = 0; // Blacklist interval
+    let mut wd_ptr = 0; // Genomic window
+    let mut sf_ptr = 0; // Scaling factor bin
 
     let out_path = temp_dir.join(format!("{chr}.frag.tsv.zst"));
 
@@ -191,6 +308,19 @@ fn process_chrom(
 
     // Write using a bounded window sorter to ensure (start,end)-sorted output
     let mut sorter = WindowSorter::new(opt.fragment_lengths.max_fragment_length);
+
+    let get_gc_weight = {
+        let gc_corrector = gc_corrector_opt.as_ref();
+        let gc_prefixes = gc_prefixes_opt.as_ref();
+        move |fragment: &FragFileFragment| -> Result<Option<f64>> {
+            match (gc_corrector, gc_prefixes) {
+                (Some(corrector), Some(prefixes)) => {
+                    corrector.correct_fragment(fragment.start as u64, fragment.end as u64, prefixes)
+                }
+                _ => Ok(None),
+            }
+        }
+    };
 
     // Iterate fragments
     for fragment_res in iter.by_ref() {
@@ -210,14 +340,96 @@ fn process_chrom(
             continue;
         }
 
+        // Find all overlapping count-windows
+        let overlapping_windows = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            windows,
+            None,
+            fragment.start.into(),
+            fragment.end.into(),
+            1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
+            opt.fragment_lengths.max_fragment_length.into(),
+        )?;
+        let overlapping_windows = if let Some(overlaps) = overlapping_windows {
+            overlaps
+        } else {
+            continue;
+        };
+
+        let gc_weight = get_gc_weight(&fragment)?;
+
+        // Find all overlapping scaling-factor bins
+        // And count up the weight
+        let scaling_weight = if !scaling_chr.is_empty() {
+            // Find overlapping scaling-bins
+            let overlapping_scaling_bins = find_overlapping_windows(
+                chrom_len,
+                &mut sf_ptr,
+                Some(&scaling_with_bin_idx),
+                None,
+                fragment.start.into(), // Full fragment
+                fragment.end.into(),
+                1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
+                opt.fragment_lengths.max_fragment_length.into(),
+            )
+            .with_context(|| format!("finding overlapping scaling bins on chr {chr}"))?
+            .context("no overlapping scaling bins found")?; // Should always find >= 1 bin
+
+            // Extract the indices of the overlapping bins
+            let overlapping_scaling_bin_indices: Vec<usize> = overlapping_scaling_bins
+                .windows
+                .iter()
+                .map(|w| w.idx)
+                .collect();
+
+            // Calculate the weight per overlapping count-window
+            // NOTE: `compute_window_scaling_over_fragment` always returns
+            // an overlap fraction of 1.0 (count full fragment)!
+            let scaling_weight = compute_window_scaling_over_fragment(
+                &overlapping_windows,
+                &overlapping_scaling_bin_indices,
+                scaling_chr,
+            )?
+            .pop()
+            .map(|(_, w, _)| w)
+            .expect("no overlapping scaling bins found");
+
+            Some(scaling_weight)
+        } else {
+            None
+        };
+
         counter.base.counted_fragments += 1;
+
+        // Create text line
+        let line = match (gc_weight, scaling_weight) {
+            (Some(gc_w), Some(sf_w)) => format!(
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                chr,
+                fragment.start,
+                fragment.end,
+                fragment.min_mapq,
+                fragment.read1_strand,
+                gc_w,
+                sf_w
+            ),
+            (Some(gc_w), None) => format!(
+                "{}\t{}\t{}\t{}\t{}\t{}\n",
+                chr, fragment.start, fragment.end, fragment.min_mapq, fragment.read1_strand, gc_w,
+            ),
+            (None, Some(sf_w)) => format!(
+                "{}\t{}\t{}\t{}\t{}\t{}\n",
+                chr, fragment.start, fragment.end, fragment.min_mapq, fragment.read1_strand, sf_w
+            ),
+            (None, None) => format!(
+                "{}\t{}\t{}\t{}\t{}\n",
+                chr, fragment.start, fragment.end, fragment.min_mapq, fragment.read1_strand,
+            ),
+        };
 
         // Push into windowed sorter
         // That flushes the previous (sorted) entries on the fly
-        let line = format!(
-            "{}\t{}\t{}\t{}\t{}\n",
-            chr, fragment.start, fragment.end, fragment.min_mapq, fragment.read1_strand
-        );
         sorter.push(
             WindowEntry {
                 start: fragment.start,

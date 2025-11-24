@@ -1,4 +1,6 @@
-use crate::commands::cli_common::{ChromosomeArgs, FragmentLengthArgs, IOCArgs};
+use crate::commands::cli_common::{
+    ApplyGCArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs, ScaleGenomeArgs, WindowSpec,
+};
 use crate::shared::blacklist::BlacklistStrategy;
 use std::path::PathBuf;
 
@@ -45,8 +47,18 @@ pub struct BamToFragConfig {
     )]
     pub output_prefix: String,
 
+    /// Intervals to keep overlapping fragments from `[path]`
+    #[cfg_attr(
+        feature = "cli",
+        clap(long = "by-bed", value_parser, help_heading = "Windows")
+    )]
+    pub by_bed: Option<PathBuf>,
+
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub chromosomes: ChromosomeArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub scale_genome: ScaleGenomeArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
@@ -103,6 +115,26 @@ pub struct BamToFragConfig {
         )
     )]
     pub blacklist_strategy: BlacklistStrategy,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub gc: ApplyGCArgs,
+
+    /// Optional 2bit reference genome file [path]
+    ///
+    /// NOTE: Required for GC correction, otherwise ignored.
+    ///
+    /// E.g., "hg38.2bit" from UCSC ( https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/hg38.2bit ).
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            short = 'r',
+            long,
+            value_parser,
+            required = false,
+            help_heading = "GC Correction"
+        )
+    )]
+    pub ref_2bit: Option<PathBuf>,
 }
 
 impl BamToFragConfig {
@@ -110,7 +142,9 @@ impl BamToFragConfig {
         Self {
             ioc,
             output_prefix: "coverage".into(),
+            by_bed: None,
             chromosomes,
+            scale_genome: ScaleGenomeArgs::default(),
             fragment_lengths: FragmentLengthArgs {
                 min_fragment_length: 20,
                 max_fragment_length: 1000,
@@ -120,11 +154,30 @@ impl BamToFragConfig {
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::Any,
+            gc: ApplyGCArgs { gc_file: None },
+            ref_2bit: None,
+        }
+    }
+
+    /// If neither flag is set, default to `Global`.
+    pub fn resolve_windows(&self) -> WindowSpec {
+        if let Some(p) = self.by_bed.clone() {
+            WindowSpec::Bed(p)
+        } else {
+            WindowSpec::Global
         }
     }
 
     pub fn set_output_prefix<S: Into<String>>(&mut self, prefix: S) {
         self.output_prefix = prefix.into();
+    }
+
+    pub fn set_by_bed(&mut self, by_bed: Option<PathBuf>) {
+        self.by_bed = by_bed;
+    }
+
+    pub fn set_scale_genome(&mut self, scale_genome: ScaleGenomeArgs) {
+        self.scale_genome = scale_genome;
     }
 
     pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
@@ -149,5 +202,13 @@ impl BamToFragConfig {
 
     pub fn set_blacklist_strategy(&mut self, blacklist_strategy: BlacklistStrategy) {
         self.blacklist_strategy = blacklist_strategy;
+    }
+
+    pub fn set_gc(&mut self, gc: ApplyGCArgs) {
+        self.gc = gc;
+    }
+
+    pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
+        self.ref_2bit = ref_2bit;
     }
 }

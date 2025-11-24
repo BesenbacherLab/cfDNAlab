@@ -30,13 +30,13 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 /// Positions in blacklisted regions are set to `f32::NaN` (and thus not included in sums or averages).
 ///
 /// ## GC correction
-/// 
+///
 /// Weight the contribution of each fragment by its length and GC content, using a precomputed
 /// correction matrix (`cfdna gc-bias`). This reduces the global GC bias in the coverage,
-/// which is a common technically-induced bias. 
-/// 
+/// which is a common technically-induced bias.
+///
 /// The GC correction matrix should be calculated from the same BAM file, as the bias is sample-specific.
-/// 
+///
 /// ## Temporary files
 ///
 /// We write temporary files to a `<output-dir>/tmp.<output-prefix>.<random>` directory to reduce memory.
@@ -216,6 +216,10 @@ impl FCoverageConfig {
         self.decimals = decimals;
     }
 
+    pub fn set_scale_genome(&mut self, scale_genome: ScaleGenomeArgs) {
+        self.scale_genome = scale_genome;
+    }
+
     pub fn set_keep_zero_runs(&mut self, keep: bool) {
         self.keep_zero_runs = keep;
     }
@@ -246,10 +250,6 @@ impl FCoverageConfig {
 
     pub fn set_require_proper_pair(&mut self, require: bool) {
         self.require_proper_pair = require;
-    }
-
-    pub fn set_scale_genome(&mut self, scale: ScaleGenomeArgs) {
-        self.scale_genome = scale;
     }
 
     pub fn set_gc(&mut self, gc: ApplyGCArgs) {

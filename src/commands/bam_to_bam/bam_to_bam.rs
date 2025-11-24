@@ -229,7 +229,7 @@ fn process_chrom(
     )
     .with_local_counters();
 
-    // Streaming pointers and single fetch for this chr
+    // Streaming pointers
     let mut bl_ptr = 0; // Blacklist interval
     let mut wd_ptr = 0; // Genomic window
     let mut sf_ptr = 0; // Scaling factor bin

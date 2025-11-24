@@ -37,7 +37,7 @@ use crate::{
         bam::create_chromosome_reader, bed::load_windows_from_bed, thread_pool::init_global_pool,
     },
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -119,6 +119,9 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
         load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
 
     // Load GC correction package if specified
+    if opt.gc.gc_file.is_some() {
+        println!("Start: Loading GC correction matrix");
+    }
     let gc_corrector = if let Some(gc_file) = &opt.gc.gc_file {
         let package = GCCorrectionPackage::from_file(gc_file)?;
         Some(GCCorrector::from_package(&package)?)
@@ -559,10 +562,9 @@ fn process_tile(
     debug_assert!(_tid_check == tile.tid as u32);
 
     let gc_prefixes_opt = if gc_corrector_opt.is_some() {
-        let ref_2bit = opt
-            .ref_2bit
-            .as_ref()
-            .expect("When GC correction is specified, --ref-2bit must also be specified");
+        let ref_2bit = opt.ref_2bit.as_ref().ok_or_else(|| {
+            anyhow!("When GC correction is specified, --ref-2bit must also be specified")
+        })?;
         let mut seq_bytes = read_seq_in_range(
             &ref_2bit,
             &tile.chr,

@@ -100,4 +100,4 @@ counter_struct!(ProfileGroupsCounters;
     blacklisted_fragments: u64
 );
 
-counter_struct!(BamToFragCounters; blacklisted_fragments: u64);
+counter_struct!(BamToFragCounters; blacklisted_fragments: u64, gc_excl_fragments: u64);
