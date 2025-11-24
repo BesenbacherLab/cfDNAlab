@@ -229,6 +229,7 @@ cfdna wps-peaks --bam $BAM --output-dir $OUT/wps_peaks_statistics_per_5mb --by-s
 
 ## TODO
 
+    - Support --end-offsets in gc-correction by adding it to the reference gc tool, so ref bias is made the same way!
     - Bin chromosomes for higher parallelization where meaningful.
     - Add GC correction tools and implementations.
     - Allow input BED files to be compressed.

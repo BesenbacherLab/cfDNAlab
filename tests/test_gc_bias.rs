@@ -1,8 +1,13 @@
+use anyhow::Result;
 use fxhash::FxHashMap;
 use ndarray::array;
+use tempfile::tempdir;
 
 use cfdnalab::commands::gc_bias::{
+    GC_CORRECTION_SCHEMA_VERSION,
     binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
+    correct::GCCorrector,
+    package::GCCorrectionPackage,
     support_masking::build_extreme_gc_support_mask,
 };
 
@@ -53,4 +58,53 @@ fn round_trips_bins_to_edges_and_back() {
     assert_eq!(reconstructed_axis.num_bins, axis.num_bins);
     assert_eq!(reconstructed_axis.bin_to_indices, axis.bin_to_indices);
     assert_eq!(reconstructed_axis.index_to_bin, axis.index_to_bin);
+}
+
+#[test]
+fn provides_expected_weights_after_roundtrip() -> Result<()> {
+    // Arrange: a package whose edges start at non-zero values so offset logic is exercised.
+    let length_edges = vec![30, 34, 40];
+    let gc_edges = vec![10, 60, 90];
+    let correction_matrix = array![[1.5_f64, 2.0_f64], [0.5_f64, 0.75_f64]];
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 3,
+        length_edges: length_edges.clone(),
+        gc_edges: gc_edges.clone(),
+        correction_matrix,
+    };
+    let tmp_dir = tempdir()?;
+    let pkg_path = tmp_dir.path().join("gc_package.npz");
+    package.write_npz(&pkg_path)?;
+
+    // Act: load the package and build a corrector.
+    let loaded = GCCorrectionPackage::from_file(&pkg_path)?;
+    let corrector = GCCorrector::from_package(&loaded)?;
+
+    // Assert: fragments landing in each bin retrieve the expected weights.
+    let weight_len31_gc20 = corrector.get_correction_weight(31, 20)?;
+    assert!(
+        (weight_len31_gc20 - 1.5).abs() < f64::EPSILON,
+        "length 31 / GC 20 should map to 1.5"
+    );
+
+    let weight_len32_gc70 = corrector.get_correction_weight(32, 70)?;
+    assert!(
+        (weight_len32_gc70 - 2.0).abs() < f64::EPSILON,
+        "length 32 / GC 70 should map to 2.0"
+    );
+
+    let weight_len38_gc55 = corrector.get_correction_weight(38, 55)?;
+    assert!(
+        (weight_len38_gc55 - 0.5).abs() < f64::EPSILON,
+        "length 38 / GC 55 should map to 0.5"
+    );
+
+    let weight_len39_gc80 = corrector.get_correction_weight(39, 80)?;
+    assert!(
+        (weight_len39_gc80 - 0.75).abs() < f64::EPSILON,
+        "length 39 / GC 80 should map to 0.75"
+    );
+
+    Ok(())
 }
