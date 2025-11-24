@@ -28,7 +28,7 @@ pub struct RecordEntry {
     pub tags: SharedTags,
 }
 
-/// Maintains a bounded in-memory buffer to emit fragments in strict coordinate order
+/// Keeps a bounded in-memory buffer so fragments are written in strict coordinate order
 /// from an almost-sorted stream whose disorder is limited by `max_window_bp`.
 ///
 /// This sorter uses `BinaryHeap<Reverse<HeapEntry>>` as a min-heap so that `peek()` and `pop()` yield
@@ -57,7 +57,7 @@ pub struct RecordEntry {
 /// - Flush all:
 ///     Drains the residual heap, sorts that small tail, and writes it out to complete ordering.
 /// - Ordering:
-///     Emits entries strictly ordered by `(start, end, strand, qname, arrival)` within a chromosome stream.
+///     Writes entries strictly ordered by `(start, end, strand, qname, arrival)` within a chromosome stream.
 /// - Memory bound:
 ///     Heap size is bounded by the number of fragments whose starts fall within the last
 ///     `max_window_bp` bases, not by total input size.

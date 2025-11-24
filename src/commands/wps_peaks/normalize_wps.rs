@@ -21,7 +21,7 @@ const SG_ORDER: usize = 2;
 /// Centers per-base WPS values around a local median so short-range spikes are easy to spot.
 ///
 /// Maintains a sliding median over `baseline_reference`, honors optional mask
-/// entries, and emits `f32::NAN` when the window lacks enough usable bases.
+/// entries, and produces `f32::NAN` when the window lacks enough usable bases.
 /// Feeding the raw WPS as `baseline_reference` and the smoothed values as
 /// `numerator` reproduces Snyder's behavior.
 ///

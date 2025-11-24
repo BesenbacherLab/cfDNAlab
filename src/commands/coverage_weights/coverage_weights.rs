@@ -25,23 +25,28 @@ use std::{
     time::Instant,
 };
 
-/// Execute the genome-normalisation pipeline and emit stride-level scaling factors.
+/// Calculates weights for genomic smoothing using large bins and a stride.
 ///
-/// Implementation details:
+/// Technical details:
 /// - Resolves chromosomes, prepares output directories, and loads optional blacklists before
 ///   scanning each chromosome in parallel.
 /// - Converts fragments into coverage profiles, smooths them with a triangular kernel, and writes
 ///   the resulting statistics to a TSV file.
-/// - Tracks iterator counters so the summary in the terminal reflects acceptance, blacklist hits,
-///   and fragment counts.
+/// - Tracks iterator counters so the printed summary reflects accepted fragments, blacklist hits,
+///   and other bookkeeping numbers.
 ///
-/// Parameters:
-/// - `opt`: Fully resolved configuration for the `coverage-weights` command.
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Fully resolved configuration for the `coverage-weights` command.
 ///
-/// Returns:
-/// - `Ok(())` when the scaling-factor TSV is written successfully.
+/// Returns
+/// -------
+/// - `Ok(())`:
+///     Scaling factors were written successfully.
 ///
-/// Errors:
+/// Errors
+/// ------
 /// - Returns an error if the BAM cannot be read, blacklist files are invalid, or the output file
 ///   cannot be created.
 pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {

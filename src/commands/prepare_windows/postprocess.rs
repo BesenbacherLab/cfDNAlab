@@ -124,8 +124,8 @@ pub fn deduplicate_identical(
 /// `min_distance_bp` apart, resolving conflicts with deterministic policies.
 ///
 /// The function consumes already sorted input, collecting overlapping windows in
-/// `pending_by_key`. Once spacing is satisfied, the chosen candidate is emitted
-/// and the last end coordinate updated.
+/// `pending_by_key`. Once spacing is satisfied, it selects the best candidate,
+/// appends it to the result, and updates the last end coordinate.
 ///
 /// # Parameters
 /// - `windows`: sorted windows to filter.
@@ -191,7 +191,7 @@ pub fn enforce_min_distance_within_group(
 
 /// Split processed windows into a safe prefix and boundary tail.
 ///
-/// Streaming emits the safe prefix immediately while retaining the tail to
+/// Streaming passes the safe prefix immediately while retaining the tail to
 /// protect against merges or spacing interactions with the next chunk.
 ///
 /// The function computes the earliest index that might participate in a future

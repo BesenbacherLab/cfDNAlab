@@ -80,8 +80,8 @@ pub fn merge_positional_tiles(
 
 /// Joins already-compressed per-tile final outputs while preserving frame boundaries.
 ///
-/// A compressed header frame is emitted before concatenating the tile frames in genomic order, so
-/// the resulting file is still a valid zstd concatenation stream suitable for downstream tools.
+/// A compressed header frame is written first, followed by each tile frame in genomic order, so
+/// the resulting file stays a valid zstd concatenation stream suitable for downstream tools.
 ///
 /// # Parameters
 /// - `temp_dir`: Directory containing the compressed per-tile final files.

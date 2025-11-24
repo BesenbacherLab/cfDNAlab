@@ -1035,8 +1035,9 @@ fn add_clipped_blacklist_to_cp(
 /// - `core_end`: Exclusive end of the tile core in absolute coordinates.
 ///
 /// # Returns
-/// `Ok(bool)` when the contribution is applied successfully, or an error bubbling from the coverage
-/// accumulator.
+/// - `Ok(true)` if the fragment contributes at least one base to the tile core.
+/// - `Ok(false)` if every segment falls outside the core after clipping.
+/// - An error when the coverage accumulator rejects the update.
 #[inline]
 pub fn add_fragment_clipped_to_core(
     cp: &mut Coverage,

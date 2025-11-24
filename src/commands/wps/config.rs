@@ -40,7 +40,7 @@ use std::path::PathBuf;
 /// ## Scaling
 ///
 /// When `--scaling-factors` are provided, we scale the **final per-position WPS** by the factor assigned
-/// to the centre base of that position.
+/// to the center base of that position.
 ///
 /// ## Temporary files
 ///

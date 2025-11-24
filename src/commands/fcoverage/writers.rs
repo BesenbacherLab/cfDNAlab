@@ -38,7 +38,7 @@ pub fn write_final_row<W: Write>(
 /// - `local_end_idx`: Exclusive end index inside `cov`.
 /// - `tile_abs_start`: Absolute coordinate of `cov[0]`.
 /// - `decimals`: Number of decimals to keep when grouping runs.
-/// - `keep_zero_runs`: Whether runs with value zero should be emitted.
+/// - `keep_zero_runs`: Whether runs with values that rounds to zero should still be written.
 /// - `out`: Writer receiving the BedGraph lines.
 ///
 /// # Returns
@@ -97,7 +97,7 @@ pub fn emit_bedgraph_runs<W: Write>(
 /// - `tile_abs_start`: Absolute coordinate of `cov[0]`.
 /// - `orig_idx`: Optional original window index to append.
 /// - `decimals`: Number of decimals to keep when grouping runs.
-/// - `keep_zero_runs`: Whether runs with value zero should be emitted.
+/// - `keep_zero_runs`: Whether runs with values that rounds to zero should still be written.
 /// - `out`: Writer receiving the TSV lines.
 ///
 /// # Returns

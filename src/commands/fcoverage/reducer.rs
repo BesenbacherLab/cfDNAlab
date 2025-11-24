@@ -104,7 +104,7 @@ struct WindowAccum {
 ///  * Per-tile **cross-index** files: list `orig_idx` that are NOT fully contained in that tile core
 ///
 /// Goal
-///  * Emit final rows strictly in **increasing `orig_idx`** order without
+///  * Produce final rows strictly in **increasing `orig_idx`** order without
 ///    buffering all windows or scanning every window
 ///
 /// How ordering is guaranteed
@@ -395,7 +395,7 @@ struct BinAccum {
 ///
 /// The cross-index counts how many tiles contribute to each bin start:
 /// - If a bin is not listed in any cross-index file, we expect exactly 1 contribution.
-/// - If it appears N times, we expect N contributions before emitting that bin.
+/// - If it appears N times, we wait for N contributions before writing that bin.
 ///
 /// The final bin is truncated to the chromosome end; it may be shorter than window_bp.
 pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(

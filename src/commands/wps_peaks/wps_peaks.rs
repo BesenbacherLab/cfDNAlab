@@ -1070,7 +1070,7 @@ pub struct PeakSignalProcessingOptions {
     pub initial_segment_marker: u64,
 }
 
-/// Process an in-memory WPS signal (with optional mask) and emit Snyder-style peaks.
+/// Process an in-memory WPS signal (with optional mask) and return Snyder-style peaks.
 ///
 /// This helper mirrors the per-tile pipeline executed by `peaks_for_tile`, but skips all BAM IO.
 /// It enables unit tests to exercise the smoothing + normalization + peak-calling logic using

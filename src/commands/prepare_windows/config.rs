@@ -10,7 +10,7 @@ use std::path::PathBuf;
 ///
 /// `prep-windows` reads a delimited table with at least `chrom,start,end`, validates every row,
 /// and writes a canonical BED-like file that downstream tools can reuse. The command keeps
-/// your metadata columns during processing but emits only well-behaved coordinates plus an optional
+/// your metadata columns during processing but writes only well-behaved coordinates plus an optional
 /// `group` label for downstream tools.
 ///
 /// A *group* is simply a tag that tells later analyses how to partition the windows (for example,

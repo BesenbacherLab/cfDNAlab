@@ -20,7 +20,7 @@ pub struct PeakCall {
 ///
 /// Peaks are detected by following the original Snyder et al. pipeline:
 /// positive residual runs are grouped, short gaps are bridged, windows are
-/// filtered by length, and the densest sub-region is emitted. The returned peaks
+/// filtered by length, and the densest sub-region is reported. The returned peaks
 /// carry genomic coordinates (start inclusive, end exclusive) as well as the
 /// the position of the maximum height inside the peak region. The `min_peak_height`
 /// parameter controls the minimum residual height required to keep a peak.
@@ -109,7 +109,7 @@ pub fn call_peaks(
     peaks
 }
 
-/// Finalize the current positive run and emit a peak if one is found.
+/// Finalize the current positive run and push a peak if one is found.
 fn finalize_run(
     chr: &str,
     peaks: &mut Vec<PeakCall>,

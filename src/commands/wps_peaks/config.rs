@@ -57,7 +57,7 @@ Peaks: Positions and stats? Just always give everything? Well, unique-positions,
 /// ## Scaling
 ///
 /// When `--scaling-factors` are provided, we scale the **final per-position WPS** by the factor assigned
-/// to the centre base of that position.
+/// to the center base of that position.
 ///
 /// ## Temporary files
 ///
@@ -105,12 +105,12 @@ pub struct WPSPeaksConfig {
     ///   Overlapping windows are merged before processing to avoid duplicate rows.
     ///   Excludes all positions that do not overlap a window from the output.
     ///
-    /// - `"indexed-positions"`: Emit all peak coordinates inside the provided windows together
-    ///   with the original window index (`--by-bed` only). Overlapping windows keep duplicates so each window is
-    ///   reported independently.
+    /// - `"indexed-positions"`: Write every peak coordinate inside the provided windows together
+    ///   with the original window index (`--by-bed` only). Overlapping windows keep duplicates so
+    ///   each window is reported independently.
     ///   Excludes all positions that do not overlap a window from the output.
     ///
-    /// - `"stats"`: Emit peak counts as well as average and median distances between peaks per
+    /// - `"stats"`: Report peak counts plus the average and median distances between peaks per
     ///   window.
     ///
     /// Ignored when no windows are supplied. Required whenever `--by-bed` or `--by-size` are

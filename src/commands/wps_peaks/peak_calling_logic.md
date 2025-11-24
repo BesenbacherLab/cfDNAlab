@@ -85,11 +85,11 @@ Snyder enforces domain-specific constraints on run lengths (50-150 bp, or 50-150
 
 3. Collapse adjacent retained positions into intervals.
 
-4. If the original run length is <= 150 bp, select the interval whose cumulative residual sum is the largest and emit that single peak.
+4. If the original run length is <= 150 bp, select the interval whose cumulative residual sum is the largest and report that single peak.
 
-5. If the run length is between 150 bp and 450 bp, emit every contiguous interval whose length falls within 50-150 bp and whose `peak_height` exceeds the Snyder cutoff described below. Multiple intervals can survive from one run in this case, matching the Snyder script.
+5. If the run length is between 150 bp and 450 bp, report every contiguous interval whose length falls within 50-150 bp and whose `peak_height` exceeds the Snyder cutoff described below. Multiple intervals can survive from one run in this case, matching the Snyder script.
 
-6. For each emitted interval record:
+6. For each reported interval record:
 
    - `peak_height`: maximum residual inside the interval.
 

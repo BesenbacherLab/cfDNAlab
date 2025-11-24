@@ -191,12 +191,12 @@ fn single_fragment_produces_central_plateau() -> Result<()> {
 
     // Manual expectations:
     // - Window size 4 gives left_span = right_span = 2. A fragment counts as fully covering a
-    //   centre when the window [c-2, c+2) stays within [10, 22).
+    //   center when the window [c-2, c+2) stays within [10, 22).
     //   This happens for c = 12..=20, yielding the +1 plateau [12, 21).
     // - Endpoints only subtract when they fall strictly inside the window:
-    //   * The left endpoint at 10 affects centres 9, 10, 11 -> run [9, 12) at -1.
-    //   * The right endpoint at 22 affects centres 21, 22 -> run [21, 23) at -1.
-    // - All remaining centres stay at zero and are omitted because keep_zero_runs=false.
+    //   * The left endpoint at 10 affects centers 9, 10, 11 -> run [9, 12) at -1.
+    //   * The right endpoint at 22 affects centers 21, 22 -> run [21, 23) at -1.
+    // - All remaining centers stay at zero and are omitted because keep_zero_runs=false.
     let expected = vec![
         wps_run("chr1", 9, 12, -1.0),
         wps_run("chr1", 12, 21, 1.0),
@@ -221,8 +221,8 @@ fn overlapping_fragments_stack_scores() -> Result<()> {
     //     * F1 covers c = 2..=18.
     //     * F2 covers c = 6..=10.
     // - Endpoint penalties:
-    //     * F1 endpoints reduce centres c = 19, 20.
-    //     * F2 endpoints reduce centres c = 3, 4, 5 on the left and c = 11, 12 on the right.
+    //     * F1 endpoints reduce centers c = 19, 20.
+    //     * F2 endpoints reduce centers c = 3, 4, 5 on the left and c = 11, 12 on the right.
     // - Combining both fragments yields the visible runs:
     //     * [2, 3) at +1 from the long fragment.
     //     * [6, 11) at +2 where both fragments span the window.
@@ -249,7 +249,7 @@ fn keep_zero_runs_emits_flat_segments() -> Result<()> {
 
     // Same geometry as the single-fragment test, but keep_zero_runs=true means we retain zero
     // plateaus between non-zero segments:
-    // - Leading zeros from the first valid centre (2) up to the first penalty at 9.
+    // - Leading zeros from the first valid center (2) up to the first penalty at 9.
     // - Trailing zeros that stretch beyond the region of interest; we assert up to c = 30.
     let expected = vec![
         wps_run("chr1", 2, 9, 0.0),
@@ -273,7 +273,7 @@ fn fragment_equal_to_window_removes_central_signal() -> Result<()> {
     let cfg = make_config(4, false, &fixture.bam, out_dir.path(), "equal_window");
 
     // Fragment length exactly matches the window (4 bp):
-    // - Centre c = 12 is fully covered (edge-aligned) so contributes +1.
+    // - Center c = 12 is fully covered (edge-aligned) so contributes +1.
     // - Endpoints reduce windows that contain them strictly:
     //     * Left endpoint at 10 subtracts for c = 9, 10, 11.
     //     * Right endpoint at 14 subtracts for c = 13, 14, 15.
@@ -303,9 +303,9 @@ fn fragment_equal_to_window_with_zero_runs_emits_shoulders() -> Result<()> {
     );
 
     // Fragment length equals window size:
-    // - Full coverage contributes +1 at centre 12.
+    // - Full coverage contributes +1 at center 12.
     // - Endpoint windows carry -1 shoulders on both sides.
-    // - Remaining centres stay at 0 and are kept because keep_zero_runs=true.
+    // - Remaining centers stay at 0 and are kept because keep_zero_runs=true.
     let expected = vec![
         wps_run("chr1", 2, 9, 0.0),
         wps_run("chr1", 9, 12, -1.0),
@@ -410,7 +410,7 @@ fn long_fragment_fixture_produces_expected_wps_runs() -> Result<()> {
 
     // Manual expectations (window size 120 -> left_span = right_span = 60):
     // - A fragment contributes +1 wherever the 120bp window fits entirely inside it,
-    //   meaning centres [start+60, end-60). The first fragment therefore yields
+    //   meaning centers [start+60, end-60). The first fragment therefore yields
     //   [60, 341) at +1.
     // - When two fragments are 400bp apart, their full-coverage bands overlap for
     //   81 bases, so the combined run reaches +2 (e.g., [460, 541)).

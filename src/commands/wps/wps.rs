@@ -1050,7 +1050,7 @@ fn finalize_diff(diff: &mut [f32]) -> Vec<f32> {
     out
 }
 
-/// Build a mask over the dilated tile span marking blacklisted bases and centres
+/// Build a mask over the dilated tile span marking blacklisted bases and centers
 /// whose WPS window would exceed chromosome bounds.
 fn build_mask_for_core(
     dilated_start: u32,
@@ -1093,8 +1093,8 @@ fn build_mask_for_core(
     let right_span_u64 = right_span as u64;
 
     for offset in 0..dilated_span_len {
-        let centre_abs = dilated_start_abs + offset as u64;
-        if centre_abs < left_span_u64 || centre_abs + right_span_u64 > chromosome_length {
+        let center_abs = dilated_start_abs + offset as u64;
+        if center_abs < left_span_u64 || center_abs + right_span_u64 > chromosome_length {
             if mask[offset] == 0 {
                 mask[offset] = 1;
             }

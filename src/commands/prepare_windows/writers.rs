@@ -15,7 +15,7 @@ use std::{
 /// final concatenation pass.
 ///
 /// The writer wraps a 1 MiB `BufWriter<File>` pointing at a sanitized path under
-/// the run's temp directory. Callers borrow the writer when emitting rows and
+/// the run's temp directory. Callers borrow the writer when writing rows and
 /// later reuse the stored path during concatenation.
 #[derive(Debug)]
 pub struct ChromTempWriter {
@@ -35,7 +35,7 @@ impl ChromTempWriter {
 /// Windows without an assigned group become compact three-column BED rows, while
 /// grouped windows receive a fourth column so the metadata survives the write.
 ///
-/// The function iterates the slice in order, emitting either
+/// The function iterates the slice in order, writing either
 /// `chrom<sep>start<sep>end` or `chrom<sep>start<sep>end<sep>group`. The caller
 /// provides the separator (typically `\t`).
 ///
@@ -138,7 +138,7 @@ pub fn finalize_temp_writers(
 /// that fail the minimum-count threshold when requested.
 ///
 /// Output is buffered (stdout or file). Each temp file is streamed line by line;
-/// the optional group column determines whether to emit a three- or four-column
+/// the optional group column determines whether to write a three- or four-column
 /// row, and temp entries are processed in lexicographic chromosome order.
 ///
 /// # Parameters

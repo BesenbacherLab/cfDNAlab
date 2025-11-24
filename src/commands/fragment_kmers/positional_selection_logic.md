@@ -212,6 +212,6 @@ For odd lengths, the exact middle base may be excluded by the `Nearest` rules (b
 2. At count time (per fragment, per k):
    a. Clip to segment/tile.
    b. Enforce **k-mer fit** (shrink runs by `k − 1` on the appropriate side).
-   c. Emit counts.
+   c. Record the counts.
 
 ---

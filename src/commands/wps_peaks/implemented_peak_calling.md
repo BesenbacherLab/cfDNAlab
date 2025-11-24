@@ -6,7 +6,7 @@ This generated report captures the behavior that currently ships in `cfdna wps-p
 
 - The command is compiled only when both `cmd_wps_peaks` and `cmd_wps` features are enabled. The CLI exposes it through `cfdna wps-peaks`.
 - The configuration struct is `WPSPeaksConfig` (`src/commands/wps_peaks/config.rs`). It embeds `WPSSharedConfig`, so every filter that applies to `cfdna wps` (paired-end requirements, fragment length bounds, blacklist handling, scaling, tile sizing) is also in effect here.
-- Peaks can be emitted for entire chromosomes (no windows) or confined to BED / fixed-size windows. Window modes drive the writer behavior (unique positions, indexed positions, stats).
+- Peaks can be produced for entire chromosomes (no windows) or confined to BED / fixed-size windows. Window modes drive the writer behavior (unique positions, indexed positions, stats).
 
 ## End-to-end data flow
 
@@ -34,9 +34,9 @@ This generated report captures the behavior that currently ships in `cfdna wps-p
    - Residuals (i.e. median-subtracted smoothed WPS) are scanned left to right. Masked bases and `NaN`s finalize the current run.
   - Short gaps (`MAX_GAP = 5 bp`) are bridged by inserting zeros, so minor dips do not break a run. Snyder’s script does the same by pushing `0` values while `ipos <= cend + 5` (see `snyder_code.md`).
    - Runs shorter than 50 bp or longer than 450 bp are discarded (`MIN_LENGTH = 50`, `MAX_LENGTH = 150`, `MAX_RUN_LENGTH = 3 * MAX_LENGTH`).
-   - A run is filtered through its own median: only positions with residuals >= run median survive.
-   - Surviving positions are collapsed into sub windows. For runs up to 150 bp the densest sub window (by summed residual) is emitted once. For longer runs (<= 450 bp) every contiguous sub window whose length sits within 50-150 bp and whose max residual exceeds `--min-peak-height` becomes a peak.
-   - Each emitted `PeakCall` records: chromosome, inclusive start, exclusive end, `peak_position` (where the residual reaches its max), `height` (that max), and `segment_id`. The `segment_id` equals the barrier marker that was active when the run started and is incremented every time a mask or run reset occurs. Stats use it to avoid crossing masked gaps.
+  - A run is filtered through its own median: only positions with residuals >= run median survive.
+  - Surviving positions are collapsed into sub windows. For runs up to 150 bp the densest sub window (by summed residual) is reported once. For longer runs (<= 450 bp) every contiguous sub window whose length sits within 50-150 bp and whose max residual exceeds `--min-peak-height` becomes a peak.
+  - Each `PeakCall` records: chromosome, inclusive start, exclusive end, `peak_position` (where the residual reaches its max), `height` (that max), and `segment_id`. The `segment_id` equals the barrier marker that was active when the run started and is incremented every time a mask or run reset occurs. Stats use it to avoid crossing masked gaps.
    - Peaks are clipped to the tile core before being persisted to ensure no peaks are included in more than one tile.
 
 6. **Tile outputs and persistence**
@@ -48,8 +48,8 @@ This generated report captures the behavior that currently ships in `cfdna wps-p
        - `WindowSource::FixedSizeBuffered`: used when tile and window boundaries do not align. `FixedSizeWindows` streams windows per chromosome, maintains `next_start` and `next_idx`, and can spawn windows that begin before the current tile so long as they overlap it.
        - `WindowSource::FixedSizeAligned`: used when tiles align with bins. Because windows are deterministic, stats do not need to examine peaks directly; the writer only needs the per-window contributions that `peaks_for_tile` precomputed.
      - **Output modes**
-       - `Unique`: per-window merge of peaks by genomic position. Peaks sharing the same base keep only the highest height. Outputs `chromosome start end height` (start=end-1).
-       - `Indexed`: all peaks inside a window are emitted individually along with the zero-based window index. Peaks are not deduplicated.
+      - `Unique`: per-window merge of peaks by genomic position. Peaks sharing the same base keep only the highest height. Outputs `chromosome start end height` (start=end-1).
+      - `Indexed`: all peaks inside a window are written individually along with the zero-based window index. Peaks are not deduplicated.
        - `Stats`: per-window peak counts plus average and median inter-peak distances.
      - `WindowAccumulator` keeps state for all windows overlapping the running tile. It stores either a `BTreeMap` (unique) or a `Vec<PeakCall>` (indexed). For stats it stores counts, first/last peaks, first/last segments, and a histogram of observed distances.
      - Completed windows are flushed when their end coordinate drops behind the end of the current tile. A chromosome change flushes any remaining windows.
@@ -64,7 +64,7 @@ This generated report captures the behavior that currently ships in `cfdna wps-p
    - Windows with fewer than two peaks report `NaN` for both metrics.
 
 8. **Temp files and cleanup**
-   - After all tiles are processed, the temp directory is deleted. Failures only emit a warning; stale temp directories may persist if the process is interrupted.
+   - After all tiles are processed, the temp directory is deleted. Failures only print a warning; stale temp directories may persist if the process is interrupted.
 
 ## Configuration knobs and their real effects
 
