@@ -22,7 +22,7 @@ In-line comments start with title-cased first word and does not have a terminal 
 
 Never use "…" or similar non-ascii symbols. They don't work in the terminal. Use "...", "->", ">=", etc.
 
-Adapt to my language. If I use "center", don't use "centre". Don't use words that humans rarely use when unnecessary, like "emit".
+Adapt to my language. If I use "center", don't use "centre". Don't use words/phrases that humans rarely use when unnecessary, like "emit", "bubbles up".
 
 **Order**
 1. **Summary (pedagogical):** What this does and when to use it. (The pedagogical part is implicit, not explicit, don't add "friendly summary" etc.)
@@ -62,6 +62,8 @@ def fn(...):
 ## Scope & Backwards Compatibility
 
 **Assume no backwards compatibility constraints** unless explicitly asked to maintain them. We are often designing new tools.
+
+If I tell you to give me a conceptual answer, it's completely forbidden for you to touch the code.
 
 ## Engineering Choices
 
