@@ -361,12 +361,21 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         norm_correction_matrix
     };
 
+    // Length-bin frequencies (normalized) used for length-agnostic GC correction
+    let length_bin_frequencies = {
+        let per_length_totals = binned_gc_counts.sum_axis(Axis(1));
+        let total: f64 = per_length_totals.iter().sum();
+        ensure!(total > 0.0, "Total fragment count for length bins is zero");
+        per_length_totals.iter().map(|v| *v / total).collect()
+    };
+
     // Save reusable correction package with metadata for downstream commands
     let correction_pkg = GCCorrectionPackage::from_components(
         GC_CORRECTION_SCHEMA_VERSION,
         &length_bins,
         &gc_bins,
         correction_matrix.clone(),
+        length_bin_frequencies,
         opt,
     )?;
     correction_pkg.write_npz(&opt.ioc.output_dir.join("gc_bias_correction.npz"))?;
@@ -476,7 +485,7 @@ fn process_chrom(
     let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
         scaling_chr.iter().map(|(s, e, _)| (*s, *e, 0u64)).collect();
 
-    // Streaming pointers and single fetch for this chr
+    // Streaming pointers
     let mut wd_ptr = 0; // Genomic window
     let mut sf_ptr = 0; // Scaling factor bin
 

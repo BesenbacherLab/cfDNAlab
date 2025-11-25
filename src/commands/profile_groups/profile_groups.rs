@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray_npy::write_npy;
@@ -13,6 +13,10 @@ use crate::{
             resolve_chromosomes_and_contigs,
         },
         counters::ProfileGroupsCounters,
+        gc_bias::{
+            correct::{GCCorrector, load_gc_corrector},
+            counting::build_gc_prefixes,
+        },
         profile_groups::{
             config::ProfileGroupsConfig, counting_by_group::ProfileGroupsCounts,
             windows::ensure_uniform_window_len,
@@ -21,12 +25,13 @@ use crate::{
     shared::{
         bam::create_chromosome_reader,
         bed::{load_grouped_windows_from_bed, write_group_idx_to_name_tsv},
-        blacklist::is_blacklisted,
+        blacklist::{apply_blacklist_mask_to_seq, is_blacklisted},
         fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         read::default_include_read,
+        reference::read_seq_in_range,
         scale_genome::compute_window_scaling_over_fragment,
         thread_pool::init_global_pool,
         tiled_run::{
@@ -97,6 +102,13 @@ pub fn run(opt: &ProfileGroupsConfig) -> Result<()> {
     // Ensure all windows have the same length
     let window_size = ensure_uniform_window_len(&windows_map)?;
 
+    // Prepare length bins
+    let mut length_bins = opt.length_bins.clone();
+    length_bins.sort_unstable();
+    let num_length_bins = length_bins.len();
+    let min_fragment_length = length_bins[0];
+    let max_fragment_length = length_bins[num_length_bins - 1] - 1;
+
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
         println!("Start: Loading scaling factors");
@@ -104,14 +116,18 @@ pub fn run(opt: &ProfileGroupsConfig) -> Result<()> {
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
         load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
 
+    // Load GC correction package if specified
+    if opt.gc.gc_file.is_some() {
+        println!("Start: Loading GC correction matrix");
+    }
+    let gc_corrector = load_gc_corrector(
+        opt.gc.gc_file.as_ref(),
+        min_fragment_length,
+        max_fragment_length,
+    )?;
+
     // Build temporary directory
     let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
-
-    // Prepare length bins
-    let mut length_bins = opt.length_bins.clone();
-    length_bins.sort_unstable();
-    let num_length_bins = length_bins.len();
-    let max_fragment_length = length_bins[num_length_bins - 1];
 
     // Build tiles
     let halo_bp: u32 = max_fragment_length; // Safe halo for pairing
@@ -194,6 +210,7 @@ pub fn run(opt: &ProfileGroupsConfig) -> Result<()> {
                 tile_span.as_ref(),
                 blacklist_chr,
                 scaling_chr,
+                gc_corrector.clone(),
             )?;
             pb.inc(1);
             Ok(out)
@@ -261,9 +278,12 @@ pub fn run(opt: &ProfileGroupsConfig) -> Result<()> {
         "  Blacklist-excluded fragments: {}",
         global_counter.blacklisted_fragments
     );
-    // if opt.gc.bin_by_gc {
-    //     println!("GC-excluded reads: {}", global_counter.base.gc_excl);
-    // }
+    if opt.gc.gc_file.is_some() {
+        println!(
+            "  GC correction failures (fragment counted with weight 1.0): {}",
+            global_counter.gc_failed_fragments
+        );
+    }
     println!(
         "  Fragments counted one or more times: {}",
         global_counter.base.counted_fragments
@@ -284,6 +304,7 @@ fn process_tile(
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_intervals: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
+    gc_corrector_opt: Option<GCCorrector>,
 ) -> anyhow::Result<(ProfileGroupsCounters, Option<PathBuf>)> {
     // Open a fresh BAM reader for this thread
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
@@ -291,6 +312,27 @@ fn process_tile(
 
     // Initialize counters (default -> 0s)
     let mut counter = ProfileGroupsCounters::default();
+
+    let gc_prefixes_opt = if gc_corrector_opt.is_some() {
+        let ref_2bit = opt.ref_2bit.as_ref().ok_or_else(|| {
+            anyhow!("When GC correction is specified, --ref-2bit must also be specified")
+        })?;
+        let mut seq_bytes = read_seq_in_range(
+            &ref_2bit,
+            &tile.chr,
+            // NOTE: Need for full fetch span to get GC of overlapping fragments!
+            (tile.fetch_start as usize)..(tile.fetch_end as usize),
+        )?;
+        apply_blacklist_mask_to_seq(
+            &mut seq_bytes,
+            &blacklist_intervals,
+            tile.fetch_start as u64,
+        );
+
+        Some(build_gc_prefixes(&seq_bytes))
+    } else {
+        None
+    };
 
     // Replace scaling factor with unused index for overlap finder
     let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
@@ -337,7 +379,7 @@ fn process_tile(
     // Initialize count array
     let mut counts = ProfileGroupsCounts::new(window_size, num_groups, length_bins.to_vec());
 
-    // Streaming pointers and single fetch for this chr
+    // Streaming pointers
     let mut bl_ptr = 0; // Blacklist interval
     let mut wd_ptr = tile_window_span
         .and_then(|span| (!span.is_empty()).then_some(span.first_idx))
@@ -351,6 +393,24 @@ fn process_tile(
         fragment_filter,
     )
     .with_local_counters();
+
+    let get_gc_weight = {
+        let gc_corrector = gc_corrector_opt.as_ref();
+        let gc_prefixes = gc_prefixes_opt.as_ref();
+        move |fragment: &Fragment, fetch_start: u32| -> Result<Option<f64>> {
+            match (gc_corrector, gc_prefixes) {
+                (Some(corrector), Some(prefixes)) => {
+                    let rel_start = (fragment.start - fetch_start) as u64;
+                    let rel_end = (fragment.end - fetch_start) as u64;
+                    corrector.correct_fragment(rel_start, rel_end, prefixes)
+                }
+                _ => Ok(None),
+            }
+        }
+    };
+
+    let correct_gc = opt.gc.gc_file.is_some();
+    let fetch_start = tile.fetch_start;
 
     // Iterate fragments and add coverage
     for fragment_res in iter.by_ref() {
@@ -379,6 +439,21 @@ fn process_tile(
         if midpoint < tile.core_start || midpoint >= tile.core_end {
             continue;
         }
+
+        // Get GC correction weight
+        // NOTE: Must come after filtering for midpoints lying within the core!
+        let gc_weight_opt = get_gc_weight(&fragment, fetch_start)?;
+        let gc_weight = match (gc_weight_opt, correct_gc) {
+            (Some(w), true) => w,
+            (None, true) => {
+                // Tried but failed to make a GC correction weight
+                // for the current fragment; fall back to no correction
+                counter.gc_failed_fragments += 1;
+                1.0
+            }
+            (None, false) => 1.0, // No correction
+            (Some(_), false) => unreachable!(),
+        };
 
         // Find all overlapping count-windows
         let overlapping_windows = find_overlapping_windows(
@@ -445,7 +520,7 @@ fn process_tile(
                     window_position as usize,
                     group_idx as usize,
                     fragment_length as usize,
-                    scaling_weight,
+                    scaling_weight * gc_weight,
                 )?;
             }
         } else {
@@ -466,7 +541,7 @@ fn process_tile(
                     window_position as usize,
                     group_idx as usize,
                     fragment_length as usize,
-                    1.0,
+                    gc_weight,
                 )?;
             }
         }

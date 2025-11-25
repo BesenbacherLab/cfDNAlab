@@ -1,5 +1,5 @@
 use crate::commands::cli_common::{
-    ChromosomeArgs, FragmentLengthArgs, ScaleGenomeArgs, WindowSpec,
+    ApplyGCArgs, ChromosomeArgs, FragmentLengthArgs, ScaleGenomeArgs, WindowSpec,
 };
 use crate::shared::blacklist::BlacklistStrategy;
 use std::path::PathBuf;
@@ -145,6 +145,26 @@ pub struct BamToBamConfig {
         )
     )]
     pub blacklist_strategy: BlacklistStrategy,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub gc: ApplyGCArgs,
+
+    /// Optional 2bit reference genome file [path]
+    ///
+    /// NOTE: Required for GC correction, otherwise ignored.
+    ///
+    /// E.g., "hg38.2bit" from UCSC ( https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/hg38.2bit ).
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            short = 'r',
+            long,
+            value_parser,
+            required = false,
+            help_heading = "GC Correction"
+        )
+    )]
+    pub ref_2bit: Option<PathBuf>,
 }
 
 impl BamToBamConfig {
@@ -165,6 +185,8 @@ impl BamToBamConfig {
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::Any,
+            gc: ApplyGCArgs { gc_file: None },
+            ref_2bit: None,
         }
     }
 
@@ -210,5 +232,13 @@ impl BamToBamConfig {
     }
     pub fn set_skip_chromosome_sort(&mut self, skip_chromosome_sort: bool) {
         self.skip_chromosome_sort = skip_chromosome_sort;
+    }
+
+    pub fn set_gc(&mut self, gc: ApplyGCArgs) {
+        self.gc = gc;
+    }
+
+    pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
+        self.ref_2bit = ref_2bit;
     }
 }

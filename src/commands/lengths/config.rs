@@ -1,7 +1,10 @@
 use crate::{
-    commands::cli_common::{
-        AssignToWindowArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs, ScaleGenomeArgs,
-        WindowsArgs,
+    commands::{
+        cli_common::{
+            ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs,
+            ScaleGenomeArgs, WindowsArgs,
+        },
+        gc_bias::correct::MarginalizeLengthsWeightingScheme,
     },
     shared::{blacklist::BlacklistStrategy, indel_mode::IndelMode},
 };
@@ -19,6 +22,15 @@ use std::path::PathBuf;
 /// you can multiply the output counts by their lengths (`C'[L] = L * C[L]`). **Other options**
 /// include counting the full fragment if the *fragment midpoint* or a given *proportion* of
 /// positions overlaps the window.
+///
+/// ## GC correction
+///
+/// Weight the contribution of each fragment based on their GC contents.
+///
+/// Note: The GC percentage is calculated from the full genomic coordinates (does not consider `--indel_mode`).
+///
+/// The length-dimension of the original correction matrix is averaged out with
+/// a specifiable weighting scheme (`--gc-length-weighting`).
 ///
 /// ## Always-on exclusion criteria
 ///
@@ -128,11 +140,60 @@ pub struct LengthsConfig {
         )
     )]
     pub blacklist_strategy: BlacklistStrategy,
-    // #[cfg_attr(feature = "cli", clap(flatten))]
-    // gc: GCArgs,
 
-    // #[cfg_attr(feature = "cli", clap(flatten))]
-    // two_bit: TwoBitArgs,
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub gc: ApplyGCArgs,
+
+    // TODO: Pretty sure about this claim, but I'm unsure whether the binning could affect this? Check
+    /// How to weight the fragment length bins when estimating the global GC bias correction `[string]`
+    ///
+    /// To GC correct a fragment length distribution, the correction weights should be **length-agnostic**.
+    /// *If* we were to use the default `fragment length bin x GC percentage bin` correction matrix, which
+    /// has an independent GC correction curve per fragment length bin, the corrected counts per fragment length
+    /// would have the same distributional shape as the original counts
+    /// (assuming we're correcting the exact same fragments seen by `cfdna gc-bias`).
+    /// We thus average out the fragment length dimension to get the overall GC bias.
+    ///
+    /// We have three weighting options when averaging the fragment-length-wise correction curves:
+    ///     
+    /// - `"equal"` weighting (default): Each fragment length bin counts the same.
+    ///   This keeps the correction independent of the count distribution we're trying to estimate,
+    ///   but very rare fragment length bins contribute the same as the most present fragment lengths.
+    ///   For low-coverage BAM files, this *could* make the correction more volatile to outliers.
+    ///
+    /// - `"coverage"`-based weighting: Each fragment length bin is weighted by how often it was observed
+    ///   in `cfdna gc-bias`. This should work better for the majority of the observed fragments
+    ///   **but biases** the correction based on the fragment length distribution we are trying to estimate
+    ///   (assuming the same BAM-file was used to estimate the GC bias).
+    ///
+    /// - `"max-coverage"` weighting: Use the GC curve for the most-observed fragment length bin.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value = "equal",
+            ignore_case = true,
+            help_heading = "GC Correction"
+        )
+    )]
+    pub gc_length_weighting: MarginalizeLengthsWeightingScheme,
+
+    /// Optional 2bit reference genome file [path]
+    ///
+    /// NOTE: Required for GC correction, otherwise ignored.
+    ///
+    /// E.g., "hg38.2bit" from UCSC ( https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/hg38.2bit ).
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            short = 'r',
+            long,
+            value_parser,
+            required = false,
+            help_heading = "GC Correction"
+        )
+    )]
+    pub ref_2bit: Option<PathBuf>,
 }
 
 impl LengthsConfig {
@@ -153,6 +214,9 @@ impl LengthsConfig {
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::default(),
+            gc: ApplyGCArgs { gc_file: None },
+            gc_length_weighting: MarginalizeLengthsWeightingScheme::Equal,
+            ref_2bit: None,
         }
     }
 
@@ -182,5 +246,20 @@ impl LengthsConfig {
 
     pub fn set_require_proper_pair(&mut self, require: bool) {
         self.require_proper_pair = require;
+    }
+
+    pub fn set_gc(&mut self, gc: ApplyGCArgs) {
+        self.gc = gc;
+    }
+
+    pub fn set_gc_length_weighting(
+        &mut self,
+        gc_length_weighting: MarginalizeLengthsWeightingScheme,
+    ) {
+        self.gc_length_weighting = gc_length_weighting;
+    }
+
+    pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
+        self.ref_2bit = ref_2bit;
     }
 }

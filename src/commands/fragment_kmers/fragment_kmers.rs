@@ -20,6 +20,10 @@ use crate::{
             tiling::*,
             windows::*,
         },
+        gc_bias::{
+            correct::{GCCorrector, load_gc_corrector},
+            counting::build_gc_prefixes,
+        },
     },
     shared::{
         bam::create_chromosome_reader,
@@ -97,9 +101,12 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
             "  Blacklist-excluded fragments: {}",
             global_counter.blacklisted_fragments
         );
-        // if opt.gc.bin_by_gc {
-        //     println!("GC-excluded reads: {}", global_counter.base.gc_excl);
-        // }
+        if opt.shared_args.gc.gc_file.is_some() {
+            println!(
+                "  GC correction failures (fragment counted with weight 1.0): {}",
+                global_counter.gc_failed_fragments
+            );
+        }
         println!(
             "  Fragments counted one or more times: {}",
             global_counter.base.counted_fragments
@@ -182,6 +189,16 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     }
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
         load_scaling_map(&opt.shared_args.scale_genome, &chromosomes, &contigs)?;
+
+    // Load GC correction package if specified
+    if opt.shared_args.gc.gc_file.is_some() {
+        println!("Start: Loading GC correction matrix");
+    }
+    let gc_corrector = load_gc_corrector(
+        opt.shared_args.gc.gc_file.as_ref(),
+        opt.shared_args.fragment_lengths.min_fragment_length,
+        opt.shared_args.fragment_lengths.max_fragment_length,
+    )?;
 
     // Build temporary directory
     let temp_dir = make_temp_dir(&opt.shared_args.ioc.output_dir, prefix)
@@ -282,6 +299,7 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
                 tile_span.as_ref(),
                 blacklist_chr,
                 scaling_chr,
+                gc_corrector.clone(),
                 counts_path.as_path(),
             )?;
             pb.inc(1);
@@ -425,11 +443,36 @@ fn process_tile(
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_intervals: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
+    gc_corrector_opt: Option<GCCorrector>,
     counts_path: &Path,
 ) -> anyhow::Result<TileResult> {
     // Open a fresh BAM reader for this thread
     let (mut reader, tid, chrom_len) =
         create_chromosome_reader(&opt.shared_args.ioc.bam, &tile.chr)?;
+
+    // Initialize counters (default -> 0s)
+    let mut counter = FragmentKmersCounters::default();
+
+    let gc_prefixes_opt = if gc_corrector_opt.is_some() {
+        // NOTE: This sequence uses fetch coordinates for enabling GC correction
+        // for all fetched fragments. It is only used to build the GC and ACGT prefixes.
+        // The later sequence used for kmer extraction uses tile core coordinates.
+        let mut seq_bytes = read_seq_in_range(
+            &opt.shared_args.ref_genome.ref_2bit,
+            &tile.chr,
+            // NOTE: Need for full fetch span to get GC of overlapping fragments!
+            (tile.fetch_start as usize)..(tile.fetch_end as usize),
+        )?;
+        apply_blacklist_mask_to_seq(
+            &mut seq_bytes,
+            &blacklist_intervals,
+            tile.fetch_start as u64,
+        );
+
+        Some(build_gc_prefixes(&seq_bytes))
+    } else {
+        None
+    };
 
     let fetch_span = determine_fetch_span(tile, window_ctx, tile_window_span, chrom_len);
     let Some((fetch_from, fetch_to)) = fetch_span else {
@@ -480,7 +523,7 @@ fn process_tile(
     // Sparse map keyed by original window index -> kmer counts
     let mut counts_by_window: FxHashMap<u64, FxHashMap<CountKey, f64>> = FxHashMap::default();
 
-    // Streaming pointers and single fetch for this chr
+    // Streaming pointers
     let mut bl_ptr = 0; // Blacklist interval
     let mut wd_ptr = tile_window_span
         .and_then(|span| (!span.is_empty()).then_some(span.first_idx))
@@ -520,8 +563,23 @@ fn process_tile(
     )
     .with_local_counters();
 
-    // Initialize counters (default -> 0s)
-    let mut counter = FragmentKmersCounters::default();
+    let get_gc_weight = {
+        let gc_corrector = gc_corrector_opt.as_ref();
+        let gc_prefixes = gc_prefixes_opt.as_ref();
+        move |fragment: &FragmentWithKmerSegments, fetch_start: u32| -> Result<Option<f64>> {
+            match (gc_corrector, gc_prefixes) {
+                (Some(corrector), Some(prefixes)) => {
+                    let rel_start = (fragment.start - fetch_start) as u64;
+                    let rel_end = (fragment.end - fetch_start) as u64;
+                    corrector.correct_fragment(rel_start, rel_end, prefixes)
+                }
+                _ => Ok(None),
+            }
+        }
+    };
+
+    let correct_gc = opt.shared_args.gc.gc_file.is_some();
+    let fetch_start = tile.fetch_start;
 
     let store_positions = opt.positional_counts;
     let has_nearest_frame = position_cache
@@ -546,6 +604,21 @@ fn process_tile(
             continue;
         }
 
+        // Get GC correction weight
+        let gc_weight_opt = get_gc_weight(&fragment, fetch_start)?;
+        let gc_weight = match (gc_weight_opt, correct_gc) {
+            (Some(w), true) => w,
+            (None, true) => {
+                // Tried but failed to make a GC correction weight
+                // for the current fragment; fall back to no correction
+                counter.gc_failed_fragments += 1;
+                1.0
+            }
+            (None, false) => 1.0, // No correction
+            (Some(_), false) => unreachable!(),
+        };
+
+        // TODO: Does first, last need to be recalculated every iteration?
         let cache = position_cache.as_ref();
         let (first, last) = cache
             // Use smallest possible k to include all positions in interval for overlap
@@ -592,6 +665,7 @@ fn process_tile(
                 kmer_specs,
                 counts,
                 positional_scaling_weights.as_deref(),
+                gc_weight,
                 tile.core_start,
                 tile.core_end,
                 has_nearest_frame,
@@ -636,7 +710,8 @@ pub fn count_kmers_at_positions(
     positional_codes_by_k: &FxHashMap<u8, KmerCodes>,
     kmer_specs: &FxHashMap<u8, KmerSpec>,
     counts: &mut FxHashMap<CountKey, f64>,
-    weights: Option<&[f32]>,
+    scaling_weights: Option<&[f32]>,
+    gc_weight: f64,
     tile_core_start: u32,
     tile_core_end: u32,
     apply_nearest_guard: bool,
@@ -832,10 +907,10 @@ pub fn count_kmers_at_positions(
                         }
 
                         // We look up weights using the same tile-relative index as the positional codes
-                        let weight = match weights {
+                        let weight = match scaling_weights {
                             Some(w) => unsafe { *w.get_unchecked(start_local) as f64 },
                             None => 1.0,
-                        };
+                        } * gc_weight;
 
                         // Record the forward kmer code emitted at this start position
                         let key = CountKey {
@@ -873,10 +948,10 @@ pub fn count_kmers_at_positions(
                                 }
                             };
 
-                        let weight = match weights {
+                        let weight = match scaling_weights {
                             Some(w) => unsafe { *w.get_unchecked(end_local) as f64 },
                             None => 1.0,
-                        };
+                        } * gc_weight;
 
                         let key = CountKey {
                             k,

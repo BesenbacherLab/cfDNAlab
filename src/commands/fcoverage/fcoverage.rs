@@ -10,9 +10,8 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::{
     emit_bedgraph_runs, emit_windowed_runs, write_final_row,
 };
-use crate::commands::gc_bias::correct::GCCorrector;
+use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
 use crate::commands::gc_bias::counting::build_gc_prefixes;
-use crate::commands::gc_bias::package::GCCorrectionPackage;
 use crate::shared::blacklist::apply_blacklist_mask_to_seq;
 use crate::shared::coverage::Coverage;
 use crate::shared::formatters::round_to;
@@ -122,12 +121,11 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     if opt.gc.gc_file.is_some() {
         println!("Start: Loading GC correction matrix");
     }
-    let gc_corrector = if let Some(gc_file) = &opt.gc.gc_file {
-        let package = GCCorrectionPackage::from_file(gc_file)?;
-        Some(GCCorrector::from_package(&package)?)
-    } else {
-        None
-    };
+    let gc_corrector = load_gc_corrector(
+        opt.gc.gc_file.as_ref(),
+        opt.fragment_lengths.min_fragment_length,
+        opt.fragment_lengths.max_fragment_length,
+    )?;
 
     // Decide mode once
     let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
@@ -534,9 +532,12 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
         global_counter.base.accepted_forward,
         global_counter.base.accepted_reverse
     );
-    // if opt.gc.bin_by_gc {
-    //     println!("GC-excluded reads: {}", global_counter.base.gc_excl);
-    // }
+    if opt.gc.gc_file.is_some() {
+        println!(
+            "  GC correction failures (fragment counted with weight 1.0): {}",
+            global_counter.gc_failed_fragments
+        );
+    }
     println!(
         "  Fragments counted one or more times: {}",
         global_counter.base.counted_fragments
@@ -561,6 +562,9 @@ fn process_tile(
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
     debug_assert!(_tid_check == tile.tid as u32);
 
+    // Counters
+    let mut counter = FCoverageCounters::default();
+
     let gc_prefixes_opt = if gc_corrector_opt.is_some() {
         let ref_2bit = opt.ref_2bit.as_ref().ok_or_else(|| {
             anyhow!("When GC correction is specified, --ref-2bit must also be specified")
@@ -571,15 +575,12 @@ fn process_tile(
             // NOTE: Need for full fetch span to get GC of overlapping fragments!
             (tile.fetch_start as usize)..(tile.fetch_end as usize),
         )?;
-        apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_chr, 0);
+        apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_chr, tile.fetch_start as u64);
 
         Some(build_gc_prefixes(&seq_bytes))
     } else {
         None
     };
-
-    // Counters
-    let mut counter = FCoverageCounters::default();
 
     // Adapt the fetch coordinates to the present windows (*in windowed mode!*)
     // When no windows are present, skip this tile
@@ -639,13 +640,12 @@ fn process_tile(
             let rel_start = (fragment.start - fetch_start) as u64;
             let rel_end = (fragment.end - fetch_start) as u64;
 
-            let weight = if let Some(weight) =
-                gc_corrector.correct_fragment(rel_start, rel_end, &gc_prefixes)?
-            {
-                weight
-            } else {
-                counter.gc_excl_fragments += 1;
-                continue;
+            let weight = match gc_corrector.correct_fragment(rel_start, rel_end, &gc_prefixes)? {
+                Some(weight) => weight,
+                None => {
+                    counter.gc_failed_fragments += 1;
+                    1.0
+                }
             };
 
             // Clip and add to tile core coverage (segments respected)

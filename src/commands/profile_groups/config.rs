@@ -1,5 +1,5 @@
 use crate::{
-    commands::cli_common::{ChromosomeArgs, IOCArgs, ScaleGenomeArgs},
+    commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs},
     shared::blacklist::BlacklistStrategy,
 };
 use std::path::PathBuf;
@@ -145,11 +145,26 @@ pub struct ProfileGroupsConfig {
         )
     )]
     pub blacklist_strategy: BlacklistStrategy,
-    // #[cfg_attr(feature = "cli", clap(flatten))]
-    // gc: GCArgs,
 
-    // #[cfg_attr(feature = "cli", clap(flatten))]
-    // two_bit: TwoBitArgs,
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub gc: ApplyGCArgs,
+
+    /// Optional 2bit reference genome file [path]
+    ///
+    /// NOTE: Required for GC correction, otherwise ignored.
+    ///
+    /// E.g., "hg38.2bit" from UCSC ( https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/hg38.2bit ).
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            short = 'r',
+            long,
+            value_parser,
+            required = false,
+            help_heading = "GC Correction"
+        )
+    )]
+    pub ref_2bit: Option<PathBuf>,
 }
 
 impl ProfileGroupsConfig {
@@ -167,6 +182,8 @@ impl ProfileGroupsConfig {
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::default(),
+            gc: ApplyGCArgs { gc_file: None },
+            ref_2bit: None,
         }
     }
 
@@ -192,5 +209,13 @@ impl ProfileGroupsConfig {
 
     pub fn set_scale_genome(&mut self, scale: ScaleGenomeArgs) {
         self.scale_genome = scale;
+    }
+
+    pub fn set_gc(&mut self, gc: ApplyGCArgs) {
+        self.gc = gc;
+    }
+
+    pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
+        self.ref_2bit = ref_2bit;
     }
 }

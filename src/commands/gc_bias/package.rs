@@ -15,6 +15,7 @@ pub struct GCCorrectionPackage {
     pub length_edges: Vec<u32>,
     pub gc_edges: Vec<u32>,
     pub correction_matrix: Array2<f64>,
+    pub length_bin_frequencies: Array1<f64>,
 }
 
 impl GCCorrectionPackage {
@@ -23,6 +24,7 @@ impl GCCorrectionPackage {
         length_bins: &BinnedAxis,
         gc_bins: &BinnedAxis,
         correction_matrix: Array2<f64>,
+        length_bin_frequencies: Array1<f64>,
         opt: &GCConfig,
     ) -> Result<Self> {
         let length_edges = compute_bin_edges(
@@ -37,6 +39,7 @@ impl GCCorrectionPackage {
             length_edges,
             gc_edges,
             correction_matrix,
+            length_bin_frequencies,
         })
     }
 
@@ -48,6 +51,10 @@ impl GCCorrectionPackage {
         npz.add_array("gc_edges", &Array1::from(self.gc_edges.clone()))?;
         npz.add_array("version", &Array1::from(vec![self.version]))?;
         npz.add_array("end_offset", &Array1::from(vec![self.end_offset]))?;
+        npz.add_array(
+            "length_bin_frequencies",
+            &Array1::from(self.length_bin_frequencies.clone()),
+        )?;
         npz.finish()?;
         Ok(())
     }
@@ -62,6 +69,7 @@ impl GCCorrectionPackage {
         let gc_edges_arr: Array1<u32> = reader.by_name("gc_edges")?;
         let version_arr: Array1<u32> = reader.by_name("version")?;
         let end_offset_arr: Array1<u64> = reader.by_name("end_offset")?;
+        let length_bin_frequencies_arr: Array1<f64> = reader.by_name("length_bin_frequencies")?;
 
         let version = *version_arr
             .iter()
@@ -94,6 +102,12 @@ impl GCCorrectionPackage {
             gc_edges.len(),
             correction_matrix.dim().1 + 1
         );
+        ensure!(
+            length_bin_frequencies_arr.len() == correction_matrix.dim().0,
+            "Length frequency length ({}) must match number of correction rows ({})",
+            length_bin_frequencies_arr.len(),
+            correction_matrix.dim().0
+        );
 
         Ok(Self {
             version,
@@ -101,6 +115,7 @@ impl GCCorrectionPackage {
             length_edges,
             gc_edges,
             correction_matrix,
+            length_bin_frequencies: length_bin_frequencies_arr,
         })
     }
 }

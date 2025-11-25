@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use crate::{
     commands::{
         cli_common::{
-            BaseSelectionArgs, ChromosomeArgs, FragmentLengthArgs, FragmentPositionSelectionArgs,
-            IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs, WindowsArgs,
+            ApplyGCArgs, BaseSelectionArgs, ChromosomeArgs, FragmentLengthArgs,
+            FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
+            WindowsArgs,
         },
         fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame},
     },
@@ -161,6 +162,9 @@ pub struct FragmentKmersSharedArgs {
         )
     )]
     pub blacklist_strategy: BlacklistStrategy,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub gc: ApplyGCArgs,
 }
 
 impl FragmentKmersSharedArgs {
@@ -199,6 +203,7 @@ impl FragmentKmersSharedArgs {
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::default(),
+            gc: ApplyGCArgs { gc_file: None },
         }
     }
 
@@ -256,6 +261,10 @@ impl FragmentKmersSharedArgs {
 
     pub fn set_require_proper_pair(&mut self, require: bool) {
         self.require_proper_pair = require;
+    }
+
+    pub fn set_gc(&mut self, gc: ApplyGCArgs) {
+        self.gc = gc;
     }
 }
 
@@ -413,5 +422,9 @@ impl FragmentKmersConfig {
 
     pub fn set_require_proper_pair(&mut self, require: bool) {
         self.shared_args.set_require_proper_pair(require);
+    }
+
+    pub fn set_gc(&mut self, gc: ApplyGCArgs) {
+        self.shared_args.set_gc(gc);
     }
 }

@@ -1,4 +1,6 @@
-use crate::commands::cli_common::ScaleGenomeArgs;
+use std::path::PathBuf;
+
+use crate::commands::cli_common::{ApplyGCArgs, ScaleGenomeArgs};
 use crate::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
 use crate::commands::wps::config::WPSSharedConfig;
 use crate::commands::wps_peaks::window_peak_results::PeaksWindowAction;
@@ -237,6 +239,14 @@ impl WPSPeaksConfig {
 
     pub fn set_min_peak_height(&mut self, min_peak_height: f32) {
         self.min_peak_height = min_peak_height;
+    }
+
+    pub fn set_gc(&mut self, gc: ApplyGCArgs) {
+        self.shared_args.set_gc(gc);
+    }
+
+    pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
+        self.shared_args.set_ref_2bit(ref_2bit);
     }
 }
 

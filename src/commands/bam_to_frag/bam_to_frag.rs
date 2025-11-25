@@ -11,7 +11,8 @@ use crate::{
         },
         counters::BamToFragCounters,
         gc_bias::{
-            correct::GCCorrector, counting::build_gc_prefixes, package::GCCorrectionPackage,
+            correct::{GCCorrector, load_gc_corrector},
+            counting::build_gc_prefixes,
         },
     },
     shared::{
@@ -73,6 +74,12 @@ pub fn run(opt: &BamToFragConfig) -> Result<()> {
             "  Blacklist-excluded fragments: {}",
             global_counter.blacklisted_fragments
         );
+        if opt.gc.gc_file.is_some() {
+            println!(
+                "  GC correction failures (fragment counted with weight 1.0): {}",
+                global_counter.gc_failed_fragments
+            );
+        }
         println!(
             "  Fragments included: {}",
             global_counter.base.counted_fragments
@@ -130,12 +137,11 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     if opt.gc.gc_file.is_some() {
         println!("Start: Loading GC correction matrix");
     }
-    let gc_corrector = if let Some(gc_file) = &opt.gc.gc_file {
-        let package = GCCorrectionPackage::from_file(gc_file)?;
-        Some(GCCorrector::from_package(&package)?)
-    } else {
-        None
-    };
+    let gc_corrector = load_gc_corrector(
+        opt.gc.gc_file.as_ref(),
+        opt.fragment_lengths.min_fragment_length,
+        opt.fragment_lengths.max_fragment_length,
+    )?;
 
     // Build temporary directory
     let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
@@ -297,18 +303,6 @@ fn process_chrom(
     )
     .with_local_counters();
 
-    // Streaming pointers
-    let mut bl_ptr = 0; // Blacklist interval
-    let mut wd_ptr = 0; // Genomic window
-    let mut sf_ptr = 0; // Scaling factor bin
-
-    let out_path = temp_dir.join(format!("{chr}.frag.tsv.zst"));
-
-    let mut writer = open_zstd_auto_writer(&out_path, 3, Some(1))?;
-
-    // Write using a bounded window sorter to ensure (start,end)-sorted output
-    let mut sorter = WindowSorter::new(opt.fragment_lengths.max_fragment_length);
-
     let get_gc_weight = {
         let gc_corrector = gc_corrector_opt.as_ref();
         let gc_prefixes = gc_prefixes_opt.as_ref();
@@ -323,6 +317,18 @@ fn process_chrom(
     };
 
     let correct_gc = opt.gc.gc_file.is_some();
+
+    // Streaming pointers
+    let mut bl_ptr = 0; // Blacklist interval
+    let mut wd_ptr = 0; // Genomic window
+    let mut sf_ptr = 0; // Scaling factor bin
+
+    let out_path = temp_dir.join(format!("{chr}.frag.tsv.zst"));
+
+    let mut writer = open_zstd_auto_writer(&out_path, 3, Some(1))?;
+
+    // Write using a bounded window sorter to ensure (start,end)-sorted output
+    let mut sorter = WindowSorter::new(opt.fragment_lengths.max_fragment_length);
 
     // Iterate fragments
     for fragment_res in iter.by_ref() {
@@ -359,11 +365,15 @@ fn process_chrom(
             continue;
         };
 
-        let gc_weight = get_gc_weight(&fragment)?;
-        if correct_gc && gc_weight.is_none() {
-            counter.gc_excl_fragments += 1;
-            continue;
-        }
+        let gc_weight = match (get_gc_weight(&fragment)?, correct_gc) {
+            (Some(w), true) => Some(w),
+            (None, true) => {
+                counter.gc_failed_fragments += 1;
+                Some(1.0)
+            }
+            (None, false) => None,
+            (Some(_), false) => unreachable!(),
+        };
 
         // Find all overlapping scaling-factor bins
         // And count up the weight

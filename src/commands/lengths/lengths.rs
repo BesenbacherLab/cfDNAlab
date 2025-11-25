@@ -5,6 +5,10 @@ use crate::{
             resolve_chromosomes_and_contigs,
         },
         counters::LengthsCounters,
+        gc_bias::{
+            correct::{LengthAgnosticGCCorrector, load_length_agnostic_gc_corrector},
+            counting::build_gc_prefixes,
+        },
         lengths::{
             config::LengthsConfig,
             counting::{LengthCounts, stack_length_counts},
@@ -13,18 +17,19 @@ use crate::{
     shared::{
         bam::create_chromosome_reader,
         bed::load_windows_from_bed,
-        blacklist::{compute_blacklist_overlap, is_blacklisted},
+        blacklist::{apply_blacklist_mask_to_seq, compute_blacklist_overlap, is_blacklisted},
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
         fragment_iterator::fragments_with_indel_counts_from_bam,
         io::create_text_writer,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         read::default_include_read,
+        reference::read_seq,
         scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
         thread_pool::init_global_pool,
     },
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray_npy::write_npy;
@@ -97,6 +102,17 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
         load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
 
+    // Load GC correction package if specified
+    if opt.gc.gc_file.is_some() {
+        println!("Start: Loading GC correction matrix");
+    }
+    let gc_corrector = load_length_agnostic_gc_corrector(
+        opt.gc.gc_file.as_ref(),
+        &opt.gc_length_weighting,
+        opt.fragment_lengths.min_fragment_length,
+        opt.fragment_lengths.max_fragment_length,
+    )?;
+
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads as usize)?;
 
@@ -125,6 +141,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 &window_opt,
                 blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
                 scaling_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
+                gc_corrector.clone(),
             )?;
             pb.inc(1);
             Ok(out)
@@ -223,6 +240,7 @@ fn process_chrom(
     window_opt: &WindowSpec,
     blacklist_intervals: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
+    gc_corrector_opt: Option<LengthAgnosticGCCorrector>,
 ) -> anyhow::Result<(
     Vec<LengthCounts>,
     Option<Vec<(String, u64, u64, u64, f64)>>,
@@ -233,6 +251,18 @@ fn process_chrom(
 
     // Initialize counters (default -> 0s)
     let mut counter = LengthsCounters::default();
+
+    let gc_prefixes_opt = if gc_corrector_opt.is_some() {
+        let ref_2bit = opt.ref_2bit.as_ref().ok_or_else(|| {
+            anyhow!("When GC correction is specified, --ref-2bit must also be specified")
+        })?;
+        let mut seq_bytes = read_seq(&ref_2bit, chr)?;
+        apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals, 0);
+
+        Some(build_gc_prefixes(&seq_bytes))
+    } else {
+        None
+    };
 
     let num_bins = match window_opt {
         WindowSpec::Bed(_) => windows.unwrap().len(),
@@ -263,11 +293,6 @@ fn process_chrom(
     // Replace scaling factor with unused index (for compatibility with overlap finder)
     let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
         scaling_chr.iter().map(|(s, e, _)| (*s, *e, 0u64)).collect();
-
-    // Streaming pointers and single fetch for this chr
-    let mut bl_ptr = 0; // Blacklist interval
-    let mut wd_ptr = 0; // Genomic window
-    let mut sf_ptr = 0; // Scaling factor bin
 
     // Get coordinates to fetch reads from and to
     let (fetch_from, fetch_to) = match window_opt {
@@ -308,6 +333,26 @@ fn process_chrom(
         fragment_filter,
     )
     .with_local_counters();
+
+    let get_gc_weight = {
+        let gc_corrector = gc_corrector_opt.as_ref();
+        let gc_prefixes = gc_prefixes_opt.as_ref();
+        move |fragment: &FragmentWithIndelCounts| -> Result<Option<f64>> {
+            match (gc_corrector, gc_prefixes) {
+                (Some(corrector), Some(prefixes)) => {
+                    corrector.correct_fragment(fragment.start as u64, fragment.end as u64, prefixes)
+                }
+                _ => Ok(None),
+            }
+        }
+    };
+
+    let correct_gc = opt.gc.gc_file.is_some();
+
+    // Streaming pointers
+    let mut bl_ptr = 0; // Blacklist interval
+    let mut wd_ptr = 0; // Genomic window
+    let mut sf_ptr = 0; // Scaling factor bin
 
     // Iterate fragments and add coverage
     for fragment_res in iter.by_ref() {
@@ -358,6 +403,19 @@ fn process_chrom(
             continue;
         };
 
+        // Get GC correction weight
+        let gc_weight_opt = get_gc_weight(&fragment)?;
+        let gc_weight = match (gc_weight_opt, correct_gc) {
+            (Some(w), true) => w,
+            (None, true) => {
+                // Tried but failed to make a GC correction weight for the current fragment; fall back to no correction
+                counter.gc_failed_fragments += 1;
+                1.0
+            }
+            (None, false) => 1.0, // No correction
+            (Some(_), false) => unreachable!(),
+        };
+
         counter.base.counted_fragments += 1;
 
         // Find all overlapping scaling-factor bins
@@ -406,7 +464,7 @@ fn process_chrom(
             {
                 counts_by_bin[overlapped_window_idx].incr_weighted(
                     fragment_length as usize,
-                    overlap_fraction_to_count * scaling_weight,
+                    overlap_fraction_to_count * scaling_weight * gc_weight,
                 );
             }
         } else {
@@ -417,7 +475,7 @@ fn process_chrom(
                     _ => 1.0f64,
                 };
                 counts_by_bin[overlapped_window.idx]
-                    .incr_weighted(fragment_length as usize, count_weight);
+                    .incr_weighted(fragment_length as usize, count_weight * gc_weight);
             }
         }
     }

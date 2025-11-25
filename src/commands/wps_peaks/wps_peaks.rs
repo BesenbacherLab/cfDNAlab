@@ -7,6 +7,7 @@ use crate::commands::cli_common::{
     resolve_chromosomes_and_contigs,
 };
 use crate::commands::counters::FCoverageCounters;
+use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
 use crate::commands::wps::wps::wps_for_tile;
 use crate::commands::wps_peaks::call_peaks::{PeakCall, call_peaks};
 use crate::commands::wps_peaks::config::WPSPeaksConfig;
@@ -142,6 +143,16 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
         load_scaling_map(&opt.shared_args.scale_genome, &chromosomes, &contigs)?;
 
+    // Load GC correction package if specified
+    if opt.shared_args.gc.gc_file.is_some() {
+        println!("Start: Loading GC correction matrix");
+    }
+    let gc_corrector = load_gc_corrector(
+        opt.shared_args.gc.gc_file.as_ref(),
+        opt.shared_args.min_fragment_length,
+        opt.shared_args.max_fragment_length,
+    )?;
+
     // Halo large enough for normalization and to keep peaks that straddle tile edges
     let normalize_halo = opt.normalize_bp / 2;
     let extra_halo = normalize_halo.saturating_add(EXTRA_PEAK_HALO_BP);
@@ -210,6 +221,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
                 windows_chr,
                 blacklist_chr,
                 scaling_chr,
+                gc_corrector.clone(),
                 extra_halo,
                 opt.min_peak_height,
             )?;
@@ -362,6 +374,12 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
         total_counter.base.accepted_forward,
         total_counter.base.accepted_reverse
     );
+    if opt.shared_args.gc.gc_file.is_some() {
+        println!(
+            "  GC correction failures (fragment counted with weight 1.0): {}",
+            total_counter.gc_failed_fragments
+        );
+    }
     println!(
         "  Fragments counted one or more times: {}",
         total_counter.base.counted_fragments
@@ -869,6 +887,7 @@ pub fn peaks_for_tile(
     windows: Option<&[(u64, u64, u64)]>,
     blacklist_chr: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
+    gc_corrector_opt: Option<GCCorrector>,
     extra_halo: u32,
     min_peak_height: f32,
 ) -> Result<(FCoverageCounters, Vec<PeakCall>)> {
@@ -887,6 +906,7 @@ pub fn peaks_for_tile(
         tile_span,
         blacklist_chr,
         scaling_chr,
+        gc_corrector_opt,
         tile_mode,
         opt.shared_args.decimals as i32, // Ignored
         extra_halo,

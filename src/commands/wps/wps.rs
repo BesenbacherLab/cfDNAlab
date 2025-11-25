@@ -9,11 +9,15 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::{
     emit_bedgraph_runs, emit_windowed_runs, write_final_row,
 };
+use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
+use crate::commands::gc_bias::counting::build_gc_prefixes;
 use crate::commands::wps::config::{WPSConfig, WPSSharedConfig};
+use crate::shared::blacklist::apply_blacklist_mask_to_seq;
 use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment_iterator::fragments_from_bam;
 use crate::shared::read::default_include_read;
+use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
 use crate::shared::tiled_run::{
     Tile, TileMode, TileWindowSpan, build_tiles, make_temp_dir, overlapping_windows_for_tile,
@@ -30,7 +34,7 @@ use crate::{
         bam::create_chromosome_reader, bed::load_windows_from_bed, thread_pool::init_global_pool,
     },
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, anyhow, ensure};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -147,7 +151,18 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
         load_scaling_map(&opt.shared_args.scale_genome, &chromosomes, &contigs)?;
 
-    let has_scaling = opt.shared_args.scale_genome.scaling_factors.is_some();
+    // Load GC correction package if specified
+    if opt.shared_args.gc.gc_file.is_some() {
+        println!("Start: Loading GC correction matrix");
+    }
+    let gc_corrector = load_gc_corrector(
+        opt.shared_args.gc.gc_file.as_ref(),
+        opt.shared_args.min_fragment_length,
+        opt.shared_args.max_fragment_length,
+    )?;
+
+    let has_scaling_or_correction = opt.shared_args.scale_genome.scaling_factors.is_some()
+        || opt.shared_args.gc.gc_file.is_some();
 
     // Some actions cannot be used with `--by-size`
     if matches!(window_opt, WindowSpec::Size(_))
@@ -214,7 +229,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             }
             CoverageWindowAction::OnlyIncludeThesePositionsUnique
             | CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
-                if has_scaling {
+                if has_scaling_or_correction {
                     opt.shared_args.decimals as i32
                 } else {
                     0
@@ -222,7 +237,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             }
         }
     } else {
-        if has_scaling {
+        if has_scaling_or_correction {
             opt.shared_args.decimals as i32
         } else {
             0
@@ -380,6 +395,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                 tile_span.as_ref(),
                 blacklist_chr,
                 scaling_chr,
+                gc_corrector.clone(),
                 mode,
                 decimals_to_use,
                 0,
@@ -569,9 +585,12 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         global_counter.base.accepted_forward,
         global_counter.base.accepted_reverse
     );
-    // if opt.shared_args.gc.bin_by_gc {
-    //     println!("GC-excluded reads: {}", global_counter.base.gc_excl);
-    // }
+    if opt.shared_args.gc.gc_file.is_some() {
+        println!(
+            "  GC correction failures (fragment counted with weight 1.0): {}",
+            global_counter.gc_failed_fragments
+        );
+    }
     println!(
         "  Fragments counted one or more times: {}",
         global_counter.base.counted_fragments
@@ -590,6 +609,7 @@ pub fn wps_for_tile(
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_chr: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
+    gc_corrector_opt: Option<GCCorrector>,
     mode: TileMode,
     decimals: i32,
     extra_halo_bp: u32,
@@ -600,6 +620,23 @@ pub fn wps_for_tile(
     debug_assert!(tid_check == tile.tid as u32);
 
     let mut counter = FCoverageCounters::default();
+
+    let gc_prefixes_opt = if gc_corrector_opt.is_some() {
+        let ref_2bit = opt.ref_2bit.as_ref().ok_or_else(|| {
+            anyhow!("When GC correction is specified, --ref-2bit must also be specified")
+        })?;
+        let mut seq_bytes = read_seq_in_range(
+            &ref_2bit,
+            &tile.chr,
+            // NOTE: Need for full fetch span to get GC of overlapping fragments!
+            (tile.fetch_start as usize)..(tile.fetch_end as usize),
+        )?;
+        apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_chr, tile.fetch_start as u64);
+
+        Some(build_gc_prefixes(&seq_bytes))
+    } else {
+        None
+    };
 
     // Adapt the fetch coordinates to the present windows (*in genomic-windowed mode!*)
     // When no windows are present, skip this tile
@@ -671,40 +708,81 @@ pub fn wps_for_tile(
     )
     .with_local_counters();
 
+    let get_gc_weight = {
+        let gc_corrector = gc_corrector_opt.as_ref();
+        let gc_prefixes = gc_prefixes_opt.as_ref();
+        move |fragment: &Fragment, fetch_start: u32| -> Result<Option<f64>> {
+            match (gc_corrector, gc_prefixes) {
+                (Some(corrector), Some(prefixes)) => {
+                    let rel_start = (fragment.start - fetch_start) as u64;
+                    let rel_end = (fragment.end - fetch_start) as u64;
+                    corrector.correct_fragment(rel_start, rel_end, prefixes)
+                }
+                _ => Ok(None),
+            }
+        }
+    };
+
+    let correct_gc = opt.gc.gc_file.is_some();
+    let fetch_start = tile.fetch_start;
+    let fetch_end = tile.fetch_end;
+
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
-        counter.base.counted_fragments += 1;
+
+        if fragment.start < fetch_start || fragment.end > fetch_end {
+            // Fragment won't overlap the counting region (assuming correct max_fragment_length+window halo!)
+            continue;
+        }
+
+        // Get GC correction weight
+        let gc_weight_opt = get_gc_weight(&fragment, fetch_start)?;
+        let gc_weight = match (gc_weight_opt, correct_gc) {
+            (Some(w), true) => w,
+            (None, true) => {
+                // Tried but failed to make a GC correction weight
+                // for the current fragment; fall back to no correction
+                counter.gc_failed_fragments += 1;
+                1.0
+            }
+            (None, false) => 1.0, // No correction
+            (Some(_), false) => unreachable!(),
+        };
 
         let fragment_start = fragment.start as i64;
         let fragment_end = fragment.end as i64;
 
         // Full-span contribution: window stays entirely inside the fragment (edges may align)
-        push_range(
+        let was_pushed_1 = push_range(
             &mut span_diff,
             dilated_start_i64,
             dilated_end_i64,
             fragment_start + window_left_i64,
             fragment_end - window_right_i64 + 1,
-            1.0,
+            gc_weight as f32,
         );
         // Left endpoint contribution: window must still contain the fragment start
-        push_range(
+        let was_pushed_2 = push_range(
             &mut end_diff,
             dilated_start_i64,
             dilated_end_i64,
             fragment_start - window_right_i64 + 1,
             fragment_start + window_left_i64,
-            1.0,
+            gc_weight as f32,
         );
         // Right endpoint contribution: window must still contain the fragment end (exclusive)
-        push_range(
+        let was_pushed_3 = push_range(
             &mut end_diff,
             dilated_start_i64,
             dilated_end_i64,
             fragment_end - window_right_i64 + 1,
             fragment_end + window_left_i64 - 1,
-            1.0,
+            gc_weight as f32,
         );
+
+        if was_pushed_1 || was_pushed_2 || was_pushed_3 {
+            counter.base.counted_fragments += 1;
+        }
     }
 
     let overlap_vals = finalize_diff(&mut span_diff);
@@ -1020,6 +1098,8 @@ pub fn wps_for_tile(
     return Ok((counter, None, None));
 }
 
+// TODO: Add title to docstring
+/// Returns whether the range was pushed.
 fn push_range(
     diff: &mut [f32],
     core_start: i64,
@@ -1027,16 +1107,17 @@ fn push_range(
     raw_start: i64,
     raw_end: i64,
     weight: f32,
-) {
+) -> bool {
     let start = raw_start.max(core_start);
     let end = raw_end.min(core_end);
     if start >= end {
-        return;
+        return false;
     }
     let from = (start - core_start) as usize;
     let to = (end - core_start) as usize;
     diff[from] += weight;
     diff[to] -= weight;
+    true
 }
 
 fn finalize_diff(diff: &mut [f32]) -> Vec<f32> {

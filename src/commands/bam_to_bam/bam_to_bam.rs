@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rust_htslib::bam::{self, Format, Header, Read, Record, ext::BamRecordExtensions};
@@ -6,19 +6,30 @@ use std::{sync::Arc, time::Instant};
 
 use crate::{
     commands::{
-        bam_to_bam::config::BamToBamConfig,
-        bam_to_bam::sorted_writer::{RecordEntry, RecordTags, WindowSorter},
+        bam_to_bam::{
+            config::BamToBamConfig,
+            sorted_writer::{RecordEntry, RecordTags, WindowSorter},
+        },
         cli_common::{
             WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
             resolve_chromosomes_and_contigs,
         },
         counters::BamToFragCounters,
+        gc_bias::{
+            correct::{GCCorrector, load_gc_corrector},
+            counting::build_gc_prefixes,
+        },
     },
     shared::{
-        bam::create_chromosome_reader, bed::load_windows_from_bed, blacklist::is_blacklisted,
+        bam::create_chromosome_reader,
+        bed::load_windows_from_bed,
+        blacklist::{apply_blacklist_mask_to_seq, is_blacklisted},
         fragment::with_records_fragment::WithRecordsFragment,
-        fragment_iterator::fragments_with_records_from_bam, overlaps::find_overlapping_windows,
-        read::default_include_read, scale_genome::compute_window_scaling_over_fragment,
+        fragment_iterator::fragments_with_records_from_bam,
+        overlaps::find_overlapping_windows,
+        read::default_include_read,
+        reference::read_seq,
+        scale_genome::compute_window_scaling_over_fragment,
     },
 };
 
@@ -60,6 +71,12 @@ pub fn run(opt: &BamToBamConfig) -> Result<()> {
             "  Blacklist-excluded fragments: {}",
             global_counter.blacklisted_fragments
         );
+        if opt.gc.gc_file.is_some() {
+            println!(
+                "  GC correction failures (fragment counted with weight 1.0): {}",
+                global_counter.gc_failed_fragments
+            );
+        }
         println!(
             "  Fragments included: {}",
             global_counter.base.counted_fragments
@@ -119,6 +136,16 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
         load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
 
+    // Load GC correction package if specified
+    if opt.gc.gc_file.is_some() {
+        println!("Start: Loading GC correction matrix");
+    }
+    let gc_corrector = load_gc_corrector(
+        opt.gc.gc_file.as_ref(),
+        opt.fragment_lengths.min_fragment_length,
+        opt.fragment_lengths.max_fragment_length,
+    )?;
+
     // Create progress bar
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
     pb.set_style(
@@ -154,6 +181,7 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
                     .and_then(|m| m.get(chr).map(|v| v.as_slice())),
                 blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
                 scaling_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
+                gc_corrector.clone(),
                 &mut writer,
             )?;
             pb.inc(1);
@@ -179,6 +207,7 @@ fn process_chrom(
     windows: Option<&[(u64, u64, u64)]>,
     blacklist_intervals: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
+    gc_corrector_opt: Option<GCCorrector>,
     writer: &mut bam::Writer,
 ) -> anyhow::Result<BamToFragCounters> {
     // Open a fresh BAM reader for this thread
@@ -186,6 +215,18 @@ fn process_chrom(
 
     // Initialize counters (default -> 0s)
     let mut counter = BamToFragCounters::default();
+
+    let gc_prefixes_opt = if gc_corrector_opt.is_some() {
+        let ref_2bit = opt.ref_2bit.as_ref().ok_or_else(|| {
+            anyhow!("When GC correction is specified, --ref-2bit must also be specified")
+        })?;
+        let mut seq_bytes = read_seq(&ref_2bit, chr)?;
+        apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals, 0);
+
+        Some(build_gc_prefixes(&seq_bytes))
+    } else {
+        None
+    };
 
     // Replace scaling factor with unused index
     let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
@@ -229,6 +270,21 @@ fn process_chrom(
     )
     .with_local_counters();
 
+    let get_gc_weight = {
+        let gc_corrector = gc_corrector_opt.as_ref();
+        let gc_prefixes = gc_prefixes_opt.as_ref();
+        move |fragment: &WithRecordsFragment| -> Result<Option<f64>> {
+            match (gc_corrector, gc_prefixes) {
+                (Some(corrector), Some(prefixes)) => {
+                    corrector.correct_fragment(fragment.start as u64, fragment.end as u64, prefixes)
+                }
+                _ => Ok(None),
+            }
+        }
+    };
+
+    let correct_gc = opt.gc.gc_file.is_some();
+
     // Streaming pointers
     let mut bl_ptr = 0; // Blacklist interval
     let mut wd_ptr = 0; // Genomic window
@@ -270,6 +326,16 @@ fn process_chrom(
             overlaps
         } else {
             continue;
+        };
+
+        let gc_weight = match (get_gc_weight(&fragment)?, correct_gc) {
+            (Some(w), true) => Some(w),
+            (None, true) => {
+                counter.gc_failed_fragments += 1;
+                Some(1.0)
+            }
+            (None, false) => None,
+            (Some(_), false) => unreachable!(),
         };
 
         // Find all overlapping scaling-factor bins
@@ -317,7 +383,7 @@ fn process_chrom(
         let tags = Arc::new(RecordTags {
             fragment_length,
             coverage_weight: scaling_weight.map(|w| w as f32),
-            gc_weight: None,
+            gc_weight: gc_weight.map(|w| w as f32),
         });
 
         counter.base.counted_fragments += 1;

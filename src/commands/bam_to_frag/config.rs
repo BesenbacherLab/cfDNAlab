@@ -18,6 +18,16 @@ use std::path::PathBuf;
 ///
 ///  - **Strand**: The strand alignment of read1
 ///
+/// AND, when either/both `--gc-file` and `--scaling-factors` are specified:
+///
+///  - **GC Weight**: The multiplicative weight needed to correct for GC bias.
+///
+///  - **Scaling Weight**: The multiplicative weight needed to perform genomic smoothing.
+///
+/// Note: When GC correction is not specified but genomic scaling is, the sixth column is the scaling weight.
+///
+/// The accompanying `*.frag.header.tsv` file has the matching column names.
+///
 /// Fragments are sorted by `(chromosome, start, end)`, using the chromosome order in `--chromosomes`.
 ///
 /// ## Always-on exclusion criteria
