@@ -6,7 +6,7 @@ use tempfile::tempdir;
 use cfdnalab::commands::gc_bias::{
     GC_CORRECTION_SCHEMA_VERSION,
     binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
-    correct::GCCorrector,
+    correct::{GCCorrector, LengthAgnosticGCCorrector, MarginalizeLengthsWeightingScheme},
     package::GCCorrectionPackage,
     support_masking::build_extreme_gc_support_mask,
 };
@@ -72,6 +72,7 @@ fn provides_expected_weights_after_roundtrip() -> Result<()> {
         length_edges: length_edges.clone(),
         gc_edges: gc_edges.clone(),
         correction_matrix,
+        length_bin_frequencies: array![1.0_f64, 1.0_f64],
     };
     let tmp_dir = tempdir()?;
     let pkg_path = tmp_dir.path().join("gc_package.npz");
@@ -106,5 +107,61 @@ fn provides_expected_weights_after_roundtrip() -> Result<()> {
         "length 39 / GC 80 should map to 0.75"
     );
 
+    Ok(())
+}
+
+fn make_length_agnostic_package() -> GCCorrectionPackage {
+    let correction_matrix = array![[1.0_f64, 2.0_f64], [3.0_f64, 5.0_f64]];
+    GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 0,
+        length_edges: vec![20, 30, 40],
+        gc_edges: vec![0, 50, 100],
+        correction_matrix,
+        length_bin_frequencies: array![0.2_f64, 0.8_f64],
+    }
+}
+
+#[test]
+fn length_agnostic_equal_weighting_means_rows() -> Result<()> {
+    let package = make_length_agnostic_package();
+    let corrector = GCCorrector::from_package(&package)?;
+    let agnostic = LengthAgnosticGCCorrector::from_gc_corrector(
+        &corrector,
+        &MarginalizeLengthsWeightingScheme::Equal,
+    )?;
+
+    assert!((agnostic.get_correction_weight(0)? - 2.0).abs() < 1e-12);
+    assert!((agnostic.get_correction_weight(50)? - 3.5).abs() < 1e-12);
+    Ok(())
+}
+
+#[test]
+fn length_agnostic_coverage_weighting_uses_frequencies() -> Result<()> {
+    let package = make_length_agnostic_package();
+    let corrector = GCCorrector::from_package(&package)?;
+    let agnostic = LengthAgnosticGCCorrector::from_gc_corrector(
+        &corrector,
+        &MarginalizeLengthsWeightingScheme::Coverage,
+    )?;
+
+    // Weighted average with frequencies [2, 8]
+    assert!((agnostic.get_correction_weight(0)? - 2.6).abs() < 1e-12);
+    assert!((agnostic.get_correction_weight(50)? - 4.4).abs() < 1e-12);
+    Ok(())
+}
+
+#[test]
+fn length_agnostic_max_coverage_picks_most_frequent_row() -> Result<()> {
+    let package = make_length_agnostic_package();
+    let corrector = GCCorrector::from_package(&package)?;
+    let agnostic = LengthAgnosticGCCorrector::from_gc_corrector(
+        &corrector,
+        &MarginalizeLengthsWeightingScheme::MaxCoverage,
+    )?;
+
+    // Row with highest frequency is [3.0, 5.0]
+    assert!((agnostic.get_correction_weight(0)? - 3.0).abs() < 1e-12);
+    assert!((agnostic.get_correction_weight(50)? - 5.0).abs() < 1e-12);
     Ok(())
 }

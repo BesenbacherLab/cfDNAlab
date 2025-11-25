@@ -221,9 +221,12 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         "  Blacklist-excluded fragments: {}",
         global_counter.blacklisted_fragments
     );
-    // if opt.gc.bin_by_gc {
-    //     println!("GC-excluded reads: {}", global_counter.gc_excl);
-    // }
+    if opt.gc.gc_file.is_some() {
+        println!(
+            "  GC correction failures (fragment counted with weight 1.0): {}",
+            global_counter.gc_failed_fragments
+        );
+    }
     println!(
         "  Fragments counted one or more times: {}",
         global_counter.base.counted_fragments
