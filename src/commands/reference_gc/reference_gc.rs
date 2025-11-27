@@ -3,8 +3,8 @@ use crate::{
         cli_common::*,
         gc_bias::{
             counting::{
-                GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window,
-                stack_gc_counts,
+                GCCounts, apply_gc_percent_width_correction, build_gc_prefixes,
+                count_reference_gc_and_length_by_window, gc_percent_widths, stack_gc_counts,
             },
             interpolation::fill_unsupported_bins_with_polynomial,
             support_masking::{
@@ -59,6 +59,12 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         }
         _ => None,
     };
+
+    // Precompute GC% bin widths (gc_count -> percent) per fragment length
+    let gc_percent_widths = Arc::new(gc_percent_widths(
+        opt.fragment_lengths.min_fragment_length as usize,
+        opt.fragment_lengths.max_fragment_length as usize,
+    ));
 
     let starts_per_chrom = {
         let mut rng1 = if let Some(seed) = opt.seed {
@@ -144,7 +150,8 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         let mut all_bin_arrays: Vec<Array2<f64>> = all_bins
             .par_iter()
             .map(|gc_counts| -> Result<_> {
-                let out = gc_counts.to_array2();
+                let mut out = gc_counts.to_array2();
+                apply_gc_percent_width_correction(&mut out, &gc_percent_widths)?;
                 pb.inc(1);
                 Ok(out)
             })
@@ -255,6 +262,12 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         &unobservable_support_mask,
     )
     .context("Writing unobservables support mask failed")?;
+
+    write_npy(
+        &opt.output_dir.join("ref_gc_percent_widths.npy"),
+        &*gc_percent_widths,
+    )
+    .context("Writing GC percent widths failed")?;
 
     // Write final counts to output_dir
     write_npy(

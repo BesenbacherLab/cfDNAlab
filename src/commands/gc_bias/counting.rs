@@ -1,6 +1,5 @@
-use core::f64;
-
-use ndarray::{Array2, Array3, s};
+use anyhow::{Result, ensure};
+use ndarray::{Array2, Array3, ArrayBase, Axis, Data, DataMut, Ix2, s};
 
 /// Prefix sums (cumsum) to compute GC and AT fractions while excluding Ns.
 /// `gc[i]`   = # of G/C in seq[0..i)
@@ -596,4 +595,74 @@ pub fn count_reference_gc_and_length_by_window(
 ///  - gc=3, acgt=3 -> exact 100%     -> (300 + 1)/3 = 100 (then clamped to ≤100 below)
 pub fn calculate_gc_bin(gc_count: u64, acgt_count: u64) -> usize {
     ((gc_count as u64 * 100 + (acgt_count as u64 / 2)) / acgt_count as u64).min(100) as usize
+}
+
+/// Precompute how many raw GC counts map to each integer GC% bin for every length.
+///
+/// Used to debias the uneven bin widths caused by half-up rounding of `gc_count / length`
+/// to an integer percent. Each output row corresponds to a fragment length and each
+/// column is a GC% bin in `[0, 100]`. Entries store how many distinct `gc_count` values
+/// round into that bin for the given length.
+pub fn gc_percent_widths(length_min: usize, length_max: usize) -> Array2<u16> {
+    assert!(
+        length_max >= length_min,
+        "length range must be non-empty ({}..={})",
+        length_min,
+        length_max
+    );
+    let num_lengths = length_max - length_min + 1;
+    let mut widths = Array2::<u16>::zeros((num_lengths, 101));
+
+    for length in length_min..=length_max {
+        let row_idx = length - length_min;
+        for gc_count in 0..=length {
+            let gc_bin = calculate_gc_bin(gc_count as u64, length as u64);
+            // Widths are small (<= length+1), so u16 is sufficient.
+            let current = widths
+                .get_mut((row_idx, gc_bin))
+                .expect("bin index in bounds");
+            *current = current.saturating_add(1);
+        }
+    }
+
+    widths
+}
+
+pub fn apply_gc_percent_width_correction<S, W>(
+    counts: &mut ArrayBase<S, Ix2>,
+    widths: &ArrayBase<W, Ix2>,
+) -> Result<()>
+where
+    S: DataMut<Elem = f64>,
+    W: Data<Elem = u16>,
+{
+    ensure!(
+        counts.dim() == widths.dim(),
+        "GC percent widths shape {:?} must match counts shape {:?}",
+        widths.dim(),
+        counts.dim()
+    );
+
+    let (n_rows, n_cols) = counts.dim();
+    for row in 0..n_rows {
+        let sum_before: f64 = counts.row(row).sum();
+        let mut sum_after = 0.0;
+        for col in 0..n_cols {
+            let width = widths[(row, col)];
+            if width > 0 {
+                let val = counts[(row, col)] / width as f64;
+                counts[(row, col)] = val;
+                sum_after += val;
+            } else {
+                counts[(row, col)] = 0.0;
+            }
+        }
+        if sum_after > 0.0 && sum_before > 0.0 {
+            let scale = sum_before / sum_after;
+            let mut row_view = counts.index_axis_mut(Axis(0), row);
+            row_view *= scale;
+        }
+    }
+
+    Ok(())
 }

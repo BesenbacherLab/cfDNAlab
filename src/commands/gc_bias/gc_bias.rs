@@ -1,4 +1,5 @@
 use crate::{
+    commands::gc_bias::counting::{apply_gc_percent_width_correction, gc_percent_widths},
     commands::{
         cli_common::*,
         counters::GCCounters,
@@ -43,11 +44,17 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
     let mut intermediate_saver =
         IntermediateFileSaver::new(opt.save_intermediates, opt.ioc.output_dir.clone());
+
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
     pb.set_style(
         ProgressStyle::default_bar()
             .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
             .unwrap(),
+    );
+
+    let gc_percent_widths = gc_percent_widths(
+        opt.fragment_lengths.min_fragment_length as usize,
+        opt.fragment_lengths.max_fragment_length as usize,
     );
 
     println!("Start: Loading reference GC bias");
@@ -169,6 +176,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
                     &ref_counts_view,
                     &reference_unobservables_support_mask,
                     &reference_outliers_support_mask,
+                    &gc_percent_widths,
                     &opt,
                     avg_window_size,
                 )?;
@@ -191,7 +199,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         let gc_counts = &all_bins[0];
         let ref_counts_view = reference_counts.index_axis(Axis(0), 0);
         process_window(gc_counts, &ref_counts_view,&reference_unobservables_support_mask,
-                    &reference_outliers_support_mask, &opt, avg_window_size)?.ok_or_else(|| {
+                    &reference_outliers_support_mask, &gc_percent_widths, &opt, avg_window_size)?.ok_or_else(|| {
             anyhow!(
                 "Produced no usable GC bias counts. \
                 Check settings such as `--min-window-acgt-pct` relative many positions are blacklisted. \
@@ -701,17 +709,19 @@ fn process_chrom(
 ///     - `Equal`: The GC counts are divided by the overall mean GC count,
 ///       ensuring GC counts have the same weight for all windows.
 ///       The reference count normalization made those matrices equally weighted.
-fn process_window<S, M>(
+fn process_window<S, M, Z>(
     gc_counts: &GCCounts,
     ref_counts: &ArrayBase<S, Ix2>,
     ref_support_mask_unobservables: &ArrayBase<M, Ix2>,
     ref_support_mask_outliers: &ArrayBase<M, Ix2>,
+    gc_percent_widths: &ArrayBase<Z, Ix2>,
     opt: &GCConfig,
     avg_window_size: Option<f64>,
 ) -> Result<Option<(Array2<f64>, Array2<f64>)>>
 where
     S: Data<Elem = f64>,
     M: Data<Elem = bool>,
+    Z: Data<Elem = u16>,
 {
     // Check window has enough valid positions
     if gc_counts.pct_acgt() < opt.min_window_acgt_pct as f64 {
@@ -719,7 +729,10 @@ where
     }
 
     // Get counts as 2d array with shape: (n_lengths, n_gc_bins)
-    let counts_mat = gc_counts.to_array2();
+    let mut counts_mat = gc_counts.to_array2();
+
+    // Debias GC% bins for uneven rounding widths before any smoothing/interpolation
+    apply_gc_percent_width_correction(&mut counts_mat, gc_percent_widths)?;
 
     // Find total counts
     let total_count: f64 = counts_mat.sum();
