@@ -327,11 +327,11 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         "binned cfDNA counts",
     )?;
 
-    // Mask extreme GC bins to avoid unstable corrections
+    // Mask extreme GC bins and the shortest lengths to avoid unstable corrections
     let correction_support_mask = build_extreme_bins_support_mask(
         binned_gc_counts.dim(),
         opt.num_extreme_gc_bins as usize,
-        opt.num_extreme_length_bins as usize,
+        opt.num_short_length_bins as usize,
     );
     let mut norm_gc_counts =
         mean_scale_per_length_array(&binned_gc_counts, 0., Some(&correction_support_mask));
@@ -359,7 +359,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     // Calculate correction matrix
     // 1) Divide cfDNA counts by reference counts
     // 2) Normalize each fragment length to mean=1.0
-    // 3) Set final correction factors for extreme GC bins to 1.0 (no corrections)
+    // 3) Interpolate masked bins so extremes follow neighbouring corrections
     // 4) Clamp any leftover extreme corrections
     let correction_matrix = {
         let raw_correction_matrix = &norm_gc_counts / &norm_ref_counts;
@@ -369,9 +369,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         let mut norm_correction_matrix =
             mean_scale_per_length_array(&raw_correction_matrix, 0., Some(&correction_support_mask));
 
-        // Refill extreme GC bins to 1.0
         if correction_support_mask.iter().any(|&supported| !supported) {
-            set_masked_entries_to_value(&mut norm_correction_matrix, &correction_support_mask, 1.0);
+            interpolate_masked_corrections(&mut norm_correction_matrix, &correction_support_mask)?;
         }
 
         // Sanity clamp of corrections
@@ -382,8 +381,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         // Zeros remain 0s
         invert_elementwise_with_zeros_inplace(&mut norm_correction_matrix);
 
-        norm_correction_matrix
-    };
+        Ok::<Array2<f64>, anyhow::Error>(norm_correction_matrix)
+    }?;
 
     // Length-bin frequencies (normalized) used for length-agnostic GC correction
     let length_bin_frequencies = {
@@ -862,6 +861,52 @@ where
     }
 
     out
+}
+
+pub fn interpolate_masked_corrections(
+    matrix: &mut Array2<f64>,
+    support_mask: &Array2<bool>,
+) -> Result<()> {
+    let (n_rows, n_cols) = matrix.dim();
+    if n_rows == 0 || n_cols == 0 {
+        return Ok(());
+    }
+    if !support_mask.iter().any(|&supported| !supported) {
+        return Ok(());
+    }
+
+    // Work on a mutable copy so we can treat newly interpolated bins as anchors
+    let mut mask = support_mask.to_owned();
+
+    for row_idx in 0..n_rows {
+        let mut row = matrix.row_mut(row_idx);
+        let row_slice = row
+            .as_slice_mut()
+            .expect("GC histogram rows should be contiguous");
+        let mut mask_row = mask.row_mut(row_idx);
+        let mask_slice = mask_row
+            .as_slice_mut()
+            .expect("Support mask rows should be contiguous");
+        fill_unsupported_bins_with_polynomial(row_slice, mask_slice, 2, 3, 3, true)?;
+    }
+
+    for col_idx in 0..n_cols {
+        let mut column_values: Vec<f64> = (0..n_rows)
+            .map(|row_idx| matrix[(row_idx, col_idx)])
+            .collect();
+        let mut column_mask: Vec<bool> = (0..n_rows)
+            .map(|row_idx| mask[(row_idx, col_idx)])
+            .collect();
+
+        fill_unsupported_bins_with_polynomial(&mut column_values, &mut column_mask, 2, 3, 3, true)?;
+
+        for row_idx in 0..n_rows {
+            matrix[(row_idx, col_idx)] = column_values[row_idx];
+            mask[(row_idx, col_idx)] = column_mask[row_idx];
+        }
+    }
+
+    Ok(())
 }
 
 // Overall scaling

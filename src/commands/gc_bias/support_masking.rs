@@ -50,14 +50,18 @@ where
     }
 }
 
+/// Build mask that supports all elements that are not part of:
+///
+///   - The N most extreme GC bins on each side.
+///   - The M shortest-length bins (often very sparse below ~70-100bp).
 pub fn build_extreme_bins_support_mask(
     shape: (usize, usize),
     extreme_gc_bins_per_side: usize,
-    extreme_length_bins_per_side: usize,
+    short_length_bins: usize,
 ) -> Array2<bool> {
     let (num_length_bins, num_gc_bins) = shape;
     let gc_bins_to_mask = extreme_gc_bins_per_side.min(num_gc_bins);
-    let length_bins_to_mask = extreme_length_bins_per_side.min(num_length_bins);
+    let length_bins_to_mask = short_length_bins.min(num_length_bins);
 
     if gc_bins_to_mask == 0 && length_bins_to_mask == 0 {
         return Array2::from_elem(shape, true);
@@ -78,11 +82,7 @@ pub fn build_extreme_bins_support_mask(
     }
 
     if length_bins_to_mask > 0 && num_length_bins > 0 {
-        let bottom_start = num_length_bins - length_bins_to_mask;
         for row_idx in 0..length_bins_to_mask {
-            mask.row_mut(row_idx).fill(false);
-        }
-        for row_idx in bottom_start..num_length_bins {
             mask.row_mut(row_idx).fill(false);
         }
     }

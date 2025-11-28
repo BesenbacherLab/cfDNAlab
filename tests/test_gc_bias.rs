@@ -8,6 +8,7 @@ use cfdnalab::commands::gc_bias::{
     binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
     correct::{GCCorrector, LengthAgnosticGCCorrector, MarginalizeLengthsWeightingScheme},
     package::GCCorrectionPackage,
+    gc_bias::interpolate_masked_corrections,
     support_masking::build_extreme_bins_support_mask,
 };
 
@@ -31,14 +32,14 @@ fn masks_extreme_gc_bins_per_side_in_square_matrix() {
 }
 
 #[test]
-fn masks_extreme_length_bins_per_side_in_matrix() {
-    // Arrange: 5x4 matrix with one extreme length bin on each side.
+fn masks_shortest_length_bins_in_matrix() {
+    // Arrange: 5x4 matrix with one shortest length bin masked.
     let expected = array![
         [false, false, false, false],
         [true, true, true, true],
         [true, true, true, true],
         [true, true, true, true],
-        [false, false, false, false],
+        [true, true, true, true],
     ];
 
     // Act: build the support mask after binning.
@@ -46,6 +47,26 @@ fn masks_extreme_length_bins_per_side_in_matrix() {
 
     // Assert: the central three length bins remain supported across all GC bins.
     assert_eq!(mask, expected);
+}
+
+#[test]
+fn interpolates_masked_short_length_row() -> Result<()> {
+    // Arrange: first length row is masked; other rows are supported.
+    let mut matrix = array![
+        [0.0_f64, 0.0_f64],
+        [2.0_f64, 2.0_f64],
+        [4.0_f64, 4.0_f64],
+        [6.0_f64, 6.0_f64],
+    ];
+    let mask = build_extreme_bins_support_mask((4, 2), 0, 1);
+
+    // Act: interpolate masked bins.
+    interpolate_masked_corrections(&mut matrix, &mask)?;
+
+    // Assert: the masked first row is filled using neighbouring lengths.
+    assert!((matrix[(0, 0)] - 2.0).abs() < 1e-6);
+    assert!((matrix[(0, 1)] - 2.0).abs() < 1e-6);
+    Ok(())
 }
 
 #[test]
