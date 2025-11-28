@@ -300,7 +300,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             &ref_gc_binned,
             0,
             &length_bins,
-            CollapseAggregation::Sum,
+            CollapseAggregation::Mean,
             None,
         )?;
 
@@ -308,7 +308,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             &cfdna_gc_binned,
             0,
             &length_bins,
-            CollapseAggregation::Sum,
+            CollapseAggregation::Mean,
             None,
         )?;
 
