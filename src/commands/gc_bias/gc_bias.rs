@@ -15,7 +15,7 @@ use crate::{
             package::GCCorrectionPackage,
             smoothing::smoothe_counts_gaussian,
             support_masking::{
-                build_extreme_gc_support_mask, set_masked_entries_to_value, stats_by_support_mask,
+                build_extreme_bins_support_mask, set_masked_entries_to_value, stats_by_support_mask,
             },
         },
     },
@@ -315,8 +315,11 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     )?;
 
     // Mask extreme GC bins to avoid unstable corrections
-    let correction_support_mask =
-        build_extreme_gc_support_mask(binned_gc_counts.dim(), opt.num_extreme_gc_bins as usize);
+    let correction_support_mask = build_extreme_bins_support_mask(
+        binned_gc_counts.dim(),
+        opt.num_extreme_gc_bins as usize,
+        opt.num_extreme_length_bins as usize,
+    );
     let mut norm_gc_counts =
         mean_scale_per_length_array(&binned_gc_counts, 0., Some(&correction_support_mask));
     let mut norm_ref_counts =

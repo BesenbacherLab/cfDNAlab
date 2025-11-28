@@ -157,6 +157,18 @@ pub struct GCConfig {
         clap(long, default_value = "1", value_parser = clap::value_parser!(u8).range(0..10), help_heading="Binning"))]
     pub num_extreme_gc_bins: u8,
 
+    /// Number of extreme fragment length bins (`--min_length_bin_mass`) from each side to avoid correcting `[float]`
+    ///
+    /// The most extreme fragment lengths can be very sparsely observed. This can lead to extreme corrections.
+    /// Set the number of bins from each side where we set the correction weight to 1.0 (no correction).
+    /// With the default min/max fragment length settings in `cfdna reference-gc` (20-1000bp),
+    /// the default of 1 should be fine. This can be tuned via visualization of the created
+    /// correction matrix.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "1", value_parser = clap::value_parser!(u8).range(0..10), help_heading="Binning"))]
+    pub num_extreme_length_bins: u8,
+
     /// Optional BED file(s) with blacklisted regions `[path]`
     ///
     /// Masking: Blacklisted positions are set to 'N' in the reference sequence
@@ -218,6 +230,7 @@ impl GCConfig {
             min_gc_bin_mass: 1.0,
             min_length_bin_mass: 1.0,
             num_extreme_gc_bins: 1,
+            num_extreme_length_bins: 1,
             min_window_acgt_pct: 10,
             save_intermediates: false,
         }
@@ -269,6 +282,10 @@ impl GCConfig {
 
     pub fn set_num_extreme_gc_bins(&mut self, num_extreme_gc_bins: u8) {
         self.num_extreme_gc_bins = num_extreme_gc_bins;
+    }
+
+    pub fn set_num_extreme_length_bins(&mut self, num_extreme_length_bins: u8) {
+        self.num_extreme_length_bins = num_extreme_length_bins;
     }
 
     pub fn set_min_window_acgt_pct(&mut self, pct: u8) {

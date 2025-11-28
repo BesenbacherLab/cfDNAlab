@@ -50,26 +50,44 @@ where
     }
 }
 
-pub fn build_extreme_gc_support_mask(
+pub fn build_extreme_bins_support_mask(
     shape: (usize, usize),
-    extreme_bins_per_side: usize,
+    extreme_gc_bins_per_side: usize,
+    extreme_length_bins_per_side: usize,
 ) -> Array2<bool> {
     let (num_length_bins, num_gc_bins) = shape;
-    let bins_to_mask = extreme_bins_per_side.min(num_gc_bins);
-    let column_is_supported: Vec<bool> = (0..num_gc_bins)
-        .map(|col_idx| {
-            if bins_to_mask == 0 {
-                true
-            } else {
-                let mask_left = col_idx < bins_to_mask;
-                let mask_right = col_idx >= num_gc_bins.saturating_sub(bins_to_mask);
-                !(mask_left || mask_right)
+    let gc_bins_to_mask = extreme_gc_bins_per_side.min(num_gc_bins);
+    let length_bins_to_mask = extreme_length_bins_per_side.min(num_length_bins);
+
+    if gc_bins_to_mask == 0 && length_bins_to_mask == 0 {
+        return Array2::from_elem(shape, true);
+    }
+
+    let mut mask = Array2::from_elem(shape, true);
+
+    if gc_bins_to_mask > 0 && num_gc_bins > 0 {
+        let right_start = num_gc_bins - gc_bins_to_mask;
+        for mut row in mask.outer_iter_mut() {
+            for col_idx in 0..gc_bins_to_mask {
+                row[col_idx] = false;
             }
-        })
-        .collect();
-    Array2::from_shape_fn((num_length_bins, num_gc_bins), |(_, col_idx)| {
-        column_is_supported[col_idx]
-    })
+            for col_idx in right_start..num_gc_bins {
+                row[col_idx] = false;
+            }
+        }
+    }
+
+    if length_bins_to_mask > 0 && num_length_bins > 0 {
+        let bottom_start = num_length_bins - length_bins_to_mask;
+        for row_idx in 0..length_bins_to_mask {
+            mask.row_mut(row_idx).fill(false);
+        }
+        for row_idx in bottom_start..num_length_bins {
+            mask.row_mut(row_idx).fill(false);
+        }
+    }
+
+    mask
 }
 
 pub fn set_masked_entries_to_value(matrix: &mut Array2<f64>, mask: &Array2<bool>, fill_value: f64) {

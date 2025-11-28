@@ -8,7 +8,7 @@ use cfdnalab::commands::gc_bias::{
     binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
     correct::{GCCorrector, LengthAgnosticGCCorrector, MarginalizeLengthsWeightingScheme},
     package::GCCorrectionPackage,
-    support_masking::build_extreme_gc_support_mask,
+    support_masking::build_extreme_bins_support_mask,
 };
 
 #[test]
@@ -24,9 +24,27 @@ fn masks_extreme_gc_bins_per_side_in_square_matrix() {
     ];
 
     // Act: build the support mask after binning.
-    let mask = build_extreme_gc_support_mask((6, 6), 2);
+    let mask = build_extreme_bins_support_mask((6, 6), 2, 0);
 
     // Assert: the central two GC bins remain supported across all lengths.
+    assert_eq!(mask, expected);
+}
+
+#[test]
+fn masks_extreme_length_bins_per_side_in_matrix() {
+    // Arrange: 5x4 matrix with one extreme length bin on each side.
+    let expected = array![
+        [false, false, false, false],
+        [true, true, true, true],
+        [true, true, true, true],
+        [true, true, true, true],
+        [false, false, false, false],
+    ];
+
+    // Act: build the support mask after binning.
+    let mask = build_extreme_bins_support_mask((5, 4), 0, 1);
+
+    // Assert: the central three length bins remain supported across all GC bins.
     assert_eq!(mask, expected);
 }
 
