@@ -96,6 +96,18 @@ pub struct RefGCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
 
+    // TODO: Base this on the original GC paper. Look it up. Perhaps add a reference.
+    /// Number of bases to exclude from each fragment end `[integer]`
+    ///
+    /// The nucleotides in the cfDNA fragment ends can reflect biological biases (e.g., DNase activity).
+    /// This argument allows isolating the GC correction from this signal. Setting
+    /// `--end-offset` here enforces this use in the downstream `cfdna gc-bias` call.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "0",
+             value_parser = clap::value_parser!(u8).range(0..20), help_heading="Core"))]
+    pub end_offset: u8,
+
     /// Whether to skip the interpolation of zero-counts `[flag]`
     ///
     /// By default, `0`s are interpolated **independently per fragment length**.

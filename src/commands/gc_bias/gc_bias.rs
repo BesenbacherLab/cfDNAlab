@@ -1,5 +1,4 @@
 use crate::{
-    commands::gc_bias::counting::{apply_gc_percent_width_correction, gc_percent_widths},
     commands::{
         cli_common::*,
         counters::GCCounters,
@@ -7,9 +6,12 @@ use crate::{
             CORRECTION_CLAMP_RANGE, GC_CORRECTION_SCHEMA_VERSION,
             binning::{CollapseAggregation, bin_greedily_by_mass, collapse_counts_by_bins},
             config::{GCConfig, WindowWeightingSchemes},
-            counting::{GCCounts, build_gc_prefixes, get_gc_integer_percentage_for_window},
+            counting::{
+                GCCounts, apply_gc_percent_width_correction, build_gc_prefixes,
+                get_gc_integer_percentage_for_window,
+            },
             interpolation::fill_unsupported_bins_with_polynomial,
-            load_reference_bias::{ReferenceGCData, load_reference_gc_data},
+            load_reference_bias::{ReferenceGCData, ReferenceGCMetadata, load_reference_gc_data},
             package::GCCorrectionPackage,
             smoothing::smoothe_counts_gaussian,
             support_masking::{
@@ -52,11 +54,6 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             .unwrap(),
     );
 
-    let gc_percent_widths = gc_percent_widths(
-        opt.fragment_lengths.min_fragment_length as usize,
-        opt.fragment_lengths.max_fragment_length as usize,
-    );
-
     println!("Start: Loading reference GC bias");
     let ReferenceGCData {
         window_spec: window_opt,
@@ -66,6 +63,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         unobservables_support_mask: reference_unobservables_support_mask,
         outliers_support_mask: mut reference_outliers_support_mask,
         avg_window_size,
+        gc_percent_widths: reference_gc_percent_widths,
+        metadata: reference_metadata,
     } = load_reference_gc_data(
         &opt.ref_gc_dir,
         Some(&chromosomes),
@@ -114,6 +113,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             let out = process_chrom(
                 &chr,
                 opt,
+                &reference_metadata,
                 windows_map
                     .as_ref()
                     .and_then(|m| m.get(chr).map(|v| v.as_slice())),
@@ -176,7 +176,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
                     &ref_counts_view,
                     &reference_unobservables_support_mask,
                     &reference_outliers_support_mask,
-                    &gc_percent_widths,
+                    &reference_gc_percent_widths,
                     &opt,
                     avg_window_size,
                 )?;
@@ -199,7 +199,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         let gc_counts = &all_bins[0];
         let ref_counts_view = reference_counts.index_axis(Axis(0), 0);
         process_window(gc_counts, &ref_counts_view,&reference_unobservables_support_mask,
-                    &reference_outliers_support_mask, &gc_percent_widths, &opt, avg_window_size)?.ok_or_else(|| {
+                    &reference_outliers_support_mask, &reference_gc_percent_widths, &opt, avg_window_size)?.ok_or_else(|| {
             anyhow!(
                 "Produced no usable GC bias counts. \
                 Check settings such as `--min-window-acgt-pct` relative many positions are blacklisted. \
@@ -416,6 +416,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 fn process_chrom(
     chr: &str,
     opt: &GCConfig,
+    reference_metadata: &ReferenceGCMetadata,
     windows_opt: Option<&[(u64, u64, u64)]>,
     window_opt: &WindowSpec,
     scaling_chr: &[(u64, u64, f32)],
@@ -460,8 +461,8 @@ fn process_chrom(
         GCCounts::new(
             0,
             100,
-            opt.fragment_lengths.min_fragment_length as usize,
-            opt.fragment_lengths.max_fragment_length as usize,
+            reference_metadata.min_fragment_length,
+            reference_metadata.max_fragment_length,
             (0, 0)
         );
         num_bins
@@ -481,10 +482,10 @@ fn process_chrom(
     // Fraction of a fragment that must overlap with a window to assign to that window
     let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
         WindowAssigner::Any | WindowAssigner::CountOverlap => {
-            1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0)
+            1. / (reference_metadata.max_fragment_length as f64 + 1.0)
         } // +1 to avoid rounding error issues
         WindowAssigner::All | WindowAssigner::Midpoint => {
-            1.0 - (1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0))
+            1.0 - (1. / (reference_metadata.max_fragment_length as f64 + 1.0))
         } // 1.0 but just below to avoid rounding errors
         WindowAssigner::Proportion(p) => p,
     };
@@ -504,8 +505,8 @@ fn process_chrom(
             let fetch_start = wn[0].0 as i64;
             let fetch_end = wn.iter().map(|w| w.1).max().unwrap() as i64;
             (
-                (fetch_start - opt.fragment_lengths.max_fragment_length as i64).max(0i64),
-                (fetch_end + opt.fragment_lengths.max_fragment_length as i64).min(chrom_len as i64),
+                (fetch_start - reference_metadata.max_fragment_length as i64).max(0i64),
+                (fetch_end + reference_metadata.max_fragment_length as i64).min(chrom_len as i64),
             )
         }
         _ => (0i64, chrom_len as i64),
@@ -518,8 +519,8 @@ fn process_chrom(
     // Function for filtering fragments after pairing
     // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
     let fragment_filter = {
-        let min_len = opt.fragment_lengths.min_fragment_length;
-        let max_len = opt.fragment_lengths.max_fragment_length;
+        let min_len = reference_metadata.min_fragment_length as u32;
+        let max_len = reference_metadata.max_fragment_length as u32;
         move |f: &Fragment| {
             let len = f.len();
             len >= min_len && len <= max_len
@@ -541,7 +542,7 @@ fn process_chrom(
     .with_local_counters();
 
     // Convert variables once
-    let end_offset_u32 = opt.end_offset as u32;
+    let end_offset_u32 = reference_metadata.end_offset as u32;
     let min_acgt_fraction = 1.0f32;
 
     // Iterate fragments and count GC
@@ -562,7 +563,7 @@ fn process_chrom(
             gc_window_start as usize,
             gc_window_end as usize,
             min_acgt_fraction,
-            1, // Fraction is 100% so this is ignored
+            10, // Fraction is 100% so sets a lower fragment length boundary (after end offsets)
         );
 
         // Unpack GC fraction (or continue)
@@ -597,7 +598,7 @@ fn process_chrom(
             interval_start.into(),
             interval_end.into(),
             min_overlap_fraction,
-            opt.fragment_lengths.max_fragment_length.into(),
+            reference_metadata.max_fragment_length as u64,
         )?;
         let overlapping_windows = if let Some(overlaps) = overlapping_windows {
             overlaps
@@ -618,8 +619,8 @@ fn process_chrom(
                 None,
                 fragment.start.into(), // Full fragment
                 fragment.end.into(),
-                1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
-                opt.fragment_lengths.max_fragment_length.into(),
+                1. / (reference_metadata.max_fragment_length as f64 + 1.0), // Any overlap
+                reference_metadata.max_fragment_length as u64,
             )
             .with_context(|| format!("finding overlapping scaling bins on chr {chr}"))?
             .context("no overlapping scaling bins found")?; // Should always find >= 1 bin

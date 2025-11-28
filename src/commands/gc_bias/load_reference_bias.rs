@@ -4,10 +4,11 @@ use crate::{
 };
 use anyhow::{Context, Result, ensure};
 use fxhash::FxHashMap;
-use ndarray::{Array2, Array3};
-use ndarray_npy::read_npy;
-use std::path::Path;
+use ndarray::{Array1, Array2, Array3};
+use ndarray_npy::NpzReader;
+use std::{fs::File, path::Path};
 
+#[derive(Clone, Debug)]
 pub struct ReferenceGCData {
     pub window_spec: WindowSpec,
     pub windows_map: Option<FxHashMap<String, Windows>>,
@@ -16,6 +17,15 @@ pub struct ReferenceGCData {
     pub unobservables_support_mask: Array2<bool>,
     pub outliers_support_mask: Array2<bool>,
     pub avg_window_size: Option<f64>,
+    pub gc_percent_widths: Array2<u16>,
+    pub metadata: ReferenceGCMetadata,
+}
+
+#[derive(Clone, Debug)]
+pub struct ReferenceGCMetadata {
+    pub min_fragment_length: usize,
+    pub max_fragment_length: usize,
+    pub end_offset: u8,
 }
 
 pub fn load_reference_gc_data(
@@ -23,46 +33,12 @@ pub fn load_reference_gc_data(
     chromosomes: Option<&[String]>,
     max_blacklisted_pct: u8,
 ) -> Result<ReferenceGCData> {
-    let counts_path = ref_dir.join("ref_gc_counts.npy");
-    let unobservables_support_mask_path = ref_dir.join("ref_support_mask.unobservables.npy");
-    let outliers_support_mask_path = ref_dir.join("ref_support_mask.outliers.npy");
+    let package_path = ref_dir.join("ref_gc_package.npz");
     let bins_path = ref_dir.join("ref_gc_bins.bed");
-
-    let counts: Array3<f64> = read_npy(&counts_path)
-        .with_context(|| format!("Reading reference GC counts from {:?}", counts_path))?;
-
-    let unobservables_support_mask: Array2<bool> = read_npy(&unobservables_support_mask_path)
-        .with_context(|| {
-            format!(
-                "Reading reference support mask (unobservables) from {:?}",
-                unobservables_support_mask_path
-            )
-        })?;
-
-    let outliers_support_mask: Array2<bool> =
-        read_npy(&outliers_support_mask_path).with_context(|| {
-            format!(
-                "Reading reference support mask (outliers) from {:?}",
-                outliers_support_mask_path
-            )
-        })?;
-
-    ensure!(
-        unobservables_support_mask.dim() == outliers_support_mask.dim(),
-        "The two support masks must have the same shape. Unobservables ({:?}) != outliers ({:?}).",
-        unobservables_support_mask.dim(),
-        outliers_support_mask.dim(),
-    );
+    let (counts, unobservables_support_mask, outliers_support_mask, gc_percent_widths, metadata) =
+        read_reference_gc_package(&package_path)?;
 
     let num_count_windows = counts.dim().0;
-
-    ensure!(
-        unobservables_support_mask.dim().0 == counts.dim().1
-            && unobservables_support_mask.dim().1 == counts.dim().2,
-        "Reference counts ({:?}) and support masks ({:?}) had incompatible shapes",
-        counts.dim(),
-        unobservables_support_mask.dim()
-    );
 
     let window_spec = if num_count_windows == 1 && !bins_path.exists() {
         WindowSpec::Global
@@ -129,7 +105,89 @@ pub fn load_reference_gc_data(
         unobservables_support_mask,
         outliers_support_mask,
         avg_window_size: avg_window_size,
+        gc_percent_widths,
+        metadata,
     })
+}
+
+fn read_reference_gc_package(
+    path: &Path,
+) -> Result<(
+    Array3<f64>,
+    Array2<bool>,
+    Array2<bool>,
+    Array2<u16>,
+    ReferenceGCMetadata,
+)> {
+    let file = File::open(path).with_context(|| {
+        format!(
+            "Reading reference GC package from {:?}. Regenerate reference GC if missing",
+            path
+        )
+    })?;
+    let mut reader = NpzReader::new(file)?;
+
+    let counts: Array3<f64> = reader
+        .by_name("counts")
+        .context("Missing counts in reference GC package")?;
+    let unobservables_support_mask: Array2<bool> = reader
+        .by_name("support_mask_unobservables")
+        .context("Missing support_mask_unobservables in reference GC package")?;
+    let outliers_support_mask: Array2<bool> = reader
+        .by_name("support_mask_outliers")
+        .context("Missing support_mask_outliers in reference GC package")?;
+    let gc_percent_widths: Array2<u16> = reader
+        .by_name("gc_percent_widths")
+        .context("Missing gc_percent_widths in reference GC package")?;
+    let lengths: Array1<u32> = reader
+        .by_name("length_range")
+        .context("missing length_range in reference GC package")?;
+    ensure!(
+        lengths.len() == 2,
+        "length_range should contain [min, max] (len=2). Found len={}",
+        lengths.len()
+    );
+    let end_offset_arr: Array1<u32> = reader
+        .by_name("end_offset")
+        .context("missing end_offset in reference GC package")?;
+    ensure!(
+        end_offset_arr.len() == 1,
+        "end_offset should be length 1. Found len={}",
+        end_offset_arr.len()
+    );
+    let metadata = ReferenceGCMetadata {
+        min_fragment_length: lengths[0] as usize,
+        max_fragment_length: lengths[1] as usize,
+        end_offset: end_offset_arr[0] as u8,
+    };
+
+    ensure!(
+        unobservables_support_mask.dim() == outliers_support_mask.dim(),
+        "The two support masks must have the same shape. Unobservables ({:?}) != outliers ({:?}).",
+        unobservables_support_mask.dim(),
+        outliers_support_mask.dim(),
+    );
+    ensure!(
+        unobservables_support_mask.dim().0 == counts.dim().1
+            && unobservables_support_mask.dim().1 == counts.dim().2,
+        "Reference counts ({:?}) and support masks ({:?}) had incompatible shapes",
+        counts.dim(),
+        unobservables_support_mask.dim()
+    );
+    ensure!(
+        gc_percent_widths.dim() == (counts.dim().1, counts.dim().2),
+        "GC percent widths shape {:?} must match per-window counts shape {:?}",
+        gc_percent_widths.dim(),
+        (counts.dim().1, counts.dim().2)
+    );
+
+    Ok((
+        counts,
+        unobservables_support_mask,
+        outliers_support_mask,
+        gc_percent_widths,
+        metadata,
+    ))
 }
 
 pub fn parse_reference_bins(

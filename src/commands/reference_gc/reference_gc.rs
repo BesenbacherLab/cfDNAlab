@@ -23,8 +23,8 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
-use ndarray::Array2;
-use ndarray_npy::write_npy;
+use ndarray::{Array1, Array2, Array3};
+use ndarray_npy::NpzWriter;
 use rand::{SeedableRng, rngs::StdRng};
 use rayon::prelude::*;
 use std::{fs::create_dir_all, io::Write, sync::Arc, time::Instant};
@@ -251,30 +251,18 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         );
     }
 
-    write_npy(
-        &opt.output_dir.join("ref_support_mask.outliers.npy"),
-        &outlier_support_mask,
-    )
-    .context("Writing outlier support mask failed")?;
-
-    write_npy(
-        &opt.output_dir.join("ref_support_mask.unobservables.npy"),
-        &unobservable_support_mask,
-    )
-    .context("Writing unobservables support mask failed")?;
-
-    write_npy(
-        &opt.output_dir.join("ref_gc_percent_widths.npy"),
-        &*gc_percent_widths,
-    )
-    .context("Writing GC percent widths failed")?;
-
-    // Write final counts to output_dir
-    write_npy(
-        &opt.output_dir.join("ref_gc_counts.npy"),
+    // Write reference GC package (counts, masks, widths, metadata)
+    write_reference_gc_package(
+        &opt.output_dir.join("ref_gc_package.npz"),
         &stack_gc_counts(&all_bin_arrays),
+        &unobservable_support_mask,
+        &outlier_support_mask,
+        &*gc_percent_widths,
+        opt.fragment_lengths.min_fragment_length as usize,
+        opt.fragment_lengths.max_fragment_length as usize,
+        0, // reference-gc currently does not support end offsets
     )
-    .context("Write final fail")?;
+    .context("Writing reference GC package failed")?;
 
     // Write bins BED file
     if !matches!(window_opt, WindowSpec::Global) {
@@ -295,6 +283,31 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         total_covered_acgt_positions
     );
     println!("Elapsed time: {:.2?}", elapsed);
+    Ok(())
+}
+
+fn write_reference_gc_package(
+    path: &std::path::Path,
+    counts: &Array3<f64>,
+    support_unobservables: &Array2<bool>,
+    support_outliers: &Array2<bool>,
+    gc_percent_widths: &Array2<u16>,
+    length_min: usize,
+    length_max: usize,
+    end_offset: u8,
+) -> Result<()> {
+    let file = std::fs::File::create(path)?;
+    let mut npz = NpzWriter::new(file);
+    npz.add_array("counts", counts)?;
+    npz.add_array("support_mask_unobservables", support_unobservables)?;
+    npz.add_array("support_mask_outliers", support_outliers)?;
+    npz.add_array("gc_percent_widths", gc_percent_widths)?;
+    npz.add_array(
+        "length_range",
+        &Array1::from(vec![length_min as u32, length_max as u32]),
+    )?;
+    npz.add_array("end_offset", &Array1::from(vec![end_offset as u32]))?;
+    npz.finish()?;
     Ok(())
 }
 

@@ -181,21 +181,6 @@ pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub fragment_lengths: FragmentLengthArgs,
-
-    // TODO: Base this on the original GC paper. Look it up. Perhaps add a reference.
-    // TODO: Need to use this when counting in reference
-    /// Number of bases to exclude from each fragment end `[integer]`
-    ///
-    /// The nucleotides in the fragment ends can reflect biological biases (e.g., DNase activity).
-    /// This argument allows isolating the GC correction from this signal.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long, default_value = "0",
-             value_parser = clap::value_parser!(u8).range(0..20), help_heading="Core"))]
-    pub end_offset: u8,
-
     /// Minimum percentage of ACGT positions in a **window** to consider it in the bias estimation `[integer]`
     ///
     /// If you believe windows that are mostly blacklisted may be too noisy in their
@@ -230,11 +215,6 @@ impl GCConfig {
             blacklist: None,
             min_mapq: 30,
             require_proper_pair: false,
-            fragment_lengths: FragmentLengthArgs {
-                min_fragment_length: 20,
-                max_fragment_length: 1000,
-            },
-            end_offset: 0,
             min_gc_bin_mass: 1.0,
             min_length_bin_mass: 1.0,
             num_extreme_gc_bins: 1,
@@ -277,18 +257,6 @@ impl GCConfig {
 
     pub fn set_require_proper_pair(&mut self, require: bool) {
         self.require_proper_pair = require;
-    }
-
-    pub fn set_fragment_lengths(&mut self, fragment_lengths: FragmentLengthArgs) {
-        self.fragment_lengths = fragment_lengths;
-    }
-
-    pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
-        &mut self.fragment_lengths
-    }
-
-    pub fn set_end_offset(&mut self, end_offset: u8) {
-        self.end_offset = end_offset;
     }
 
     pub fn set_min_length_bin_mass(&mut self, min_length_bin_mass: f32) {
