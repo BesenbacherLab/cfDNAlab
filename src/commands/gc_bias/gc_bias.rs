@@ -322,6 +322,13 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     let mut norm_ref_counts =
         mean_scale_per_length_array(&binned_ref_counts, 0., Some(&correction_support_mask));
 
+    // Set extreme GC bins to 1.0 in both arrays to avoid zero-division etc.
+    println!("Start: Setting extreme GC bins to 1.0");
+    if correction_support_mask.iter().any(|&supported| !supported) {
+        set_masked_entries_to_value(&mut norm_gc_counts, &correction_support_mask, 1.0);
+        set_masked_entries_to_value(&mut norm_ref_counts, &correction_support_mask, 1.0);
+    }
+
     intermediate_saver.save_file(
         &norm_gc_counts,
         "normalized_binned_cfdna_counts",
@@ -332,13 +339,6 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         "normalized_binned_ref_counts",
         "normalized binned reference counts",
     )?;
-
-    // Set extreme GC bins to 1.0 in both arrays to avoid zero-division etc.
-    println!("Start: Setting extreme GC bins to 1.0");
-    if correction_support_mask.iter().any(|&supported| !supported) {
-        set_masked_entries_to_value(&mut norm_gc_counts, &correction_support_mask, 1.0);
-        set_masked_entries_to_value(&mut norm_ref_counts, &correction_support_mask, 1.0);
-    }
 
     // Calculate correction matrix
     // 1) Divide cfDNA counts by reference counts

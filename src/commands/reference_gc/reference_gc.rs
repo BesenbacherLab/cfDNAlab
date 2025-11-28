@@ -40,8 +40,12 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
             .unwrap(),
     );
 
+    let min_effective_len = opt
+        .fragment_lengths
+        .min_fragment_length
+        .saturating_sub(2 * u32::from(opt.end_offset));
     ensure!(
-        opt.fragment_lengths.min_fragment_length - 2 * (opt.end_offset as u32) >= 10,
+        min_effective_len >= 10,
         "Requires at least 10 bases for GC calculation. --min-fragment-length ({}) - 2x --end-offset ({}) is < 10. Please adjust --min-fragment-length.",
         opt.fragment_lengths.min_fragment_length,
         opt.end_offset
