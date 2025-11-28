@@ -146,21 +146,21 @@ pub struct GCConfig {
         clap(long, default_value = "1.0", value_parser = parse_percentage_within_0_100_f32, help_heading="Binning"))]
     pub min_gc_bin_mass: f32,
 
-    /// Number of extreme GC bins (`--min_gc_bin_mass`) from each side to avoid correcting `[float]`
+    /// Number of extreme GC bins (`--min_gc_bin_mass`) from each side to interpolate from neighbouring corrections `[float]`
     ///
     /// The most extreme GC fractions are very sparsely observed. This can lead to extreme corrections.
-    /// Set the number of bins from each side where we set the correction weight to 1.0 (no correction).
+    /// Set the number of bins from each side where we interpolate a correction based on the neighbouring corrections.
     /// The default of 1 should be fine but this can be tuned via visualization of the created
-    /// correction matrix.
+    /// correction matrix and intermediate files (`--save-intermediates`).
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "1", value_parser = clap::value_parser!(u8).range(0..10), help_heading="Binning"))]
     pub num_extreme_gc_bins: u8,
 
-    /// Number of the **shortest** fragment length bins (`--min_length_bin_mass`) to avoid correcting `[float]`
+    /// Number of the **shortest** fragment length bins (`--min_length_bin_mass`) to interpolate from neighbouring corrections `[float]`
     ///
-    /// The most extremely short fragment lengths can be very sparsely observed. This can lead to extreme corrections.
-    /// Set the number of short-length bins where we set the correction weight to 1.0 (no correction).
+    /// The shortest fragment lengths can be very sparsely observed. This can lead to extreme corrections.
+    /// Set the number of short-length bins where we interpolate a correction based on the neighbouring corrections.
     /// With the default minimum fragment length setting in `cfdna reference-gc` (20bp),
     /// the default of 1 should be fine. This can be tuned via visualization of the created
     /// correction matrix and intermediate files (`--save-intermediates`).
