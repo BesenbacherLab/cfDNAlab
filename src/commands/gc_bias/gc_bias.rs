@@ -286,7 +286,13 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             // Weight the average by how common the lengths are in the cfDNA
             Some(smoothed_gc_counts.view()),
         )?;
-        collapse_counts_by_bins(&length_binned, 1, &gc_bins, CollapseAggregation::Mean, None)?
+        collapse_counts_by_bins(
+            &length_binned,
+            1,
+            &gc_bins,
+            CollapseAggregation::Mean,
+            Some(length_binned.view()),
+        )?
     };
 
     intermediate_saver.save_file(
