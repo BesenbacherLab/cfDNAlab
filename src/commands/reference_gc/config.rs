@@ -100,8 +100,7 @@ pub struct RefGCConfig {
     /// Number of bases to exclude from each fragment end `[integer]`
     ///
     /// The nucleotides in the cfDNA fragment ends can reflect biological biases (e.g., DNase activity).
-    /// This argument allows isolating the GC correction from this signal. Setting
-    /// `--end-offset` here enforces this use in the downstream `cfdna gc-bias` call.
+    /// This argument allows isolating the GC correction from this signal.
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "0",

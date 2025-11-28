@@ -1,7 +1,7 @@
 use crate::commands::gc_bias::{
     GC_CORRECTION_SCHEMA_VERSION,
     binning::{BinnedAxis, compute_bin_edges},
-    config::GCConfig,
+    load_reference_bias::ReferenceGCMetadata,
 };
 use anyhow::{Context, Result, ensure};
 use ndarray::{Array1, Array2};
@@ -25,17 +25,17 @@ impl GCCorrectionPackage {
         gc_bins: &BinnedAxis,
         correction_matrix: Array2<f64>,
         length_bin_frequencies: Array1<f64>,
-        opt: &GCConfig,
+        reference_metadata: &ReferenceGCMetadata,
     ) -> Result<Self> {
         let length_edges = compute_bin_edges(
             length_bins,
-            opt.fragment_lengths.min_fragment_length as u32,
-            opt.fragment_lengths.max_fragment_length as u32,
+            reference_metadata.min_fragment_length as u32,
+            reference_metadata.max_fragment_length as u32,
         )?;
         let gc_edges = compute_bin_edges(gc_bins, 0, 100)?;
         Ok(Self {
             version,
-            end_offset: opt.end_offset as u64,
+            end_offset: reference_metadata.end_offset as u64,
             length_edges,
             gc_edges,
             correction_matrix,

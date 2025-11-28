@@ -21,7 +21,7 @@ use crate::{
         sampling::sample_starts_per_chrom,
     },
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array1, Array2, Array3};
 use ndarray_npy::NpzWriter;
@@ -38,6 +38,13 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         ProgressStyle::default_bar()
             .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
             .unwrap(),
+    );
+
+    ensure!(
+        opt.fragment_lengths.min_fragment_length - 2 * (opt.end_offset as u32) >= 10,
+        "Requires at least 10 bases for GC calculation. --min-fragment-length ({}) - 2x --end-offset ({}) is < 10. Please adjust --min-fragment-length.",
+        opt.fragment_lengths.min_fragment_length,
+        opt.end_offset
     );
 
     // Create output directory
@@ -64,6 +71,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
     let gc_percent_widths = Arc::new(gc_percent_widths(
         opt.fragment_lengths.min_fragment_length as usize,
         opt.fragment_lengths.max_fragment_length as usize,
+        opt.end_offset as usize,
     ));
 
     let starts_per_chrom = {
@@ -231,6 +239,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
             .first()
             .map(|arr| arr.dim().1 - 1)
             .expect("at least one GC histogram should exist"),
+        opt.end_offset as usize,
     );
 
     debug_assert_eq!(
@@ -260,7 +269,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         &*gc_percent_widths,
         opt.fragment_lengths.min_fragment_length as usize,
         opt.fragment_lengths.max_fragment_length as usize,
-        0, // reference-gc currently does not support end offsets
+        opt.end_offset,
     )
     .context("Writing reference GC package failed")?;
 
@@ -372,6 +381,7 @@ fn process_chrom(
         // of GC and fragment lengths are truly 0 (enabling clean interpolation)
         1.0,
         1u32,
+        opt.end_offset as usize,
     );
 
     // Calculate total number of ACGT positions covered

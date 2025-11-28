@@ -507,13 +507,14 @@ pub fn count_reference_gc_and_length_by_window(
     gc_prefixes: &GCPrefixes,
     length_range: (u64, u64), // [min_len, max_len) in bp
     windows: &[(u64, u64, u64)],
-    start_positions: &[usize], // sorted unique genomic starts for this chromosome
+    start_positions: &[usize], // Sorted unique genomic starts for this chromosome
     chrom_len: u64,
-    min_acgt_fraction: f32, // e.g., 0.8
+    min_acgt_fraction: f32, // E.g., 0.8
     min_acgt_count: u32,
+    end_offset: usize,
 ) {
-    let gc_prefix = &gc_prefixes.gc; // prefix sums of GC counts
-    let acgt_prefix = &gc_prefixes.acgt; // prefix sums of A/C/G/T (non-N/non-blacklist)
+    let gc_prefix = &gc_prefixes.gc; // Prefix sums of GC counts
+    let acgt_prefix = &gc_prefixes.acgt; // Prefix sums of A/C/G/T (non-N/non-blacklist)
     debug_assert_eq!(gc_prefix.len(), acgt_prefix.len());
     debug_assert!(
         gc_prefix.len() >= chrom_len as usize + 1,
@@ -526,7 +527,11 @@ pub fn count_reference_gc_and_length_by_window(
     // Precompute required ACGT counts per length: max(ceil(frac * len), min_count)
     let mut required_acgt_per_len = vec![0u32; max_len + 1];
     for len in min_len..max_len {
-        let req_by_frac = (min_acgt_fraction * (len as f32)).ceil() as u32;
+        let effective_length = len.saturating_sub(2 * end_offset);
+        if effective_length == 0 {
+            continue;
+        }
+        let req_by_frac = (min_acgt_fraction * (effective_length as f32)).ceil() as u32;
         required_acgt_per_len[len] = req_by_frac.max(min_acgt_count).max(1);
     }
 
@@ -562,15 +567,20 @@ pub fn count_reference_gc_and_length_by_window(
                 let frag_max_excl = max_len.min(remaining as usize + 1);
 
                 for frag_len in min_len..frag_max_excl {
-                    let end_idx = start_pos + frag_len;
+                    // Apply end offsets to GC window
+                    if frag_len <= 2 * end_offset {
+                        continue;
+                    }
+                    let gc_start = start_pos + end_offset;
+                    let gc_end = start_pos + frag_len - end_offset;
 
                     // Prefix lookups
-                    let acgt_count = acgt_prefix[end_idx] - acgt_prefix[start_pos];
+                    let acgt_count = acgt_prefix[gc_end] - acgt_prefix[gc_start];
                     if acgt_count < required_acgt_per_len[frag_len] {
                         continue;
                     }
 
-                    let gc_count = gc_prefix[end_idx] - gc_prefix[start_pos];
+                    let gc_count = gc_prefix[gc_end] - gc_prefix[gc_start];
 
                     // Round to the nearest percent (**half-up**) using integer math.
                     let gc_percent_bin = calculate_gc_bin(gc_count as u64, acgt_count as u64);
@@ -603,7 +613,7 @@ pub fn calculate_gc_bin(gc_count: u64, acgt_count: u64) -> usize {
 /// to an integer percent. Each output row corresponds to a fragment length and each
 /// column is a GC% bin in `[0, 100]`. Entries store how many distinct `gc_count` values
 /// round into that bin for the given length.
-pub fn gc_percent_widths(length_min: usize, length_max: usize) -> Array2<u16> {
+pub fn gc_percent_widths(length_min: usize, length_max: usize, end_offset: usize) -> Array2<u16> {
     assert!(
         length_max >= length_min,
         "length range must be non-empty ({}..={})",
@@ -615,8 +625,12 @@ pub fn gc_percent_widths(length_min: usize, length_max: usize) -> Array2<u16> {
 
     for length in length_min..=length_max {
         let row_idx = length - length_min;
-        for gc_count in 0..=length {
-            let gc_bin = calculate_gc_bin(gc_count as u64, length as u64);
+        let effective_length = length.saturating_sub(2 * end_offset);
+        if effective_length == 0 {
+            continue;
+        }
+        for gc_count in 0..=effective_length {
+            let gc_bin = calculate_gc_bin(gc_count as u64, effective_length as u64);
             // Widths are small (<= length+1), so u16 is sufficient.
             let current = widths
                 .get_mut((row_idx, gc_bin))

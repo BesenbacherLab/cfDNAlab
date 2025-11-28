@@ -384,7 +384,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         &gc_bins,
         correction_matrix.clone(),
         length_bin_frequencies,
-        opt,
+        &reference_metadata,
     )?;
     correction_pkg.write_npz(&opt.ioc.output_dir.join("gc_bias_correction.npz"))?;
 

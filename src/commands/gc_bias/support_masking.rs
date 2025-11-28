@@ -147,6 +147,7 @@ pub fn build_theoretical_support_mask(
     length_max: usize,
     gc_min: usize,
     gc_max: usize,
+    end_offset: usize,
 ) -> Array2<bool> {
     assert!(
         length_max >= length_min,
@@ -170,8 +171,12 @@ pub fn build_theoretical_support_mask(
             continue;
         }
         let row_idx = length - length_min;
-        let acgt_count = length as u64;
-        for gc_count in 0..=length {
+        let effective_length = length.saturating_sub(2 * end_offset);
+        if effective_length == 0 {
+            continue;
+        }
+        let acgt_count = effective_length as u64;
+        for gc_count in 0..=effective_length {
             // Use the same integer rounding as the reference-gc tool!
             let gc_bin = calculate_gc_bin(gc_count as u64, acgt_count) as u64;
             if gc_bin < gc_min as u64 {
