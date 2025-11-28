@@ -280,40 +280,39 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     // We sum them to answer the question: "What is the probability of seeing this bin".
     // TODO: Since only the length dimension is normalized, these operations make a big difference. Reconsider them carefully!
     let (binned_ref_counts, binned_gc_counts) = {
-        let ref_length_binned = collapse_counts_by_bins(
-            &avg_norm_ref_counts,
-            0,
-            &length_bins,
-            CollapseAggregation::Mean,
-            // Weight the average by how common the lengths are in the cfDNA
-            Some(smoothed_gc_counts.view()),
-        )?;
-
-        let cfdna_length_binned = collapse_counts_by_bins(
-            &smoothed_gc_counts,
-            0,
-            &length_bins,
-            CollapseAggregation::Sum,
-            None,
-        )?;
-
         let ref_gc_binned = collapse_counts_by_bins(
-            &ref_length_binned,
+            &avg_norm_ref_counts,
             1,
             &gc_bins,
-            CollapseAggregation::Mean,
-            Some(cfdna_length_binned.view()),
+            CollapseAggregation::Sum,
+            None,
         )?;
 
         let cfdna_gc_binned = collapse_counts_by_bins(
-            &cfdna_length_binned,
+            &smoothed_gc_counts,
             1,
             &gc_bins,
             CollapseAggregation::Sum,
             None,
         )?;
 
-        (ref_gc_binned, cfdna_gc_binned)
+        let ref_length_binned = collapse_counts_by_bins(
+            &ref_gc_binned,
+            0,
+            &length_bins,
+            CollapseAggregation::Sum,
+            None,
+        )?;
+
+        let cfdna_length_binned = collapse_counts_by_bins(
+            &cfdna_gc_binned,
+            0,
+            &length_bins,
+            CollapseAggregation::Sum,
+            None,
+        )?;
+
+        (ref_length_binned, cfdna_length_binned)
     };
 
     intermediate_saver.save_file(
