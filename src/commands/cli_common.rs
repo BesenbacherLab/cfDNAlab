@@ -108,6 +108,12 @@ pub struct FragmentLengthArgs {
 }
 
 impl FragmentLengthArgs {
+    pub fn default() -> Self {
+        Self {
+            min_fragment_length: 30,
+            max_fragment_length: 1000,
+        }
+    }
     /// Check whether a fragment length is within the configured inclusive range.
     pub fn contains(&self, len: u32) -> bool {
         len >= self.min_fragment_length && len <= self.max_fragment_length

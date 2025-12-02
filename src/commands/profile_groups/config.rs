@@ -69,14 +69,14 @@ pub struct ProfileGroupsConfig {
     ///
     /// **NOTE**: Memory consumption increases linearly with the number of bins.
     ///
-    /// Example: `--length-bins 20 80 150 220 500 1001` or `--length-bins {20..1001..10}` for `20 30 40 ... 1001`
+    /// Example: `--length-bins 30 80 150 220 500 1001` or `--length-bins {30..1001..10}` for `30 40 50 ... 1001`
     #[cfg_attr(
         feature = "cli",
         clap(
             long,
-            value_parser = clap::value_parser!(u32).range(1..),
+            value_parser = clap::value_parser!(u32).range(10..),
             num_args = 2.., // At least two edges per occurrence
-            default_values_t = [20_u32, 1001_u32],
+            default_values_t = [30_u32, 1001_u32],
             help_heading = "Core"
         )
     )]
@@ -173,7 +173,7 @@ impl ProfileGroupsConfig {
             ioc,
             output_prefix: "sites".into(),
             intervals,
-            length_bins: vec![20, 1001],
+            length_bins: vec![30, 1001],
             tile_size: 63_000_000,
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),

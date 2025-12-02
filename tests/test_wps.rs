@@ -405,7 +405,7 @@ fn long_fragment_fixture_produces_expected_wps_runs() -> Result<()> {
         out_dir.path(),
         "long_fragment_wps",
     );
-    // Allow the 600bp inserts from the shared fixture.
+    // Allow the 1000bp inserts from the shared fixture.
     cfg.set_max_fragment_length(1_000);
 
     // Manual expectations (window size 120 -> left_span = right_span = 60):

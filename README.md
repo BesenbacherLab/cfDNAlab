@@ -192,7 +192,7 @@ BAM="..." # ?
 OUT="..." # sample specific
 BLACKLIST="..." # ?
 THREADS=12
-MINLENGTH=20
+MINLENGTH=30
 MAXLENGTH=600
 
 # Coverage weights for genomic smoothing

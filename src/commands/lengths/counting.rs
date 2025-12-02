@@ -213,9 +213,9 @@ impl LengthCounts {
 }
 
 impl Default for LengthCounts {
-    /// Create an empty default `LengthCounts` (20–600 length).
+    /// Create an empty default `LengthCounts` (30-1000 length).
     fn default() -> Self {
-        Self::new(20, 600)
+        Self::new(30, 1000)
     }
 }
 

@@ -7,8 +7,8 @@ use cfdnalab::commands::gc_bias::{
     GC_CORRECTION_SCHEMA_VERSION,
     binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
     correct::{GCCorrector, LengthAgnosticGCCorrector, MarginalizeLengthsWeightingScheme},
-    package::GCCorrectionPackage,
     gc_bias::interpolate_masked_corrections,
+    package::GCCorrectionPackage,
     support_masking::build_extreme_bins_support_mask,
 };
 

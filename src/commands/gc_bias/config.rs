@@ -161,7 +161,7 @@ pub struct GCConfig {
     ///
     /// The shortest fragment lengths can be very sparsely observed. This can lead to extreme corrections.
     /// Set the number of short-length bins where we interpolate a correction based on the neighbouring corrections.
-    /// With the default minimum fragment length setting in `cfdna reference-gc` (20bp),
+    /// With the default minimum fragment length setting in `cfdna reference-gc` (30bp),
     /// the default of 1 should be fine. This can be tuned via visualization of the created
     /// correction matrix and intermediate files (`--save-intermediates`).
     #[cfg_attr(

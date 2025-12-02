@@ -414,9 +414,9 @@ impl GCCounts {
 }
 
 impl Default for GCCounts {
-    /// Create an empty default `GCCounts` (0–100 GC, 20–600 length).
+    /// Create an empty default `GCCounts` (0-100 GC, 30-1000 length).
     fn default() -> Self {
-        Self::new(0, 100, 20, 600, (0, 0))
+        Self::new(0, 100, 30, 1000, (0, 0))
     }
 }
 

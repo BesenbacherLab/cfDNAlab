@@ -155,10 +155,7 @@ impl BamToFragConfig {
             by_bed: None,
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
-            fragment_lengths: FragmentLengthArgs {
-                min_fragment_length: 20,
-                max_fragment_length: 1000,
-            },
+            fragment_lengths: FragmentLengthArgs::default(),
             min_mapq: 0,
             require_proper_pair: false,
             blacklist: None,

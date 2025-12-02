@@ -193,10 +193,7 @@ impl FragmentKmersSharedArgs {
             windows: WindowsArgs::default(),
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
-            fragment_lengths: FragmentLengthArgs {
-                min_fragment_length: 20,
-                max_fragment_length: 1000,
-            },
+            fragment_lengths: FragmentLengthArgs::default(),
             quiet: false,
             min_mapq: 30,
             require_proper_pair: false,
