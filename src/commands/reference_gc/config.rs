@@ -101,9 +101,11 @@ pub struct RefGCConfig {
     ///
     /// The nucleotides in the cfDNA fragment ends can reflect biological biases (e.g., DNase activity).
     /// This argument allows isolating the GC correction from this signal.
+    /// 
+    /// The default of `10 bp` is based on the GCfix paper by Rahman et al. 2025.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "0",
+        clap(long, default_value = "10",
              value_parser = clap::value_parser!(u8).range(0..20), help_heading="Core"))]
     pub end_offset: u8,
 

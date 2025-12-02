@@ -97,7 +97,7 @@ pub struct FragmentLengthArgs {
     /// Minimum fragment length to include `[integer]`
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "20", value_parser = clap::value_parser!(u32).range(10..), help_heading="Filtering"))]
+        clap(long, default_value = "30", value_parser = clap::value_parser!(u32).range(10..), help_heading="Filtering"))]
     pub min_fragment_length: u32,
 
     /// Maximum fragment length to include `[integer]`
