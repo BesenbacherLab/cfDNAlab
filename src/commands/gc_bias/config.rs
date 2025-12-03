@@ -73,12 +73,6 @@ impl FromStr for WindowWeightingSchemes {
 /// The read failed quality check.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[cfg_attr(
-    feature = "cli",
-    clap(
-        group = clap::ArgGroup::new("min_acgt")
-            .args(&["min_fragment_acgt_pct", "min_fragment_acgt_count"])
-            .multiple(true)))]
 #[derive(Clone)]
 pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]

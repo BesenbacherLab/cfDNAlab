@@ -21,12 +21,6 @@ use std::path::PathBuf;
 /// using a second-order polynomial with the 3 nearest neighbours on each side.
 /// Note: Zeros can still occur at edges.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-#[cfg_attr(
-    feature = "cli",
-    clap(
-        group = clap::ArgGroup::new("min_acgt")
-            .args(&["min_acgt_pct", "min_acgt_count"])
-            .multiple(true)))]
 pub struct RefGCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ref_genome: Ref2BitRequiredArgs,
@@ -119,4 +113,44 @@ pub struct RefGCConfig {
     /// interpolation based on the neighbourhood of non-zero counts.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub skip_interpolation: bool,
+
+    /// Standard deviation for Gaussian kernel that smoothes raw GC counts for each fragment length `[float]`
+    ///
+    /// Before converting to discrete GC percentages, we apply smoothing to the raw GC counts separately for each fragment length.
+    /// For a fragment length of 150, we thus have counts of fragments with GCs ranging from 0..=150, and smoothing
+    /// happens on this scale so the distance between elements are the same for all fragment lengths.
+    ///
+    /// Note: The same smoothing parameters (sigma and radius) are used for downstream `cfdna gc-bias` calls.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "0.55",
+             value_parser = clap::value_parser!(f64), help_heading="Smoothing"))]
+    pub smoothing_sigma: f64,
+
+    /// Radius of Gaussian kernel that smoothes raw GC counts for each fragment length `[integer]`
+    ///
+    /// Kernel size is `2 * radius + 1`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "2",
+             value_parser = clap::value_parser!(u8).range(1..10), help_heading="Smoothing"))]
+    pub smoothing_radius: u8,
+
+    /// Whether to skip the smoothing of raw GC counts`[flag]`
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Smoothing"))]
+    pub skip_smoothing: bool,
+}
+
+impl RefGCConfig {
+    pub fn check_smoothing_settings(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.smoothing_sigma > 0.0,
+            "--smoothing-sigma must be positive"
+        );
+        anyhow::ensure!(
+            self.smoothing_sigma <= 10.0,
+            "--smoothing-sigma must be <= 10.0"
+        );
+        Ok(())
+    }
 }

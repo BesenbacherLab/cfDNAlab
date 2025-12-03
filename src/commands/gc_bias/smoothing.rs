@@ -1,3 +1,4 @@
+use anyhow::{Result, ensure};
 use ndarray::Array2;
 
 /// Smoothe a length-by-GC matrix using a separable Gaussian kernel.
@@ -92,48 +93,65 @@ fn gaussian_kernel(radius: usize, sigma: f64) -> Vec<f64> {
     kernel
 }
 
-/// Given intuitive mass targets (e.g. 0.5 center, 0.4 for ±1, 0.1 for ±2),
-/// fit a sigma that produces a discrete Gaussian matching those weights.
-///
-/// `targets` should be a slice of length `radius + 1`, where index 0 is the
-/// desired mass on the center bin and index `k` is the combined mass for
-/// both ±k neighbors.
-pub fn fit_sigma_for_targets(radius: usize, targets: &[f64]) -> f64 {
-    assert!(
-        targets.len() == radius + 1,
-        "targets must have entries for center + each offset"
-    );
-    let total: f64 = targets.iter().sum();
-    assert!(
-        (total - 1.0).abs() < 1e-6,
-        "target weights must sum to 1.0 (got {total})"
-    );
-
-    let mut sigma = 1.0;
-    for _ in 0..30 {
-        let kernel = gaussian_kernel(radius, sigma);
-        let mut error = 0.0;
-        for offset in 0..=radius {
-            let weight = if offset == 0 {
-                kernel[radius]
-            } else {
-                kernel[radius + offset] * 2.0 // combine ±offset
-            };
-            error += (weight - targets[offset]).powi(2);
-        }
-
-        // crude gradient-free adjustment: compare farthest weight to target
-        let far_weight = kernel.last().copied().unwrap_or(0.0) * 2.0;
-        let far_target = *targets.last().unwrap();
-        if far_target > 0.0 {
-            let ratio = (far_weight / far_target).max(1e-6);
-            sigma /= ratio.sqrt(); // shrink sigma if too broad, expand if too sharp
-        }
-
-        if error < 1e-8 {
-            break;
-        }
+/// Smooth a 1-D row in place with a clamped Gaussian kernel.
+pub fn smooth_row_in_place(row: &mut [f64], sigma: f64, radius: usize) -> Result<()> {
+    ensure!(sigma > 0.0, "sigma must be positive");
+    ensure!(radius > 0, "radius must be positive");
+    if row.is_empty() {
+        return Ok(());
     }
 
-    sigma
+    let kernel = gaussian_kernel(radius, sigma);
+    let mut tmp = vec![0.0; row.len()];
+
+    let n = row.len();
+    for i in 0..n {
+        let mut acc = 0.0;
+        for (k, &w) in kernel.iter().enumerate() {
+            let offset = k as isize - radius as isize; // Are sometimes negative
+            let src = reflect_index(i as isize + offset, n);
+            acc += row[src] * w;
+        }
+        tmp[i] = acc;
+    }
+
+    row.copy_from_slice(&tmp);
+    Ok(())
+}
+
+/// Slice the row for `length` from a flat counts buffer and smooth it in place.
+pub fn smooth_length_row_in_place(
+    counts: &mut [f64],
+    offsets: &[usize],
+    length_min: usize,
+    length: usize,
+    sigma: f64,
+    radius: usize,
+) -> Result<()> {
+    ensure!(length >= length_min);
+
+    let row_idx = length - length_min;
+    ensure!(row_idx + 1 < offsets.len());
+
+    let start = offsets[row_idx];
+    let end = offsets[row_idx + 1];
+    ensure!(!(start >= end || end > counts.len()));
+
+    // Split to get a mutable slice for this row
+    let (_, tail) = counts.split_at_mut(start);
+    let (row, _) = tail.split_at_mut(end - start);
+    smooth_row_in_place(row, sigma, radius)?;
+    Ok(())
+}
+
+#[inline]
+fn reflect_index(i: isize, len: usize) -> usize {
+    debug_assert!(len > 0);
+    if i < 0 {
+        (-i) as usize
+    } else if i as usize >= len {
+        (2 * len - 2).saturating_sub(i as usize)
+    } else {
+        i as usize
+    }
 }

@@ -24,7 +24,7 @@ fn should_keep_only_whitelisted_chromosomes_when_loading_bed() -> Result<()> {
 
     // Assert
     let chr1 = map.get("chr1").expect("chr1 missing");
-    assert_eq!(chr1.as_slice(), &[(0, 10, 0), (20, 30, 1)]);
+    assert_eq!(chr1.as_slice(), &[(0, 10, 0), (20, 30, 2)]);
 
     let empty = load_windows_from_bed(
         bed.path(),
@@ -53,7 +53,7 @@ fn should_filter_windows_by_predicate_when_loading_bed() -> Result<()> {
 
     // Assert
     let chr1 = map.get("chr1").expect("chr1 missing");
-    assert_eq!(chr1.as_slice(), &[(10, 25, 0)]);
+    assert_eq!(chr1.as_slice(), &[(10, 25, 1)]);
     Ok(())
 }
 

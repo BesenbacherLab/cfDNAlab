@@ -1,6 +1,8 @@
 use anyhow::{Result, ensure};
 use ndarray::{Array2, Array3, ArrayBase, Axis, Data, DataMut, Ix2, s};
 
+use crate::commands::gc_bias::smoothing::smooth_length_row_in_place;
+
 /// Prefix sums (cumsum) to compute GC and AT fractions while excluding Ns.
 /// `gc[i]`   = # of G/C in seq[0..i)
 /// `acgt[i]`= # of A/T/G/C in seq[0..i)
@@ -74,12 +76,11 @@ pub fn get_gc_integer_percentage_for_window(
 #[derive(Debug, Clone)]
 pub struct GCCounts {
     counts: Vec<f64>,
-    pub gc_min: usize,
-    pub gc_max: usize,
     pub length_min: usize,
     pub length_max: usize,
     num_lengths: usize,
-    num_gc_bins: usize,
+    offsets: Vec<usize>,
+    end_offset: usize,
     pub num_acgt_out_of: (u64, u64),
 }
 
@@ -88,14 +89,12 @@ impl GCCounts {
     ///
     /// Parameters
     /// ----------
-    /// gc_min: usize
-    ///     Minimum GC bin (inclusive).
-    /// gc_max: usize
-    ///     Maximum GC bin (inclusive).
     /// length_min: usize
     ///     Minimum fragment length (inclusive).
     /// length_max: usize
     ///     Maximum fragment length (inclusive).
+    /// end_offset: usize
+    ///     Number of bases trimmed from each fragment end when counting GC.
     /// num_acgt_out_of:
     ///     Number of ACGT bases and the total number of positions.
     ///
@@ -104,25 +103,42 @@ impl GCCounts {
     /// counts: GCCounts
     ///     A `GCCounts` object with all counts initialized to zero.
     pub fn new(
-        gc_min: usize,
-        gc_max: usize,
         length_min: usize,
         length_max: usize,
+        end_offset: usize,
         num_acgt_out_of: (u64, u64),
-    ) -> Self {
-        let num_gc_bins = gc_max - gc_min + 1;
-        let num_lengths = length_max - length_min + 1;
-        let counts = vec![0f64; num_gc_bins * num_lengths];
-        Self {
+    ) -> Result<Self> {
+        let (counts, offsets, num_lengths) =
+            Self::initialize_counts(length_min, length_max, end_offset)?;
+        Ok(Self {
             counts,
-            gc_min,
-            gc_max,
             length_min,
             length_max,
             num_lengths,
-            num_gc_bins,
+            offsets,
+            end_offset,
             num_acgt_out_of,
+        })
+    }
+
+    /// Initialize the counts with 0s and create the offsets for length-indexing.
+    fn initialize_counts(
+        length_min: usize,
+        length_max: usize,
+        end_offset: usize,
+    ) -> Result<(Vec<f64>, Vec<usize>, usize)> {
+        ensure!(length_min <= length_max, "length_min must be <= length_max");
+        let num_lengths = length_max - length_min + 1;
+        let mut offsets = Vec::with_capacity(num_lengths + 1);
+        let mut acc: usize = 0;
+        for length in length_min..=length_max {
+            offsets.push(acc);
+            let effective_length = length.saturating_sub(2 * end_offset);
+            acc += effective_length + 1; // gc = 0..=effective_length
         }
+        offsets.push(acc); // End index
+        let counts = vec![0.0; acc];
+        Ok((counts, offsets, num_lengths))
     }
 
     /// Check whether `(length, gc)` is within configured ranges.
@@ -132,7 +148,7 @@ impl GCCounts {
     /// length: usize
     ///     Fragment length to test.
     /// gc: usize
-    ///     GC bin to test.
+    ///     GC count to test.
     ///
     /// Returns
     /// -------
@@ -140,67 +156,53 @@ impl GCCounts {
     ///     True if both indices are in range.
     #[inline]
     fn in_bounds(&self, length: usize, gc: usize) -> bool {
-        (self.length_min..=self.length_max).contains(&length)
-            && (self.gc_min..=self.gc_max).contains(&gc)
+        self.effective_length(length)
+            .map_or(false, |effective_length| gc <= effective_length)
     }
 
-    /// Compute row/column indices in `Array2` (see `.as_array2()`)
-    /// output for `(length, gc)` if in bounds.
-    ///
-    /// Parameters
-    /// ----------
-    /// length: usize
-    ///     Fragment length (absolute, not zero-based).
-    /// gc: usize
-    ///     GC bin (absolute, not zero-based).
-    ///
-    /// Returns
-    /// -------
-    /// idx: Option<(usize, usize)>
-    ///     `(row, col)` zero-based indices if in range, otherwise `None`.
     #[inline]
-    pub fn index_of(&self, length: usize, gc: usize) -> Option<(usize, usize)> {
-        if self.in_bounds(length, gc) {
-            Some((length - self.length_min, gc - self.gc_min))
+    fn effective_length(&self, length: usize) -> Option<usize> {
+        if (self.length_min..=self.length_max).contains(&length) {
+            Some(length.saturating_sub(2 * self.end_offset))
         } else {
             None
         }
     }
 
-    /// Get index in the raw (flattened) counts for a given fragment length and gc.
+    /// Get index in the raw (flattened) counts for a given fragment length and GC count.
     #[inline]
-    pub fn flat_index(&self, length: usize, gc: usize) -> Option<usize> {
+    fn flat_index(&self, length: usize, gc: usize) -> Option<usize> {
         if self.in_bounds(length, gc) {
             let row = length - self.length_min;
-            let col = gc - self.gc_min;
-            Some(row * self.num_gc_bins + col)
+            let start = self.offsets[row];
+            Some(start + gc)
         } else {
             None
         }
     }
 
-    /// Increment the counter for a given fragment length and GC bin.
+    /// Increment the counter for a given fragment length and GC count.
     ///
     /// Parameters
     /// ----------
     /// length: usize
     ///     Fragment length (absolute).
     /// gc: usize
-    ///     GC bin (absolute).
+    ///     GC count (number of GC bases after end offsets), absolute.
     pub fn incr(&mut self, length: usize, gc: usize) {
         if let Some(idx) = self.flat_index(length, gc) {
             self.counts[idx] += 1.0;
         }
     }
 
-    /// Increment the counter by a weight for a given fragment length and GC bin.
+    /// Increment the counter by a weight for a given fragment length and GC count.
     ///
     /// Parameters
     /// ----------
     /// length: usize
     ///     Fragment length (absolute).
     /// gc: usize
-    ///     GC bin (absolute).
+    ///     GC count (number of GC bases after end offsets), absolute.
     /// weight: f64
     ///     Weight to count up.
     pub fn incr_weighted(&mut self, length: usize, gc: usize, weight: f64) {
@@ -259,16 +261,6 @@ impl GCCounts {
         &self.counts
     }
 
-    /// Get the counts as an `Array2` object.
-    ///
-    /// Returns
-    /// -------
-    /// counts: Array2<f64>
-    pub fn to_array2(&self) -> Array2<f64> {
-        Array2::from_shape_vec((self.num_lengths, self.num_gc_bins), self.counts.clone())
-            .expect("inconsistent row lengths")
-    }
-
     /// Number of length rows.
     ///
     /// Returns
@@ -278,17 +270,6 @@ impl GCCounts {
     #[inline]
     pub fn n_lengths(&self) -> usize {
         self.num_lengths
-    }
-
-    /// Number of GC columns.
-    ///
-    /// Returns
-    /// -------
-    /// n: usize
-    ///     Count of GC bins.
-    #[inline]
-    pub fn n_gc_bins(&self) -> usize {
-        self.num_gc_bins
     }
 
     /// Get the percentage of `ACGT` bases in the observed positions.
@@ -307,6 +288,32 @@ impl GCCounts {
         }
     }
 
+    /// Sum of all counts.
+    pub fn sum(&self) -> f64 {
+        self.counts.iter().copied().sum()
+    }
+
+    /// Mean count across all GC-by-length cells. Returns 0.0 if empty.
+    pub fn mean(&self) -> f64 {
+        if self.counts.is_empty() {
+            0.0
+        } else {
+            self.sum() / self.counts.len() as f64
+        }
+    }
+
+    /// Scale all counts by `factor` in place.
+    pub fn scale_counts(&mut self, factor: f64) -> Result<()> {
+        ensure!(factor > 0.0);
+        if factor == 1.0 {
+            return Ok(());
+        }
+        for v in self.counts.iter_mut() {
+            *v *= factor;
+        }
+        Ok(())
+    }
+
     /// Create a zero-initialized `GCCounts` with the same ranges and shape as `self`.
     ///
     /// Returns
@@ -314,17 +321,8 @@ impl GCCounts {
     /// counts: GCCounts
     ///     New object with all counts set to zero and identical configuration.
     #[inline]
-    pub fn zeroed_like(&self) -> Self {
-        Self {
-            counts: vec![0f64; self.num_gc_bins * self.num_lengths],
-            gc_min: self.gc_min,
-            gc_max: self.gc_max,
-            length_min: self.length_min,
-            length_max: self.length_max,
-            num_gc_bins: self.num_gc_bins,
-            num_lengths: self.num_lengths,
-            num_acgt_out_of: (0, 0),
-        }
+    pub fn zeroed_like(&self) -> Result<Self> {
+        Self::new(self.length_min, self.length_max, self.end_offset, (0, 0))
     }
 
     /// Check if two `GCCounts` are compatible for merging (same ranges and shape).
@@ -340,12 +338,12 @@ impl GCCounts {
     ///     `true` if the two objects have identical ranges and matrix shape.
     #[inline]
     pub fn is_compatible_with(&self, other: &Self) -> bool {
-        self.gc_min == other.gc_min
-            && self.gc_max == other.gc_max
-            && self.length_min == other.length_min
+        self.length_min == other.length_min
             && self.length_max == other.length_max
             && self.n_lengths() == other.n_lengths()
-            && self.n_gc_bins() == other.n_gc_bins()
+            && self.offsets == other.offsets
+            && self.counts.len() == other.counts.len()
+            && self.end_offset == other.end_offset
     }
 
     /// Merge (sum) counts from `other` into `self` using saturating addition.
@@ -359,7 +357,7 @@ impl GCCounts {
     /// -------
     /// result: Result<(), anyhow::Error>
     ///     An error is returned if the two objects are incompatible.
-    pub fn merge_from(&mut self, other: &Self) -> anyhow::Result<()> {
+    pub fn merge_from(&mut self, other: &Self) -> Result<()> {
         if !self.is_compatible_with(other) {
             return Err(anyhow::anyhow!(
                 "incompatible GCCounts: self={} vs other={}",
@@ -397,7 +395,7 @@ impl GCCounts {
     /// // let by_chr: HashMap<String, GCCounts> = ...;
     /// let total = GCCounts::collapse(by_chr.values())?;
     /// ```
-    pub fn collapse<'a, I>(iter: I) -> anyhow::Result<Self>
+    pub fn collapse<'a, I>(iter: I) -> Result<Self>
     where
         I: IntoIterator<Item = &'a GCCounts>,
     {
@@ -411,12 +409,67 @@ impl GCCounts {
         }
         Ok(acc)
     }
-}
 
-impl Default for GCCounts {
+    /// Slice the row for `length` from a flat counts buffer and smooth it in place.
+    /// Returns `true` if the slice was valid and smoothed.
+    pub fn smooth_length_rows_in_place(&mut self, sigma: f64, radius: u8) {
+        for length in self.length_range() {
+            let Some(effective_length) = self.effective_length(length) else {
+                continue;
+            };
+            if effective_length == 0 {
+                continue;
+            }
+            // Uses offsets based on original lengths
+            // so end_offsets are already considered
+            smooth_length_row_in_place(
+                &mut self.counts,
+                &self.offsets,
+                self.length_min,
+                length,
+                sigma,
+                radius as usize,
+            )
+            .expect("length/offsets out of range");
+        }
+    }
+
+    pub fn length_range(&self) -> std::ops::RangeInclusive<usize> {
+        self.length_min..=self.length_max
+    }
+
+    /// Collapse ragged GC-count rows into a rectangular GC% x length matrix.
+    ///
+    /// The stored `end_offset` is applied to derive effective lengths before
+    /// computing GC percentages, so bins that are theoretically unobservable
+    /// are never populated.
+    pub fn to_gc_percent_grid(&self, gc_min: usize, gc_max: usize) -> Result<Array2<f64>> {
+        ensure!(gc_min < gc_max, "gc_min must be < gc_max");
+        let num_lengths = self.length_max - self.length_min + 1;
+        let num_gc_bins = gc_max - gc_min + 1;
+        let mut grid = Array2::<f64>::zeros((num_lengths, num_gc_bins));
+        for length in self.length_range() {
+            let row_idx = length - self.length_min;
+            let start = self.offsets[row_idx];
+            let end = self.offsets[row_idx + 1];
+            let effective_length = length.saturating_sub(2 * self.end_offset);
+            if effective_length == 0 {
+                continue;
+            }
+            for (gc, &val) in (0..).zip(self.counts[start..end].iter()) {
+                let gc_pct = calculate_gc_bin(gc as u64, effective_length as u64);
+                if (gc_min..=gc_max).contains(&gc_pct) {
+                    let col_idx = gc_pct - gc_min;
+                    grid[(row_idx, col_idx)] += val;
+                }
+            }
+        }
+        Ok(grid)
+    }
+
     /// Create an empty default `GCCounts` (0-100 GC, 30-1000 length).
-    fn default() -> Self {
-        Self::new(0, 100, 30, 1000, (0, 0))
+    fn default() -> Result<Self> {
+        Self::new(30, 1000, 0, (0, 0))
     }
 }
 
@@ -424,13 +477,9 @@ impl std::fmt::Display for GCCounts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "GCCounts(gc:[{}..={}], len:[{}..={}], dims:({},{}), pct_acgt:({}) )",
-            self.gc_min,
-            self.gc_max,
+            "GCCounts(len:[{}..={}], pct_acgt:({}) )",
             self.length_min,
             self.length_max,
-            self.n_lengths(),
-            self.n_gc_bins(),
             self.pct_acgt(),
         )
     }
@@ -466,10 +515,10 @@ pub fn stack_gc_counts(all_counts: &[Array2<f64>]) -> Array3<f64> {
 /// - `acgt_count >= min_acgt_count`, and
 /// - `acgt_count / L >= min_acgt_fraction`.
 ///
-/// When counted, the GC fraction is binned to a **percent** in `[0, 100]` using
-/// **half-up rounding** *without floats*, via:
-/// `round(100 * gc / acgt) = (100*gc + acgt/2) / acgt`.
-/// This avoids the systematic low bias of floor‐division.
+/// When counted, the raw GC **count** for the fragment's effective length
+/// (after applying `end_offset`) is stored. Percentages are derived later with
+/// `to_gc_percent_grid`, which uses the effective length for the same
+/// half-up rounding as `calculate_gc_bin`.
 ///
 /// The sampled `start_positions` must be **sorted, unique**, and refer to the same
 /// chromosome as `gc_prefixes`. Windows are assumed **sorted by start** (they may
@@ -480,7 +529,7 @@ pub fn stack_gc_counts(all_counts: &[Array2<f64>]) -> Array3<f64> {
 /// ----------
 /// counts_by_bin: &mut Vec<GCCounts>
 ///     Per-window accumulator. For window index `i`, `counts_by_bin[i]` is updated
-///     by calling `incr(fragment_length, gc_percent_bin)`.
+///     by calling `incr(fragment_length, gc_count)`.
 /// gc_prefixes: &GCPrefixes
 ///     Prefix arrays with one extra sentinel element: `gc[k]` and `acgt[k]` give
 ///     cumulative counts in `[0, k)`. Requires `gc.len() == acgt.len() >= chrom_len + 1`.
@@ -582,10 +631,7 @@ pub fn count_reference_gc_and_length_by_window(
 
                     let gc_count = gc_prefix[gc_end] - gc_prefix[gc_start];
 
-                    // Round to the nearest percent (**half-up**) using integer math.
-                    let gc_percent_bin = calculate_gc_bin(gc_count as u64, acgt_count as u64);
-
-                    counts_by_bin[win_idx].incr(frag_len, gc_percent_bin);
+                    counts_by_bin[win_idx].incr(frag_len, gc_count as usize);
                 }
             }
 

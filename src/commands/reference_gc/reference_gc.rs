@@ -33,6 +33,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
     let start_time = Instant::now();
     let chromosomes = opt.chromosomes.resolve_chromosomes(None)?;
     let window_opt = opt.windows.resolve_windows();
+    opt.check_smoothing_settings()?;
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
     pb.set_style(
         ProgressStyle::default_bar()
@@ -148,7 +149,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
     let (mut all_bin_arrays, outlier_support_mask) = {
         // Convert to single `GCCounts` for global
         // Keep wrapped in vector to simplify writer
-        let all_bins = if matches!(window_opt, WindowSpec::Global) {
+        let mut all_bins = if matches!(window_opt, WindowSpec::Global) {
             vec![GCCounts::collapse(&all_bins)?]
         } else {
             all_bins
@@ -159,10 +160,14 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         pb.reset();
         pb.set_length(all_bins.len() as u64);
         pb.set_position(0);
-        let mut all_bin_arrays: Vec<Array2<f64>> = all_bins
-            .par_iter()
-            .map(|gc_counts| -> Result<_> {
-                let mut out = gc_counts.to_array2();
+        let mut all_bin_grids: Vec<Array2<f64>> = all_bins
+            .par_iter_mut()
+            .map(|gc_counts: &mut GCCounts| -> Result<_> {
+                if !opt.skip_smoothing {
+                    gc_counts
+                        .smooth_length_rows_in_place(opt.smoothing_sigma, opt.smoothing_radius);
+                }
+                let mut out = gc_counts.to_gc_percent_grid(0, 100)?;
                 apply_gc_percent_width_correction(&mut out, &gc_percent_widths)?;
                 pb.inc(1);
                 Ok(out)
@@ -171,14 +176,12 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         pb.finish_with_message("| Finished array conversion");
 
         // Create mask of supported count bins BEFORE interpolation
-        // Elements that are zero in all windows are considered impossible
-        // for the combination of GC and fragment lengths when
-        // all positions are valid ACGT bases
-        // NOTE: These are found empirically here but could be calculated theoretically?
+        // Elements that are seen less than 3 times per 1Mb are considered unsupported.
+        // These include the theoretically unobservable combinations of fragment lengths and GC percentage bins.
         let mut outlier_support_mask = create_support_mask_threshold_per_mb(
-            all_bin_arrays.as_slice(),
+            all_bin_grids.as_slice(),
             total_covered_acgt_positions,
-            2.0,
+            3.0,
         )
         .expect("support mask should be created");
 
@@ -188,7 +191,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
             pb.set_length(all_bins.len() as u64);
             pb.set_position(0);
 
-            for array in all_bin_arrays.iter_mut() {
+            for array in all_bin_grids.iter_mut() {
                 debug_assert_eq!(
                     array.dim(),
                     outlier_support_mask.dim(),
@@ -214,7 +217,7 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         }
 
         pb.finish_with_message("| Finished interpolating missing counts");
-        (all_bin_arrays, outlier_support_mask)
+        (all_bin_grids, outlier_support_mask)
     };
 
     // Sort by original index (when given a bed file)
@@ -274,6 +277,10 @@ pub fn run(opt: &RefGCConfig) -> Result<()> {
         opt.fragment_lengths.min_fragment_length as usize,
         opt.fragment_lengths.max_fragment_length as usize,
         opt.end_offset,
+        opt.skip_interpolation,
+        opt.smoothing_radius,
+        opt.smoothing_sigma,
+        opt.skip_smoothing,
     )
     .context("Writing reference GC package failed")?;
 
@@ -308,6 +315,10 @@ fn write_reference_gc_package(
     length_min: usize,
     length_max: usize,
     end_offset: u8,
+    skip_interpolation: bool,
+    smoothing_radius: u8,
+    smoothing_sigma: f64,
+    skip_smoothing: bool,
 ) -> Result<()> {
     let file = std::fs::File::create(path)?;
     let mut npz = NpzWriter::new(file);
@@ -320,6 +331,16 @@ fn write_reference_gc_package(
         &Array1::from(vec![length_min as u32, length_max as u32]),
     )?;
     npz.add_array("end_offset", &Array1::from(vec![end_offset as u32]))?;
+    npz.add_array(
+        "skip_interpolation",
+        &Array1::from(vec![skip_interpolation]),
+    )?;
+    npz.add_array(
+        "smoothing_radius",
+        &Array1::from(vec![smoothing_radius as u32]),
+    )?;
+    npz.add_array("smoothing_sigma", &Array1::from(vec![smoothing_sigma]))?;
+    npz.add_array("skip_smoothing", &Array1::from(vec![skip_smoothing]))?;
     npz.finish()?;
     Ok(())
 }
@@ -362,12 +383,11 @@ fn process_chrom(
     // Initialize count arrays
     let mut counts_by_bin = vec![
         GCCounts::new(
-            0usize,
-            100usize,
             opt.fragment_lengths.min_fragment_length as usize,
             opt.fragment_lengths.max_fragment_length as usize,
+            opt.end_offset as usize,
             (0, 0) // Not used in this command
-        );
+        )?;
         num_bins
     ];
 
@@ -405,8 +425,6 @@ fn process_chrom(
         }
         total_acgt
     };
-
-    // TODO: To use this for filtering, we need to know the N-positions as well (we need percentage usable positions)
 
     let bin_info = if let Some(size) = opt.windows.by_size {
         // Build bin information for chromosome
