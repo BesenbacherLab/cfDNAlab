@@ -466,11 +466,6 @@ impl GCCounts {
         }
         Ok(grid)
     }
-
-    /// Create an empty default `GCCounts` (0-100 GC, 30-1000 length).
-    fn default() -> Result<Self> {
-        Self::new(30, 1000, 0, (0, 0))
-    }
 }
 
 impl std::fmt::Display for GCCounts {

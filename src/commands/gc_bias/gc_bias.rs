@@ -846,7 +846,7 @@ where
     Ok(Some((weighted_ref_counts, gc_counts)))
 }
 
-fn mean_scale_per_length_array<S, M>(
+pub fn mean_scale_per_length_array<S, M>(
     x: &ArrayBase<S, Ix2>,
     pseudo_count: f64,
     support_mask: Option<&ArrayBase<M, Ix2>>,
@@ -883,6 +883,11 @@ where
         } else {
             (x.row(row_idx).sum(), n_cols)
         };
+
+        // Keep empty rows at zero instead of producing NaNs when the mean is zero.
+        if valid_count == 0 || row_sum == 0.0 {
+            continue;
+        }
 
         let denom = if valid_count > 0 {
             (row_sum / valid_count as f64) + pseudo_count * valid_count as f64
@@ -948,7 +953,7 @@ pub fn interpolate_masked_corrections(
 // Overall scaling
 // Elements that are marked as `false` in the support mask are
 // still scaled but do not contribute to the mean
-fn mean_scale_array<S, M>(
+pub fn mean_scale_array<S, M>(
     x: &ArrayBase<S, Ix2>,
     support_mask: Option<&ArrayBase<M, Ix2>>,
 ) -> Option<Array2<f64>>

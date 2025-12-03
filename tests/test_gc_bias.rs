@@ -326,3 +326,30 @@ mod tests_gc_percent_grid {
         assert!((row_len6[50] - 2.0).abs() < 1e-12); // 3/6 -> 50%
     }
 }
+
+mod tests_helpers {
+
+    #[cfg(test)]
+    mod tests {
+        use cfdnalab::commands::gc_bias::gc_bias::mean_scale_per_length_array;
+        use ndarray::array;
+
+        #[test]
+        fn leaves_zero_rows_untouched_in_mean_scaling() {
+            // Arrange: first length row has no mass; second has values that should be mean-scaled.
+            let counts = array![[0.0, 0.0], [2.0, 4.0]];
+            let mask = array![[true, true], [true, true]];
+
+            // Act
+            let scaled = mean_scale_per_length_array(&counts, 0.0, Some(&mask));
+
+            // Assert: empty row stays zero; non-empty row divides by its mean (3.0).
+            assert!(
+                scaled.row(0).iter().all(|&v| v == 0.0),
+                "zero row should remain zero after scaling"
+            );
+            assert!((scaled[(1, 0)] - 2.0 / 3.0).abs() < 1e-12);
+            assert!((scaled[(1, 1)] - 4.0 / 3.0).abs() < 1e-12);
+        }
+    }
+}
