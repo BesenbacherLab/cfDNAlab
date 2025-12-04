@@ -326,8 +326,13 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
     // Get greedy bins for lengths and GC
     // Maps "length -> length bin" and "gc -> gc bin"
-    let length_bins = bin_greedily_by_mass(&smoothed_gc_counts, 0, opt.min_length_bin_mass as f64)?;
-    let gc_bins = bin_greedily_by_mass(&smoothed_gc_counts, 1, opt.min_gc_bin_mass as f64)?;
+    let length_bins = bin_greedily_by_mass(
+        &smoothed_gc_counts,
+        0,
+        opt.min_length_bin_mass as f64,
+        opt.min_length_bin_width,
+    )?;
+    let gc_bins = bin_greedily_by_mass(&smoothed_gc_counts, 1, opt.min_gc_bin_mass as f64, 1)?;
 
     // a) Collapse row-mean-scaled reference counts into the length and GC bins
     // We average the values at the collapsed indices, weighted by the occurence of the lengths in the cfDNA.

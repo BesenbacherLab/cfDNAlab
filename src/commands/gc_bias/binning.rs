@@ -18,6 +18,7 @@ pub fn bin_greedily_by_mass<S>(
     counts: &ArrayBase<S, Ix2>,
     axis: usize,
     min_mass_pct: f64,
+    min_width: u8,
 ) -> Result<BinnedAxis>
 where
     S: Data<Elem = f64>,
@@ -46,16 +47,19 @@ where
     let min_mass = total_mass * (min_mass_pct / 100.0);
     let mut bins: Vec<Vec<usize>> = Vec::new();
     let mut running_mass = 0.0;
+    let mut running_width = 0;
     let mut current_bin_indices: Vec<usize> = Vec::new();
 
     for (idx, &mass) in masses.iter().enumerate() {
         running_mass += mass;
+        running_width += 1;
         current_bin_indices.push(idx);
 
-        if running_mass >= min_mass {
+        if running_mass >= min_mass && running_width >= min_width {
             bins.push(current_bin_indices.clone());
             current_bin_indices.clear();
             running_mass = 0.0;
+            running_width = 0;
         }
     }
 

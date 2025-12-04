@@ -259,7 +259,7 @@ mod binning_tests {
         // Two rows each contribute exactly half the total mass (1 of 2).
         // Setting min_mass_pct to 99% forces all indices into one bin.
         let counts = array![[1.0, 0.0], [0.0, 1.0]];
-        let bins = bin_greedily_by_mass(&counts, 0, 99.0).expect("binning should succeed");
+        let bins = bin_greedily_by_mass(&counts, 0, 99.0, 1).expect("binning should succeed");
         assert_eq!(bins.num_bins, 1, "All rows must merge into a single bin");
         assert_eq!(
             bins.bin_to_indices.get(&0),
@@ -274,7 +274,7 @@ mod binning_tests {
         // so once row 2 is included the threshold is met and a new bin starts.
         // The remaining row becomes the second bin.
         let counts = array![[10.0, 0.0], [0.0, 10.0], [10.0, 0.0], [40.0, 0.0]];
-        let bins = bin_greedily_by_mass(&counts, 0, 30.0).expect("binning should succeed");
+        let bins = bin_greedily_by_mass(&counts, 0, 30.0, 1).expect("binning should succeed");
         assert_eq!(bins.num_bins, 2, "Expected two bins");
         assert_eq!(
             bins.bin_to_indices.get(&0),
@@ -301,7 +301,7 @@ mod binning_tests {
             [40.0, 0.0],
             [10.0, 0.0]
         ];
-        let bins = bin_greedily_by_mass(&counts, 0, 30.0).expect("binning should succeed");
+        let bins = bin_greedily_by_mass(&counts, 0, 30.0, 1).expect("binning should succeed");
         assert_eq!(bins.num_bins, 2, "Expected two bins");
         assert_eq!(
             bins.bin_to_indices.get(&0),
@@ -318,7 +318,7 @@ mod binning_tests {
     #[test]
     fn handles_zero_total_mass() {
         let counts = array![[0.0, 0.0], [0.0, 0.0]];
-        let bins = bin_greedily_by_mass(&counts, 0, 10.0).expect("binning should succeed");
+        let bins = bin_greedily_by_mass(&counts, 0, 10.0, 1).expect("binning should succeed");
         assert_eq!(bins.num_bins, 0, "No bins should be created for zero mass");
         assert!(bins.index_to_bin.is_empty());
         assert!(bins.bin_to_indices.is_empty());

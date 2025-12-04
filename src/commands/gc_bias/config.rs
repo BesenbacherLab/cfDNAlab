@@ -132,6 +132,14 @@ pub struct GCConfig {
         clap(long, default_value = "0.5", value_parser = parse_percentage_within_0_100_f32, help_heading="Binning"))]
     pub min_length_bin_mass: f32,
 
+    /// Minimum number of fragment lengths per fragment length bin `[float]`
+    ///
+    /// Reduces sparsity-related issues in ultra low-coverage samples.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "3", value_parser = clap::value_parser!(u8).range(1..100), help_heading="Binning"))]
+    pub min_length_bin_width: u8,
+
     /// Minimum percentage of counts to have in each GC contents bin `[float]`
     ///
     /// Greater than 0, lower than 100. Default is 1% (i.e., a max. of 100 bins).
@@ -223,6 +231,7 @@ impl GCConfig {
             require_proper_pair: false,
             min_gc_bin_mass: 1.0,
             min_length_bin_mass: 1.0,
+            min_length_bin_width: 3,
             num_extreme_gc_bins: 1,
             num_short_length_bins: 1,
             min_window_acgt_pct: 10,
@@ -268,6 +277,10 @@ impl GCConfig {
 
     pub fn set_min_length_bin_mass(&mut self, min_length_bin_mass: f32) {
         self.min_length_bin_mass = min_length_bin_mass;
+    }
+
+    pub fn set_min_length_bin_width(&mut self, min_length_bin_width: u8) {
+        self.min_length_bin_width = min_length_bin_width;
     }
 
     pub fn set_min_gc_bin_mass(&mut self, min_gc_bin_mass: f32) {
