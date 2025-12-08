@@ -31,11 +31,15 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 ///
 /// ## GC correction
 ///
-/// Weight the contribution of each fragment by its length and GC content, using a precomputed
-/// correction matrix (`cfdna gc-bias`). This reduces the global GC bias in the coverage,
-/// which is a common technically-induced bias.
+/// Reduce the global GC bias (common technically-induced bias) in the coverage
+/// by weighting the contribution of fragments. Two options:
 ///
-/// The GC correction matrix should be calculated from the same BAM file, as the bias is sample-specific.
+/// `--gc-file`: Weight the contribution of each fragment by its length and GC content using a precomputed
+/// correction matrix (`cfdna gc-bias`). The GC correction matrix should be calculated from the same BAM file,
+/// as the bias is sample-specific.
+///
+/// `--gc-tag`: Weight the contribution of each fragment by a weight saved as an aux tag in the BAM reads.
+/// Allows using external GC packages like `GCParagon` and `GCfix`.
 ///
 /// ## Temporary files
 ///
@@ -200,7 +204,11 @@ impl FCoverageConfig {
             min_mapq: 30,
             require_proper_pair: false,
             blacklist: None,
-            gc: ApplyGCArgs { gc_file: None },
+            gc: ApplyGCArgs {
+                gc_file: None,
+                gc_tag: None,
+                drop_invalid_gc: false,
+            },
             ref_2bit: None,
         }
     }

@@ -374,8 +374,63 @@ pub struct ScaleGenomeArgs {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
+#[cfg_attr(
+    feature = "cli",
+    clap(
+        group = clap::ArgGroup::new("gc_correction")
+            .args(&["gc_file", "gc_tag"])
+            .multiple(false)))]
 #[derive(Debug, Clone, Default)]
 pub struct ApplyGCArgs {
+    /// Optional path to GC correction file *made from the same BAM file* with `gc-bias` `[path]`
+    ///
+    /// The file is usually called `gc_bias_correction.npz`.
+    ///
+    /// **NOTE**: Requires specifying the reference genome 2bit file as well.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_parser,
+            group = "gc_correction",
+            help_heading = "GC Correction (select max. one source)"
+        )
+    )]
+    pub gc_file: Option<PathBuf>,
+
+    /// Optional aux tag to get GC weight from when using external GC correction packages `[path]`
+    ///
+    /// Packages like `GCParagon` and `GCfix` allow saving GC weights directly to the reads
+    /// in a BAM file. They often assign a "gc" aux tag.
+    ///
+    /// The average per-read weight is used to count the fragment. When any of the reads have a zero-weight,
+    /// the fragment gets a zero-weight.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_parser,
+            group = "gc_correction",
+            help_heading = "GC Correction (select max. one source)"
+        )
+    )]
+    pub gc_tag: Option<String>,
+
+    /// Whether to drop fragments where the GC correction could no be calculated `[path]`
+    ///
+    /// If a GC correction weight could not be computed/retrieved for a fragment,
+    /// the default is to weight it as `1.0` (no correction). If you prefer to
+    /// exclude it instead, set this flag.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, help_heading = "GC Correction (select max. one source)")
+    )]
+    pub drop_invalid_gc: bool,
+}
+
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Debug, Clone, Default)]
+pub struct ApplyGCArgFileOnly {
     /// Optional path to GC correction file *made from the same BAM file* with `gc-bias` `[path]`
     ///
     /// The file is usually called `gc_bias_correction.npz`.
@@ -386,6 +441,14 @@ pub struct ApplyGCArgs {
         clap(long, value_parser, help_heading = "GC Correction")
     )]
     pub gc_file: Option<PathBuf>,
+
+    /// Whether to drop fragments where the GC correction could no be calculated `[path]`
+    ///
+    /// If a GC correction weight could not be computed for a fragment,
+    /// the default is to weight it as `1.0` (no correction). If you prefer to
+    /// exclude it instead, set this flag.
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "GC Correction"))]
+    pub drop_invalid_gc: bool,
 }
 
 // TODO: Is "nearest" clear enough in all usecases?

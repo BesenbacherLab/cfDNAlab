@@ -130,8 +130,9 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     // Decide mode once
     let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
     let masked = opt.blacklist.is_some();
-    let has_scaling_or_correction =
-        opt.scale_genome.scaling_factors.is_some() || opt.gc.gc_file.is_some();
+    let has_scaling_or_correction = opt.scale_genome.scaling_factors.is_some()
+        || opt.gc.gc_file.is_some()
+        || opt.gc.gc_tag.is_some();
 
     // Some actions cannot be used with `--by-size`
     if matches!(window_opt, WindowSpec::Size(_))
@@ -222,6 +223,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     pb.set_position(0);
 
     let tile_window_spans_for_threads = tile_window_spans.clone();
+    let gc_tag = opt.gc.gc_tag.as_deref();
 
     let tile_results: Vec<FCoverageCounters> = tiles
         .par_iter()
@@ -348,6 +350,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
                 blacklist_chr,
                 scaling_chr,
                 gc_corrector.clone(), // Quite small memory footprint
+                gc_tag,
                 mode,
                 decimals_to_use,
             )?;
@@ -532,10 +535,15 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
         global_counter.base.accepted_forward,
         global_counter.base.accepted_reverse
     );
-    if opt.gc.gc_file.is_some() {
+    if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
+        let gc_fail_action = if opt.gc.drop_invalid_gc {
+            "fragment skipped"
+        } else {
+            "fragment counted with weight 1.0"
+        };
         println!(
-            "  GC correction failures (fragment counted with weight 1.0): {}",
-            global_counter.gc_failed_fragments
+            "  GC correction failures ({}): {}",
+            gc_fail_action, global_counter.gc_failed_fragments
         );
     }
     println!(
@@ -555,6 +563,7 @@ fn process_tile(
     blacklist_chr: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
+    gc_tag: Option<&str>,
     mode: TileMode,
     decimals: i32,
 ) -> Result<FCoverageCounters> {
@@ -611,12 +620,15 @@ fn process_tile(
         move |r: &Record| default_include_read(r, opt.require_proper_pair, opt.min_mapq)
     };
 
+    let gc_tag_bytes = gc_tag.map(|t| t.as_bytes().to_vec());
+
     // Create fragment iterator
     let mut iter = fragments_with_segments_from_bam(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
         include_read_fn,
         1,
         !opt.ignore_gap,
+        gc_tag_bytes.as_deref(),
         fragment_filter,
     )
     .with_local_counters();
@@ -644,7 +656,11 @@ fn process_tile(
                 Some(weight) => weight,
                 None => {
                     counter.gc_failed_fragments += 1;
-                    1.0
+                    if opt.gc.drop_invalid_gc {
+                        continue;
+                    } else {
+                        1.0
+                    }
                 }
             };
 
@@ -653,6 +669,40 @@ fn process_tile(
                 &mut cp,
                 &fragment,
                 weight as f32,
+                tile.core_start,
+                tile.core_end,
+            )?;
+
+            if was_counted {
+                counter.base.counted_fragments += 1;
+            }
+        }
+    } else if gc_tag.is_some() {
+        for fragment_res in iter.by_ref() {
+            let fragment = fragment_res.context("reading fragment")?;
+
+            let gc_weight = if fragment.gc_tag.had_invalid {
+                counter.gc_failed_fragments += 1;
+                if opt.gc.drop_invalid_gc {
+                    continue;
+                } else {
+                    1.0
+                }
+            } else if let Some(w) = fragment.gc_tag.weight {
+                w
+            } else {
+                counter.gc_failed_fragments += 1;
+                if opt.gc.drop_invalid_gc {
+                    continue;
+                } else {
+                    1.0
+                }
+            };
+
+            let was_counted = add_fragment_clipped_to_core(
+                &mut cp,
+                &fragment,
+                gc_weight as f32,
                 tile.core_start,
                 tile.core_end,
             )?;
@@ -1066,6 +1116,7 @@ pub fn add_fragment_clipped_to_core(
                     tid: fragment.tid,
                     start: s - core_start,
                     end: e - core_start,
+                    gc_tag: Default::default(),
                 };
                 cp.add_fragment_weighted(local, weight)?;
                 counted = true;
@@ -1082,6 +1133,7 @@ pub fn add_fragment_clipped_to_core(
                 tid: fragment.tid,
                 start: s - core_start,
                 end: e - core_start,
+                gc_tag: Default::default(),
             };
 
             cp.add_fragment_weighted(local, weight)?;

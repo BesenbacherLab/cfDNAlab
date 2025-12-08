@@ -40,6 +40,7 @@ mod tests_coverage_prefix {
             has_ref_gap,
             max_ref_gap,
             ref_mapped_segments: segs.to_vec(),
+            gc_tag: Default::default(),
         }
     }
 
@@ -57,12 +58,14 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 100,
             end: 200,
+            gc_tag: Default::default(),
         })?;
         cp.add_fragment_weighted(
             Fragment {
                 tid: 0,
                 start: 150,
                 end: 250,
+                gc_tag: Default::default(),
             },
             0.87,
         )?;
@@ -137,6 +140,7 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 10,
             end: 20,
+        gc_tag: Default::default(),
         })?;
         cp.finalize_coverage(false);
         cp.build_indexes(false)?;
@@ -146,6 +150,7 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 20,
             end: 30,
+        gc_tag: Default::default(),
         })?;
         // Now any query should complain coverage not finalized
         let err = cp.sum_coverage(0, 40, false).unwrap_err();
@@ -169,6 +174,7 @@ mod tests_coverage_prefix {
                 tid: 0,
                 start: 0,
                 end: 1,
+            gc_tag: Default::default(),
             })
             .unwrap_err();
         assert!(format!("{err}").contains("prefix was dropped"));
@@ -183,12 +189,14 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 10,
             end: 110,
+        gc_tag: Default::default(),
         })?;
         cp.add_fragment_weighted(
             Fragment {
                 tid: 0,
                 start: 200,
                 end: 400,
+            gc_tag: Default::default(),
             },
             0.5,
         )?;
@@ -223,6 +231,7 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 10,
             end: 20,
+        gc_tag: Default::default(),
         })?;
         cp.finalize_coverage(true);
 
@@ -253,6 +262,7 @@ mod tests_coverage_prefix {
                     tid: 0,
                     start: 0,
                     end: 10,
+                gc_tag: Default::default(),
                 },
                 -0.1,
             )
@@ -265,6 +275,7 @@ mod tests_coverage_prefix {
                 tid: 0,
                 start: 10,
                 end: 10,
+            gc_tag: Default::default(),
             })
             .unwrap_err();
         assert!(format!("{err}").contains("start 10 >= end 10"));
@@ -278,6 +289,7 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 0,
             end: 10,
+        gc_tag: Default::default(),
         })?;
         cp.finalize_coverage(true);
         let err = cp.sum_coverage(10, 60, false).unwrap_err();
@@ -308,6 +320,7 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 0,
             end: 1,
+        gc_tag: Default::default(),
         })?;
         let cov = cp.finalize_coverage(true);
         assert_eq!(cov, &[1.0]);
@@ -326,6 +339,7 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 10,
             end: 20,
+        gc_tag: Default::default(),
         })?;
         cp.finalize_coverage(true);
         cp.build_indexes(true)?;
@@ -346,6 +360,7 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 5,
             end: 15,
+        gc_tag: Default::default(),
         })?;
         cp.finalize_coverage(true);
         cp.build_indexes(false)?;
@@ -367,6 +382,7 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 2,
             end: 5,
+        gc_tag: Default::default(),
         })?;
         cp.finalize_coverage(true);
         cp.build_indexes(true)?;
@@ -384,6 +400,7 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 1,
             end: 4,
+        gc_tag: Default::default(),
         })?;
         cp.finalize_coverage(true);
         // In-bounds positions
@@ -403,12 +420,14 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 10,
             end: 30,
+        gc_tag: Default::default(),
         })?;
         cp.add_fragment_weighted(
             Fragment {
                 tid: 0,
                 start: 40,
                 end: 90,
+            gc_tag: Default::default(),
             },
             0.5,
         )?;
@@ -444,6 +463,7 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 10,
             end: 20,
+        gc_tag: Default::default(),
         })?;
         // Assumes delta is NOT dropped!
         let c1 = cp.finalize_coverage(false).to_vec();
@@ -459,12 +479,14 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 0,
             end: 500,
+        gc_tag: Default::default(),
         })?;
         cp.add_fragment_weighted(
             Fragment {
                 tid: 0,
                 start: 250,
                 end: 750,
+            gc_tag: Default::default(),
             },
             0.5,
         )?;
@@ -516,6 +538,7 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 0,
             end: 10,
+        gc_tag: Default::default(),
         })?;
         cp.finalize_coverage(true);
         cp.build_indexes(true)?;
@@ -538,12 +561,14 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 20,
             end: 60,
+        gc_tag: Default::default(),
         })?;
         cp.add_fragment_weighted(
             Fragment {
                 tid: 0,
                 start: 100,
                 end: 150,
+            gc_tag: Default::default(),
             },
             0.5,
         )?;
@@ -566,6 +591,7 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 10,
             end: 20,
+        gc_tag: Default::default(),
         })?;
         cp.finalize_coverage(true);
 
@@ -594,6 +620,7 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 10,
             end: 20,
+        gc_tag: Default::default(),
         })?;
         cp.finalize_coverage(false); // Cannot refinalize if delta is dropped
         cp.build_indexes(false)?;
@@ -605,6 +632,7 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 20,
             end: 30,
+        gc_tag: Default::default(),
         })?;
         // Now querying should fail because coverage not finalized
         let err = cp.avg_coverage(0, 100, false).unwrap_err();
@@ -712,6 +740,7 @@ mod tests_coverage_prefix {
             tid: 0,
             start: 10,
             end: 20,
+        gc_tag: Default::default(),
         })?;
         cp.finalize_coverage(true);
 
@@ -745,11 +774,13 @@ mod tests_window_results {
             tid: 0,
             start: 10,
             end: 20,
+        gc_tag: Default::default(),
         })?;
         cp.add_fragment(Fragment {
             tid: 0,
             start: 30,
             end: 40,
+        gc_tag: Default::default(),
         })?;
         cp.finalize_coverage(false);
         Ok(cp)
@@ -826,6 +857,7 @@ mod tests_window_results {
             tid: 0,
             start: 5,
             end: 15,
+        gc_tag: Default::default(),
         })?;
         cp.finalize_coverage(true);
 

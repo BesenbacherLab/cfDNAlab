@@ -1,3 +1,4 @@
+use crate::shared::gc_tag::{GcTagValue, combine_gc_tag_values};
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::Record;
 
@@ -10,6 +11,8 @@ pub struct Fragment {
     pub start: u32,
     /// exclusive end (right boundary of the reverse read)
     pub end: u32,
+    /// Optional GC weight from aux tag if provided
+    pub gc_tag: crate::shared::gc_tag::GcTagValue,
 }
 
 impl Fragment {
@@ -26,6 +29,7 @@ pub struct MinimalReadInfo {
     pub pos: u32, // leftmost aligned ref pos
     pub end: u32, // exclusive rightmost aligned ref pos (reference_end)
     pub is_reverse: bool,
+    pub gc_tag: crate::shared::gc_tag::GcTagValue,
 }
 
 impl From<&Record> for MinimalReadInfo {
@@ -36,6 +40,7 @@ impl From<&Record> for MinimalReadInfo {
             pos: r.pos() as u32,
             end: r.reference_end() as u32,
             is_reverse: r.is_reverse(),
+            gc_tag: GcTagValue::default(),
         }
     }
 }
@@ -79,10 +84,12 @@ pub fn collect_fragment(a: &MinimalReadInfo, b: &MinimalReadInfo) -> Option<Frag
     if !is_inwards_oriented(forward, reverse) {
         return None;
     }
+    let gc_tag = combine_gc_tag_values(&forward.gc_tag, &reverse.gc_tag);
     Some(Fragment {
         tid: forward.tid,
         start: forward.pos,
         end: reverse.end,
+        gc_tag,
     })
 }
 

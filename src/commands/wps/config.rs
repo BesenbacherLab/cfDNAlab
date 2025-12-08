@@ -240,7 +240,11 @@ impl WPSSharedConfig {
             min_mapq: 30,
             require_proper_pair: false,
             blacklist: None,
-            gc: ApplyGCArgs { gc_file: None },
+            gc: ApplyGCArgs {
+                gc_file: None,
+                gc_tag: None,
+                drop_invalid_gc: false,
+            },
             ref_2bit: None,
         }
     }

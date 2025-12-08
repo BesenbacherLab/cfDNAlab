@@ -225,6 +225,7 @@ fn process_chrom(
     let mut iter = fragments_from_bam(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
         include_read_fn,
+        None,
         fragment_filter,
     )
     .with_local_counters();

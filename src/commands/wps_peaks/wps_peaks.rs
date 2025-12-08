@@ -374,10 +374,15 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
         total_counter.base.accepted_forward,
         total_counter.base.accepted_reverse
     );
-    if opt.shared_args.gc.gc_file.is_some() {
+    if opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some() {
+        let gc_fail_action = if opt.shared_args.gc.drop_invalid_gc {
+            "fragment skipped"
+        } else {
+            "fragment counted with weight 1.0"
+        };
         println!(
-            "  GC correction failures (fragment counted with weight 1.0): {}",
-            total_counter.gc_failed_fragments
+            "  GC correction failures ({}): {}",
+            gc_fail_action, total_counter.gc_failed_fragments
         );
     }
     println!(

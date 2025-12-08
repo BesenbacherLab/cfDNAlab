@@ -107,7 +107,12 @@ impl<R: BufRead> FragFileIter<R> {
                 end,
                 start
             );
-            Ok(Fragment { tid, start, end })
+            Ok(Fragment {
+                tid,
+                start,
+                end,
+                gc_tag: crate::shared::gc_tag::GcTagValue::default(),
+            })
         };
 
         match fmt {

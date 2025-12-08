@@ -72,9 +72,14 @@ pub fn run(opt: &BamToBamConfig) -> Result<()> {
             global_counter.blacklisted_fragments
         );
         if opt.gc.gc_file.is_some() {
+            let gc_fail_action = if opt.gc.drop_invalid_gc {
+                "fragment skipped"
+            } else {
+                "fragment counted with weight 1.0"
+            };
             println!(
-                "  GC correction failures (fragment counted with weight 1.0): {}",
-                global_counter.gc_failed_fragments
+                "  GC correction failures ({}): {}",
+                gc_fail_action, global_counter.gc_failed_fragments
             );
         }
         println!(

@@ -1,5 +1,5 @@
 use crate::commands::cli_common::{
-    ApplyGCArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs, ScaleGenomeArgs, WindowSpec,
+    ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, IOCArgs, ScaleGenomeArgs, WindowSpec,
 };
 use crate::shared::blacklist::BlacklistStrategy;
 use std::path::PathBuf;
@@ -127,7 +127,7 @@ pub struct BamToFragConfig {
     pub blacklist_strategy: BlacklistStrategy,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub gc: ApplyGCArgs,
+    pub gc: ApplyGCArgFileOnly,
 
     /// Optional 2bit reference genome file [path]
     ///
@@ -161,7 +161,10 @@ impl BamToFragConfig {
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::Any,
-            gc: ApplyGCArgs { gc_file: None },
+            gc: ApplyGCArgFileOnly {
+                gc_file: None,
+                drop_invalid_gc: false,
+            },
             ref_2bit: None,
         }
     }
@@ -211,7 +214,7 @@ impl BamToFragConfig {
         self.blacklist_strategy = blacklist_strategy;
     }
 
-    pub fn set_gc(&mut self, gc: ApplyGCArgs) {
+    pub fn set_gc(&mut self, gc: ApplyGCArgFileOnly) {
         self.gc = gc;
     }
 

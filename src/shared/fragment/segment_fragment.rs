@@ -5,6 +5,7 @@ use smallvec::SmallVec;
 use crate::shared::fragment::minimal_fragment::{
     Fragment, PairOrientable, is_inwards_oriented, oriented_pair_from_read_info,
 };
+use crate::shared::gc_tag::{GcTagValue, combine_gc_tag_values, read_gc_tag_from_record};
 
 /// Fragment that may carry explicit reference-coverage segments
 ///
@@ -16,6 +17,7 @@ pub struct FragmentWithSegments {
     pub start: u32, // forward.start
     pub end: u32,   // reverse.end (end-exclusive)
     pub segments: Option<SmallVec<[(u32, u32); 12]>>,
+    pub gc_tag: GcTagValue,
 }
 
 impl FragmentWithSegments {
@@ -32,6 +34,7 @@ impl From<Fragment> for FragmentWithSegments {
             start: f.start,
             end: f.end,
             segments: None,
+            gc_tag: GcTagValue::default(),
         }
     }
 }
@@ -57,11 +60,12 @@ pub struct SegmentedReadInfo {
     pub has_ref_gap: bool,                    // True if any D/N present
     pub max_ref_gap: u32,                     // Longest single D/N length (0 if none)
     pub ref_mapped_segments: Vec<(u32, u32)>, // Relative segments: (offset_from_pos, len)
+    pub gc_tag: GcTagValue,
 }
 
-impl From<&Record> for SegmentedReadInfo {
+impl SegmentedReadInfo {
     #[inline]
-    fn from(r: &Record) -> Self {
+    pub fn from_record_with_gc_tag(r: &Record, gc_tag: Option<&[u8]>) -> Self {
         // Detect any D/N and track max gap length
         let mut has_ref_gap = false;
         let mut max_gap: u32 = 0;
@@ -132,6 +136,10 @@ impl From<&Record> for SegmentedReadInfo {
             }
         }
 
+        let gc_tag_value = gc_tag
+            .map(|tag| read_gc_tag_from_record(r, tag))
+            .unwrap_or_default();
+
         SegmentedReadInfo {
             tid: r.tid(),
             pos: r.pos() as u32,
@@ -140,7 +148,15 @@ impl From<&Record> for SegmentedReadInfo {
             has_ref_gap,
             max_ref_gap: max_gap,
             ref_mapped_segments,
+            gc_tag: gc_tag_value,
         }
+    }
+}
+
+impl From<&Record> for SegmentedReadInfo {
+    #[inline]
+    fn from(r: &Record) -> Self {
+        SegmentedReadInfo::from_record_with_gc_tag(r, None)
     }
 }
 
@@ -192,6 +208,7 @@ pub fn collect_fragment_with_segments(
 
     let span_start = forward.pos;
     let span_end = reverse.end;
+    let gc_tag = combine_gc_tag_values(&forward.gc_tag, &reverse.gc_tag);
 
     // Decide if we switch to segments
     let trigger = (forward.has_ref_gap && forward.max_ref_gap >= trigger_min_gap_bp)
@@ -204,6 +221,7 @@ pub fn collect_fragment_with_segments(
             start: span_start,
             end: span_end,
             segments: None,
+            gc_tag,
         });
     }
 
@@ -265,6 +283,7 @@ pub fn collect_fragment_with_segments(
             start: span_start,
             end: span_end,
             segments: None,
+            gc_tag,
         });
     }
 
@@ -312,5 +331,6 @@ pub fn collect_fragment_with_segments(
         start: span_start,
         end: span_end,
         segments,
+        gc_tag,
     })
 }

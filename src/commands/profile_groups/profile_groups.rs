@@ -171,6 +171,7 @@ pub fn run(opt: &ProfileGroupsConfig) -> Result<()> {
     pb.set_position(0);
 
     let tile_window_spans_for_threads = tile_window_spans.clone();
+    let gc_tag = opt.gc.gc_tag.as_deref();
 
     let tile_results: Vec<(ProfileGroupsCounters, Option<PathBuf>)> = tiles
         .par_iter()
@@ -211,6 +212,7 @@ pub fn run(opt: &ProfileGroupsConfig) -> Result<()> {
                 blacklist_chr,
                 scaling_chr,
                 gc_corrector.clone(),
+                gc_tag,
             )?;
             pb.inc(1);
             Ok(out)
@@ -278,10 +280,15 @@ pub fn run(opt: &ProfileGroupsConfig) -> Result<()> {
         "  Blacklist-excluded fragments: {}",
         global_counter.blacklisted_fragments
     );
-    if opt.gc.gc_file.is_some() {
+    if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
+        let gc_fail_action = if opt.gc.drop_invalid_gc {
+            "fragment skipped"
+        } else {
+            "fragment counted with weight 1.0"
+        };
         println!(
-            "  GC correction failures (fragment counted with weight 1.0): {}",
-            global_counter.gc_failed_fragments
+            "  GC correction failures ({}): {}",
+            gc_fail_action, global_counter.gc_failed_fragments
         );
     }
     println!(
@@ -305,6 +312,7 @@ fn process_tile(
     blacklist_intervals: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
+    gc_tag: Option<&str>,
 ) -> anyhow::Result<(ProfileGroupsCounters, Option<PathBuf>)> {
     // Open a fresh BAM reader for this thread
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
@@ -387,9 +395,11 @@ fn process_tile(
     let mut sf_ptr = 0; // Scaling factor bin
 
     // Create fragment iterator
+    let gc_tag_bytes = gc_tag.map(|t| t.as_bytes().to_vec());
     let mut iter = fragments_from_bam(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
         include_read_fn,
+        gc_tag_bytes.as_deref(),
         fragment_filter,
     )
     .with_local_counters();
@@ -442,17 +452,41 @@ fn process_tile(
 
         // Get GC correction weight
         // NOTE: Must come after filtering for midpoints lying within the core!
-        let gc_weight_opt = get_gc_weight(&fragment, fetch_start)?;
-        let gc_weight = match (gc_weight_opt, correct_gc) {
-            (Some(w), true) => w,
-            (None, true) => {
-                // Tried but failed to make a GC correction weight
-                // for the current fragment; fall back to no correction
+        let gc_weight = if gc_tag.is_some() {
+            // Tag mode: trust tag if valid, otherwise treat as failure
+            if fragment.gc_tag.had_invalid {
                 counter.gc_failed_fragments += 1;
-                1.0
+                if opt.gc.drop_invalid_gc {
+                    continue;
+                } else {
+                    1.0
+                }
+            } else if let Some(tag_w) = fragment.gc_tag.weight {
+                tag_w as f64
+            } else {
+                counter.gc_failed_fragments += 1;
+                if opt.gc.drop_invalid_gc {
+                    continue;
+                } else {
+                    1.0
+                }
             }
-            (None, false) => 1.0, // No correction
-            (Some(_), false) => unreachable!(),
+        } else {
+            // File-based correction path
+            let gc_weight_opt = get_gc_weight(&fragment, fetch_start)?;
+            match (gc_weight_opt, correct_gc) {
+                (Some(w), true) => w,
+                (None, true) => {
+                    counter.gc_failed_fragments += 1;
+                    if opt.gc.drop_invalid_gc {
+                        continue;
+                    } else {
+                        1.0
+                    }
+                }
+                (None, false) => 1.0, // No correction
+                (Some(_), false) => unreachable!(),
+            }
         };
 
         // Find all overlapping count-windows

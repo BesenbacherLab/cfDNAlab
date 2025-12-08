@@ -189,6 +189,7 @@ impl Coverage {
                     tid: frag.tid,
                     start: frag.start,
                     end: frag.end,
+                    gc_tag: crate::shared::gc_tag::GcTagValue::default(),
                 };
                 self.add_fragment_weighted(base, weight)
             }

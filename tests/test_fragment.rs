@@ -353,6 +353,7 @@ mod test_segmented_fragments {
             has_ref_gap,
             max_ref_gap,
             ref_mapped_segments: segs.to_vec(),
+            gc_tag: Default::default(),
         }
     }
 
@@ -649,8 +650,8 @@ mod test_kmer_segments {
         end_offset: u32,
     ) -> Option<FragmentWithKmerSegments> {
         let capture_segments = matches!(indel_mode, IndelMode::Adjust);
-        let f_info = KmerSegmentedReadInfo::from_record(forward, capture_segments);
-        let r_info = KmerSegmentedReadInfo::from_record(reverse, capture_segments);
+        let f_info = KmerSegmentedReadInfo::from_record(forward, capture_segments, None);
+        let r_info = KmerSegmentedReadInfo::from_record(reverse, capture_segments, None);
         collect_fragment_with_kmer_segments(&f_info, &r_info, indel_mode, include_gap, end_offset)
     }
     fn segments(frag: &FragmentWithKmerSegments) -> Vec<(u32, u32)> {

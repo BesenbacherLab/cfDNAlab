@@ -182,7 +182,11 @@ impl ProfileGroupsConfig {
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::default(),
-            gc: ApplyGCArgs { gc_file: None },
+            gc: ApplyGCArgs {
+                gc_file: None,
+                gc_tag: None,
+                drop_invalid_gc: false,
+            },
             ref_2bit: None,
         }
     }

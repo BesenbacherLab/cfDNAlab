@@ -222,10 +222,17 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         global_counter.blacklisted_fragments
     );
     if opt.gc.gc_file.is_some() {
-        println!(
-            "  GC correction failures (fragment counted with weight 1.0): {}",
-            global_counter.gc_failed_fragments
-        );
+        if opt.gc.gc_file.is_some() {
+            let gc_fail_action = if opt.gc.drop_invalid_gc {
+                "fragment skipped"
+            } else {
+                "fragment counted with weight 1.0"
+            };
+            println!(
+                "  GC correction failures ({}): {}",
+                gc_fail_action, global_counter.gc_failed_fragments
+            );
+        }
     }
     println!(
         "  Fragments counted one or more times: {}",
@@ -411,9 +418,14 @@ fn process_chrom(
         let gc_weight = match (gc_weight_opt, correct_gc) {
             (Some(w), true) => w,
             (None, true) => {
-                // Tried but failed to make a GC correction weight for the current fragment; fall back to no correction
+                // Tried but failed to make a GC correction weight for the current fragment
+                // Fall back to no correction or skip
                 counter.gc_failed_fragments += 1;
-                1.0
+                if opt.gc.drop_invalid_gc {
+                    continue;
+                } else {
+                    1.0
+                }
             }
             (None, false) => 1.0, // No correction
             (Some(_), false) => unreachable!(),

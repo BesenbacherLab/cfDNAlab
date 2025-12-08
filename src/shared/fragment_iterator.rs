@@ -17,6 +17,7 @@ let mut it = fragments_with_segments_from_bam(
     include_read,
     1,                 // trigger_min_gap_bp
     !opt.ignore_gap,   // include_inter_mate_gap
+    None,              // optional gc tag
     post,
 ).with_local_counters();
 
@@ -284,6 +285,7 @@ pub fn fragments_with_segments_from_bam<RIter, PF>(
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     trigger_min_gap_bp: u32,
     include_inter_mate_gap: bool,
+    gc_tag: Option<&[u8]>,
     fragment_filter: PF,
 ) -> PairingAdapter<
     impl Iterator<Item = Result<InputItem<FragmentWithSegments>>>,
@@ -299,12 +301,15 @@ where
         trigger_min_gap_bp,
         include_inter_mate_gap,
     };
+    let gc_tag_bytes = gc_tag.map(|tag| tag.to_vec());
 
     // Map BAM records -> InputItem::Read, converting errors to anyhow with context.
     let mapped = records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord));
 
     PairingAdapter::new(mapped, Some(pairer))
-        .with_bam_filter_and_mapper(include_read, |rec| SegmentedReadInfo::from(rec))
+        .with_bam_filter_and_mapper(include_read, move |rec| {
+            SegmentedReadInfo::from_record_with_gc_tag(rec, gc_tag_bytes.as_deref())
+        })
         .with_fragment_filter(fragment_filter)
 }
 
@@ -357,6 +362,7 @@ pub fn fragments_with_kmer_segments_from_bam<RIter, PF>(
     indel_mode: IndelMode,
     include_inter_mate_gap: bool,
     end_offset: u32,
+    gc_tag: Option<&[u8]>,
     fragment_filter: PF,
 ) -> PairingAdapter<
     impl Iterator<Item = Result<InputItem<FragmentWithKmerSegments>>>,
@@ -373,6 +379,7 @@ where
         include_inter_mate_gap,
         end_offset,
     };
+    let gc_tag_bytes = gc_tag.map(|tag| tag.to_vec());
 
     let mapped = records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord));
 
@@ -380,7 +387,7 @@ where
 
     PairingAdapter::new(mapped, Some(pairer))
         .with_bam_filter_and_mapper(include_read, move |rec| {
-            KmerSegmentedReadInfo::from_record(rec, capture_segments)
+            KmerSegmentedReadInfo::from_record(rec, capture_segments, gc_tag_bytes.as_deref())
         })
         .with_fragment_filter(fragment_filter)
 }
@@ -402,6 +409,7 @@ impl Pairer for BasicPairer {
 pub fn fragments_from_bam<RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
+    gc_tag: Option<&[u8]>,
     fragment_filter: PF,
 ) -> PairingAdapter<
     impl Iterator<Item = Result<InputItem<Fragment>>>,
@@ -414,11 +422,18 @@ where
     PF: Fn(&Fragment) -> bool + Send + Sync + 'static,
 {
     let pairer = BasicPairer;
+    let gc_tag_bytes = gc_tag.map(|tag| tag.to_vec());
 
     let mapped = records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord));
 
     PairingAdapter::new(mapped, Some(pairer))
-        .with_bam_filter_and_mapper(include_read, |rec| MinimalReadInfo::from(rec))
+        .with_bam_filter_and_mapper(include_read, move |rec| {
+            let mut info = MinimalReadInfo::from(rec);
+            if let Some(tag) = gc_tag_bytes.as_deref() {
+                info.gc_tag = crate::shared::gc_tag::read_gc_tag_from_record(rec, tag);
+            }
+            info
+        })
         .with_fragment_filter(fragment_filter)
 }
 

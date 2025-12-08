@@ -5,6 +5,7 @@ use smallvec::SmallVec;
 use crate::shared::fragment::minimal_fragment::{
     PairOrientable, is_inwards_oriented, oriented_pair_from_read_info,
 };
+use crate::shared::gc_tag::{GcTagValue, combine_gc_tag_values, read_gc_tag_from_record};
 use crate::shared::indel_mode::IndelMode;
 
 /// Represents a fragment together with the reference segments that are safe for k-mer analysis.
@@ -14,6 +15,7 @@ pub struct FragmentWithKmerSegments {
     pub start: u32,
     pub end: u32,
     pub segments: SmallVec<[(u32, u32); 12]>,
+    pub gc_tag: GcTagValue,
 }
 
 impl FragmentWithKmerSegments {
@@ -42,6 +44,7 @@ pub struct KmerSegmentedReadInfo {
     pub leading_insertion: bool,
     pub trailing_insertion: bool,
     pub ref_mapped_segments: Vec<(u32, u32)>,
+    pub gc_tag: GcTagValue,
 }
 
 impl KmerSegmentedReadInfo {
@@ -69,7 +72,7 @@ impl KmerSegmentedReadInfo {
 
 impl KmerSegmentedReadInfo {
     /// Build read metadata, optionally collecting reference segments for indel-aware counting.
-    pub fn from_record(r: &Record, capture_segments: bool) -> Self {
+    pub fn from_record(r: &Record, capture_segments: bool, gc_tag: Option<&[u8]>) -> Self {
         // First pass: gather flags that drive pairing decisions and mate-gap handling.
         let mut has_insertion = false;
         let mut has_deletion = false;
@@ -157,6 +160,10 @@ impl KmerSegmentedReadInfo {
             Vec::new()
         };
 
+        let gc_tag_value = gc_tag
+            .map(|tag| read_gc_tag_from_record(r, tag))
+            .unwrap_or_default();
+
         KmerSegmentedReadInfo {
             tid: r.tid(),
             pos: r.pos() as u32,
@@ -167,6 +174,7 @@ impl KmerSegmentedReadInfo {
             leading_insertion,
             trailing_insertion,
             ref_mapped_segments,
+            gc_tag: gc_tag_value,
         }
     }
 }
@@ -230,6 +238,7 @@ fn collect_flat_fragment(
     end_offset: u32,
     span_start: u32,
     span_end: u32,
+    gc_tag: GcTagValue,
 ) -> Option<FragmentWithKmerSegments> {
     let trim_start = span_start.saturating_add(end_offset);
     let trim_end = if span_end > end_offset {
@@ -278,6 +287,7 @@ fn collect_flat_fragment(
         start: span_start,
         end: span_end,
         segments,
+        gc_tag,
     })
 }
 
@@ -308,6 +318,7 @@ pub fn collect_fragment_with_kmer_segments(
     if !is_inwards_oriented(forward, reverse) {
         return None;
     }
+    let gc_tag = combine_gc_tag_values(&forward.gc_tag, &reverse.gc_tag);
 
     if matches!(indel_mode, IndelMode::Skip) && (forward.has_indel() || reverse.has_indel()) {
         return None;
@@ -330,6 +341,7 @@ pub fn collect_fragment_with_kmer_segments(
             end_offset,
             span_start,
             span_end,
+            gc_tag,
         );
     }
 
@@ -415,5 +427,6 @@ pub fn collect_fragment_with_kmer_segments(
         start: span_start,
         end: span_end,
         segments,
+        gc_tag,
     })
 }

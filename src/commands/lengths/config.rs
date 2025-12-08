@@ -1,7 +1,7 @@
 use crate::{
     commands::{
         cli_common::{
-            ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs,
+            ApplyGCArgFileOnly, AssignToWindowArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs,
             ScaleGenomeArgs, WindowsArgs,
         },
         gc_bias::correct::MarginalizeLengthsWeightingScheme,
@@ -142,7 +142,7 @@ pub struct LengthsConfig {
     pub blacklist_strategy: BlacklistStrategy,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub gc: ApplyGCArgs,
+    pub gc: ApplyGCArgFileOnly,
 
     // TODO: Pretty sure about this claim, but I'm unsure whether the binning could affect this? Check
     /// How to weight the fragment length bins when estimating the global GC bias correction `[string]`
@@ -211,7 +211,10 @@ impl LengthsConfig {
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::default(),
-            gc: ApplyGCArgs { gc_file: None },
+            gc: ApplyGCArgFileOnly {
+                gc_file: None,
+                drop_invalid_gc: false,
+            },
             gc_length_weighting: MarginalizeLengthsWeightingScheme::Equal,
             ref_2bit: None,
         }
@@ -245,7 +248,7 @@ impl LengthsConfig {
         self.require_proper_pair = require;
     }
 
-    pub fn set_gc(&mut self, gc: ApplyGCArgs) {
+    pub fn set_gc(&mut self, gc: ApplyGCArgFileOnly) {
         self.gc = gc;
     }
 

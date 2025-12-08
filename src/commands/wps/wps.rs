@@ -585,10 +585,15 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         global_counter.base.accepted_forward,
         global_counter.base.accepted_reverse
     );
-    if opt.shared_args.gc.gc_file.is_some() {
+    if opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some() {
+        let gc_fail_action = if opt.shared_args.gc.drop_invalid_gc {
+            "fragment skipped"
+        } else {
+            "fragment counted with weight 1.0"
+        };
         println!(
-            "  GC correction failures (fragment counted with weight 1.0): {}",
-            global_counter.gc_failed_fragments
+            "  GC correction failures ({}): {}",
+            gc_fail_action, global_counter.gc_failed_fragments
         );
     }
     println!(
@@ -701,9 +706,11 @@ pub fn wps_for_tile(
         len >= min_len && len <= max_len
     };
 
+    let gc_tag_bytes = opt.gc.gc_tag.as_deref().map(|t| t.as_bytes().to_vec());
     let mut iter = fragments_from_bam(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
         include_read_fn,
+        gc_tag_bytes.as_deref(),
         fragment_filter,
     )
     .with_local_counters();
@@ -736,17 +743,40 @@ pub fn wps_for_tile(
         }
 
         // Get GC correction weight
-        let gc_weight_opt = get_gc_weight(&fragment, fetch_start)?;
-        let gc_weight = match (gc_weight_opt, correct_gc) {
-            (Some(w), true) => w,
-            (None, true) => {
-                // Tried but failed to make a GC correction weight
-                // for the current fragment; fall back to no correction
+        let gc_weight = if opt.gc.gc_tag.is_some() {
+            if fragment.gc_tag.had_invalid {
                 counter.gc_failed_fragments += 1;
-                1.0
+                if opt.gc.drop_invalid_gc {
+                    continue;
+                } else {
+                    1.0
+                }
+            } else if let Some(tag_w) = fragment.gc_tag.weight {
+                tag_w as f64
+            } else {
+                counter.gc_failed_fragments += 1;
+                if opt.gc.drop_invalid_gc {
+                    continue;
+                } else {
+                    1.0
+                }
             }
-            (None, false) => 1.0, // No correction
-            (Some(_), false) => unreachable!(),
+        } else {
+            let gc_weight_opt = get_gc_weight(&fragment, fetch_start)?;
+            match (gc_weight_opt, correct_gc) {
+                (Some(w), true) => w,
+                (None, true) => {
+                    // Tried but failed to make a GC correction weight
+                    counter.gc_failed_fragments += 1;
+                    if opt.gc.drop_invalid_gc {
+                        continue;
+                    } else {
+                        1.0
+                    }
+                }
+                (None, false) => 1.0, // No correction
+                (Some(_), false) => unreachable!(),
+            }
         };
 
         let fragment_start = fragment.start as i64;
