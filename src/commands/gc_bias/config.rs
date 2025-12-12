@@ -290,7 +290,7 @@ pub struct GCConfig {
         feature = "cli",
         clap(
             long,
-            default_value = "8",
+            default_value = "3",
             value_parser = clap::value_parser!(f32),
             help_heading = "Outliers"
         )

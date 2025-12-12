@@ -434,7 +434,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         let raw_correction_matrix = &norm_gc_counts / &norm_ref_counts;
 
         // Normalize correction matrix per fragment length to be centered around 1.0
-        // Still ignore extreme GC bins in the mean-calculations
+        // Still ignores extreme GC bins in the mean-calculations
         let mut norm_correction_matrix =
             mean_scale_per_length_array(&raw_correction_matrix, 0., Some(&correction_support_mask));
 
@@ -461,6 +461,14 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         // Sanity clamp of corrections
         norm_correction_matrix =
             norm_correction_matrix.clamp(CORRECTION_CLAMP_RANGE.0, CORRECTION_CLAMP_RANGE.1);
+
+        // Re-normalize correction matrix per fragment length to be centered around 1.0
+        // Still ignores extreme GC bins in the mean-calculations
+        let mut norm_correction_matrix = mean_scale_per_length_array(
+            &norm_correction_matrix,
+            0.,
+            Some(&correction_support_mask),
+        );
 
         // Make correction factors multipliers by inverting elements to 1 / x
         // Zeros remain 0s
