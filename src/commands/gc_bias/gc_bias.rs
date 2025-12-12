@@ -473,11 +473,12 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         });
         outlier_stats.hard_clamped = hard_clamp_count;
 
-        // Re-normalize correction matrix per fragment length to be centered around 1.0
-        // Still ignores extreme GC bins in the mean-calculations
+        // Re-normalize correction matrix per fragment length to be centered around 1.0.
+        // Use trimmed means over all bins (mask not applied here) so interpolated extremes
+        // still contribute to scaling while tails are tempered by trimming.
         norm_correction_matrix = mean_scale_per_length_array_trimmed(
             &norm_correction_matrix,
-            Some(&correction_support_mask),
+            None,
             0.05,
             0.95,
         );
@@ -1004,6 +1005,10 @@ where
         }
 
         if values.is_empty() {
+            // No supported values: keep original row to avoid zeroing it out
+            for (col_idx, value) in x.row(row_idx).iter().enumerate() {
+                out[(row_idx, col_idx)] = *value;
+            }
             continue;
         }
 
@@ -1016,10 +1021,16 @@ where
         let trimmed_slice = &values[start..end];
         let count = trimmed_slice.len();
         if count == 0 {
+            for (col_idx, value) in x.row(row_idx).iter().enumerate() {
+                out[(row_idx, col_idx)] = *value;
+            }
             continue;
         }
         let mean = trimmed_slice.iter().sum::<f64>() / count as f64;
         if mean == 0.0 {
+            for (col_idx, value) in x.row(row_idx).iter().enumerate() {
+                out[(row_idx, col_idx)] = *value;
+            }
             continue;
         }
 
