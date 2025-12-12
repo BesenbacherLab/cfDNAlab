@@ -6,8 +6,8 @@ use std::path::PathBuf;
 /// Count GC fraction per fragment length at a sampled number of starting positions in the reference genome.
 /// This 2D count distribution can serve as the expected GC bias in GC correction.
 ///
-/// How: A number (default: 200M) of starting positions are uniformly sampled across the reference
-/// genome. For each position, we count the GC fraction for every possible fragment length (default: 20-1000bp).
+/// How: A number (default: 500M) of starting positions are uniformly sampled across the reference
+/// genome. For each position, we count the GC fraction for every possible fragment length (default: 30-1000bp).
 ///
 /// Intervals (the possible fragments) with too few ACGT bases after blacklist masking are discarded
 /// (so increase `--n-positions` accordingly).
@@ -61,7 +61,7 @@ pub struct RefGCConfig {
     /// since blacklisting likely removes a big chunk of them.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "200000000", help_heading = "Core")
+        clap(long, default_value = "500000000", help_heading = "Core")
     )]
     pub n_positions: usize,
 
@@ -90,7 +90,6 @@ pub struct RefGCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
 
-    // TODO: Base this on the original GC paper. Look it up. Perhaps add a reference.
     /// Number of bases to exclude from each fragment end `[integer]`
     ///
     /// The nucleotides in the cfDNA fragment ends can reflect biological biases (e.g., DNase activity).
