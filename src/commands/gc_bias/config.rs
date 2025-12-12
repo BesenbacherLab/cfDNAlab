@@ -6,8 +6,8 @@ use std::{path::PathBuf, str::FromStr};
 #[derive(Default, Clone, Debug)]
 pub enum WindowWeightingSchemes {
     Equal,
-    #[default]
     Coverage,
+    #[default]
     ValidPositions,
 }
 
@@ -132,7 +132,7 @@ pub struct GCConfig {
     ///
     /// One of:
     ///
-    ///  - `"coverage"` (default): Windows are weighted by their average number of observed fragments.
+    ///  - `"coverage"`: Windows are weighted by their average number of observed fragments.
     ///    Compared to a single global window, this approach weights the local reference bias the
     ///    same as the local cfDNA bias in the global biases. *Technically*, only the reference count
     ///    distribution is reweighted, as the cfDNA counts already reflect the coverage.
@@ -145,7 +145,7 @@ pub struct GCConfig {
     /// **NOTE**: Only specify this argument when windows exist.
     #[cfg_attr(
         feature = "cli",
-        clap(long, value_enum, default_value = "coverage", help_heading = "Core")
+        clap(long, value_enum, default_value = "valid-positions", help_heading = "Core")
     )]
     pub window_weighting: WindowWeightingSchemes,
 
@@ -245,7 +245,7 @@ pub struct GCConfig {
     /// - `quantile`: Clamp using `--outlier-quantiles` (one symmetric value or two explicit values).
     ///
     /// - `iqr`, `stddev`, `mad`: Use the corresponding rule with multiplier `--outlier-k`.
-    /// 
+    ///
     /// **NOTE**: After outlier detection, correction values are further clipped at `[0.1, 10.0]`.
     #[cfg_attr(
         feature = "cli",
@@ -260,12 +260,7 @@ pub struct GCConfig {
     /// - `global`: Detect from the full correction matrix.
     #[cfg_attr(
         feature = "cli",
-        clap(
-            long,
-            default_value = "per-length",
-            value_enum,
-            help_heading = "Outliers"
-        )
+        clap(long, default_value = "global", value_enum, help_heading = "Outliers")
     )]
     pub outlier_scope: OutlierScopeArg,
 
