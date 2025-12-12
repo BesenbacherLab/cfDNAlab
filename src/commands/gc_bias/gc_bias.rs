@@ -473,11 +473,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         });
         outlier_stats.hard_clamped = hard_clamp_count;
 
-        // Re-normalize correction matrix per fragment length to be centered around 1.0.
-        // Use trimmed means over all bins (mask not applied here) so interpolated extremes
-        // still contribute to scaling while tails are tempered by trimming.
-        norm_correction_matrix =
-            mean_scale_per_length_array_trimmed(&norm_correction_matrix, None, 0.05, 0.95);
+        // Re-normalize correction matrix per fragment length to be centered around 1.0 (no mask).
+        norm_correction_matrix = mean_scale_per_length_array(&norm_correction_matrix, 0., None);
 
         // Make correction factors multipliers by inverting elements to 1 / x
         // Zeros remain 0s
@@ -949,88 +946,6 @@ where
         for (col_idx, value) in x.row(row_idx).iter().enumerate() {
             let numerator = *value + pseudo_count;
             out[(row_idx, col_idx)] = numerator / denom;
-        }
-    }
-
-    out
-}
-
-/// Mean-scale each row using a trimmed mean on supported cells.
-///
-/// Trims values outside [`lower_trim`, `upper_trim`] percentiles (inclusive range kept) when
-/// computing the mean; falls back to the full mean if trimming would drop all values.
-pub fn mean_scale_per_length_array_trimmed<S>(
-    x: &ArrayBase<S, Ix2>,
-    support_mask: Option<&Array2<bool>>,
-    lower_trim: f64,
-    upper_trim: f64,
-) -> Array2<f64>
-where
-    S: Data<Elem = f64>,
-{
-    assert!(
-        (0.0..=1.0).contains(&lower_trim)
-            && (0.0..=1.0).contains(&upper_trim)
-            && lower_trim < upper_trim,
-        "Trim bounds must satisfy 0 <= lower < upper <= 1"
-    );
-    let (n_rows, n_cols) = x.dim();
-    if let Some(m) = support_mask {
-        assert_eq!(
-            m.dim(),
-            (n_rows, n_cols),
-            "Mask shape {:?} must match counts shape {:?}",
-            m.dim(),
-            (n_rows, n_cols)
-        );
-    }
-
-    let mut out = Array2::zeros((n_rows, n_cols));
-
-    for row_idx in 0..n_rows {
-        let mut values: Vec<f64> = Vec::with_capacity(n_cols);
-        if let Some(mask_arr) = support_mask {
-            for (value, &is_valid) in x.row(row_idx).iter().zip(mask_arr.row(row_idx)) {
-                if is_valid {
-                    values.push(*value);
-                }
-            }
-        } else {
-            values.extend(x.row(row_idx).iter().copied());
-        }
-
-        if values.is_empty() {
-            // No supported values: keep original row to avoid zeroing it out
-            for (col_idx, value) in x.row(row_idx).iter().enumerate() {
-                out[(row_idx, col_idx)] = *value;
-            }
-            continue;
-        }
-
-        values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
-        let len = values.len();
-        let start = (len as f64 * lower_trim).floor() as usize;
-        let mut end = (len as f64 * upper_trim).ceil() as usize;
-        end = end.max(start + 1).min(len);
-
-        let trimmed_slice = &values[start..end];
-        let count = trimmed_slice.len();
-        if count == 0 {
-            for (col_idx, value) in x.row(row_idx).iter().enumerate() {
-                out[(row_idx, col_idx)] = *value;
-            }
-            continue;
-        }
-        let mean = trimmed_slice.iter().sum::<f64>() / count as f64;
-        if mean == 0.0 {
-            for (col_idx, value) in x.row(row_idx).iter().enumerate() {
-                out[(row_idx, col_idx)] = *value;
-            }
-            continue;
-        }
-
-        for (col_idx, value) in x.row(row_idx).iter().enumerate() {
-            out[(row_idx, col_idx)] = *value / mean;
         }
     }
 
