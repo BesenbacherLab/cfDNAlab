@@ -45,6 +45,8 @@ pub struct OutlierStats {
     pub unsupported_examined: usize,
     /// Number of unsupported values that were winsorized or masked.
     pub unsupported_outliers_handled: usize,
+    /// Number of values adjusted by the hard safety clamp after outlier handling.
+    pub hard_clamped: usize,
 }
 
 impl OutlierStats {
@@ -54,6 +56,7 @@ impl OutlierStats {
         self.total_outliers_handled += other.total_outliers_handled;
         self.unsupported_examined += other.unsupported_examined;
         self.unsupported_outliers_handled += other.unsupported_outliers_handled;
+        self.hard_clamped += other.hard_clamped;
     }
 }
 
@@ -154,7 +157,8 @@ pub fn outlier_bounds(vals: &[f32], rule: OutlierRule) -> Option<(f32, f32)> {
 /// exclude extreme GC bins already handled elsewhere). Masked cells do not contribute to bound
 /// estimation but are still clamped/masked using the bounds from supported cells. Non-finite
 /// values are ignored during bound calculation, and MaskNaN writes NaN back into the matrix for
-/// downstream handling.
+/// downstream handling. Stats separate supported vs unsupported cells; a later hard clamp is
+/// tracked in `hard_clamped`.
 pub fn apply_outliers_to_matrix(
     matrix: &mut Array2<f64>,
     support_mask: Option<&Array2<bool>>,

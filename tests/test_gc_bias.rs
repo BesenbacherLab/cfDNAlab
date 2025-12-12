@@ -243,7 +243,8 @@ mod tests_gc_bias {
                 total_examined: 6,
                 total_outliers_handled: 2,
                 unsupported_examined: 0,
-                unsupported_outliers_handled: 0
+                unsupported_outliers_handled: 0,
+                hard_clamped: 0
             }
         );
     }
@@ -290,7 +291,8 @@ mod tests_gc_bias {
                 total_examined: 2,
                 total_outliers_handled: 0,
                 unsupported_examined: 1,
-                unsupported_outliers_handled: 1
+                unsupported_outliers_handled: 1,
+                hard_clamped: 0
             }
         );
     }

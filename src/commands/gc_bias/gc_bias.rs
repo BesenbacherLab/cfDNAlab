@@ -458,9 +458,20 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             );
         }
 
-        // Sanity clamp of corrections
-        norm_correction_matrix =
-            norm_correction_matrix.clamp(CORRECTION_CLAMP_RANGE.0, CORRECTION_CLAMP_RANGE.1);
+        // Sanity clamp of corrections; tracked separately from outlier stats
+        let mut hard_clamp_count = 0usize;
+        norm_correction_matrix.mapv_inplace(|v| {
+            if v < CORRECTION_CLAMP_RANGE.0 {
+                hard_clamp_count += 1;
+                CORRECTION_CLAMP_RANGE.0
+            } else if v > CORRECTION_CLAMP_RANGE.1 {
+                hard_clamp_count += 1;
+                CORRECTION_CLAMP_RANGE.1
+            } else {
+                v
+            }
+        });
+        outlier_stats.hard_clamped = hard_clamp_count;
 
         // Re-normalize correction matrix per fragment length to be centered around 1.0
         // Still ignores extreme GC bins in the mean-calculations
@@ -518,11 +529,12 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     );
     if !matches!(outlier_rule, OutlierRule::None) {
         println!(
-            "  Outlier handling: examined {} ({} adjusted), unsupported examined {} ({} adjusted)",
+            "  Outlier handling: examined: {} ({} adjusted), unsupported examined: {} ({} adjusted), clamped to [0.1,10.0]: {}",
             outlier_stats.total_examined,
             outlier_stats.total_outliers_handled,
             outlier_stats.unsupported_examined,
-            outlier_stats.unsupported_outliers_handled
+            outlier_stats.unsupported_outliers_handled,
+            outlier_stats.hard_clamped
         );
     }
     println!("----------");

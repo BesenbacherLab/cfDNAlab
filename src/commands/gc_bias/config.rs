@@ -245,6 +245,8 @@ pub struct GCConfig {
     /// - `quantile`: Clamp using `--outlier-quantiles` (one symmetric value or two explicit values).
     ///
     /// - `iqr`, `stddev`, `mad`: Use the corresponding rule with multiplier `--outlier-k`.
+    /// 
+    /// **NOTE**: After outlier detection, correction values are further clipped at `[0.1, 10.0]`.
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value = "iqr", value_enum, help_heading = "Outliers")
