@@ -600,6 +600,13 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         "  Fragments counted one or more times: {}",
         global_counter.base.counted_fragments
     );
+    if opt.shared_args.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
+        println!(
+            "  GC tag values outside [0, {:.0}] treated as invalid: {}",
+            crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
+            global_counter.gc_out_of_range_tags
+        );
+    }
     println!("----------");
     println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
@@ -746,6 +753,9 @@ pub fn wps_for_tile(
         let gc_weight = if opt.gc.gc_tag.is_some() {
             if fragment.gc_tag.had_invalid {
                 counter.gc_failed_fragments += 1;
+                if fragment.gc_tag.was_out_of_range {
+                    counter.gc_out_of_range_tags += 1;
+                }
                 if opt.gc.drop_invalid_gc {
                     continue;
                 } else {

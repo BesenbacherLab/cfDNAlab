@@ -389,6 +389,13 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
         "  Fragments counted one or more times: {}",
         total_counter.base.counted_fragments
     );
+    if opt.shared_args.gc.gc_tag.is_some() && total_counter.gc_out_of_range_tags > 0 {
+        println!(
+            "  GC tag values outside [0, {:.0}] treated as invalid: {}",
+            crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
+            total_counter.gc_out_of_range_tags
+        );
+    }
     println!("----------");
     println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
