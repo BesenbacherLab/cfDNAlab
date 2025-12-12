@@ -1,4 +1,6 @@
 use crate::commands::cli_common::*;
+use crate::commands::gc_bias::outliers::{OutlierAction, OutlierRule, OutlierScope};
+use anyhow::{Result, anyhow};
 use std::{path::PathBuf, str::FromStr};
 
 #[derive(Default, Clone, Debug)]
@@ -31,6 +33,35 @@ impl FromStr for WindowWeightingSchemes {
         } else {
             Err("Use 'equal', 'coverage', or 'valid-positions'".into())
         }
+    }
+}
+
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutlierMethodArg {
+    None,
+    Quantile,
+    Iqr,
+    Stddev,
+    Mad,
+}
+
+impl Default for OutlierMethodArg {
+    fn default() -> Self {
+        OutlierMethodArg::Iqr
+    }
+}
+
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutlierScopeArg {
+    PerLength,
+    Global,
+}
+
+impl Default for OutlierScopeArg {
+    fn default() -> Self {
+        OutlierScopeArg::PerLength
     }
 }
 
@@ -205,7 +236,67 @@ pub struct GCConfig {
              value_parser = clap::value_parser!(u8).range(0..101), help_heading="Minimum ACGT"))]
     pub min_window_acgt_pct: u8,
 
-    // TODO: specify further when implemented!
+    /// Handle extreme correction factors to avoid unstable weights `[string]`
+    ///
+    /// Options:
+    ///
+    /// - `none`: Disable outlier handling.
+    ///
+    /// - `quantile`: Clamp using `--outlier-quantiles` (one symmetric value or two explicit values).
+    ///
+    /// - `iqr`, `stddev`, `mad`: Use the corresponding rule with multiplier `--outlier-k`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "iqr", value_enum, help_heading = "Outliers")
+    )]
+    pub outlier_method: OutlierMethodArg,
+
+    /// Whether to detect outliers per fragment length or across the full matrix `[string]`
+    ///
+    /// - `per-length`: Detect separately per fragment length.
+    ///
+    /// - `global`: Detect from the full correction matrix.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value = "per-length",
+            value_enum,
+            help_heading = "Outliers"
+        )
+    )]
+    pub outlier_scope: OutlierScopeArg,
+
+    /// Quantiles for `quantile` outlier detection `[float or float,float]`
+    ///
+    /// Used when `--outlier-method quantile`. Provide one value to apply symmetrically (`q` -> lower=`q`, upper=`1-q`)
+    /// or two values for explicit `lower,upper`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_parser = parse_quantile_0_1,
+            num_args = 1..=2,
+            default_values_t = [0.03_f32, 0.97_f32],
+            help_heading = "Outliers"
+        )
+    )]
+    pub outlier_quantiles: Vec<f32>,
+
+    /// Multiplier `k` for `iqr`, `stddev`, or `mad` outlier detection `[float]`
+    ///
+    /// Used when `--outlier-method` is one of `iqr`, `stddev`, or `mad`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value = "8",
+            value_parser = clap::value_parser!(f32),
+            help_heading = "Outliers"
+        )
+    )]
+    pub outlier_k: f32,
+
     /// Whether to save key intermediate files for inspecting the correction process `[flag]`
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub save_intermediates: bool,
@@ -235,6 +326,10 @@ impl GCConfig {
             num_extreme_gc_bins: 1,
             num_short_length_bins: 1,
             min_window_acgt_pct: 10,
+            outlier_method: OutlierMethodArg::Iqr,
+            outlier_scope: OutlierScopeArg::PerLength,
+            outlier_quantiles: vec![0.03, 0.97],
+            outlier_k: 8.0,
             save_intermediates: false,
         }
     }
@@ -302,6 +397,43 @@ impl GCConfig {
     pub fn set_save_intermediates(&mut self, save_intermediates: bool) {
         self.save_intermediates = save_intermediates;
     }
+
+    pub fn outlier_settings(&self) -> Result<(OutlierRule, OutlierAction, OutlierScope)> {
+        let rule = match self.outlier_method {
+            OutlierMethodArg::None => OutlierRule::None,
+            OutlierMethodArg::Quantile => {
+                let (lower, upper) = resolve_outlier_quantiles(&self.outlier_quantiles)?;
+                OutlierRule::Quantile { lower, upper }
+            }
+            OutlierMethodArg::Iqr => {
+                if self.outlier_k <= 0.0 {
+                    return Err(anyhow!("outlier-k must be > 0 for IQR"));
+                }
+                OutlierRule::TukeyIqr { k: self.outlier_k }
+            }
+            OutlierMethodArg::Stddev => {
+                if self.outlier_k <= 0.0 {
+                    return Err(anyhow!("outlier-k must be > 0 for stddev"));
+                }
+                OutlierRule::StdDev { k: self.outlier_k }
+            }
+            OutlierMethodArg::Mad => {
+                if self.outlier_k <= 0.0 {
+                    return Err(anyhow!("outlier-k must be > 0 for mad"));
+                }
+                OutlierRule::Mad { k: self.outlier_k }
+            }
+        };
+
+        let action = OutlierAction::Winsorize;
+
+        let scope = match self.outlier_scope {
+            OutlierScopeArg::PerLength => OutlierScope::PerLength,
+            OutlierScopeArg::Global => OutlierScope::Global,
+        };
+
+        Ok((rule, action, scope))
+    }
 }
 
 #[cfg_attr(not(feature = "cli"), allow(dead_code))]
@@ -316,4 +448,43 @@ fn parse_percentage_within_0_100_f32(input: &str) -> Result<f32, String> {
     } else {
         Ok(value)
     }
+}
+
+fn parse_quantile_0_1(input: &str) -> Result<f32, String> {
+    let value: f32 = input
+        .parse()
+        .map_err(|err: std::num::ParseFloatError| err.to_string())?;
+    if !(0.0..=1.0).contains(&value) {
+        Err("value must be between 0 and 1".into())
+    } else {
+        Ok(value)
+    }
+}
+
+fn resolve_outlier_quantiles(vals: &[f32]) -> Result<(f32, f32)> {
+    if vals.is_empty() {
+        return Err(anyhow!(
+            "provide at least one quantile for --outlier-method quantile"
+        ));
+    }
+    if vals.len() == 1 {
+        let q = vals[0];
+        if q >= 0.5 {
+            return Err(anyhow!(
+                "single quantile must be < 0.5 to allow symmetric bounds (got {})",
+                q
+            ));
+        }
+        return Ok((q, 1.0 - q));
+    }
+    let lower = vals[0];
+    let upper = vals[1];
+    if lower >= upper {
+        return Err(anyhow!(
+            "outlier lower quantile must be < upper quantile (got {} >= {})",
+            lower,
+            upper
+        ));
+    }
+    Ok((lower, upper))
 }

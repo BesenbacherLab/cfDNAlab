@@ -217,6 +217,12 @@ Public API oriented; no assertions on private internals.
 
 For regressions: fails before fix, passes after.
 
+### Clap
+
+Don't use `long = "name"`, just `long`. It is automatically filled in.
+
+Clap already specifies default values, so don't add "default is xx".
+
 ## Additionals
 
 Don't spend time reordering imports manually. Just let autoformatting do that for us.

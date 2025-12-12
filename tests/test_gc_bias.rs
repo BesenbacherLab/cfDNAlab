@@ -9,6 +9,15 @@ mod tests_gc_bias {
         binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
         correct::{GCCorrector, LengthAgnosticGCCorrector, MarginalizeLengthsWeightingScheme},
         gc_bias::interpolate_masked_corrections,
+        outliers::{
+            OutlierAction,
+            OutlierRule,
+            OutlierScope,
+            OutlierStats,
+            apply_outliers_to_matrix,
+            interpolated_quantile,
+            outlier_bounds,
+        },
         package::GCCorrectionPackage,
         support_masking::build_extreme_bins_support_mask,
     };
@@ -204,6 +213,197 @@ mod tests_gc_bias {
         assert!((agnostic.get_correction_weight(0)? - 3.0).abs() < 1e-12);
         assert!((agnostic.get_correction_weight(50)? - 5.0).abs() < 1e-12);
         Ok(())
+    }
+
+    #[test]
+    fn apply_outliers_per_length_winsorizes_rows() {
+        let mut matrix = array![[1.0_f64, 2.0_f64, 100.0_f64], [1.0_f64, 5.0_f64, 6.0_f64]];
+        let mask = array![[true, true, true], [true, true, true]];
+
+        let stats = apply_outliers_to_matrix(
+            &mut matrix,
+            Some(&mask),
+            OutlierScope::PerLength,
+            OutlierRule::Quantile {
+                lower: 0.0,
+                upper: 0.5,
+            },
+            OutlierAction::Winsorize,
+        );
+
+        assert_eq!(matrix[[0, 0]], 1.0);
+        assert_eq!(matrix[[0, 1]], 2.0);
+        assert_eq!(matrix[[0, 2]], 2.0); // Clamped
+        assert_eq!(matrix[[1, 0]], 1.0);
+        assert_eq!(matrix[[1, 1]], 5.0);
+        assert_eq!(matrix[[1, 2]], 5.0); // Clamped
+        assert_eq!(
+            stats,
+            OutlierStats {
+                total_examined: 6,
+                total_outliers_handled: 2,
+                unsupported_examined: 0,
+                unsupported_outliers_handled: 0
+            }
+        );
+    }
+
+    #[test]
+    fn quantile_outliers_symmetry_clamps_extremes() {
+        let mut matrix = array![[1.0_f64, 1.0_f64, 100.0_f64]];
+
+        apply_outliers_to_matrix(
+            &mut matrix,
+            None,
+            OutlierScope::Global,
+            OutlierRule::Quantile {
+                lower: 0.25,
+                upper: 0.75,
+            },
+            OutlierAction::Winsorize,
+        );
+
+        assert!((matrix[[0, 0]] - 1.0).abs() < 1e-6);
+        assert!((matrix[[0, 1]] - 1.0).abs() < 1e-6);
+        assert!((matrix[[0, 2]] - 50.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn masked_cells_are_clamped_but_not_counted() {
+        let mut matrix = array![[1.0_f64, 2.0_f64, 100.0_f64]];
+        let mask = array![[true, true, false]];
+
+        let stats = apply_outliers_to_matrix(
+            &mut matrix,
+            Some(&mask),
+            OutlierScope::Global,
+            OutlierRule::TukeyIqr { k: 1.0 },
+            OutlierAction::Winsorize,
+        );
+
+        assert!((matrix[[0, 0]] - 1.0).abs() < 1e-6);
+        assert!((matrix[[0, 1]] - 2.0).abs() < 1e-6);
+        assert!((matrix[[0, 2]] - 2.25).abs() < 1e-6); // Unsupported cell still clamped
+        assert_eq!(
+            stats,
+            OutlierStats {
+                total_examined: 2,
+                total_outliers_handled: 0,
+                unsupported_examined: 1,
+                unsupported_outliers_handled: 1
+            }
+        );
+    }
+
+    #[test]
+    fn interpolated_quantile_weights_neighbors_by_offset() {
+        // Arrange
+        let values = vec![0.0_f32, 10.0_f32, 20.0_f32, 30.0_f32, 40.0_f32];
+
+        // Act
+        let p_0 = interpolated_quantile(&values, 0.0);
+        let p_05 = interpolated_quantile(&values, 0.5);
+        let p_06 = interpolated_quantile(&values, 0.6);
+        let p_08 = interpolated_quantile(&values, 0.8);
+        let p_1 = interpolated_quantile(&values, 1.0);
+
+        // Assert
+        assert!((p_0 - 0.0).abs() < 1e-6);
+        assert!((p_05 - 20.0).abs() < 1e-6);
+        assert!((p_06 - 24.0).abs() < 1e-6); // 40% from 20 to 30
+        assert!((p_08 - 32.0).abs() < 1e-6); // 20% from 30 to 40
+        assert!((p_1 - 40.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn quantile_bounds_interpolate_between_indices() {
+        // Arrange: Percentiles fall between indices, so bounds should blend neighbors
+        let values = vec![0.0_f32, 10.0_f32, 20.0_f32, 30.0_f32, 40.0_f32];
+
+        // Act: compute bounds for percentiles that require interpolation.
+        let bounds = outlier_bounds(
+            &values,
+            OutlierRule::Quantile {
+                lower: 0.6,
+                upper: 0.8,
+            },
+        )
+        .expect("quantile bounds should exist");
+
+        // Assert: 0.6 is 40% from element 2 (20) to 3 (30); 0.8 is 20% from 3 (30) to 4 (40)
+        assert!((bounds.0 - 24.0).abs() < 1e-6);
+        assert!((bounds.1 - 32.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn iqr_outliers_per_length_clamps_high_values() {
+        let mut matrix = array![[1.0_f64, 2.0_f64, 8.0_f64]];
+
+        apply_outliers_to_matrix(
+            &mut matrix,
+            None,
+            OutlierScope::PerLength,
+            OutlierRule::TukeyIqr { k: 0.5 },
+            OutlierAction::Winsorize,
+        );
+
+        assert!((matrix[[0, 0]] - 1.0).abs() < 1e-6);
+        assert!((matrix[[0, 1]] - 2.0).abs() < 1e-6);
+        assert!((matrix[[0, 2]] - 6.75).abs() < 1e-6);
+    }
+
+    #[test]
+    fn stddev_outliers_global_clamps_tail() {
+        let mut matrix = array![[1.0_f64, 1.0_f64, 10.0_f64]];
+
+        apply_outliers_to_matrix(
+            &mut matrix,
+            None,
+            OutlierScope::Global,
+            OutlierRule::StdDev { k: 1.0 },
+            OutlierAction::Winsorize,
+        );
+
+        assert!((matrix[[0, 2]] - 8.2426405).abs() < 1e-5);
+    }
+
+    #[test]
+    fn mad_outliers_symmetrically_clamp() {
+        let mut matrix = array![[1.0_f64, 2.0_f64, 3.0_f64, 9.0_f64]];
+
+        apply_outliers_to_matrix(
+            &mut matrix,
+            None,
+            OutlierScope::Global,
+            OutlierRule::Mad { k: 1.0 },
+            OutlierAction::Winsorize,
+        );
+
+        assert!((matrix[[0, 0]] - 1.0174).abs() < 1e-4);
+        assert!((matrix[[0, 1]] - 2.0).abs() < 1e-6);
+        assert!((matrix[[0, 2]] - 3.0).abs() < 1e-6);
+        assert!((matrix[[0, 3]] - 3.9826).abs() < 1e-4);
+    }
+
+    #[test]
+    fn per_length_scope_differs_from_global() {
+        let mut matrix = array![[1.0_f64, 100.0_f64], [1.0_f64, 1.0_f64]];
+
+        apply_outliers_to_matrix(
+            &mut matrix,
+            None,
+            OutlierScope::PerLength,
+            OutlierRule::Quantile {
+                lower: 0.25,
+                upper: 0.75,
+            },
+            OutlierAction::Winsorize,
+        );
+
+        assert!((matrix[[0, 0]] - 25.75).abs() < 1e-6);
+        assert!((matrix[[0, 1]] - 75.25).abs() < 1e-6);
+        assert!((matrix[[1, 0]] - 1.0).abs() < 1e-6);
+        assert!((matrix[[1, 1]] - 1.0).abs() < 1e-6);
     }
 }
 

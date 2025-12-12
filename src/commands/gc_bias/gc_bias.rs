@@ -9,6 +9,7 @@ use crate::{
             counting::{GCCounts, apply_gc_percent_width_correction, build_gc_prefixes},
             interpolation::fill_unsupported_bins_with_polynomial,
             load_reference_bias::{ReferenceGCData, ReferenceGCMetadata, load_reference_gc_data},
+            outliers::{OutlierRule, OutlierStats, apply_outliers_to_matrix},
             package::GCCorrectionPackage,
             smoothing::smoothe_counts_gaussian,
             support_masking::{
@@ -419,6 +420,11 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         "normalized binned reference counts",
     )?;
 
+    // Resolve outlier handling configuration
+    let (outlier_rule, outlier_action, outlier_scope) = opt.outlier_settings()?;
+    let mut outlier_stats = OutlierStats::default();
+
+    // TODO: Update this pipeline list
     // Calculate correction matrix
     // 1) Divide cfDNA counts by reference counts
     // 2) Normalize each fragment length to mean=1.0
@@ -438,6 +444,18 @@ pub fn run(opt: &GCConfig) -> Result<()> {
                 opt.num_extreme_gc_bins, opt.num_short_length_bins
             );
             interpolate_masked_corrections(&mut norm_correction_matrix, &correction_support_mask)?;
+        }
+
+        if !matches!(outlier_rule, OutlierRule::None) {
+            println!("Start: Applying outlier handling to correction matrix");
+            let support = Some(&correction_support_mask);
+            outlier_stats = apply_outliers_to_matrix(
+                &mut norm_correction_matrix,
+                support,
+                outlier_scope,
+                outlier_rule,
+                outlier_action,
+            );
         }
 
         // Sanity clamp of corrections
@@ -490,6 +508,15 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         "  Fragments counted one or more times: {}",
         global_counter.base.counted_fragments
     );
+    if !matches!(outlier_rule, OutlierRule::None) {
+        println!(
+            "  Outlier handling: examined {} ({} adjusted), unsupported examined {} ({} adjusted)",
+            outlier_stats.total_examined,
+            outlier_stats.total_outliers_handled,
+            outlier_stats.unsupported_examined,
+            outlier_stats.unsupported_outliers_handled
+        );
+    }
     println!("----------");
     println!("Elapsed time: {:.2?}", elapsed);
     Ok(())

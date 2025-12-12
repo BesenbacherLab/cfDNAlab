@@ -8,7 +8,7 @@ mod test_gc_tag_values {
         // Arrange: start with a sane weight
         let mut rec_ok = Record::new();
         rec_ok
-            .push_aux(b"GC", &Aux::Float(2.5))
+            .push_aux(b"GC", Aux::Float(2.5))
             .expect("set GC tag");
         let ok = read_gc_tag_from_record(&rec_ok, b"GC");
 
@@ -19,7 +19,7 @@ mod test_gc_tag_values {
 
         // Arrange: record carrying a wildly high weight that should be treated as invalid
         let mut rec_high = Record::new();
-        rec_high.push_aux(b"GC", &Aux::Float(1.1e3)).expect("set GC tag");
+        rec_high.push_aux(b"GC", Aux::Float(1.1e3)).expect("set GC tag");
         let high = read_gc_tag_from_record(&rec_high, b"GC");
 
         // Assert: extreme values are rejected to avoid runaway coverage
@@ -30,7 +30,7 @@ mod test_gc_tag_values {
         // Arrange: negative weights are also invalid
         let mut rec_neg = Record::new();
         rec_neg
-            .push_aux(b"GC", &Aux::Float(-3.0))
+            .push_aux(b"GC", Aux::Float(-3.0))
             .expect("set GC tag");
         let neg = read_gc_tag_from_record(&rec_neg, b"GC");
 
@@ -41,7 +41,7 @@ mod test_gc_tag_values {
         // Arrange: NaN should be invalid but not counted as out-of-range
         let mut rec_nan = Record::new();
         rec_nan
-            .push_aux(b"GC", &Aux::Float(f32::NAN))
+            .push_aux(b"GC", Aux::Float(f32::NAN))
             .expect("set GC tag");
         let nan = read_gc_tag_from_record(&rec_nan, b"GC");
 
@@ -54,11 +54,11 @@ mod test_gc_tag_values {
     fn combining_valid_weights_remains_in_range() {
         let mut rec_a = Record::new();
         rec_a
-            .push_aux(b"GC", &Aux::Float(2.0))
+            .push_aux(b"GC", Aux::Float(2.0))
             .expect("set GC tag");
         let mut rec_b = Record::new();
         rec_b
-            .push_aux(b"GC", &Aux::Float(4.0))
+            .push_aux(b"GC", Aux::Float(4.0))
             .expect("set GC tag");
 
         let a = read_gc_tag_from_record(&rec_a, b"GC");
