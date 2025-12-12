@@ -36,7 +36,7 @@ use ndarray::{Array2, ArrayBase, Axis, Data, DataMut, Ix2, Zip};
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{cmp::Ordering, fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
+use std::{fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
 
 pub fn run(opt: &GCConfig) -> Result<()> {
     let start_time = Instant::now();
@@ -474,7 +474,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         outlier_stats.hard_clamped = hard_clamp_count;
 
         // Re-normalize correction matrix per fragment length to be centered around 1.0 (no mask).
-        norm_correction_matrix = mean_scale_per_length_array(&norm_correction_matrix, 0., None);
+        norm_correction_matrix =
+            mean_scale_per_length_array(&norm_correction_matrix, 0., None::<&Array2<bool>>);
 
         // Make correction factors multipliers by inverting elements to 1 / x
         // Zeros remain 0s
