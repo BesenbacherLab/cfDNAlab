@@ -1,4 +1,5 @@
 use rust_htslib::bam::record::{Aux, Record};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// GC weight extracted from an AUX tag together with validity status.
 #[derive(Debug, Clone, Copy, Default)]
@@ -9,15 +10,38 @@ pub struct GcTagValue {
     pub had_invalid: bool,
 }
 
+/// Reject GC weights that are clearly out of range to avoid runaway coverage when tags are corrupt.
+///
+/// Correction weights are expected to hover around 0–a few hundred at most; values far beyond that
+/// are treated as invalid.
+const MAX_REASONABLE_GC_WEIGHT: f32 = 1.0e3;
+const MAX_GC_WARNINGS: usize = 5;
+static EXTREME_GC_WARNINGS: AtomicUsize = AtomicUsize::new(0);
+
+#[inline]
+fn warn_extreme_gc_weight(v: f32) {
+    let seen = EXTREME_GC_WARNINGS.fetch_add(1, Ordering::Relaxed);
+    if seen < MAX_GC_WARNINGS {
+        eprintln!(
+            "warning: GC tag weight {} is outside [0, {}]; treating as invalid",
+            v, MAX_REASONABLE_GC_WEIGHT
+        );
+        if seen + 1 == MAX_GC_WARNINGS {
+            eprintln!("warning: suppressing further GC tag weight warnings");
+        }
+    }
+}
+
 impl GcTagValue {
     #[inline]
     fn from_number(v: f32) -> Self {
-        if v.is_finite() && v >= 0.0 {
+        if v.is_finite() && (0.0..=MAX_REASONABLE_GC_WEIGHT).contains(&v) {
             GcTagValue {
                 weight: Some(v),
                 had_invalid: false,
             }
         } else {
+            warn_extreme_gc_weight(v);
             GcTagValue {
                 weight: None,
                 had_invalid: true,
