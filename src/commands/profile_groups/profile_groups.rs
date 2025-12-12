@@ -290,6 +290,13 @@ pub fn run(opt: &ProfileGroupsConfig) -> Result<()> {
             "  GC correction failures ({}): {}",
             gc_fail_action, global_counter.gc_failed_fragments
         );
+        if opt.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
+            println!(
+                "  GC tag values outside [0, {:.0}] treated as invalid: {}",
+                crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
+                global_counter.gc_out_of_range_tags
+            );
+        }
     }
     println!(
         "  Fragments counted one or more times: {}",
@@ -456,6 +463,9 @@ fn process_tile(
             // Tag mode: trust tag if valid, otherwise treat as failure
             if fragment.gc_tag.had_invalid {
                 counter.gc_failed_fragments += 1;
+                if fragment.gc_tag.was_out_of_range {
+                    counter.gc_out_of_range_tags += 1;
+                }
                 if opt.gc.drop_invalid_gc {
                     continue;
                 } else {

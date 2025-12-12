@@ -546,10 +546,6 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
             gc_fail_action, global_counter.gc_failed_fragments
         );
     }
-    println!(
-        "  Fragments counted one or more times: {}",
-        global_counter.base.counted_fragments
-    );
     if opt.gc.gc_tag.is_some() {
         if global_counter.gc_out_of_range_tags > 0 {
             println!(
@@ -559,6 +555,10 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
             );
         }
     }
+    println!(
+        "  Fragments counted one or more times: {}",
+        global_counter.base.counted_fragments
+    );
     println!("----------");
     println!("Elapsed time: {:.2?}", elapsed);
     Ok(())

@@ -252,6 +252,13 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
             "  GC correction failures ({}): {}",
             gc_fail_action, global_counter.gc_failed_fragments
         );
+        if opt.shared_args.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
+            println!(
+                "  GC tag values outside [0, {:.0}] treated as invalid: {}",
+                crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
+                global_counter.gc_out_of_range_tags
+            );
+        }
     }
     println!(
         "  Fragments counted one or more times: {}",

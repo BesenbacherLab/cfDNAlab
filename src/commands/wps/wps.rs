@@ -596,10 +596,6 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             gc_fail_action, global_counter.gc_failed_fragments
         );
     }
-    println!(
-        "  Fragments counted one or more times: {}",
-        global_counter.base.counted_fragments
-    );
     if opt.shared_args.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
         println!(
             "  GC tag values outside [0, {:.0}] treated as invalid: {}",
@@ -607,6 +603,10 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             global_counter.gc_out_of_range_tags
         );
     }
+    println!(
+        "  Fragments counted one or more times: {}",
+        global_counter.base.counted_fragments
+    );
     println!("----------");
     println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
