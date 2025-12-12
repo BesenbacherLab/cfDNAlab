@@ -476,12 +476,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         // Re-normalize correction matrix per fragment length to be centered around 1.0.
         // Use trimmed means over all bins (mask not applied here) so interpolated extremes
         // still contribute to scaling while tails are tempered by trimming.
-        norm_correction_matrix = mean_scale_per_length_array_trimmed(
-            &norm_correction_matrix,
-            None,
-            0.05,
-            0.95,
-        );
+        norm_correction_matrix =
+            mean_scale_per_length_array_trimmed(&norm_correction_matrix, None, 0.05, 0.95);
 
         // Make correction factors multipliers by inverting elements to 1 / x
         // Zeros remain 0s
@@ -963,15 +959,14 @@ where
 ///
 /// Trims values outside [`lower_trim`, `upper_trim`] percentiles (inclusive range kept) when
 /// computing the mean; falls back to the full mean if trimming would drop all values.
-pub fn mean_scale_per_length_array_trimmed<S, M>(
+pub fn mean_scale_per_length_array_trimmed<S>(
     x: &ArrayBase<S, Ix2>,
-    support_mask: Option<&ArrayBase<M, Ix2>>,
+    support_mask: Option<&Array2<bool>>,
     lower_trim: f64,
     upper_trim: f64,
 ) -> Array2<f64>
 where
     S: Data<Elem = f64>,
-    M: Data<Elem = bool>,
 {
     assert!(
         (0.0..=1.0).contains(&lower_trim)

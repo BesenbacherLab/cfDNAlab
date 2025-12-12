@@ -145,7 +145,12 @@ pub struct GCConfig {
     /// **NOTE**: Only specify this argument when windows exist.
     #[cfg_attr(
         feature = "cli",
-        clap(long, value_enum, default_value = "valid-positions", help_heading = "Core")
+        clap(
+            long,
+            value_enum,
+            default_value = "valid-positions",
+            help_heading = "Core"
+        )
     )]
     pub window_weighting: WindowWeightingSchemes,
 

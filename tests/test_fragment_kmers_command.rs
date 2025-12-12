@@ -1251,7 +1251,7 @@ mod tests_fragment_kmer_positions {
                 start: 0,
                 end: fragment_len,
                 segments: smallvec![(0, fragment_len)],
-            gc_tag: Default::default(),
+                gc_tag: Default::default(),
             };
 
             Self {

@@ -565,7 +565,12 @@ fn process_tile(
     };
 
     // Create fragment iterator
-    let gc_tag_bytes = opt.shared_args.gc.gc_tag.as_deref().map(|t| t.as_bytes().to_vec());
+    let gc_tag_bytes = opt
+        .shared_args
+        .gc
+        .gc_tag
+        .as_deref()
+        .map(|t| t.as_bytes().to_vec());
     let mut iter = fragments_with_kmer_segments_from_bam(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
         include_read_fn,
