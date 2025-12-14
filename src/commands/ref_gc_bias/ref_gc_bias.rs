@@ -4,7 +4,7 @@ use crate::{
         gc_bias::{
             counting::{
                 GCCounts, apply_gc_percent_width_correction, build_gc_prefixes,
-                count_reference_gc_and_length_by_window, gc_percent_widths, stack_gc_counts,
+                count_reference_gc_and_length_by_window, gc_percent_widths,
             },
             interpolation::fill_unsupported_bins_with_polynomial,
             support_masking::{
@@ -132,7 +132,6 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
             .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
             .unwrap(),
     );
-    pb.set_position(0);
 
     let windows_lookup = windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(&tiles, |chr| {
@@ -155,6 +154,8 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         opt.end_offset as usize,
         (0, 0),
     )?;
+
+    pb.set_position(0);
 
     let (total_counts, total_covered_acgt_positions) = tiles
         .par_iter()
@@ -378,11 +379,7 @@ fn process_tile(
             if end_abs <= start_abs {
                 continue;
             }
-            tile_windows.push((
-                start_abs - seq_start,
-                end_abs - seq_start,
-                *idx,
-            ));
+            tile_windows.push((start_abs - seq_start, end_abs - seq_start, *idx));
         }
     } else {
         // Global mode: one window spanning the tile core
