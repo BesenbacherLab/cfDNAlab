@@ -18,7 +18,7 @@ use crate::{
         bed::{Windows, load_windows_from_bed},
         blacklist::apply_blacklist_mask_to_seq,
         reference::{read_seq_in_range, twobit_contig_lengths},
-        sampling::sample_starts_per_chrom,
+        sampling::{sample_starts_in_core, sampling_density},
         thread_pool::init_global_pool,
         tiled_run::{
             Tile, TileWindowSpan, build_tiles, overlapping_windows_for_tile,
@@ -31,7 +31,7 @@ use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array1, Array2};
 use ndarray_npy::NpzWriter;
-use rand::{SeedableRng, rngs::StdRng};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use rayon::prelude::*;
 use std::{sync::Arc, time::Instant};
 
@@ -104,21 +104,22 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         opt.fragment_lengths.max_fragment_length as usize,
         opt.end_offset as usize,
     ));
+    let start_position_sampling_density = sampling_density(
+        &chrom_lengths,
+        opt.fragment_lengths.max_fragment_length as u64,
+        opt.n_positions,
+    );
+    ensure!(
+        start_position_sampling_density <= 1.0,
+        "Sampling density {:.4} exceeds 1.0. Reduce --n-positions or increase reference span.",
+        start_position_sampling_density
+    );
 
-    // Sample start positions once across the genome (shared by all tiles)
-    let starts_per_chrom = {
-        let mut rng1 = if let Some(seed) = opt.seed {
-            StdRng::seed_from_u64(seed)
-        } else {
-            let mut thread_rng = rand::rng();
-            StdRng::from_rng(&mut thread_rng)
-        };
-        sample_starts_per_chrom(
-            &mut rng1,
-            &chrom_lengths,
-            opt.n_positions,
-            opt.fragment_lengths.max_fragment_length as usize,
-        )?
+    let mut seed_rng = if let Some(seed) = opt.seed {
+        StdRng::seed_from_u64(seed)
+    } else {
+        let mut thread_rng = rand::rng();
+        StdRng::from_rng(&mut thread_rng)
     };
 
     // Build tiles (core plus padding = max fragment length) to bound memory per worker
@@ -126,6 +127,8 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     // applies it symmetrically
     let halo_bp: u32 = opt.fragment_lengths.max_fragment_length;
     let (tiles, _) = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, None)?;
+    // Derive per-tile seeds to keep sampling deterministic without storing all start positions
+    let tile_seeds: Vec<u64> = (0..tiles.len()).map(|_| seed_rng.random()).collect();
     let pb = Arc::new(ProgressBar::new(tiles.len() as u64));
     pb.set_style(
         ProgressStyle::default_bar()
@@ -173,17 +176,22 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
             let chr_len = *chrom_lengths
                 .get(chr)
                 .ok_or_else(|| anyhow::anyhow!("missing chromosome length for {}", chr))?;
-            let starts = starts_per_chrom
-                .get(chr)
-                .map(|v| v.as_slice())
-                .unwrap_or(&[]);
+            let mut tile_rng = StdRng::seed_from_u64(tile_seeds[tile_idx]);
+            let starts = sample_starts_in_core(
+                &mut tile_rng,
+                tile.core_start as u64,
+                tile.core_end as u64,
+                chr_len as u64,
+                opt.fragment_lengths.max_fragment_length as u64,
+                start_position_sampling_density,
+            );
             // Count tile-local windows using the shared counter logic on window slices
             let res = process_tile(
                 tile,
                 tile_span.as_ref(),
                 chr_len as u64,
                 windows_chr,
-                starts,
+                starts.as_slice(),
                 blacklist_chr,
                 opt,
             );
@@ -201,6 +209,9 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     pb.finish_with_message("| Finished counting");
 
     println!("Start: Processing counts");
+
+    let used_start_positions =
+        total_counts.sum_for_length(opt.fragment_lengths.min_fragment_length as usize)?;
 
     // Convert counts to Array2 and interpolate zero-counts (single global grid)
     let mut global_counts = total_counts;
@@ -283,6 +294,10 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     println!(
         "Windows covered {} total ACGT bases",
         total_covered_acgt_positions
+    );
+    println!(
+        "Used {:.0} start positions at length {}",
+        used_start_positions, opt.fragment_lengths.min_fragment_length
     );
     println!("Elapsed time: {:.2?}", elapsed);
     Ok(())

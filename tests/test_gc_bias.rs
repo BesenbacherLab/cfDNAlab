@@ -524,6 +524,37 @@ mod tests_gc_percent_grid {
     }
 }
 
+mod tests_length_bounds {
+
+    use cfdnalab::commands::gc_bias::counting::GCCounts;
+
+    #[test]
+    fn reports_offsets_based_on_effective_length() {
+        // length_min=3, length_max=5, end_offset=1 -> effective lengths: 1,2,3
+        let counts = GCCounts::new(3, 5, 1, (0, 0)).expect("init counts");
+
+        let bounds_len3 = counts.length_bounds(3).expect("len3 bounds");
+        let bounds_len4 = counts.length_bounds(4).expect("len4 bounds");
+        let bounds_len5 = counts.length_bounds(5).expect("len5 bounds");
+
+        assert_eq!(bounds_len3, (0, 2)); // size 2 for effective len 1 (gc 0..1)
+        assert_eq!(bounds_len4, (2, 5)); // size 3 for effective len 2 (gc 0..2)
+        assert_eq!(bounds_len5, (5, 9)); // size 4 for effective len 3 (gc 0..3)
+
+        // Verify the slice lengths match the effective length + 1
+        assert_eq!(bounds_len3.1 - bounds_len3.0, 2);
+        assert_eq!(bounds_len4.1 - bounds_len4.0, 3);
+        assert_eq!(bounds_len5.1 - bounds_len5.0, 4);
+    }
+
+    #[test]
+    fn row_bounds_errors_outside_length_range() {
+        let counts = GCCounts::new(10, 12, 0, (0, 0)).expect("init counts");
+        assert!(counts.length_bounds(9).is_err());
+        assert!(counts.length_bounds(13).is_err());
+    }
+}
+
 mod tests_helpers {
 
     #[cfg(test)]

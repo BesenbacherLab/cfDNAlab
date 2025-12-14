@@ -162,7 +162,7 @@ impl GCCounts {
 
     #[inline]
     fn effective_length(&self, length: usize) -> Option<usize> {
-        if (self.length_min..=self.length_max).contains(&length) {
+        if self.length_range().contains(&length) {
             Some(length.saturating_sub(2 * self.end_offset))
         } else {
             None
@@ -300,6 +300,25 @@ impl GCCounts {
         } else {
             self.sum() / self.counts.len() as f64
         }
+    }
+
+    /// Get the flat slice bounds for a specific fragment length.
+    pub fn length_bounds(&self, length: usize) -> Result<(usize, usize)> {
+        ensure!(
+            self.length_range().contains(&length),
+            "length {} outside [{}, {}]",
+            length,
+            self.length_min,
+            self.length_max
+        );
+        let row_idx = length - self.length_min;
+        Ok((self.offsets[row_idx], self.offsets[row_idx + 1]))
+    }
+
+    /// Sum counts for a specific fragment length row.
+    pub fn sum_for_length(&self, length: usize) -> Result<f64> {
+        let (start, end) = self.length_bounds(length)?;
+        Ok(self.counts[start..end].iter().copied().sum())
     }
 
     /// Scale all counts by `factor` in place.
@@ -450,8 +469,7 @@ impl GCCounts {
         let mut grid = Array2::<f64>::zeros((num_lengths, num_gc_bins));
         for length in self.length_range() {
             let row_idx = length - self.length_min;
-            let start = self.offsets[row_idx];
-            let end = self.offsets[row_idx + 1];
+            let (start, end) = self.length_bounds(length)?;
             let effective_length = length.saturating_sub(2 * self.end_offset);
             if effective_length == 0 {
                 continue;
