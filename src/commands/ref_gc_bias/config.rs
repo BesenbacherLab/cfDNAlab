@@ -3,25 +3,20 @@ use std::path::PathBuf;
 
 // TODO: Do we need to add end-offset here, if users use it when calculating gc bias in cfDNA?
 
-/// Count GC fraction per fragment length at a sampled number of starting positions in the reference genome.
-/// This 2D count distribution can serve as the expected GC bias in GC correction.
+/// Build a reference GC bias table for cfDNA correction.
 ///
-/// How: A number (default: 500M) of starting positions are uniformly sampled across the reference
-/// genome. For each position, we count the GC fraction for every possible fragment length (default: 30-1000bp).
+/// Samples `n_positions` across all chromosomes and counts GC for every fragment length in range
+/// (optionally trimmed in ends). Creates one genome-wide GC-by-length table that
+/// downstream GC bias correction uses as the expected bias. If you provide a BED file via `--by-bed`,
+/// overlapping intervals are merged and counting is limited to those bases. Problematic regions
+/// can be excluded via a blacklist. Otherwise, the full genome is used.
 ///
-/// Intervals (the possible fragments) with too few ACGT bases after blacklist masking are discarded
-/// (so increase `--n-positions` accordingly).
-///
-/// ## Interpolation
-///
-/// Some GC fractions are unlikely to see with certain fragment lengths,
-/// as only occurence of masked positions will lead to those fractions. Hence, there
-/// will be a lot of 0s in the counts. To enable the use of those GC fractions in
-/// downstream correction of partly masked fragments, we interpolate the zero-counts (only)
-/// using a second-order polynomial with the 3 nearest neighbours on each side.
-/// Note: Zeros can still occur at edges.
+/// This command never produces per-window outputs. Use `ref-gc-counts` if you need window-level
+/// counts. After counting, the table is smoothed length-wise and converted to GC percentages.
+/// A support mask flags bins with too few counts per megabase (including theoretically unobservable
+/// GC-by-length combinations), and the sparse bins are interpolated using neighbours.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
-pub struct RefGCConfig {
+pub struct RefGCBiasConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ref_genome: Ref2BitRequiredArgs,
 
@@ -72,7 +67,7 @@ pub struct RefGCConfig {
     pub seed: Option<u64>,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub windows: WindowsArgs,
+    pub windows: RefGCWindowsArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub chromosomes: ChromosomeArgs,
@@ -138,9 +133,23 @@ pub struct RefGCConfig {
     /// Whether to skip the smoothing of raw GC counts`[flag]`
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Smoothing"))]
     pub skip_smoothing: bool,
+
+    /// Size of tiles to process the reference in `[integer]`
+    ///
+    /// Chromosomes are processed in tiles of this size to reduce memory usage.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value = "20000000",
+            value_parser = clap::value_parser!(u32).range(1000000..),
+            help_heading = "Core"
+        )
+    )]
+    pub tile_size: u32,
 }
 
-impl RefGCConfig {
+impl RefGCBiasConfig {
     pub fn check_smoothing_settings(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.smoothing_sigma > 0.0,
@@ -151,5 +160,25 @@ impl RefGCConfig {
             "--smoothing-sigma must be <= 10.0"
         );
         Ok(())
+    }
+}
+
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Debug, Clone, Default)]
+pub struct RefGCWindowsArgs {
+    /// BED file with regions to include `[path]`
+    ///
+    /// We count at the **unique positions** included in the specified intervals.
+    #[cfg_attr(feature = "cli", clap(long, value_parser, help_heading = "Windows"))]
+    pub by_bed: Option<PathBuf>,
+}
+
+impl RefGCWindowsArgs {
+    pub fn resolve_windows(&self) -> WindowSpec {
+        if let Some(p) = self.by_bed.clone() {
+            WindowSpec::Bed(p)
+        } else {
+            WindowSpec::Global
+        }
     }
 }

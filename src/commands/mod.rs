@@ -19,7 +19,9 @@ pub mod prepare_windows;
 #[cfg(feature = "cmd_midpoints")]
 pub mod profile_groups;
 #[cfg(feature = "cmd_reference_gc")]
-pub mod reference_gc;
+pub mod ref_gc_bias;
+#[cfg(feature = "cmd_reference_gc")]
+pub mod ref_gc_counts;
 pub mod transitions;
 pub mod visualize_positions;
 #[cfg(feature = "cmd_wps")]

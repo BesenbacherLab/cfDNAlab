@@ -11,7 +11,7 @@ use crate::{
                 build_theoretical_support_mask, create_support_mask_threshold_per_mb,
             },
         },
-        reference_gc::config::RefGCConfig,
+        ref_gc_counts::config::RefGCCountsConfig,
     },
     shared::{
         bed::load_windows_from_bed,
@@ -29,7 +29,7 @@ use rand::{SeedableRng, rngs::StdRng};
 use rayon::prelude::*;
 use std::{fs::create_dir_all, io::Write, sync::Arc, time::Instant};
 
-pub fn run(opt: &RefGCConfig) -> Result<()> {
+pub fn run(opt: &RefGCCountsConfig) -> Result<()> {
     let start_time = Instant::now();
     let chromosomes = opt.chromosomes.resolve_chromosomes(None)?;
     let window_opt = opt.windows.resolve_windows();
@@ -347,7 +347,7 @@ fn write_reference_gc_package(
 
 fn process_chrom(
     chr: &str,
-    opt: &RefGCConfig,
+    opt: &RefGCCountsConfig,
     windows: Option<&[(u64, u64, u64)]>,
     window_opt: &WindowSpec,
     // gc_bins: usize,
