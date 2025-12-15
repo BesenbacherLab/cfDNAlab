@@ -222,12 +222,13 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     apply_gc_percent_width_correction(&mut global_grid, &gc_percent_widths)?;
 
     // Create mask of supported count bins BEFORE interpolation
-    // Elements seen less than 3 times per 1Mb are considered unsupported.
+    // Elements seen less than N times per 1Mb are considered unsupported.
     // These include the theoretically unobservable combinations of fragment lengths and GC percentage bins.
+    let threshold_per_mb = 1 + opt.n_positions / 100000000;
     let mut outlier_support_mask = create_support_mask_threshold_per_mb(
         std::slice::from_ref(&global_grid),
         total_covered_acgt_positions,
-        3.0,
+        threshold_per_mb as f64,
     )
     .expect("support mask should be created");
 
@@ -449,7 +450,7 @@ fn process_tile(
     );
 
     // Sum tile-local windows into a single accumulator
-    let mut merged = counts_by_bin.into_iter().try_fold(
+    let merged = counts_by_bin.into_iter().try_fold(
         GCCounts::new(
             opt.fragment_lengths.min_fragment_length as usize,
             opt.fragment_lengths.max_fragment_length as usize,
@@ -476,7 +477,6 @@ fn process_tile(
             gc_prefixes.acgt[clipped_end as usize] - gc_prefixes.acgt[clipped_start as usize];
         total_acgt_in_core += acgt as u64;
     }
-    merged.num_acgt_out_of = (total_acgt_in_core, total_acgt_in_core);
 
     Ok((merged, total_acgt_in_core))
 }

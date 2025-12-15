@@ -344,6 +344,46 @@ impl GCCounts {
         Self::new(self.length_min, self.length_max, self.end_offset, (0, 0))
     }
 
+    /// Build a `GCCounts` from raw components.
+    ///
+    /// Parameters
+    /// ----------
+    /// counts: Vec<f64>
+    ///     Flattened counts buffer matching the internal layout for the provided ranges.
+    /// length_min: usize
+    ///     Minimum fragment length (inclusive).
+    /// length_max: usize
+    ///     Maximum fragment length (inclusive).
+    /// end_offset: usize
+    ///     Number of bases trimmed from each fragment end when counting GC.
+    /// num_acgt_out_of:
+    ///     Number of ACGT bases and the total number of positions.
+    pub fn from_parts(
+        counts: Vec<f64>,
+        length_min: usize,
+        length_max: usize,
+        end_offset: usize,
+        num_acgt_out_of: (u64, u64),
+    ) -> Result<Self> {
+        let (_init_counts, offsets, num_lengths) =
+            Self::initialize_counts(length_min, length_max, end_offset)?;
+        ensure!(
+            counts.len() == offsets.last().copied().unwrap_or(0),
+            "counts buffer length {} does not match expected {}",
+            counts.len(),
+            offsets.last().copied().unwrap_or(0)
+        );
+        Ok(Self {
+            counts,
+            length_min,
+            length_max,
+            num_lengths,
+            offsets,
+            end_offset,
+            num_acgt_out_of,
+        })
+    }
+
     /// Check if two `GCCounts` are compatible for merging (same ranges and shape).
     ///
     /// Parameters
@@ -455,6 +495,11 @@ impl GCCounts {
 
     pub fn length_range(&self) -> std::ops::RangeInclusive<usize> {
         self.length_min..=self.length_max
+    }
+
+    #[inline]
+    pub fn end_offset(&self) -> usize {
+        self.end_offset
     }
 
     /// Collapse ragged GC-count rows into a rectangular GC% x length matrix.

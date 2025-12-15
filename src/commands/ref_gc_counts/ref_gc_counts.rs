@@ -404,7 +404,7 @@ fn process_chrom(
         // We only count those where all bases are proper, so non-supported combinations
         // of GC and fragment lengths are truly 0 (enabling clean interpolation)
         1.0,
-        1u32,
+        MIN_ACGT_BASES_FOR_GC_FRACTION,
         opt.end_offset as usize,
     );
 

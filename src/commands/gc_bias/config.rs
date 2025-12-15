@@ -75,11 +75,12 @@ impl Default for OutlierScopeArg {
 /// Requirements: Please precompute the reference GC bias with `cfdna ref-gc-bias`.
 /// This file can be reused for all samples (aligned to the same assembly).
 ///
-/// The most extreme GC bins get corrections of `1.0` to avoid extreme corrections due to sparsity.
+/// The most extreme GC and shortest-length bins get interpolated corrections based on neighbours
+/// to avoid extreme corrections due to sparsity.
 ///
 /// Combinations of GC fractions and fragment lengths that are either theoretically unobservable
-/// or *very* rarely observed in the *reference genome* are interpolated from surrounding counts.
-/// Other combinations with zero counts in the *cfDNA* remains zero in the correction matrix.
+/// or *very* rarely observed in the **reference genome** are interpolated from surrounding counts.
+/// Other combinations with post-smoothing zero counts in the *cfDNA* remains zero in the correction matrix.
 /// The final correction matrix thus works for all possible GC x Length combinations.
 ///
 /// Fragment length is defined as `end(reverse) - start(forward)`.
@@ -87,12 +88,11 @@ impl Default for OutlierScopeArg {
 /// ## Windowing
 ///
 /// Technical GC bias is assumed to be a "global" bias. To control how each region of the genome
-/// (which may have amplified or reduced coverage) contributes to the calculation of this global bias,
-/// we can calculate the bias in genomic windows and combine them via (weighted) averaging.
+/// (which may have amplified/reduced coverage) contributes to the calculation of this global bias,
+/// we can calculate the bias in genomic windows and combine them via weighted averaging:
 ///
-/// The windows are taken from the reference GC bias file from `cfdna ref-gc-bias`.
-///
-/// The output of `cfdna gc-bias` is always a 2D correction matrix.
+/// The counts of each window are divided by their window-mean and scaled by the number of
+/// valid ACGT positions in the window. The windows are then averaged.
 ///
 /// ## Always-on exclusion criteria
 ///
@@ -116,9 +116,6 @@ pub struct GCConfig {
     ///
     /// Precompute with `cfdna ref-gc-bias`. The directory must include all files
     /// created by `cfdna ref-gc-bias`.
-    ///
-    /// Windowing: When the reference bias is passed in genomic windows, we calculate the
-    /// cfDNA GC bias corrections per window and average them (see `--window-weighting`).
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser, required = true, help_heading = "Core")
@@ -126,39 +123,21 @@ pub struct GCConfig {
     pub ref_gc_dir: PathBuf,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub window_assignment: AssignToWindowArgs,
+    pub windows: WindowsArgs,
 
-    /// How to weight the windows when averaging them `[coverage|valid-positions|equal]`
-    ///
-    /// One of:
-    ///
-    ///  - `"coverage"`: Windows are weighted by their average number of observed fragments.
-    ///    Compared to a single global window, this approach weights the local reference bias the
-    ///    same as the local cfDNA bias in the global biases. *Technically*, only the reference count
-    ///    distribution is reweighted, as the cfDNA counts already reflect the coverage.
-    ///
-    ///  - `"valid-positions"`: Weight windows by how many positions are usable (not blacklisted or `N`).
-    ///
-    ///  - `"equal"`: All windows get the same weight in the final correction matrix,
-    ///    no matter how many positions were blacklisted, etc.
-    ///
-    /// **NOTE**: Only specify this argument when windows exist.
-    #[cfg_attr(
-        feature = "cli",
-        clap(
-            long,
-            value_enum,
-            default_value = "valid-positions",
-            help_heading = "Core"
-        )
-    )]
-    pub window_weighting: WindowWeightingSchemes,
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub window_assignment: AssignToWindowArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub chromosomes: ChromosomeArgs,
 
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub scale_genome: ScaleGenomeArgs,
+    /// Size of tiles to parallelize over `[integer]`
+    ///
+    /// Chromosomes are processed in tiles of this size to reduce memory usage.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "10000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
+    pub tile_size: u32,
 
     /// Minimum percentage of counts to have in each length bin `[float]`
     ///
@@ -315,10 +294,10 @@ impl GCConfig {
             ioc,
             ref_genome: Ref2BitRequiredArgs { ref_2bit },
             ref_gc_dir,
+            windows: WindowsArgs::default(),
             window_assignment: AssignToWindowArgs::default(),
-            window_weighting: WindowWeightingSchemes::default(),
             chromosomes,
-            scale_genome: ScaleGenomeArgs::default(),
+            tile_size: 10_000_000,
             blacklist: None,
             min_mapq: 30,
             require_proper_pair: false,
@@ -329,7 +308,7 @@ impl GCConfig {
             num_short_length_bins: 1,
             min_window_acgt_pct: 10,
             outlier_method: OutlierMethodArg::Iqr,
-            outlier_scope: OutlierScopeArg::PerLength,
+            outlier_scope: OutlierScopeArg::Global,
             outlier_quantiles: vec![0.03, 0.97],
             outlier_k: 8.0,
             save_intermediates: false,
@@ -344,20 +323,20 @@ impl GCConfig {
         self.ref_gc_dir = ref_gc_dir;
     }
 
-    pub fn set_window_assignment(&mut self, assignment: AssignToWindowArgs) {
-        self.window_assignment = assignment;
+    pub fn set_windows(&mut self, windows: WindowsArgs) {
+        self.windows = windows;
     }
 
-    pub fn set_window_weighting(&mut self, weighting: WindowWeightingSchemes) {
-        self.window_weighting = weighting;
+    pub fn set_window_assignment(&mut self, assignment: AssignToWindowArgs) {
+        self.window_assignment = assignment;
     }
 
     pub fn set_chromosomes(&mut self, chromosomes: ChromosomeArgs) {
         self.chromosomes = chromosomes;
     }
 
-    pub fn set_scaling_factors(&mut self, scaling_factors: Option<PathBuf>) {
-        self.scale_genome.scaling_factors = scaling_factors;
+    pub fn set_tile_size(&mut self, tile_size: u32) {
+        self.tile_size = tile_size;
     }
 
     pub fn set_blacklist(&mut self, blacklist: Option<Vec<PathBuf>>) {
@@ -452,6 +431,7 @@ fn parse_percentage_within_0_100_f32(input: &str) -> Result<f32, String> {
     }
 }
 
+#[cfg_attr(not(feature = "cli"), allow(dead_code))]
 fn parse_quantile_0_1(input: &str) -> Result<f32, String> {
     let value: f32 = input
         .parse()

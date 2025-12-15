@@ -8,6 +8,9 @@ use fxhash::FxHashMap;
 use std::path::Path;
 use std::{path::PathBuf, str::FromStr};
 
+/// Minimum ACGT bases required when estimating GC fraction for sample reads.
+pub const MIN_ACGT_BASES_FOR_GC_FRACTION: u32 = 10;
+
 /// Args for in-/output and core (threads).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone)]
@@ -97,13 +100,13 @@ pub struct FragmentLengthArgs {
     /// Minimum fragment length to include `[integer]`
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "30", value_parser = clap::value_parser!(u32).range(10..), help_heading="Filtering"))]
+        clap(long, default_value = "30", value_parser = clap::value_parser!(u32).range(MIN_ACGT_BASES_FOR_GC_FRACTION as i64..), help_heading="Filtering"))]
     pub min_fragment_length: u32,
 
     /// Maximum fragment length to include `[integer]`
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "1000", value_parser = clap::value_parser!(u32).range(10..), help_heading="Filtering"))]
+        clap(long, default_value = "1000", value_parser = clap::value_parser!(u32).range(MIN_ACGT_BASES_FOR_GC_FRACTION as i64..), help_heading="Filtering"))]
     pub max_fragment_length: u32,
 }
 

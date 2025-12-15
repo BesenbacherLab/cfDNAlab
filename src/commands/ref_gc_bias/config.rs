@@ -74,9 +74,10 @@ pub struct RefGCBiasConfig {
 
     /// Optional BED file(s) with blacklisted regions [path]
     ///
-    /// Masking: Blacklisted positions are set to 'N' in the reference sequence
-    /// the GC fraction is calculated from. See the `Minimum ACGT` options
-    /// for when to ignore a kmer with too few ACGT (non-'N' and non-blacklisted) bases.
+    /// We count no fragment intervals that overlap a blacklisted base.
+    /// This results in a lower count for long fragment lengths, which
+    /// is not a problem due to length-wise normalization in the downstream
+    /// `cfdna gc-bias` command.
     #[cfg_attr(
         feature = "cli",
         clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading="Filtering"))]
@@ -141,7 +142,7 @@ pub struct RefGCBiasConfig {
         feature = "cli",
         clap(
             long,
-            default_value = "20000000",
+            default_value = "10000000",
             value_parser = clap::value_parser!(u32).range(1000000..),
             help_heading = "Core"
         )

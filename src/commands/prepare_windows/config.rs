@@ -881,6 +881,7 @@ impl Default for PrepareConfig {
     }
 }
 
+#[cfg_attr(not(feature = "cli"), allow(dead_code))]
 fn parse_sep(input: &str) -> Result<char, String> {
     match input {
         r"\t" | "tab" => Ok('\t'),
