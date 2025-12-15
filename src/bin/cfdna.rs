@@ -16,7 +16,7 @@ use cfdnalab::commands::lengths::config::LengthsConfig;
 use cfdnalab::commands::prepare_windows::config::PrepareConfig;
 #[cfg(feature = "cmd_midpoints")]
 use cfdnalab::commands::profile_groups::config::ProfileGroupsConfig;
-#[cfg(feature = "cmd_reference_gc")]
+#[cfg(feature = "cmd_ref_gc_bias")]
 use cfdnalab::commands::ref_gc_bias::config::RefGCBiasConfig;
 #[cfg(feature = "cmd_visualize_positions")]
 use cfdnalab::commands::visualize_positions::config::VisualizePositionsConfig;
@@ -37,7 +37,7 @@ use cfdnalab::commands::wps_peaks::config::WPSPeaksConfig;
         feature = "cmd_lengths",
         feature = "cmd_prepare_windows",
         feature = "cmd_midpoints",
-        feature = "cmd_reference_gc",
+        feature = "cmd_ref_gc_bias",
         feature = "cmd_visualize_positions",
         feature = "cmd_wps",
         feature = "cmd_wps_peaks"
@@ -58,7 +58,7 @@ struct Cli {
 enum Cmd {
     #[cfg(feature = "cmd_gc_bias")]
     GCBias(GCConfig),
-    #[cfg(feature = "cmd_reference_gc")]
+    #[cfg(feature = "cmd_ref_gc_bias")]
     RefGcBias(RefGCBiasConfig), // Extract reference GC counts
     #[cfg(feature = "cmd_coverage_weights")]
     CoverageWeights(CoverageWeightsConfig),
@@ -105,7 +105,7 @@ fn main() {
     let res: anyhow::Result<()> = match cli.cmd {
         #[cfg(feature = "cmd_gc_bias")]
         Cmd::GCBias(cfg) => cfdnalab::commands::gc_bias::gc_bias::run(&cfg),
-        #[cfg(feature = "cmd_reference_gc")]
+        #[cfg(feature = "cmd_ref_gc_bias")]
         Cmd::RefGcBias(cfg) => cfdnalab::commands::ref_gc_bias::ref_gc_bias::run(&cfg),
         #[cfg(feature = "cmd_coverage_weights")]
         Cmd::CoverageWeights(cfg) => {

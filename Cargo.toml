@@ -13,7 +13,7 @@ default = [
     "cmd_lengths",
     "cmd_prepare_windows",
     "cmd_midpoints",
-    "cmd_reference_gc",
+    "cmd_ref_gc_bias",
 ]
 cli = ["clap"]
 cmd_bam_to_bam = []
@@ -26,7 +26,8 @@ cmd_gc_bias = []
 cmd_lengths = []
 cmd_prepare_windows = []
 cmd_midpoints = []
-cmd_reference_gc = []
+cmd_ref_gc_bias = []
+cmd_ref_gc_counts = []
 cmd_visualize_positions = ["cmd_fragment_kmers"]
 cmd_visualize_positions_tests = ["cmd_visualize_positions"]
 cmd_wps = ["cmd_fcoverage"]

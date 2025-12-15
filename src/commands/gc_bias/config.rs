@@ -72,7 +72,7 @@ impl Default for OutlierScopeArg {
 ///
 /// The observed distribution of cfDNA fragments is corrected to a precomputed reference bias.
 ///
-/// Requirements: Please precompute the reference GC bias with `cfdna reference-gc`.
+/// Requirements: Please precompute the reference GC bias with `cfdna ref-gc-bias`.
 /// This file can be reused for all samples (aligned to the same assembly).
 ///
 /// The most extreme GC bins get corrections of `1.0` to avoid extreme corrections due to sparsity.
@@ -90,7 +90,7 @@ impl Default for OutlierScopeArg {
 /// (which may have amplified or reduced coverage) contributes to the calculation of this global bias,
 /// we can calculate the bias in genomic windows and combine them via (weighted) averaging.
 ///
-/// The windows are taken from the reference GC bias file from `cfdna reference-gc`.
+/// The windows are taken from the reference GC bias file from `cfdna ref-gc-bias`.
 ///
 /// The output of `cfdna gc-bias` is always a 2D correction matrix.
 ///
@@ -114,8 +114,8 @@ pub struct GCConfig {
 
     /// Path to directory with reference GC bias files to correct against `[path]`
     ///
-    /// Precompute with `cfdna reference-gc`. The directory must include all files
-    /// created by `cfdna reference-gc`.
+    /// Precompute with `cfdna ref-gc-bias`. The directory must include all files
+    /// created by `cfdna ref-gc-bias`.
     ///
     /// Windowing: When the reference bias is passed in genomic windows, we calculate the
     /// cfDNA GC bias corrections per window and average them (see `--window-weighting`).
@@ -199,7 +199,7 @@ pub struct GCConfig {
     ///
     /// The shortest fragment lengths can be very sparsely observed. This can lead to extreme corrections.
     /// Set the number of short-length bins where we interpolate a correction based on the neighbouring corrections.
-    /// With the default minimum fragment length setting in `cfdna reference-gc` (30bp),
+    /// With the default minimum fragment length setting in `cfdna ref-gc-bias` (30bp),
     /// the default of 1 should be fine. This can be tuned via visualization of the created
     /// correction matrix and intermediate files (`--save-intermediates`).
     #[cfg_attr(
@@ -213,7 +213,7 @@ pub struct GCConfig {
     /// the GC fraction is calculated from. See the `Minimum ACGT` options
     /// for when to ignore a fragment with too few ACGT (non-'N' and non-blacklisted) bases.
     ///
-    /// NOTE: Ensure the same positions were blacklisted when calculating the reference bias (`cfdna reference-gc`).
+    /// NOTE: Ensure the same positions were blacklisted when calculating the reference bias (`cfdna ref-gc-bias`).
     #[cfg_attr(
         feature = "cli",
         clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading="Filtering"))]

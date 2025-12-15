@@ -62,7 +62,7 @@ pub fn get_gc_integer_percentage_for_window(
         return None;
     }
 
-    // Use the same integer rounding as the reference-gc tool!
+    // Use the same integer rounding as the ref-gc-bias tool!
     let gc_percent_bin = calculate_gc_bin(gc as u64, acgt as u64);
     Some(gc_percent_bin)
 }

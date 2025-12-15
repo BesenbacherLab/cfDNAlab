@@ -108,7 +108,7 @@ Calculate the reference GC bias in windows. NOTE: This file can be reused for al
 
 ```bash
 
-cfdna reference-gc \
+cfdna ref-gc-bias \
   ...
 
 ```

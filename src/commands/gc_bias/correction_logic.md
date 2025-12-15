@@ -5,7 +5,7 @@ This document captures the working plan for our GC-bias correction pass. It mirr
 ## 1. Build the interval grid
 - Default to 1 Mb windows so examples stay manageable. Users with more compute can switch to genome-wide or custom window sizes.
 - Always apply the blacklist up front. A window with all bases masked simply contributes zero fragments and drops out naturally.
-- Precompute and store the reference GC matrix (`reference_gc`) for every allowed window so we never resimulate reference fragments at runtime.
+- Precompute and store the reference GC matrix (`ref-gc-bias`) for every allowed window so we never resimulate reference fragments at runtime.
 
 ## 2. Count observed fragments
 - For each window, iterate all fragments once (`bam_to_frag` can do this in seconds) and fill a 2D histogram indexed by fragment length and absolute GC count.
