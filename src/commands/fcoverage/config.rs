@@ -35,11 +35,11 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 /// by weighting the contribution of fragments. Two options:
 ///
 /// `--gc-file`: Weight the contribution of each fragment by its length and GC content using a precomputed
-/// correction matrix (`cfdna gc-bias`). The GC correction matrix should be calculated from the same BAM file,
+/// correction matrix from `cfdna gc-bias`. The GC correction matrix should be calculated from the same BAM file,
 /// as the bias is sample-specific.
 ///
 /// `--gc-tag`: Weight the contribution of each fragment by a weight saved as an aux tag in the BAM reads.
-/// Allows using external GC packages like `GCParagon` and `GCfix`.
+/// Allows using external GC packages like `GCParagon` and `GCfix` (both use the tag "GC").
 ///
 /// ## Temporary files
 ///
