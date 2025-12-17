@@ -272,7 +272,6 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     );
 
     let windows_lookup = windows_map.as_ref();
-    // TODO: Perhaps mark windows that cross tiles already here? Allows accumulating those fully contained and only reducing crossers!
     let tile_window_spans = Arc::new(precompute_tile_window_spans(&tiles, |chr| {
         windows_lookup
             .and_then(|m| m.get(chr).map(|w| w.as_slice()))
