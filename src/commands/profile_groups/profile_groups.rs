@@ -25,7 +25,7 @@ use crate::{
     shared::{
         bam::create_chromosome_reader,
         bed::{load_grouped_windows_from_bed, write_group_idx_to_name_tsv},
-        blacklist::{apply_blacklist_mask_to_seq, is_blacklisted},
+        blacklist::is_blacklisted,
         fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
         midpoint::midpoint_random_even_with_thread_rng,
@@ -332,18 +332,12 @@ fn process_tile(
         let ref_2bit = opt.ref_2bit.as_ref().ok_or_else(|| {
             anyhow!("When GC correction is specified, --ref-2bit must also be specified")
         })?;
-        let mut seq_bytes = read_seq_in_range(
+        let seq_bytes = read_seq_in_range(
             &ref_2bit,
             &tile.chr,
             // NOTE: Need for full fetch span to get GC of overlapping fragments!
             (tile.fetch_start as usize)..(tile.fetch_end as usize),
         )?;
-        apply_blacklist_mask_to_seq(
-            &mut seq_bytes,
-            &blacklist_intervals,
-            tile.fetch_start as u64,
-        );
-
         Some(build_gc_prefixes(&seq_bytes))
     } else {
         None

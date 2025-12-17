@@ -16,18 +16,12 @@ use crate::{
         },
     },
     shared::{
-        bam::create_chromosome_reader,
-        bed::load_windows_from_bed,
-        blacklist::{apply_blacklist_mask_to_seq, is_blacklisted},
+        bam::create_chromosome_reader, bed::load_windows_from_bed, blacklist::is_blacklisted,
         fragment::frag_file_fragment::FragFileFragment,
         fragment_iterator::fragments_with_frag_file_info_from_bam,
-        overlaps::find_overlapping_windows,
-        read::default_include_read,
-        reference::read_seq,
-        scale_genome::compute_window_scaling_over_fragment,
-        thread_pool::init_global_pool,
-        tiled_run::make_temp_dir,
-        writers::open_zstd_auto_writer,
+        overlaps::find_overlapping_windows, read::default_include_read, reference::read_seq,
+        scale_genome::compute_window_scaling_over_fragment, thread_pool::init_global_pool,
+        tiled_run::make_temp_dir, writers::open_zstd_auto_writer,
     },
 };
 use anyhow::{Context, Result, anyhow};
@@ -258,9 +252,7 @@ fn process_chrom(
         let ref_2bit = opt.ref_2bit.as_ref().ok_or_else(|| {
             anyhow!("When GC correction is specified, --ref-2bit must also be specified")
         })?;
-        let mut seq_bytes = read_seq(&ref_2bit, chr)?;
-        apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals, 0);
-
+        let seq_bytes = read_seq(&ref_2bit, chr)?;
         Some(build_gc_prefixes(&seq_bytes))
     } else {
         None

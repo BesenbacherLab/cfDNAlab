@@ -469,18 +469,12 @@ fn process_tile(
         // NOTE: This sequence uses fetch coordinates for enabling GC correction
         // for all fetched fragments. It is only used to build the GC and ACGT prefixes.
         // The later sequence used for kmer extraction uses tile core coordinates.
-        let mut seq_bytes = read_seq_in_range(
+        let seq_bytes = read_seq_in_range(
             &opt.shared_args.ref_genome.ref_2bit,
             &tile.chr,
             // NOTE: Need for full fetch span to get GC of overlapping fragments!
             (tile.fetch_start as usize)..(tile.fetch_end as usize),
         )?;
-        apply_blacklist_mask_to_seq(
-            &mut seq_bytes,
-            &blacklist_intervals,
-            tile.fetch_start as u64,
-        );
-
         Some(build_gc_prefixes(&seq_bytes))
     } else {
         None

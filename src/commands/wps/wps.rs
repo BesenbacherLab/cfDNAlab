@@ -12,7 +12,6 @@ use crate::commands::fcoverage::writers::{
 use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
 use crate::commands::gc_bias::counting::build_gc_prefixes;
 use crate::commands::wps::config::{WPSConfig, WPSSharedConfig};
-use crate::shared::blacklist::apply_blacklist_mask_to_seq;
 use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment_iterator::fragments_from_bam;
@@ -637,14 +636,12 @@ pub fn wps_for_tile(
         let ref_2bit = opt.ref_2bit.as_ref().ok_or_else(|| {
             anyhow!("When GC correction is specified, --ref-2bit must also be specified")
         })?;
-        let mut seq_bytes = read_seq_in_range(
+        let seq_bytes = read_seq_in_range(
             &ref_2bit,
             &tile.chr,
             // NOTE: Need for full fetch span to get GC of overlapping fragments!
             (tile.fetch_start as usize)..(tile.fetch_end as usize),
         )?;
-        apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_chr, tile.fetch_start as u64);
-
         Some(build_gc_prefixes(&seq_bytes))
     } else {
         None

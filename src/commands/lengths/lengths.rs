@@ -17,7 +17,7 @@ use crate::{
     shared::{
         bam::create_chromosome_reader,
         bed::load_windows_from_bed,
-        blacklist::{apply_blacklist_mask_to_seq, compute_blacklist_overlap, is_blacklisted},
+        blacklist::{compute_blacklist_overlap, is_blacklisted},
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
         fragment_iterator::fragments_with_indel_counts_from_bam,
         io::create_text_writer,
@@ -266,9 +266,7 @@ fn process_chrom(
         let ref_2bit = opt.ref_2bit.as_ref().ok_or_else(|| {
             anyhow!("When GC correction is specified, --ref-2bit must also be specified")
         })?;
-        let mut seq_bytes = read_seq(&ref_2bit, chr)?;
-        apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals, 0);
-
+        let seq_bytes = read_seq(&ref_2bit, chr)?;
         Some(build_gc_prefixes(&seq_bytes))
     } else {
         None
