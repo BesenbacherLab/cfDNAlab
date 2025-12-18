@@ -344,6 +344,18 @@ impl GCCounts {
         Self::new(self.length_min, self.length_max, self.end_offset, (0, 0))
     }
 
+    /// Clear counts in place without reallocating.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.counts.fill(0.0);
+        self.num_acgt_out_of = (0, 0);
+    }
+
+    #[inline]
+    pub fn buffer_len(&self) -> usize {
+        self.counts.len()
+    }
+
     /// Build a `GCCounts` from raw components.
     ///
     /// Parameters

@@ -3,6 +3,20 @@ use crate::commands::gc_bias::outliers::{OutlierAction, OutlierRule, OutlierScop
 use anyhow::{Result, anyhow};
 use std::{path::PathBuf, str::FromStr};
 
+// Central defaults to keep CLI and programmatic creation in sync
+pub const DEFAULT_TILE_SIZE: u32 = 10_000_000;
+pub const DEFAULT_MIN_LENGTH_BIN_MASS: f32 = 0.5;
+pub const DEFAULT_MIN_LENGTH_BIN_WIDTH: u8 = 3;
+pub const DEFAULT_MIN_GC_BIN_MASS: f32 = 1.0;
+pub const DEFAULT_NUM_EXTREME_GC_BINS: u8 = 1;
+pub const DEFAULT_NUM_SHORT_LENGTH_BINS: u8 = 1;
+pub const DEFAULT_MIN_WINDOW_ACGT_PCT: u8 = 10;
+pub const DEFAULT_MIN_MAPQ: u8 = 30;
+pub const DEFAULT_OUTLIER_K: f32 = 3.0;
+pub const DEFAULT_OUTLIER_QUANTILES: [f32; 2] = [0.03, 0.97];
+pub const DEFAULT_OUTLIER_METHOD: OutlierMethodArg = OutlierMethodArg::Iqr;
+pub const DEFAULT_OUTLIER_SCOPE: OutlierScopeArg = OutlierScopeArg::Global;
+
 #[derive(Default, Clone, Debug)]
 pub enum WindowWeightingSchemes {
     Equal,
@@ -61,7 +75,7 @@ pub enum OutlierScopeArg {
 
 impl Default for OutlierScopeArg {
     fn default() -> Self {
-        OutlierScopeArg::PerLength
+        OutlierScopeArg::Global
     }
 }
 
@@ -136,7 +150,13 @@ pub struct GCConfig {
     /// Chromosomes are processed in tiles of this size to reduce memory usage.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "10000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
+        clap(
+            long,
+            default_value_t = DEFAULT_TILE_SIZE,
+            value_parser = clap::value_parser!(u32).range(1000000..),
+            help_heading = "Core"
+        )
+    )]
     pub tile_size: u32,
 
     /// Minimum percentage of counts to have in each length bin `[float]`
@@ -144,7 +164,13 @@ pub struct GCConfig {
     /// Greater than 0, lower than 100. Default is 0.5% (i.e., a max. of 200 bins).
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "0.5", value_parser = parse_percentage_within_0_100_f32, help_heading="Binning"))]
+        clap(
+            long,
+            default_value_t = DEFAULT_MIN_LENGTH_BIN_MASS,
+            value_parser = parse_percentage_within_0_100_f32,
+            help_heading = "Binning"
+        )
+    )]
     pub min_length_bin_mass: f32,
 
     /// Minimum number of fragment lengths per fragment length bin `[float]`
@@ -152,7 +178,13 @@ pub struct GCConfig {
     /// Reduces sparsity-related issues in ultra low-coverage samples.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "3", value_parser = clap::value_parser!(u8).range(1..100), help_heading="Binning"))]
+        clap(
+            long,
+            default_value_t = DEFAULT_MIN_LENGTH_BIN_WIDTH,
+            value_parser = clap::value_parser!(u8).range(1..100),
+            help_heading = "Binning"
+        )
+    )]
     pub min_length_bin_width: u8,
 
     /// Minimum percentage of counts to have in each GC contents bin `[float]`
@@ -160,7 +192,13 @@ pub struct GCConfig {
     /// Greater than 0, lower than 100. Default is 1% (i.e., a max. of 100 bins).
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "1.0", value_parser = parse_percentage_within_0_100_f32, help_heading="Binning"))]
+        clap(
+            long,
+            default_value_t = DEFAULT_MIN_GC_BIN_MASS,
+            value_parser = parse_percentage_within_0_100_f32,
+            help_heading = "Binning"
+        )
+    )]
     pub min_gc_bin_mass: f32,
 
     /// Number of extreme GC bins (`--min_gc_bin_mass`) from each side to interpolate from neighbouring corrections `[float]`
@@ -171,7 +209,13 @@ pub struct GCConfig {
     /// correction matrix and intermediate files (`--save-intermediates`).
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "1", value_parser = clap::value_parser!(u8).range(0..10), help_heading="Binning"))]
+        clap(
+            long,
+            default_value_t = DEFAULT_NUM_EXTREME_GC_BINS,
+            value_parser = clap::value_parser!(u8).range(0..10),
+            help_heading = "Binning"
+        )
+    )]
     pub num_extreme_gc_bins: u8,
 
     /// Number of the **shortest** fragment length bins (`--min_length_bin_mass`) to interpolate from neighbouring corrections `[float]`
@@ -183,7 +227,13 @@ pub struct GCConfig {
     /// correction matrix and intermediate files (`--save-intermediates`).
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "1", value_parser = clap::value_parser!(u8).range(0..10), help_heading="Binning"))]
+        clap(
+            long,
+            default_value_t = DEFAULT_NUM_SHORT_LENGTH_BINS,
+            value_parser = clap::value_parser!(u8).range(0..10),
+            help_heading = "Binning"
+        )
+    )]
     pub num_short_length_bins: u8,
 
     /// Optional BED file(s) with blacklisted regions `[path]`
@@ -201,7 +251,14 @@ pub struct GCConfig {
     /// Minimum mapping quality to include `[integer]`
     #[cfg_attr(
         feature = "cli",
-        clap(long, alias = "mq", default_value = "30", value_parser = clap::value_parser!(u8).range(0..), help_heading="Filtering"))]
+        clap(
+            long,
+            alias = "mq",
+            default_value_t = DEFAULT_MIN_MAPQ,
+            value_parser = clap::value_parser!(u8).range(0..),
+            help_heading = "Filtering"
+        )
+    )]
     pub min_mapq: u8,
 
     /// Only count properly paired reads `[flag]`
@@ -216,8 +273,13 @@ pub struct GCConfig {
     /// remaining positions, use this to threshold to remove them from the analysis.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "10",
-             value_parser = clap::value_parser!(u8).range(0..101), help_heading="Minimum ACGT"))]
+        clap(
+            long,
+            default_value_t = DEFAULT_MIN_WINDOW_ACGT_PCT,
+            value_parser = clap::value_parser!(u8).range(0..101),
+            help_heading = "Minimum ACGT"
+        )
+    )]
     pub min_window_acgt_pct: u8,
 
     /// Handle extreme correction factors to avoid unstable weights `[string]`
@@ -233,7 +295,7 @@ pub struct GCConfig {
     /// **NOTE**: After outlier detection, correction values are further clipped at `[0.1, 10.0]`.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "iqr", value_enum, help_heading = "Outliers")
+        clap(long, default_value_t = DEFAULT_OUTLIER_METHOD, value_enum, help_heading = "Outliers")
     )]
     pub outlier_method: OutlierMethodArg,
 
@@ -244,7 +306,7 @@ pub struct GCConfig {
     /// - `global`: Detect from the full correction matrix.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "global", value_enum, help_heading = "Outliers")
+        clap(long, default_value_t = DEFAULT_OUTLIER_SCOPE, value_enum, help_heading = "Outliers")
     )]
     pub outlier_scope: OutlierScopeArg,
 
@@ -258,7 +320,7 @@ pub struct GCConfig {
             long,
             value_parser = parse_quantile_0_1,
             num_args = 1..=2,
-            default_values_t = [0.03_f32, 0.97_f32],
+            default_values_t = DEFAULT_OUTLIER_QUANTILES,
             help_heading = "Outliers"
         )
     )]
@@ -271,7 +333,7 @@ pub struct GCConfig {
         feature = "cli",
         clap(
             long,
-            default_value = "3",
+            default_value_t = DEFAULT_OUTLIER_K,
             value_parser = clap::value_parser!(f32),
             help_heading = "Outliers"
         )
@@ -297,20 +359,20 @@ impl GCConfig {
             windows: WindowsArgs::default(),
             window_assignment: AssignToWindowArgs::default(),
             chromosomes,
-            tile_size: 10_000_000,
+            tile_size: DEFAULT_TILE_SIZE,
             blacklist: None,
-            min_mapq: 30,
+            min_mapq: DEFAULT_MIN_MAPQ,
             require_proper_pair: false,
-            min_gc_bin_mass: 1.0,
-            min_length_bin_mass: 1.0,
-            min_length_bin_width: 3,
-            num_extreme_gc_bins: 1,
-            num_short_length_bins: 1,
-            min_window_acgt_pct: 10,
-            outlier_method: OutlierMethodArg::Iqr,
-            outlier_scope: OutlierScopeArg::Global,
-            outlier_quantiles: vec![0.03, 0.97],
-            outlier_k: 8.0,
+            min_gc_bin_mass: DEFAULT_MIN_GC_BIN_MASS,
+            min_length_bin_mass: DEFAULT_MIN_LENGTH_BIN_MASS,
+            min_length_bin_width: DEFAULT_MIN_LENGTH_BIN_WIDTH,
+            num_extreme_gc_bins: DEFAULT_NUM_EXTREME_GC_BINS,
+            num_short_length_bins: DEFAULT_NUM_SHORT_LENGTH_BINS,
+            min_window_acgt_pct: DEFAULT_MIN_WINDOW_ACGT_PCT,
+            outlier_method: DEFAULT_OUTLIER_METHOD,
+            outlier_scope: DEFAULT_OUTLIER_SCOPE,
+            outlier_quantiles: DEFAULT_OUTLIER_QUANTILES.to_vec(),
+            outlier_k: DEFAULT_OUTLIER_K,
             save_intermediates: false,
         }
     }

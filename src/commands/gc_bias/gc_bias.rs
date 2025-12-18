@@ -6,7 +6,10 @@ use crate::{
             CORRECTION_CLAMP_RANGE, GC_CORRECTION_SCHEMA_VERSION,
             binning::{CollapseAggregation, bin_greedily_by_mass, collapse_counts_by_bins},
             config::GCConfig,
-            counting::{GCCounts, apply_gc_percent_width_correction, build_gc_prefixes},
+            counting::{
+                GCCounts, GCPrefixes, apply_gc_percent_width_correction, build_gc_prefixes,
+            },
+            cross_tile_parts::{CrossingPart, stream_crossing_files, write_crossing_parts},
             interpolation::fill_unsupported_bins_with_polynomial,
             load_reference_bias::{ReferenceGCData, ReferenceGCMetadata, load_reference_gc_data},
             outliers::{OutlierRule, OutlierStats, apply_outliers_to_matrix},
@@ -15,10 +18,14 @@ use crate::{
             support_masking::{
                 build_extreme_bins_support_mask, set_masked_entries_to_value, stats_by_support_mask,
             },
+            windows::{
+                WindowState, compute_window_acgt, compute_window_stats, fixed_size_window_bounds,
+                overlap_length, prepare_tile_windows,
+            },
         },
     },
     shared::{
-        bam::{Contigs, create_chromosome_reader},
+        bam::create_chromosome_reader,
         bed::{Windows, load_windows_from_bed},
         blacklist::apply_blacklist_mask_to_seq,
         fragment::minimal_fragment::Fragment,
@@ -29,132 +36,102 @@ use crate::{
         reference::read_seq_in_range,
         thread_pool::init_global_pool,
         tiled_run::{
-            Tile, TileWindowSpan, build_tiles, make_temp_dir, overlapping_windows_for_tile,
-            parse_tile_index, precompute_tile_window_spans,
+            Tile, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
         },
     },
 };
-use anyhow::{Context, Result, anyhow, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
-use ndarray::{Array1, Array2, ArrayBase, Axis, Data, DataMut, Ix2, Zip};
-use ndarray_npy::{NpzReader, NpzWriter, write_npy};
+use ndarray::{Array2, ArrayBase, Axis, Data, DataMut, Ix2, Zip};
+use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{
-    fs::{File, create_dir_all},
-    io::BufReader,
-    path::PathBuf,
-    sync::Arc,
-    time::Instant,
-};
+use std::{fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
 
-fn compute_avg_window_span(
-    window_opt: &WindowSpec,
-    windows_map: Option<&FxHashMap<String, Windows>>,
-    contigs: &Contigs,
-    chromosomes: &[String],
-) -> Result<f64> {
-    match window_opt {
-        WindowSpec::Bed(_) => {
-            let mut total_len: u64 = 0;
-            let mut count: u64 = 0;
-            if let Some(map) = windows_map {
-                for chr in chromosomes {
-                    if let Some(ws) = map.get(chr) {
-                        for (s, e, _) in ws.as_slice() {
-                            total_len = total_len.saturating_add(e.saturating_sub(*s));
-                            count += 1;
-                        }
-                    }
-                }
-            }
-            ensure!(count > 0, "No windows to compute average span from");
-            Ok(total_len as f64 / count as f64)
-        }
-        WindowSpec::Global => {
-            let mut total_len: u64 = 0;
-            for chr in chromosomes {
-                if let Some((_, len)) = contigs.contigs.get(chr) {
-                    total_len = total_len.saturating_add(*len as u64);
-                }
-            }
-            ensure!(
-                total_len > 0,
-                "Chromosome lengths unavailable for global window span"
-            );
-            Ok(total_len as f64)
-        }
-        WindowSpec::Size(win_size) => {
-            ensure!(*win_size > 0, "Window size must be positive");
-            let mut total_windows: u64 = 0;
-            let mut total_span: u64 = 0;
-            for chr in chromosomes {
-                let Some((_, len_u32)) = contigs.contigs.get(chr) else {
-                    bail!("Missing contig length for {}", chr);
-                };
-                let len = *len_u32 as u64;
-                if len == 0 {
-                    continue;
-                }
-                let full = len / *win_size;
-                let rem = len % *win_size;
-                total_windows += full + u64::from(rem > 0);
-                total_span += len;
-            }
-            ensure!(total_windows > 0, "No windows computed for --by-size");
-            Ok(total_span as f64 / total_windows as f64)
-        }
-    }
-}
-
-fn write_crossing_parts(
-    temp_dir: &PathBuf,
-    tile_idx: u32,
-    template: &GCCounts,
-    parts: &[CrossingPart],
-) -> Result<Option<PathBuf>> {
-    if parts.is_empty() {
+/// Get the GC count for a fragment after trimming ends.
+///
+/// Returns `None` when the trimmed interval is empty, outside the loaded sequence,
+/// or lacks sufficient ACGT support.
+pub fn get_fragment_gc(
+    fragment: &Fragment,
+    seq_start: u64,
+    seq_end: u64,
+    end_offset: u32,
+    gc_prefixes: &GCPrefixes,
+    min_acgt_fraction: f32,
+) -> Result<Option<usize>> {
+    let gc_window_start = fragment.start.saturating_add(end_offset);
+    let gc_window_end = fragment.end.saturating_sub(end_offset);
+    if gc_window_end <= gc_window_start {
         return Ok(None);
     }
-    let path = temp_dir.join(format!("cross.{}.npz", tile_idx));
-    let file = File::create(&path)?;
-    let mut npz = NpzWriter::new(file);
-
-    let counts_len = template.borrow_raw_counts().len();
-    let mut idxs: Vec<u64> = Vec::with_capacity(parts.len());
-    let mut acgt0: Vec<u64> = Vec::with_capacity(parts.len());
-    let mut acgt1: Vec<u64> = Vec::with_capacity(parts.len());
-    let mut counts_arr = Array2::zeros((parts.len(), counts_len));
-    for (row_idx, part) in parts.iter().enumerate() {
-        idxs.push(part.idx as u64);
-        acgt0.push(part.counts.num_acgt_out_of.0);
-        acgt1.push(part.counts.num_acgt_out_of.1);
-        let counts = part.counts.borrow_raw_counts();
-        ensure!(
-            counts.len() == counts_len,
-            "Crossing part counts length {} did not match expected {}",
-            counts.len(),
-            counts_len
-        );
-        counts_arr
-            .row_mut(row_idx)
-            .assign(&ndarray::ArrayView1::from(counts.as_slice()));
+    if gc_window_end as u64 > seq_end || (gc_window_start as u64) < seq_start {
+        return Ok(None);
     }
 
-    npz.add_array("idx", &Array1::from(idxs))?;
-    npz.add_array("acgt0", &Array1::from(acgt0))?;
-    npz.add_array("acgt1", &Array1::from(acgt1))?;
-    npz.add_array("counts", &counts_arr)?;
+    let acgt = gc_prefixes.acgt[(gc_window_end - seq_start as u32) as usize]
+        - gc_prefixes.acgt[(gc_window_start - seq_start as u32) as usize];
+    if acgt < MIN_ACGT_BASES_FOR_GC_FRACTION
+        || (acgt as f32 / (gc_window_end - gc_window_start) as f32) < min_acgt_fraction
+    {
+        return Ok(None);
+    }
 
-    npz.finish()?;
-    Ok(Some(path))
+    let gc = gc_prefixes.gc[(gc_window_end - seq_start as u32) as usize]
+        - gc_prefixes.gc[(gc_window_start - seq_start as u32) as usize];
+    ensure!(
+        gc <= (gc_window_end - gc_window_start),
+        "GC count exceeded interval length: {} > {}",
+        gc,
+        gc_window_end - gc_window_start
+    );
+    Ok(Some(gc as usize))
 }
 
-#[derive(Clone)]
-struct CrossingPart {
-    idx: usize,
-    counts: GCCounts,
+pub fn finalize_window_buffer(
+    buf: &mut WindowState,
+    gc_prefixes: &GCPrefixes,
+    seq_start: u64,
+    seq_end: u64,
+    tile_core_start: u64,
+    tile_core_end: u64,
+    windows_aligned_to_tiles: bool,
+    apply_window_scaling: bool,
+    opt: &GCConfig,
+    avg_window_span: f64,
+    out: &mut WindowState, // TODO: Rename to something meaningful
+    crossing_parts: &mut Vec<CrossingPart>,
+) -> Result<()> {
+    if !buf.has_counts {
+        buf.counts.clear();
+        return Ok(());
+    }
+
+    compute_window_acgt(buf, gc_prefixes, seq_start, seq_end)?;
+
+    if !apply_window_scaling {
+        out.counts.merge_from(&buf.counts)?;
+        out.weight += 1;
+        buf.counts.clear();
+        buf.has_counts = false;
+        return Ok(());
+    }
+
+    let crosses_tile = buf.start < tile_core_start || buf.end > tile_core_end;
+    if !windows_aligned_to_tiles && crosses_tile {
+        crossing_parts.push(CrossingPart {
+            idx: buf.idx as usize,
+            counts: buf.counts.clone(),
+        });
+    } else if let Some(scaled) = process_window(buf.counts.clone(), opt, Some(avg_window_span))? {
+        out.counts.merge_from(&scaled)?;
+        out.weight += 1;
+    }
+
+    buf.counts.clear();
+    buf.has_counts = false;
+    Ok(())
 }
 
 struct ReduceState {
@@ -221,12 +198,12 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         gc_percent_widths: reference_gc_percent_widths,
         metadata: reference_metadata,
     } = load_reference_gc_data(&opt.ref_gc_dir)?;
-
     let avg_norm_ref_counts = mean_scale_per_length_array(
         &reference_counts,
         0.,
         Some(&reference_outliers_support_mask),
     );
+    drop(reference_counts);
 
     // Create output directory
     create_dir_all(&opt.ioc.output_dir).context("Cannot create output_dir")?;
@@ -256,6 +233,11 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         _ => None,
     };
 
+    let window_stats =
+        compute_window_stats(&window_opt, windows_map.as_ref(), &contigs, &chromosomes)?;
+    let avg_window_span = window_stats.avg_span;
+    let total_windows = window_stats.total_windows;
+
     // Build tiles (core plus halo = max fragment length) to bound memory per worker
     let halo_bp = reference_metadata.max_fragment_length as u32;
     let align_bp = match &window_opt {
@@ -281,9 +263,6 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads as usize)?;
-
-    let avg_window_span =
-        compute_avg_window_span(&window_opt, windows_map.as_ref(), &contigs, &chromosomes)?;
 
     println!("Start: Counting per tile");
 
@@ -327,8 +306,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             )?;
 
             let mut state = ReduceState::new(&zero_counts);
-            state.merge_scaled(&tile_counts.contained_scaled_sum)?;
-            state.add_weight(tile_counts.contained_weight);
+            state.merge_scaled(&tile_counts.counts)?;
+            state.add_weight(tile_counts.weight);
             state.merge_counters(counter);
             state.push_crossing_file(tile_counts.crossing_file);
 
@@ -356,8 +335,6 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         )?;
         reduce_state.scaled_sum.merge_from(&cross_sum)?;
         reduce_state.scaled_weight += cross_weight;
-    } else if matches!(window_opt, WindowSpec::Global) {
-        reduce_state.scaled_weight = 1;
     }
 
     let keep_temp = false;
@@ -373,15 +350,27 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         eprintln!("kept temp tiles in {}", temp_dir.display());
     }
 
+    let counted_windows = if matches!(window_opt, WindowSpec::Global) {
+        usize::from(reduce_state.scaled_weight > 0)
+    } else {
+        reduce_state.scaled_weight
+    };
+
+    let scaling_weight = if matches!(window_opt, WindowSpec::Global) && counted_windows > 0 {
+        1usize
+    } else {
+        reduce_state.scaled_weight
+    };
+
     let global_counter = reduce_state.counters;
 
     ensure!(
-        reduce_state.scaled_weight > 0,
+        scaling_weight > 0,
         "No usable GC bias windows produced counts. Check window settings and blacklist coverage."
     );
 
     let mut avg_gc_counts = reduce_state.scaled_sum.clone();
-    avg_gc_counts.scale_counts(1.0 / reduce_state.scaled_weight as f64)?;
+    avg_gc_counts.scale_counts(1.0 / scaling_weight as f64)?;
     drop(reduce_state);
 
     // Smoothe GC counts on counts-level for each fragment length
@@ -457,9 +446,9 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     }
 
     // Smoothe the *normalized* counts
-    println!("Start: Smoothing counts with 2D Gaussian kernel");
     let do_smoothing = false;
     let smoothed_gc_counts = if do_smoothing {
+        println!("Start: Smoothing counts with 2D Gaussian kernel");
         // 5-element kernel (-2...+2)
         let radius: usize = 2;
         // Standard deviation (quite sharp so not too smoothed)
@@ -487,11 +476,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     )?;
     let gc_bins = bin_greedily_by_mass(&smoothed_gc_counts, 1, opt.min_gc_bin_mass as f64, 1)?;
 
-    // a) Collapse row-mean-scaled reference counts into the length and GC bins
-    // We average the values at the collapsed indices, weighted by the occurence of the lengths in the cfDNA.
-    // b) Collapse cfDNA counts into the length and GC bins.
-    // We sum them to answer the question: "What is the probability of seeing this bin".
-    // TODO: Since only the length dimension is normalized, these operations make a big difference. Reconsider them carefully!
+    // Collapse GC and length bins
     let (binned_ref_counts, binned_gc_counts) = {
         let ref_gc_binned = collapse_counts_by_bins(
             &avg_norm_ref_counts,
@@ -675,6 +660,10 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         "  Fragments counted one or more times: {}",
         global_counter.base.counted_fragments
     );
+    println!(
+        "  Windows processed: {} total, {} with counts",
+        total_windows, counted_windows
+    );
     if !matches!(outlier_rule, OutlierRule::None) {
         println!(
             "  Outlier handling: examined: {} ({} adjusted), unsupported examined: {} ({} adjusted), clamped to [0.1,10.0]: {}",
@@ -690,22 +679,6 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     Ok(())
 }
 
-struct TileWindowCounts {
-    contained_scaled_sum: GCCounts,
-    contained_weight: usize,
-    crossing_file: Option<PathBuf>,
-}
-
-impl TileWindowCounts {
-    fn empty(template: &GCCounts) -> anyhow::Result<Self> {
-        Ok(Self {
-            contained_scaled_sum: template.zeroed_like()?,
-            contained_weight: 0,
-            crossing_file: None,
-        })
-    }
-}
-
 fn process_tile(
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
@@ -718,129 +691,72 @@ fn process_tile(
     template: &GCCounts,
     temp_dir: &PathBuf,
     blacklist_intervals: &[(u64, u64)],
-) -> anyhow::Result<(TileWindowCounts, GCCounters)> {
+) -> anyhow::Result<(WindowState, GCCounters)> {
+    let apply_window_scaling = !matches!(window_opt, WindowSpec::Global);
+
     // Open a fresh BAM reader for this thread
     let (mut reader, tid, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
-
-    let seq_start = tile.fetch_start as u64;
-    let seq_end = tile.fetch_end.min(chrom_len as u32) as u64;
-
-    // Load only the tile span (core plus halo)
-    let mut seq_bytes = read_seq_in_range(
-        &opt.ref_genome.ref_2bit,
-        &tile.chr,
-        seq_start as usize..seq_end as usize,
-    )?;
-    apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals, seq_start);
-    let gc_prefixes = build_gc_prefixes(&seq_bytes);
-
-    // Delete seq_bytes from memory
-    drop(seq_bytes);
 
     // Initialize counters (default -> 0s)
     let mut counter = GCCounters::default();
 
-    // Build per-tile window list (overlapping core)
-    let mut tile_windows: Vec<(u64, u64, u64, bool, u64, u64)> = Vec::new(); // (abs_start, abs_end, idx, contained, total_len, observed_len)
-    match window_opt {
-        WindowSpec::Bed(_) => {
-            let win_slice = windows_opt.ok_or_else(|| {
-                anyhow!(
-                    "Window specification is windowed, but no windows provided for chromosome {}",
-                    &tile.chr
-                )
-            })?;
-            if win_slice.is_empty() {
-                return Ok((TileWindowCounts::empty(template)?, counter));
-            }
-            for &(ws, we, idx) in overlapping_windows_for_tile(win_slice, tile, tile_window_span) {
-                let contained = ws >= tile.core_start as u64 && we <= tile.core_end as u64;
-                let span = we.saturating_sub(ws);
-                tile_windows.push((ws, we, idx, contained, span, 0));
-            }
-        }
-        WindowSpec::Size(window_bp) => {
-            let core_start_bp = tile.core_start as u64;
-            let core_end_bp = tile.core_end as u64;
-            let first_bin_idx = core_start_bp / *window_bp;
-            let last_bin_idx = core_end_bp.saturating_sub(1) / *window_bp;
+    let mut out = WindowState::new(0, 0, 0, true, template)?;
+    let mut crossing_parts: Vec<CrossingPart> = Vec::new();
 
-            for bin_idx in first_bin_idx..=last_bin_idx {
-                let window_start = bin_idx * *window_bp;
-                if window_start >= chrom_len {
-                    break;
-                }
-                let window_end = (bin_idx + 1).saturating_mul(*window_bp);
-                let clamped_end = window_end.min(chrom_len);
-                let total_span = clamped_end.saturating_sub(window_start);
-                let is_contained = window_start >= core_start_bp && clamped_end <= core_end_bp;
-
-                tile_windows.push((
-                    window_start,
-                    clamped_end,
-                    bin_idx,
-                    is_contained,
-                    total_span,
-                    0,
-                ));
-            }
-        }
-        WindowSpec::Global => {
-            let span = (tile.core_end - tile.core_start) as u64;
-            tile_windows.push((
-                tile.core_start as u64,
-                tile.core_end as u64,
-                0,
-                true,
-                span,
-                0,
-            ));
-        }
+    // Prep tile windows:
+    // - Fixed-size windows get two rolling WindowState buffers so we can slide without reallocating.
+    // - BED/global windows get a Vec of WindowState built from the cached span to stay aligned with global indices.
+    // - If the cached span is empty (no BED overlaps), we skip the tile before touching reference sequence or BAM.
+    let prepared_windows = prepare_tile_windows(
+        window_opt,
+        windows_opt,
+        tile,
+        tile_window_span,
+        chrom_len,
+        template,
+    )?;
+    if prepared_windows.skip_tile {
+        return Ok((out, counter));
     }
+    let mut windows = prepared_windows.windows;
+    let streaming_buffers = prepared_windows.streaming_buffers;
 
-    if tile_windows.is_empty() {
-        return Ok((TileWindowCounts::empty(template)?, counter));
-    }
+    let seq_start = tile.fetch_start as u64;
+    let seq_end = tile.fetch_end.min(chrom_len as u32) as u64;
 
-    let tile_window_intervals: Vec<(u64, u64, u64)> = tile_windows
-        .iter()
-        .enumerate()
-        .map(|(local_idx, (s, e, _, _, _, _))| (*s, *e, local_idx as u64))
-        .collect();
-
-    // Initialize count arrays
-    let mut counts_by_bin = vec![
-        GCCounts::new(
-            reference_metadata.min_fragment_length,
-            reference_metadata.max_fragment_length,
-            reference_metadata.end_offset as usize,
-            (0, 0)
+    let gc_prefixes = {
+        // Load only the tile span (core plus halo)
+        let mut seq_bytes = read_seq_in_range(
+            &opt.ref_genome.ref_2bit,
+            &tile.chr,
+            seq_start as usize..seq_end as usize,
         )?;
-        tile_windows.len()
-    ];
+        // Blacklist GC prefixes to avoid using blacklist-overlapping fragments in bias-estimation
+        // NOTE: Downstream commands don't blacklist prefixes so it's possible to correct such fragments
+        // using their full GC context
+        apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals, seq_start);
+        build_gc_prefixes(&seq_bytes)
+    };
 
-    let mut mutable_seq_end = seq_end.clone();
-    // Count the number of ACGT bases and total number of bases per window (clipped to fetched span)
-    for (bin_idx, (start, end, _, _, total_len, observed_len)) in
-        tile_windows.iter_mut().enumerate()
-    {
-        let start_local = start.saturating_sub(seq_start) as usize;
-        let end_local = end.min(&mut mutable_seq_end).saturating_sub(seq_start) as usize;
-        if end_local <= start_local || end_local > gc_prefixes.acgt.len() - 1 {
-            continue;
+    // Decide whether we run streaming (fixed-size windows) or per-window Vec (BED/global)
+    let using_streaming = streaming_buffers.is_some();
+
+    let mut tile_window_intervals: Option<Vec<(u64, u64, u64)>> = None;
+    if !using_streaming {
+        if windows.is_empty() {
+            return Ok((out, counter));
         }
-        let acgt_count = gc_prefixes.acgt[end_local] - gc_prefixes.acgt[start_local];
-        let obs_len = (end_local - start_local) as u64;
-        *observed_len = obs_len;
-        let denom = if *total_len > 0 && *observed_len == 0 {
-            *total_len
-        } else {
-            obs_len
-        };
-        counts_by_bin[bin_idx].num_acgt_out_of = (acgt_count as u64, denom);
+        tile_window_intervals = Some(
+            windows
+                .iter()
+                .enumerate()
+                .map(|(local_idx, w)| (w.start, w.end, local_idx as u64))
+                .collect(),
+        );
     }
 
     // Fraction of a fragment that must overlap with a window to assign to that window
+    // Keeps overlap assignment consistent between streaming and non-streaming paths
     let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
         WindowAssigner::Any | WindowAssigner::CountOverlap => {
             1. / (reference_metadata.max_fragment_length as f64 + 1.0)
@@ -850,9 +766,6 @@ fn process_tile(
         } // 1.0 but just below to avoid rounding errors
         WindowAssigner::Proportion(p) => p,
     };
-
-    // Streaming pointers
-    let mut wd_ptr = 0; // Genomic window
 
     reader
         .fetch((tid, tile.fetch_start as i64, tile.fetch_end as i64))
@@ -884,224 +797,261 @@ fn process_tile(
     )
     .with_local_counters();
 
-    // Convert variables once
-    let end_offset_u32 = reference_metadata.end_offset as u32;
-    let min_acgt_fraction = 1.0f32;
+    if let Some((window_bp, mut current, mut next)) = streaming_buffers {
+        // Fixed-size windows
+        // Streaming branch: maintain a sliding pair of window buffers to avoid per-window allocations
+        for fragment_res in iter.by_ref() {
+            let fragment = fragment_res.context("reading fragment")?;
+            let fragment_length = fragment.len();
 
-    // Iterate fragments and count GC
-    for fragment_res in iter.by_ref() {
-        let fragment = fragment_res.context("reading fragment")?;
-        let fragment_length = fragment.len();
-
-        // Only count fragments whose start lies inside the tile core to avoid double counting
-        if fragment.start < tile.core_start || fragment.start >= tile.core_end {
-            continue;
-        }
-
-        // Apply fragment end offsets
-        let gc_window_start = fragment.start.saturating_add(end_offset_u32);
-        let gc_window_end = fragment.end.saturating_sub(end_offset_u32);
-        if gc_window_end <= gc_window_start {
-            continue;
-        }
-
-        if gc_window_end as u64 > seq_end || (gc_window_start as u64) < seq_start {
-            continue;
-        }
-
-        // Extract GC count in the interval. We store raw GC counts per length.
-        let gc_count = {
-            let acgt = gc_prefixes.acgt[(gc_window_end - seq_start as u32) as usize]
-                - gc_prefixes.acgt[(gc_window_start - seq_start as u32) as usize];
-            if acgt < MIN_ACGT_BASES_FOR_GC_FRACTION
-                || (acgt as f32 / (gc_window_end - gc_window_start) as f32) < min_acgt_fraction
-            {
+            // Only count fragments whose start lies inside the tile core to avoid double counting
+            if fragment.start < tile.core_start || fragment.start >= tile.core_end {
                 continue;
             }
 
-            let gc = gc_prefixes.gc[(gc_window_end - seq_start as u32) as usize]
-                - gc_prefixes.gc[(gc_window_start - seq_start as u32) as usize];
-            ensure!(
-                gc <= (gc_window_end - gc_window_start),
-                "GC count exceeded interval length: {} > {}",
-                gc,
-                gc_window_end - gc_window_start
-            );
-            gc as usize
-        };
+            // If the fragment is past the current window, finalize and advance the buffers
+            while fragment.start as u64 >= current.end {
+                finalize_window_buffer(
+                    &mut current,
+                    &gc_prefixes,
+                    seq_start,
+                    seq_end,
+                    tile.core_start as u64,
+                    tile.core_end as u64,
+                    windows_aligned_to_tiles,
+                    apply_window_scaling,
+                    opt,
+                    avg_window_span,
+                    &mut out,
+                    &mut crossing_parts,
+                )?;
+                let mut recycled = current;
+                current = next;
 
-        // Find all overlapping windows
-        let (interval_start, interval_end) = match opt.window_assignment.assign_by {
-            WindowAssigner::Midpoint => {
-                let midpoint =
-                    midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
-                (midpoint, midpoint + 1)
+                // Prepare the next buffer using the recycled allocation
+                let next_idx = current.idx + 1;
+                let (next_start, next_end) =
+                    fixed_size_window_bounds(next_idx, window_bp, chrom_len);
+                let next_contained =
+                    next_start >= tile.core_start as u64 && next_end <= tile.core_end as u64;
+                recycled.reset(next_idx, next_start, next_end, next_contained, template)?;
+                next = recycled;
             }
-            WindowAssigner::Any
-            | WindowAssigner::All
-            | WindowAssigner::Proportion(_)
-            | WindowAssigner::CountOverlap => (fragment.start, fragment.end),
-        };
-        let overlapping_windows = find_overlapping_windows(
-            chrom_len,
-            &mut wd_ptr,
-            Some(tile_window_intervals.as_slice()),
-            None,
-            interval_start.into(),
-            interval_end.into(),
-            min_overlap_fraction,
-            reference_metadata.max_fragment_length as u64,
-        )?;
-        let overlapping_windows = if let Some(overlaps) = overlapping_windows {
-            overlaps
-        } else {
-            continue;
-        };
 
-        counter.base.counted_fragments += 1;
-
-        // Increment counter by 1.0 or by the overlap fraction
-        // NOTE: incrementer handles min-gc-pct offsetting!
-        for overlapped_window in overlapping_windows.windows {
-            let count_weight = match opt.window_assignment.assign_by {
-                WindowAssigner::CountOverlap => overlapped_window.overlap_fraction as f64,
-                _ => 1.0f64,
+            let Some(gc_count) = get_fragment_gc(
+                &fragment,
+                seq_start,
+                seq_end,
+                reference_metadata.end_offset as u32,
+                &gc_prefixes,
+                1.0,
+            )?
+            else {
+                continue;
             };
-            counts_by_bin[overlapped_window.idx].incr_weighted(
-                fragment_length as usize,
-                gc_count,
-                count_weight,
+
+            let (interval_start, interval_end) = match opt.window_assignment.assign_by {
+                WindowAssigner::Midpoint => {
+                    let midpoint =
+                        midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
+                    (midpoint, midpoint + 1)
+                }
+                WindowAssigner::Any
+                | WindowAssigner::All
+                | WindowAssigner::Proportion(_)
+                | WindowAssigner::CountOverlap => (fragment.start, fragment.end),
+            };
+
+            let fragment_span_length = (interval_end - interval_start) as f64;
+
+            // Choose buffers to update: at most current and next for fixed-size windows
+            let mut targets: Vec<(&mut WindowState, f64)> = Vec::with_capacity(2);
+            let overlap_current = overlap_length(
+                interval_start as u64,
+                interval_end as u64,
+                current.start,
+                current.end,
             );
+            if overlap_current > 0 {
+                let fraction = overlap_current as f64 / fragment_span_length;
+                if fraction >= min_overlap_fraction {
+                    // Increment counter by 1.0 or by the overlap fraction
+                    let count_weight = match opt.window_assignment.assign_by {
+                        WindowAssigner::CountOverlap => fraction,
+                        _ => 1.0f64,
+                    };
+                    targets.push((&mut current, count_weight));
+                }
+            }
+
+            let overlap_next = overlap_length(
+                interval_start as u64,
+                interval_end as u64,
+                next.start,
+                next.end,
+            );
+            if overlap_next > 0 {
+                let fraction = overlap_next as f64 / fragment_span_length;
+                if fraction >= min_overlap_fraction {
+                    // Increment counter by 1.0 or by the overlap fraction
+                    let count_weight = match opt.window_assignment.assign_by {
+                        WindowAssigner::CountOverlap => fraction,
+                        _ => 1.0,
+                    };
+                    targets.push((&mut next, count_weight));
+                }
+            }
+
+            if targets.is_empty() {
+                continue;
+            }
+
+            counter.base.counted_fragments += 1;
+
+            for (buf, count_weight) in targets {
+                buf.has_counts = true;
+                buf.counts
+                    .incr_weighted(fragment_length as usize, gc_count, count_weight);
+            }
+        }
+
+        // Flush both buffers so partially filled windows still reach downstream reducers
+        finalize_window_buffer(
+            &mut current,
+            &gc_prefixes,
+            seq_start,
+            seq_end,
+            tile.core_start as u64,
+            tile.core_end as u64,
+            windows_aligned_to_tiles,
+            apply_window_scaling,
+            opt,
+            avg_window_span,
+            &mut out,
+            &mut crossing_parts,
+        )?;
+        finalize_window_buffer(
+            &mut next,
+            &gc_prefixes,
+            seq_start,
+            seq_end,
+            tile.core_start as u64,
+            tile.core_end as u64,
+            windows_aligned_to_tiles,
+            apply_window_scaling,
+            opt,
+            avg_window_span,
+            &mut out,
+            &mut crossing_parts,
+        )?;
+    } else {
+        let mut window_ptr = 0usize; // Genomic window pointer reused by overlap finder
+        let tile_window_intervals = tile_window_intervals
+            .as_ref()
+            .expect("tile window intervals missing for non-streaming windows");
+
+        // Iterate fragments and count GC
+        for fragment_res in iter.by_ref() {
+            let fragment = fragment_res.context("reading fragment")?;
+            let fragment_length = fragment.len();
+
+            // Only count fragments whose start lies inside the tile core to avoid double counting
+            if fragment.start < tile.core_start || fragment.start >= tile.core_end {
+                continue;
+            }
+
+            let Some(gc_count) = get_fragment_gc(
+                &fragment,
+                seq_start,
+                seq_end,
+                reference_metadata.end_offset as u32,
+                &gc_prefixes,
+                1.0,
+            )?
+            else {
+                continue;
+            };
+
+            // Find all overlapping windows
+            let (interval_start, interval_end) = match opt.window_assignment.assign_by {
+                WindowAssigner::Midpoint => {
+                    let midpoint =
+                        midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
+                    (midpoint, midpoint + 1)
+                }
+                WindowAssigner::Any
+                | WindowAssigner::All
+                | WindowAssigner::Proportion(_)
+                | WindowAssigner::CountOverlap => (fragment.start, fragment.end),
+            };
+            let overlapping_windows = find_overlapping_windows(
+                chrom_len,
+                &mut window_ptr,
+                Some(tile_window_intervals.as_slice()),
+                None,
+                interval_start.into(),
+                interval_end.into(),
+                min_overlap_fraction,
+                reference_metadata.max_fragment_length as u64,
+            )?;
+            let overlapping_windows = if let Some(overlaps) = overlapping_windows {
+                overlaps
+            } else {
+                continue;
+            };
+
+            counter.base.counted_fragments += 1;
+
+            // Increment counter by 1.0 or by the overlap fraction
+            for overlapped_window in overlapping_windows.windows {
+                let count_weight = match opt.window_assignment.assign_by {
+                    WindowAssigner::CountOverlap => overlapped_window.overlap_fraction as f64,
+                    _ => 1.0f64,
+                };
+                if let Some(state) = windows.get_mut(overlapped_window.idx) {
+                    state.has_counts = true;
+                    state
+                        .counts
+                        .incr_weighted(fragment_length as usize, gc_count, count_weight);
+                }
+            }
+        }
+
+        for mut w in windows {
+            finalize_window_buffer(
+                &mut w,
+                &gc_prefixes,
+                seq_start,
+                seq_end,
+                tile.core_start as u64,
+                tile.core_end as u64,
+                windows_aligned_to_tiles,
+                apply_window_scaling,
+                opt,
+                avg_window_span,
+                &mut out,
+                &mut crossing_parts,
+            )?;
         }
     }
 
-    // Get counters from iterator
     counter.add_from_snapshot(iter.counters_snapshot());
 
-    let mut out = TileWindowCounts {
-        contained_scaled_sum: template.zeroed_like()?,
-        contained_weight: 0,
-        crossing_file: None,
-    };
-    let mut crossing_parts: Vec<CrossingPart> = Vec::new();
-    for (bin_idx, (_, _, idx, contained, _, _)) in tile_windows.into_iter().enumerate() {
-        let gc_counts = counts_by_bin
-            .get(bin_idx)
-            .cloned()
-            .context("Tile window count missing")?;
-        if matches!(window_opt, WindowSpec::Global) {
-            if gc_counts.pct_acgt() < opt.min_window_acgt_pct as f64 {
-                continue;
-            }
-            if gc_counts.sum() == 0.0 || gc_counts.num_acgt_out_of.0 == 0 {
-                continue;
-            }
-            out.contained_scaled_sum.merge_from(&gc_counts)?;
-            out.contained_weight += 1;
-            continue;
-        }
-
-        if contained {
-            if let Some(scaled) = process_window(gc_counts, opt, Some(avg_window_span))? {
-                out.contained_scaled_sum.merge_from(&scaled)?;
-                out.contained_weight += 1;
-            }
-        } else if !windows_aligned_to_tiles {
-            crossing_parts.push(CrossingPart {
-                idx: idx as usize,
-                counts: gc_counts,
-            });
+    // Write crossing parts when windows are not aligned
+    // Streaming and non-streaming share the same writer
+    out.crossing_file = if using_streaming {
+        if !windows_aligned_to_tiles {
+            write_crossing_parts(temp_dir, tile.index, template, &crossing_parts)?
         } else {
-            ensure!(
-                contained,
-                "Windows were expected to align with tiles, but window {} in tile {} crossed a boundary",
-                idx,
-                tile.index
-            );
+            None
         }
-    }
-
-    out.crossing_file = if !windows_aligned_to_tiles && !matches!(window_opt, WindowSpec::Global) {
+    } else if !windows_aligned_to_tiles && !matches!(window_opt, WindowSpec::Global) {
         write_crossing_parts(temp_dir, tile.index, template, &crossing_parts)?
     } else {
         None
     };
 
     Ok((out, counter))
-}
-
-pub fn stream_crossing_files(
-    mut files: Vec<PathBuf>,
-    template: &GCCounts,
-    opt: &GCConfig,
-    avg_window_span: f64,
-) -> Result<(GCCounts, usize)> {
-    if files.is_empty() {
-        return Ok((template.zeroed_like()?, 0));
-    }
-    files.sort_by_key(|p| {
-        parse_tile_index(p.file_name().and_then(|s| s.to_str()).unwrap_or("")).unwrap_or(u32::MAX)
-    });
-
-    let mut total_sum = template.zeroed_like()?;
-    let mut total_weight = 0usize;
-
-    let mut current_idx: Option<usize> = None;
-    let mut current_counts: Option<GCCounts> = None;
-    for path in files {
-        let file = File::open(&path)?;
-        let mut npz = NpzReader::new(BufReader::new(file))?;
-        let idxs: Array1<u64> = npz.by_name("idx")?;
-        let acgt0: Array1<u64> = npz.by_name("acgt0")?;
-        let acgt1: Array1<u64> = npz.by_name("acgt1")?;
-        let counts: Array2<f64> = npz.by_name("counts")?;
-        ensure!(
-            counts.dim().1 == template.borrow_raw_counts().len(),
-            "Counts matrix width mismatch in {:?}",
-            path
-        );
-        ensure!(
-            idxs.len() == counts.nrows() && acgt0.len() == idxs.len() && acgt1.len() == idxs.len(),
-            "Crossing file {:?} had inconsistent vector lengths",
-            path
-        );
-
-        for rec_idx in 0..idxs.len() {
-            let row = counts.row(rec_idx).to_vec();
-            let counts = GCCounts::from_parts(
-                row,
-                template.length_min,
-                template.length_max,
-                template.end_offset(),
-                (acgt0[rec_idx], acgt1[rec_idx]),
-            )?;
-
-            let idx = idxs[rec_idx] as usize;
-            if current_idx != Some(idx) {
-                if let (Some(_ci), Some(cc)) = (current_idx, current_counts.take()) {
-                    if let Some(scaled) = process_window(cc, opt, Some(avg_window_span))? {
-                        total_sum.merge_from(&scaled)?;
-                        total_weight += 1;
-                    }
-                }
-                current_idx = Some(idx);
-                current_counts = Some(counts);
-            } else if let Some(cc) = current_counts.as_mut() {
-                cc.merge_from(&counts)?;
-            }
-        }
-
-        let _ = std::fs::remove_file(&path);
-    }
-
-    if let (Some(_), Some(cc)) = (current_idx, current_counts.take()) {
-        if let Some(scaled) = process_window(cc, opt, Some(avg_window_span))? {
-            total_sum.merge_from(&scaled)?;
-            total_weight += 1;
-        }
-    }
-
-    Ok((total_sum, total_weight))
 }
 
 pub fn process_window(
