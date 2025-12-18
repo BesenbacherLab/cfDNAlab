@@ -36,7 +36,7 @@ def fn(...):
     """
     Short, friendly summary that teaches the idea in plain language.
 
-    Technical details: note important behavior, invariants, and caveats.
+    Technical details that note important behavior, invariants, and caveats.
     Mention performance characteristics if relevant.
 
     Parameters
@@ -68,6 +68,8 @@ If I tell you to give me a conceptual answer, it's completely forbidden for you 
 ## Engineering Choices
 
 **Don’t overengineer by default.** Favor readability and maintainability. If a more complex design offers clear benefits, it’s acceptable — note the benefit briefly or ask which path to take.
+
+Do not fail silently. If something is wrong, the program should tell the user. Do not find fancy ways to avoid handling what should actually be errors!
 
 ## General Rules
 
@@ -117,6 +119,8 @@ Name tests as Given_When_Then or Should_X_When_Y.
 Example: splits_fields_when_quotes_present.
 
 One behavioral concept per test. Multiple assertions are fine if they express the same idea.
+
+Use descriptive comments to show your derivations and intentions with each block in pedagogical terms.
 
 ### Determinism
 
@@ -238,3 +242,7 @@ If my reasoning is weak, dissect it and show why. If I’m fooling myself or lyi
 Then give a precise, prioritized plan what to change in thought, action, or mindset to reach the next level. Hold nothing back. Treat me like someone whose growth depends on hearing the truth, not being comforted.
 
 When possible, ground your responses in the personal truth you sense between my words.
+
+---
+
+DO NOT USE SEMICOLONS ";" IN DOCSTRINGS!

@@ -52,7 +52,7 @@ fn filters_on_mapping_quality_and_fragment_membership() -> Result<()> {
     let lengths = read_fragment_lengths(&out_bam)?;
     assert!(
         lengths.iter().all(|&len| len == 160),
-        "Surviving reads must carry the fragment_length AUX tag"
+        "Surviving reads must carry the FLEN AUX tag"
     );
 
     Ok(())
@@ -256,7 +256,7 @@ fn writes_coverage_weight_when_scaling_factors_provided() -> Result<()> {
     cfg.scale_genome.scaling_factors = Some(scaling);
 
     run_inner(&cfg)?;
-    let weights = read_tag_values(&out_bam, b"coverage_weight")?;
+    let weights = read_tag_values(&out_bam, b"COV")?;
     assert_eq!(
         weights,
         vec![2.0f32, 2.0f32],
@@ -308,7 +308,7 @@ fn read_fragment_lengths(path: &Path) -> Result<Vec<u32>> {
     let mut values = Vec::new();
     for rec in reader.records() {
         let rec = rec?;
-        if let Ok(Aux::U32(value)) = rec.aux(b"fragment_length") {
+        if let Ok(Aux::U32(value)) = rec.aux(b"FLEN") {
             values.push(value);
         }
     }

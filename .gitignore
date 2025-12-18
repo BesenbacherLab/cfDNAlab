@@ -23,3 +23,5 @@ target
 Cargo.lock
 
 src/commands/wps_peaks/snyder_code.md
+
+src/commands/gc_bias/window_streaming_logic.md
