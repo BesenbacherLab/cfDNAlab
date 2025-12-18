@@ -10,21 +10,21 @@ use std::path::PathBuf;
 /// them directly to a given BAM file. Filter which reads/fragments to write and add correction
 /// weights as AUX tags on the reads. The new BAM file is coordinate-sorted.
 ///
-/// **NOTE**: This is **not** needed for running other `cfDNAlab` tools. Those tools will not use the correction tags.
+/// **NOTE**: This is **not** needed for running other `cfDNAlab` tools. Those tools will **not** automatically use the correction tags.
 ///
 /// ## Genomic smoothing (scale-genome)
 ///
 /// The coverage weight that would normally be **multiplied** with the fragment's count value (`1.0`)
-/// is written as the AUX tag `coverage_weight` to both mate reads.
+/// is written as the AUX tag `COV` to both mate reads.
 ///
 /// ## GC bias correction
 ///
 /// The GC bias correction weight that would normally be **multiplied** with the fragment's count
-/// value (`1.0` or the smoothed value) is written as the AUX tag `gc` to both mate reads.
+/// value (`1.0` or the smoothed value) is written as the AUX tag `GC` to both mate reads.
 ///
 /// ## Fragment length
 ///
-/// The fragment length is written to the AUX tag "fragment_length".
+/// The fragment length is written to the AUX tag "FLEN".
 ///
 /// ## Always-on exclusion criteria
 ///

@@ -5,9 +5,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use rust_htslib::bam::{self, Record, record::Aux};
 
-const COVERAGE_WEIGHT_TAG: &[u8] = b"coverage_weight";
-const FRAGMENT_LENGTH_TAG: &[u8] = b"fragment_length";
-const GC_WEIGHT_TAG: &[u8] = b"gc";
+const COVERAGE_WEIGHT_TAG: &[u8] = b"COV";
+const FRAGMENT_LENGTH_TAG: &[u8] = b"FLEN";
+const GC_WEIGHT_TAG: &[u8] = b"GC";
 
 /// Per-record AUX payload.
 #[derive(Debug, Default)]
@@ -89,7 +89,7 @@ pub struct RecordEntry {
 /// // End of stream:
 /// sorter.flush_all(&mut writer)?;
 /// ```
-
+///
 pub struct WindowSorter {
     heap: BinaryHeap<Reverse<HeapEntry>>,
     max_window_bp: u32, // Look-back (max fragment length)
