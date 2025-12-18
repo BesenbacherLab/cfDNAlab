@@ -124,8 +124,8 @@ pub fn finalize_window_buffer(
             idx: buf.idx as usize,
             counts: buf.counts.clone(),
         });
-    } else if let Some(scaled) = process_window(buf.counts.clone(), opt, Some(avg_window_span))? {
-        out.counts.merge_from(&scaled)?;
+    } else if process_window_in_place(&mut buf.counts, opt, Some(avg_window_span))? {
+        out.counts.merge_from(&buf.counts)?;
         out.weight += 1;
     }
 
@@ -1061,17 +1061,17 @@ fn process_tile(
     Ok((out, counter))
 }
 
-pub fn process_window(
-    mut gc_counts: GCCounts,
+pub fn process_window_in_place(
+    gc_counts: &mut GCCounts,
     opt: &GCConfig,
     avg_window_size: Option<f64>,
-) -> Result<Option<GCCounts>> {
+) -> Result<bool> {
     // Check window has enough valid positions
     if gc_counts.pct_acgt() < opt.min_window_acgt_pct as f64 {
-        return Ok(None);
+        return Ok(false);
     }
     if gc_counts.sum() == 0.0 {
-        return Ok(None);
+        return Ok(false);
     }
 
     // Get mean coverage to scale by (supported cells only)
@@ -1082,7 +1082,7 @@ pub fn process_window(
     let num_acgt = gc_counts.num_acgt_out_of.0;
     if num_acgt == 0 {
         // No positions observed
-        return Ok(None);
+        return Ok(false);
     }
     // Use avg window size to "scale the scaling"
     // So the counts don't explode in size
@@ -1092,7 +1092,18 @@ pub fn process_window(
     // Mean scale, then multiply by the usable window-size (scaled to lower values)
     gc_counts.scale_counts((1. / mean_count) * (num_acgt as f64 / avg_window_span))?;
 
-    Ok(Some(gc_counts))
+    Ok(true)
+}
+
+pub fn process_window(
+    mut gc_counts: GCCounts,
+    opt: &GCConfig,
+    avg_window_size: Option<f64>,
+) -> Result<Option<GCCounts>> {
+    if process_window_in_place(&mut gc_counts, opt, avg_window_size)? {
+        return Ok(Some(gc_counts));
+    }
+    Ok(None)
 }
 
 pub fn mean_scale_per_length_array<S, M>(
