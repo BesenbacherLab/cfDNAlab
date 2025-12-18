@@ -865,7 +865,7 @@ fn process_tile(
             let fragment_span_length = (interval_end - interval_start) as f64;
 
             // Choose buffers to update: at most current and next for fixed-size windows
-            let mut targets: Vec<(&mut WindowState, f64)> = Vec::with_capacity(2);
+            let mut current_weight: Option<f64> = None;
             let overlap_current = overlap_length(
                 interval_start as u64,
                 interval_end as u64,
@@ -880,10 +880,11 @@ fn process_tile(
                         WindowAssigner::CountOverlap => fraction,
                         _ => 1.0f64,
                     };
-                    targets.push((&mut current, count_weight));
+                    current_weight = Some(count_weight);
                 }
             }
 
+            let mut next_weight: Option<f64> = None;
             let overlap_next = overlap_length(
                 interval_start as u64,
                 interval_end as u64,
@@ -898,19 +899,25 @@ fn process_tile(
                         WindowAssigner::CountOverlap => fraction,
                         _ => 1.0,
                     };
-                    targets.push((&mut next, count_weight));
+                    next_weight = Some(count_weight);
                 }
             }
 
-            if targets.is_empty() {
+            if current_weight.is_none() && next_weight.is_none() {
                 continue;
             }
 
             counter.base.counted_fragments += 1;
 
-            for (buf, count_weight) in targets {
-                buf.has_counts = true;
-                buf.counts
+            if let Some(count_weight) = current_weight {
+                current.has_counts = true;
+                current
+                    .counts
+                    .incr_weighted(fragment_length as usize, gc_count, count_weight);
+            }
+            if let Some(count_weight) = next_weight {
+                next.has_counts = true;
+                next.counts
                     .incr_weighted(fragment_length as usize, gc_count, count_weight);
             }
         }
