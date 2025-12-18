@@ -498,9 +498,19 @@ mod tests_gc_percent_grid {
         let grid = counts.to_gc_percent_grid(0, 100).expect("gc percent grid");
         let row = grid.row(0);
 
-        // Assert: mass lands in the half-up bins only.
-        assert_only_bin_has_value(row.as_slice().unwrap(), 33, 2.0);
-        assert!((row[67] - 3.0).abs() < 1e-12);
+        // Assert: derive the half-up bins explicitly
+        // calculate_gc_bin does round_half_up(100 * gc / effective_length) via (100 * gc + len/2) / len
+        // Effective length is 3 (no end trimming)
+        // gc=1 -> (100 * 1 + 3/2) / 3 = (100 + 1) / 3 = 33
+        // gc=2 -> (100 * 2 + 3/2) / 3 = (200 + 1) / 3 = 67
+        // Mass must land only in those bins
+        for (idx, &val) in row.iter().enumerate() {
+            match idx {
+                33 => assert!((val - 2.0).abs() < 1e-12, "bin 33 expected 2.0, got {}", val),
+                67 => assert!((val - 3.0).abs() < 1e-12, "bin 67 expected 3.0, got {}", val),
+                _ => assert!(val.abs() < 1e-12, "bin {} expected 0, got {}", idx, val),
+            }
+        }
     }
 
     #[test]
@@ -519,8 +529,13 @@ mod tests_gc_percent_grid {
 
         let row_len5 = grid.row(0);
         let row_len6 = grid.row(1);
-        assert!((row_len5[40] - 1.0).abs() < 1e-12); // 2/5 -> 40%
-        assert!((row_len6[50] - 2.0).abs() < 1e-12); // 3/6 -> 50%
+        // Derivation with end offsets
+        // End offset is 1 so effective length = length - 2
+        // calculate_gc_bin uses (100 * gc + eff_len/2) / eff_len
+        // len5 -> eff3: gc=2 gives (100 * 2 + 3/2) / 3 = (200 + 1) / 3 = 67
+        // len6 -> eff4: gc=3 gives (100 * 3 + 4/2) / 4 = (300 + 2) / 4 = 75
+        assert!((row_len5[67] - 1.0).abs() < 1e-12);
+        assert!((row_len6[75] - 2.0).abs() < 1e-12);
     }
 }
 

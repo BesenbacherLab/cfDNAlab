@@ -246,3 +246,4 @@ When possible, ground your responses in the personal truth you sense between my 
 ---
 
 DO NOT USE SEMICOLONS ";" IN DOCSTRINGS!
+DO NOT BE LAZY WITH COMMENTS!
