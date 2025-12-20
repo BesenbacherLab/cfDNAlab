@@ -208,6 +208,14 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
 
     pb.finish_with_message("| Finished counting");
 
+    // Release tile-level inputs before global aggregation
+    drop(tile_window_spans_for_threads);
+    drop(tile_window_spans);
+    drop(tile_seeds);
+    drop(tiles);
+    drop(windows_map);
+    drop(blacklist_map);
+
     println!("Start: Processing counts");
 
     let used_start_positions =
@@ -449,19 +457,8 @@ fn process_tile(
         opt.end_offset as usize,
     );
 
-    // Sum tile-local windows into a single accumulator
-    let merged = counts_by_bin.into_iter().try_fold(
-        GCCounts::new(
-            opt.fragment_lengths.min_fragment_length as usize,
-            opt.fragment_lengths.max_fragment_length as usize,
-            opt.end_offset as usize,
-            (0, 0),
-        )?,
-        |mut acc, c| -> Result<GCCounts> {
-            acc.merge_from(&c)?;
-            Ok(acc)
-        },
-    )?;
+    // Release per-tile start positions after counting
+    drop(tile_starts);
 
     // Compute ACGT coverage only within the core so bases are not double-counted across tiles
     let mut total_acgt_in_core = 0u64;
@@ -477,6 +474,24 @@ fn process_tile(
             gc_prefixes.acgt[clipped_end as usize] - gc_prefixes.acgt[clipped_start as usize];
         total_acgt_in_core += acgt as u64;
     }
+
+    // Release per-tile buffers before merging counts
+    drop(gc_prefixes);
+    drop(tile_windows);
+
+    // Sum tile-local windows into a single accumulator
+    let merged = counts_by_bin.into_iter().try_fold(
+        GCCounts::new(
+            opt.fragment_lengths.min_fragment_length as usize,
+            opt.fragment_lengths.max_fragment_length as usize,
+            opt.end_offset as usize,
+            (0, 0),
+        )?,
+        |mut acc, c| -> Result<GCCounts> {
+            acc.merge_from(&c)?;
+            Ok(acc)
+        },
+    )?;
 
     Ok((merged, total_acgt_in_core))
 }

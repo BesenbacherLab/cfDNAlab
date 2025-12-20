@@ -40,8 +40,7 @@ mod test_compute_window_stats {
         let contigs = build_contigs(&[("chr1", 300), ("chr2", 100)]);
         let chromosomes = vec!["chr1".to_string(), "chr2".to_string()];
 
-        let stats =
-            compute_window_stats(&window_spec, Some(&map), &contigs, &chromosomes).unwrap();
+        let stats = compute_window_stats(&window_spec, Some(&map), &contigs, &chromosomes).unwrap();
 
         assert!(
             (stats.avg_span - 70.0).abs() < f64::EPSILON,
@@ -68,7 +67,10 @@ mod test_compute_window_stats {
             "expected combined span of 2500.0, got {}",
             stats.avg_span
         );
-        assert_eq!(stats.total_windows, 1, "global mode should report one window");
+        assert_eq!(
+            stats.total_windows, 1,
+            "global mode should report one window"
+        );
     }
 
     #[test]
@@ -85,7 +87,10 @@ mod test_compute_window_stats {
             "expected average window span of 250.0, got {}",
             stats.avg_span
         );
-        assert_eq!(stats.total_windows, 6, "expected four windows on chr1 and two on chr2");
+        assert_eq!(
+            stats.total_windows, 6,
+            "expected four windows on chr1 and two on chr2"
+        );
     }
 }
 
@@ -271,6 +276,25 @@ mod tests_prepare_tile_windows {
         assert!(!next.contained);
         Ok(())
     }
+
+    #[test]
+    fn builds_global_window_for_tile_core() -> Result<()> {
+        let template = make_template();
+        let tile = make_tile();
+
+        let prepared =
+            prepare_tile_windows(&WindowSpec::Global, None, &tile, None, 500, &template)?;
+
+        assert!(!prepared.skip_tile);
+        assert!(prepared.streaming_buffers.is_none());
+        assert_eq!(prepared.windows.len(), 1);
+        let window = &prepared.windows[0];
+        assert_eq!(window.idx, 0);
+        assert_eq!(window.start, tile.core_start as u64);
+        assert_eq!(window.end, tile.core_end as u64);
+        assert!(window.contained);
+        Ok(())
+    }
 }
 
 mod tests_gc_bias_window_logic {
@@ -321,6 +345,27 @@ mod tests_gc_bias_window_logic {
         let c1 = scaled.get(10, 1).unwrap();
         assert!((c0 - 1.4666667).abs() < 1e-6);
         assert!((c1 - 2.9333334).abs() < 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn drops_window_when_acgt_fraction_below_threshold() -> Result<()> {
+        // Arrange: Only 25% of the positions are ACGT, below the 50% threshold
+        let tmp = tempdir()?;
+        let mut cfg = make_config(&tmp);
+        cfg.set_min_window_acgt_pct(50);
+
+        let mut counts = GCCounts::new(10, 10, 0, (5, 20))?;
+        counts.set(10, 0, 5.0);
+
+        // Act
+        let result = process_window(counts, &cfg, Some(100.0))?;
+
+        // Assert
+        assert!(
+            result.is_none(),
+            "window with low ACGT should be filtered out"
+        );
         Ok(())
     }
 

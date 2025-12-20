@@ -27,8 +27,8 @@ pub fn compute_window_stats(
 ) -> Result<WindowStats> {
     match window_opt {
         WindowSpec::Bed(_) => {
-            let map = windows_map
-                .ok_or_else(|| anyhow!("BED window spec requires loaded windows"))?;
+            let map =
+                windows_map.ok_or_else(|| anyhow!("BED window spec requires loaded windows"))?;
             let mut total_len: u64 = 0;
             let mut count: u64 = 0;
             for chr in chromosomes {
@@ -321,12 +321,7 @@ pub fn prepare_tile_windows(
 
             let next_idx = current_idx + 1;
             let next = window_state_from_idx(
-                next_idx,
-                *window_bp,
-                chrom_len,
-                core_start,
-                core_end,
-                template,
+                next_idx, *window_bp, chrom_len, core_start, core_end, template,
             )?;
 
             streaming_buffers = Some((*window_bp, current, next));

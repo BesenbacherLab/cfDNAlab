@@ -325,6 +325,13 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
     pb.finish_with_message("| Finished counting");
 
+    // Release tile-level inputs before global aggregation
+    drop(tile_window_spans_for_threads);
+    drop(tile_window_spans);
+    drop(tiles);
+    drop(windows_map);
+    drop(blacklist_map);
+
     println!("Start: Processing counts");
     if !windows_aligned_to_tiles && !matches!(window_opt, WindowSpec::Global) {
         let (cross_sum, cross_weight) = stream_crossing_files(
@@ -953,76 +960,81 @@ fn process_tile(
         )?;
     } else {
         let mut window_ptr = 0usize; // Genomic window pointer reused by overlap finder
-        let tile_window_intervals = tile_window_intervals
-            .as_ref()
-            .expect("tile window intervals missing for non-streaming windows");
+        {
+            let tile_window_intervals = tile_window_intervals
+                .as_ref()
+                .expect("tile window intervals missing for non-streaming windows");
 
-        // Iterate fragments and count GC
-        for fragment_res in iter.by_ref() {
-            let fragment = fragment_res.context("reading fragment")?;
-            let fragment_length = fragment.len();
+            // Iterate fragments and count GC
+            for fragment_res in iter.by_ref() {
+                let fragment = fragment_res.context("reading fragment")?;
+                let fragment_length = fragment.len();
 
-            // Only count fragments whose start lies inside the tile core to avoid double counting
-            if fragment.start < tile.core_start || fragment.start >= tile.core_end {
-                continue;
-            }
-
-            let Some(gc_count) = get_fragment_gc(
-                &fragment,
-                seq_start,
-                seq_end,
-                reference_metadata.end_offset as u32,
-                &gc_prefixes,
-                1.0,
-            )?
-            else {
-                continue;
-            };
-
-            // Find all overlapping windows
-            let (interval_start, interval_end) = match opt.window_assignment.assign_by {
-                WindowAssigner::Midpoint => {
-                    let midpoint =
-                        midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
-                    (midpoint, midpoint + 1)
+                // Only count fragments whose start lies inside the tile core to avoid double counting
+                if fragment.start < tile.core_start || fragment.start >= tile.core_end {
+                    continue;
                 }
-                WindowAssigner::Any
-                | WindowAssigner::All
-                | WindowAssigner::Proportion(_)
-                | WindowAssigner::CountOverlap => (fragment.start, fragment.end),
-            };
-            let overlapping_windows = find_overlapping_windows(
-                chrom_len,
-                &mut window_ptr,
-                Some(tile_window_intervals.as_slice()),
-                None,
-                interval_start.into(),
-                interval_end.into(),
-                min_overlap_fraction,
-                reference_metadata.max_fragment_length as u64,
-            )?;
-            let overlapping_windows = if let Some(overlaps) = overlapping_windows {
-                overlaps
-            } else {
-                continue;
-            };
 
-            counter.base.counted_fragments += 1;
-
-            // Increment counter by 1.0 or by the overlap fraction
-            for overlapped_window in overlapping_windows.windows {
-                let count_weight = match opt.window_assignment.assign_by {
-                    WindowAssigner::CountOverlap => overlapped_window.overlap_fraction as f64,
-                    _ => 1.0f64,
+                let Some(gc_count) = get_fragment_gc(
+                    &fragment,
+                    seq_start,
+                    seq_end,
+                    reference_metadata.end_offset as u32,
+                    &gc_prefixes,
+                    1.0,
+                )?
+                else {
+                    continue;
                 };
-                if let Some(state) = windows.get_mut(overlapped_window.idx) {
-                    state.has_counts = true;
-                    state
-                        .counts
-                        .incr_weighted(fragment_length as usize, gc_count, count_weight);
+
+                // Find all overlapping windows
+                let (interval_start, interval_end) = match opt.window_assignment.assign_by {
+                    WindowAssigner::Midpoint => {
+                        let midpoint =
+                            midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
+                        (midpoint, midpoint + 1)
+                    }
+                    WindowAssigner::Any
+                    | WindowAssigner::All
+                    | WindowAssigner::Proportion(_)
+                    | WindowAssigner::CountOverlap => (fragment.start, fragment.end),
+                };
+                let overlapping_windows = find_overlapping_windows(
+                    chrom_len,
+                    &mut window_ptr,
+                    Some(tile_window_intervals.as_slice()),
+                    None,
+                    interval_start.into(),
+                    interval_end.into(),
+                    min_overlap_fraction,
+                    reference_metadata.max_fragment_length as u64,
+                )?;
+                let overlapping_windows = if let Some(overlaps) = overlapping_windows {
+                    overlaps
+                } else {
+                    continue;
+                };
+
+                counter.base.counted_fragments += 1;
+
+                // Increment counter by 1.0 or by the overlap fraction
+                for overlapped_window in overlapping_windows.windows {
+                    let count_weight = match opt.window_assignment.assign_by {
+                        WindowAssigner::CountOverlap => overlapped_window.overlap_fraction as f64,
+                        _ => 1.0f64,
+                    };
+                    if let Some(state) = windows.get_mut(overlapped_window.idx) {
+                        state.has_counts = true;
+                        state
+                            .counts
+                            .incr_weighted(fragment_length as usize, gc_count, count_weight);
+                    }
                 }
             }
         }
+
+        // Release interval cache before finalizing windows
+        tile_window_intervals = None;
 
         for mut w in windows {
             finalize_window_buffer(
@@ -1041,6 +1053,9 @@ fn process_tile(
             )?;
         }
     }
+
+    // Release prefix arrays before writing crossing parts
+    drop(gc_prefixes);
 
     counter.add_from_snapshot(iter.counters_snapshot());
 

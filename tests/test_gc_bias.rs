@@ -440,28 +440,6 @@ mod tests_gc_percent_grid {
 
     use cfdnalab::commands::gc_bias::counting::GCCounts;
 
-    fn assert_only_bin_has_value(row: &[f64], idx: usize, expected: f64) {
-        for (col, &val) in row.iter().enumerate() {
-            if col == idx {
-                assert!(
-                    (val - expected).abs() < 1e-12,
-                    "bin {} expected {}, got {}",
-                    col,
-                    expected,
-                    val
-                );
-            } else {
-                assert!(
-                    val.abs() < 1e-12,
-                    "bin {} expected 0, got {} (target bin {})",
-                    col,
-                    val,
-                    idx
-                );
-            }
-        }
-    }
-
     #[test]
     fn should_place_gc_counts_in_matching_percent_bins() {
         // Arrange: one length row with distinct weights per GC count.
@@ -506,8 +484,16 @@ mod tests_gc_percent_grid {
         // Mass must land only in those bins
         for (idx, &val) in row.iter().enumerate() {
             match idx {
-                33 => assert!((val - 2.0).abs() < 1e-12, "bin 33 expected 2.0, got {}", val),
-                67 => assert!((val - 3.0).abs() < 1e-12, "bin 67 expected 3.0, got {}", val),
+                33 => assert!(
+                    (val - 2.0).abs() < 1e-12,
+                    "bin 33 expected 2.0, got {}",
+                    val
+                ),
+                67 => assert!(
+                    (val - 3.0).abs() < 1e-12,
+                    "bin 67 expected 3.0, got {}",
+                    val
+                ),
                 _ => assert!(val.abs() < 1e-12, "bin {} expected 0, got {}", idx, val),
             }
         }
