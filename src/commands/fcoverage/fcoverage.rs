@@ -360,6 +360,14 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
 
     pb.finish_with_message("| Finished counting");
 
+    // Release per-tile inputs before merging outputs
+    drop(tile_window_spans_for_threads);
+    drop(tile_window_spans);
+    drop(tiles);
+    drop(blacklist_map);
+    drop(scaling_map);
+    drop(gc_corrector);
+
     // Collect counters
     for counter in tile_results {
         global_counter += counter;
