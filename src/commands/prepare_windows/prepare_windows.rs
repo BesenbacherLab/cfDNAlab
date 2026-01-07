@@ -3,31 +3,28 @@
 //! The intended labeling and filtering logic is specified in the `label_and_filter_logic.md` document.
 //!
 //!  This module implements a memory-bounded, chromosome-streaming pipeline that:
-//!  - Validates and loads a `near` interval set (non-overlapping, unique edges).
+//!  - Validates and loads a `near` interval set (half-open, duplicate edges handled by `--near-duplicates`).
 //!  - Loads and combines blacklist intervals (with an optional halo).
 //!  - Streams the BAM file by chromosome in chunks, applying early filters,
-//!    nearest-distance binning (with `-/+/=` prefixes that reflect direction), spacing,
-//!    merging, and deduplication.
-//!  - Writes per-chromosome temporary files and concatenates them,
-//!    enforcing `min_per_group` in a final pass.
+//!    nearest-distance binning (with `-/+/=` prefixes that reflect direction),
+//!    minimum-distance filtering, merging, and deduplication.
+//!  - Writes per-chromosome temporary files and concatenates them in a final pass.
 //!
 //!  The implementation favors determinism, clear rules, and low memory usage. It
-//!  assumes input is sorted by (chrom, start). If it is not, you should either
-//!  sort upstream or add an explicit sort prepass.
+//!  assumes input is sorted by (chrom, start).
 
 use crate::commands::prepare_windows::chunk::{flush_chromosome, process_and_write_chunk};
 use crate::commands::prepare_windows::config::*;
-use crate::commands::prepare_windows::near_file::{
-    NearHit, NearIndex, NearSide, NearTie, NearestResult, load_near_index, nearest_edge_distance,
+use crate::commands::prepare_windows::filters::{
+    ExcludeRule, filter_and_write_output, parse_exclude_rules, parse_min_per_rules,
 };
+use crate::commands::prepare_windows::labels::{LabelSchema, LabelTuple};
+use crate::commands::prepare_windows::near_file::load_near_index;
 use crate::commands::prepare_windows::parsers::{
-    DistanceBins, parse_distance_bins, parse_record_line, parse_score_filter,
-    resolve_column_indices,
+    parse_distance_bins, parse_record_line, parse_score_filter, resolve_column_indices,
 };
 use crate::commands::prepare_windows::resizers::apply_size_transform;
-use crate::commands::prepare_windows::writers::{
-    ChromTempWriter, concatenate_temps_enforcing_min_per_group, finalize_temp_writers,
-};
+use crate::commands::prepare_windows::writers::{ChromTempWriter, finalize_temp_writers};
 use crate::shared::bed::{detect_header, line_looks_like_header};
 use crate::shared::blacklist::{is_blacklisted, load_blacklists};
 use crate::shared::io::open_text_reader;
@@ -48,17 +45,36 @@ use std::{env, fs, mem};
 #[derive(Debug, Clone)]
 pub struct FinalWindow {
     pub chrom: Arc<str>,
-    pub start: u32,
-    pub end: u32,
+    pub original_start: u32,
+    pub original_end: u32,
+    pub resized_start: u32,
+    pub resized_end: u32,
     pub merged: bool,
-    pub group: String,      // Empty means "no group label"
-    pub score: Option<f32>, // Present only if parsed and requested
+    pub label_tuples: Vec<LabelTuple>, // Atomic label tuples for this window
+    pub group_key: String,             // Grouping key for merge and minimum-distance filtering
+    pub score: Option<f32>,            // Present only if parsed and requested
 }
 
 impl FinalWindow {
     #[inline]
-    pub fn length(&self) -> u32 {
-        self.end - self.start
+    pub fn start_for(&self, coord_set: CoordinateSet) -> u32 {
+        match coord_set {
+            CoordinateSet::Original => self.original_start,
+            CoordinateSet::Resized => self.resized_start,
+        }
+    }
+
+    #[inline]
+    pub fn end_for(&self, coord_set: CoordinateSet) -> u32 {
+        match coord_set {
+            CoordinateSet::Original => self.original_end,
+            CoordinateSet::Resized => self.resized_end,
+        }
+    }
+
+    #[inline]
+    pub fn length_for(&self, coord_set: CoordinateSet) -> u32 {
+        self.end_for(coord_set) - self.start_for(coord_set)
     }
 }
 
@@ -71,21 +87,6 @@ pub struct BlacklistCursor {
 }
 
 /// Run the prepare pipeline using the provided configuration.
-///
-/// This function orchestrates near and blacklist loading, streams the main input,
-/// performs early filtering and annotation, enforces spacing and merging with
-/// chunked writes, and finally concatenates chromosome-temporaries applying
-/// the `min_per_group` filter.
-///
-/// Parameters
-/// ----------
-/// - cfg:
-///     Command-line configuration.
-///
-/// Returns
-/// -------
-/// - ok:
-///     Success or error.
 pub fn run(cfg: &PrepareConfig) -> Result<()> {
     let start_time = Instant::now();
 
@@ -108,6 +109,14 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     } else {
         None
     };
+
+    // Resolve label schema and key references
+    let label_schema = LabelSchema::new(&cfg.compose)?;
+    let merge_key = label_schema.resolve_key(&cfg.merge_key)?;
+    let out_labels = label_schema.resolve_keys(&cfg.out_labels)?;
+
+    let min_per_rules = parse_min_per_rules(&cfg.min_per, &label_schema)?;
+    let exclude_rules: Vec<ExcludeRule> = parse_exclude_rules(&cfg.exclude_labels, &label_schema)?;
 
     // How to handle missing scores
     let drop_missing_scores =
@@ -173,18 +182,23 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         make_temp_dir(&base_output_dir, "prepare_windows").context("create per-run temp dir")?;
     let mut temp_writers: FxHashMap<String, ChromTempWriter> = FxHashMap::default();
 
-    // Group counts across all chromosomes (after spacing/merge)
-    let mut global_group_counts: FxHashMap<String, u64> = FxHashMap::default();
-
     // State for streaming by chromosome with chunking
-    let chunk_size: usize = 5_000_000; // You can expose as a flag if desired
+    // Chunk size in windows to limit memory while keeping sequential IO fast
+    let chunk_size: usize = 5_000_000;
+    // Current chromosome name for grouping and change detection
     let mut current_chrom: String = String::new();
+    // Tracks chromosomes already seen to guard against out-of-order input
     let mut processed_chromosomes: FxHashSet<String> = FxHashSet::default();
+    // Previous window start for the current chromosome for ordering checks
     let mut last_start_for_current: Option<u32> = None;
+    // Tail windows that must carry into the next chunk for merging
     let mut carryover_tail: Vec<FinalWindow> = Vec::new();
+    // Batch of windows collected for processing before flush
     let mut current_batch: Vec<FinalWindow> = Vec::with_capacity(chunk_size + 1024);
+    // Known size for the current chromosome for trimming and bounds checks
     let mut current_chrom_size: Option<u32> = None;
-    let mut chrom_intern: FxHashMap<String, Arc<str>> = FxHashMap::default();
+    // Interned chromosome strings to avoid repeated allocations
+    let mut chromosome_intern_pool: FxHashMap<String, Arc<str>> = FxHashMap::default();
 
     // Optional header handling for input: skip if present
     let mut reader = input_reader;
@@ -279,10 +293,15 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
                 &mut current_batch,
                 &mut temp_writers,
                 &temp_dir,
-                &mut global_group_counts,
                 blacklist_cursors.get_mut(&current_chrom),
                 blacklist_look_back,
+                current_chrom_size,
                 cfg,
+                &mut near_index,
+                distance_bins.as_ref(),
+                &label_schema,
+                &merge_key,
+                &out_labels,
             )?;
 
             // Move to new chromosome
@@ -320,22 +339,23 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             }
         }
 
-        // Transform to final coordinates
+        // Resized coordinates are computed per record even when merging uses originals
+        // Transform to resized coordinates
         let chrom_size = current_chrom_size;
-        let Some((final_start, final_end)) = apply_size_transform(start, end, chrom_size, cfg)
+        let Some((resized_start, resized_end)) = apply_size_transform(start, end, chrom_size, cfg)
         else {
             continue;
         };
 
         // TODO: Get the cursor along with the chromosome sizes to avoid 1B get_mut calls (hashing)
-        // Blacklist pre-check on pre-merge full-size coordinates
+        // Blacklist pre-check on resized coordinates
         if let Some(cursor) = blacklist_cursors.get_mut(&chrom) {
             if !cursor.intervals.is_empty()
                 && is_blacklisted(
                     cursor.intervals.as_slice(),
                     cfg.blacklist_strategy,
-                    final_start as u64,
-                    final_end as u64,
+                    resized_start as u64,
+                    resized_end as u64,
                     blacklist_look_back,
                     &mut cursor.pre_cursor,
                 )
@@ -344,25 +364,12 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             }
         }
 
-        // Find nearest intervals and bin by distance and update the group name
-        let composed_group = if let Some(composed_group) = add_near_group_annotation(
-            &mut near_index,
-            &chrom,
-            final_start,
-            final_end,
-            cfg,
-            distance_bins.as_ref(),
-            &input_group,
-        ) {
-            composed_group
-        } else {
-            continue;
-        };
+        let label_tuples = vec![LabelTuple::new(input_group.clone())];
 
         // Intern chromosome identifiers so every window for the same chromosome
-        // shares a single heap allocation; the Arc keeps those copies alive
+        // shares a single heap allocation. The Arc keeps those copies alive
         // while allowing cheap cloning across batches.
-        let chrom_arc = match chrom_intern.entry(chrom.clone()) {
+        let chrom_arc = match chromosome_intern_pool.entry(chrom.clone()) {
             Entry::Occupied(entry) => entry.get().clone(),
             Entry::Vacant(entry) => {
                 let arc: Arc<str> = chrom.into_boxed_str().into();
@@ -374,14 +381,17 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         // Accumulate into batch
         current_batch.push(FinalWindow {
             chrom: chrom_arc,
-            start: final_start,
-            end: final_end,
+            original_start: start,
+            original_end: end,
+            resized_start,
+            resized_end,
             merged: false,
-            group: composed_group,
+            label_tuples,
+            group_key: input_group,
             score,
         });
 
-        // If batch exceeds chunk size, process and write safe prefix
+        // If batch exceeds chunk size, process and write the processed region
         if current_batch.len() >= chunk_size {
             process_and_write_chunk(
                 &current_chrom,
@@ -389,10 +399,15 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
                 &mut current_batch,
                 &mut temp_writers,
                 &temp_dir,
-                &mut global_group_counts,
                 blacklist_cursors.get_mut(&current_chrom),
                 blacklist_look_back,
+                current_chrom_size,
                 cfg,
+                &mut near_index,
+                distance_bins.as_ref(),
+                &label_schema,
+                &merge_key,
+                &out_labels,
             )?;
         }
     }
@@ -405,201 +420,34 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             &mut current_batch,
             &mut temp_writers,
             &temp_dir,
-            &mut global_group_counts,
             blacklist_cursors.get_mut(&current_chrom),
             blacklist_look_back,
+            current_chrom_size,
             cfg,
+            &mut near_index,
+            distance_bins.as_ref(),
+            &label_schema,
+            &merge_key,
+            &out_labels,
         )?;
     }
 
-    // Final pass: concatenate temps, enforcing min_per_group
+    // Final pass: apply filtering and write output
     let temp_entries = finalize_temp_writers(&mut temp_writers)?;
-    concatenate_temps_enforcing_min_per_group(cfg, &temp_entries, &global_group_counts)?;
-    fs::remove_dir_all(&temp_dir).ok();
+    filter_and_write_output(
+        cfg,
+        &temp_entries,
+        &label_schema,
+        &out_labels,
+        &min_per_rules,
+        &exclude_rules,
+        &base_output_dir,
+    )?;
+    if temp_dir.exists() {
+        fs::remove_dir_all(&temp_dir).context("Removing temp dir")?;
+    }
 
     let elapsed = start_time.elapsed();
     println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
-}
-
-/// Compose the output group label from optional parts, omitting empty segments.
-///
-/// The order is `{input_group?}.{near_group?}.{bin_label?}`.
-///
-/// Parameters
-/// ----------
-/// - input_group:
-///     Group string from `--group-cols` concatenation (may be empty).
-/// - near_group:
-///     Optional near group name.
-/// - bin_label:
-///     Optional distance bin label.
-///
-/// Returns
-/// -------
-/// - group:
-///     Composed group label (possibly empty string).
-fn compose_group_label(
-    input_group: &str,
-    near_group: Option<&str>,
-    bin_label: Option<&str>,
-) -> String {
-    let mut parts: Vec<&str> = Vec::with_capacity(3);
-    if !input_group.is_empty() {
-        parts.push(input_group);
-    }
-    if let Some(ng) = near_group {
-        if !ng.is_empty() {
-            parts.push(ng);
-        }
-    }
-    if let Some(label) = bin_label {
-        if !label.is_empty() {
-            parts.push(label);
-        }
-    }
-    parts.join(".")
-}
-
-/// Build the near-annotation label for a window using the cursor-based nearest lookup.
-/// Returns the composed group label (input group + optional near group + optional bin),
-/// or `None` when the window should be dropped by policy (e.g., ties=drop, out of range).
-fn add_near_group_annotation(
-    near_index: &mut Option<NearIndex>,
-    chrom: &str,
-    final_start: u32,
-    final_end: u32,
-    cfg: &PrepareConfig,
-    distance_bins: Option<&DistanceBins>,
-    input_group: &str,
-) -> Option<String> {
-    // If no near index (or no data for this chrom), keep the input group as-is
-    let Some(near_idx) = near_index.as_mut() else {
-        return Some(input_group.to_owned());
-    };
-    let Some(near_chrom) = near_idx.per_chrom.get_mut(chrom) else {
-        return Some(input_group.to_owned());
-    };
-    if near_chrom.intervals.is_empty() {
-        return Some(input_group.to_owned());
-    }
-
-    // Helpers
-    let is_signed_mode = matches!(cfg.distance_sign, DistSign::Signed);
-
-    let within_max_distance = |distance_bp: i32| -> bool {
-        if let Some(max_abs) = cfg.distance_max {
-            return distance_bp.unsigned_abs() <= max_abs;
-        }
-        true
-    };
-
-    let normalize_for_binning = |distance_bp: i32| -> i32 {
-        if matches!(cfg.distance_sign, DistSign::Absolute) {
-            distance_bp.abs()
-        } else {
-            distance_bp
-        }
-    };
-
-    // Compute nearest using the in-struct cursor
-    let Some(nearest_result) = nearest_edge_distance(
-        final_start,
-        final_end,
-        near_chrom,
-        &cfg.near_edge,
-        &cfg.near_direction,
-        is_signed_mode,
-    ) else {
-        // No nearby intervals within the considered directions -> keep input group only
-        return Some(input_group.to_owned());
-    };
-
-    // Compose label for the near group (+, -, =) where +/- reflect strand-relative upstream/downstream
-    let make_side_label = |hit: &NearHit| -> String {
-        let side_prefix = match hit.side {
-            NearSide::Upstream => "-",
-            NearSide::Downstream => "+",
-            NearSide::Overlap => "=",
-        };
-        match hit.group_id {
-            Some(id) => {
-                let name = near_idx.group_id_to_name[id as usize].as_str();
-                format!("{side_prefix}{name}")
-            }
-            None => side_prefix.to_string(),
-        }
-    };
-
-    match nearest_result {
-        NearestResult::Single(mut hit) => {
-            // Distance filtering
-            if !within_max_distance(hit.distance) {
-                return None;
-            }
-
-            // Normalize for binning/output according to cfg.distance_sign
-            hit.distance = normalize_for_binning(hit.distance);
-
-            // Optional bin label
-            let bin_label = distance_bins.and_then(|bins| bins.match_label(hit.distance));
-
-            // Label for the near group (+-=)
-            let near_label = make_side_label(&hit);
-
-            // Compose final group label
-            Some(compose_group_label(
-                input_group,
-                Some(near_label.as_str()),
-                bin_label,
-            ))
-        }
-
-        NearestResult::Tie(NearTie {
-            mut upstream,
-            mut downstream,
-        }) => {
-            // Caller policy: drop on ties if requested
-            if matches!(cfg.near_ties, NearTiePolicy::Drop) {
-                return None;
-            }
-
-            // Apply distance threshold and normalization to both (when present)
-            let mut kept_labels: Vec<String> = Vec::with_capacity(2);
-
-            if let Some(ref mut upstream_hit) = upstream {
-                if within_max_distance(upstream_hit.distance) {
-                    upstream_hit.distance = normalize_for_binning(upstream_hit.distance);
-                    kept_labels.push(make_side_label(upstream_hit));
-                }
-            }
-            if let Some(ref mut downstream_hit) = downstream {
-                if within_max_distance(downstream_hit.distance) {
-                    downstream_hit.distance = normalize_for_binning(downstream_hit.distance);
-                    kept_labels.push(make_side_label(downstream_hit));
-                }
-            }
-
-            if kept_labels.is_empty() {
-                return None;
-            }
-
-            // Distances in a tie have the same absolute value by construction; pick one for binning
-            let bin_distance = upstream
-                .as_ref()
-                .map(|h| h.distance)
-                .or_else(|| downstream.as_ref().map(|h| h.distance))
-                .unwrap();
-
-            let bin_label = distance_bins.and_then(|bins| bins.match_label(bin_distance));
-
-            let near_combo = kept_labels.join("/");
-
-            Some(compose_group_label(
-                input_group,
-                Some(near_combo.as_str()),
-                bin_label,
-            ))
-        }
-    }
 }

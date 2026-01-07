@@ -3,7 +3,8 @@ use crate::commands::prepare_windows::config::{OobPolicy, PrepareConfig};
 /// Apply resize or flank transform to a window.
 ///
 /// The function returns final coordinates and ensures they are valid with respect
-/// to chromosome bounds according to the out-of-bounds policy.
+/// to chromosome bounds according to the out-of-bounds policy when a size
+/// transform is applied.
 ///
 /// Parameters
 /// ----------
@@ -29,8 +30,10 @@ pub fn apply_size_transform(
     cfg: &PrepareConfig,
 ) -> Option<(u32, u32)> {
     let (mut out_start, mut out_end) = (start, end);
+    let mut transformed = false;
 
     if let Some(size) = cfg.resize {
+        transformed = true;
         // Center on midpoint. Odd sizes center exactly; even sizes choose a side randomly
         // to avoid bias if you configured a seed; otherwise, round left deterministically
         // by defaulting to left if no seed was given.
@@ -53,6 +56,7 @@ pub fn apply_size_transform(
             }
         }
     } else if let Some(flanks) = cfg.flank.as_ref() {
+        transformed = true;
         let left = flanks[0];
         let right = flanks[1];
         // Allow zero and directionality; negative values are clipped later by policy
@@ -63,6 +67,10 @@ pub fn apply_size_transform(
         if out_end < out_start {
             return None;
         }
+    }
+
+    if !transformed {
+        return Some((out_start, out_end));
     }
 
     // Out-of-bounds handling

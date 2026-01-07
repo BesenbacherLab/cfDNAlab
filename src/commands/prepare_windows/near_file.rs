@@ -1,4 +1,4 @@
-use crate::commands::prepare_windows::config::NearEdge;
+use crate::commands::prepare_windows::{config::NearEdge, labels::validate_label_token};
 use crate::{commands::prepare_windows::config::NearDirection, shared::io::open_text_reader};
 use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
@@ -178,9 +178,15 @@ pub fn load_near_index(
         };
 
         let group = if group_col_present {
-            it.next()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
+            match it.next().map(|s| s.trim()) {
+                Some(name) if !name.is_empty() => {
+                    if let Err(message) = validate_label_token(name, "near group label") {
+                        bail!(message);
+                    }
+                    Some(name.to_string())
+                }
+                _ => None,
+            }
         } else {
             None
         };

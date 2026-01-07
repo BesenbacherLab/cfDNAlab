@@ -1,3 +1,4 @@
+use crate::commands::prepare_windows::labels::validate_label_token;
 use anyhow::{Context, Result, bail};
 
 /* Parse distance bins */
@@ -61,6 +62,11 @@ pub fn parse_distance_bins(specs: &[String]) -> Result<DistanceBins> {
             .split_once(':')
             .with_context(|| format!("Invalid distance bin spec (missing ':'): '{}'", spec))?;
 
+        let label = label.trim();
+        if let Err(message) = validate_label_token(label, "distance bin label") {
+            bail!(message);
+        }
+
         let expr = expr.trim();
         let parsed = if let Some(num) = expr.strip_prefix("<=") {
             DistanceExpr::Le(num.parse::<i32>().context("Parsing <=N")?)
@@ -85,7 +91,7 @@ pub fn parse_distance_bins(specs: &[String]) -> Result<DistanceBins> {
         };
 
         rules.push(DistanceBin {
-            label: label.trim().to_string(),
+            label: label.to_string(),
             expr: parsed,
         });
     }
@@ -259,6 +265,9 @@ pub fn parse_record_line(
         for &idx in &cols.group {
             let val = fields.get(idx).unwrap_or(&"").trim();
             if !val.is_empty() {
+                if let Err(message) = validate_label_token(val, "input group label") {
+                    bail!(message);
+                }
                 parts.push(val);
             }
         }

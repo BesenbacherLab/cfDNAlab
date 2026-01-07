@@ -1,4 +1,8 @@
-use crate::commands::prepare_windows::{config::PrepareConfig, prepare_windows::FinalWindow};
+use crate::commands::prepare_windows::{
+    config::PrepareConfig,
+    labels::{LabelKey, LabelSchema, build_tuple_compositions, render_label_for_key},
+    prepare_windows::FinalWindow,
+};
 use crate::shared::io::{TextWriter, create_text_writer, stdout_text_writer};
 use anyhow::{Context, Result};
 use fxhash::FxHashMap;
@@ -11,8 +15,7 @@ use std::{
 /// Buffered writer paired with a chromosome-scoped temporary BED file.
 ///
 /// Streaming each chromosome through its own writer keeps memory usage low and
-/// lets the pipeline defer global policies (such as `min_per_group`) until the
-/// final concatenation pass.
+/// lets the pipeline defer global policies until the final concatenation pass.
 ///
 /// The writer wraps a 1 MiB `BufWriter<File>` pointing at a sanitized path under
 /// the run's temp directory. Callers borrow the writer when writing rows and
@@ -43,6 +46,8 @@ impl ChromTempWriter {
 /// - `writer`: destination implementing [`Write`].
 /// - `windows`: window slice to serialize.
 /// - `separator`: delimiter to place between columns.
+/// - `out_labels`: label keys to write after coordinates.
+/// - `label_schema`: resolved label compositions.
 ///
 /// # Returns
 /// `Ok(())` on success or an error if writing fails.
@@ -50,28 +55,29 @@ pub fn write_windows<W: Write>(
     writer: &mut W,
     windows: &[FinalWindow],
     separator: char,
+    out_labels: &[LabelKey],
+    label_schema: &LabelSchema,
 ) -> Result<()> {
     for w in windows {
-        if w.group.is_empty() {
-            writeln!(
-                writer,
-                "{}{sep}{}{sep}{}",
-                w.chrom.as_ref(),
-                w.start,
-                w.end,
-                sep = separator
-            )?;
+        let tuple_compositions = if label_schema.compositions().is_empty() {
+            Vec::new()
         } else {
-            writeln!(
-                writer,
-                "{}{sep}{}{sep}{}{sep}{}",
-                w.chrom.as_ref(),
-                w.start,
-                w.end,
-                w.group,
-                sep = separator
-            )?;
+            build_tuple_compositions(&w.label_tuples, label_schema)
+        };
+        write!(
+            writer,
+            "{}{sep}{}{sep}{}",
+            w.chrom.as_ref(),
+            w.resized_start,
+            w.resized_end,
+            sep = separator
+        )?;
+        for key in out_labels {
+            let label =
+                render_label_for_key(&w.label_tuples, &tuple_compositions, key, label_schema);
+            write!(writer, "{sep}{}", label, sep = separator)?;
         }
+        writeln!(writer)?;
     }
     Ok(())
 }
@@ -132,36 +138,27 @@ pub fn finalize_temp_writers(
     Ok(entries)
 }
 
-/// Concatenate temp outputs into the final writer, honoring `min_per_group`.
+/// Concatenate temp outputs into the final writer.
 ///
-/// Replays each chromosome's temp file back to back, filtering out group labels
-/// that fail the minimum-count threshold when requested.
+/// Replays each chromosome's temp file back to back.
 ///
-/// Output is buffered (stdout or file). Each temp file is streamed line by line;
-/// the optional group column determines whether to write a three- or four-column
-/// row, and temp entries are processed in lexicographic chromosome order.
+/// Output is buffered (stdout or file). Each temp file is streamed line by line,
+/// preserving columns exactly as they were written, and temp entries are processed
+/// in lexicographic chromosome order.
 ///
 /// # Parameters
 /// - `cfg`: resolved configuration.
 /// - `temp_entries`: `(chromosome, temp_path)` pairs returned by
 ///   [`finalize_temp_writers`].
-/// - `global_group_counts`: counts per group after spacing/merging.
 ///
 /// # Returns
 /// `Ok(())` on success or an error if reading/writing fails.
-pub fn concatenate_temps_enforcing_min_per_group(
-    cfg: &PrepareConfig,
-    temp_entries: &[(String, PathBuf)],
-    global_group_counts: &FxHashMap<String, u64>,
-) -> Result<()> {
+pub fn concatenate_temps(cfg: &PrepareConfig, temp_entries: &[(String, PathBuf)]) -> Result<()> {
     let mut out: TextWriter = if cfg.output.as_os_str() == "-" {
         stdout_text_writer()
     } else {
         create_text_writer(&cfg.output)?
     };
-
-    // Helper to decide if a group passes the threshold
-    let min_required = cfg.min_per_group;
 
     // Concatenate in lexicographic chrom order by default
     let mut entries: Vec<&(String, PathBuf)> = temp_entries.iter().collect();
@@ -176,47 +173,7 @@ pub fn concatenate_temps_enforcing_min_per_group(
             if line.is_empty() {
                 continue;
             }
-            if cfg.group_cols.is_empty() && cfg.distance_bins.is_none() {
-                // No group anywhere, write as-is (3 columns)
-                writeln!(out, "{}", line)?;
-                continue;
-            }
-
-            // If group column exists, it is the 4th field
-            // We do not add a header; this is a minimal BED-like.
-            let mut parts = line.split(cfg.sep);
-            let chrom_name = parts.next().unwrap_or_default();
-            let start = parts.next().unwrap_or_default();
-            let end = parts.next().unwrap_or_default();
-            let group = parts.next().unwrap_or_default();
-
-            if group.is_empty() {
-                // If there is no group after all processing, write the 3 cols only
-                writeln!(out, "{}{}{}{}{}", chrom_name, cfg.sep, start, cfg.sep, end)?;
-            } else if let Some(min_n) = min_required {
-                let count = *global_group_counts.get(group).unwrap_or(&0);
-                if count >= min_n as u64 {
-                    writeln!(
-                        out,
-                        "{}{sep}{}{sep}{}{sep}{}",
-                        chrom_name,
-                        start,
-                        end,
-                        group,
-                        sep = cfg.sep
-                    )?;
-                }
-            } else {
-                writeln!(
-                    out,
-                    "{}{sep}{}{sep}{}{sep}{}",
-                    chrom_name,
-                    start,
-                    end,
-                    group,
-                    sep = cfg.sep
-                )?;
-            }
+            writeln!(out, "{}", line)?;
         }
     }
 
