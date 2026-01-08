@@ -5,7 +5,7 @@
 //!  This module implements a memory-bounded, chromosome-streaming pipeline that:
 //!  - Validates and loads a `near` interval set (half-open, duplicate edges handled by `--near-duplicates`).
 //!  - Loads and combines blacklist intervals (with an optional halo).
-//!  - Streams the BAM file by chromosome in chunks, applying early filters,
+//!  - Streams the BED file by chromosome in chunks, applying early filters,
 //!    nearest-distance binning (with `-/+/=` prefixes that reflect direction),
 //!    minimum-distance filtering, merging, and deduplication.
 //!  - Writes per-chromosome temporary files and concatenates them in a final pass.
@@ -17,8 +17,9 @@ use crate::commands::prepare_windows::chunk::{flush_chromosome, process_and_writ
 use crate::commands::prepare_windows::config::*;
 use crate::commands::prepare_windows::filters::{
     ExcludeRule, filter_and_write_output, parse_exclude_rules, parse_min_per_rules,
+    validate_available_keys, validate_compositions_available,
 };
-use crate::commands::prepare_windows::labels::{LabelSchema, LabelTuple};
+use crate::commands::prepare_windows::labels::{AtomicLabelPart, LabelSchema, LabelTuple};
 use crate::commands::prepare_windows::near_file::load_near_index;
 use crate::commands::prepare_windows::parsers::{
     parse_distance_bins, parse_record_line, parse_score_filter, resolve_column_indices,
@@ -34,16 +35,16 @@ use anyhow::{Context, Result, bail};
 use fxhash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{env, fs, mem};
 
-/// Final window representation used throughout the pipeline.
+/// Window representation used throughout the prepare pipeline.
 ///
 /// Coordinates are 0-based, half-open `[start, end)`.
 #[derive(Debug, Clone)]
-pub struct FinalWindow {
+pub struct Window {
     pub chrom: Arc<str>,
     pub original_start: u32,
     pub original_end: u32,
@@ -55,7 +56,7 @@ pub struct FinalWindow {
     pub score: Option<f32>,            // Present only if parsed and requested
 }
 
-impl FinalWindow {
+impl Window {
     #[inline]
     pub fn start_for(&self, coord_set: CoordinateSet) -> u32 {
         match coord_set {
@@ -86,18 +87,68 @@ pub struct BlacklistCursor {
     pub post_cursor: usize, // Post-merge filtering
 }
 
+// Removes the temp directory on drop
+struct TempDirGuard {
+    path: PathBuf,
+    removed: bool,
+}
+
+impl TempDirGuard {
+    fn new(base_dir: &Path, prefix: &str) -> Result<Self> {
+        let path = make_temp_dir(base_dir, prefix).context("create per-run temp dir")?;
+        Ok(Self {
+            path,
+            removed: false,
+        })
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn remove(&mut self) -> Result<()> {
+        if self.removed {
+            return Ok(());
+        }
+        if self.path.exists() {
+            fs::remove_dir_all(&self.path).context("Removing temp dir")?;
+        }
+        self.removed = true;
+        Ok(())
+    }
+}
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        let _ = self.remove();
+    }
+}
+
 /// Run the prepare pipeline using the provided configuration.
 pub fn run(cfg: &PrepareConfig) -> Result<()> {
     let start_time = Instant::now();
 
-    println!("Preparing BED-like file");
+    println!("Preparing windows");
 
-    // TODO: Print pipeline that will be applied
+    // Prepare the temp directory early so we fail fast on missing write permissions
+    println!("Start: Creating temporary directory");
+    let base_output_dir = match &cfg.output {
+        path if path.as_os_str() != "-" => path
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| env::current_dir().expect("current_dir")),
+        _ => env::temp_dir(),
+    };
+    let mut temp_dir_guard = TempDirGuard::new(&base_output_dir, "prepare_windows")?;
+    // Keep per-chrom temp files in a subdirectory so they can be removed once filtered
+    let stream_temp_dir = make_temp_dir(temp_dir_guard.path(), "prepare_windows_stream")
+        .context("create stream temp dir")?;
 
     // TODO: Validate IO paths early (and other args)
 
     // Compile distance bins (if any)
     let distance_bins = if let Some(specs) = &cfg.distance_bins {
+        println!("Start: Parsing distance bins");
         Some(parse_distance_bins(specs)?)
     } else {
         None
@@ -105,18 +156,37 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
 
     // Compile score filter (if any)
     let score_filter = if let Some(expr) = &cfg.score_filter {
+        println!("Start: Parsing score filter");
         Some(parse_score_filter(expr)?)
     } else {
         None
     };
 
     // Resolve label schema and key references
+    println!("Start: Resolving label schema");
     let label_schema = LabelSchema::new(&cfg.compose)?;
+    let available_parts = available_atomic_parts(cfg);
+    validate_compositions_available(&label_schema, &available_parts)?;
     let merge_key = label_schema.resolve_key(&cfg.merge_key)?;
+    validate_available_keys(
+        std::slice::from_ref(&merge_key),
+        &label_schema,
+        &available_parts,
+        "merge-key",
+    )?;
     let out_labels = label_schema.resolve_keys(&cfg.out_labels)?;
+    validate_available_keys(&out_labels, &label_schema, &available_parts, "out-labels")?;
 
-    let min_per_rules = parse_min_per_rules(&cfg.min_per, &label_schema)?;
-    let exclude_rules: Vec<ExcludeRule> = parse_exclude_rules(&cfg.exclude_labels, &label_schema)?;
+    if !cfg.min_per.is_empty() {
+        println!("Start: Parsing min-per rules");
+    }
+    let min_per_rules = parse_min_per_rules(&cfg.min_per, &label_schema, &available_parts)?;
+
+    if !cfg.exclude_labels.is_empty() {
+        println!("Start: Parsing exclude rules");
+    }
+    let exclude_rules: Vec<ExcludeRule> =
+        parse_exclude_rules(&cfg.exclude_labels, &label_schema, &available_parts)?;
 
     // How to handle missing scores
     let drop_missing_scores =
@@ -124,6 +194,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
 
     // Load near index (validated)
     let mut near_index = if let Some(path) = &cfg.near {
+        println!("Start: Loading near file");
         let has_header_final = match cfg.near_header {
             HeaderMode::Present => true,
             HeaderMode::Absent => false,
@@ -148,6 +219,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     // Load blacklist intervals (optional)
     let mut blacklist_cursors: FxHashMap<String, BlacklistCursor> = FxHashMap::default();
     if let Some(paths) = &cfg.blacklist {
+        println!("Start: Loading blacklist intervals");
         let loaded = load_blacklists(paths.as_slice(), 1, cfg.blacklist_halo as u64, None)?;
         for (chrom, intervals) in loaded.into_iter() {
             blacklist_cursors.insert(
@@ -163,6 +235,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     let blacklist_look_back: u64 = 0;
 
     // Open input and initial reader
+    println!("Start: Opening input reader");
     let input_reader: Box<dyn BufRead> = if cfg.input.as_os_str() == "-" {
         Box::new(BufReader::with_capacity(1 << 20, std::io::stdin()))
     } else {
@@ -170,16 +243,6 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     };
 
     // TODO: Add info to config about this temporary directory, so user knows to not call (with "-") in a folder with no storage or write permissions!
-    // Prepare per-run temporary directory and chromosome writers
-    let base_output_dir = match &cfg.output {
-        path if path.as_os_str() != "-" => path
-            .parent()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| env::current_dir().expect("current_dir")),
-        _ => env::temp_dir(),
-    };
-    let temp_dir =
-        make_temp_dir(&base_output_dir, "prepare_windows").context("create per-run temp dir")?;
     let mut temp_writers: FxHashMap<String, ChromTempWriter> = FxHashMap::default();
 
     // State for streaming by chromosome with chunking
@@ -187,14 +250,16 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     let chunk_size: usize = 5_000_000;
     // Current chromosome name for grouping and change detection
     let mut current_chrom: String = String::new();
+    // Chromosome order as it appears in the input stream
+    let mut chrom_order: Vec<String> = Vec::new();
     // Tracks chromosomes already seen to guard against out-of-order input
     let mut processed_chromosomes: FxHashSet<String> = FxHashSet::default();
     // Previous window start for the current chromosome for ordering checks
-    let mut last_start_for_current: Option<u32> = None;
+    let mut prev_start_for_current: Option<u32> = None;
     // Tail windows that must carry into the next chunk for merging
-    let mut carryover_tail: Vec<FinalWindow> = Vec::new();
+    let mut carryover_tail: Vec<Window> = Vec::new();
     // Batch of windows collected for processing before flush
-    let mut current_batch: Vec<FinalWindow> = Vec::with_capacity(chunk_size + 1024);
+    let mut current_batch: Vec<Window> = Vec::with_capacity(chunk_size + 1024);
     // Known size for the current chromosome for trimming and bounds checks
     let mut current_chrom_size: Option<u32> = None;
     // Interned chromosome strings to avoid repeated allocations
@@ -235,19 +300,26 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     }
 
     // Map from chromosome to size if trimming/dropping is enabled
-    let chrom_sizes_map: FxHashMap<String, u32> =
-        if matches!(cfg.oob, OobPolicy::Trim | OobPolicy::Drop) && cfg.chrom_sizes.is_some() {
-            load_chrom_sizes(cfg.chrom_sizes.as_ref().unwrap())?
-        } else {
-            FxHashMap::default()
-        };
+    let has_size_transform = cfg.resize.is_some() || cfg.flank.is_some();
+    let chrom_sizes_map: FxHashMap<String, u32> = if has_size_transform
+        && matches!(cfg.oob, OobPolicy::Trim | OobPolicy::Drop)
+        && cfg.chrom_sizes.is_some()
+    {
+        println!("Start: Loading chromosome sizes");
+        load_chrom_sizes(cfg.chrom_sizes.as_ref().unwrap())?
+    } else {
+        FxHashMap::default()
+    };
 
+    println!("Start: Resolving input columns");
     let column_indices =
         resolve_column_indices(&cfg.cols, &cfg.group_cols, cfg.score_col.as_deref())?;
 
     // Stream input records
+    println!("Start: Streaming input records");
     loop {
-        // TODO: Explain this if-else statement
+        // Header auto-detection may have already read the first data line, so consume it here
+        // Swap to avoid losing the buffered line and to reuse the existing allocation
         if let Some(mut pending) = pending_line.take() {
             mem::swap(&mut line_buffer, &mut pending);
         } else {
@@ -272,7 +344,8 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         if current_chrom.is_empty() {
             current_chrom = chrom.clone();
             current_chrom_size = chrom_sizes_map.get(&current_chrom).copied();
-            last_start_for_current = None;
+            prev_start_for_current = None;
+            chrom_order.push(current_chrom.clone());
         }
 
         if chrom != current_chrom {
@@ -292,7 +365,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
                 &mut carryover_tail,
                 &mut current_batch,
                 &mut temp_writers,
-                &temp_dir,
+                &stream_temp_dir,
                 blacklist_cursors.get_mut(&current_chrom),
                 blacklist_look_back,
                 current_chrom_size,
@@ -308,20 +381,21 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             current_chrom.clear();
             current_chrom = chrom.clone();
             current_chrom_size = chrom_sizes_map.get(&current_chrom).copied();
-            last_start_for_current = None;
+            prev_start_for_current = None;
+            chrom_order.push(current_chrom.clone());
         }
 
-        if let Some(last) = last_start_for_current {
-            if chrom == current_chrom && start < last {
+        if let Some(prev_start) = prev_start_for_current {
+            if chrom == current_chrom && start < prev_start {
                 bail!(
                     "Input is not sorted: chromosome '{}' has start {} before previous {}",
                     chrom,
                     start,
-                    last
+                    prev_start
                 );
             }
         }
-        last_start_for_current = Some(start);
+        prev_start_for_current = Some(start);
 
         // Early score filtering
         if let Some(sf) = &score_filter {
@@ -379,7 +453,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         };
 
         // Accumulate into batch
-        current_batch.push(FinalWindow {
+        current_batch.push(Window {
             chrom: chrom_arc,
             original_start: start,
             original_end: end,
@@ -398,7 +472,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
                 &mut carryover_tail,
                 &mut current_batch,
                 &mut temp_writers,
-                &temp_dir,
+                &stream_temp_dir,
                 blacklist_cursors.get_mut(&current_chrom),
                 blacklist_look_back,
                 current_chrom_size,
@@ -419,7 +493,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             &mut carryover_tail,
             &mut current_batch,
             &mut temp_writers,
-            &temp_dir,
+            &stream_temp_dir,
             blacklist_cursors.get_mut(&current_chrom),
             blacklist_look_back,
             current_chrom_size,
@@ -433,6 +507,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     }
 
     // Final pass: apply filtering and write output
+    println!("Start: Finalizing output");
     let temp_entries = finalize_temp_writers(&mut temp_writers)?;
     filter_and_write_output(
         cfg,
@@ -441,13 +516,29 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         &out_labels,
         &min_per_rules,
         &exclude_rules,
-        &base_output_dir,
+        temp_dir_guard.path(),
+        &chrom_order,
     )?;
-    if temp_dir.exists() {
-        fs::remove_dir_all(&temp_dir).context("Removing temp dir")?;
-    }
+    println!("Start: Removing temporary directory");
+    temp_dir_guard.remove()?;
 
     let elapsed = start_time.elapsed();
     println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
+}
+
+fn available_atomic_parts(cfg: &PrepareConfig) -> FxHashSet<AtomicLabelPart> {
+    let mut parts: FxHashSet<AtomicLabelPart> = FxHashSet::default();
+    parts.insert(AtomicLabelPart::Input);
+    if cfg.near.is_some() {
+        parts.insert(AtomicLabelPart::NearSide);
+        parts.insert(AtomicLabelPart::NearName);
+    }
+    if cfg.distance_bins.is_some() {
+        parts.insert(AtomicLabelPart::Bin);
+    }
+    if cfg.cluster_min_overlaps.is_some() {
+        parts.insert(AtomicLabelPart::Cluster);
+    }
+    parts
 }

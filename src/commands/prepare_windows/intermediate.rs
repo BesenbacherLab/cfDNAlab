@@ -1,5 +1,5 @@
 use crate::commands::prepare_windows::labels::LabelTuple;
-use crate::commands::prepare_windows::prepare_windows::FinalWindow;
+use crate::commands::prepare_windows::prepare_windows::Window;
 use anyhow::{Context, Result, bail};
 use std::io::Write;
 
@@ -54,7 +54,7 @@ pub fn write_intermediate_window<W: Write>(
 /// `Ok(())` on success or an error if writing fails.
 pub fn write_intermediate_windows<W: Write>(
     writer: &mut W,
-    windows: &[FinalWindow],
+    windows: &[Window],
     separator: char,
 ) -> Result<()> {
     for window in windows {
@@ -73,6 +73,7 @@ pub fn write_intermediate_windows<W: Write>(
 }
 
 /// Parse a single intermediate line into a window.
+#[inline]
 pub fn parse_intermediate_line(line: &str, separator: char) -> Result<IntermediateWindow> {
     let mut fields = line.splitn(4, separator);
     let chrom = fields
@@ -103,6 +104,7 @@ pub fn parse_intermediate_line(line: &str, separator: char) -> Result<Intermedia
     })
 }
 
+#[inline]
 fn serialize_label_tuples(tuples: &[LabelTuple]) -> String {
     let mut parts: Vec<String> = Vec::with_capacity(tuples.len());
     for tuple in tuples {

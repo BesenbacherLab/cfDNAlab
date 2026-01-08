@@ -2,9 +2,20 @@
 
 pub const RESERVED_LABEL_NONE: &str = "none";
 
+const RESERVED_LABELS: [&str; 6] = [
+    "input",
+    "near-side",
+    "near-name",
+    "bin",
+    "cluster",
+    RESERVED_LABEL_NONE,
+];
+
 /// Return true if the label token is reserved.
 pub fn is_reserved_label(token: &str) -> bool {
-    token.eq_ignore_ascii_case(RESERVED_LABEL_NONE)
+    RESERVED_LABELS
+        .iter()
+        .any(|reserved| token.eq_ignore_ascii_case(reserved))
 }
 
 /// Validate a label token for user-defined labels.
@@ -63,16 +74,31 @@ impl AtomicLabelPart {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum LabelKey {
+    /// Reference an atomic label part like `input` or `near-side`.
     Atomic(AtomicLabelPart),
+    /// Reference a named composition by index in the schema composition list.
+    ///
+    /// The index is the position of the composition in the `--compose` list
+    /// after validation. The schema stores compositions in declaration order,
+    /// so earlier `--compose` entries have lower indices.
     Composition(usize),
 }
 
+/// A composition part used when defining a named label.
+///
+/// Each part is either an atomic label or a reference to an earlier
+/// named composition in the schema.
 #[derive(Clone, Debug)]
 pub enum LabelPartRef {
     Atomic(AtomicLabelPart),
     Composition(usize),
 }
 
+/// A named label composition built from ordered parts.
+///
+/// The `parts` are stored in the user-provided order so composition output
+/// stays stable. The `depends_on` set tracks which atomic parts are required
+/// for optimization decisions during rendering.
 #[derive(Clone, Debug)]
 pub struct LabelComposition {
     pub name: String,
@@ -80,6 +106,10 @@ pub struct LabelComposition {
     pub depends_on: BTreeSet<AtomicLabelPart>,
 }
 
+/// Resolved schema for named compositions and their indices.
+///
+/// This stores compositions in declaration order and provides a
+/// name-to-index lookup for fast resolution.
 #[derive(Clone, Debug, Default)]
 pub struct LabelSchema {
     compositions: Vec<LabelComposition>,
@@ -229,6 +259,7 @@ impl LabelTuple {
     }
 }
 
+#[inline]
 fn atomic_value<'a>(tuple: &'a LabelTuple, part: AtomicLabelPart) -> &'a str {
     match part {
         AtomicLabelPart::Input => tuple.input.as_str(),
@@ -274,6 +305,7 @@ fn build_composition_values(tuple: &LabelTuple, compositions: &[LabelComposition
 /// -------
 /// - `values`:
 ///     Per-tuple composition values in schema order.
+#[inline]
 pub fn build_tuple_compositions(tuples: &[LabelTuple], schema: &LabelSchema) -> Vec<Vec<String>> {
     tuples
         .iter()
@@ -295,6 +327,7 @@ pub fn normalize_label_tuples(tuples: &mut Vec<LabelTuple>) {
     tuples.dedup();
 }
 
+#[inline]
 fn all_parts_match(tuples: &[LabelTuple], parts: &BTreeSet<AtomicLabelPart>) -> bool {
     for part in parts {
         if matches!(part, AtomicLabelPart::Input) {
@@ -312,6 +345,7 @@ fn all_parts_match(tuples: &[LabelTuple], parts: &BTreeSet<AtomicLabelPart>) -> 
     true
 }
 
+#[inline]
 fn combined_input_value(tuples: &[LabelTuple]) -> String {
     let mut values: Vec<&str> = tuples.iter().map(|tuple| tuple.input.as_str()).collect();
     values.sort();

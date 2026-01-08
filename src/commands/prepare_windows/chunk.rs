@@ -13,7 +13,7 @@ use crate::commands::prepare_windows::{
         apply_cluster_labels, deduplicate_identical, enforce_min_distance_within_group,
         partition_safe_and_tail,
     },
-    prepare_windows::{BlacklistCursor, FinalWindow},
+    prepare_windows::{BlacklistCursor, Window},
     resizers::apply_size_transform,
     writers::{ChromTempWriter, ensure_temp_writer_for_chrom},
 };
@@ -120,8 +120,8 @@ impl NearAnnotation {
 /// `Ok(())` on success or an error if writing fails.
 pub fn process_and_write_chunk(
     chrom: &str,
-    carryover_tail: &mut Vec<FinalWindow>,
-    current_batch: &mut Vec<FinalWindow>,
+    carryover_tail: &mut Vec<Window>,
+    current_batch: &mut Vec<Window>,
     temp_writers: &mut FxHashMap<String, ChromTempWriter>,
     temp_dir: &Path,
     blacklist_cursor: Option<&mut BlacklistCursor>,
@@ -134,7 +134,7 @@ pub fn process_and_write_chunk(
     merge_key: &LabelKey,
     out_labels: &[LabelKey],
 ) -> Result<()> {
-    let mut windows: Vec<FinalWindow> =
+    let mut windows: Vec<Window> =
         Vec::with_capacity(carryover_tail.len() + current_batch.len());
     windows.append(carryover_tail);
     windows.append(current_batch);
@@ -227,7 +227,7 @@ pub fn process_and_write_chunk(
         );
 
         if matches!(cfg.merge_on, CoordinateSet::Original) && has_size_transform {
-            let mut resized_after_merge: Vec<FinalWindow> = Vec::with_capacity(windows.len());
+            let mut resized_after_merge: Vec<Window> = Vec::with_capacity(windows.len());
             for mut window in windows {
                 // NOTE: Falls back to original coordinates when no resizing is specified
                 if let Some((resized_start, resized_end)) = apply_size_transform(
@@ -265,7 +265,7 @@ pub fn process_and_write_chunk(
         if !is_input_keyed {
             update_group_keys(&mut windows, &input_key, label_schema);
             current_order = None;
-            is_input_keyed = true;
+            //is_input_keyed = true;
         }
         // Minimum-distance filtering uses input groups and group-first ordering
         ensure_sorted(
@@ -320,7 +320,7 @@ pub fn process_and_write_chunk(
         );
 
         if matches!(cfg.merge_on, CoordinateSet::Original) && has_size_transform {
-            let mut resized_after_merge: Vec<FinalWindow> = Vec::with_capacity(windows.len());
+            let mut resized_after_merge: Vec<Window> = Vec::with_capacity(windows.len());
             for mut window in windows {
                 // NOTE: Falls back to original coordinates when no resizing is specified
                 if let Some((resized_start, resized_end)) = apply_size_transform(
@@ -368,8 +368,8 @@ pub fn process_and_write_chunk(
 
     // Output ordering uses the label columns requested by the user, not group_key
     sort_windows_by_output_labels(&mut windows, output_coord_set, out_labels, label_schema);
-    current_order = None;
-    current_coord_set = None;
+    // current_order = None;
+    // current_coord_set = None;
 
     let merge_group_keys = if merge_within_enabled {
         // Tail detection for within-group merging needs merge-key values, not output labels
@@ -407,7 +407,7 @@ pub fn process_and_write_chunk(
 /// Invokes [`process_and_write_chunk`] one last time and then writes any
 /// residual tail because no future chunk can modify it.
 ///
-/// After processing, the tail is emitted directly to the chromosome writer.
+/// After processing, the tail is send directly to the chromosome writer.
 ///
 /// # Parameters
 /// - `chrom`: chromosome identifier.
@@ -429,8 +429,8 @@ pub fn process_and_write_chunk(
 /// `Ok(())` on success or an error if writing fails.
 pub fn flush_chromosome(
     chrom: &str,
-    carryover_tail: &mut Vec<FinalWindow>,
-    current_batch: &mut Vec<FinalWindow>,
+    carryover_tail: &mut Vec<Window>,
+    current_batch: &mut Vec<Window>,
     temp_writers: &mut FxHashMap<String, ChromTempWriter>,
     temp_dir: &Path,
     blacklist_cursor: Option<&mut BlacklistCursor>,
@@ -473,7 +473,7 @@ pub fn flush_chromosome(
 }
 
 fn update_group_keys(
-    windows: &mut [FinalWindow],
+    windows: &mut [Window],
     merge_key: &LabelKey,
     label_schema: &LabelSchema,
 ) {
@@ -498,7 +498,7 @@ fn update_group_keys(
 }
 
 fn build_group_keys_for_label(
-    windows: &[FinalWindow],
+    windows: &[Window],
     label_schema: &LabelSchema,
     key: &LabelKey,
 ) -> Vec<String> {
@@ -519,7 +519,7 @@ fn build_group_keys_for_label(
 }
 
 fn sort_windows_by_output_labels(
-    windows: &mut [FinalWindow],
+    windows: &mut [Window],
     coord_set: CoordinateSet,
     out_labels: &[LabelKey],
     label_schema: &LabelSchema,
@@ -559,8 +559,9 @@ fn sort_windows_by_output_labels(
 }
 
 /// Ensure windows are sorted in the required order and coordinate space.
+#[inline]
 fn ensure_sorted(
-    windows: &mut [FinalWindow],
+    windows: &mut [Window],
     desired_order: WindowSortOrder,
     desired_coord_set: CoordinateSet,
     current_order: &mut Option<WindowSortOrder>,
@@ -581,19 +582,19 @@ fn ensure_sorted(
 }
 
 fn apply_near_annotations(
-    windows: Vec<FinalWindow>,
+    windows: Vec<Window>,
     near_index: &mut Option<NearIndex>,
     cfg: &PrepareConfig,
     distance_bins: Option<&DistanceBins>,
     coord_set: CoordinateSet,
-) -> Vec<FinalWindow> {
+) -> Vec<Window> {
     let Some(near_idx) = near_index.as_mut() else {
         return windows;
     };
 
     let is_signed_mode = matches!(cfg.distance_sign, DistSign::Signed);
 
-    let mut retained: Vec<FinalWindow> = Vec::with_capacity(windows.len());
+    let mut retained: Vec<Window> = Vec::with_capacity(windows.len());
 
     for mut window in windows {
         let chrom = window.chrom.as_ref();
@@ -702,16 +703,16 @@ fn apply_near_annotations(
 // TODO: Add docstring
 /// Windows should be sorted by the output coordinate set
 fn filter_blacklisted_post_merge(
-    windows: Vec<FinalWindow>,
+    windows: Vec<Window>,
     blacklist_cursor: Option<&mut BlacklistCursor>,
     strategy: BlacklistStrategy,
     look_back: u64,
     coord_set: CoordinateSet,
-) -> Vec<FinalWindow> {
+) -> Vec<Window> {
     match blacklist_cursor {
         Some(cursor) if !cursor.intervals.is_empty() => {
             let intervals = cursor.intervals.as_slice();
-            let mut retained: Vec<FinalWindow> = Vec::with_capacity(windows.len());
+            let mut retained: Vec<Window> = Vec::with_capacity(windows.len());
             for entry in windows.into_iter() {
                 if entry.merged {
                     if is_blacklisted(

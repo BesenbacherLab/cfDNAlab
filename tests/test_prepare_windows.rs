@@ -409,7 +409,7 @@ mod tests_prepare_windows_pipeline {
         cfg.output = output;
         cfg.header = HeaderMode::Absent;
         cfg.group_cols = vec!["3".to_string()];
-        cfg.compose = vec!["core=input,bin".parse()?];
+        cfg.compose = vec!["core=input,bin".parse().map_err(anyhow::Error::msg)?];
         cfg.out_labels = vec!["input".to_string(), "core".to_string()];
         cfg.exclude_labels = vec!["core=A.prox".to_string()];
         cfg.near = Some(near);
@@ -792,12 +792,12 @@ mod tests_postprocess {
         postprocess::{
             deduplicate_identical, enforce_min_distance_within_group, partition_safe_and_tail,
         },
-        prepare_windows::FinalWindow,
+        prepare_windows::Window,
     };
     use std::sync::Arc;
 
-    fn win(chrom: &str, start: u32, end: u32, group: &str, score: Option<f32>) -> FinalWindow {
-        FinalWindow {
+    fn win(chrom: &str, start: u32, end: u32, group: &str, score: Option<f32>) -> Window {
+        Window {
             chrom: Arc::<str>::from(chrom.to_string()),
             original_start: start,
             original_end: end,
@@ -810,7 +810,7 @@ mod tests_postprocess {
         }
     }
 
-    fn snapshot(windows: &[FinalWindow]) -> Vec<(String, u32, u32, String, Option<f32>)> {
+    fn snapshot(windows: &[Window]) -> Vec<(String, u32, u32, String, Option<f32>)> {
         windows
             .iter()
             .map(|w| {
@@ -1134,12 +1134,12 @@ mod tests_mergers {
         config::{CoordinateSet, MergeLabel, MergeScope},
         labels::LabelTuple,
         mergers::{merge_across_groups, merge_windows, merge_within_groups},
-        prepare_windows::FinalWindow,
+        prepare_windows::Window,
     };
     use std::sync::Arc;
 
-    fn win(chrom: &str, start: u32, end: u32, group: &str) -> FinalWindow {
-        FinalWindow {
+    fn win(chrom: &str, start: u32, end: u32, group: &str) -> Window {
+        Window {
             chrom: Arc::<str>::from(chrom.to_string()),
             original_start: start,
             original_end: end,
@@ -1152,7 +1152,7 @@ mod tests_mergers {
         }
     }
 
-    fn snapshot(windows: &[FinalWindow]) -> Vec<(String, u32, u32, Vec<String>)> {
+    fn snapshot(windows: &[Window]) -> Vec<(String, u32, u32, Vec<String>)> {
         windows
             .iter()
             .map(|w| {
@@ -1731,7 +1731,7 @@ mod tests_writers {
     use cfdnalab::commands::prepare_windows::{
         config::PrepareConfig,
         labels::{AtomicLabelPart, LabelKey, LabelSchema, LabelTuple},
-        prepare_windows::FinalWindow,
+        prepare_windows::Window,
         writers::{
             ChromTempWriter, concatenate_temps, ensure_temp_writer_for_chrom,
             finalize_temp_writers, write_windows,
@@ -1740,8 +1740,8 @@ mod tests_writers {
     use fxhash::FxHashMap;
     use tempfile::TempDir;
 
-    fn win(chrom: &str, start: u32, end: u32, group: &str) -> FinalWindow {
-        FinalWindow {
+    fn win(chrom: &str, start: u32, end: u32, group: &str) -> Window {
+        Window {
             chrom: chrom.to_string().into(),
             original_start: start,
             original_end: end,
@@ -1884,7 +1884,7 @@ mod tests_chunk {
         chunk::{flush_chromosome, process_and_write_chunk},
         config::{DedupKeep, DistancePolicy, MergeLabel, MergeScope, PrepareConfig},
         labels::{AtomicLabelPart, LabelKey, LabelSchema, LabelTuple},
-        prepare_windows::FinalWindow,
+        prepare_windows::Window,
         writers::{ChromTempWriter, finalize_temp_writers},
     };
     use fxhash::FxHashMap;
@@ -1892,8 +1892,8 @@ mod tests_chunk {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    fn win(chrom: &str, start: u32, end: u32, group: &str) -> FinalWindow {
-        FinalWindow {
+    fn win(chrom: &str, start: u32, end: u32, group: &str) -> Window {
+        Window {
             chrom: Arc::<str>::from(chrom.to_string()),
             original_start: start,
             original_end: end,
@@ -1912,6 +1912,10 @@ mod tests_chunk {
 
     fn merge_key() -> LabelKey {
         LabelKey::Atomic(AtomicLabelPart::Input)
+    }
+
+    fn out_labels() -> Vec<LabelKey> {
+        vec![LabelKey::Atomic(AtomicLabelPart::Input)]
     }
 
     fn make_config() -> PrepareConfig {
@@ -1935,6 +1939,7 @@ mod tests_chunk {
         let mut writers: FxHashMap<String, ChromTempWriter> = FxHashMap::default();
         let schema = label_schema();
         let key = merge_key();
+        let labels = out_labels();
         let mut near_index = None;
         process_and_write_chunk(
             "chr1",
@@ -1950,6 +1955,7 @@ mod tests_chunk {
             None,
             &schema,
             &key,
+            &labels,
         )?;
         assert!(carryover.is_empty());
         let entries = finalize_temp_writers(&mut writers)?;
@@ -1970,6 +1976,7 @@ mod tests_chunk {
         let mut writers: FxHashMap<String, ChromTempWriter> = FxHashMap::default();
         let schema = label_schema();
         let key = merge_key();
+        let labels = out_labels();
         let mut near_index = None;
         process_and_write_chunk(
             "chr1",
@@ -1985,6 +1992,7 @@ mod tests_chunk {
             None,
             &schema,
             &key,
+            &labels,
         )?;
         assert_eq!(carryover.len(), 1);
         let entries = finalize_temp_writers(&mut writers)?;
@@ -2003,6 +2011,7 @@ mod tests_chunk {
         let mut writers: FxHashMap<String, ChromTempWriter> = FxHashMap::default();
         let schema = label_schema();
         let key = merge_key();
+        let labels = out_labels();
         let mut near_index = None;
         flush_chromosome(
             "chr1",
@@ -2018,6 +2027,7 @@ mod tests_chunk {
             None,
             &schema,
             &key,
+            &labels,
         )?;
         assert!(carryover.is_empty());
         let entries = finalize_temp_writers(&mut writers)?;
@@ -2037,6 +2047,7 @@ mod tests_chunk {
         let mut writers: FxHashMap<String, ChromTempWriter> = FxHashMap::default();
         let schema = label_schema();
         let key = merge_key();
+        let labels = out_labels();
         let mut near_index = None;
         process_and_write_chunk(
             "chr1",
@@ -2052,6 +2063,7 @@ mod tests_chunk {
             None,
             &schema,
             &key,
+            &labels,
         )?;
         let entries = finalize_temp_writers(&mut writers)?;
         let contents = fs::read_to_string(&entries[0].1)?;
@@ -2068,6 +2080,7 @@ mod tests_chunk {
         let mut writers: FxHashMap<String, ChromTempWriter> = FxHashMap::default();
         let schema = label_schema();
         let key = merge_key();
+        let labels = out_labels();
         let mut near_index = None;
         flush_chromosome(
             "chr1",
@@ -2083,6 +2096,7 @@ mod tests_chunk {
             None,
             &schema,
             &key,
+            &labels,
         )?;
         assert!(writers.is_empty());
         Ok(())
@@ -2099,6 +2113,7 @@ mod tests_chunk {
         let mut writers: FxHashMap<String, ChromTempWriter> = FxHashMap::default();
         let schema = label_schema();
         let key = merge_key();
+        let labels = out_labels();
         let mut near_index = None;
 
         process_and_write_chunk(
@@ -2115,6 +2130,7 @@ mod tests_chunk {
             None,
             &schema,
             &key,
+            &labels,
         )?;
 
         assert_eq!(carryover.len(), 1); // retained tail for next chunk
@@ -2134,6 +2150,7 @@ mod tests_chunk {
             None,
             &schema,
             &key,
+            &labels,
         )?;
 
         let entries = finalize_temp_writers(&mut writers)?;

@@ -2,7 +2,7 @@ use crate::commands::prepare_windows::{
     config::{CoordinateSet, MergeLabel, MergeScope},
     labels::normalize_label_tuples,
     order::{WindowSortOrder, sort_windows_in_place},
-    prepare_windows::FinalWindow,
+    prepare_windows::Window,
 };
 
 /// Merge windows that are separated by at most `merge_gap_bp`.
@@ -33,13 +33,13 @@ use crate::commands::prepare_windows::{
 /// - merged:
 ///     Merged windows with label tuples composed according to policy.
 pub fn merge_windows(
-    windows: Vec<FinalWindow>,
+    windows: Vec<Window>,
     merge_scope: MergeScope,
     merge_gap_bp: Option<u32>,
     merge_label: MergeLabel,
     merge_on: CoordinateSet,
     presorted: bool,
-) -> Vec<FinalWindow> {
+) -> Vec<Window> {
     if merge_gap_bp.is_none() || windows.is_empty() || matches!(merge_scope, MergeScope::None) {
         return windows;
     }
@@ -53,16 +53,16 @@ pub fn merge_windows(
 }
 
 pub fn merge_within_groups(
-    mut windows: Vec<FinalWindow>,
+    mut windows: Vec<Window>,
     gap: u32,
     merge_label: MergeLabel,
     merge_on: CoordinateSet,
     presorted: bool,
-) -> Vec<FinalWindow> {
+) -> Vec<Window> {
     if !presorted {
         sort_windows_in_place(&mut windows, WindowSortOrder::GroupChromStartEnd, merge_on);
     }
-    let mut result: Vec<FinalWindow> = Vec::with_capacity(windows.len());
+    let mut result: Vec<Window> = Vec::with_capacity(windows.len());
     let mut i = 0usize;
     while i < windows.len() {
         let mut current = windows[i].clone();
@@ -95,17 +95,17 @@ pub fn merge_within_groups(
 }
 
 pub fn merge_across_groups(
-    mut windows: Vec<FinalWindow>,
+    mut windows: Vec<Window>,
     gap: u32,
     merge_label: MergeLabel,
     merge_on: CoordinateSet,
     presorted: bool,
-) -> Vec<FinalWindow> {
+) -> Vec<Window> {
     if !presorted {
         sort_windows_in_place(&mut windows, WindowSortOrder::ChromStartEndGroup, merge_on);
     }
 
-    let mut result: Vec<FinalWindow> = Vec::with_capacity(windows.len());
+    let mut result: Vec<Window> = Vec::with_capacity(windows.len());
     let mut i = 0usize;
     while i < windows.len() {
         let mut current = windows[i].clone();

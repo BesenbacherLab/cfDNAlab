@@ -1,6 +1,6 @@
 use crate::commands::prepare_windows::{
     config::{CoordinateSet, DedupKeep, DistancePolicy, MergeScope},
-    prepare_windows::FinalWindow,
+    prepare_windows::Window,
 };
 use fxhash::FxHashMap;
 use std::cmp::Ordering;
@@ -38,16 +38,16 @@ struct Candidate {
 /// # Returns
 /// Deduplicated window vector.
 pub fn deduplicate_identical(
-    windows: Vec<FinalWindow>,
+    windows: Vec<Window>,
     policy: DedupKeep,
     use_score: bool,
     coord_set: CoordinateSet,
-) -> Vec<FinalWindow> {
+) -> Vec<Window> {
     if windows.is_empty() || matches!(policy, DedupKeep::None) {
         return windows;
     }
 
-    let mut result: Vec<FinalWindow> = Vec::with_capacity(windows.len());
+    let mut result: Vec<Window> = Vec::with_capacity(windows.len());
     let mut i = 0usize;
     while i < windows.len() {
         let mut j = i + 1;
@@ -127,18 +127,18 @@ pub fn deduplicate_identical(
 /// # Returns
 /// Spaced window vector.
 pub fn enforce_min_distance_within_group(
-    windows: Vec<FinalWindow>,
+    windows: Vec<Window>,
     min_distance_bp: Option<u32>,
     policy: DistancePolicy,
     use_score: bool,
     coord_set: CoordinateSet,
-) -> Vec<FinalWindow> {
+) -> Vec<Window> {
     if min_distance_bp.is_none() || windows.is_empty() {
         return windows;
     }
     let limit = min_distance_bp.unwrap();
 
-    let mut result: Vec<FinalWindow> = Vec::with_capacity(windows.len());
+    let mut result: Vec<Window> = Vec::with_capacity(windows.len());
     let mut last_end_by_key: FxHashMap<(String, Arc<str>), u32> = FxHashMap::default();
     let mut pending_by_key: FxHashMap<(String, Arc<str>), Vec<Candidate>> = FxHashMap::default();
 
@@ -205,7 +205,7 @@ pub fn enforce_min_distance_within_group(
 /// - `()`:
 ///     Updates `windows` in place.
 pub fn apply_cluster_labels(
-    windows: &mut [FinalWindow],
+    windows: &mut [Window],
     min_overlaps: u32,
     coord_set: CoordinateSet,
 ) {
@@ -290,7 +290,7 @@ pub fn apply_cluster_labels(
 }
 
 fn build_coverage_index(
-    windows: &[FinalWindow],
+    windows: &[Window],
     coord_set: CoordinateSet,
 ) -> (Vec<u32>, Vec<u32>, Vec<u64>) {
     let mut events: Vec<(u32, i32)> = Vec::with_capacity(windows.len() * 2);
@@ -388,7 +388,7 @@ fn overlap_sum_with_segments(
 /// # Returns
 /// Tuple of `(safe_prefix, boundary_tail)`.
 pub fn partition_safe_and_tail(
-    windows: Vec<FinalWindow>,
+    windows: Vec<Window>,
     min_distance_bp: Option<u32>,
     merge_scope: MergeScope,
     merge_gap_bp: Option<u32>,
@@ -397,7 +397,7 @@ pub fn partition_safe_and_tail(
     cluster_min_overlaps: Option<u32>,
     cluster_coord_set: CoordinateSet,
     merge_group_keys: Option<&[String]>,
-) -> (Vec<FinalWindow>, Vec<FinalWindow>) {
+) -> (Vec<Window>, Vec<Window>) {
     if windows.is_empty() {
         return (windows, Vec::new());
     }
@@ -464,7 +464,7 @@ pub fn partition_safe_and_tail(
 }
 
 fn collect_tail_indices(
-    windows: &[FinalWindow],
+    windows: &[Window],
     merge_scope: MergeScope,
     margin: u32,
     coord_set: CoordinateSet,
@@ -536,7 +536,7 @@ fn collect_tail_indices(
 /// Earliest index that must remain in the tail.
 fn compute_tail_start_within_indices(
     indices: &[usize],
-    windows: &[FinalWindow],
+    windows: &[Window],
     margin: u32,
     coord_set: CoordinateSet,
     group_keys: Option<&[String]>,
@@ -590,7 +590,7 @@ fn compute_tail_start_within_indices(
 /// Earliest index that must remain in the tail.
 fn compute_tail_start_across_indices(
     indices: &[usize],
-    windows: &[FinalWindow],
+    windows: &[Window],
     margin: u32,
     coord_set: CoordinateSet,
 ) -> usize {

@@ -1,7 +1,7 @@
 use crate::commands::prepare_windows::{
     config::PrepareConfig,
     labels::{LabelKey, LabelSchema, build_tuple_compositions, render_label_for_key},
-    prepare_windows::FinalWindow,
+    prepare_windows::Window,
 };
 use crate::shared::io::{TextWriter, create_text_writer, stdout_text_writer};
 use anyhow::{Context, Result};
@@ -53,7 +53,7 @@ impl ChromTempWriter {
 /// `Ok(())` on success or an error if writing fails.
 pub fn write_windows<W: Write>(
     writer: &mut W,
-    windows: &[FinalWindow],
+    windows: &[Window],
     separator: char,
     out_labels: &[LabelKey],
     label_schema: &LabelSchema,
@@ -104,6 +104,7 @@ pub fn ensure_temp_writer_for_chrom<'a>(
 ) -> Result<&'a mut ChromTempWriter> {
     if !temp_writers.contains_key(chrom) {
         let sanitized = chrom.replace('/', "_");
+        // Temp file name is "chrom.<sanitized>.bed.tmp", for example "chrom.chr1.bed.tmp" or "chrom.chr1_KI270706v1_random.bed.tmp"
         let path = temp_dir.join(format!("chrom.{sanitized}.bed.tmp"));
         let file = File::create(&path)
             .with_context(|| format!("creating temp file for chromosome {}", chrom))?;

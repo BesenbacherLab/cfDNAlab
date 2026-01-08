@@ -1,4 +1,4 @@
-use crate::commands::prepare_windows::{config::CoordinateSet, prepare_windows::FinalWindow};
+use crate::commands::prepare_windows::{config::CoordinateSet, prepare_windows::Window};
 
 /// Canonical sort orders used throughout the prepare_windows pipeline.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -13,7 +13,7 @@ pub enum WindowSortOrder {
 
 /// Sort a slice of windows in place according to the requested ordering.
 pub fn sort_windows_in_place(
-    windows: &mut [FinalWindow],
+    windows: &mut [Window],
     order: WindowSortOrder,
     coord_set: CoordinateSet,
 ) {
@@ -43,7 +43,7 @@ pub fn sort_windows_in_place(
 
 /// Convenience helper that consumes and returns a sorted vector.
 #[inline]
-pub fn sort_windows_vec(mut windows: Vec<FinalWindow>, order: WindowSortOrder) -> Vec<FinalWindow> {
+pub fn sort_windows_vec(mut windows: Vec<Window>, order: WindowSortOrder) -> Vec<Window> {
     sort_windows_in_place(&mut windows, order, CoordinateSet::Resized);
     windows
 }
