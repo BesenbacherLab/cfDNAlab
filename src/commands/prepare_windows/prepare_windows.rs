@@ -6,8 +6,8 @@
 //!  - Validates and loads a `near` interval set (half-open, duplicate edges handled by `--near-duplicates`).
 //!  - Loads and combines blacklist intervals (with an optional halo).
 //!  - Streams the BED file by chromosome in chunks, applying early filters,
-//!    nearest-distance binning (with `-/+/=` prefixes that reflect direction),
-//!    minimum-distance filtering, merging, and deduplication.
+//!    resize or flank transforms, blacklist checks, deduplication, merging,
+//!    clustering, minimum-distance filtering, and near annotation with distance bins.
 //!  - Writes per-chromosome temporary files and concatenates them in a final pass.
 //!
 //!  The implementation favors determinism, clear rules, and low memory usage. It
@@ -22,7 +22,8 @@ use crate::commands::prepare_windows::filters::{
 use crate::commands::prepare_windows::labels::{AtomicLabelPart, LabelSchema, LabelTuple};
 use crate::commands::prepare_windows::near_file::load_near_index;
 use crate::commands::prepare_windows::parsers::{
-    parse_distance_bins, parse_record_line, parse_score_filter, resolve_column_indices,
+    parse_distance_bins, parse_record_line, parse_score_filter, parse_single_index,
+    resolve_column_indices,
 };
 use crate::commands::prepare_windows::resizers::apply_size_transform;
 use crate::commands::prepare_windows::writers::{ChromTempWriter, finalize_temp_writers};
@@ -146,6 +147,31 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
 
     // TODO: Validate IO paths early (and other args)
 
+    if cfg.distance_bins.is_some() && cfg.near.is_none() {
+        bail!("--distance-bins requires --near");
+    }
+
+    let use_input_chrom_order = cfg.chromosomes.chromosomes_file.is_none()
+        && matches!(
+            cfg.chromosomes.chromosomes.as_deref(),
+            Some([single]) if single.eq_ignore_ascii_case("all")
+        );
+    let chromosomes = if use_input_chrom_order {
+        Vec::new()
+    } else {
+        cfg.chromosomes.resolve_chromosomes(None)?
+    };
+    let allowed_chromosomes = if use_input_chrom_order {
+        None
+    } else {
+        Some(chromosomes.iter().cloned().collect::<FxHashSet<String>>())
+    };
+    let chromosomes_for_blacklist = if use_input_chrom_order {
+        None
+    } else {
+        Some(chromosomes.as_slice())
+    };
+
     // Compile distance bins (if any)
     let distance_bins = if let Some(specs) = &cfg.distance_bins {
         println!("Start: Parsing distance bins");
@@ -193,6 +219,21 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         matches!(cfg.score_missing, MissingScore::Drop) && cfg.score_filter.is_some();
 
     // Load near index (validated)
+    let near_strand_col = cfg
+        .near_strand_col
+        .as_deref()
+        .map(parse_single_index)
+        .transpose()?;
+    let mut near_group_cols: Vec<usize> = Vec::new();
+    for col in &cfg.near_group_cols {
+        near_group_cols.push(parse_single_index(col)?);
+    }
+    let near_group_cols = if near_group_cols.is_empty() {
+        None
+    } else {
+        Some(near_group_cols)
+    };
+
     let mut near_index = if let Some(path) = &cfg.near {
         println!("Start: Loading near file");
         let has_header_final = match cfg.near_header {
@@ -201,15 +242,16 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             HeaderMode::Auto => detect_header(path, cfg.sep).unwrap_or(false),
         };
 
-        let strand_col_present = true; // TODO: configure as optional
-        let group_col_present = true; // TODO: configure as optional
+        let consider_strand_in_dups =
+            matches!(cfg.near_edge, NearEdge::Upstream | NearEdge::Downstream)
+                && near_strand_col.is_some();
         Some(load_near_index(
             path,
             cfg.sep,
             has_header_final,
-            strand_col_present,
-            group_col_present,
-            matches!(cfg.near_edge, NearEdge::Upstream | NearEdge::Downstream),
+            near_strand_col,
+            near_group_cols.as_deref(),
+            consider_strand_in_dups,
             cfg.near_duplicates,
         )?)
     } else {
@@ -220,7 +262,8 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     let mut blacklist_cursors: FxHashMap<String, BlacklistCursor> = FxHashMap::default();
     if let Some(paths) = &cfg.blacklist {
         println!("Start: Loading blacklist intervals");
-        let loaded = load_blacklists(paths.as_slice(), 1, cfg.blacklist_halo as u64, None)?;
+        let loaded =
+            load_blacklists(paths.as_slice(), 1, cfg.blacklist_halo as u64, chromosomes_for_blacklist)?;
         for (chrom, intervals) in loaded.into_iter() {
             blacklist_cursors.insert(
                 chrom,
@@ -341,11 +384,19 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         let (chrom, start, end, input_group, score) =
             parse_record_line(line, cfg.sep, &column_indices)?;
 
+        if let Some(allowed) = allowed_chromosomes.as_ref() {
+            if !allowed.contains(&chrom) {
+                continue;
+            }
+        }
+
         if current_chrom.is_empty() {
             current_chrom = chrom.clone();
             current_chrom_size = chrom_sizes_map.get(&current_chrom).copied();
             prev_start_for_current = None;
-            chrom_order.push(current_chrom.clone());
+            if use_input_chrom_order {
+                chrom_order.push(current_chrom.clone());
+            }
         }
 
         if chrom != current_chrom {
@@ -382,7 +433,9 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             current_chrom = chrom.clone();
             current_chrom_size = chrom_sizes_map.get(&current_chrom).copied();
             prev_start_for_current = None;
-            chrom_order.push(current_chrom.clone());
+            if use_input_chrom_order {
+                chrom_order.push(current_chrom.clone());
+            }
         }
 
         if let Some(prev_start) = prev_start_for_current {
@@ -509,6 +562,12 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     // Final pass: apply filtering and write output
     println!("Start: Finalizing output");
     let temp_entries = finalize_temp_writers(&mut temp_writers)?;
+    let output_chromosomes = if use_input_chrom_order {
+        chrom_order
+    } else {
+        chromosomes
+    };
+
     filter_and_write_output(
         cfg,
         &temp_entries,
@@ -517,7 +576,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         &min_per_rules,
         &exclude_rules,
         temp_dir_guard.path(),
-        &chrom_order,
+        &output_chromosomes,
     )?;
     println!("Start: Removing temporary directory");
     temp_dir_guard.remove()?;
@@ -532,7 +591,9 @@ fn available_atomic_parts(cfg: &PrepareConfig) -> FxHashSet<AtomicLabelPart> {
     parts.insert(AtomicLabelPart::Input);
     if cfg.near.is_some() {
         parts.insert(AtomicLabelPart::NearSide);
-        parts.insert(AtomicLabelPart::NearName);
+        if !cfg.near_group_cols.is_empty() {
+            parts.insert(AtomicLabelPart::NearName);
+        }
     }
     if cfg.distance_bins.is_some() {
         parts.insert(AtomicLabelPart::Bin);

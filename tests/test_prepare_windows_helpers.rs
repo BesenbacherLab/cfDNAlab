@@ -2,6 +2,7 @@
 
 mod tests_prepare_windows_helpers {
     use anyhow::Result;
+    use cfdnalab::commands::prepare_windows::config::CoordinateSet;
     use cfdnalab::commands::prepare_windows::config::ComposeSpec;
     use cfdnalab::commands::prepare_windows::filters::{
         collect_min_per_window_filter_data, normalize_min_per_rules, parse_exclude_rules,
@@ -11,7 +12,14 @@ mod tests_prepare_windows_helpers {
     use cfdnalab::commands::prepare_windows::labels::{
         build_tuple_compositions, AtomicLabelPart, LabelKey, LabelSchema, LabelTuple,
     };
+    use cfdnalab::commands::prepare_windows::near_file::{NearDuplicatesPolicy, Strand, load_near_index};
+    use cfdnalab::commands::prepare_windows::postprocess::partition_safe_and_tail;
+    use cfdnalab::commands::prepare_windows::prepare_windows::Window;
+    use cfdnalab::commands::prepare_windows::config::MergeScope;
     use fxhash::FxHashSet;
+    use tempfile::NamedTempFile;
+    use std::io::Write;
+    use std::sync::Arc;
 
     fn build_schema(specs: &[&str]) -> Result<LabelSchema> {
         let mut compose_specs: Vec<ComposeSpec> = Vec::with_capacity(specs.len());
@@ -42,6 +50,20 @@ mod tests_prepare_windows_helpers {
         let mut tuple = LabelTuple::new(input.to_string());
         tuple.bin = bin.map(|value| value.to_string());
         tuple
+    }
+
+    fn build_window(chrom: &str, start: u32, end: u32, group_key: &str) -> Window {
+        Window {
+            chrom: Arc::from(chrom),
+            original_start: start,
+            original_end: end,
+            resized_start: start,
+            resized_end: end,
+            merged: false,
+            label_tuples: Vec::new(),
+            group_key: group_key.to_string(),
+            score: None,
+        }
     }
 
     fn assert_min_per_window_data(
@@ -553,6 +575,162 @@ mod tests_prepare_windows_helpers {
         assert_eq!(normalized.len(), 1);
         assert!(matches!(normalized[0].key, LabelKey::Composition(1)));
         assert_eq!(normalized[0].min_count, 250);
+        Ok(())
+    }
+
+    #[test]
+    fn should_keep_tail_for_merge_gap_zero() -> Result<()> {
+        // Arrange
+        // Merge gap zero still allows overlaps across chunk boundaries
+        // Even with only two windows, the last window must stay in the tail
+        // The next chunk could add a window that overlaps or touches this one
+        // Keeping it in the tail preserves correctness for cross-chunk merges
+        let windows = vec![
+            build_window("chr1", 10, 20, "A"),
+            build_window("chr1", 30, 40, "A"),
+        ];
+
+        // Act
+        let (safe_prefix, tail) = partition_safe_and_tail(
+            windows,
+            None,
+            MergeScope::Within,
+            Some(0),
+            CoordinateSet::Resized,
+            CoordinateSet::Resized,
+            None,
+            CoordinateSet::Resized,
+            None,
+        );
+
+        // Assert
+        assert_eq!(safe_prefix.len(), 1);
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].start_for(CoordinateSet::Resized), 30);
+        Ok(())
+    }
+
+    #[test]
+    fn should_keep_tail_for_min_distance_zero() -> Result<()> {
+        // Arrange
+        // Minimum distance zero still requires checking the next chunk for overlaps
+        // Even with only two windows, the last window must stay in the tail
+        // The next chunk could add a window that overlaps or touches this one
+        // Keeping it in the tail preserves correctness for cross-chunk spacing
+        let windows = vec![
+            build_window("chr1", 10, 20, "A"),
+            build_window("chr1", 30, 40, "A"),
+        ];
+
+        // Act
+        let (safe_prefix, tail) = partition_safe_and_tail(
+            windows,
+            Some(0),
+            MergeScope::None,
+            None,
+            CoordinateSet::Resized,
+            CoordinateSet::Resized,
+            None,
+            CoordinateSet::Resized,
+            None,
+        );
+
+        // Assert
+        assert_eq!(safe_prefix.len(), 1);
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].start_for(CoordinateSet::Resized), 30);
+        Ok(())
+    }
+
+    #[test]
+    fn should_keep_tail_for_cluster_overlap() -> Result<()> {
+        // Arrange
+        // Clustering depends on overlap depth, so the last window must carry forward
+        // Even with only two windows, the last window must stay in the tail
+        // The next chunk could add a window that overlaps and changes cluster depth
+        // Keeping it in the tail preserves correctness for cross-chunk clustering
+        let windows = vec![
+            build_window("chr1", 10, 20, "A"),
+            build_window("chr1", 30, 40, "B"),
+        ];
+
+        // Act
+        let (safe_prefix, tail) = partition_safe_and_tail(
+            windows,
+            None,
+            MergeScope::None,
+            None,
+            CoordinateSet::Resized,
+            CoordinateSet::Resized,
+            Some(2),
+            CoordinateSet::Resized,
+            None,
+        );
+
+        // Assert
+        assert_eq!(safe_prefix.len(), 1);
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].start_for(CoordinateSet::Resized), 30);
+        Ok(())
+    }
+
+    #[test]
+    fn should_keep_tail_for_cross_chunk_merge_gap_zero() -> Result<()> {
+        // Arrange
+        // Cross-chunk merges with gap zero can still happen at the boundary
+        // The last window per merge group must stay in the tail for the next chunk
+        let windows = vec![
+            build_window("chr1", 10, 20, "A"),
+            build_window("chr1", 20, 30, "A"),
+            build_window("chr1", 40, 50, "B"),
+        ];
+        let merge_group_keys = vec!["A".to_string(), "A".to_string(), "B".to_string()];
+
+        // Act
+        let (safe_prefix, tail) = partition_safe_and_tail(
+            windows,
+            None,
+            MergeScope::Within,
+            Some(0),
+            CoordinateSet::Resized,
+            CoordinateSet::Resized,
+            None,
+            CoordinateSet::Resized,
+            Some(&merge_group_keys),
+        );
+
+        // Assert
+        assert_eq!(safe_prefix.len(), 1);
+        assert_eq!(tail.len(), 2);
+        assert_eq!(tail[0].start_for(CoordinateSet::Resized), 20);
+        Ok(())
+    }
+
+    #[test]
+    fn should_load_near_without_strand_column() -> Result<()> {
+        // Arrange
+        // Missing strand column should default to '+' for every near interval
+        let mut file = NamedTempFile::new()?;
+        writeln!(file, "chr1\t10\t20\tGeneA")?;
+        writeln!(file, "chr1\t30\t40\tGeneB")?;
+
+        // Act
+        let index = load_near_index(
+            file.path(),
+            '\t',
+            false,
+            None,
+            Some(&[3]),
+            false,
+            NearDuplicatesPolicy::Error,
+        )?;
+
+        // Assert
+        let chr1 = index.per_chrom.get("chr1").expect("chr1 near intervals");
+        assert_eq!(chr1.intervals.len(), 2);
+        assert_eq!(chr1.intervals[0].strand, Strand::Plus);
+        assert_eq!(chr1.intervals[1].strand, Strand::Plus);
+        assert_eq!(index.group_id_to_name, vec!["GeneA".to_string(), "GeneB".to_string()]);
         Ok(())
     }
 }

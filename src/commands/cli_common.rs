@@ -279,7 +279,8 @@ pub struct ChromosomeArgs {
     /// When no chromosomes are specified, it defaults to `chr1..chr22`.
     ///
     /// Specify `"all"` *as the only string* to use all present chromosomes.
-    /// Only works for tools where a BAM path is passed.
+    /// For BAM-backed commands this uses the BAM header order.
+    /// For commands that read chromosome order from their input, this uses the input order.
     #[cfg_attr(
         feature = "cli", clap(
             long, num_args = 1..,

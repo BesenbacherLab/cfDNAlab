@@ -44,8 +44,11 @@ The base pieces you can reference anywhere
 
 * `input` — original group from `--group-cols`.
   - When windows carry multiple groups, values are joined with `__` in stable order.
+  - Missing group values are written as `[NA]` so each label keeps the same number of segments.
 * `near-side` — one of `- + =` relative to the near interval strand.
 * `near-name` — the group name from the near file.
+  - Missing group values are written as `[NA]` so each label keeps the same number of segments.
+  - Chromosomes with no near intervals keep empty near labels and are not filtered by `--distance-max`.
 * `bin` — the distance bin label.
 * `cluster` — set to `cluster` for windows that meet the overlap threshold, otherwise `none`.
 
@@ -296,9 +299,10 @@ You can set several min-per rules. Each rule is a key and a threshold.
   - **Any-member** counting: A window with `input = A__B` adds one to `A` and one to `B`.
   - The window satisfies `input=N` if **any** of its input groups ends up with a count at least `N`.
 
-* Single-valued atomic parts (`near-side`, `near-name`, `bin`):
-  - Each window adds one to exactly one bucket in that dimension.
-  - The window satisfies the rule if the bucket it contributes to reaches the threshold.
+* Atomic parts (`near-side`, `near-name`, `bin`):
+  - Each window adds one to every distinct value it carries for that part.
+  - This can be more than one bucket when near ties create multiple tuples.
+  - The window satisfies the rule if any of its buckets reaches the threshold.
 
 * Named compositions:
   - If the composition produces multiple labels for a window, it uses the same any-member logic.

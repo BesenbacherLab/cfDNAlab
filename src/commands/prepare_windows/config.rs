@@ -1,4 +1,5 @@
 use crate::{
+    commands::cli_common::ChromosomeArgs,
     commands::prepare_windows::{labels::validate_label_token, near_file::NearDuplicatesPolicy},
     shared::blacklist::BlacklistStrategy,
 };
@@ -31,7 +32,9 @@ use std::path::PathBuf;
 /// - Tags dense overlaps as clusters.
 ///
 /// The output is minimal, headerless, and sorted by `(chrom, start, end, labels)`,
-/// where the label columns are specified via `--out-labels`.
+/// where the label columns are specified via `--out-labels` and the chromosome
+/// order is controlled by `--chromosomes`.
+/// When `--chromosomes all` is specified, the output order follows the input stream.
 ///
 /// ## Practical notes
 ///
@@ -64,7 +67,13 @@ pub struct PrepareConfig {
     /// Compression inferred from file extension (`.gz` or `.zst`). Use `'-'` for stdin.
     #[cfg_attr(
         feature = "cli",
-        clap(long, value_parser, required = true, help_heading = "Core")
+        clap(
+            long,
+            short = 'i',
+            value_parser,
+            required = true,
+            help_heading = "Core"
+        )
     )]
     pub input: PathBuf,
 
@@ -73,9 +82,18 @@ pub struct PrepareConfig {
     /// Compression inferred from file extension (`.gz` or `.zst`). Use `'-'` for stdout.
     #[cfg_attr(
         feature = "cli",
-        clap(long, value_parser, default_value = "-", help_heading = "Core")
+        clap(
+            long,
+            short = 'o',
+            value_parser,
+            default_value = "-",
+            help_heading = "Core"
+        )
     )]
     pub output: PathBuf,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub chromosomes: ChromosomeArgs,
 
     /// Header presence in input `[string]`
     ///
@@ -130,6 +148,7 @@ pub struct PrepareConfig {
     /// Provide one or more column indices. When multiple are given, they will be
     /// concatenated using `__` into the `input` label.
     /// Values must be ASCII alphanumerics and cannot be `none`.
+    /// Empty values are replaced with `[NA]` so the number of group segments stays fixed.
     ///
     /// If omitted, the `input` label is empty and can be composed with later labels.
     ///
@@ -342,6 +361,12 @@ pub struct PrepareConfig {
     /// Expected columns:
     ///   `chromosome`, `start`, `end`, optional `strand`, optional `group`.
     ///
+    /// Use `--near-strand-col` to point to a strand column.
+    /// When omitted, all intervals default to the `+` strand.
+    ///
+    /// Use `--near-group-cols` to point to group columns.
+    /// When omitted, `near-name` is empty and not available for filtering.
+    ///
     /// - `strand` is one of `+`, `-`, or `.` (unknown). If absent, `+` is assumed.
     ///
     /// - Group names must be ASCII alphanumerics and cannot be the string `none`.
@@ -356,6 +381,8 @@ pub struct PrepareConfig {
     ///     target edge(s) (see `--near-edge`).
     ///
     /// If you specify TSS sites, provide 1-bp intervals at the strand-specific TSS.
+    /// If a chromosome has no near intervals, windows on that chromosome keep empty near labels.
+    /// `--distance-max` only applies when a near hit exists.
     ///
     /// When `--near` is specified, the labels `near-side` and `near-name` become available
     /// for use in `--compose`, `--out-labels`, and `--exclude-labels`.
@@ -450,6 +477,44 @@ pub struct PrepareConfig {
         )
     )]
     pub near_header: HeaderMode,
+
+    /// Strand column index in the `--near` file `[string]`
+    ///
+    /// Use this when the near file includes a strand column.
+    /// Index is 0-based.
+    /// When omitted, all intervals default to the `+` strand.
+    ///
+    /// Example: `--near-strand-col 3`
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_parser,
+            requires = "near",
+            help_heading = "Distance to near intervals"
+        )
+    )]
+    pub near_strand_col: Option<String>,
+
+    /// Group column indices in the `--near` file `[strings]`
+    ///
+    /// Use this when the near file includes group name columns.
+    /// Indices are 0-based.
+    /// When omitted, `near-name` is empty and not available for filtering.
+    /// Empty values are replaced with `[NA]` so the number of group segments stays fixed.
+    ///
+    /// Example: `--near-group-cols 4 5`
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_parser,
+            num_args = 1..,
+            requires = "near",
+            help_heading = "Distance to near intervals"
+        )
+    )]
+    pub near_group_cols: Vec<String>,
 
     /// Edge of near-intervals to consider in distance calculation `[string]`
     ///
@@ -561,6 +626,7 @@ pub struct PrepareConfig {
     /// Labels must be ASCII alphanumerics and cannot be the string `none`.
     ///
     /// When specified, the label `bin` becomes available.
+    /// Requires `--near`.
     ///
     /// Examples:
     ///
@@ -606,6 +672,7 @@ pub struct PrepareConfig {
     /// Maximum absolute distance to keep `[integer]`
     ///
     /// Windows with `|distance| > --distance-max` are dropped prior to binning.
+    /// When no near interval exists for a chromosome, this filter does not apply.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -1107,6 +1174,7 @@ impl Default for PrepareConfig {
         Self {
             input: "-".into(),
             output: "-".into(),
+            chromosomes: ChromosomeArgs::default(),
             header: HeaderMode::Auto,
             cols: "chrom=0,start=1,end=2".to_string(),
             group_cols: Vec::new(),
@@ -1123,6 +1191,8 @@ impl Default for PrepareConfig {
             blacklist_strategy: BlacklistStrategy::Any,
             near: None,
             near_header: HeaderMode::Auto,
+            near_strand_col: None,
+            near_group_cols: Vec::new(),
             near_edge: NearEdge::Nearest,
             near_direction: NearDirection::Both,
             near_ties: NearTiePolicy::Annotate,

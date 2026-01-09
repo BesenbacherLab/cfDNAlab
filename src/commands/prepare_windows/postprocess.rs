@@ -204,11 +204,7 @@ pub fn enforce_min_distance_within_group(
 /// -------
 /// - `()`:
 ///     Updates `windows` in place.
-pub fn apply_cluster_labels(
-    windows: &mut [Window],
-    min_overlaps: u32,
-    coord_set: CoordinateSet,
-) {
+pub fn apply_cluster_labels(windows: &mut [Window], min_overlaps: u32, coord_set: CoordinateSet) {
     if windows.is_empty() {
         return;
     }
@@ -373,6 +369,8 @@ fn overlap_sum_with_segments(
 /// The function finds the earliest output-order index that could still interact
 /// across the chunk boundary under either merging or minimum-distance rules, then splits
 /// the list.
+/// When a margin is zero, the last window for each key or chromosome is still kept in the tail
+/// because overlap is still possible across the chunk boundary.
 ///
 /// # Parameters
 /// - `windows`: processed windows in output order.
@@ -556,9 +554,7 @@ fn compute_tail_start_within_indices(
         match maybe_last_end {
             None => {
                 last_per_key.insert(key, window_end);
-                if margin > 0 {
-                    min_index = min_index.min(pos);
-                }
+                min_index = min_index.min(pos);
             }
             Some(last_end) => {
                 if window.start_for(coord_set) <= last_end.saturating_add(margin) {
@@ -602,11 +598,10 @@ fn compute_tail_start_across_indices(
         let chrom_name = window.chrom.as_ref();
         let last_end = last_end_by_chrom.get(chrom_name).copied().unwrap_or(0);
         let window_end = window.end_for(coord_set);
+
         if last_end == 0 {
             last_end_by_chrom.insert(chrom_name, window_end);
-            if margin > 0 {
-                min_index = min_index.min(pos);
-            }
+            min_index = min_index.min(pos);
         } else if window.start_for(coord_set) <= last_end.saturating_add(margin) {
             min_index = min_index.min(pos);
             let new_end = last_end.max(window_end);

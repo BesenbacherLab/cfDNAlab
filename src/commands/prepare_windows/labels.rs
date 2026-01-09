@@ -1,6 +1,7 @@
 /// Label validation helpers and reserved words.
 
 pub const RESERVED_LABEL_NONE: &str = "none";
+pub const MISSING_GROUP_LABEL: &str = "[NA]";
 
 const RESERVED_LABELS: [&str; 6] = [
     "input",

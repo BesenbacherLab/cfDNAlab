@@ -1,4 +1,4 @@
-use crate::commands::prepare_windows::labels::validate_label_token;
+use crate::commands::prepare_windows::labels::{MISSING_GROUP_LABEL, validate_label_token};
 use anyhow::{Context, Result, bail};
 
 /* Parse distance bins */
@@ -264,7 +264,9 @@ pub fn parse_record_line(
         let mut parts: Vec<&str> = Vec::with_capacity(cols.group.len());
         for &idx in &cols.group {
             let val = fields.get(idx).unwrap_or(&"").trim();
-            if !val.is_empty() {
+            if val.is_empty() {
+                parts.push(MISSING_GROUP_LABEL);
+            } else {
                 if let Err(message) = validate_label_token(val, "input group label") {
                     bail!(message);
                 }
@@ -312,7 +314,7 @@ pub fn parse_cols_indices(cols_spec: &str) -> Result<(usize, usize, usize)> {
 }
 
 #[inline]
-fn parse_single_index(s: &str) -> Result<usize> {
+pub(crate) fn parse_single_index(s: &str) -> Result<usize> {
     let idx = s
         .parse::<usize>()
         .with_context(|| format!("Expecting 0-based index, got '{}'", s))?;
