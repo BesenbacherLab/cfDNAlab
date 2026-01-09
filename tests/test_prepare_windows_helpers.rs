@@ -5,7 +5,7 @@ mod tests_prepare_windows_helpers {
     use cfdnalab::commands::prepare_windows::config::ComposeSpec;
     use cfdnalab::commands::prepare_windows::filters::{
         collect_min_per_window_filter_data, normalize_min_per_rules, parse_exclude_rules,
-        parse_min_per_rules, validate_available_keys, validate_compositions_available, MinPerKeyState,
+        parse_min_per_rules, validate_available_keys, validate_compositions_available, MinPerKeyRuleState,
         MinPerWindowFilterData,
     };
     use cfdnalab::commands::prepare_windows::labels::{
@@ -232,8 +232,8 @@ mod tests_prepare_windows_helpers {
     #[test]
     fn should_collect_min_per_values_when_rejections_and_missing_values_present() -> Result<()> {
         // Arrange
-        let input_state = MinPerKeyState::new(LabelKey::Atomic(AtomicLabelPart::Input), 1);
-        let mut bin_state = MinPerKeyState::new(LabelKey::Atomic(AtomicLabelPart::Bin), 1);
+        let input_state = MinPerKeyRuleState::new(LabelKey::Atomic(AtomicLabelPart::Input), 1);
+        let mut bin_state = MinPerKeyRuleState::new(LabelKey::Atomic(AtomicLabelPart::Bin), 1);
         bin_state.add_rejected_value("drop");
         let states = vec![input_state, bin_state];
 
@@ -274,7 +274,7 @@ mod tests_prepare_windows_helpers {
     fn should_collect_composition_values_when_composition_rule_present() -> Result<()> {
         // Arrange
         let schema = build_schema(&["core=input,bin"])?;
-        let mut composition_state = MinPerKeyState::new(LabelKey::Composition(0), 1);
+        let mut composition_state = MinPerKeyRuleState::new(LabelKey::Composition(0), 1);
         composition_state.add_rejected_value("A.y");
         let states = vec![composition_state];
 
@@ -305,8 +305,8 @@ mod tests_prepare_windows_helpers {
     #[test]
     fn should_return_empty_values_when_window_has_no_tuples() -> Result<()> {
         // Arrange
-        let input_state = MinPerKeyState::new(LabelKey::Atomic(AtomicLabelPart::Input), 1);
-        let bin_state = MinPerKeyState::new(LabelKey::Atomic(AtomicLabelPart::Bin), 1);
+        let input_state = MinPerKeyRuleState::new(LabelKey::Atomic(AtomicLabelPart::Input), 1);
+        let bin_state = MinPerKeyRuleState::new(LabelKey::Atomic(AtomicLabelPart::Bin), 1);
         let states = vec![input_state, bin_state];
         let label_tuples: Vec<LabelTuple> = Vec::new();
         let tuple_compositions: Vec<Vec<String>> = Vec::new();

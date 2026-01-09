@@ -296,14 +296,14 @@ fn atomic_value_for_tuple(tuple: &LabelTuple, part: AtomicLabelPart) -> &str {
 /// Holds the running count for each observed value, plus the set of values
 /// that have already fallen below the minimum.
 #[derive(Clone, Debug)]
-pub struct MinPerKeyState {
+pub struct MinPerKeyRuleState {
     key: LabelKey,
     min_count: u64,
     counts: FxHashMap<String, u64>,
     rejected_values: FxHashSet<String>,
 }
 
-impl MinPerKeyState {
+impl MinPerKeyRuleState {
     /// Create a new min-per rule state.
     ///
     /// Parameters
@@ -344,9 +344,9 @@ impl MinPerKeyState {
 /// rules with eager bucket removal until the result stabilizes, then writes
 /// the requested label columns.
 ///
-/// Min-per "states"
-/// ----------------
-/// - Each `--min-per` rule builds a `MinPerKeyState` that tracks counts for
+/// Min-per rule states
+/// -------------------
+/// - Each `--min-per` rule builds a `MinPerKeyRuleState` that tracks counts for
 ///   every observed value of the rule key, for example `input=SampleA` or
 ///   `core=A.B`.
 /// - Values that fall below the minimum are rejected and removed from all
@@ -423,8 +423,8 @@ pub fn filter_and_write_output(
     }
 
     // Remove duplicate rules (by membership) and zero-min rules
-    let normalized = normalize_min_per_rules(min_per_rules, label_schema);
-    if normalized.is_empty() {
+    let normalized_rules = normalize_min_per_rules(min_per_rules, label_schema);
+    if normalized_rules.is_empty() {
         let result = write_output_from_entries(
             cfg,
             &entries,
@@ -437,38 +437,46 @@ pub fn filter_and_write_output(
     }
 
     // Single-rule is a simplified path (no recursion)
-    if normalized.len() == 1 {
-        let mut state = MinPerKeyState::new(normalized[0].key.clone(), normalized[0].min_count);
+    if normalized_rules.len() == 1 {
+        let mut rule_state = MinPerKeyRuleState::new(
+            normalized_rules[0].key.clone(),
+            normalized_rules[0].min_count,
+        );
         compute_initial_counts(
             &entries,
             cfg.sep,
             label_schema,
-            std::slice::from_mut(&mut state),
+            std::slice::from_mut(&mut rule_state),
         )?;
-        initialize_rejected_values(std::slice::from_mut(&mut state));
+        initialize_rejected_values(std::slice::from_mut(&mut rule_state));
         let result = filter_single_key_and_write_output(
             cfg,
             &entries,
             label_schema,
             out_labels,
             exclude_rules_for_output,
-            &state,
+            &rule_state,
         );
         remove_temp_dir_for_entries(&entries)?;
         return result;
     }
 
     // Multi-rule requires iterative filtering until stable
-    let mut states: Vec<MinPerKeyState> = normalized
+    let mut rule_states: Vec<MinPerKeyRuleState> = normalized_rules
         .iter()
-        .map(|rule| MinPerKeyState::new(rule.key.clone(), rule.min_count))
+        .map(|rule| MinPerKeyRuleState::new(rule.key.clone(), rule.min_count))
         .collect();
-    compute_initial_counts(&entries, cfg.sep, label_schema, &mut states)?;
-    initialize_rejected_values(&mut states);
+    compute_initial_counts(&entries, cfg.sep, label_schema, &mut rule_states)?;
+    initialize_rejected_values(&mut rule_states);
 
     loop {
-        let (next_entries, rejections_added) =
-            filter_min_per_pass(&entries, cfg.sep, label_schema, &mut states, base_temp_dir)?;
+        let (next_entries, rejections_added) = filter_min_per_pass(
+            &entries,
+            cfg.sep,
+            label_schema,
+            &mut rule_states,
+            base_temp_dir,
+        )?;
         remove_temp_dir_for_entries(&entries)?;
         entries = sort_temp_entries(&next_entries, &chrom_positions)?;
         if !rejections_added {
@@ -716,8 +724,8 @@ fn label_key_name(key: &LabelKey, label_schema: &LabelSchema) -> String {
 ///     Field separator used in the temp files.
 /// - `label_schema`:
 ///     Schema for resolving composition values.
-/// - `states`:
-///     Per-key state that will be filled with counts.
+/// - `rule_states`:
+///     Per-key rule state that will be filled with counts.
 ///
 /// Returns
 /// -------
@@ -726,13 +734,13 @@ fn compute_initial_counts(
     entries: &[(String, PathBuf)],
     separator: char,
     label_schema: &LabelSchema,
-    states: &mut [MinPerKeyState],
+    rule_states: &mut [MinPerKeyRuleState],
 ) -> Result<()> {
-    if states.is_empty() {
+    if rule_states.is_empty() {
         return Ok(());
     }
 
-    let needs_compositions_for_counts = states
+    let needs_compositions_for_counts = rule_states
         .iter()
         .any(|state| matches!(state.key, LabelKey::Composition(_)));
 
@@ -752,7 +760,7 @@ fn compute_initial_counts(
                 Vec::new()
             };
 
-            for state in states.iter_mut() {
+            for state in rule_states.iter_mut() {
                 // Count each value once per window to avoid double counting tied labels
                 let values = collect_unique_values_for_key(
                     &window.label_tuples,
@@ -775,11 +783,11 @@ fn compute_initial_counts(
 ///
 /// Parameters
 /// ----------
-/// - `states`:
-///     Per-key state to update in place.
-fn initialize_rejected_values(states: &mut [MinPerKeyState]) {
+/// - `rule_states`:
+///     Per-key rule state to update in place.
+fn initialize_rejected_values(rule_states: &mut [MinPerKeyRuleState]) {
     // Initialize rejected values from the initial counts
-    for state in states {
+    for state in rule_states {
         for (value, count) in state.counts.iter() {
             if *count < state.min_count {
                 state.rejected_values.insert(value.clone());
@@ -817,7 +825,7 @@ fn filter_single_key_and_write_output(
     label_schema: &LabelSchema,
     out_labels: &[LabelKey],
     exclude_rules: &[ExcludeRule],
-    state: &MinPerKeyState,
+    state: &MinPerKeyRuleState,
 ) -> Result<()> {
     let mut out: TextWriter = if cfg.output.as_os_str() == "-" {
         stdout_text_writer()
@@ -855,7 +863,6 @@ fn filter_single_key_and_write_output(
 
             // Apply min-per by keeping only tuples whose key value is allowed
             let mut kept_tuples: Vec<LabelTuple> = Vec::new();
-            // Keep per-state values aligned with states order so each index maps to the same rule
             for (tuple_idx, tuple) in window.label_tuples.iter().enumerate() {
                 let value = key_value_for_tuple(tuple, tuple_idx, &tuple_compositions, &state.key);
                 if value.is_empty() || !allowed_values.contains(value) {
@@ -919,8 +926,8 @@ fn filter_single_key_and_write_output(
 ///     Field separator used in the temp files.
 /// - `label_schema`:
 ///     Schema for resolving composition values.
-/// - `states`:
-///     Per-key min-per state to update.
+/// - `rule_states`:
+///     Per-key rule state to update.
 /// - `base_temp_dir`:
 ///     Parent directory for creating a new pass directory.
 ///
@@ -934,14 +941,14 @@ fn filter_min_per_pass(
     entries: &[(String, PathBuf)],
     separator: char,
     label_schema: &LabelSchema,
-    states: &mut [MinPerKeyState],
+    rule_states: &mut [MinPerKeyRuleState],
     base_temp_dir: &Path,
 ) -> Result<(Vec<(String, PathBuf)>, bool)> {
     let temp_dir = make_temp_dir(base_temp_dir, "prepare_windows_filter")?;
     let mut writers: FxHashMap<String, ChromTempWriter> = FxHashMap::default();
     let mut rejections_added = false;
 
-    let needs_compositions_for_min_per = states
+    let needs_compositions_for_min_per = rule_states
         .iter()
         .any(|state| matches!(state.key, LabelKey::Composition(_)));
 
@@ -967,14 +974,14 @@ fn filter_min_per_pass(
             let filter_data = collect_min_per_window_filter_data(
                 &window.label_tuples,
                 &tuple_compositions,
-                states,
+                rule_states,
             );
             let values_before_filter = filter_data.values_before_filter;
             let values_after_filter = filter_data.values_after_filter;
             let kept_tuples = filter_data.kept_tuples;
 
             // Decrement counts for values that disappeared after filtering this window
-            for (idx, state) in states.iter_mut().enumerate() {
+            for (idx, state) in rule_states.iter_mut().enumerate() {
                 // Compare the before and after sets using the same per-state index
                 for value in values_before_filter[idx].iter() {
                     // Decrement only when a value was present before but not after filtering
@@ -1026,7 +1033,7 @@ pub struct MinPerWindowFilterData {
 /// Collect per-rule values and kept tuples for a single window.
 ///
 /// Builds the before and after value sets, applying each min-per rule in order.
-/// The resulting vectors keep the same order as `states` so index positions
+/// The resulting vectors keep the same order as `rule_states` so index positions
 /// match when counts are decremented.
 ///
 /// Parameters
@@ -1035,7 +1042,7 @@ pub struct MinPerWindowFilterData {
 ///     Tuples to evaluate for the window.
 /// - `tuple_compositions`:
 ///     Precomputed composition values for each tuple.
-/// - `states`:
+/// - `rule_states`:
 ///     Min-per rule states providing keys and rejected values.
 ///
 /// Returns
@@ -1045,11 +1052,11 @@ pub struct MinPerWindowFilterData {
 pub fn collect_min_per_window_filter_data(
     label_tuples: &[LabelTuple],
     tuple_compositions: &[Vec<String>],
-    states: &[MinPerKeyState],
+    rule_states: &[MinPerKeyRuleState],
 ) -> MinPerWindowFilterData {
     // Track values before filtering so we can decrement counts once per window
-    let mut values_before_filter: Vec<Vec<String>> = Vec::with_capacity(states.len());
-    for state in states.iter() {
+    let mut values_before_filter: Vec<Vec<String>> = Vec::with_capacity(rule_states.len());
+    for state in rule_states.iter() {
         values_before_filter.push(collect_unique_values_for_key(
             label_tuples,
             tuple_compositions,
@@ -1058,16 +1065,16 @@ pub fn collect_min_per_window_filter_data(
     }
 
     // Keep tuples that pass every min-per rule and record their values
-    let mut values_after_filter: Vec<Vec<String>> = vec![Vec::new(); states.len()];
+    let mut values_after_filter: Vec<Vec<String>> = vec![Vec::new(); rule_states.len()];
     let mut kept_tuples: Vec<LabelTuple> = Vec::new();
 
-    // Index positions match states, so values_before_filter[idx] and values_after_filter[idx]
+    // Index positions match rule_states, so values_before_filter[idx] and values_after_filter[idx]
     // always refer to the same min-per rule when we compare and decrement
     for (tuple_idx, tuple) in label_tuples.iter().enumerate() {
-        // Collect values in state order so we can reuse them for values_after_filter
-        let mut tuple_values: Vec<&str> = Vec::with_capacity(states.len());
+        // Collect values in rule_state order so we can reuse them for values_after_filter
+        let mut tuple_values: Vec<&str> = Vec::with_capacity(rule_states.len());
         let mut passes = true;
-        for state in states.iter() {
+        for state in rule_states.iter() {
             let value = key_value_for_tuple(tuple, tuple_idx, tuple_compositions, &state.key);
             // Reject tuples with missing values or previously rejected values
             if value.is_empty() || state.rejected_values.contains(value) {
@@ -1249,7 +1256,7 @@ fn deduplicate_values(values: &mut Vec<String>) {
 /// -------
 /// - `added_rejection`:
 ///     True when the value newly falls below the threshold.
-fn decrement_value_count(state: &mut MinPerKeyState, value: &str) -> Result<bool> {
+fn decrement_value_count(state: &mut MinPerKeyRuleState, value: &str) -> Result<bool> {
     let entry = state
         .counts
         .get_mut(value)
