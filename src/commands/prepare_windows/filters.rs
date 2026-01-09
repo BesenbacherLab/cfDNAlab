@@ -340,9 +340,9 @@ impl MinPerKeyRuleState {
 
 /// Filter intermediate windows and write the final output.
 ///
-/// This drops excluded windows before any min-per counting, applies min-per
-/// rules with eager bucket removal until the result stabilizes, then writes
-/// the requested label columns.
+/// This drops excluded windows and computes initial min-per
+/// counts (when needed). It then applies min-per rules with bucket removal
+/// until the result stabilizes, and writes the requested label columns.
 ///
 /// Min-per rule states
 /// -------------------
@@ -379,7 +379,7 @@ impl MinPerKeyRuleState {
 ///     Minimum-per rules to enforce.
 /// - `exclude_rules`:
 ///     Label exclusion rules applied before min-per filtering.
-/// - `base_output_dir`:
+/// - `base_temp_dir`:
 ///     Per-run temp directory used for creating filtering temp subdirectories.
 ///
 /// Returns
@@ -401,74 +401,59 @@ pub fn filter_and_write_output(
         return write_empty_output(cfg);
     }
 
-    // Drop excluded windows before we do any min-per counting
-    let mut exclude_rules_for_output: &[ExcludeRule] = exclude_rules;
-    if !exclude_rules.is_empty() {
-        let filtered_entries = filter_excluded_entries(
+    // Remove duplicate rules (by membership) and zero-min rules
+    let normalized_rules = normalize_min_per_rules(min_per_rules, label_schema);
+    let mut rule_states: Vec<MinPerKeyRuleState> = normalized_rules
+        .iter()
+        .map(|rule| MinPerKeyRuleState::new(rule.key.clone(), rule.min_count))
+        .collect();
+
+    let do_any_filtering = !rule_states.is_empty() || !exclude_rules.is_empty();
+
+    // Filter by exclude-rules when present and count post-filtering values per state (when min-per rules exist)
+    if do_any_filtering {
+        let filtered_entries = filter_excluded_entries_and_count(
             &entries,
             cfg.sep,
             label_schema,
             exclude_rules,
             base_temp_dir,
+            if rule_states.is_empty() {
+                None
+            } else {
+                Some(&mut rule_states)
+            },
         )?;
-        remove_temp_dir_for_entries(&entries)?;
         entries = sort_temp_entries(&filtered_entries, &chrom_positions)?;
-        // Exclusions already applied to temp files so skip rechecking later
-        exclude_rules_for_output = &[];
     }
 
     if entries.is_empty() {
         // No windows remain after exclusion and early filtering
         return write_empty_output(cfg);
     }
-
-    // Remove duplicate rules (by membership) and zero-min rules
-    let normalized_rules = normalize_min_per_rules(min_per_rules, label_schema);
     if normalized_rules.is_empty() {
-        let result = write_output_from_entries(
-            cfg,
-            &entries,
-            label_schema,
-            out_labels,
-            exclude_rules_for_output,
-        );
+        let result = write_output_from_entries(cfg, &entries, label_schema, out_labels);
         remove_temp_dir_for_entries(&entries)?;
         return result;
     }
 
-    // Single-rule is a simplified path (no recursion)
-    if normalized_rules.len() == 1 {
-        let mut rule_state = MinPerKeyRuleState::new(
-            normalized_rules[0].key.clone(),
-            normalized_rules[0].min_count,
-        );
-        compute_initial_counts(
-            &entries,
-            cfg.sep,
-            label_schema,
-            std::slice::from_mut(&mut rule_state),
-        )?;
-        initialize_rejected_values(std::slice::from_mut(&mut rule_state));
+    // Min-per rules exist so find the initial values to reject in the filtering passes
+    initialize_rejected_values(&mut rule_states);
+
+    // Single-rule is a simplified path (no iteration)
+    if rule_states.len() == 1 {
         let result = filter_single_key_and_write_output(
             cfg,
             &entries,
             label_schema,
             out_labels,
-            exclude_rules_for_output,
-            &rule_state,
+            &rule_states[0],
         );
         remove_temp_dir_for_entries(&entries)?;
         return result;
     }
 
     // Multi-rule requires iterative filtering until stable
-    let mut rule_states: Vec<MinPerKeyRuleState> = normalized_rules
-        .iter()
-        .map(|rule| MinPerKeyRuleState::new(rule.key.clone(), rule.min_count))
-        .collect();
-    compute_initial_counts(&entries, cfg.sep, label_schema, &mut rule_states)?;
-    initialize_rejected_values(&mut rule_states);
-
     loop {
         let (next_entries, rejections_added) = filter_min_per_pass(
             &entries,
@@ -484,30 +469,65 @@ pub fn filter_and_write_output(
         }
     }
 
-    let result = write_output_from_entries(
-        cfg,
-        &entries,
-        label_schema,
-        out_labels,
-        exclude_rules_for_output,
-    );
+    let result = write_output_from_entries(cfg, &entries, label_schema, out_labels);
     remove_temp_dir_for_entries(&entries)?;
     result
 }
 
-fn filter_excluded_entries(
+/// Filter out excluded windows and optionally compute min-per counts.
+///
+/// This writes a new set of temp files that skip excluded windows. When
+/// `rule_states` is provided, it also tallies per-window counts for each
+/// min-per rule using only the kept windows.
+///
+/// Parameters
+/// ----------
+/// - `entries`:
+///   Sorted temp files containing intermediate windows.
+/// - `separator`:
+///   Field separator used in the temp files.
+/// - `label_schema`:
+///   Schema for resolving composition values.
+/// - `exclude_rules`:
+///   Label exclusion rules applied before min-per filtering.
+/// - `base_temp_dir`:
+///   Parent directory for creating a new temp directory.
+/// - `rule_states`:
+///   Optional min-per rule states to update with counts.
+/// Returns
+/// -------
+/// - `entries`:
+///     Temp files containing only the kept windows.
+fn filter_excluded_entries_and_count(
     entries: &[(String, PathBuf)],
     separator: char,
     label_schema: &LabelSchema,
     exclude_rules: &[ExcludeRule],
     base_temp_dir: &Path,
+    rule_states: Option<&mut [MinPerKeyRuleState]>,
 ) -> Result<Vec<(String, PathBuf)>> {
-    let temp_dir = make_temp_dir(base_temp_dir, "prepare_windows_exclude")?;
+    let has_exclusions = !exclude_rules.is_empty();
+    let temp_dir = if has_exclusions {
+        Some(make_temp_dir(base_temp_dir, "prepare_windows_exclude")?)
+    } else {
+        None
+    };
     let mut writers: FxHashMap<String, ChromTempWriter> = FxHashMap::default();
 
-    let needs_compositions_for_exclude = exclude_rules
-        .iter()
-        .any(|rule| matches!(rule.key, LabelKey::Composition(_)));
+    let mut rule_states = rule_states;
+    let needs_compositions_for_exclude = has_exclusions
+        && exclude_rules
+            .iter()
+            .any(|rule| matches!(rule.key, LabelKey::Composition(_)));
+    let needs_compositions_for_counts = rule_states
+        .as_ref()
+        .map(|states| {
+            states
+                .iter()
+                .any(|state| matches!(state.key, LabelKey::Composition(_)))
+        })
+        .unwrap_or(false);
+    let needs_compositions = needs_compositions_for_exclude || needs_compositions_for_counts;
 
     for (_chrom, path) in entries {
         let file = File::open(path)?;
@@ -519,31 +539,64 @@ fn filter_excluded_entries(
             }
             let window =
                 parse_intermediate_line_with_context(&line, line_idx + 1, path, separator)?;
-            let tuple_compositions = if needs_compositions_for_exclude {
+            let tuple_compositions = if needs_compositions {
                 build_tuple_compositions(&window.label_tuples, label_schema)
             } else {
                 Vec::new()
             };
 
             // Skip windows that match any exclusion rule before min-per counting
-            if tuples_match_exclusion_with_compositions(
-                &window.label_tuples,
-                exclude_rules,
-                &tuple_compositions,
-            ) {
+            if has_exclusions
+                && tuples_match_exclusion_with_compositions(
+                    &window.label_tuples,
+                    exclude_rules,
+                    &tuple_compositions,
+                )
+            {
                 continue;
             }
 
-            let writer = ensure_temp_writer_for_chrom(&window.chrom, &temp_dir, &mut writers)?;
-            write_intermediate_window(writer.writer(), &window, separator)?;
+            // Count initial values (post-filtering) for downstream min-per filtering
+            if let Some(rule_states) = rule_states.as_deref_mut() {
+                // Count each value once per window to avoid double counting tied labels
+                for state in rule_states.iter_mut() {
+                    let values = collect_unique_values_for_key(
+                        &window.label_tuples,
+                        &tuple_compositions,
+                        &state.key,
+                    );
+                    for value in values {
+                        *state.counts.entry(value).or_insert(0) += 1;
+                    }
+                }
+            }
+
+            if has_exclusions {
+                let temp_dir = temp_dir
+                    .as_ref()
+                    .expect("Temp dir should exist when exclusions are enabled");
+                let writer = ensure_temp_writer_for_chrom(&window.chrom, temp_dir, &mut writers)?;
+                write_intermediate_window(writer.writer(), &window, separator)?;
+            }
         }
     }
 
-    let entries = finalize_temp_writers(&mut writers)?;
-    if entries.is_empty() && temp_dir.exists() {
-        fs::remove_dir_all(&temp_dir)
-            .with_context(|| format!("Removing temp dir {}", temp_dir.display()))?;
-    }
+    let entries = if has_exclusions {
+        let entries = finalize_temp_writers(&mut writers)?;
+        if entries.is_empty() {
+            let temp_dir = temp_dir
+                .as_ref()
+                .expect("Temp dir should exist when exclusions are enabled");
+            if temp_dir.exists() {
+                fs::remove_dir_all(temp_dir)
+                    .with_context(|| format!("Removing temp dir {}", temp_dir.display()))?;
+            }
+        }
+        entries
+    } else {
+        entries.to_vec()
+    };
+
     Ok(entries)
 }
 
@@ -710,72 +763,6 @@ fn label_key_name(key: &LabelKey, label_schema: &LabelSchema) -> String {
     }
 }
 
-/// Count label values before any min-per filtering is applied.
-///
-/// Reads each intermediate window and tallies counts for the keys used by
-/// the min-per rules. This is the baseline used to determine which values
-/// fall below the thresholds.
-///
-/// Parameters
-/// ----------
-/// - `entries`:
-///     Sorted temp files containing intermediate windows.
-/// - `separator`:
-///     Field separator used in the temp files.
-/// - `label_schema`:
-///     Schema for resolving composition values.
-/// - `rule_states`:
-///     Per-key rule state that will be filled with counts.
-///
-/// Returns
-/// -------
-/// `Ok(())` on success or an error if reading or parsing fails.
-fn compute_initial_counts(
-    entries: &[(String, PathBuf)],
-    separator: char,
-    label_schema: &LabelSchema,
-    rule_states: &mut [MinPerKeyRuleState],
-) -> Result<()> {
-    if rule_states.is_empty() {
-        return Ok(());
-    }
-
-    let needs_compositions_for_counts = rule_states
-        .iter()
-        .any(|state| matches!(state.key, LabelKey::Composition(_)));
-
-    for (_chrom, path) in entries {
-        let file = File::open(path)?;
-        let reader = BufReader::with_capacity(1 << 20, file);
-        for (line_idx, line_res) in reader.lines().enumerate() {
-            let line = line_res?;
-            if line.is_empty() {
-                continue;
-            }
-            let window =
-                parse_intermediate_line_with_context(&line, line_idx + 1, path, separator)?;
-            let tuple_compositions = if needs_compositions_for_counts {
-                build_tuple_compositions(&window.label_tuples, label_schema)
-            } else {
-                Vec::new()
-            };
-
-            for state in rule_states.iter_mut() {
-                // Count each value once per window to avoid double counting tied labels
-                let values = collect_unique_values_for_key(
-                    &window.label_tuples,
-                    &tuple_compositions,
-                    &state.key,
-                );
-                for value in values {
-                    *state.counts.entry(value).or_insert(0) += 1;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Initialize rejections for values already below their minimums.
 ///
 /// This avoids extra work in the first filtering pass by skipping values
@@ -811,8 +798,6 @@ fn initialize_rejected_values(rule_states: &mut [MinPerKeyRuleState]) {
 ///     Schema for resolving composition values.
 /// - `out_labels`:
 ///     Label keys to write in the final output.
-/// - `exclude_rules`:
-///     Label exclusion rules applied before writing.
 /// - `state`:
 ///     Precomputed min-per state for the single key.
 ///
@@ -824,7 +809,6 @@ fn filter_single_key_and_write_output(
     entries: &[(String, PathBuf)],
     label_schema: &LabelSchema,
     out_labels: &[LabelKey],
-    exclude_rules: &[ExcludeRule],
     state: &MinPerKeyRuleState,
 ) -> Result<()> {
     let mut out: TextWriter = if cfg.output.as_os_str() == "-" {
@@ -841,9 +825,8 @@ fn filter_single_key_and_write_output(
         .map(|(value, _)| value.as_str())
         .collect();
 
-    // Exclusions are rechecked here only when they were not applied upstream
     let needs_compositions_for_selection = matches!(state.key, LabelKey::Composition(_))
-        || needs_compositions_for_output(out_labels, exclude_rules);
+        || needs_compositions_for_output(out_labels, &[]);
 
     for (_chrom, path) in entries {
         let file = File::open(path)?;
@@ -877,21 +860,11 @@ fn filter_single_key_and_write_output(
             }
 
             // Rebuild compositions for the kept tuples before exclusions and output
-            let kept_tuple_compositions =
-                if needs_compositions_for_output(out_labels, exclude_rules) {
-                    build_tuple_compositions(&kept_tuples, label_schema)
-                } else {
-                    Vec::new()
-                };
-
-            // Apply exclusions against the kept tuples when exclusions were not prefiltered
-            if tuples_match_exclusion_with_compositions(
-                &kept_tuples,
-                exclude_rules,
-                &kept_tuple_compositions,
-            ) {
-                continue;
-            }
+            let kept_tuple_compositions = if needs_compositions_for_output(out_labels, &[]) {
+                build_tuple_compositions(&kept_tuples, label_schema)
+            } else {
+                Vec::new()
+            };
 
             // Write only the tuples that survived the min-per filter
             write_output_line(
@@ -1323,7 +1296,6 @@ fn write_output_from_entries(
     entries: &[(String, PathBuf)],
     label_schema: &LabelSchema,
     out_labels: &[LabelKey],
-    exclude_rules: &[ExcludeRule],
 ) -> Result<()> {
     let mut out: TextWriter = if cfg.output.as_os_str() == "-" {
         stdout_text_writer()
@@ -1331,7 +1303,7 @@ fn write_output_from_entries(
         create_text_writer(&cfg.output)?
     };
 
-    let needs_compositions_for_labels = needs_compositions_for_output(out_labels, exclude_rules);
+    let needs_compositions_for_labels = needs_compositions_for_output(out_labels, &[]);
 
     for (_chrom, path) in entries {
         let file = File::open(path)?;
@@ -1363,13 +1335,6 @@ fn write_output_from_entries(
             } else {
                 Vec::new()
             };
-            if tuples_match_exclusion_with_compositions(
-                &window.label_tuples,
-                exclude_rules,
-                &tuple_compositions,
-            ) {
-                continue;
-            }
 
             write_output_line(
                 &mut out,
