@@ -83,6 +83,7 @@ mod tests_prepare_windows_pipeline {
         cfg.blacklist_halo = 0;
         cfg.near = Some(near);
         cfg.near_header = HeaderMode::Absent;
+        cfg.near_group_cols = vec!["3".to_string()];
         cfg.near_edge = NearEdge::Nearest;
         cfg.near_direction = NearDirection::Both;
         cfg.distance_sign = DistSign::Absolute;
@@ -158,11 +159,48 @@ mod tests_prepare_windows_pipeline {
         cfg.merge_scope = MergeScope::Within;
         cfg.merge_gap = Some(0);
         cfg.merge_label = MergeLabel::Join;
+        cfg.merge_on = CoordinateSet::Resized;
 
         let lines = run_pipeline(&cfg)?;
         assert_eq!(
             lines,
             vec!["chr1\t7\t27\tA".to_string(), "chr1\t37\t47\tA".to_string(),],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_resize_after_merging_when_merge_on_original() -> Result<()> {
+        // Arrange
+        let tmpdir = TempDir::new()?;
+        let input = write_temp_file(
+            &tmpdir,
+            "input.tsv",
+            &["chr1\t10\t14\tA", "chr1\t20\t24\tA", "chr1\t40\t44\tA"],
+        )?;
+        let output = tmpdir.path().join("out.tsv");
+
+        let mut cfg = PrepareConfig::default();
+        cfg.input = input;
+        cfg.output = output;
+        cfg.header = HeaderMode::Absent;
+        cfg.group_cols = vec!["3".to_string()];
+        cfg.resize = Some(5);
+        cfg.oob = OobPolicy::Allow;
+        cfg.merge_scope = MergeScope::Within;
+        cfg.merge_gap = Some(6);
+        cfg.merge_label = MergeLabel::Join;
+        cfg.merge_on = CoordinateSet::Original;
+
+        // Act
+        let lines = run_pipeline(&cfg)?;
+
+        // Assert
+        // Merge first two windows because original gap is 6 and merge_gap is 6 (10->24)
+        // Midpoint is start + (end-start)/2, so 10-24 -> midpoint 17, resize 5 -> 15-20
+        assert_eq!(
+            lines,
+            vec!["chr1\t15\t20\tA".to_string(), "chr1\t40\t45\tA".to_string(),],
         );
         Ok(())
     }
@@ -195,11 +233,7 @@ mod tests_prepare_windows_pipeline {
             "mid:5-15".to_string(),
             "far:>15".to_string(),
         ]);
-        cfg.out_labels = vec![
-            "near-side".to_string(),
-            "near-name".to_string(),
-            "bin".to_string(),
-        ];
+        cfg.out_labels = vec!["near-side".to_string(), "bin".to_string()];
         cfg.oob = OobPolicy::Allow;
 
         let lines = run_pipeline(&cfg)?;
@@ -207,9 +241,9 @@ mod tests_prepare_windows_pipeline {
         assert_eq!(
             lines,
             vec![
-                "chr1\t6\t8\t+\tA\tprox".to_string(),
-                "chr1\t52\t54\t-\tB\tmid".to_string(),
-                "chr1\t150\t152\t-\tC\tfar".to_string(),
+                "chr1\t6\t8\t+\tprox".to_string(),
+                "chr1\t52\t54\t-\tmid".to_string(),
+                "chr1\t150\t152\t-\tfar".to_string(),
             ],
         );
         Ok(())
@@ -229,6 +263,7 @@ mod tests_prepare_windows_pipeline {
         cfg.header = HeaderMode::Absent;
         cfg.near = Some(near);
         cfg.near_header = HeaderMode::Absent;
+        cfg.near_group_cols = vec!["3".to_string()];
         cfg.near_edge = NearEdge::Nearest;
         cfg.near_direction = NearDirection::Both;
         cfg.distance_sign = DistSign::Absolute;
@@ -265,6 +300,7 @@ mod tests_prepare_windows_pipeline {
         cfg.header = HeaderMode::Absent;
         cfg.near = Some(near);
         cfg.near_header = HeaderMode::Absent;
+        cfg.near_group_cols = vec!["3".to_string()];
         cfg.near_edge = NearEdge::Nearest;
         cfg.near_direction = NearDirection::Both;
         cfg.distance_sign = DistSign::Absolute;
@@ -300,6 +336,7 @@ mod tests_prepare_windows_pipeline {
         cfg.header = HeaderMode::Absent;
         cfg.near = Some(near);
         cfg.near_header = HeaderMode::Absent;
+        cfg.near_group_cols = vec!["3".to_string()];
         cfg.near_edge = NearEdge::Nearest;
         cfg.near_direction = NearDirection::Both;
         cfg.distance_sign = DistSign::Signed;
@@ -348,8 +385,9 @@ mod tests_prepare_windows_pipeline {
         cfg.header = HeaderMode::Absent;
         cfg.near = Some(near);
         cfg.near_header = HeaderMode::Absent;
+        cfg.near_group_cols = vec!["3".to_string()];
         cfg.near_edge = NearEdge::Nearest;
-        cfg.distance_sign = DistSign::Absolute; // direction prefix should still appear
+        cfg.distance_sign = DistSign::Absolute; // Direction prefix should still appear
         cfg.out_labels = vec!["near-side".to_string(), "near-name".to_string()];
         cfg.oob = OobPolicy::Allow;
 
@@ -358,6 +396,39 @@ mod tests_prepare_windows_pipeline {
         assert_eq!(
             lines,
             vec!["chr1\t0\t10\t+\tTARG", "chr1\t150\t160\t-\tTARG"],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn should_add_direction_prefix_without_near_groups() -> Result<()> {
+        // Arrange
+        let tmpdir = TempDir::new()?;
+        let input = write_temp_file(&tmpdir, "input.tsv", &["chr1\t0\t10", "chr1\t150\t160"])?;
+        let near = write_temp_file(&tmpdir, "near.tsv", &["chr1\t100\t110\tTARG"])?;
+        let output = tmpdir.path().join("out.tsv");
+
+        let mut cfg = PrepareConfig::default();
+        cfg.input = input;
+        cfg.output = output;
+        cfg.header = HeaderMode::Absent;
+        cfg.near = Some(near);
+        cfg.near_header = HeaderMode::Absent;
+        cfg.near_edge = NearEdge::Nearest;
+        cfg.distance_sign = DistSign::Absolute; // Direction prefix should still appear
+        cfg.out_labels = vec!["near-side".to_string()];
+        cfg.oob = OobPolicy::Allow;
+
+        // Act
+        let lines = run_pipeline(&cfg)?;
+
+        // Assert
+        assert_eq!(
+            lines,
+            vec![
+                "chr1\t0\t10\t+".to_string(),
+                "chr1\t150\t160\t-".to_string()
+            ]
         );
         Ok(())
     }
@@ -670,6 +741,7 @@ mod tests_prepare_windows_pipeline {
         cfg.blacklist_halo = 2;
         cfg.near = Some(near);
         cfg.near_header = HeaderMode::Absent;
+        cfg.near_group_cols = vec!["3".to_string()];
         cfg.near_edge = NearEdge::Nearest;
         cfg.distance_sign = DistSign::Signed;
         cfg.distance_bins = Some(vec!["close:<5".to_string(), "far:>=5".to_string()]);
@@ -1275,7 +1347,6 @@ mod tests_resizers {
         config::{OobPolicy, PrepareConfig},
         resizers::apply_size_transform,
     };
-    use fxhash::hash64;
 
     fn base_config() -> PrepareConfig {
         let mut cfg = PrepareConfig::default();
@@ -1287,32 +1358,48 @@ mod tests_resizers {
     fn resize_with_odd_size_centers_window() {
         let mut cfg = base_config();
         cfg.resize = Some(5);
-        let transformed = apply_size_transform(10, 20, None, &cfg).expect("resize");
+        // Odd input length and odd target size yield a single centered placement
+        let transformed = apply_size_transform(10, 21, None, &cfg).expect("resize");
+        // Midpoint is 10 + (21 - 10) / 2 = 15, size 5 spans 13-18
         assert_eq!(transformed, (13, 18));
     }
 
     #[test]
-    fn resize_with_even_size_respects_seed() {
+    fn resize_with_even_size_centers_window_when_parity_matches() {
         let mut cfg = base_config();
         cfg.resize = Some(6);
-        cfg.seed = Some(42);
-        let midpoint: u32 = 10 + ((22 - 10) / 2);
-        let half: u32 = cfg.resize.unwrap() / 2;
-        let decision = hash64(&(
-            midpoint as u64,
-            cfg.resize.unwrap() as u64,
-            cfg.seed.unwrap(),
-        )) & 1;
-        let expected = if decision == 0 {
-            (midpoint.saturating_sub(half), midpoint.saturating_add(half))
-        } else {
-            (
-                midpoint.saturating_sub(half.saturating_sub(1)),
-                midpoint.saturating_add(half + 1),
-            )
-        };
+        // Even input length and even target size yield a single centered placement
         let transformed = apply_size_transform(10, 22, None, &cfg).expect("resize");
-        assert_eq!(transformed, expected);
+        // Midpoint is 10 + (22 - 10) / 2 = 16, size 6 spans 13-19
+        assert_eq!(transformed, (13, 19));
+    }
+
+    #[test]
+    fn resize_with_even_input_and_odd_target_picks_left_or_right() {
+        let mut cfg = base_config();
+        cfg.resize = Some(3);
+        // Even input length and odd target size have two equally centered placements
+        let transformed = apply_size_transform(10, 16, None, &cfg).expect("resize");
+        // Midpoint is 10 + (16 - 10) / 2 = 13, size 3 can be 11-14 or 12-15
+        let left = (11, 14);
+        let right = (12, 15);
+        assert!(transformed == left || transformed == right);
+
+        // TODO: Add examples (different seeds) that shows each outcome (regression tests)
+    }
+
+    #[test]
+    fn resize_with_odd_input_and_even_target_picks_left_or_right() {
+        let mut cfg = base_config();
+        cfg.resize = Some(4);
+        // Odd input length and even target size have two equally centered placements
+        let transformed = apply_size_transform(10, 15, None, &cfg).expect("resize");
+        // Midpoint is 10 + (15 - 10) / 2 = 12, size 4 can be 10-14 or 11-15
+        let left = (10, 14);
+        let right = (11, 15);
+        assert!(transformed == left || transformed == right);
+
+        // TODO: Add examples (different seeds) that shows each outcome (regression tests)
     }
 
     #[test]
@@ -1475,8 +1562,8 @@ mod tests_near_file {
             &path,
             '\t',
             false,
-            false,
-            true,
+            None,
+            Some(&[3]),
             false,
             NearDuplicatesPolicy::Error,
         )?;
@@ -1497,8 +1584,8 @@ mod tests_near_file {
             &path,
             '\t',
             false,
-            false,
-            false,
+            None,
+            None,
             false,
             NearDuplicatesPolicy::Error,
         )
@@ -1614,8 +1701,8 @@ mod tests_near_file {
             &path,
             '\t',
             true,
-            false,
-            false,
+            None,
+            None,
             false,
             NearDuplicatesPolicy::Error,
         )?;
@@ -1883,6 +1970,7 @@ mod tests_chunk {
     use cfdnalab::commands::prepare_windows::{
         chunk::{flush_chromosome, process_and_write_chunk},
         config::{DedupKeep, DistancePolicy, MergeLabel, MergeScope, PrepareConfig},
+        intermediate::parse_intermediate_line,
         labels::{AtomicLabelPart, LabelKey, LabelSchema, LabelTuple},
         prepare_windows::Window,
         writers::{ChromTempWriter, finalize_temp_writers},
@@ -2155,8 +2243,18 @@ mod tests_chunk {
 
         let entries = finalize_temp_writers(&mut writers)?;
         let contents = fs::read_to_string(&entries[0].1)?;
-        assert!(contents.contains("chr1\t0\t10"));
-        assert!(contents.contains("g1__g2"));
+        let line = contents.lines().next().expect("intermediate line");
+        let parsed = parse_intermediate_line(line, cfg.sep)?;
+        let inputs: Vec<&str> = parsed
+            .label_tuples
+            .iter()
+            .map(|tuple| tuple.input.as_str())
+            .collect();
+        // Tuples are stored separately in intermediate files
+        assert_eq!(parsed.chrom, "chr1");
+        assert_eq!(parsed.start, 0);
+        assert_eq!(parsed.end, 10);
+        assert_eq!(inputs, vec!["g1", "g2"]);
         Ok(())
     }
 }

@@ -381,8 +381,6 @@ pub struct PrepareConfig {
     ///     target edge(s) (see `--near-edge`).
     ///
     /// If you specify TSS sites, provide 1-bp intervals at the strand-specific TSS.
-    /// If a chromosome has no near intervals, windows on that chromosome keep empty near labels.
-    /// `--distance-max` only applies when a near hit exists.
     ///
     /// When `--near` is specified, the labels `near-side` and `near-name` become available
     /// for use in `--compose`, `--out-labels`, and `--exclude-labels`.
@@ -392,6 +390,14 @@ pub struct PrepareConfig {
     ///   `-` = upstream, `+` = downstream, `=` = overlap.
     ///
     /// This prefix is included even when using `--distance-sign absolute`.
+    ///
+    /// When no near intervals exist for a chromosome:
+    ///
+    ///   - If `--distance-max` is set, windows on that chromosome are dropped. Otherwise:
+    ///
+    ///   - If `--distance-bins` is set, `bin` is set to `[NO-NEAR]`.
+    ///
+    ///   - `near-side` (and `near-name` when configured) are set to `[NONE]`.
     ///
     /// Upstream/Downstream definition (strand-aware)
     /// ---------------------------------------------
@@ -626,6 +632,7 @@ pub struct PrepareConfig {
     /// Labels must be ASCII alphanumerics and cannot be the string `none`.
     ///
     /// When specified, the label `bin` becomes available.
+    /// Chromosomes without near intervals use the special bin `[NO-NEAR]`.
     /// Requires `--near`.
     ///
     /// Examples:
@@ -672,7 +679,7 @@ pub struct PrepareConfig {
     /// Maximum absolute distance to keep `[integer]`
     ///
     /// Windows with `|distance| > --distance-max` are dropped prior to binning.
-    /// When no near interval exists for a chromosome, this filter does not apply.
+    /// Windows without any near intervals are dropped when this is set.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -708,9 +715,22 @@ pub struct PrepareConfig {
 
     /// Resize window to a fixed size (bp) centered on the midpoint `[integer]`
     ///
-    /// **Midpoint**: For *odd-sized* existing intervals, the midpoint base is the center of the new window.
-    /// For *even sizes*, ties are resolved by randomly assigning either the left or right base
-    /// (to avoid rounding bias).
+    /// Resizing centers the new window on the midpoint of the original interval.
+    /// When the input length and target size have different parity (odd/even),
+    /// there are two equally centered placements. In that case, the code chooses
+    /// left or right with a deterministic hash based on the midpoint, input length,
+    /// target size, and optional seed.
+    ///
+    /// The interval and resize combinations look like the following (2+3 leads to
+    /// random selection of midpoint to reduce midpoint selection bias):
+    ///
+    ///     Interval size 6, resize 4: [011110] -> unique placement
+    ///
+    ///     Interval size 6, resize 3: [001110] or [011100] -> left or right choice
+    ///
+    ///     Interval size 5, resize 4: [11110] or [01111] -> left or right choice
+    ///
+    ///     Interval size 5, resize 3: [01110] -> unique placement
     ///
     /// Only one of `--resize` and `--flank` can be specified at a time.
     #[cfg_attr(

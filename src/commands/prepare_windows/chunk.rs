@@ -2,8 +2,8 @@ use crate::commands::prepare_windows::{
     config::{CoordinateSet, DedupKeep, DistSign, MergeScope, NearTiePolicy, PrepareConfig},
     intermediate::write_intermediate_windows,
     labels::{
-        AtomicLabelPart, LabelKey, LabelSchema, LabelTuple, build_tuple_compositions,
-        normalize_label_tuples, render_label_for_key,
+        AtomicLabelPart, LabelKey, LabelSchema, LabelTuple, NO_NEAR_BIN_LABEL, NO_NEAR_LABEL,
+        build_tuple_compositions, normalize_label_tuples, render_label_for_key,
     },
     mergers::merge_windows,
     near_file::{NearHit, NearIndex, NearSide, NearTie, NearestResult, nearest_edge_distance},
@@ -581,7 +581,7 @@ fn ensure_sorted(
     }
 }
 
-fn apply_near_annotations(
+pub fn apply_near_annotations(
     windows: Vec<Window>,
     near_index: &mut Option<NearIndex>,
     cfg: &PrepareConfig,
@@ -598,14 +598,74 @@ fn apply_near_annotations(
 
     for mut window in windows {
         let chrom = window.chrom.as_ref();
-        let Some(near_chrom) = near_idx.per_chrom.get_mut(chrom) else {
-            retained.push(window);
-            continue;
-        };
-        if near_chrom.intervals.is_empty() {
+        let near_chrom = near_idx.per_chrom.get_mut(chrom);
+        let no_near_intervals = near_chrom
+            .as_ref()
+            .map(|chrom| chrom.intervals.is_empty())
+            .unwrap_or(true);
+        if no_near_intervals {
+            let first_warning = near_idx.warned_no_near.is_empty();
+            let should_warn = near_idx.warned_no_near.insert(chrom.to_string());
+            if should_warn {
+                if first_warning {
+                    let include_name = !cfg.near_group_cols.is_empty();
+                    if cfg.distance_max.is_some() {
+                        eprintln!(
+                            "Warning: Chromosome '{}' has no near intervals. Windows on this chromosome will be dropped due to --distance-max.",
+                            chrom
+                        );
+                    } else if distance_bins.is_some() {
+                        if include_name {
+                            eprintln!(
+                                "Warning: Chromosome '{}' has no near intervals. Windows will keep near-side/near-name as '{}' and bin as '{}'.",
+                                chrom,
+                                NO_NEAR_LABEL,
+                                NO_NEAR_BIN_LABEL
+                            );
+                        } else {
+                            eprintln!(
+                                "Warning: Chromosome '{}' has no near intervals. Windows will keep near-side as '{}' and bin as '{}'.",
+                                chrom,
+                                NO_NEAR_LABEL,
+                                NO_NEAR_BIN_LABEL
+                            );
+                        }
+                    } else if include_name {
+                        eprintln!(
+                            "Warning: Chromosome '{}' has no near intervals. Windows will keep near-side/near-name as '{}'.",
+                            chrom,
+                            NO_NEAR_LABEL
+                        );
+                    } else {
+                        eprintln!(
+                            "Warning: Chromosome '{}' has no near intervals. Windows will keep near-side as '{}'.",
+                            chrom,
+                            NO_NEAR_LABEL
+                        );
+                    }
+                } else {
+                    eprintln!("Warning: Chromosome '{}' has no near intervals.", chrom);
+                }
+            }
+
+            if cfg.distance_max.is_some() {
+                continue;
+            }
+
+            for tuple in &mut window.label_tuples {
+                tuple.near_side = Some(NO_NEAR_LABEL.to_string());
+                if !cfg.near_group_cols.is_empty() {
+                    tuple.near_name = Some(NO_NEAR_LABEL.to_string());
+                }
+                if distance_bins.is_some() {
+                    tuple.bin = Some(NO_NEAR_BIN_LABEL.to_string());
+                }
+            }
+
             retained.push(window);
             continue;
         }
+        let near_chrom = near_chrom.expect("near_chrom should exist");
 
         let window_start = window.start_for(coord_set);
         let window_end = window.end_for(coord_set);

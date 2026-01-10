@@ -46,10 +46,12 @@ The base pieces you can reference anywhere
   - When windows carry multiple groups, values are joined with `__` in stable order.
   - Missing group values are written as `[NA]` so each label keeps the same number of segments.
 * `near-side` — one of `- + =` relative to the near interval strand.
+  - When a chromosome has no near intervals, this is `[NONE]`.
 * `near-name` — the group name from the near file.
   - Missing group values are written as `[NA]` so each label keeps the same number of segments.
-  - Chromosomes with no near intervals keep empty near labels and are not filtered by `--distance-max`.
+  - When a chromosome has no near intervals, this is `[NONE]`.
 * `bin` — the distance bin label.
+  - When a chromosome has no near intervals, this is `[NO-NEAR]` if `--distance-bins` is set.
 * `cluster` — set to `cluster` for windows that meet the overlap threshold, otherwise `none`.
 
 If a value is missing, it is empty.
@@ -227,6 +229,7 @@ When no resize or flank is configured, resized coordinates match the originals.
 
 Distances are computed after merging using the merged window coordinates.
 Only the selected coordinates are carried forward for binning.
+When a chromosome has no near intervals, `--distance-max` drops its windows.
 
 ---
 

@@ -6,6 +6,23 @@ use crate::commands::prepare_windows::config::{OobPolicy, PrepareConfig};
 /// to chromosome bounds according to the out-of-bounds policy when a size
 /// transform is applied.
 ///
+/// Resizing centers the new window on the midpoint of the original interval.
+/// When the input length and target size have different parity (odd/even),
+/// there are two equally centered placements. In that case, the code chooses
+/// left or right with a deterministic hash based on the midpoint, input length,
+/// target size, and optional seed.
+///
+/// Size Examples
+/// -------------
+///
+/// Interval size 6, resize 4: [011110] -> unique placement
+///
+/// Interval size 6, resize 3: [001110] or [011100] -> left or right choice
+///
+/// Interval size 5, resize 4: [11110] or [01111] -> left or right choice
+///
+/// Interval size 5, resize 3: [01110] -> unique placement
+///
 /// Parameters
 /// ----------
 /// - start:
@@ -34,26 +51,33 @@ pub fn apply_size_transform(
 
     if let Some(size) = cfg.resize {
         transformed = true;
-        // Center on midpoint. Odd sizes center exactly; even sizes choose a side randomly
-        // to avoid bias if you configured a seed; otherwise, round left deterministically
-        // by defaulting to left if no seed was given.
-        let midpoint = start + ((end - start) / 2);
+        // Center on midpoint, then resolve left or right when parity (odd/even) makes centering ambiguous
+        let length = end.saturating_sub(start);
+        let midpoint = start + (length / 2);
         let half = size / 2;
-        if size % 2 == 1 {
+        let parity_matches = (length % 2) == (size % 2);
+        if parity_matches {
             out_start = midpoint.saturating_sub(half);
-            out_end = midpoint.saturating_add(half) + 1;
+            out_end = out_start.saturating_add(size);
         } else {
-            // Even size: choose left or right deterministically using a hash that
-            // incorporates the midpoint, target size, and optional seed.
+            // Resolve left or right deterministically to avoid bias
             let decision_seed = cfg.seed.unwrap_or(0);
-            let hash = fxhash::hash64(&(midpoint as u64, size as u64, decision_seed));
-            if (hash & 1) == 0 {
-                out_start = midpoint.saturating_sub(half);
-                out_end = midpoint.saturating_add(half);
+            let hash =
+                fxhash::hash64(&(midpoint as u64, length as u64, size as u64, decision_seed));
+            // Low bit acts as a deterministic coin flip for left or right choice
+            let choose_left = (hash & 1) == 0;
+            let midpoint_i = midpoint as i64;
+            let half_i = half as i64;
+            let offset = if length % 2 == 0 {
+                if choose_left { -1 } else { 0 }
+            } else if choose_left {
+                0
             } else {
-                out_start = midpoint.saturating_sub(half.saturating_sub(1));
-                out_end = midpoint.saturating_add(half + 1);
-            }
+                1
+            };
+            let start_i = midpoint_i - half_i + offset;
+            out_start = if start_i < 0 { 0 } else { start_i as u32 };
+            out_end = out_start.saturating_add(size);
         }
     } else if let Some(flanks) = cfg.flank.as_ref() {
         transformed = true;

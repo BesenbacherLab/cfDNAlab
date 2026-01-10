@@ -2,8 +2,9 @@
 
 mod tests_prepare_windows_helpers {
     use anyhow::Result;
-    use cfdnalab::commands::prepare_windows::config::CoordinateSet;
+    use cfdnalab::commands::prepare_windows::config::{CoordinateSet, PrepareConfig};
     use cfdnalab::commands::prepare_windows::config::ComposeSpec;
+    use cfdnalab::commands::prepare_windows::chunk::apply_near_annotations;
     use cfdnalab::commands::prepare_windows::filters::{
         collect_min_per_window_filter_data, normalize_min_per_rules, parse_exclude_rules,
         parse_min_per_rules, validate_available_keys, validate_compositions_available, MinPerKeyRuleState,
@@ -11,8 +12,10 @@ mod tests_prepare_windows_helpers {
     };
     use cfdnalab::commands::prepare_windows::labels::{
         build_tuple_compositions, AtomicLabelPart, LabelKey, LabelSchema, LabelTuple,
+        NO_NEAR_BIN_LABEL, NO_NEAR_LABEL,
     };
-    use cfdnalab::commands::prepare_windows::near_file::{NearDuplicatesPolicy, Strand, load_near_index};
+    use cfdnalab::commands::prepare_windows::near_file::{NearDuplicatesPolicy, NearIndex, Strand, load_near_index};
+    use cfdnalab::commands::prepare_windows::parsers::parse_distance_bins;
     use cfdnalab::commands::prepare_windows::postprocess::partition_safe_and_tail;
     use cfdnalab::commands::prepare_windows::prepare_windows::Window;
     use cfdnalab::commands::prepare_windows::config::MergeScope;
@@ -62,6 +65,20 @@ mod tests_prepare_windows_helpers {
             merged: false,
             label_tuples: Vec::new(),
             group_key: group_key.to_string(),
+            score: None,
+        }
+    }
+
+    fn build_window_with_tuple(chrom: &str, start: u32, end: u32) -> Window {
+        Window {
+            chrom: Arc::from(chrom),
+            original_start: start,
+            original_end: end,
+            resized_start: start,
+            resized_end: end,
+            merged: false,
+            label_tuples: vec![LabelTuple::new("A".to_string())],
+            group_key: "A".to_string(),
             score: None,
         }
     }
@@ -731,6 +748,57 @@ mod tests_prepare_windows_helpers {
         assert_eq!(chr1.intervals[0].strand, Strand::Plus);
         assert_eq!(chr1.intervals[1].strand, Strand::Plus);
         assert_eq!(index.group_id_to_name, vec!["GeneA".to_string(), "GeneB".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn should_drop_windows_without_near_when_distance_max_set() -> Result<()> {
+        // Arrange
+        // No near intervals means no hit, so --distance-max drops windows
+        let windows = vec![build_window_with_tuple("chr1", 10, 20)];
+        let mut near_index = Some(NearIndex::default());
+        let mut cfg = PrepareConfig::default();
+        cfg.distance_max = Some(100);
+
+        // Act
+        let result = apply_near_annotations(
+            windows,
+            &mut near_index,
+            &cfg,
+            None,
+            CoordinateSet::Resized,
+        );
+
+        // Assert
+        assert!(result.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn should_label_no_near_when_bins_set_and_distance_max_unset() -> Result<()> {
+        // Arrange
+        // No near intervals should emit [NO-NEAR] bin and [NONE] labels
+        let windows = vec![build_window_with_tuple("chr1", 10, 20)];
+        let mut near_index = Some(NearIndex::default());
+        let mut cfg = PrepareConfig::default();
+        cfg.near_group_cols = vec!["3".to_string()];
+        let bins = parse_distance_bins(&vec!["prox:<100".to_string()])?;
+
+        // Act
+        let result = apply_near_annotations(
+            windows,
+            &mut near_index,
+            &cfg,
+            Some(&bins),
+            CoordinateSet::Resized,
+        );
+
+        // Assert
+        assert_eq!(result.len(), 1);
+        let tuple = &result[0].label_tuples[0];
+        assert_eq!(tuple.near_side.as_deref(), Some(NO_NEAR_LABEL));
+        assert_eq!(tuple.near_name.as_deref(), Some(NO_NEAR_LABEL));
+        assert_eq!(tuple.bin.as_deref(), Some(NO_NEAR_BIN_LABEL));
         Ok(())
     }
 }

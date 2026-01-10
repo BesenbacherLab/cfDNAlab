@@ -4,7 +4,7 @@ use crate::commands::prepare_windows::{
 };
 use crate::{commands::prepare_windows::config::NearDirection, shared::io::open_text_reader};
 use anyhow::{Context, Result, bail};
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use std::{cmp::Ordering, io::BufRead, path::Path};
 
 /// Interval from the `--near` set.
@@ -31,6 +31,7 @@ pub struct NearIndex {
     pub per_chrom: FxHashMap<String, NearChrom>,
     pub group_name_to_id: FxHashMap<String, u32>,
     pub group_id_to_name: Vec<String>,
+    pub warned_no_near: FxHashSet<String>,
 }
 
 /// Where the nearest interval sits relative to the window.

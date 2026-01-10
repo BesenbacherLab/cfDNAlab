@@ -2,6 +2,8 @@
 
 pub const RESERVED_LABEL_NONE: &str = "none";
 pub const MISSING_GROUP_LABEL: &str = "[NA]";
+pub const NO_NEAR_LABEL: &str = "[NONE]";
+pub const NO_NEAR_BIN_LABEL: &str = "[NO-NEAR]";
 
 const RESERVED_LABELS: [&str; 6] = [
     "input",
