@@ -50,6 +50,65 @@ use std::path::PathBuf;
 ///
 /// - "Nearest distance" refers to the closest edge of the comparison interval. NOTE:
 ///   For point features (e.g., TSS), provide 1-bp intervals at the strand-specific coordinate.
+///
+/// ## Examples
+///
+/// ### Case: Preparing windows for `cfdna midpoints`
+///
+/// Input: Transcription factor binding sites
+///
+/// Filters:
+///
+///   - Blacklist regions with a "halo" (increased region sizes) matching the max. fragment size
+///     in downstream processing (on each side of the blacklisted interval),
+///     so midpoint profiles are never affected by neighbouring blacklists.
+///
+///   - Deduplicate binding sites with same (chrom,start,end,transcription factor ID).
+///
+///   - Merge overlapping binding sites belonging to the same transcription factor (based on original coordinates).
+///     These could be slightly shifted duplicates from multiple experiments.
+///
+///   - Remove one/more binding sites if they are too close to another binding site from the same transcription factor.
+///     This is to show how to do this. It's not clear this is better than using them all.
+///
+///   - Proximity to TSS sites (`--near` and `--distance-bins`). Keep only distal binding sites.
+///     A binding site must be within 100kb of a TSS site (`--distance-max`).
+///     
+///   - Min-per: At least 1000 windows per transcription factor (i.e., the `input` **group**).
+///
+///   - Detect "clusters" of binding sites when >10 binding sites overlap (after merging). These are marked in the
+///     output group label, so we can count midpoints separately for clustered and non-clustered binding sites.
+///
+/// We resize windows to 2001bp around the midpoint of the intervals.
+///
+/// We create an output label column that concatenates the input transcription factor
+/// name and the clustering-status, so we can use that as group column in `cfdna midpoints`.
+///
+/// ```bash
+///
+/// cfdna prep-windows -i tf_coords.bed.gz -o new_tf_coords.tsv.zst \
+///     --sep tab --group-cols 3  \
+///     --compose out=input,cluster --out-labels out  \
+///     --exclude-labels bin=prox --min-per input=1000  \
+///     --blacklist encode_blacklist.bed --blacklist-halo 1000  \
+///     --near tss_coords.bed --near-strand-col 4  \
+///     --distance-bins 'prox:<2000' 'dist:>2000'  \
+///     --distance-max 100000 --distance-from original  \
+///     --resize 2001 --chrom-sizes hg38.chrom.sizes  \
+///     --deduplicate keep-first --min-distance-within-group 50  \
+///     --cluster-min-overlaps 10  \
+///     --merge-scope within --merge-gap 0
+///
+/// ```
+///
+/// Alternatively, define proximal as e.g. 2.5kb upstream and 0.5kb downstream:
+///
+/// ```bash
+///
+///     --distance-bins 'prox:-2500-500' 'upDist:<-2500' 'downDist:>500'  \
+///     --distance-sign signed
+///
+/// ```
 #[cfg_attr(feature = "cli", derive(Parser, Clone))]
 #[cfg_attr(
     feature = "cli",
@@ -625,6 +684,8 @@ pub struct PrepareConfig {
     )]
     pub near_duplicates: NearDuplicatesPolicy,
 
+    // TODO: Add "rest" definition
+    // TODO: Ensure 'prox:-2500-500' works (when signed)
     /// Distance bin specifications `[quoted strings]`
     ///
     /// Provide one or more `'<label>:<expr>'` rules. The first matching rule wins.
