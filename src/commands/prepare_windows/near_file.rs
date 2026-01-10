@@ -1,7 +1,10 @@
-use crate::commands::prepare_windows::config::NearEdge;
+use crate::commands::prepare_windows::{
+    config::NearEdge,
+    labels::{MISSING_GROUP_LABEL, validate_label_token},
+};
 use crate::{commands::prepare_windows::config::NearDirection, shared::io::open_text_reader};
 use anyhow::{Context, Result, bail};
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use std::{cmp::Ordering, io::BufRead, path::Path};
 
 /// Interval from the `--near` set.
@@ -28,6 +31,7 @@ pub struct NearIndex {
     pub per_chrom: FxHashMap<String, NearChrom>,
     pub group_name_to_id: FxHashMap<String, u32>,
     pub group_id_to_name: Vec<String>,
+    pub warned_no_near: FxHashSet<String>,
 }
 
 /// Where the nearest interval sits relative to the window.
@@ -99,10 +103,12 @@ pub enum NearDuplicatesPolicy {
 ///     Field separator character.
 /// - has_header:
 ///     Whether the near file has a header line.
-/// - strand_col_present:
-///     Whether the strand column is present (fourth column).
-/// - group_col_present:
-///     Whether a `group` column is present (fourth or fifth column).
+/// - strand_col:
+///     Optional column index for the strand field.
+///     When omitted, all intervals default to the `+` strand.
+/// - group_cols:
+///     Optional column indices for group name fields.
+///     When omitted, group names are left empty.
 ///
 /// Returns
 /// -------
@@ -112,8 +118,8 @@ pub fn load_near_index(
     path: &Path,
     separator: char,
     has_header: bool,
-    strand_col_present: bool,
-    group_col_present: bool,
+    strand_col: Option<usize>,
+    group_cols: Option<&[usize]>,
     consider_strand_in_dups: bool,
     near_duplicates: NearDuplicatesPolicy,
 ) -> Result<NearIndex> {
@@ -133,21 +139,21 @@ pub fn load_near_index(
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let mut it = line.split(separator);
+        let fields: Vec<&str> = line.split(separator).collect();
 
-        let chrom = it
-            .next()
+        let chrom = fields
+            .get(0)
             .context("Near parse: missing chrom")?
             .trim()
             .to_string();
-        let start: u32 = it
-            .next()
+        let start: u32 = fields
+            .get(1)
             .context("Near parse: missing start")?
             .trim()
             .parse()
             .with_context(|| format!("Invalid start at near line {}", lineno + 1))?;
-        let end: u32 = it
-            .next()
+        let end: u32 = fields
+            .get(2)
             .context("Near parse: missing end")?
             .trim()
             .parse()
@@ -162,25 +168,43 @@ pub fn load_near_index(
             );
         }
 
-        let strand = if strand_col_present {
-            match it.next().map(|s| s.trim()) {
-                Some("+") => Strand::Plus,
-                Some("-") => Strand::Minus,
-                Some(".") | None => Strand::Unknown,
-                Some(other) => bail!(
+        let strand = if let Some(idx) = strand_col {
+            let strand_value = fields
+                .get(idx)
+                .context("Near parse: missing strand")?
+                .trim();
+            match strand_value {
+                "+" => Strand::Plus,
+                "-" => Strand::Minus,
+                "." | "" => Strand::Unknown,
+                other => bail!(
                     "Near parse error at line {}: invalid strand '{}'",
                     lineno + 1,
                     other
                 ),
             }
         } else {
-            Strand::Plus // Default when not provided
+            Strand::Plus
         };
 
-        let group = if group_col_present {
-            it.next()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
+        let group = if let Some(indices) = group_cols {
+            let mut parts: Vec<&str> = Vec::with_capacity(indices.len());
+            for &idx in indices {
+                let name = fields.get(idx).unwrap_or(&"").trim();
+                if name.is_empty() {
+                    parts.push(MISSING_GROUP_LABEL);
+                    continue;
+                }
+                if let Err(message) = validate_label_token(name, "near group label") {
+                    bail!(message);
+                }
+                parts.push(name);
+            }
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join("__"))
+            }
         } else {
             None
         };

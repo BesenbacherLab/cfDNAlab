@@ -1025,16 +1025,18 @@ fn process_tile(
                     };
                     if let Some(state) = windows.get_mut(overlapped_window.idx) {
                         state.has_counts = true;
-                        state
-                            .counts
-                            .incr_weighted(fragment_length as usize, gc_count, count_weight);
+                        state.counts.incr_weighted(
+                            fragment_length as usize,
+                            gc_count,
+                            count_weight,
+                        );
                     }
                 }
             }
         }
 
         // Release interval cache before finalizing windows
-        tile_window_intervals = None;
+        drop(tile_window_intervals);
 
         for mut w in windows {
             finalize_window_buffer(
