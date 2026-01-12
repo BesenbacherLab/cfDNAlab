@@ -289,8 +289,7 @@ pub struct PrepareConfig {
     /// Parts can be atomic parts or earlier compositions.
     /// Names must be ASCII alphanumerics and cannot be `none`.
     ///
-    /// Format
-    /// ------
+    /// **Format**:
     ///
     /// - `NAME=PART1,PART2,...`
     ///
@@ -331,8 +330,7 @@ pub struct PrepareConfig {
     ///
     /// Use this to enforce minimum counts for atomic parts or named compositions.
     ///
-    /// Format
-    /// ------
+    /// **Format**:
     ///
     /// - `KEY=COUNT`
     ///
@@ -354,13 +352,11 @@ pub struct PrepareConfig {
     /// Use this to exclude windows based on atomic parts or compositions before
     /// any `--min-per` filtering.
     ///
-    /// Format
-    /// ------
+    /// **Format**:
     ///
     /// - `KEY=TERM`
     ///
-    /// Examples
-    /// --------
+    /// **Examples**:
     ///
     /// - `--exclude-labels bin=prox cluster=cluster`
     ///
@@ -475,8 +471,7 @@ pub struct PrepareConfig {
     ///
     ///   - `near-side` (and `near-name` when configured) are set to `[NONE]`.
     ///
-    /// Upstream/Downstream definition (strand-aware)
-    /// ---------------------------------------------
+    /// **Upstream/Downstream definition (strand-aware)**
     ///
     /// `Upstream/Downstream` are defined **relative to the near interval's annotated strand**:
     ///
@@ -487,8 +482,7 @@ pub struct PrepareConfig {
     /// - For an unknown strand (`.`): upstream/downstream are derived from genomic placement to the chosen target edge(s)
     ///   (falls back to genomic-nearest semantics).
     ///
-    /// Examples
-    /// --------
+    /// **Examples**
     ///
     /// Legend: '===' near interval, '###' window, '---' empty span. Signs are relative to the near-interval's strand.
     ///
@@ -528,7 +522,7 @@ pub struct PrepareConfig {
     ///
     /// ```
     ///
-    /// **Ties and overlaps:**
+    /// **Ties and overlaps**:
     ///
     /// - Overlap yields distance 0 and `near-side` label prefix `=`.
     ///
@@ -713,7 +707,7 @@ pub struct PrepareConfig {
     /// Chromosomes without near intervals use the special bin `[NO-NEAR]`.
     /// Requires `--near`.
     ///
-    /// Examples:
+    /// **Examples**:
     ///
     /// - `--distance-bins 'prox:<500' 'mid:500-2000' 'dist:>2000'`
     ///
@@ -773,8 +767,8 @@ pub struct PrepareConfig {
     /// Use this to choose which coordinates determine the near distance and bin label.
     /// When no resize or flank is configured, resized coordinates match the originals.
     ///
-    /// Values
-    /// ------
+    /// One of:
+    ///
     /// - `"resized"`: Use resized coordinates.
     ///
     /// - `"original"`: Use original coordinates.
@@ -879,8 +873,7 @@ pub struct PrepareConfig {
     /// Use `--cluster-before-min-distance` to move clustering ahead of this step.
     /// It uses the same coordinate set as `--distance-from`.
     ///
-    /// Selection rule
-    /// --------------
+    /// **Selection rule**:
     ///
     /// - Sort windows by `(input, chrom, start, end)` in the chosen coordinate set.
     ///
@@ -971,8 +964,8 @@ pub struct PrepareConfig {
 
     /// Coordinates used for clustering overlap checks `[string]`
     ///
-    /// Values
-    /// ------
+    /// One of:
+    ///
     /// - `"original"`: Use original coordinates.
     ///
     /// - `"resized"`: Use resized coordinates. When no resize or flank is configured,
@@ -1047,8 +1040,7 @@ pub struct PrepareConfig {
 
     /// Coordinates used for merging `[string]`
     ///
-    /// Values
-    /// ------
+    /// One of:
     ///
     /// - `"original"`: Merge using original coordinates. If resizing is configured,
     ///   the merged window is resized after merging.
