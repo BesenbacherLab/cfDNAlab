@@ -15,7 +15,7 @@ use std::path::PathBuf;
 /// label columns.
 ///
 /// A label is a tag that tells downstream analyses how to partition the windows. Labels can be
-/// based on input columns, distance to a `--near` set of genomic intervals, overlap-based 
+/// based on input columns, distance to a `--near` set of genomic intervals, overlap-based
 /// "cluster" inclusion, or compositions of these parts that you define.
 ///
 /// The command parses the BED/TSV/CSV input and:
@@ -35,7 +35,7 @@ use std::path::PathBuf;
 /// The output is minimal, headerless, and sorted by `(chrom, start, end, labels)`,
 /// where the label columns are specified via `--out-labels` and the chromosome
 /// order is controlled by `--chromosomes`.
-/// When `--chromosomes all` is specified, the output order follows the chromosome 
+/// When `--chromosomes all` is specified, the output order follows the chromosome
 /// order in the input.
 ///
 /// ## Practical notes
@@ -61,26 +61,28 @@ use std::path::PathBuf;
 ///
 /// Filters:
 ///
-///   \t- Blacklist regions with a "halo" (increased region sizes) matching the max. fragment size
-///     in downstream processing (on each side of the blacklisted interval),
-///     so midpoint profiles are never affected by neighbouring blacklists.
+///   - Remove windows overlapping halo-expanded blacklisted regions ("halo": we flank blacklisted
+///     regions with half the maximum fragment size (from downstream analysis) on both sides,
+///     so midpoint profiles are not affected by problematic neighbouring regions.
 ///
-///   - Deduplicate binding sites with same (chrom,start,end,transcription factor ID).
+///   - Deduplicate binding sites with same (chrom,start,end,transcription factor).
 ///
-///   - Merge overlapping binding sites belonging to the same transcription factor 
-///     (based on original coordinates). These could be slightly shifted duplicates
+///   - Merge overlapping binding sites belonging to the same transcription factor
+///     (using the original coordinates). These could be slightly shifted duplicates
 ///     from multiple experiments.
 ///
-///   - Remove one/more binding sites if they are too close to another binding site from the same transcription factor.
-///     This is to show how to do this. It's not clear this is better than using them all.
+///   - Remove one/more binding sites if they lie too close to another binding site from
+///     the same transcription factor. Shown for demo purposes, it is unclear whether this
+///     step is meaningful (see `--min-distance-within-group`).
 ///
-///   - Proximity to TSS sites (`--near` and `--distance-bins`). Keep only distal binding sites.
-///     A binding site must be within 100kb of a TSS site (`--distance-max`).
+///   - Proximity to TSS sites (`--near` and `--distance-bins`). Keep only distal binding sites
+///     within 100kb from a TSS site (`--distance-max`).
 ///     
 ///   - Min-per: At least 1000 windows per transcription factor (i.e., the `input` **group**).
 ///
-///   - Detect "clusters" of binding sites when >10 binding sites overlap (after merging). These are marked in the
-///     output group label, so we can count midpoints separately for clustered and non-clustered binding sites.
+///   - Detect "clusters" of binding sites when >10 binding sites overlap (after merging per
+///     transcription factor). These are marked in the output group label, so we can count
+///     midpoints separately for clustered and non-clustered binding sites.
 ///
 /// We resize windows to 2001bp around the midpoint of the intervals.
 ///
@@ -90,27 +92,27 @@ use std::path::PathBuf;
 /// ```bash
 ///
 /// cfdna prep-windows -i tf_coords.bed.gz -o new_tf_coords.tsv.zst \
-/// 
+///
 ///     --sep tab --group-cols 3  \
-/// 
+///
 ///     --compose out=input,cluster --out-labels out  \
-/// 
+///
 ///     --exclude-labels bin=prox --min-per input=1000  \
-/// 
-///     --blacklist encode_blacklist.bed --blacklist-halo 1000  \
-/// 
+///
+///     --blacklist encode_blacklist.bed --blacklist-halo 500  \
+///
 ///     --near tss_coords.bed --near-strand-col 4  \
-/// 
+///
 ///     --distance-bins 'prox:<2000' 'dist:>2000'  \
-/// 
+///
 ///     --distance-max 100000 --distance-from original  \
-/// 
+///
 ///     --resize 2001 --chrom-sizes hg38.chrom.sizes  \
-/// 
+///
 ///     --deduplicate keep-first --min-distance-within-group 50  \
-/// 
+///
 ///     --cluster-min-overlaps 10  \
-/// 
+///
 ///     --merge-scope within --merge-gap 0
 ///
 /// ```
@@ -120,7 +122,7 @@ use std::path::PathBuf;
 /// ```bash
 ///
 ///     --distance-bins 'prox:-2500-500' 'upDist:<-2500' 'downDist:>500'  \
-/// 
+///
 ///     --distance-sign signed
 ///
 /// ```
