@@ -7,34 +7,36 @@ use crate::{
 use clap::{ArgGroup, Parser, ValueEnum};
 use std::path::PathBuf;
 
-/// Clean and standardise genomic windows so downstream cfDNA tools receive a tidy BED-like file.
+/// Clean and standardise genomic windows for downstream cfDNAlab tools.
 ///
-/// `prep-windows` reads a delimited table with at least `chrom,start,end`, validates every row,
-/// and writes a BED-like file for downstream tools. The command writes validated coordinates
-/// plus specifiable label columns.
+/// `prep-windows` reads a delimited table with `chrom,start,end` and optional
+/// group and score columns, filters and validates each row, and writes a BED-like file for
+/// downstream tools. The command writes validated coordinates plus specifiable
+/// label columns.
 ///
 /// A label is a tag that tells downstream analyses how to partition the windows. Labels can be
-/// based on input columns, distance to a `--near` set, clustering inclusion, or named compositions
-/// you define.
+/// based on input columns, distance to a `--near` set of genomic intervals, overlap-based 
+/// "cluster" inclusion, or compositions of these parts that you define.
 ///
-/// The command parses the TSV/CSV input and:
+/// The command parses the BED/TSV/CSV input and:
 ///
 /// - Filters windows using score thresholds, blacklist overlap, and label-based rules.
 ///
 /// - Adjusts coordinates by resizing to a specific size or adding flanks to the
 ///   current sizes (trimmed to chromosome limits).
 ///
-/// - Merges windows based on merge scope, merge key, and merge-on coordinates.
+/// - Merges windows based either within groups or across groups.
 ///
-/// - Builds labels by combining input columns or binning distances to elements
-///   in the `near` file (e.g., TSS sites).
+/// - Builds labels by combining input columns and/or binning distances to elements
+///   in the `near` file (e.g., proximal/distal TSS sites).
 ///
-/// - Tags dense overlaps as clusters.
+/// - Tags dense overlaps as "clusters".
 ///
 /// The output is minimal, headerless, and sorted by `(chrom, start, end, labels)`,
 /// where the label columns are specified via `--out-labels` and the chromosome
 /// order is controlled by `--chromosomes`.
-/// When `--chromosomes all` is specified, the output order follows the input stream.
+/// When `--chromosomes all` is specified, the output order follows the chromosome 
+/// order in the input.
 ///
 /// ## Practical notes
 ///
@@ -46,27 +48,28 @@ use std::path::PathBuf;
 /// - Column indices are 0-based when you refer to them explicitly.
 ///
 /// - Blacklist checks run on the resized window span using the halo (padding) you configure.
-///   When no resize or flank is configured, resized coordinates match the originals.
+///   When no resize or flank is configured, "resized coordinates" match the original coordinates.
 ///
-/// - "Nearest distance" refers to the closest edge of the comparison interval. NOTE:
+/// - "Nearest distance" refers to the closest considered edge of the comparison interval. NOTE:
 ///   For point features (e.g., TSS), provide 1-bp intervals at the strand-specific coordinate.
 ///
 /// ## Examples
 ///
-/// ### Case: Preparing windows for `cfdna midpoints`
+/// ### Case: Preparing binding sites for `cfdna midpoints`
 ///
 /// Input: Transcription factor binding sites
 ///
 /// Filters:
 ///
-///   - Blacklist regions with a "halo" (increased region sizes) matching the max. fragment size
+///   \t- Blacklist regions with a "halo" (increased region sizes) matching the max. fragment size
 ///     in downstream processing (on each side of the blacklisted interval),
 ///     so midpoint profiles are never affected by neighbouring blacklists.
 ///
 ///   - Deduplicate binding sites with same (chrom,start,end,transcription factor ID).
 ///
-///   - Merge overlapping binding sites belonging to the same transcription factor (based on original coordinates).
-///     These could be slightly shifted duplicates from multiple experiments.
+///   - Merge overlapping binding sites belonging to the same transcription factor 
+///     (based on original coordinates). These could be slightly shifted duplicates
+///     from multiple experiments.
 ///
 ///   - Remove one/more binding sites if they are too close to another binding site from the same transcription factor.
 ///     This is to show how to do this. It's not clear this is better than using them all.
@@ -87,16 +90,27 @@ use std::path::PathBuf;
 /// ```bash
 ///
 /// cfdna prep-windows -i tf_coords.bed.gz -o new_tf_coords.tsv.zst \
+/// 
 ///     --sep tab --group-cols 3  \
+/// 
 ///     --compose out=input,cluster --out-labels out  \
+/// 
 ///     --exclude-labels bin=prox --min-per input=1000  \
+/// 
 ///     --blacklist encode_blacklist.bed --blacklist-halo 1000  \
+/// 
 ///     --near tss_coords.bed --near-strand-col 4  \
+/// 
 ///     --distance-bins 'prox:<2000' 'dist:>2000'  \
+/// 
 ///     --distance-max 100000 --distance-from original  \
+/// 
 ///     --resize 2001 --chrom-sizes hg38.chrom.sizes  \
+/// 
 ///     --deduplicate keep-first --min-distance-within-group 50  \
+/// 
 ///     --cluster-min-overlaps 10  \
+/// 
 ///     --merge-scope within --merge-gap 0
 ///
 /// ```
@@ -106,6 +120,7 @@ use std::path::PathBuf;
 /// ```bash
 ///
 ///     --distance-bins 'prox:-2500-500' 'upDist:<-2500' 'downDist:>500'  \
+/// 
 ///     --distance-sign signed
 ///
 /// ```
