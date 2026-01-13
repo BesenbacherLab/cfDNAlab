@@ -319,7 +319,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
 
     // State for streaming by chromosome with chunking
     // Chunk size in windows to limit memory while keeping sequential IO fast
-    let chunk_size: usize = 2_000_000;
+    let chunk_size: usize = 500_000;
     // Current chromosome name for grouping and change detection
     let mut current_chrom: String = String::new();
     // Chromosome order as it appears in the input stream
