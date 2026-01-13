@@ -31,6 +31,7 @@ use crate::shared::bed::{detect_header, line_looks_like_header};
 use crate::shared::blacklist::{is_blacklisted, load_blacklists};
 use crate::shared::io::open_text_reader;
 use crate::shared::reference::load_chrom_sizes;
+use crate::shared::thread_pool::init_global_pool;
 use crate::shared::tiled_run::make_temp_dir;
 use anyhow::{Context, Result, bail};
 use ctrlc;
@@ -318,7 +319,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
 
     // State for streaming by chromosome with chunking
     // Chunk size in windows to limit memory while keeping sequential IO fast
-    let chunk_size: usize = 5_000_000;
+    let chunk_size: usize = 1_000_000;
     // Current chromosome name for grouping and change detection
     let mut current_chrom: String = String::new();
     // Chromosome order as it appears in the input stream
@@ -340,6 +341,9 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     let mut reader = input_reader;
     let mut line_buffer = String::new();
     let mut pending_line: Option<String> = None;
+
+    // Configure global thread‐pool size
+    init_global_pool(cfg.n_threads as usize)?;
 
     let has_known_chroms = !chromosomes.is_empty();
     let pb = if has_known_chroms {
