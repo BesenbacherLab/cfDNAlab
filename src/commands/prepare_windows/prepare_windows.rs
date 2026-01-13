@@ -34,11 +34,12 @@ use crate::shared::reference::load_chrom_sizes;
 use crate::shared::tiled_run::make_temp_dir;
 use anyhow::{Context, Result, bail};
 use fxhash::{FxHashMap, FxHashSet};
+use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::hash_map::Entry;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{env, fs, mem};
 
 /// Window representation used throughout the prepare pipeline.
@@ -262,8 +263,12 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     let mut blacklist_cursors: FxHashMap<String, BlacklistCursor> = FxHashMap::default();
     if let Some(paths) = &cfg.blacklist {
         println!("Start: Loading blacklist intervals");
-        let loaded =
-            load_blacklists(paths.as_slice(), 1, cfg.blacklist_halo as u64, chromosomes_for_blacklist)?;
+        let loaded = load_blacklists(
+            paths.as_slice(),
+            1,
+            cfg.blacklist_halo as u64,
+            chromosomes_for_blacklist,
+        )?;
         for (chrom, intervals) in loaded.into_iter() {
             blacklist_cursors.insert(
                 chrom,
@@ -312,6 +317,30 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     let mut reader = input_reader;
     let mut line_buffer = String::new();
     let mut pending_line: Option<String> = None;
+
+    let has_known_chroms = !chromosomes.is_empty();
+    let pb = if has_known_chroms {
+        let bar = Arc::new(ProgressBar::new(chromosomes.len() as u64));
+        bar.set_style(
+            ProgressStyle::default_bar()
+                .template("Chromosomes {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
+                .unwrap(),
+        );
+        bar.set_position(0);
+        bar
+    } else {
+        let spinner = Arc::new(ProgressBar::new_spinner());
+        spinner.set_style(
+            ProgressStyle::default_spinner()
+                .template("Chromosomes {spinner} {msg} [{elapsed_precise}]")
+                .unwrap(),
+        );
+        spinner.enable_steady_tick(Duration::from_millis(100));
+        spinner.set_message("0 processed");
+        spinner
+    };
+
+    let mut processed_chrom_count: u64 = 0;
 
     match cfg.header {
         HeaderMode::Present => {
@@ -436,6 +465,17 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             if use_input_chrom_order {
                 chrom_order.push(current_chrom.clone());
             }
+
+            processed_chrom_count += 1;
+            if has_known_chroms {
+                pb.inc(1);
+                pb.set_message(format!("Last {}", current_chrom));
+            } else {
+                pb.set_message(format!(
+                    "{} processed (last {})",
+                    processed_chrom_count, current_chrom
+                ));
+            }
         }
 
         if let Some(prev_start) = prev_start_for_current {
@@ -557,6 +597,29 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             &merge_key,
             &out_labels,
         )?;
+        processed_chrom_count += 1;
+        if has_known_chroms {
+            pb.inc(1);
+            pb.set_message(format!("Last {}", current_chrom));
+        } else {
+            pb.set_message(format!(
+                "{} processed (last {})",
+                processed_chrom_count, current_chrom
+            ));
+        }
+    }
+
+    if has_known_chroms {
+        pb.finish_with_message(format!(
+            "{} processed of {}",
+            processed_chrom_count,
+            chromosomes.len()
+        ));
+    } else {
+        pb.finish_with_message(format!(
+            "{} processed (input order)",
+            processed_chrom_count
+        ));
     }
 
     // Final pass: apply filtering and write output

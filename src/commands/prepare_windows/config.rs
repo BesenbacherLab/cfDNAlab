@@ -101,9 +101,9 @@ use std::path::PathBuf;
 ///
 ///     --blacklist encode_blacklist.bed --blacklist-halo 500  \
 ///
-///     --near tss_coords.bed --near-strand-col 4  \
+///     --near tss_coords.bed --near-strand-col 4 --near-duplicates keep-first  \
 ///
-///     --distance-bins 'prox:<2000' 'dist:>2000'  \
+///     --distance-bins 'prox:<=2000' 'dist:>2000'  \
 ///
 ///     --distance-max 100000 --distance-from original  \
 ///
@@ -1104,6 +1104,17 @@ pub struct PrepareConfig {
         clap(long, value_parser = clap::value_parser!(u64), help_heading = "Reproducibility")
     )]
     pub seed: Option<u64>,
+
+    /// Number of threads to use during sorting steps `[integer]`
+    ///
+    /// This command generally takes a long time and is hard to parallelize.
+    ///
+    /// Defaults to the number of available CPU cores (-1).
+    #[cfg_attr(
+        feature = "cli",
+        clap(short = 't', long, default_value_t = (num_cpus::get()-1).max(1), help_heading = "Core")
+    )]
+    pub n_threads: usize,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -1307,6 +1318,7 @@ impl Default for PrepareConfig {
             merge_gap: None,
             merge_label: MergeLabel::Join,
             seed: None,
+            n_threads: (num_cpus::get() - 1).max(1),
         }
     }
 }
