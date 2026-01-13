@@ -548,46 +548,60 @@ fn compute_tail_start_within_indices(
     coord_set: CoordinateSet,
     group_keys: Option<&[String]>,
 ) -> usize {
-    // We walk the sorted indices from the end toward the start so we can see which earlier
-    // windows could still be impacted by a later window in this chunk
-    // For minimum-distance and within-group merges, a window is unsafe to flush if there exists
-    // a later window in the same (group, chrom) whose start lies within `margin` of this window's start
-    // We track the farthest end we have seen so far per key to decide whether the current window
-    // overlaps or sits within the margin of that span
-    let mut last_per_key: FxHashMap<(String, Arc<str>), u32> = FxHashMap::default();
-    let mut min_index = indices.len();
+    // Walk forward and keep only the final overlap chain per (group, chrom) because only that chain
+    // can reach into the next chunk. Earlier chains that ended before the boundary are safe.
+    // After the scan, filter out chains whose last end is before the chunk boundary start because
+    // they cannot interact with future windows.
+    let mut chain_start_by_key: FxHashMap<(String, Arc<str>), usize> = FxHashMap::default();
+    let mut last_end_by_key: FxHashMap<(String, Arc<str>), u32> = FxHashMap::default();
+    let mut max_start_in_chunk: u32 = 0;
 
-    for (pos, &idx) in indices.iter().enumerate().rev() {
-        // Current window when scanning backward
+    for (pos, &idx) in indices.iter().enumerate() {
         let window = &windows[idx];
-        // Resolve group key used for within-group rules
         let group_key = group_keys
             .and_then(|keys| keys.get(idx))
             .cloned()
             .unwrap_or_else(|| window.group_key.clone());
         let key = (group_key, window.chrom.clone());
-        let maybe_last_end = last_per_key.get(&key).copied();
-        let window_end = window.end_for(coord_set);
-        match maybe_last_end {
+        let start = window.start_for(coord_set);
+        let end = window.end_for(coord_set);
+        if start > max_start_in_chunk {
+            max_start_in_chunk = start;
+        }
+
+        match last_end_by_key.get(&key).copied() {
             None => {
-                // First time seeing this (group, chrom) when scanning from the end
-                // Record its end so earlier windows can measure overlap against it
-                last_per_key.insert(key, window_end);
+                last_end_by_key.insert(key.clone(), end);
+                chain_start_by_key.insert(key, pos);
             }
             Some(last_end) => {
-                // There is already a later window for this key
-                // If the current start is within the margin of that later end, this window is unsafe
-                // and everything at or before this position must be kept in the tail
-                if window.start_for(coord_set) <= last_end.saturating_add(margin) {
-                    min_index = min_index.min(pos);
-                    let new_end = last_end.max(window_end);
-                    // Extend the tracked end so even earlier windows consider the union span
-                    last_per_key.insert(key, new_end);
+                if start <= last_end.saturating_add(margin) {
+                    // Chain continues, extend its end
+                    let new_end = last_end.max(end);
+                    last_end_by_key.insert(key, new_end);
+                } else {
+                    // Chain ended before the boundary
+                    // replace with a new chain starting here
+                    last_end_by_key.insert(key.clone(), end);
+                    chain_start_by_key.insert(key, pos);
                 }
             }
         }
     }
-    min_index
+
+    let boundary_start = max_start_in_chunk;
+    chain_start_by_key
+        .iter()
+        .filter_map(|(key, &start_idx)| {
+            let last_end = last_end_by_key.get(key).copied().unwrap_or(0);
+            if last_end >= boundary_start.saturating_sub(margin) {
+                Some(start_idx)
+            } else {
+                None
+            }
+        })
+        .min()
+        .unwrap_or(indices.len())
 }
 
 /// Identify earliest index in the suffix that might be affected across groups.
@@ -612,24 +626,49 @@ fn compute_tail_start_across_indices(
     margin: u32,
     coord_set: CoordinateSet,
 ) -> usize {
+    // Same idea as within-group but keyed by chromosome: track the final overlap chain per chrom.
+    let mut chain_start_by_chrom: FxHashMap<&str, usize> = FxHashMap::default();
     let mut last_end_by_chrom: FxHashMap<&str, u32> = FxHashMap::default();
-    let mut min_index = indices.len();
+    let mut max_start_in_chunk: u32 = 0;
 
-    for (pos, &idx) in indices.iter().enumerate().rev() {
+    for (pos, &idx) in indices.iter().enumerate() {
         let window = &windows[idx];
         let chrom_name = window.chrom.as_ref();
-        let last_end = last_end_by_chrom.get(chrom_name).copied().unwrap_or(0);
-        let window_end = window.end_for(coord_set);
-
-        if last_end == 0 {
-            last_end_by_chrom.insert(chrom_name, window_end);
-        } else if window.start_for(coord_set) <= last_end.saturating_add(margin) {
-            min_index = min_index.min(pos);
-            let new_end = last_end.max(window_end);
-            last_end_by_chrom.insert(chrom_name, new_end);
+        let start = window.start_for(coord_set);
+        let end = window.end_for(coord_set);
+        if start > max_start_in_chunk {
+            max_start_in_chunk = start;
+        }
+        match last_end_by_chrom.get(chrom_name).copied() {
+            None => {
+                last_end_by_chrom.insert(chrom_name, end);
+                chain_start_by_chrom.insert(chrom_name, pos);
+            }
+            Some(last_end) => {
+                if start <= last_end.saturating_add(margin) {
+                    let new_end = last_end.max(end);
+                    last_end_by_chrom.insert(chrom_name, new_end);
+                } else {
+                    last_end_by_chrom.insert(chrom_name, end);
+                    chain_start_by_chrom.insert(chrom_name, pos);
+                }
+            }
         }
     }
-    min_index
+
+    let boundary_start = max_start_in_chunk;
+    chain_start_by_chrom
+        .iter()
+        .filter_map(|(chrom, &start_idx)| {
+            let last_end = last_end_by_chrom.get(chrom).copied().unwrap_or(0);
+            if last_end >= boundary_start.saturating_sub(margin) {
+                Some(start_idx)
+            } else {
+                None
+            }
+        })
+        .min()
+        .unwrap_or(indices.len())
 }
 
 fn choose_candidate(
