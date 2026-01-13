@@ -59,6 +59,7 @@ tempfile = "3.20.0"
 strum = "0.27.2"
 strum_macros = "0.27.2"
 staged-sg-filter = { version = "0.2.3", optional = true }
+ctrlc = "3.5.1"
 
 [dev-dependencies]
 libc = "0.2"

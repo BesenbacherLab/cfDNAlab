@@ -80,7 +80,7 @@ use std::path::PathBuf;
 ///     
 ///   - Min-per: At least 1000 windows per transcription factor (i.e., the `input` **group**).
 ///
-///   - Detect "clusters" of binding sites when >10 binding sites overlap (after merging per
+///   - Detect "clusters" of binding sites when >15 binding sites overlap (after merging per
 ///     transcription factor). These are marked in the output group label, so we can count
 ///     midpoints separately for clustered and non-clustered binding sites.
 ///
@@ -111,7 +111,7 @@ use std::path::PathBuf;
 ///
 ///     --deduplicate keep-first --min-distance-within-group 50  \
 ///
-///     --cluster-min-overlaps 10  \
+///     --cluster-min-overlaps 15  \
 ///
 ///     --merge-scope within --merge-gap 0
 ///

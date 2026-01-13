@@ -33,12 +33,15 @@ use crate::shared::io::open_text_reader;
 use crate::shared::reference::load_chrom_sizes;
 use crate::shared::tiled_run::make_temp_dir;
 use anyhow::{Context, Result, bail};
+use ctrlc;
 use fxhash::{FxHashMap, FxHashSet};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::hash_map::Entry;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::process;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::{env, fs, mem};
 
@@ -145,6 +148,26 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     // Keep per-chrom temp files in a subdirectory so they can be removed once filtered
     let stream_temp_dir = make_temp_dir(temp_dir_guard.path(), "prepare_windows_stream")
         .context("create stream temp dir")?;
+
+    // Best-effort cleanup when interrupted (Ctrl+C)
+    let cleanup_done = Arc::new(AtomicBool::new(false));
+    let cleanup_path = temp_dir_guard.path().to_path_buf();
+    {
+        let cleanup_done = cleanup_done.clone();
+        ctrlc::set_handler(move || {
+            if cleanup_done.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            if let Err(err) = fs::remove_dir_all(&cleanup_path) {
+                eprintln!(
+                    "Warning: failed to remove temporary directory {:?}: {}",
+                    cleanup_path, err
+                );
+            }
+            process::exit(130);
+        })
+        .context("install Ctrl+C handler")?;
+    }
 
     // TODO: Validate IO paths early (and other args)
 
@@ -326,7 +349,6 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
                 .template("Chromosomes {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
                 .unwrap(),
         );
-        bar.set_position(0);
         bar
     } else {
         let spinner = Arc::new(ProgressBar::new_spinner());
@@ -336,7 +358,6 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
                 .unwrap(),
         );
         spinner.enable_steady_tick(Duration::from_millis(100));
-        spinner.set_message("0 processed");
         spinner
     };
 
@@ -389,6 +410,13 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
 
     // Stream input records
     println!("Start: Streaming input records");
+
+    if has_known_chroms {
+        pb.set_position(0);
+    } else {
+        pb.set_message("0 processed");
+    }
+
     loop {
         // Header auto-detection may have already read the first data line, so consume it here
         // Swap to avoid losing the buffered line and to reuse the existing allocation
@@ -616,10 +644,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             chromosomes.len()
         ));
     } else {
-        pb.finish_with_message(format!(
-            "{} processed (input order)",
-            processed_chrom_count
-        ));
+        pb.finish_with_message(format!("{} processed (input order)", processed_chrom_count));
     }
 
     // Final pass: apply filtering and write output
