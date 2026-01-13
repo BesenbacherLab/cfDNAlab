@@ -412,10 +412,7 @@ pub fn partition_safe_and_tail(
                 gap_bp,
                 merge_coord_set,
                 merge_group_keys,
-            )
-            .into_iter()
-            .min()
-            {
+            ) {
                 tail_start_index = tail_start_index.min(min_index);
                 println!("merge tail start index: {}", min_index);
             }
@@ -430,10 +427,7 @@ pub fn partition_safe_and_tail(
             distance_bp,
             distance_coord_set,
             None,
-        )
-        .into_iter()
-        .min()
-        {
+        ) {
             tail_start_index = tail_start_index.min(min_index);
             println!("min-distance tail start index: {}", min_index);
         }
@@ -476,9 +470,9 @@ fn collect_tail_indices(
     margin: u32,
     coord_set: CoordinateSet,
     group_keys: Option<&[String]>,
-) -> Vec<usize> {
+) -> Option<usize> {
     if windows.is_empty() {
-        return Vec::new();
+        return None;
     }
 
     let mut indices: Vec<usize> = (0..windows.len()).collect();
@@ -509,11 +503,11 @@ fn collect_tail_indices(
                 .then(a.end_for(coord_set).cmp(&b.end_for(coord_set)))
                 .then(a.group_key.cmp(&b.group_key))
         }),
-        MergeScope::None => return Vec::new(),
+        MergeScope::None => return None,
     }
 
     let tail_start = match merge_scope {
-        MergeScope::None => indices.len(),
+        MergeScope::None => None,
         MergeScope::Within => {
             compute_tail_start_within_indices(&indices, windows, margin, coord_set, group_keys)
         }
@@ -522,7 +516,7 @@ fn collect_tail_indices(
         }
     };
 
-    indices[tail_start..].to_vec()
+    tail_start.map(|pos_in_indices| indices[pos_in_indices])
 }
 
 /// Identify earliest index in the suffix that might be affected within groups.
@@ -547,7 +541,7 @@ fn compute_tail_start_within_indices(
     margin: u32,
     coord_set: CoordinateSet,
     group_keys: Option<&[String]>,
-) -> usize {
+) -> Option<usize> {
     // Walk forward and keep only the final overlap chain per (group, chrom) because only that chain
     // can reach into the next chunk. Earlier chains that ended before the boundary are safe.
     // After the scan, filter out chains whose last end is before the chunk boundary start because
@@ -595,11 +589,7 @@ fn compute_tail_start_within_indices(
         if last_end >= boundary_start.saturating_sub(margin) {
             eprintln!(
                 "Debug: tail candidate key={} chrom={} start_idx={} last_end={} boundary_start={}",
-                key.0,
-                key.1,
-                start_idx,
-                last_end,
-                boundary_start
+                key.0, key.1, start_idx, last_end, boundary_start
             );
         }
     }
@@ -608,13 +598,22 @@ fn compute_tail_start_within_indices(
         .filter_map(|(key, &start_idx)| {
             let last_end = last_end_by_key.get(key).copied().unwrap_or(0);
             if last_end >= boundary_start.saturating_sub(margin) {
-                Some(start_idx)
+                Some((key, start_idx))
             } else {
                 None
             }
         })
-        .min()
-        .unwrap_or(indices.len())
+        .min_by_key(|(_, start_idx)| *start_idx)
+        .map(|(key, start_idx)| {
+            if start_idx == 0 {
+                let last_end = last_end_by_key.get(key).copied().unwrap_or(0);
+                eprintln!(
+                    "Debug: min tail key={} chrom={} start_idx=0 last_end={} boundary_start={}",
+                    key.0, key.1, last_end, boundary_start
+                );
+            }
+            start_idx
+        })
 }
 
 /// Identify earliest index in the suffix that might be affected across groups.
@@ -638,7 +637,7 @@ fn compute_tail_start_across_indices(
     windows: &[Window],
     margin: u32,
     coord_set: CoordinateSet,
-) -> usize {
+) -> Option<usize> {
     // Same idea as within-group but keyed by chromosome: track the final overlap chain per chrom.
     let mut chain_start_by_chrom: FxHashMap<&str, usize> = FxHashMap::default();
     let mut last_end_by_chrom: FxHashMap<&str, u32> = FxHashMap::default();
@@ -675,10 +674,7 @@ fn compute_tail_start_across_indices(
         if last_end >= boundary_start.saturating_sub(margin) {
             eprintln!(
                 "Debug: tail candidate chrom={} start_idx={} last_end={} boundary_start={}",
-                chrom,
-                start_idx,
-                last_end,
-                boundary_start
+                chrom, start_idx, last_end, boundary_start
             );
         }
     }
@@ -687,13 +683,22 @@ fn compute_tail_start_across_indices(
         .filter_map(|(chrom, &start_idx)| {
             let last_end = last_end_by_chrom.get(chrom).copied().unwrap_or(0);
             if last_end >= boundary_start.saturating_sub(margin) {
-                Some(start_idx)
+                Some((chrom, start_idx))
             } else {
                 None
             }
         })
-        .min()
-        .unwrap_or(indices.len())
+        .min_by_key(|(_, start_idx)| *start_idx)
+        .map(|(chrom, start_idx)| {
+            if start_idx == 0 {
+                let last_end = last_end_by_chrom.get(chrom).copied().unwrap_or(0);
+                eprintln!(
+                    "Debug: min tail chrom={} start_idx=0 last_end={} boundary_start={}",
+                    chrom, last_end, boundary_start
+                );
+            }
+            start_idx
+        })
 }
 
 fn choose_candidate(
