@@ -355,7 +355,7 @@ pub fn process_and_write_chunk(
         output_coord_set,
     );
 
-    // Near annotation needs chrom-first ordering for the distance coordinate set
+    // Tail detection for the next chunk (and min-distance safety) needs chrom-first ordering on the distance coordinate set
     ensure_sorted(
         &mut windows,
         WindowSortOrder::ChromStartEnd,
@@ -363,13 +363,6 @@ pub fn process_and_write_chunk(
         &mut current_order,
         &mut current_coord_set,
     );
-
-    windows = apply_near_annotations(windows, near_index, cfg, distance_bins, distance_coord_set);
-
-    // Output ordering uses the label columns requested by the user, not group_key
-    sort_windows_by_output_labels(&mut windows, output_coord_set, out_labels, label_schema);
-    // current_order = None;
-    // current_coord_set = None;
 
     let merge_group_keys = if merge_within_enabled {
         // Tail detection for within-group merging needs merge-key values, not output labels
@@ -383,7 +376,7 @@ pub fn process_and_write_chunk(
     };
 
     // Split into a processed region that cannot change and a tail that might still merge with the next chunk
-    let (safe_prefix, tail) = partition_safe_and_tail(
+    let (mut safe_prefix, tail) = partition_safe_and_tail(
         windows,
         cfg.min_distance_within_group,
         cfg.merge_scope,
@@ -394,6 +387,19 @@ pub fn process_and_write_chunk(
         cluster_coord_set,
         merge_group_keys.as_deref(),
     );
+
+    // Only annotate the safe prefix now. Tail will be annotated on final flush
+    // Note: Uses the existing ChromStartEnd ordering
+    safe_prefix = apply_near_annotations(
+        safe_prefix,
+        near_index,
+        cfg,
+        distance_bins,
+        distance_coord_set,
+    );
+
+    // Output ordering uses the label columns requested by the user, not group_key
+    sort_windows_by_output_labels(&mut safe_prefix, output_coord_set, out_labels, label_schema);
 
     let writer = ensure_temp_writer_for_chrom(chrom, temp_dir, temp_writers)?;
 
@@ -464,10 +470,12 @@ pub fn flush_chromosome(
     )?;
 
     if !carryover_tail.is_empty() {
+        let mut tail = std::mem::take(carryover_tail);
+        tail = apply_near_annotations(tail, near_index, cfg, distance_bins, cfg.distance_from);
+        sort_windows_by_output_labels(&mut tail, CoordinateSet::Resized, out_labels, label_schema);
+
         let writer = ensure_temp_writer_for_chrom(chrom, temp_dir, temp_writers)?;
-        // Carryover tail is already in output order from the previous processing pass
-        write_intermediate_windows(writer.writer(), carryover_tail, cfg.sep)?;
-        carryover_tail.clear();
+        write_intermediate_windows(writer.writer(), &tail, cfg.sep)?;
     }
     Ok(())
 }
