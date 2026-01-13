@@ -539,11 +539,19 @@ fn compute_tail_start_within_indices(
     coord_set: CoordinateSet,
     group_keys: Option<&[String]>,
 ) -> usize {
+    // We walk the sorted indices from the end toward the start so we can see which earlier
+    // windows could still be impacted by a later window in this chunk
+    // For minimum-distance and within-group merges, a window is unsafe to flush if there exists
+    // a later window in the same (group, chrom) whose start lies within `margin` of this window's start
+    // We track the farthest end we have seen so far per key to decide whether the current window
+    // overlaps or sits within the margin of that span
     let mut last_per_key: FxHashMap<(String, Arc<str>), u32> = FxHashMap::default();
     let mut min_index = indices.len();
 
     for (pos, &idx) in indices.iter().enumerate().rev() {
+        // Current window when scanning backward
         let window = &windows[idx];
+        // Resolve group key used for within-group rules
         let group_key = group_keys
             .and_then(|keys| keys.get(idx))
             .cloned()
@@ -553,13 +561,18 @@ fn compute_tail_start_within_indices(
         let window_end = window.end_for(coord_set);
         match maybe_last_end {
             None => {
+                // First time seeing this (group, chrom) when scanning from the end
+                // Record its end so earlier windows can measure overlap against it
                 last_per_key.insert(key, window_end);
-                min_index = min_index.min(pos);
             }
             Some(last_end) => {
+                // There is already a later window for this key
+                // If the current start is within the margin of that later end, this window is unsafe
+                // and everything at or before this position must be kept in the tail
                 if window.start_for(coord_set) <= last_end.saturating_add(margin) {
                     min_index = min_index.min(pos);
                     let new_end = last_end.max(window_end);
+                    // Extend the tracked end so even earlier windows consider the union span
                     last_per_key.insert(key, new_end);
                 }
             }
@@ -601,7 +614,6 @@ fn compute_tail_start_across_indices(
 
         if last_end == 0 {
             last_end_by_chrom.insert(chrom_name, window_end);
-            min_index = min_index.min(pos);
         } else if window.start_for(coord_set) <= last_end.saturating_add(margin) {
             min_index = min_index.min(pos);
             let new_end = last_end.max(window_end);
