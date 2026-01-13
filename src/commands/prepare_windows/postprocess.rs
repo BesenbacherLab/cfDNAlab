@@ -590,6 +590,19 @@ fn compute_tail_start_within_indices(
     }
 
     let boundary_start = max_start_in_chunk;
+    for (key, &start_idx) in chain_start_by_key.iter() {
+        let last_end = last_end_by_key.get(key).copied().unwrap_or(0);
+        if last_end >= boundary_start.saturating_sub(margin) {
+            eprintln!(
+                "Debug: tail candidate key={} chrom={} start_idx={} last_end={} boundary_start={}",
+                key.0,
+                key.1,
+                start_idx,
+                last_end,
+                boundary_start
+            );
+        }
+    }
     chain_start_by_key
         .iter()
         .filter_map(|(key, &start_idx)| {
@@ -657,6 +670,18 @@ fn compute_tail_start_across_indices(
     }
 
     let boundary_start = max_start_in_chunk;
+    for (chrom, &start_idx) in chain_start_by_chrom.iter() {
+        let last_end = last_end_by_chrom.get(chrom).copied().unwrap_or(0);
+        if last_end >= boundary_start.saturating_sub(margin) {
+            eprintln!(
+                "Debug: tail candidate chrom={} start_idx={} last_end={} boundary_start={}",
+                chrom,
+                start_idx,
+                last_end,
+                boundary_start
+            );
+        }
+    }
     chain_start_by_chrom
         .iter()
         .filter_map(|(chrom, &start_idx)| {
