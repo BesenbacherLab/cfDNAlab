@@ -592,6 +592,24 @@ pub fn apply_near_annotations(
         return windows;
     };
 
+    // Rewind the near cursor for this chunk's chromosome using existing cursor state.
+    if let Some(first_window) = windows.first() {
+        let min_start = first_window.start_for(coord_set);
+        let chunk_chrom = first_window.chrom.clone();
+        if let Some(chrom) = near_idx.per_chrom.get_mut(chunk_chrom.as_ref()) {
+            if !chrom.intervals.is_empty() {
+                let len = chrom.intervals.len();
+                let mut cursor = chrom.cursor.min(len.saturating_sub(1));
+                if cursor != 0 {
+                    while cursor > 0 && chrom.intervals[cursor].end > min_start {
+                        cursor -= 1;
+                    }
+                }
+                chrom.cursor = cursor;
+            }
+        }
+    }
+
     let is_signed_mode = matches!(cfg.distance_sign, DistSign::Signed);
 
     let mut retained: Vec<Window> = Vec::with_capacity(windows.len());
