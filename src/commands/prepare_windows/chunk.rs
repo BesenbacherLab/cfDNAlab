@@ -134,8 +134,7 @@ pub fn process_and_write_chunk(
     merge_key: &LabelKey,
     out_labels: &[LabelKey],
 ) -> Result<()> {
-    let mut windows: Vec<Window> =
-        Vec::with_capacity(carryover_tail.len() + current_batch.len());
+    let mut windows: Vec<Window> = Vec::with_capacity(carryover_tail.len() + current_batch.len());
     windows.append(carryover_tail);
     windows.append(current_batch);
 
@@ -388,6 +387,12 @@ pub fn process_and_write_chunk(
         merge_group_keys.as_deref(),
     );
 
+    println!(
+        "Safe length: {} | Tail length: {}",
+        safe_prefix.len(),
+        tail.len()
+    );
+
     // Only annotate the safe prefix now. Tail will be annotated on final flush
     // Note: Uses the existing ChromStartEnd ordering
     safe_prefix = apply_near_annotations(
@@ -480,11 +485,7 @@ pub fn flush_chromosome(
     Ok(())
 }
 
-fn update_group_keys(
-    windows: &mut [Window],
-    merge_key: &LabelKey,
-    label_schema: &LabelSchema,
-) {
+fn update_group_keys(windows: &mut [Window], merge_key: &LabelKey, label_schema: &LabelSchema) {
     let needs_compositions = matches!(merge_key, LabelKey::Composition(_));
     for window in windows {
         if window.label_tuples.is_empty() {
@@ -644,29 +645,23 @@ pub fn apply_near_annotations(
                         if include_name {
                             eprintln!(
                                 "Warning: Chromosome '{}' has no near intervals. Windows will keep near-side/near-name as '{}' and bin as '{}'.",
-                                chrom,
-                                NO_NEAR_LABEL,
-                                NO_NEAR_BIN_LABEL
+                                chrom, NO_NEAR_LABEL, NO_NEAR_BIN_LABEL
                             );
                         } else {
                             eprintln!(
                                 "Warning: Chromosome '{}' has no near intervals. Windows will keep near-side as '{}' and bin as '{}'.",
-                                chrom,
-                                NO_NEAR_LABEL,
-                                NO_NEAR_BIN_LABEL
+                                chrom, NO_NEAR_LABEL, NO_NEAR_BIN_LABEL
                             );
                         }
                     } else if include_name {
                         eprintln!(
                             "Warning: Chromosome '{}' has no near intervals. Windows will keep near-side/near-name as '{}'.",
-                            chrom,
-                            NO_NEAR_LABEL
+                            chrom, NO_NEAR_LABEL
                         );
                     } else {
                         eprintln!(
                             "Warning: Chromosome '{}' has no near intervals. Windows will keep near-side as '{}'.",
-                            chrom,
-                            NO_NEAR_LABEL
+                            chrom, NO_NEAR_LABEL
                         );
                     }
                 } else {
