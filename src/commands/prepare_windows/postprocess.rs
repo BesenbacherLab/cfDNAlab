@@ -414,7 +414,6 @@ pub fn partition_safe_and_tail(
                 merge_group_keys,
             ) {
                 tail_start_index = tail_start_index.min(min_index);
-                println!("merge tail start index: {}", min_index);
             }
         }
     }
@@ -429,7 +428,6 @@ pub fn partition_safe_and_tail(
             None,
         ) {
             tail_start_index = tail_start_index.min(min_index);
-            println!("min-distance tail start index: {}", min_index);
         }
     }
 
@@ -448,7 +446,6 @@ pub fn partition_safe_and_tail(
                     }
                 }) {
                     tail_start_index = tail_start_index.min(min_index);
-                    println!("clustering tail start index: {}", min_index);
                 }
             }
         }
@@ -584,15 +581,6 @@ fn compute_tail_start_within_indices(
     }
 
     let boundary_start = max_start_in_chunk;
-    for (key, &start_idx) in chain_start_by_key.iter() {
-        let last_end = last_end_by_key.get(key).copied().unwrap_or(0);
-        if last_end >= boundary_start.saturating_sub(margin) {
-            eprintln!(
-                "Debug: tail candidate key={} chrom={} start_idx={} last_end={} boundary_start={}",
-                key.0, key.1, start_idx, last_end, boundary_start
-            );
-        }
-    }
     chain_start_by_key
         .iter()
         .filter_map(|(key, &start_idx)| {
@@ -604,16 +592,7 @@ fn compute_tail_start_within_indices(
             }
         })
         .min_by_key(|(_, start_idx)| *start_idx)
-        .map(|(key, start_idx)| {
-            if start_idx == 0 {
-                let last_end = last_end_by_key.get(key).copied().unwrap_or(0);
-                eprintln!(
-                    "Debug: min tail key={} chrom={} start_idx=0 last_end={} boundary_start={}",
-                    key.0, key.1, last_end, boundary_start
-                );
-            }
-            start_idx
-        })
+        .map(|(_, start_idx)| start_idx)
 }
 
 /// Identify earliest index in the suffix that might be affected across groups.
@@ -669,15 +648,6 @@ fn compute_tail_start_across_indices(
     }
 
     let boundary_start = max_start_in_chunk;
-    for (chrom, &start_idx) in chain_start_by_chrom.iter() {
-        let last_end = last_end_by_chrom.get(chrom).copied().unwrap_or(0);
-        if last_end >= boundary_start.saturating_sub(margin) {
-            eprintln!(
-                "Debug: tail candidate chrom={} start_idx={} last_end={} boundary_start={}",
-                chrom, start_idx, last_end, boundary_start
-            );
-        }
-    }
     chain_start_by_chrom
         .iter()
         .filter_map(|(chrom, &start_idx)| {
@@ -689,16 +659,7 @@ fn compute_tail_start_across_indices(
             }
         })
         .min_by_key(|(_, start_idx)| *start_idx)
-        .map(|(chrom, start_idx)| {
-            if start_idx == 0 {
-                let last_end = last_end_by_chrom.get(chrom).copied().unwrap_or(0);
-                eprintln!(
-                    "Debug: min tail chrom={} start_idx=0 last_end={} boundary_start={}",
-                    chrom, last_end, boundary_start
-                );
-            }
-            start_idx
-        })
+        .map(|(_, start_idx)| start_idx)
 }
 
 fn choose_candidate(
