@@ -417,6 +417,7 @@ pub fn partition_safe_and_tail(
             .min()
             {
                 tail_start_index = tail_start_index.min(min_index);
+                println("merge tail start index: {}", min_index);
             }
         }
     }
@@ -434,6 +435,7 @@ pub fn partition_safe_and_tail(
         .min()
         {
             tail_start_index = tail_start_index.min(min_index);
+            println("min-distance tail start index: {}", min_index);
         }
     }
 
@@ -443,19 +445,16 @@ pub fn partition_safe_and_tail(
             // For overlap-only clustering (margin is zero), any window whose end is <= the first
             // start of the yet-to-be-seen chunk cannot overlap future windows. Everything that
             // extends beyond that boundary must stay in the tail.
-            if let Some(last_start) = windows.last().map(|w| w.start_for(cluster_coord_set)) {
-                if let Some(min_index) = windows
-                    .iter()
-                    .enumerate()
-                    .find_map(|(idx, w)| {
-                        if w.end_for(cluster_coord_set) > last_start {
-                            Some(idx)
-                        } else {
-                            None
-                        }
-                    })
-                {
+            if let Some(max_start) = windows.iter().map(|w| w.start_for(cluster_coord_set)).max() {
+                if let Some(min_index) = windows.iter().enumerate().find_map(|(idx, w)| {
+                    if w.end_for(cluster_coord_set) > max_start {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                }) {
                     tail_start_index = tail_start_index.min(min_index);
+                    println("clustering tail start index: {}", min_index);
                 }
             }
         }
