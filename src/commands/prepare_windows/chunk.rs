@@ -374,6 +374,18 @@ pub fn process_and_write_chunk(
         None
     };
 
+    // Debug: surface the largest window in this chunk before partitioning
+    if let Some(max_window) = windows.iter().max_by_key(|w| w.length_for(CoordinateSet::Original)) {
+        eprintln!(
+            "Debug: largest window before partition {}:{}-{} len={} group={}",
+            max_window.chrom,
+            max_window.start_for(CoordinateSet::Original),
+            max_window.end_for(CoordinateSet::Original),
+            max_window.length_for(CoordinateSet::Original),
+            max_window.group_key
+        );
+    }
+
     // Split into a processed region that cannot change and a tail that might still merge with the next chunk
     let (mut safe_prefix, tail) = partition_safe_and_tail(
         windows,
