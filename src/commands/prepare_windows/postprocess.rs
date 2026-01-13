@@ -417,7 +417,7 @@ pub fn partition_safe_and_tail(
             .min()
             {
                 tail_start_index = tail_start_index.min(min_index);
-                println("merge tail start index: {}", min_index);
+                println!("merge tail start index: {}", min_index);
             }
         }
     }
@@ -435,7 +435,7 @@ pub fn partition_safe_and_tail(
         .min()
         {
             tail_start_index = tail_start_index.min(min_index);
-            println("min-distance tail start index: {}", min_index);
+            println!("min-distance tail start index: {}", min_index);
         }
     }
 
@@ -454,7 +454,7 @@ pub fn partition_safe_and_tail(
                     }
                 }) {
                     tail_start_index = tail_start_index.min(min_index);
-                    println("clustering tail start index: {}", min_index);
+                    println!("clustering tail start index: {}", min_index);
                 }
             }
         }
