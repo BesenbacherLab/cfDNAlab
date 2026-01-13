@@ -21,6 +21,7 @@ use crate::shared::blacklist::{BlacklistStrategy, is_blacklisted};
 use anyhow::Result;
 use fxhash::FxHashMap;
 use std::path::Path;
+use std::sync::OnceLock;
 
 /// Per-hit annotation values used to expand label tuples
 #[derive(Clone)]
@@ -375,15 +376,19 @@ pub fn process_and_write_chunk(
     };
 
     // Debug: surface the largest window in this chunk before partitioning
-    if let Some(max_window) = windows.iter().max_by_key(|w| w.length_for(CoordinateSet::Original)) {
-        eprintln!(
-            "Debug: largest window before partition {}:{}-{} len={} group={}",
-            max_window.chrom,
-            max_window.start_for(CoordinateSet::Original),
-            max_window.end_for(CoordinateSet::Original),
-            max_window.length_for(CoordinateSet::Original),
-            max_window.group_key
-        );
+    if prep_windows_debug_enabled() {
+        if let Some(max_window) =
+            windows.iter().max_by_key(|w| w.length_for(CoordinateSet::Original))
+        {
+            eprintln!(
+                "Debug: largest window before partition {}:{}-{} len={} group={}",
+                max_window.chrom,
+                max_window.start_for(CoordinateSet::Original),
+                max_window.end_for(CoordinateSet::Original),
+                max_window.length_for(CoordinateSet::Original),
+                max_window.group_key
+            );
+        }
     }
 
     // Split into a processed region that cannot change and a tail that might still merge with the next chunk
@@ -399,11 +404,13 @@ pub fn process_and_write_chunk(
         merge_group_keys.as_deref(),
     );
 
-    println!(
-        "Safe length: {} | Tail length: {}",
-        safe_prefix.len(),
-        tail.len()
-    );
+    if prep_windows_debug_enabled() {
+        eprintln!(
+            "Debug: Safe length: {} | Tail length: {}",
+            safe_prefix.len(),
+            tail.len()
+        );
+    }
 
     // Only annotate the safe prefix now. Tail will be annotated on final flush
     // Note: Uses the existing ChromStartEnd ordering
@@ -423,6 +430,11 @@ pub fn process_and_write_chunk(
     write_intermediate_windows(writer.writer(), &safe_prefix, cfg.sep)?;
     *carryover_tail = tail;
     Ok(())
+}
+
+fn prep_windows_debug_enabled() -> bool {
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("PREP_WINDOWS_DEBUG").is_ok())
 }
 
 /// Flush remaining windows when finishing a chromosome stream.
