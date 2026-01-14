@@ -25,7 +25,7 @@ use std::path::PathBuf;
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
-pub struct ProfileGroupsConfig {
+pub struct MidpointsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
 
@@ -167,7 +167,7 @@ pub struct ProfileGroupsConfig {
     pub ref_2bit: Option<PathBuf>,
 }
 
-impl ProfileGroupsConfig {
+impl MidpointsConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs, intervals: PathBuf) -> Self {
         Self {
             ioc,

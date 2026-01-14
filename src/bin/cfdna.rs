@@ -12,10 +12,10 @@ use cfdnalab::commands::fragment_kmers::config::FragmentKmersConfig;
 use cfdnalab::commands::gc_bias::config::GCConfig;
 #[cfg(feature = "cmd_lengths")]
 use cfdnalab::commands::lengths::config::LengthsConfig;
+#[cfg(feature = "cmd_midpoints")]
+use cfdnalab::commands::midpoints::config::MidpointsConfig;
 #[cfg(feature = "cmd_prepare_windows")]
 use cfdnalab::commands::prepare_windows::config::PrepareConfig;
-#[cfg(feature = "cmd_midpoints")]
-use cfdnalab::commands::profile_groups::config::ProfileGroupsConfig;
 #[cfg(feature = "cmd_ref_gc_bias")]
 use cfdnalab::commands::ref_gc_bias::config::RefGCBiasConfig;
 #[cfg(feature = "cmd_visualize_positions")]
@@ -71,7 +71,7 @@ enum Cmd {
     #[cfg(feature = "cmd_wps_peaks")]
     WPSPeaks(WPSPeaksConfig),
     #[cfg(feature = "cmd_midpoints")]
-    Midpoints(ProfileGroupsConfig),
+    Midpoints(MidpointsConfig),
     #[cfg(feature = "cmd_fragment_kmers")]
     FragmentKmers(FragmentKmersConfig),
     #[cfg(feature = "cmd_prepare_windows")]
@@ -120,7 +120,7 @@ fn main() {
         #[cfg(feature = "cmd_wps_peaks")]
         Cmd::WPSPeaks(cfg) => cfdnalab::commands::wps_peaks::wps_peaks::run(&cfg),
         #[cfg(feature = "cmd_midpoints")]
-        Cmd::Midpoints(cfg) => cfdnalab::commands::profile_groups::profile_groups::run(&cfg),
+        Cmd::Midpoints(cfg) => cfdnalab::commands::midpoints::midpoints::run(&cfg),
         #[cfg(feature = "cmd_fragment_kmers")]
         Cmd::FragmentKmers(cfg) => cfdnalab::commands::fragment_kmers::fragment_kmers::run(&cfg),
         #[cfg(feature = "cmd_prepare_windows")]

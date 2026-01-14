@@ -4,8 +4,8 @@ mod fixtures;
 
 use anyhow::Result;
 use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, ScaleGenomeArgs};
-use cfdnalab::commands::profile_groups::config::ProfileGroupsConfig;
-use cfdnalab::commands::profile_groups::profile_groups::run;
+use cfdnalab::commands::midpoints::config::MidpointsConfig;
+use cfdnalab::commands::midpoints::midpoints::run;
 use fixtures::{complex_bam_fixture, write_bed};
 use ndarray::Array3;
 use ndarray_npy::read_npy;
@@ -33,7 +33,7 @@ fn midpoint_profiles_written_with_group_index() -> Result<()> {
         ],
     )?;
 
-    let mut cfg = ProfileGroupsConfig::new(
+    let mut cfg = MidpointsConfig::new(
         IOCArgs {
             bam: bam.bam.clone(),
             output_dir: temp.path().to_path_buf(),

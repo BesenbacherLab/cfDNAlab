@@ -2,27 +2,29 @@
 
 mod tests_prepare_windows_helpers {
     use anyhow::Result;
-    use cfdnalab::commands::prepare_windows::config::{CoordinateSet, PrepareConfig};
-    use cfdnalab::commands::prepare_windows::config::ComposeSpec;
     use cfdnalab::commands::prepare_windows::chunk::apply_near_annotations;
+    use cfdnalab::commands::prepare_windows::config::ComposeSpec;
+    use cfdnalab::commands::prepare_windows::config::MergeScope;
+    use cfdnalab::commands::prepare_windows::config::{CoordinateSet, PrepareConfig};
     use cfdnalab::commands::prepare_windows::filters::{
-        collect_min_per_window_filter_data, normalize_min_per_rules, parse_exclude_rules,
-        parse_min_per_rules, validate_available_keys, validate_compositions_available, MinPerKeyRuleState,
-        MinPerWindowFilterData,
+        MinPerKeyRuleState, MinPerWindowFilterData, collect_min_per_window_filter_data,
+        normalize_min_per_rules, parse_exclude_rules, parse_min_per_rules, validate_available_keys,
+        validate_compositions_available,
     };
     use cfdnalab::commands::prepare_windows::labels::{
-        build_tuple_compositions, AtomicLabelPart, LabelKey, LabelSchema, LabelTuple,
-        NO_NEAR_BIN_LABEL, NO_NEAR_LABEL,
+        AtomicLabelPart, LabelKey, LabelSchema, LabelTuple, NO_NEAR_BIN_LABEL, NO_NEAR_LABEL,
+        build_tuple_compositions,
     };
-    use cfdnalab::commands::prepare_windows::near_file::{NearDuplicatesPolicy, NearIndex, Strand, load_near_index};
+    use cfdnalab::commands::prepare_windows::near_file::{
+        NearDuplicatesPolicy, NearIndex, Strand, load_near_index,
+    };
     use cfdnalab::commands::prepare_windows::parsers::parse_distance_bins;
     use cfdnalab::commands::prepare_windows::postprocess::partition_safe_and_tail;
     use cfdnalab::commands::prepare_windows::prepare_windows::Window;
-    use cfdnalab::commands::prepare_windows::config::MergeScope;
     use fxhash::FxHashSet;
-    use tempfile::NamedTempFile;
     use std::io::Write;
     use std::sync::Arc;
+    use tempfile::NamedTempFile;
 
     fn build_schema(specs: &[&str]) -> Result<LabelSchema> {
         let mut compose_specs: Vec<ComposeSpec> = Vec::with_capacity(specs.len());
@@ -747,7 +749,10 @@ mod tests_prepare_windows_helpers {
         assert_eq!(chr1.intervals.len(), 2);
         assert_eq!(chr1.intervals[0].strand, Strand::Plus);
         assert_eq!(chr1.intervals[1].strand, Strand::Plus);
-        assert_eq!(index.group_id_to_name, vec!["GeneA".to_string(), "GeneB".to_string()]);
+        assert_eq!(
+            index.group_id_to_name,
+            vec!["GeneA".to_string(), "GeneB".to_string()]
+        );
         Ok(())
     }
 
@@ -761,13 +766,8 @@ mod tests_prepare_windows_helpers {
         cfg.distance_max = Some(100);
 
         // Act
-        let result = apply_near_annotations(
-            windows,
-            &mut near_index,
-            &cfg,
-            None,
-            CoordinateSet::Resized,
-        );
+        let result =
+            apply_near_annotations(windows, &mut near_index, &cfg, None, CoordinateSet::Resized);
 
         // Assert
         assert!(result.is_empty());

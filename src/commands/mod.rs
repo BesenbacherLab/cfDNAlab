@@ -14,10 +14,10 @@ pub mod fragment_kmers;
 pub mod gc_bias;
 #[cfg(feature = "cmd_lengths")]
 pub mod lengths;
+#[cfg(feature = "cmd_midpoints")]
+pub mod midpoints;
 #[cfg(feature = "cmd_prepare_windows")]
 pub mod prepare_windows;
-#[cfg(feature = "cmd_midpoints")]
-pub mod profile_groups;
 #[cfg(feature = "cmd_ref_gc_bias")]
 pub mod ref_gc_bias;
 #[cfg(feature = "cmd_ref_gc_counts")]

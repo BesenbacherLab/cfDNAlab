@@ -17,8 +17,8 @@ use crate::{
             correct::{GCCorrector, load_gc_corrector},
             counting::build_gc_prefixes,
         },
-        profile_groups::{
-            config::ProfileGroupsConfig, counting_by_group::ProfileGroupsCounts,
+        midpoints::{
+            config::MidpointsConfig, counting_by_group::ProfileGroupsCounts,
             windows::ensure_uniform_window_len,
         },
     },
@@ -62,7 +62,7 @@ use crate::{
 /// Errors:
 /// - Returns an error if any input cannot be read, the grouped BED is invalid, or writing the
 ///   outputs fails.
-pub fn run(opt: &ProfileGroupsConfig) -> Result<()> {
+pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let start_time = Instant::now();
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
@@ -308,7 +308,7 @@ pub fn run(opt: &ProfileGroupsConfig) -> Result<()> {
 }
 
 fn process_tile(
-    opt: &ProfileGroupsConfig,
+    opt: &MidpointsConfig,
     tile: &Tile,
     tile_counts_out: PathBuf,
     window_size: usize,

@@ -377,8 +377,9 @@ pub fn process_and_write_chunk(
 
     // Debug: surface the largest window in this chunk before partitioning
     if prep_windows_debug_enabled() {
-        if let Some(max_window) =
-            windows.iter().max_by_key(|w| w.length_for(CoordinateSet::Original))
+        if let Some(max_window) = windows
+            .iter()
+            .max_by_key(|w| w.length_for(CoordinateSet::Original))
         {
             eprintln!(
                 "Debug: largest window before partition {}:{}-{} len={} group={}",
