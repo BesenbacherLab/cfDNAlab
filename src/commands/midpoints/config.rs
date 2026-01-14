@@ -7,12 +7,12 @@ use std::path::PathBuf;
 /// Count positional fragment **midpoint** coverage in groups of genomic windows.
 ///
 /// **Midpoints**: The center of the fragment span (`[end(reverse), start(forward)]`),
-/// with ties (in even-sized windows) randomly assigned to either the left or right mid-position
+/// with ties (in even-sized fragments) randomly assigned to either the left or right mid-position
 /// to reduce rounding bias.
 ///
 /// **Groups**: The coverage profiles are "collapsed" (summed per position) for all windows in a group.
 /// E.g., groups can be transcription factors with windows being binding sites. We then
-/// get the overall profile per transcription factor.
+/// get the overall midpoint profile per transcription factor.
 ///
 /// ## Always-on exclusion criteria
 ///
@@ -31,7 +31,7 @@ pub struct MidpointsConfig {
 
     /// Prefix for output files (e.g., a sample name) `[string]`
     ///
-    /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
+    /// E.g., specify to enable writing to the same output directory from multiple calls of the command.
     ///
     /// Examples produce files like:
     ///   `<prefix>.midpoint_profiles.npy`.
@@ -43,14 +43,14 @@ pub struct MidpointsConfig {
 
     /// The grouped fixed-size intervals to count within `[path]`
     ///
-    /// A BED file of genomic intervals and their respective group names.
+    /// A BED-like file of genomic intervals and their respective group names.
     ///
     /// Must be sorted by the `chromosome` and `start` coordinates, and
-    /// all intervals must have the same length.
+    /// all intervals must have the same size.
     ///
     /// Sites with the same group name are collapsed to a single profile.
     ///
-    /// Columns: `chromosome, start, end, group_name`.
+    /// Columns: `chromosome, start, end, group_name`. No header.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -110,8 +110,8 @@ pub struct MidpointsConfig {
 
     /// Optional BED file(s) with blacklisted regions `[path]`
     ///
-    /// **NOTE**: It may be an advantage to instead remove intervals that overlap
-    /// blacklisted regions from the BED file.
+    /// **NOTE**: It may be an advantage to instead remove intervals that lie within
+    /// half the maximum fragment length of blacklisted regions from the `--intervals` file.
     #[cfg_attr(
         feature = "cli", clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading = "Filtering"))]
     pub blacklist: Option<Vec<PathBuf>>,
