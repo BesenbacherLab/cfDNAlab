@@ -38,7 +38,7 @@ use crate::{
             write::write_decoded_counts_matrix,
         },
         overlaps::find_overlapping_windows,
-        read::default_include_read,
+        read::default_include_read_paired_end,
         reference::read_seq_in_range,
         scale_genome::apply_scaling_to_coverage_in_place,
         thread_pool::init_global_pool,
@@ -550,7 +550,7 @@ fn process_tile(
     let include_read_fn = {
         let opt = (*opt).clone();
         move |r: &Record| {
-            default_include_read(
+            default_include_read_paired_end(
                 r,
                 opt.shared_args.require_proper_pair,
                 opt.shared_args.min_mapq,

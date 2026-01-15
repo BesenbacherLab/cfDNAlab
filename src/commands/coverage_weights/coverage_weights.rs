@@ -9,7 +9,7 @@ use crate::{
     },
     shared::{
         bam::create_chromosome_reader, coverage::Coverage, fragment::minimal_fragment::Fragment,
-        fragment_iterator::fragments_from_bam, read::default_include_read,
+        fragment_iterator::fragments_from_bam, read::default_include_read_paired_end,
         thread_pool::init_global_pool,
     },
 };
@@ -218,7 +218,7 @@ fn process_chrom(
     // Wrap to use opt
     let include_read_fn = {
         let opt = (*opt).clone();
-        move |r: &Record| default_include_read(r, opt.require_proper_pair, opt.min_mapq)
+        move |r: &Record| default_include_read_paired_end(r, opt.require_proper_pair, opt.min_mapq)
     };
 
     // Create fragment iterator

@@ -32,7 +32,7 @@ use crate::{
         fragment_iterator::fragments_from_bam,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
-        read::default_include_read,
+        read::default_include_read_paired_end,
         reference::read_seq_in_range,
         thread_pool::init_global_pool,
         tiled_run::{
@@ -792,7 +792,7 @@ fn process_tile(
     // Wrap to use opt
     let include_read_fn = {
         let opt = (*opt).clone();
-        move |r: &Record| default_include_read(r, opt.require_proper_pair, opt.min_mapq)
+        move |r: &Record| default_include_read_paired_end(r, opt.require_proper_pair, opt.min_mapq)
     };
 
     // Create fragment iterator

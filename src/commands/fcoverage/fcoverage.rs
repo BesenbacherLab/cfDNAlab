@@ -17,7 +17,7 @@ use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment::segment_fragment::FragmentWithSegments;
 use crate::shared::fragment_iterator::fragments_with_segments_from_bam;
-use crate::shared::read::default_include_read;
+use crate::shared::read::default_include_read_paired_end;
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
 use crate::shared::tiled_run::{
@@ -633,7 +633,7 @@ fn process_tile(
     // Wrap to use opt
     let include_read_fn = {
         let opt = (*opt).clone();
-        move |r: &Record| default_include_read(r, opt.require_proper_pair, opt.min_mapq)
+        move |r: &Record| default_include_read_paired_end(r, opt.require_proper_pair, opt.min_mapq)
     };
 
     let gc_tag_bytes = gc_tag.map(|t| t.as_bytes().to_vec());

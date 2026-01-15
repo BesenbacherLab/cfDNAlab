@@ -15,7 +15,7 @@ use crate::commands::wps::config::{WPSConfig, WPSSharedConfig};
 use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment_iterator::fragments_from_bam;
-use crate::shared::read::default_include_read;
+use crate::shared::read::default_include_read_paired_end;
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
 use crate::shared::tiled_run::{
@@ -703,7 +703,7 @@ pub fn wps_for_tile(
 
     let require_proper_pair = opt.require_proper_pair;
     let min_mapq = opt.min_mapq;
-    let include_read_fn = move |r: &Record| default_include_read(r, require_proper_pair, min_mapq);
+    let include_read_fn = move |r: &Record| default_include_read_paired_end(r, require_proper_pair, min_mapq);
 
     let fragment_filter = move |frag: &Fragment| {
         let len = frag.len();

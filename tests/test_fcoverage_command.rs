@@ -8,7 +8,7 @@ use cfdnalab::commands::fcoverage::config::FCoverageConfig;
 use cfdnalab::commands::fcoverage::fcoverage::run;
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
 use cfdnalab::shared::fragment::minimal_fragment::collect_fragment_from_records;
-use cfdnalab::shared::read::default_include_read;
+use cfdnalab::shared::read::default_include_read_paired_end;
 use fixtures::{read_zst_to_string, simple_inward_bam};
 use rust_htslib::bam::{Read, Reader};
 use tempfile::TempDir;
@@ -52,7 +52,7 @@ fn per_position_outputs_basic_fragment() -> Result<()> {
     let mut pair_store = Vec::new();
     for (idx, result) in reader.records().enumerate() {
         let rec = result?;
-        if default_include_read(&rec, cfg.require_proper_pair, cfg.min_mapq) {
+        if default_include_read_paired_end(&rec, cfg.require_proper_pair, cfg.min_mapq) {
             if rec.is_reverse() {
                 accepted.1 += 1;
             } else {

@@ -19,17 +19,19 @@ use crate::{
         bed::load_windows_from_bed,
         blacklist::{compute_blacklist_overlap, is_blacklisted},
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
-        fragment_iterator::fragments_with_indel_counts_from_bam,
+        fragment_iterator::{
+            fragments_with_indel_counts_from_bam, fragments_with_indel_counts_from_single_end_bam,
+        },
         io::create_text_writer,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
-        read::default_include_read,
+        read::{default_include_read_paired_end, default_include_read_single_end},
         reference::read_seq,
         scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
         thread_pool::init_global_pool,
     },
 };
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray_npy::write_npy;
@@ -57,6 +59,9 @@ use std::{io::Write, sync::Arc, time::Instant};
 ///   the first failure.
 pub fn run(opt: &LengthsConfig) -> Result<()> {
     let start_time = Instant::now();
+    if opt.single_end && opt.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --single-end");
+    }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
@@ -327,20 +332,30 @@ fn process_chrom(
         move |f: &FragmentWithIndelCounts| lengths.contains(f.len_indel_adjusted())
     };
 
-    // Wrap to use opt
-    let include_read_fn = {
-        let opt = (*opt).clone();
-        move |r: &Record| default_include_read(r, opt.require_proper_pair, opt.min_mapq)
-    };
-
     // Create fragment iterator
-    let mut iter = fragments_with_indel_counts_from_bam(
-        reader.records().map(|r| r.map_err(anyhow::Error::from)),
-        include_read_fn,
-        opt.indel_mode,
-        fragment_filter,
-    )
-    .with_local_counters();
+    let mut iter = if opt.single_end {
+        let min_mapq = opt.min_mapq;
+        let include_read_fn = move |r: &Record| default_include_read_single_end(r, min_mapq);
+        fragments_with_indel_counts_from_single_end_bam(
+            reader.records().map(|r| r.map_err(anyhow::Error::from)),
+            include_read_fn,
+            opt.indel_mode,
+            fragment_filter,
+        )
+        .with_local_counters()
+    } else {
+        let require_proper_pair = opt.require_proper_pair;
+        let min_mapq = opt.min_mapq;
+        let include_read_fn =
+            move |r: &Record| default_include_read_paired_end(r, require_proper_pair, min_mapq);
+        fragments_with_indel_counts_from_bam(
+            reader.records().map(|r| r.map_err(anyhow::Error::from)),
+            include_read_fn,
+            opt.indel_mode,
+            fragment_filter,
+        )
+        .with_local_counters()
+    };
 
     let get_gc_weight = {
         let gc_corrector = gc_corrector_opt.as_ref();

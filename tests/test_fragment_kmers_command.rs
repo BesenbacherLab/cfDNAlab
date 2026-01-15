@@ -1411,7 +1411,7 @@ mod revcomp_tests {
     use cfdnalab::commands::visualize_positions::ReferenceFrame;
     use cfdnalab::shared::fragment::segment_kmer_fragment::FragmentWithKmerSegments;
     use cfdnalab::shared::fragment_iterator::fragments_with_kmer_segments_from_bam;
-    use cfdnalab::shared::read::default_include_read;
+    use cfdnalab::shared::read::default_include_read_paired_end;
     use tempfile::TempDir;
 
     #[test]
@@ -1855,7 +1855,7 @@ mod revcomp_tests {
         let length_filter = positional_cfg.shared_args.fragment_lengths.clone();
 
         let include_read = move |rec: &rust_htslib::bam::Record| {
-            default_include_read(rec, require_proper_pair, min_mapq)
+            default_include_read_paired_end(rec, require_proper_pair, min_mapq)
         };
         let fragment_filter =
             move |fragment: &FragmentWithKmerSegments| length_filter.contains(fragment.len());

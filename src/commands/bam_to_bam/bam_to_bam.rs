@@ -24,7 +24,7 @@ use crate::{
         bam::create_chromosome_reader, bed::load_windows_from_bed, blacklist::is_blacklisted,
         fragment::with_records_fragment::WithRecordsFragment,
         fragment_iterator::fragments_with_records_from_bam, overlaps::find_overlapping_windows,
-        read::default_include_read, reference::read_seq,
+        read::default_include_read_paired_end, reference::read_seq,
         scale_genome::compute_window_scaling_over_fragment,
     },
 };
@@ -258,7 +258,7 @@ fn process_chrom(
     // Wrap to use opt
     let include_read_fn = {
         let opt = (*opt).clone();
-        move |r: &Record| default_include_read(r, opt.require_proper_pair, opt.min_mapq)
+        move |r: &Record| default_include_read_paired_end(r, opt.require_proper_pair, opt.min_mapq)
     };
 
     // Create fragment iterator
