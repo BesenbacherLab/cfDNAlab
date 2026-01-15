@@ -291,7 +291,7 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
 
     // Second pass: write BAM in chrom_sizes order for predictable tid ordering
     let mut write_idx: u64 = 0;
-    let qname_prefix = "fragment_";
+    let qname_prefix = "fragment";
     for chr in &chrom_sizes_order {
         let path = match temp_paths.get(chr) {
             Some(p) => p,
@@ -413,7 +413,7 @@ fn make_record(frag: &ParsedFragment, tid: i32, prefix: &str, idx: u64) -> Resul
         .ok_or_else(|| anyhow::anyhow!("Negative fragment length"))?)
         as u32;
 
-    let qname = format!("{}:{}", prefix, idx);
+    let qname = format!("{}_{}", prefix, idx);
     let seq = vec![b'N'; frag_len as usize];
     let qual = vec![40u8; frag_len as usize];
     let cigar = CigarString(vec![Cigar::Match(frag_len)]);

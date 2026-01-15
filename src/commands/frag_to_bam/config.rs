@@ -4,12 +4,14 @@ use std::path::PathBuf;
 
 /// Convert a finaleDB-style frag file to a single-end BAM file.
 ///
-/// Expected information in the `.frag.tsv` file's first five columns:
+/// The first five columns in the frag file:
 /// `Chromosome, Start, End, MapQ, Strand`.
 ///
 /// Other columns are ignored.
 ///
 /// Each read in the new BAM file represents a fragment from the frag file.
+///
+/// The BAM header contains all contigs from `--chrom-sizes` in the `--chrom-sizes` order.
 ///
 /// The BAM file is not indexed. This can be done with `samtools index`.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
@@ -29,8 +31,6 @@ pub struct FragToBamConfig {
     pub frag: PathBuf,
 
     /// Output directory to write new BAM file in `[path]`
-    ///
-    /// The BAM header contains all contigs from `--chrom-sizes` in the `--chrom-sizes` order.
     #[cfg_attr(
         feature = "cli",
         clap(
