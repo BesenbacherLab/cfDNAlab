@@ -7,6 +7,7 @@ edition = "2024"
 default = [
     "cmd_bam_to_bam",
     "cmd_bam_to_frag",
+    "cmd_frag_to_bam",
     "cmd_coverage_weights",
     "cmd_fcoverage",
     "cmd_gc_bias",
@@ -18,6 +19,7 @@ default = [
 cli = ["clap"]
 cmd_bam_to_bam = []
 cmd_bam_to_frag = []
+cmd_frag_to_bam = []
 cmd_coverage_weights = []
 cmd_fcoverage = []
 cmd_fragment_kmers = []

@@ -151,7 +151,7 @@ impl BamToFragConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
-            output_prefix: "coverage".into(),
+            output_prefix: "fragments".into(),
             by_bed: None,
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),

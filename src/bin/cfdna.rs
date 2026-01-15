@@ -6,6 +6,8 @@ use cfdnalab::commands::bam_to_frag::config::BamToFragConfig;
 use cfdnalab::commands::coverage_weights::config::CoverageWeightsConfig;
 #[cfg(feature = "cmd_fcoverage")]
 use cfdnalab::commands::fcoverage::config::FCoverageConfig;
+#[cfg(feature = "cmd_frag_to_bam")]
+use cfdnalab::commands::frag_to_bam::config::FragToBamConfig;
 #[cfg(feature = "cmd_fragment_kmers")]
 use cfdnalab::commands::fragment_kmers::config::FragmentKmersConfig;
 #[cfg(feature = "cmd_gc_bias")]
@@ -30,6 +32,7 @@ use cfdnalab::commands::wps_peaks::config::WPSPeaksConfig;
     not(any(
         feature = "cmd_bam_to_bam",
         feature = "cmd_bam_to_frag",
+        feature = "cmd_frag_to_bam",
         feature = "cmd_coverage_weights",
         feature = "cmd_fcoverage",
         feature = "cmd_fragment_kmers",
@@ -82,6 +85,8 @@ enum Cmd {
     BamToBam(BamToBamConfig),
     #[cfg(feature = "cmd_bam_to_frag")]
     BamToFrag(BamToFragConfig),
+    #[cfg(feature = "cmd_frag_to_bam")]
+    FragToBam(FragToBamConfig),
     // Ends(EndsConfig),
 }
 
@@ -133,6 +138,8 @@ fn main() {
         Cmd::BamToBam(cfg) => cfdnalab::commands::bam_to_bam::bam_to_bam::run(&cfg),
         #[cfg(feature = "cmd_bam_to_frag")]
         Cmd::BamToFrag(cfg) => cfdnalab::commands::bam_to_frag::bam_to_frag::run(&cfg),
+        #[cfg(feature = "cmd_frag_to_bam")]
+        Cmd::FragToBam(cfg) => cfdnalab::commands::frag_to_bam::frag_to_bam::run(&cfg),
     };
 
     if let Err(e) = res {

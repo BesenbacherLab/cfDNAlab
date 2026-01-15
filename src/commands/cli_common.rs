@@ -16,6 +16,10 @@ pub const MIN_ACGT_BASES_FOR_GC_FRACTION: u32 = 10;
 #[derive(Debug, Clone)]
 pub struct IOCArgs {
     /// Indexed, coordinate-sorted BAM input file `[path]`
+    ///
+    /// Can be either **paired-end** or **single-end** (set `--single-end`).
+    /// Single-end assumes the reads span their fragments exactly
+    /// (so read size is fragment size).
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -280,7 +284,8 @@ pub struct ChromosomeArgs {
     ///
     /// Specify `"all"` *as the only string* to use all present chromosomes.
     /// For BAM-backed commands this uses the BAM header order.
-    /// For commands that read chromosome order from their input, this uses the input order.
+    /// For commands that read chromosome order from their input, 
+    /// this may use the input order or some other order.
     #[cfg_attr(
         feature = "cli", clap(
             long, num_args = 1..,

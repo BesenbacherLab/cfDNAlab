@@ -2,6 +2,8 @@
 pub mod bam_to_bam;
 #[cfg(feature = "cmd_bam_to_frag")]
 pub mod bam_to_frag;
+#[cfg(feature = "cmd_frag_to_bam")]
+pub mod frag_to_bam;
 pub mod cli_common;
 mod counters;
 #[cfg(feature = "cmd_coverage_weights")]

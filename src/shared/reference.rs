@@ -63,10 +63,29 @@ pub fn twobit_contig_lengths<P: AsRef<Path>>(
 /// - sizes:
 ///     Map of chrom -> size (u32, saturating if > u32::MAX).
 pub fn load_chrom_sizes<P: AsRef<Path>>(path: P) -> Result<FxHashMap<String, u32>> {
+    let (_, sizes) = load_chrom_sizes_with_order(path)?;
+    Ok(sizes)
+}
+
+/// Load chromosome sizes *in order* from a two-column sizes file or .fai.
+///
+/// Parameters
+/// ----------
+/// - path:
+///     Path to sizes or FAI.
+///
+/// Returns
+/// -------
+/// - sizes:
+///     Map of chrom -> size (u32, saturating if > u32::MAX).
+pub fn load_chrom_sizes_with_order<P: AsRef<std::path::Path>>(
+    path: P,
+) -> Result<(Vec<String>, FxHashMap<String, u32>)> {
     let path = path.as_ref();
     let file = File::open(path).with_context(|| format!("Opening chrom sizes {:?}", path))?;
     let reader = BufReader::with_capacity(1 << 20, file);
     let mut sizes: FxHashMap<String, u32> = FxHashMap::default();
+    let mut order: Vec<String> = Vec::new();
 
     for line_res in reader.lines() {
         let line = line_res?;
@@ -78,13 +97,24 @@ pub fn load_chrom_sizes<P: AsRef<Path>>(path: P) -> Result<FxHashMap<String, u32
         if parts.len() < 2 {
             continue;
         }
-        let name = parts[0].trim().to_string();
+        let name = parts[0].trim();
+        if name.is_empty() {
+            continue;
+        }
         let size: u64 = parts[1]
             .trim()
             .parse()
             .with_context(|| format!("Invalid size for '{}'", name))?;
-        sizes.insert(name, size.min(u32::MAX as u64) as u32);
+        if sizes.contains_key(name) {
+            anyhow::bail!(
+                "Duplicate chromosome '{}' in chrom-sizes file {:?}",
+                name,
+                path
+            );
+        }
+        order.push(name.to_string());
+        sizes.insert(name.to_string(), size.min(u32::MAX as u64) as u32);
     }
 
-    Ok(sizes)
+    Ok((order, sizes))
 }
