@@ -59,7 +59,7 @@ use std::{io::Write, sync::Arc, time::Instant};
 ///   the first failure.
 pub fn run(opt: &LengthsConfig) -> Result<()> {
     let start_time = Instant::now();
-    if opt.single_end && opt.require_proper_pair {
+    if opt.single_end.single_end && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --single-end");
     }
     let (chromosomes, contigs) =
@@ -347,7 +347,7 @@ fn process_chrom(
     };
 
     // Create fragment iterator
-    let mut iter = if opt.single_end {
+    let mut iter = if opt.single_end.single_end {
         let min_mapq = opt.min_mapq;
         let include_read_fn = move |r: &Record| default_include_read_single_end(r, min_mapq);
         fragments_with_indel_counts_from_single_end_bam(

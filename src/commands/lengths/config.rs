@@ -2,7 +2,7 @@ use crate::{
     commands::{
         cli_common::{
             ApplyGCArgFileOnly, AssignToWindowArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs,
-            ScaleGenomeArgs, WindowsArgs,
+            ScaleGenomeArgs, SingleEndArgs, WindowsArgs,
         },
         gc_bias::correct::MarginalizeLengthsWeightingScheme,
     },
@@ -12,8 +12,8 @@ use std::path::PathBuf;
 
 /// Count fragment lengths in a BAM-file.
 ///
-/// Fragment length: For paired-end sequencing, the length is defined as `end(reverse) - start(forward)`.
-/// For single-end sequencing, the length is defined as the `end(read) - start(read)`.
+/// Fragment length: For **paired-end** sequencing, the length is defined as `end(reverse) - start(forward)`.
+/// For **single-end** sequencing, the length is defined as the `end(read) - start(read)`.
 ///
 /// The default for windows is to count fragments by their overlap fraction. That is, most
 /// fragments are counted as `1.0`, while fragments overlapping the edge of a window are counted
@@ -37,21 +37,21 @@ use std::path::PathBuf;
 ///
 /// The following criteria always exclude a read:
 ///
-/// **Paired-end sequencing**:
+/// The read is secondary, supplementary or duplicate.
+/// The read failed quality check.
+///
+/// **Paired-end input only**:
 /// The read or mate read is unmapped.
 /// The read is mapped to a different `tid` than the mate.
-/// The read is secondary, supplementary or duplicate.
-/// The read failed quality check.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
-///
-/// **Single-end sequencing**:
-/// The read is secondary, supplementary or duplicate.
-/// The read failed quality check.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub single_end: SingleEndArgs,
 
     /// How to handle insertions and deletions in fragments `[string]`
     ///
@@ -99,18 +99,6 @@ pub struct LengthsConfig {
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
-
-    /// The input is single-end and the read spans the full fragment `[flag]`
-    ///
-    /// Each aligned read is treated as a fragment spanning its aligned reference interval
-    /// `[pos, reference_end)`. This uses the mapped span only
-    /// (soft clips excluded).
-    ///
-    /// Indel handling follows `--indel-mode` on the single read.
-    ///
-    /// Cannot be combined with `--require-proper-pair`.
-    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
-    pub single_end: bool,
 
     /// Minimum mapping quality to include `[integer]`
     #[cfg_attr(
@@ -224,7 +212,7 @@ impl LengthsConfig {
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
             fragment_lengths: FragmentLengthArgs::default(),
-            single_end: false,
+            single_end: SingleEndArgs { single_end: false },
             min_mapq: 30,
             require_proper_pair: false,
             blacklist: None,
@@ -255,7 +243,7 @@ impl LengthsConfig {
         &mut self.fragment_lengths
     }
 
-    pub fn set_single_end(&mut self, single_end: bool) {
+    pub fn set_single_end(&mut self, single_end: SingleEndArgs) {
         self.single_end = single_end;
     }
 

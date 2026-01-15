@@ -57,6 +57,20 @@ pub struct IOCArgs {
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone)]
+pub struct SingleEndArgs {
+    /// The input is single-end and the read spans exactly the full fragment `[flag]`
+    ///
+    /// Each aligned read is treated as a fragment spanning its aligned reference interval
+    /// `[pos, reference_end)`. This uses the mapped span only
+    /// (soft clips excluded).
+    ///
+    /// Cannot be combined with `--require-proper-pair` (when available).
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
+    pub single_end: bool,
+}
+
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[derive(Debug, Clone)]
 pub struct Ref2BitRequiredArgs {
     /// 2bit reference genome file [path]
     ///
@@ -284,7 +298,7 @@ pub struct ChromosomeArgs {
     ///
     /// Specify `"all"` *as the only string* to use all present chromosomes.
     /// For BAM-backed commands this uses the BAM header order.
-    /// For commands that read chromosome order from their input, 
+    /// For commands that read chromosome order from their input,
     /// this may use the input order or some other order.
     #[cfg_attr(
         feature = "cli", clap(
