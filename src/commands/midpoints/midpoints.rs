@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray_npy::write_npy;
@@ -30,7 +30,7 @@ use crate::{
         fragment_iterator::fragments_from_bam,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
-        read::default_include_read_paired_end,
+        read::{default_include_read_paired_end, default_include_read_single_end},
         reference::read_seq_in_range,
         scale_genome::compute_window_scaling_over_fragment,
         thread_pool::init_global_pool,
@@ -64,6 +64,9 @@ use crate::{
 ///   outputs fails.
 pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let start_time = Instant::now();
+    if opt.single_end.single_end && opt.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --single-end");
+    }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
     let prefix = opt.output_prefix.trim();
@@ -379,12 +382,6 @@ fn process_tile(
         }
     };
 
-    // Wrap to use opt
-    let include_read_fn = {
-        let opt = (*opt).clone();
-        move |r: &Record| default_include_read_paired_end(r, opt.require_proper_pair, opt.min_mapq)
-    };
-
     // Initialize count array
     let mut counts = ProfileGroupsCounts::new(window_size, num_groups, length_bins.to_vec());
 
@@ -397,14 +394,31 @@ fn process_tile(
 
     // Create fragment iterator
     let gc_tag_bytes = gc_tag.map(|t| t.as_bytes().to_vec());
-    let mut iter = fragments_from_bam(
-        reader.records().map(|r| r.map_err(anyhow::Error::from)),
-        include_read_fn,
-        gc_tag_bytes.as_deref(),
-        fragment_filter,
-        false,
-    )
-    .with_local_counters();
+    let mut iter = if opt.single_end.single_end {
+        let min_mapq = opt.min_mapq;
+        let include_read_fn = move |r: &Record| default_include_read_single_end(r, min_mapq);
+        fragments_from_bam(
+            reader.records().map(|r| r.map_err(anyhow::Error::from)),
+            include_read_fn,
+            gc_tag_bytes.as_deref(),
+            fragment_filter,
+            true,
+        )
+        .with_local_counters()
+    } else {
+        let min_mapq = opt.min_mapq;
+        let require_proper_pair = opt.require_proper_pair;
+        let include_read_fn =
+            move |r: &Record| default_include_read_paired_end(r, require_proper_pair, min_mapq);
+        fragments_from_bam(
+            reader.records().map(|r| r.map_err(anyhow::Error::from)),
+            include_read_fn,
+            gc_tag_bytes.as_deref(),
+            fragment_filter,
+            false,
+        )
+        .with_local_counters()
+    };
 
     let get_gc_weight = {
         let gc_corrector = gc_corrector_opt.as_ref();

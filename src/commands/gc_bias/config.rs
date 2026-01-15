@@ -97,7 +97,9 @@ impl Default for OutlierScopeArg {
 /// Other combinations with post-smoothing zero counts in the *cfDNA* remains zero in the correction matrix.
 /// The final correction matrix thus works for all possible GC x Length combinations.
 ///
-/// Fragment length: For **paired-end** sequencing, the length is defined as `end(reverse) - start(forward)`.
+/// ## Fragment length
+///
+/// For **paired-end** sequencing, the length is defined as `end(reverse) - start(forward)`.
 /// For **single-end** sequencing, the length is defined as the `end(read) - start(read)`.
 ///
 /// ## Windowing

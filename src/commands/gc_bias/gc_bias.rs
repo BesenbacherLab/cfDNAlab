@@ -689,10 +689,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         println!(
             "    > 'unsupported' = bins the reference masks out (winsorized after interpolation)"
         );
-        println!(
-            "    Clamped to [0.1,10.0]: {}",
-            outlier_stats.hard_clamped
-        );
+        println!("    Clamped to [0.1,10.0]: {}", outlier_stats.hard_clamped);
     }
     println!("----------");
     println!("Elapsed time: {:.2?}", elapsed);

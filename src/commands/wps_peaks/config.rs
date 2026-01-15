@@ -18,7 +18,7 @@ Peaks: Positions and stats? Just always give everything? Well, unique-positions,
 ///
 /// **Experimental**: enable via `--features cmd_wps_peaks cmd_wps` during `cargo build/install`.
 ///
-/// Only paired-end fragments with both reads present are considered.
+/// In paired-end mode, only fragments with both reads present are considered.
 ///
 /// NOTE: To extract just the WPS, see `cfdna wps` instead.
 ///
@@ -71,10 +71,12 @@ Peaks: Positions and stats? Just always give everything? Well, unique-positions,
 ///
 /// The following criteria always exclude a read:
 ///
-/// The read or mate read is unmapped.
-/// The read is mapped to a different `tid` than the mate.
 /// The read is secondary, supplementary or duplicate.
 /// The read failed quality check.
+///
+/// **Paired-end input only**:
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 ///
 /// ## Examples

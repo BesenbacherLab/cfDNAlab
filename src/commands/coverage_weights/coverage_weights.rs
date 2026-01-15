@@ -8,7 +8,9 @@ use crate::{
         },
     },
     shared::{
-        bam::create_chromosome_reader, coverage::Coverage, fragment::minimal_fragment::Fragment,
+        bam::create_chromosome_reader,
+        coverage::Coverage,
+        fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
         read::{default_include_read_paired_end, default_include_read_single_end},
         thread_pool::init_global_pool,

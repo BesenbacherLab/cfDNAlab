@@ -1,33 +1,42 @@
 use crate::{
-    commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs},
+    commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs, SingleEndArgs},
     shared::blacklist::BlacklistStrategy,
 };
 use std::path::PathBuf;
 
 /// Count positional fragment **midpoint** coverage in groups of genomic windows.
 ///
-/// **Midpoints**: The center of the fragment span (`[end(reverse), start(forward)]`),
-/// with ties (in even-sized fragments) randomly assigned to either the left or right mid-position
-/// to reduce rounding bias.
+/// **Midpoints**: The center of the fragment span, with ties (in even-sized fragments)
+/// randomly assigned to either the left or right mid-position to reduce rounding bias.
 ///
 /// **Groups**: The coverage profiles are "collapsed" (summed per position) for all windows in a group.
 /// E.g., groups can be transcription factors with windows being binding sites. We then
 /// get the overall midpoint profile per transcription factor.
 ///
+/// ## Fragment span
+///
+/// For **paired-end** sequencing, the span is defined as `[forward.pos, reverse.end)`.
+/// For **single-end** sequencing, the span is defined as `[read.pos, read.end)`.
+///
 /// ## Always-on exclusion criteria
 ///
 /// The following criteria always exclude a read:
 ///
-/// The read or mate read is unmapped.
-/// The read is mapped to a different `tid` than the mate.
 /// The read is secondary, supplementary or duplicate.
 /// The read failed quality check.
+///
+/// **Paired-end input only**:
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct MidpointsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub single_end: SingleEndArgs,
 
     /// Prefix for output files (e.g., a sample name) `[string]`
     ///
@@ -171,6 +180,7 @@ impl MidpointsConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs, intervals: PathBuf) -> Self {
         Self {
             ioc,
+            single_end: SingleEndArgs { single_end: false },
             output_prefix: "sites".into(),
             intervals,
             length_bins: vec![30, 1001],
