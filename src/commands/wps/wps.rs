@@ -703,7 +703,8 @@ pub fn wps_for_tile(
 
     let require_proper_pair = opt.require_proper_pair;
     let min_mapq = opt.min_mapq;
-    let include_read_fn = move |r: &Record| default_include_read_paired_end(r, require_proper_pair, min_mapq);
+    let include_read_fn =
+        move |r: &Record| default_include_read_paired_end(r, require_proper_pair, min_mapq);
 
     let fragment_filter = move |frag: &Fragment| {
         let len = frag.len();
@@ -716,6 +717,7 @@ pub fn wps_for_tile(
         include_read_fn,
         gc_tag_bytes.as_deref(),
         fragment_filter,
+        false,
     )
     .with_local_counters();
 

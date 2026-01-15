@@ -2,8 +2,6 @@
 pub mod bam_to_bam;
 #[cfg(feature = "cmd_bam_to_frag")]
 pub mod bam_to_frag;
-#[cfg(feature = "cmd_frag_to_bam")]
-pub mod frag_to_bam;
 pub mod cli_common;
 mod counters;
 #[cfg(feature = "cmd_coverage_weights")]
@@ -11,6 +9,8 @@ pub mod coverage_weights;
 pub mod ends;
 #[cfg(feature = "cmd_fcoverage")]
 pub mod fcoverage;
+#[cfg(feature = "cmd_frag_to_bam")]
+pub mod frag_to_bam;
 pub mod fragment_kmers;
 #[cfg(feature = "cmd_gc_bias")]
 pub mod gc_bias;

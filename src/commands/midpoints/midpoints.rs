@@ -402,6 +402,7 @@ fn process_tile(
         include_read_fn,
         gc_tag_bytes.as_deref(),
         fragment_filter,
+        false,
     )
     .with_local_counters();
 

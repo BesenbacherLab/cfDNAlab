@@ -227,6 +227,7 @@ fn process_chrom(
         include_read_fn,
         None,
         fragment_filter,
+        false,
     )
     .with_local_counters();
 

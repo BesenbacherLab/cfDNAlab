@@ -97,7 +97,8 @@ impl Default for OutlierScopeArg {
 /// Other combinations with post-smoothing zero counts in the *cfDNA* remains zero in the correction matrix.
 /// The final correction matrix thus works for all possible GC x Length combinations.
 ///
-/// Fragment length is defined as `end(reverse) - start(forward)`.
+/// Fragment length: For **paired-end** sequencing, the length is defined as `end(reverse) - start(forward)`.
+/// For **single-end** sequencing, the length is defined as the `end(read) - start(read)`.
 ///
 /// ## Windowing
 ///
@@ -112,16 +113,21 @@ impl Default for OutlierScopeArg {
 ///
 /// The following criteria always exclude a read:
 ///
-/// The read or mate read is unmapped.
-/// The read is mapped to a different `tid` than the mate.
 /// The read is secondary, supplementary or duplicate.
 /// The read failed quality check.
+///
+/// **Paired-end input only**:
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub single_end: SingleEndArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ref_genome: Ref2BitRequiredArgs,
@@ -354,6 +360,7 @@ impl GCConfig {
     ) -> Self {
         Self {
             ioc,
+            single_end: SingleEndArgs { single_end: false },
             ref_genome: Ref2BitRequiredArgs { ref_2bit },
             ref_gc_dir,
             windows: WindowsArgs::default(),

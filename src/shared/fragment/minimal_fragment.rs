@@ -93,6 +93,19 @@ pub fn collect_fragment(a: &MinimalReadInfo, b: &MinimalReadInfo) -> Option<Frag
     })
 }
 
+/// Build a Fragment from a single read (single-end input).
+pub fn collect_fragment_from_single_read(read: &MinimalReadInfo) -> Option<Fragment> {
+    if read.end <= read.pos {
+        return None;
+    }
+    Some(Fragment {
+        tid: read.tid,
+        start: read.pos,
+        end: read.end,
+        gc_tag: read.gc_tag,
+    })
+}
+
 /* --- Helpers --- */
 
 /// Pair-orientation trait so we can write a single generic function for orienting pairs

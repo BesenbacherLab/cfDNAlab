@@ -75,7 +75,9 @@ use crate::shared::{
             FragmentWithIndelCounts, IndelReadInfo, collect_fragment_with_indel_counts,
             collect_fragment_with_indel_counts_from_single_read,
         },
-        minimal_fragment::{Fragment, MinimalReadInfo, collect_fragment},
+        minimal_fragment::{
+            Fragment, MinimalReadInfo, collect_fragment, collect_fragment_from_single_read,
+        },
         segment_fragment::{
             FragmentWithSegments, SegmentedReadInfo, collect_fragment_with_segments,
         },
@@ -455,36 +457,53 @@ impl Pairer for BasicPairer {
     }
 }
 
-/// From BAM: pair reads into basic `Fragment`.
-pub fn fragments_from_bam<RIter, PF>(
+// Shared alias to keep basic fragment iterators uniform across constructors
+pub type BasicFragmentIter<'a> = PairingAdapter<
+    Box<dyn Iterator<Item = Result<InputItem<Fragment>>> + 'a>,
+    BasicPairer,
+    MinimalReadInfo,
+    Fragment,
+>;
+
+/// From BAM: optionally pair reads into `Fragment` or treat each as single-end.
+pub fn fragments_from_bam<'a, RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     gc_tag: Option<&[u8]>,
     fragment_filter: PF,
-) -> PairingAdapter<
-    impl Iterator<Item = Result<InputItem<Fragment>>>,
-    BasicPairer,
-    MinimalReadInfo,
-    Fragment,
->
+    single_end: bool,
+) -> BasicFragmentIter<'a>
 where
-    RIter: Iterator<Item = Result<Record>>,
+    RIter: Iterator<Item = Result<Record>> + 'a,
     PF: Fn(&Fragment) -> bool + Send + Sync + 'static,
 {
-    let pairer = BasicPairer;
     let gc_tag_bytes = gc_tag.map(|tag| tag.to_vec());
+    let mapped: Box<dyn Iterator<Item = Result<InputItem<Fragment>>> + 'a> =
+        Box::new(records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord)));
 
-    let mapped = records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord));
+    let mut adapter = PairingAdapter::new(
+        mapped,
+        if single_end {
+            None::<BasicPairer>
+        } else {
+            Some(BasicPairer)
+        },
+    )
+    .with_bam_filter_and_mapper(include_read, move |rec| {
+        let mut info = MinimalReadInfo::from(rec);
+        if let Some(tag) = gc_tag_bytes.as_deref() {
+            info.gc_tag = crate::shared::gc_tag::read_gc_tag_from_record(rec, tag);
+        }
+        info
+    })
+    .with_fragment_filter(fragment_filter);
 
-    PairingAdapter::new(mapped, Some(pairer))
-        .with_bam_filter_and_mapper(include_read, move |rec| {
-            let mut info = MinimalReadInfo::from(rec);
-            if let Some(tag) = gc_tag_bytes.as_deref() {
-                info.gc_tag = crate::shared::gc_tag::read_gc_tag_from_record(rec, tag);
-            }
-            info
-        })
-        .with_fragment_filter(fragment_filter)
+    if single_end {
+        adapter = adapter
+            .with_bam_single_fragment_from_read(|read| collect_fragment_from_single_read(read));
+    }
+
+    adapter
 }
 
 /// From an iterator of ready-made basic `Fragment`s.
