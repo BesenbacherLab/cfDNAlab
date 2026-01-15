@@ -193,6 +193,20 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     )
     .context("Write final fail")?;
 
+    // Write the min+max fragment length settings
+    let settings_path = opt.ioc.output_dir.join("fragment_length_settings.json");
+    let mut settings_writer =
+        create_text_writer(&settings_path).context("Create fragment length settings file")?;
+    writeln!(
+        settings_writer,
+        "{{\"min_fragment_length\":{},\"max_fragment_length\":{}}}",
+        opt.fragment_lengths.min_fragment_length, opt.fragment_lengths.max_fragment_length
+    )
+    .context("Write fragment length settings")?;
+    settings_writer
+        .finish()
+        .context("Finalize fragment length settings writer")?;
+
     // Write window coordinates as BED file to output_dir
     // Write bins BED file
     if !matches!(window_opt, WindowSpec::Global) {
