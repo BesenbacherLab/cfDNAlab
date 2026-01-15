@@ -675,12 +675,22 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         total_windows, counted_windows
     );
     if !matches!(outlier_rule, OutlierRule::None) {
+        println!("  Outlier handling:");
+        println!("    > Limits estimated from reference-supported bins only");
         println!(
-            "  Outlier handling: examined: {} ({} adjusted), unsupported examined: {} ({} adjusted), clamped to [0.1,10.0]: {}",
-            outlier_stats.total_examined,
-            outlier_stats.total_outliers_handled,
-            outlier_stats.unsupported_examined,
-            outlier_stats.unsupported_outliers_handled,
+            "    Supported cells examined: {} (winsorized: {})",
+            outlier_stats.total_examined, outlier_stats.total_outliers_handled
+        );
+        println!("    > 'supported' = bins the reference marks valid (used to set limits)");
+        println!(
+            "    Unsupported cells examined: {} (winsorized: {})",
+            outlier_stats.unsupported_examined, outlier_stats.unsupported_outliers_handled
+        );
+        println!(
+            "    > 'unsupported' = bins the reference masks out (winsorized after interpolation)"
+        );
+        println!(
+            "    Clamped to [0.1,10.0]: {}",
             outlier_stats.hard_clamped
         );
     }
