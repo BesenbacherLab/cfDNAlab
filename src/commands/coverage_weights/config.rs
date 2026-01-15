@@ -14,8 +14,13 @@ use std::path::PathBuf;
 ///
 /// ## Coverage
 ///
-/// The full fragment span `[forward.pos, reverse.end)` is counted without consideration of deletions and gaps.
+/// The full fragment span is counted without consideration of deletions and gaps.
 /// This is fine for genome-scale normalization that reduces relative changes in coverage across the genome.
+///
+/// ### Fragment span
+///
+/// For **paired-end** sequencing, the span is defined as `[forward.pos, reverse.end)`.
+/// For **single-end** sequencing, the soan is defined as `[read.pos, read.end)`.
 ///
 /// ## Smoothing
 ///
@@ -53,20 +58,28 @@ use std::path::PathBuf;
 ///
 /// The weights are normalized by their sum (after potential truncation at edges).
 ///
+/// Single-end BAMs can be processed with `--single-end`, which treats each aligned read span as
+/// the full fragment and skips mate-based filters. Do not combine this with `--require-proper-pair`.
+///
 /// ## Always-on exclusion criteria
 ///
 /// The following criteria always exclude a read:
 ///
-/// The read or mate read is unmapped.
-/// The read is mapped to a different `tid` than the mate.
 /// The read is secondary, supplementary or duplicate.
 /// The read failed quality check.
+///
+/// **Paired-end input only**:
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct CoverageWeightsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub single_end: SingleEndArgs,
 
     /// Prefix for output files (e.g., a sample name) `[string]`
     ///
@@ -167,6 +180,7 @@ impl CoverageWeightsConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
+            single_end: SingleEndArgs { single_end: false },
             output_prefix: "normalize_genome".to_string(),
             bin_size: 5_000_000,
             stride: 500_000,
