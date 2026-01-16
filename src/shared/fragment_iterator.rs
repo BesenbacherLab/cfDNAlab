@@ -19,6 +19,7 @@ let mut it = fragments_with_segments_from_bam(
     !opt.ignore_gap,   // include_inter_mate_gap
     None,              // optional gc tag
     post,
+    false,             // single_end
 ).with_local_counters();
 
 for frag in it.by_ref() {
@@ -80,6 +81,7 @@ use crate::shared::{
         },
         segment_fragment::{
             FragmentWithSegments, SegmentedReadInfo, collect_fragment_with_segments,
+            collect_fragment_with_segments_from_single_read,
         },
         segment_kmer_fragment::{
             FragmentWithKmerSegments, KmerSegmentedReadInfo, collect_fragment_with_kmer_segments,
@@ -259,7 +261,7 @@ where
                     // *Single-end* path when no pairer is present
                     if self.pairer.is_none() {
                         let Some(map_frag) = &self.bam_single_fragment_from_read else {
-                            return Some(Err(anyhow!("single-end fragment mapper not configured")));
+                            return Some(Err(anyhow!("no pairer and single-end fragment mapper not configured")));
                         };
                         let frag_opt = map_frag(&mapped);
                         if let Some(frag) = frag_opt {
@@ -339,6 +341,7 @@ pub fn fragments_with_segments_from_bam<RIter, PF>(
     include_inter_mate_gap: bool,
     gc_tag: Option<&[u8]>,
     fragment_filter: PF,
+    single_end: bool,
 ) -> PairingAdapter<
     impl Iterator<Item = Result<InputItem<FragmentWithSegments>>>,
     WithSegmentsPairer,
@@ -358,11 +361,26 @@ where
     // Map BAM records -> InputItem::Read, converting errors to anyhow with context.
     let mapped = records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord));
 
-    PairingAdapter::new(mapped, Some(pairer))
-        .with_bam_filter_and_mapper(include_read, move |rec| {
-            SegmentedReadInfo::from_record_with_gc_tag(rec, gc_tag_bytes.as_deref())
-        })
-        .with_fragment_filter(fragment_filter)
+    let mut adapter = PairingAdapter::new(
+        mapped,
+        if single_end {
+            None::<WithSegmentsPairer>
+        } else {
+            Some(pairer)
+        },
+    )
+    .with_bam_filter_and_mapper(include_read, move |rec| {
+        SegmentedReadInfo::from_record_with_gc_tag(rec, gc_tag_bytes.as_deref())
+    })
+    .with_fragment_filter(fragment_filter);
+
+    if single_end {
+        adapter = adapter.with_bam_single_fragment_from_read(move |read| {
+            collect_fragment_with_segments_from_single_read(read, trigger_min_gap_bp)
+        });
+    }
+
+    adapter
 }
 
 /// From an iterator of ready-made `FragmentWithSegments` (e.g., BED-like source).

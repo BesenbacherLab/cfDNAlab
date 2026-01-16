@@ -20,7 +20,7 @@ use crate::shared::tiled_run::{
     Tile, TileMode, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
 };
 use crate::shared::writers::open_zstd_auto_writer;
-use anyhow::{Context, Result, anyhow, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -52,6 +52,9 @@ const EXTRA_PEAK_HALO_BP: u32 = 450;
 ///     Indicates whether peak calling finished and all outputs were written successfully.
 pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     let start_time = Instant::now();
+    if opt.shared_args.single_end.single_end && opt.shared_args.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --single-end");
+    }
     let (chromosomes, contigs) = resolve_chromosomes_and_contigs(
         &opt.shared_args.chromosomes,
         &opt.shared_args.ioc.bam.as_path(),

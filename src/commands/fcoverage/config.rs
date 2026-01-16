@@ -1,14 +1,21 @@
 use std::path::PathBuf;
 
 use crate::commands::cli_common::{ApplyGCArgs, ScaleGenomeArgs};
-use crate::commands::cli_common::{ChromosomeArgs, FragmentLengthArgs, IOCArgs, WindowsArgs};
+use crate::commands::cli_common::{
+    ChromosomeArgs, FragmentLengthArgs, IOCArgs, SingleEndArgs, WindowsArgs,
+};
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 
 /// Count positional **fragment** coverage across the genome.
 ///
-/// Only paired-end fragments with both reads present are counted. By default,
-/// the entire fragment span `[start(forward), end(reverse))` is counted, except for
+/// In paired-end mode, only fragments with both reads present are considered.
+/// By default, the entire fragment span is counted, except for
 /// deletions and skipped regions that are not covered by the other read.
+///
+/// ## Fragment span
+///
+/// For **paired-end** sequencing, the span is defined as `[forward.pos, reverse.end)`.
+/// For **single-end** sequencing, the span is defined as `[read.pos, read.end)`.
 ///
 /// ## Windowing
 ///
@@ -51,16 +58,21 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 ///
 /// The following criteria always exclude a read:
 ///
-/// The read or mate read is unmapped.
-/// The read is mapped to a different `tid` than the mate.
 /// The read is secondary, supplementary or duplicate.
 /// The read failed quality check.
+///
+/// **Paired-end input only**:
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct FCoverageConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub single_end: SingleEndArgs,
 
     /// Prefix for output files (e.g., a sample name) `[string]`
     ///
@@ -191,6 +203,7 @@ impl FCoverageConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
+            single_end: SingleEndArgs { single_end: false },
             output_prefix: "coverage".into(),
             decimals: 2,
             keep_zero_runs: false,

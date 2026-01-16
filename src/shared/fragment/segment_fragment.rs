@@ -236,7 +236,7 @@ pub fn collect_fragment_with_segments(
             .saturating_add(reverse.ref_mapped_segments.len()),
     );
 
-    // Expand forward read's relative ref-mapped segments to absolute genome coords
+    // Expand forward read's relative ref-mapped segments to absolute coordinates
     //
     // Each stored tuple is (offset_from_pos, len) measured on the reference
     // Add `pos` to get absolute [start, end) on the chromosome
@@ -332,5 +332,85 @@ pub fn collect_fragment_with_segments(
         end: span_end,
         segments,
         gc_tag,
+    })
+}
+
+/// Build a fragment from a single segmented read (single-end input).
+pub fn collect_fragment_with_segments_from_single_read(
+    read: &SegmentedReadInfo,
+    trigger_min_gap_bp: u32,
+) -> Option<FragmentWithSegments> {
+    if read.end <= read.pos {
+        return None;
+    }
+
+    let span_start = read.pos;
+    let span_end = read.end;
+
+    // Decide if we switch to segments based on reference gaps
+    let trigger = read.has_ref_gap && read.max_ref_gap >= trigger_min_gap_bp;
+
+    // If no trigger, return the plain span
+    if !trigger {
+        return Some(FragmentWithSegments {
+            tid: read.tid,
+            start: span_start,
+            end: span_end,
+            segments: None,
+            gc_tag: read.gc_tag,
+        });
+    }
+
+    // Expand reference-mapped segments to absolute coordinates
+    //
+    // Each stored tuple is (offset_from_pos, len) measured on the reference
+    // Add `pos` to get absolute [start, end) on the chromosome
+    let mut abs: Vec<(u32, u32)> = Vec::with_capacity(read.ref_mapped_segments.len());
+    if !read.ref_mapped_segments.is_empty() {
+        for (off, len) in &read.ref_mapped_segments {
+            let s = read.pos.saturating_add(*off);
+            let e = s.saturating_add(*len);
+            abs.push((s, e));
+        }
+    }
+
+    if abs.is_empty() {
+        return Some(FragmentWithSegments {
+            tid: read.tid,
+            start: span_start,
+            end: span_end,
+            segments: None,
+            gc_tag: read.gc_tag,
+        });
+    }
+
+    // Segments are already merged and sorted in `SegmentedReadInfo::from_record_with_gc_tag`
+    // so we can attach them directly. Keep a light validity check only.
+    let segments = if abs.is_empty() {
+        None
+    } else {
+        let mut v = SmallVec::with_capacity(abs.len());
+        for (mut s, mut e) in abs
+            .into_iter()
+            .filter(|(s, e)| s < e && *e > span_start && *s < span_end)
+        {
+            // Clip to span
+            if s < span_start {
+                s = span_start;
+            }
+            if e > span_end {
+                e = span_end;
+            }
+            v.push((s, e));
+        }
+        if v.is_empty() { None } else { Some(v) }
+    };
+
+    Some(FragmentWithSegments {
+        tid: read.tid,
+        start: span_start,
+        end: span_end,
+        segments,
+        gc_tag: read.gc_tag,
     })
 }

@@ -17,7 +17,7 @@ use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment::segment_fragment::FragmentWithSegments;
 use crate::shared::fragment_iterator::fragments_with_segments_from_bam;
-use crate::shared::read::default_include_read_paired_end;
+use crate::shared::read::{default_include_read_paired_end, default_include_read_single_end};
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
 use crate::shared::tiled_run::{
@@ -35,7 +35,7 @@ use crate::{
         bam::create_chromosome_reader, bed::load_windows_from_bed, thread_pool::init_global_pool,
     },
 };
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -62,6 +62,9 @@ use std::{sync::Arc, time::Instant};
 ///   fails at any stage.
 pub fn run(opt: &FCoverageConfig) -> Result<()> {
     let start_time = Instant::now();
+    if opt.single_end.single_end && opt.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --single-end");
+    }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
@@ -630,24 +633,38 @@ fn process_tile(
         move |f: &FragmentWithSegments| lengths.contains(f.len())
     };
 
-    // Wrap to use opt
-    let include_read_fn = {
-        let opt = (*opt).clone();
-        move |r: &Record| default_include_read_paired_end(r, opt.require_proper_pair, opt.min_mapq)
-    };
-
     let gc_tag_bytes = gc_tag.map(|t| t.as_bytes().to_vec());
 
     // Create fragment iterator
-    let mut iter = fragments_with_segments_from_bam(
-        reader.records().map(|r| r.map_err(anyhow::Error::from)),
-        include_read_fn,
-        1,
-        !opt.ignore_gap,
-        gc_tag_bytes.as_deref(),
-        fragment_filter,
-    )
-    .with_local_counters();
+    let mut iter = if opt.single_end.single_end {
+        let min_mapq = opt.min_mapq;
+        let include_read_fn = move |r: &Record| default_include_read_single_end(r, min_mapq);
+        fragments_with_segments_from_bam(
+            reader.records().map(|r| r.map_err(anyhow::Error::from)),
+            include_read_fn,
+            1,
+            !opt.ignore_gap,
+            gc_tag_bytes.as_deref(),
+            fragment_filter,
+            true,
+        )
+        .with_local_counters()
+    } else {
+        let min_mapq = opt.min_mapq;
+        let require_proper_pair = opt.require_proper_pair;
+        let include_read_fn =
+            move |r: &Record| default_include_read_paired_end(r, require_proper_pair, min_mapq);
+        fragments_with_segments_from_bam(
+            reader.records().map(|r| r.map_err(anyhow::Error::from)),
+            include_read_fn,
+            1,
+            !opt.ignore_gap,
+            gc_tag_bytes.as_deref(),
+            fragment_filter,
+            false,
+        )
+        .with_local_counters()
+    };
 
     // Iterate fragments and add coverage
     // Separate branches for with/without GC correction
