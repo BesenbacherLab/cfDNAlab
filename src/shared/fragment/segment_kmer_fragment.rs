@@ -240,6 +240,11 @@ fn collect_flat_fragment(
     span_end: u32,
     gc_tag: GcTagValue,
 ) -> Option<FragmentWithKmerSegments> {
+    // Trim fixed offsets from both ends so k-mer contexts avoid edge artifacts.
+    // `end_offset` is expected to be small (defaults to 0), so most spans dwarf it.
+    // When a fragment is shorter than 2 * end_offset, trimming would invert the span.
+    // We thus guard by collapsing `trim_end` to `span_start` in that case so the
+    // subsequent check returns None.
     let trim_start = span_start.saturating_add(end_offset);
     let trim_end = if span_end > end_offset {
         span_end - end_offset
@@ -291,7 +296,7 @@ fn collect_flat_fragment(
     })
 }
 
-/// Build a fragment that exposes k-mer safe reference segments.
+/// Build a fragment that exposes k-mer-safe reference segments.
 ///
 /// The function pairs two reads, honours the requested indel handling strategy, optionally merges
 /// the inter-mate gap, and trims user-defined offsets from both fragment ends. Only bases that are
@@ -382,6 +387,11 @@ pub fn collect_fragment_with_kmer_segments(
     forward_segments.sort_unstable_by_key(|&(s, _)| s);
     reverse_segments.sort_unstable_by_key(|&(s, _)| s);
 
+    // Trim fixed offsets from both ends so k-mer contexts avoid edge artifacts.
+    // `end_offset` is expected to be small (defaults to 0), so most spans dwarf it.
+    // When a fragment is shorter than 2 * end_offset, trimming would invert the span.
+    // We thus guard by collapsing `trim_end` to `span_start` in that case so the
+    // subsequent check returns None.
     let trim_start = span_start.saturating_add(end_offset);
     let trim_end = if span_end > end_offset {
         span_end - end_offset
@@ -406,7 +416,7 @@ pub fn collect_fragment_with_kmer_segments(
 
     let mut merged: Vec<(u32, u32)> = Vec::new();
     for seg in candidates.into_iter() {
-        // Keep bases covered by either mate; overlapping spans collapse via `push_merged` so we only
+        // Keep bases covered by either mate. Overlapping spans collapse via `push_merged` so we only
         // exclude reference positions when both reads align an indel there.
         push_merged(&mut merged, seg);
     }
@@ -428,5 +438,81 @@ pub fn collect_fragment_with_kmer_segments(
         end: span_end,
         segments,
         gc_tag,
+    })
+}
+
+/// Build a fragment with k-mer-safe segments from a single read (single-end input).
+pub fn collect_fragment_with_kmer_segments_from_single_read(
+    read: &KmerSegmentedReadInfo,
+    indel_mode: IndelMode,
+    end_offset: u32,
+) -> Option<FragmentWithKmerSegments> {
+    if read.end <= read.pos {
+        return None;
+    }
+
+    if matches!(indel_mode, IndelMode::Skip) && read.has_indel() {
+        return None;
+    }
+
+    let span_start = read.pos;
+    let span_end = read.end;
+
+    // Trim fixed offsets from both ends so k-mer contexts avoid edge artifacts.
+    // `end_offset` is expected to be small (defaults to 0), so most spans dwarf it.
+    // When a fragment is shorter than 2 * end_offset, trimming would invert the span.
+    // We thus guard by collapsing `trim_end` to `span_start` in that case so the
+    // subsequent check returns None.
+    let trim_start = span_start.saturating_add(end_offset);
+    let trim_end = if span_end > end_offset {
+        span_end - end_offset
+    } else {
+        span_start
+    };
+    if trim_start >= trim_end {
+        return None;
+    }
+
+    let treat_as_flat = matches!(indel_mode, IndelMode::Ignore) || !read.has_indel();
+
+    let mut segments: SmallVec<[(u32, u32); 12]> = SmallVec::new();
+
+    if treat_as_flat {
+        segments.push((trim_start, trim_end));
+    } else {
+        let mut candidates: Vec<(u32, u32)> = read
+            .absolute_segments()
+            .into_iter()
+            .filter_map(|(s, e)| clip_interval(s, e, trim_start, trim_end))
+            .collect();
+
+        if candidates.is_empty() {
+            return None;
+        }
+
+        candidates.sort_unstable_by_key(|&(s, _)| s);
+
+        let mut merged: Vec<(u32, u32)> = Vec::new();
+        for seg in candidates.into_iter() {
+            push_merged(&mut merged, seg);
+        }
+
+        if merged.is_empty() {
+            return None;
+        }
+
+        segments.extend(merged.into_iter());
+    }
+
+    if segments.is_empty() {
+        return None;
+    }
+
+    Some(FragmentWithKmerSegments {
+        tid: read.tid,
+        start: span_start,
+        end: span_end,
+        segments,
+        gc_tag: read.gc_tag,
     })
 }

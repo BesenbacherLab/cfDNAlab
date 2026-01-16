@@ -1867,7 +1867,9 @@ mod revcomp_tests {
             indel_mode,
             include_gap,
             0,
+            None,
             fragment_filter,
+            false,
         )
         .collect::<Result<Vec<_>>>()?;
         assert!(

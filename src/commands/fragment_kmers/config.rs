@@ -5,7 +5,7 @@ use crate::{
         cli_common::{
             ApplyGCArgs, BaseSelectionArgs, ChromosomeArgs, FragmentLengthArgs,
             FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
-            WindowsArgs,
+            SingleEndArgs, WindowsArgs,
         },
         fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame},
     },
@@ -21,6 +21,9 @@ pub struct FragmentKmersSharedArgs {
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ref_genome: Ref2BitRequiredArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub single_end: SingleEndArgs,
 
     /// Prefix for output files (e.g., a sample name) `[string]`
     ///
@@ -177,6 +180,7 @@ impl FragmentKmersSharedArgs {
         Self {
             ioc,
             ref_genome,
+            single_end: SingleEndArgs { single_end: false },
             output_prefix: output_prefix,
             tile_size: 20_000_000,
             position_selection: FragmentPositionSelectionArgs {
@@ -284,10 +288,12 @@ impl FragmentKmersSharedArgs {
 ///
 /// The following criteria always exclude a read:
 ///
-/// The read or mate read is unmapped.
-/// The read is mapped to a different `tid` than the mate.
 /// The read is secondary, supplementary or duplicate.
 /// The read failed quality check.
+///
+/// **Paired-end input only**:
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]

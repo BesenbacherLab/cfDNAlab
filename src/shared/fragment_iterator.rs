@@ -85,6 +85,7 @@ use crate::shared::{
         },
         segment_kmer_fragment::{
             FragmentWithKmerSegments, KmerSegmentedReadInfo, collect_fragment_with_kmer_segments,
+            collect_fragment_with_kmer_segments_from_single_read,
         },
         with_records_fragment::{
             WithRecordReadInfo, WithRecordsFragment, collect_fragment_with_records,
@@ -434,6 +435,7 @@ pub fn fragments_with_kmer_segments_from_bam<RIter, PF>(
     end_offset: u32,
     gc_tag: Option<&[u8]>,
     fragment_filter: PF,
+    single_end: bool,
 ) -> PairingAdapter<
     impl Iterator<Item = Result<InputItem<FragmentWithKmerSegments>>>,
     KmerSegmentsPairer,
@@ -455,11 +457,26 @@ where
 
     let capture_segments = matches!(indel_mode, IndelMode::Adjust);
 
-    PairingAdapter::new(mapped, Some(pairer))
-        .with_bam_filter_and_mapper(include_read, move |rec| {
-            KmerSegmentedReadInfo::from_record(rec, capture_segments, gc_tag_bytes.as_deref())
-        })
-        .with_fragment_filter(fragment_filter)
+    let mut adapter = PairingAdapter::new(
+        mapped,
+        if single_end {
+            None::<KmerSegmentsPairer>
+        } else {
+            Some(pairer)
+        },
+    )
+    .with_bam_filter_and_mapper(include_read, move |rec| {
+        KmerSegmentedReadInfo::from_record(rec, capture_segments, gc_tag_bytes.as_deref())
+    })
+    .with_fragment_filter(fragment_filter);
+
+    if single_end {
+        adapter = adapter.with_bam_single_fragment_from_read(move |read| {
+            collect_fragment_with_kmer_segments_from_single_read(read, indel_mode, end_offset)
+        });
+    }
+
+    adapter
 }
 
 /* Basic fragment pairing */

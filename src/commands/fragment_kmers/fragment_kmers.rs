@@ -38,7 +38,7 @@ use crate::{
             write::write_decoded_counts_matrix,
         },
         overlaps::find_overlapping_windows,
-        read::default_include_read_paired_end,
+        read::{default_include_read_paired_end, default_include_read_single_end},
         reference::read_seq_in_range,
         scale_genome::apply_scaling_to_coverage_in_place,
         thread_pool::init_global_pool,
@@ -130,6 +130,9 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
 }
 
 pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
+    if opt.shared_args.single_end.single_end && opt.shared_args.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --single-end");
+    }
     let (chromosomes, contigs) = resolve_chromosomes_and_contigs(
         &opt.shared_args.chromosomes,
         &opt.shared_args.ioc.bam.as_path(),
@@ -565,16 +568,37 @@ fn process_tile(
         .gc_tag
         .as_deref()
         .map(|t| t.as_bytes().to_vec());
-    let mut iter = fragments_with_kmer_segments_from_bam(
-        reader.records().map(|r| r.map_err(anyhow::Error::from)),
-        include_read_fn,
-        opt.shared_args.indel_mode,
-        !opt.shared_args.ignore_gap,
-        0,
-        gc_tag_bytes.as_deref(),
-        fragment_filter,
-    )
-    .with_local_counters();
+    let mut iter = if opt.shared_args.single_end.single_end {
+        let min_mapq = opt.shared_args.min_mapq;
+        let include_read_fn = move |r: &Record| default_include_read_single_end(r, min_mapq);
+        fragments_with_kmer_segments_from_bam(
+            reader.records().map(|r| r.map_err(anyhow::Error::from)),
+            include_read_fn,
+            opt.shared_args.indel_mode,
+            !opt.shared_args.ignore_gap,
+            0,
+            gc_tag_bytes.as_deref(),
+            fragment_filter,
+            true,
+        )
+        .with_local_counters()
+    } else {
+        let min_mapq = opt.shared_args.min_mapq;
+        let require_proper_pair = opt.shared_args.require_proper_pair;
+        let include_read_fn =
+            move |r: &Record| default_include_read_paired_end(r, require_proper_pair, min_mapq);
+        fragments_with_kmer_segments_from_bam(
+            reader.records().map(|r| r.map_err(anyhow::Error::from)),
+            include_read_fn,
+            opt.shared_args.indel_mode,
+            !opt.shared_args.ignore_gap,
+            0,
+            gc_tag_bytes.as_deref(),
+            fragment_filter,
+            false,
+        )
+        .with_local_counters()
+    };
 
     let get_gc_weight = {
         let gc_corrector = gc_corrector_opt.as_ref();
