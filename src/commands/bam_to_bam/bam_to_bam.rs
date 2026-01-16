@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rust_htslib::bam::{self, Format, Header, Read, Record, ext::BamRecordExtensions};
@@ -21,10 +21,14 @@ use crate::{
         },
     },
     shared::{
-        bam::create_chromosome_reader, bed::load_windows_from_bed, blacklist::is_blacklisted,
+        bam::create_chromosome_reader,
+        bed::load_windows_from_bed,
+        blacklist::is_blacklisted,
         fragment::with_records_fragment::WithRecordsFragment,
-        fragment_iterator::fragments_with_records_from_bam, overlaps::find_overlapping_windows,
-        read::default_include_read_paired_end, reference::read_seq,
+        fragment_iterator::fragments_with_records_from_bam,
+        overlaps::find_overlapping_windows,
+        read::{default_include_read_paired_end, default_include_read_single_end},
+        reference::read_seq,
         scale_genome::compute_window_scaling_over_fragment,
     },
 };
@@ -89,6 +93,9 @@ pub fn run(opt: &BamToBamConfig) -> Result<()> {
 }
 
 pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
+    if opt.single_end.single_end && opt.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --single-end");
+    }
     let (mut chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.in_bam.as_path())?;
     if !opt.skip_chromosome_sort {
@@ -255,17 +262,24 @@ fn process_chrom(
         move |f: &WithRecordsFragment| lengths.contains(f.len())
     };
 
-    // Wrap to use opt
-    let include_read_fn = {
-        let opt = (*opt).clone();
-        move |r: &Record| default_include_read_paired_end(r, opt.require_proper_pair, opt.min_mapq)
+    // Create fragment iterator
+    let single_end = opt.single_end.single_end;
+    let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if single_end {
+        let min_mapq = opt.min_mapq;
+        Box::new(move |r: &Record| default_include_read_single_end(r, min_mapq))
+    } else {
+        let min_mapq = opt.min_mapq;
+        let require_proper_pair = opt.require_proper_pair;
+        Box::new(move |r: &Record| {
+            default_include_read_paired_end(r, require_proper_pair, min_mapq)
+        })
     };
 
-    // Create fragment iterator
     let mut iter = fragments_with_records_from_bam(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
-        include_read_fn,
+        move |rec| include_read_fn(rec),
         fragment_filter,
+        single_end,
     )
     .with_local_counters();
 
@@ -388,31 +402,50 @@ fn process_chrom(
         counter.base.counted_fragments += 1;
 
         let WithRecordsFragment {
+            single_record,
             forward_record,
             reverse_record,
             ..
         } = fragment;
 
-        sorter.push(
-            RecordEntry {
-                start: forward_record.pos() as u32,
-                end: forward_record.reference_end() as u32,
-                record: forward_record,
-                tags: tags.clone(),
-            },
-            writer,
-        )?;
+        if opt.single_end.single_end {
+            let single_record = single_record.expect("Single record must exist in single-end mode");
+            sorter.push(
+                RecordEntry {
+                    start: single_record.pos() as u32,
+                    end: single_record.reference_end() as u32,
+                    record: single_record,
+                    tags: tags.clone(),
+                },
+                writer,
+            )?;
+        } else {
+            let forward_record =
+                forward_record.expect("Forward record must exist in single-end mode");
+            let reverse_record =
+                reverse_record.expect("Reverse record must exist in single-end mode");
 
-        // Push reverse read
-        sorter.push(
-            RecordEntry {
-                start: reverse_record.pos() as u32,
-                end: reverse_record.reference_end() as u32,
-                record: reverse_record,
-                tags,
-            },
-            writer,
-        )?;
+            sorter.push(
+                RecordEntry {
+                    start: forward_record.pos() as u32,
+                    end: forward_record.reference_end() as u32,
+                    record: forward_record,
+                    tags: tags.clone(),
+                },
+                writer,
+            )?;
+
+            // Push reverse read
+            sorter.push(
+                RecordEntry {
+                    start: reverse_record.pos() as u32,
+                    end: reverse_record.reference_end() as u32,
+                    record: reverse_record,
+                    tags,
+                },
+                writer,
+            )?;
+        }
     }
 
     // Flush any fragments still buffered in the sorter tail

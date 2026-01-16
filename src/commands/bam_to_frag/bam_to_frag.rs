@@ -19,12 +19,13 @@ use crate::{
         bam::create_chromosome_reader, bed::load_windows_from_bed, blacklist::is_blacklisted,
         fragment::frag_file_fragment::FragFileFragment,
         fragment_iterator::fragments_with_frag_file_info_from_bam,
-        overlaps::find_overlapping_windows, read::default_include_read_paired_end,
+        overlaps::find_overlapping_windows,
+        read::{default_include_read_paired_end, default_include_read_single_end},
         reference::read_seq, scale_genome::compute_window_scaling_over_fragment,
         thread_pool::init_global_pool, tiled_run::make_temp_dir, writers::open_zstd_auto_writer,
     },
 };
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rayon::prelude::*;
@@ -90,6 +91,9 @@ pub fn run(opt: &BamToFragConfig) -> Result<()> {
 }
 
 pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
+    if opt.single_end.single_end && opt.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --single-end");
+    }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
     let prefix = opt.output_prefix.trim();
@@ -286,17 +290,24 @@ fn process_chrom(
         move |f: &FragFileFragment| lengths.contains(f.len())
     };
 
-    // Wrap to use opt
-    let include_read_fn = {
-        let opt = (*opt).clone();
-        move |r: &Record| default_include_read_paired_end(r, opt.require_proper_pair, opt.min_mapq)
+    // Create fragment iterator
+    let single_end = opt.single_end.single_end;
+    let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if single_end {
+        let min_mapq = opt.min_mapq;
+        Box::new(move |r: &Record| default_include_read_single_end(r, min_mapq))
+    } else {
+        let min_mapq = opt.min_mapq;
+        let require_proper_pair = opt.require_proper_pair;
+        Box::new(move |r: &Record| {
+            default_include_read_paired_end(r, require_proper_pair, min_mapq)
+        })
     };
 
-    // Create fragment iterator
     let mut iter = fragments_with_frag_file_info_from_bam(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
-        include_read_fn,
+        move |rec| include_read_fn(rec),
         fragment_filter,
+        single_end,
     )
     .with_local_counters();
 

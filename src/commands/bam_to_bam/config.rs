@@ -1,39 +1,47 @@
 use crate::commands::cli_common::{
-    ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, ScaleGenomeArgs, WindowSpec,
+    ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, ScaleGenomeArgs, SingleEndArgs,
+    WindowSpec,
 };
 use crate::shared::blacklist::BlacklistStrategy;
 use std::path::PathBuf;
 
-/// Apply filtering and corrections to the fragments in a BAM file and write to a new coordinate-sorted BAM file.
+/// Apply filtering and corrections to the fragments in a BAM file
+/// and write to a new coordinate-sorted BAM file.
 ///
 /// To use our corrections and filters in *custom*, downstream analyses, you can apply
 /// them directly to a given BAM file. Filter which reads/fragments to write and add correction
 /// weights as AUX tags on the reads. The new BAM file is coordinate-sorted.
 ///
-/// **NOTE**: This is **not** needed for running other `cfDNAlab` tools. Those tools will **not** automatically use the correction tags.
+/// **NOTE**: This is **not** needed for running other `cfDNAlab` tools.
+/// Those tools will **not** automatically use the correction tags.
 ///
 /// ## Genomic smoothing (scale-genome)
 ///
 /// The coverage weight that would normally be **multiplied** with the fragment's count value (`1.0`)
-/// is written as the AUX tag `COV` to both mate reads.
+/// is written as the AUX tag `COV` in the read(s).
 ///
 /// ## GC bias correction
 ///
 /// The GC bias correction weight that would normally be **multiplied** with the fragment's count
-/// value (`1.0` or the smoothed value) is written as the AUX tag `GC` to both mate reads.
+/// value (`1.0` or the smoothed value) is written as the AUX tag `GC` in the read(s).
 ///
 /// ## Fragment length
 ///
 /// The fragment length is written to the AUX tag "FLEN".
+/// 
+/// For **paired-end** sequencing, the length is defined as `[forward.pos, reverse.end)`.
+/// For **single-end** sequencing, the length is defined as `[read.pos, read.end)`.
 ///
 /// ## Always-on exclusion criteria
 ///
 /// The following criteria always exclude a read:
 ///
-/// The read or mate read is unmapped.
-/// The read is mapped to a different `tid` than the mate.
 /// The read is secondary, supplementary or duplicate.
 /// The read failed quality check.
+///
+/// **Paired-end input only**:
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
@@ -63,6 +71,9 @@ pub struct BamToBamConfig {
         )
     )]
     pub out_bam: PathBuf,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub single_end: SingleEndArgs,
 
     /// Intervals to keep overlapping fragments from `[path]`
     ///
@@ -179,6 +190,7 @@ impl BamToBamConfig {
             fragment_lengths: FragmentLengthArgs::default(),
             min_mapq: 0,
             require_proper_pair: false,
+            single_end: SingleEndArgs { single_end: false },
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::Any,

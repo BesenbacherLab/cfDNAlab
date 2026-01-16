@@ -108,3 +108,21 @@ pub fn collect_fragment_with_frag_file_info(
         },
     })
 }
+
+/// Build a `FragFileFragment` from a single read (single-end input).
+pub fn collect_fragment_with_frag_file_info_from_single_read(
+    read: &FragReadInfo,
+) -> Option<FragFileFragment> {
+    if read.end <= read.pos {
+        return None;
+    }
+
+    Some(FragFileFragment {
+        tid: read.tid,
+        start: read.pos,
+        end: read.end,
+        min_mapq: read.mapq,
+        // No read 1/2 so just the strand of the single read
+        read1_strand: read.strand,
+    })
+}

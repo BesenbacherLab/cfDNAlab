@@ -51,8 +51,9 @@ pub struct WithRecordsFragment {
     pub start: u32, // forward.pos
     pub end: u32,   // reverse.end (end-exclusive)
     pub min_mapq: u8,
-    pub forward_record: Record,
-    pub reverse_record: Record,
+    pub single_record: Option<Record>,
+    pub forward_record: Option<Record>,
+    pub reverse_record: Option<Record>,
 }
 
 impl WithRecordsFragment {
@@ -93,8 +94,28 @@ pub fn collect_fragment_with_records(
         start: forward.pos,
         end: reverse.end,
         min_mapq: forward.mapq.min(reverse.mapq),
+        single_record: None,
         // TODO: Avoid cloning. Would like to keep reusing oriented_pair_from_read_info but perhaps an owned version of it is needed?
-        forward_record: forward.record.clone(),
-        reverse_record: reverse.record.clone(),
+        forward_record: Some(forward.record.clone()),
+        reverse_record: Some(reverse.record.clone()),
+    })
+}
+
+/// Build a `WithRecordsFragment` from a single read (single-end input).
+pub fn collect_fragment_with_records_from_single_read(
+    read: &WithRecordReadInfo,
+) -> Option<WithRecordsFragment> {
+    if read.end <= read.pos {
+        return None;
+    }
+
+    Some(WithRecordsFragment {
+        tid: read.tid,
+        start: read.pos,
+        end: read.end,
+        min_mapq: read.mapq,
+        single_record: Some(read.record.clone()),
+        forward_record: None,
+        reverse_record: None,
     })
 }

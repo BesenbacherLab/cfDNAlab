@@ -1,5 +1,6 @@
 use crate::commands::cli_common::{
-    ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, IOCArgs, ScaleGenomeArgs, WindowSpec,
+    ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, IOCArgs, ScaleGenomeArgs,
+    SingleEndArgs, WindowSpec,
 };
 use crate::shared::blacklist::BlacklistStrategy;
 use std::path::PathBuf;
@@ -34,16 +35,21 @@ use std::path::PathBuf;
 ///
 /// The following criteria always exclude a read:
 ///
-/// The read or mate read is unmapped.
-/// The read is mapped to a different `tid` than the mate.
 /// The read is secondary, supplementary or duplicate.
 /// The read failed quality check.
+///
+/// **Paired-end input only**:
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct BamToFragConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub single_end: SingleEndArgs,
 
     /// Prefix for output file (e.g., a sample name) `[string]`
     ///
@@ -151,6 +157,7 @@ impl BamToFragConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
+            single_end: SingleEndArgs { single_end: false },
             output_prefix: "fragments".into(),
             by_bed: None,
             chromosomes,

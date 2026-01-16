@@ -549,18 +549,6 @@ fn process_tile(
         move |f: &FragmentWithKmerSegments| lengths.contains(f.len())
     };
 
-    // Wrap to use opt
-    let include_read_fn = {
-        let opt = (*opt).clone();
-        move |r: &Record| {
-            default_include_read_paired_end(
-                r,
-                opt.shared_args.require_proper_pair,
-                opt.shared_args.min_mapq,
-            )
-        }
-    };
-
     // Create fragment iterator
     let gc_tag_bytes = opt
         .shared_args
@@ -568,37 +556,28 @@ fn process_tile(
         .gc_tag
         .as_deref()
         .map(|t| t.as_bytes().to_vec());
-    let mut iter = if opt.shared_args.single_end.single_end {
+    let single_end = opt.shared_args.single_end.single_end;
+    let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if single_end {
         let min_mapq = opt.shared_args.min_mapq;
-        let include_read_fn = move |r: &Record| default_include_read_single_end(r, min_mapq);
-        fragments_with_kmer_segments_from_bam(
-            reader.records().map(|r| r.map_err(anyhow::Error::from)),
-            include_read_fn,
-            opt.shared_args.indel_mode,
-            !opt.shared_args.ignore_gap,
-            0,
-            gc_tag_bytes.as_deref(),
-            fragment_filter,
-            true,
-        )
-        .with_local_counters()
+        Box::new(move |r: &Record| default_include_read_single_end(r, min_mapq))
     } else {
         let min_mapq = opt.shared_args.min_mapq;
         let require_proper_pair = opt.shared_args.require_proper_pair;
-        let include_read_fn =
-            move |r: &Record| default_include_read_paired_end(r, require_proper_pair, min_mapq);
-        fragments_with_kmer_segments_from_bam(
-            reader.records().map(|r| r.map_err(anyhow::Error::from)),
-            include_read_fn,
-            opt.shared_args.indel_mode,
-            !opt.shared_args.ignore_gap,
-            0,
-            gc_tag_bytes.as_deref(),
-            fragment_filter,
-            false,
-        )
-        .with_local_counters()
+        Box::new(move |r: &Record| {
+            default_include_read_paired_end(r, require_proper_pair, min_mapq)
+        })
     };
+    let mut iter = fragments_with_kmer_segments_from_bam(
+        reader.records().map(|r| r.map_err(anyhow::Error::from)),
+        move |rec| include_read_fn(rec),
+        opt.shared_args.indel_mode,
+        !opt.shared_args.ignore_gap,
+        0,
+        gc_tag_bytes.as_deref(),
+        fragment_filter,
+        single_end,
+    )
+    .with_local_counters();
 
     let get_gc_weight = {
         let gc_corrector = gc_corrector_opt.as_ref();

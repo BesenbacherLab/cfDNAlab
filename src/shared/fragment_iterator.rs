@@ -71,6 +71,7 @@ use crate::shared::{
     fragment::{
         frag_file_fragment::{
             FragFileFragment, FragReadInfo, collect_fragment_with_frag_file_info,
+            collect_fragment_with_frag_file_info_from_single_read,
         },
         indel_counting_fragment::{
             FragmentWithIndelCounts, IndelReadInfo, collect_fragment_with_indel_counts,
@@ -89,6 +90,7 @@ use crate::shared::{
         },
         with_records_fragment::{
             WithRecordReadInfo, WithRecordsFragment, collect_fragment_with_records,
+            collect_fragment_with_records_from_single_read,
         },
     },
     indel_mode::IndelMode,
@@ -669,6 +671,7 @@ pub fn fragments_with_frag_file_info_from_bam<RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     fragment_filter: PF,
+    single_end: bool,
 ) -> PairingAdapter<
     impl Iterator<Item = Result<InputItem<FragFileFragment>>>,
     WithFragInfoPairer,
@@ -684,9 +687,24 @@ where
     // Map BAM records -> InputItem::Read, converting errors to anyhow with context.
     let mapped = records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord));
 
-    PairingAdapter::new(mapped, Some(pairer))
+    let mut adapter = PairingAdapter::new(
+        mapped,
+        if single_end {
+            None::<WithFragInfoPairer>
+        } else {
+            Some(pairer)
+        },
+    )
         .with_bam_filter_and_mapper(include_read, |rec| FragReadInfo::from(rec))
-        .with_fragment_filter(fragment_filter)
+        .with_fragment_filter(fragment_filter);
+
+    if single_end {
+        adapter = adapter.with_bam_single_fragment_from_read(|read| {
+            collect_fragment_with_frag_file_info_from_single_read(read)
+        });
+    }
+
+    adapter
 }
 
 /// From an iterator of ready-made `FragFileFragment` (e.g., BED-like source).
@@ -726,6 +744,7 @@ pub fn fragments_with_records_from_bam<RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     fragment_filter: PF,
+    single_end: bool,
 ) -> PairingAdapter<
     impl Iterator<Item = Result<InputItem<WithRecordsFragment>>>,
     WithRecordReadInfoPairer,
@@ -741,9 +760,24 @@ where
     // Map BAM records -> InputItem::Read, converting errors to anyhow with context.
     let mapped = records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord));
 
-    PairingAdapter::new(mapped, Some(pairer))
+    let mut adapter = PairingAdapter::new(
+        mapped,
+        if single_end {
+            None::<WithRecordReadInfoPairer>
+        } else {
+            Some(pairer)
+        },
+    )
         .with_bam_filter_and_mapper(include_read, |rec| WithRecordReadInfo::from(rec))
-        .with_fragment_filter(fragment_filter)
+        .with_fragment_filter(fragment_filter);
+
+    if single_end {
+        adapter = adapter.with_bam_single_fragment_from_read(|read| {
+            collect_fragment_with_records_from_single_read(read)
+        });
+    }
+
+    adapter
 }
 
 // /// From an iterator of ready-made `WithRecordsFragment` (e.g., BED-like source).
