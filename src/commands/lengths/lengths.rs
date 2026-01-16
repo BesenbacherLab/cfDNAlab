@@ -20,7 +20,7 @@ use crate::{
         blacklist::{compute_blacklist_overlap, is_blacklisted},
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
         fragment_iterator::{
-            fragments_with_indel_counts_from_bam, fragments_with_indel_counts_from_single_end_bam,
+            fragments_with_indel_counts_from_bam,
         },
         io::create_text_writer,
         midpoint::midpoint_random_even_with_thread_rng,
@@ -347,29 +347,25 @@ fn process_chrom(
     };
 
     // Create fragment iterator
-    let mut iter = if opt.single_end.single_end {
+    let single_end = opt.single_end.single_end;
+    let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if single_end {
         let min_mapq = opt.min_mapq;
-        let include_read_fn = move |r: &Record| default_include_read_single_end(r, min_mapq);
-        fragments_with_indel_counts_from_single_end_bam(
-            reader.records().map(|r| r.map_err(anyhow::Error::from)),
-            include_read_fn,
-            opt.indel_mode,
-            fragment_filter,
-        )
-        .with_local_counters()
+        Box::new(move |r: &Record| default_include_read_single_end(r, min_mapq))
     } else {
-        let require_proper_pair = opt.require_proper_pair;
         let min_mapq = opt.min_mapq;
-        let include_read_fn =
-            move |r: &Record| default_include_read_paired_end(r, require_proper_pair, min_mapq);
-        fragments_with_indel_counts_from_bam(
-            reader.records().map(|r| r.map_err(anyhow::Error::from)),
-            include_read_fn,
-            opt.indel_mode,
-            fragment_filter,
-        )
-        .with_local_counters()
+        let require_proper_pair = opt.require_proper_pair;
+        Box::new(move |r: &Record| {
+            default_include_read_paired_end(r, require_proper_pair, min_mapq)
+        })
     };
+    let mut iter = fragments_with_indel_counts_from_bam(
+        reader.records().map(|r| r.map_err(anyhow::Error::from)),
+        move |rec| include_read_fn(rec),
+        opt.indel_mode,
+        fragment_filter,
+        single_end,
+    )
+    .with_local_counters();
 
     let get_gc_weight = {
         let gc_corrector = gc_corrector_opt.as_ref();

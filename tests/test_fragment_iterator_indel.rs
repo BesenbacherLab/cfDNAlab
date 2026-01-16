@@ -1,7 +1,5 @@
 use cfdnalab::shared::fragment::indel_counting_fragment::FragmentWithIndelCounts;
-use cfdnalab::shared::fragment_iterator::{
-    fragments_with_indel_counts_from_bam, fragments_with_indel_counts_from_single_end_bam,
-};
+use cfdnalab::shared::fragment_iterator::fragments_with_indel_counts_from_bam;
 use rust_htslib::bam;
 use rust_htslib::bam::record::Cigar;
 
@@ -25,12 +23,13 @@ fn yields_single_end_fragments_and_respects_filter() {
         Ok(make_record(b"r2", 30, 5, false)), // length 5
     ];
     let include_read = |_r: &bam::Record| true;
-    let mut iter = fragments_with_indel_counts_from_single_end_bam(
+    let mut iter = fragments_with_indel_counts_from_bam(
         records.into_iter(),
         include_read,
         cfdnalab::shared::indel_mode::IndelMode::Ignore,
         // Filter out anything shorter than 5 (none here) and longer than 5 (none here)
         |f: &FragmentWithIndelCounts| f.len_indel_adjusted() <= 5,
+        true,
     )
     .with_local_counters();
 
@@ -58,6 +57,7 @@ fn pairs_reads_and_yields_single_fragment() {
         include_read,
         cfdnalab::shared::indel_mode::IndelMode::Ignore,
         |_f: &FragmentWithIndelCounts| true,
+        false,
     )
     .with_local_counters();
 

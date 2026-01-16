@@ -596,6 +596,7 @@ pub fn fragments_with_indel_counts_from_bam<'a, RIter, PF>(
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     indel_mode: IndelMode,
     fragment_filter: PF,
+    single_end: bool,
 ) -> IndelCountsIter<'a>
 where
     RIter: Iterator<Item = Result<Record>> + 'a,
@@ -607,9 +608,26 @@ where
     let mapped: Box<dyn Iterator<Item = Result<InputItem<FragmentWithIndelCounts>>> + 'a> =
         Box::new(records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord)));
 
-    PairingAdapter::new(mapped, Some(pairer))
-        .with_bam_filter_and_mapper(include_read, |rec| IndelReadInfo::from(rec))
-        .with_fragment_filter(fragment_filter)
+    let mut adapter = PairingAdapter::new(
+        mapped,
+        if single_end {
+            None::<WithIndelCountsPairer>
+        } else {
+            Some(pairer)
+        },
+    )
+    .with_bam_filter_and_mapper(include_read, |rec| IndelReadInfo::from(rec))
+    .with_fragment_filter(fragment_filter);
+
+    if single_end {
+        let skip_indels = matches!(indel_mode, IndelMode::Skip);
+        let count_indels = matches!(indel_mode, IndelMode::Adjust);
+        adapter = adapter.with_bam_single_fragment_from_read(move |read| {
+            collect_fragment_with_indel_counts_from_single_read(read, skip_indels, count_indels)
+        });
+    }
+
+    adapter
 }
 
 /// From an iterator of ready-made `FragmentWithIndelCounts` (e.g., BED-like source).
@@ -625,32 +643,6 @@ where
         Box::new(frags.map(|res| res.map(InputItem::Fragment)));
 
     PairingAdapter::new(mapped, None::<WithIndelCountsPairer>).with_fragment_filter(fragment_filter)
-}
-
-/// From BAM: treat each read as a single-end fragment with optional indel adjustment.
-pub fn fragments_with_indel_counts_from_single_end_bam<'a, RIter, PF>(
-    records: RIter,
-    include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
-    indel_mode: IndelMode,
-    fragment_filter: PF,
-) -> IndelCountsIter<'a>
-where
-    RIter: Iterator<Item = Result<Record>> + 'a,
-    PF: Fn(&FragmentWithIndelCounts) -> bool + Send + Sync + 'static,
-{
-    let skip_indels = matches!(indel_mode, IndelMode::Skip);
-    let count_indels = matches!(indel_mode, IndelMode::Adjust);
-
-    // Map BAM records -> InputItem::BamRecord, converting errors to anyhow with context.
-    let mapped: Box<dyn Iterator<Item = Result<InputItem<FragmentWithIndelCounts>>> + 'a> =
-        Box::new(records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord)));
-
-    PairingAdapter::new(mapped, None::<WithIndelCountsPairer>)
-        .with_bam_filter_and_mapper(include_read, |rec| IndelReadInfo::from(rec))
-        .with_bam_single_fragment_from_read(move |read| {
-            collect_fragment_with_indel_counts_from_single_read(read, skip_indels, count_indels)
-        })
-        .with_fragment_filter(fragment_filter)
 }
 
 /* For frag files pairing */
