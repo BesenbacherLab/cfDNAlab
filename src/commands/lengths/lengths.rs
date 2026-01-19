@@ -217,6 +217,13 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
             }
         }
 
+        let total_counts: f64 = global_counts.iter().sum();
+        if total_counts > 0.0 {
+            for value in &mut global_counts {
+                *value /= total_counts;
+            }
+        }
+
         let x_values: Vec<f64> = (all_bins[0].length_min..=all_bins[0].length_max)
             .map(|len| len as f64)
             .collect();
@@ -227,11 +234,11 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
             &plot_path,
             "Fragment length distribution (summed/global)",
             "Fragment length (bp)",
-            "Count",
+            "Density",
             &x_values,
             &global_counts,
-            1200,
-            800,
+            1600,
+            1000,
         )
         .with_context(|| format!("writing fragment length plot to {}", plot_path.display()))?;
     }

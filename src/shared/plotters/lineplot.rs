@@ -146,9 +146,9 @@ where
     // Keep the background clear and axis labels readable for quick QC
     drawing_area.fill(&WHITE)?;
 
-    // Grow label areas with label length to reduce clipping on long names
-    let x_label_area = (30 + (x_label.len() as u32 * 6)).min(140);
-    let y_label_area = (45 + (y_label.len() as u32 * 6)).min(180);
+    // Reserve a modest fixed strip for axis labels. Keep x compact and y slightly wider
+    let x_label_area = 52;
+    let y_label_area = 110;
 
     let mut chart = ChartBuilder::on(drawing_area)
         .caption(title, ("sans-serif", 22))
@@ -159,6 +159,7 @@ where
 
     chart
         .configure_mesh()
+        .axis_desc_style(("sans-serif", 22))
         .x_desc(x_label)
         .y_desc(y_label)
         .draw()?;

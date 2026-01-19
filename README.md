@@ -17,7 +17,7 @@ Suggest a tool or feature [here](https://github.com/LudvigOlsen/cfDNAlab/issues/
 You may need a few dependencies that can be installed as a conda environment with:
 
 ```bash
-$ conda create -n cfdnalab rust=1.87.0 zstandard perl conda-forge::llvmdev conda-forge::clangdev
+$ conda create -n cfdnalab rust=1.87.0 zstandard perl fontconfig conda-forge::llvmdev conda-forge::clangdev
 $ conda activate cfdnalab
 ```
 
