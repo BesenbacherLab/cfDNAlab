@@ -28,7 +28,7 @@ $ cargo install --git https://github.com/ludvigolsen/cfDNAlab
 $ cfdna --help
 # or clone + build
 $ git clone https://github.com/ludvigolsen/cfDNAlab
-$ cd cfdnalab && cargo build --release
+$ cd cfdnalab && cargo build --release --features cli,plotters
 $ target/release/cfdna --help
 ```
 

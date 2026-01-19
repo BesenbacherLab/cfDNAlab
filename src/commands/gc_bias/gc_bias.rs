@@ -672,15 +672,16 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         // Unweighted average bias
 
         let num_gc_bins = correction_matrix.ncols();
+        let bias_matrix = correction_matrix.mapv(|cf| if cf == 0.0 { 0.0 } else { 1.0 / cf });
         let mut unweighted_bias = vec![0.0; num_gc_bins];
         let mut unweighted_counts = vec![0usize; num_gc_bins];
 
-        for length_biases in correction_matrix.outer_iter() {
-            for (gc_idx, &correction_factor) in length_biases.iter().enumerate() {
-                if correction_factor == 0.0 {
+        for length_biases in bias_matrix.outer_iter() {
+            for (gc_idx, &bias) in length_biases.iter().enumerate() {
+                if bias == 0.0 {
                     continue;
                 }
-                unweighted_bias[gc_idx] += 1.0 / correction_factor;
+                unweighted_bias[gc_idx] += bias;
                 unweighted_counts[gc_idx] += 1;
             }
         }
@@ -696,19 +697,19 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         let mut weighted_bias = vec![0.0; num_gc_bins];
         let mut weight_per_gc = vec![0.0; num_gc_bins];
 
-        for (length_biases, &length_weight) in correction_matrix
+        for (length_biases, &length_weight) in bias_matrix
             .outer_iter()
             .zip(length_bin_frequencies.iter())
         {
             if length_weight == 0.0 {
                 continue;
             }
-            for (gc_idx, &correction_factor) in length_biases.iter().enumerate() {
-                if correction_factor == 0.0 {
+            for (gc_idx, &bias) in length_biases.iter().enumerate() {
+                if bias == 0.0 {
                     continue;
                 }
                 weight_per_gc[gc_idx] += length_weight;
-                weighted_bias[gc_idx] += length_weight / correction_factor;
+                weighted_bias[gc_idx] += length_weight * bias;
             }
         }
 

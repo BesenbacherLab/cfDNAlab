@@ -229,7 +229,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
             .map(|len| len as f64)
             .collect();
 
-        let plot_path = opt.ioc.output_dir.join("fragment_lengths_global.png");
+        let plot_path = opt.ioc.output_dir.join("fragment_lengths_overall.png");
 
         write_line_plot_png(
             &plot_path,
