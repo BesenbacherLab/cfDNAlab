@@ -41,6 +41,7 @@ arrayvec = "0.7.6"
 bincode = { version = "2.0.1", features = ["serde"] }
 chrono = { version = "0.4.42", features = ["clock"] }
 clap = { version = "4.5.37", features = ["derive"], optional = true }
+ctrlc = "3.5.1"
 flate2 = "1.1.2"
 fxhash = "0.2.1"
 indicatif = { version = "0.17.11", default-features = false, features = ["rayon", "unicode-width"] }
@@ -49,19 +50,19 @@ ndarray-npy = "0.9.1"
 needletail = { version = "0.6.3", default-features = false, features = ["flate2", "zstd"] }
 num-traits = "0.2.19"
 num_cpus = "1.17.0"
+plotters = { version = "0.3.7", optional = true }
 rand = "0.9.1"
 rayon = "1.10.0"
 rust-htslib = "0.50.0"
 serde = { version = "1.0.228", features = ["derive"] }
 smallvec = "1.15.1"
+staged-sg-filter = { version = "0.2.3", optional = true }
+strum = "0.27.2"
+strum_macros = "0.27.2"
+tempfile = "3.20.0"
 twobit = "0.2.1"
 zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
 zstd = { version = "0.13.3", features = ["zstdmt"] }
-tempfile = "3.20.0"
-strum = "0.27.2"
-strum_macros = "0.27.2"
-staged-sg-filter = { version = "0.2.3", optional = true }
-ctrlc = "3.5.1"
 
 [dev-dependencies]
 libc = "0.2"

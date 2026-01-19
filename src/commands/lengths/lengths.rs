@@ -1,3 +1,5 @@
+#[cfg(feature = "plotters")]
+use crate::shared::plotters::lineplot::write_line_plot_png;
 use crate::{
     commands::{
         cli_common::{
@@ -204,6 +206,35 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     settings_writer
         .finish()
         .context("Finalize fragment length settings writer")?;
+
+    // Plot the global fragment length distribution as a line plot for quick QC
+    #[cfg(feature = "plotters")]
+    {
+        let mut global_counts = vec![0f64; all_bins[0].counts.len()];
+        for length_counts in &all_bins {
+            for (total, count) in global_counts.iter_mut().zip(length_counts.counts.iter()) {
+                *total += *count;
+            }
+        }
+
+        let x_values: Vec<f64> = (all_bins[0].length_min..=all_bins[0].length_max)
+            .map(|len| len as f64)
+            .collect();
+
+        let plot_path = opt.ioc.output_dir.join("fragment_lengths_global.png");
+
+        write_line_plot_png(
+            &plot_path,
+            "Fragment length distribution (summed/global)",
+            "Fragment length (bp)",
+            "Count",
+            &x_values,
+            &global_counts,
+            1200,
+            800,
+        )
+        .with_context(|| format!("writing fragment length plot to {}", plot_path.display()))?;
+    }
 
     // Write window coordinates as BED file to output_dir
     // Write bins BED file
