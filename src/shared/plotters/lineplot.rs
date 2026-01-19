@@ -146,7 +146,7 @@ where
 
     // Reserve a modest fixed strip for axis labels
     let x_label_area = 52;
-    let y_label_area = 52;
+    let y_label_area = 62;
 
     let mut chart = ChartBuilder::on(drawing_area)
         .caption(title, ("sans-serif", 22))
