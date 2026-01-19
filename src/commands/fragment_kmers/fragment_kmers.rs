@@ -38,7 +38,7 @@ use crate::{
             write::write_decoded_counts_matrix,
         },
         overlaps::find_overlapping_windows,
-        read::{default_include_read_paired_end, default_include_read_single_end},
+        read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
         scale_genome::apply_scaling_to_coverage_in_place,
         thread_pool::init_global_pool,
@@ -130,8 +130,8 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
 }
 
 pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
-    if opt.shared_args.single_end.single_end && opt.shared_args.require_proper_pair {
-        bail!("--require-proper-pair cannot be used with --single-end");
+    if opt.shared_args.unpaired.reads_are_fragments && opt.shared_args.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
     let (chromosomes, contigs) = resolve_chromosomes_and_contigs(
         &opt.shared_args.chromosomes,
@@ -556,10 +556,10 @@ fn process_tile(
         .gc_tag
         .as_deref()
         .map(|t| t.as_bytes().to_vec());
-    let single_end = opt.shared_args.single_end.single_end;
-    let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if single_end {
+    let unpaired = opt.shared_args.unpaired.reads_are_fragments;
+    let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if unpaired {
         let min_mapq = opt.shared_args.min_mapq;
-        Box::new(move |r: &Record| default_include_read_single_end(r, min_mapq))
+        Box::new(move |r: &Record| default_include_read_unpaired(r, min_mapq))
     } else {
         let min_mapq = opt.shared_args.min_mapq;
         let require_proper_pair = opt.shared_args.require_proper_pair;
@@ -575,7 +575,7 @@ fn process_tile(
         0,
         gc_tag_bytes.as_deref(),
         fragment_filter,
-        single_end,
+        unpaired,
     )
     .with_local_counters();
 

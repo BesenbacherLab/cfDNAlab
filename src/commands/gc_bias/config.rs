@@ -100,7 +100,7 @@ impl Default for OutlierScopeArg {
 /// ## Fragment length
 ///
 /// For **paired-end** sequencing, the length is defined as `end(reverse) - start(forward)`.
-/// For **single-end** sequencing, the length is defined as the `end(read) - start(read)`.
+/// For **unpaired** sequencing where each read is a fragment, the length is defined as `[read.pos, read.end)`.
 ///
 /// ## Windowing
 ///
@@ -129,7 +129,7 @@ pub struct GCConfig {
     pub ioc: IOCArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub single_end: SingleEndArgs,
+    pub unpaired: UnpairedArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ref_genome: Ref2BitRequiredArgs,
@@ -362,7 +362,7 @@ impl GCConfig {
     ) -> Self {
         Self {
             ioc,
-            single_end: SingleEndArgs { single_end: false },
+            unpaired: UnpairedArgs { reads_are_fragments: false },
             ref_genome: Ref2BitRequiredArgs { ref_2bit },
             ref_gc_dir,
             windows: WindowsArgs::default(),

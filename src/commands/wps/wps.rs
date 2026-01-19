@@ -15,7 +15,7 @@ use crate::commands::wps::config::{WPSConfig, WPSSharedConfig};
 use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment_iterator::fragments_from_bam;
-use crate::shared::read::{default_include_read_paired_end, default_include_read_single_end};
+use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
 use crate::shared::tiled_run::{
@@ -61,8 +61,8 @@ use std::{sync::Arc, time::Instant};
 ///   fails at any stage.
 pub fn run(opt: &WPSConfig) -> Result<()> {
     let start_time = Instant::now();
-    if opt.shared_args.single_end.single_end && opt.shared_args.require_proper_pair {
-        bail!("--require-proper-pair cannot be used with --single-end");
+    if opt.shared_args.unpaired.reads_are_fragments && opt.shared_args.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
     let (chromosomes, contigs) = resolve_chromosomes_and_contigs(
         &opt.shared_args.chromosomes,
@@ -710,9 +710,9 @@ pub fn wps_for_tile(
     };
 
     let gc_tag_bytes = opt.gc.gc_tag.as_deref().map(|t| t.as_bytes().to_vec());
-    let mut iter = if opt.single_end.single_end {
+    let mut iter = if opt.unpaired.reads_are_fragments {
         let min_mapq = opt.min_mapq;
-        let include_read_fn = move |r: &Record| default_include_read_single_end(r, min_mapq);
+        let include_read_fn = move |r: &Record| default_include_read_unpaired(r, min_mapq);
         fragments_from_bam(
             reader.records().map(|r| r.map_err(anyhow::Error::from)),
             include_read_fn,

@@ -19,7 +19,7 @@ let mut it = fragments_with_segments_from_bam(
     !opt.ignore_gap,   // include_inter_mate_gap
     None,              // optional gc tag
     post,
-    false,             // single_end
+    false,             // unpaired
 ).with_local_counters();
 
 for frag in it.by_ref() {
@@ -147,7 +147,7 @@ pub struct PairingAdapter<I, P, R, F> {
     counters: Box<dyn FragmentCounters + Send>,
     bam_include_read: Option<Box<dyn Fn(&Record) -> bool + Send + Sync>>,
     bam_map_read: Option<Box<dyn Fn(&Record) -> R + Send + Sync>>,
-    // Optional converter used only when `pairer` is None (single-end mode).
+    // Optional converter used only when `pairer` is None (unpaired --reads-are-fragments mode).
     bam_single_fragment_from_read: Option<Box<dyn Fn(&R) -> Option<F> + Send + Sync>>,
 }
 
@@ -185,7 +185,7 @@ where
         self
     }
 
-    /// Single-end: set the mapped-read -> fragment converter (used only when `pairer` is `None`).
+    /// Unpaired: set the mapped-read -> fragment converter (used only when `pairer` is `None`).
     pub fn with_bam_single_fragment_from_read(
         mut self,
         map_fragment: impl Fn(&R) -> Option<F> + Send + Sync + 'static,
@@ -261,10 +261,12 @@ where
                     };
                     let mapped = map_read(&rec);
 
-                    // *Single-end* path when no pairer is present
+                    // *Unpaired* path when no pairer is present
                     if self.pairer.is_none() {
                         let Some(map_frag) = &self.bam_single_fragment_from_read else {
-                            return Some(Err(anyhow!("no pairer and single-end fragment mapper not configured")));
+                            return Some(Err(anyhow!(
+                                "no pairer and unpaired fragment mapper not configured"
+                            )));
                         };
                         let frag_opt = map_frag(&mapped);
                         if let Some(frag) = frag_opt {
@@ -344,7 +346,7 @@ pub fn fragments_with_segments_from_bam<RIter, PF>(
     include_inter_mate_gap: bool,
     gc_tag: Option<&[u8]>,
     fragment_filter: PF,
-    single_end: bool,
+    unpaired: bool,
 ) -> PairingAdapter<
     impl Iterator<Item = Result<InputItem<FragmentWithSegments>>>,
     WithSegmentsPairer,
@@ -366,7 +368,7 @@ where
 
     let mut adapter = PairingAdapter::new(
         mapped,
-        if single_end {
+        if unpaired {
             None::<WithSegmentsPairer>
         } else {
             Some(pairer)
@@ -377,7 +379,7 @@ where
     })
     .with_fragment_filter(fragment_filter);
 
-    if single_end {
+    if unpaired {
         adapter = adapter.with_bam_single_fragment_from_read(move |read| {
             collect_fragment_with_segments_from_single_read(read, trigger_min_gap_bp)
         });
@@ -437,7 +439,7 @@ pub fn fragments_with_kmer_segments_from_bam<RIter, PF>(
     end_offset: u32,
     gc_tag: Option<&[u8]>,
     fragment_filter: PF,
-    single_end: bool,
+    unpaired: bool,
 ) -> PairingAdapter<
     impl Iterator<Item = Result<InputItem<FragmentWithKmerSegments>>>,
     KmerSegmentsPairer,
@@ -461,7 +463,7 @@ where
 
     let mut adapter = PairingAdapter::new(
         mapped,
-        if single_end {
+        if unpaired {
             None::<KmerSegmentsPairer>
         } else {
             Some(pairer)
@@ -472,7 +474,7 @@ where
     })
     .with_fragment_filter(fragment_filter);
 
-    if single_end {
+    if unpaired {
         adapter = adapter.with_bam_single_fragment_from_read(move |read| {
             collect_fragment_with_kmer_segments_from_single_read(read, indel_mode, end_offset)
         });
@@ -502,13 +504,13 @@ pub type BasicFragmentIter<'a> = PairingAdapter<
     Fragment,
 >;
 
-/// From BAM: optionally pair reads into `Fragment` or treat each as single-end.
+/// From BAM: optionally pair reads into `Fragment` or treat each as unpaired (--reads-are-fragments).
 pub fn fragments_from_bam<'a, RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     gc_tag: Option<&[u8]>,
     fragment_filter: PF,
-    single_end: bool,
+    unpaired: bool,
 ) -> BasicFragmentIter<'a>
 where
     RIter: Iterator<Item = Result<Record>> + 'a,
@@ -520,7 +522,7 @@ where
 
     let mut adapter = PairingAdapter::new(
         mapped,
-        if single_end {
+        if unpaired {
             None::<BasicPairer>
         } else {
             Some(BasicPairer)
@@ -535,7 +537,7 @@ where
     })
     .with_fragment_filter(fragment_filter);
 
-    if single_end {
+    if unpaired {
         adapter = adapter
             .with_bam_single_fragment_from_read(|read| collect_fragment_from_single_read(read));
     }
@@ -596,7 +598,7 @@ pub fn fragments_with_indel_counts_from_bam<'a, RIter, PF>(
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     indel_mode: IndelMode,
     fragment_filter: PF,
-    single_end: bool,
+    unpaired: bool,
 ) -> IndelCountsIter<'a>
 where
     RIter: Iterator<Item = Result<Record>> + 'a,
@@ -610,7 +612,7 @@ where
 
     let mut adapter = PairingAdapter::new(
         mapped,
-        if single_end {
+        if unpaired {
             None::<WithIndelCountsPairer>
         } else {
             Some(pairer)
@@ -619,7 +621,7 @@ where
     .with_bam_filter_and_mapper(include_read, |rec| IndelReadInfo::from(rec))
     .with_fragment_filter(fragment_filter);
 
-    if single_end {
+    if unpaired {
         let skip_indels = matches!(indel_mode, IndelMode::Skip);
         let count_indels = matches!(indel_mode, IndelMode::Adjust);
         adapter = adapter.with_bam_single_fragment_from_read(move |read| {
@@ -663,7 +665,7 @@ pub fn fragments_with_frag_file_info_from_bam<RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     fragment_filter: PF,
-    single_end: bool,
+    unpaired: bool,
 ) -> PairingAdapter<
     impl Iterator<Item = Result<InputItem<FragFileFragment>>>,
     WithFragInfoPairer,
@@ -681,16 +683,16 @@ where
 
     let mut adapter = PairingAdapter::new(
         mapped,
-        if single_end {
+        if unpaired {
             None::<WithFragInfoPairer>
         } else {
             Some(pairer)
         },
     )
-        .with_bam_filter_and_mapper(include_read, |rec| FragReadInfo::from(rec))
-        .with_fragment_filter(fragment_filter);
+    .with_bam_filter_and_mapper(include_read, |rec| FragReadInfo::from(rec))
+    .with_fragment_filter(fragment_filter);
 
-    if single_end {
+    if unpaired {
         adapter = adapter.with_bam_single_fragment_from_read(|read| {
             collect_fragment_with_frag_file_info_from_single_read(read)
         });
@@ -736,7 +738,7 @@ pub fn fragments_with_records_from_bam<RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     fragment_filter: PF,
-    single_end: bool,
+    unpaired: bool,
 ) -> PairingAdapter<
     impl Iterator<Item = Result<InputItem<WithRecordsFragment>>>,
     WithRecordReadInfoPairer,
@@ -754,16 +756,16 @@ where
 
     let mut adapter = PairingAdapter::new(
         mapped,
-        if single_end {
+        if unpaired {
             None::<WithRecordReadInfoPairer>
         } else {
             Some(pairer)
         },
     )
-        .with_bam_filter_and_mapper(include_read, |rec| WithRecordReadInfo::from(rec))
-        .with_fragment_filter(fragment_filter);
+    .with_bam_filter_and_mapper(include_read, |rec| WithRecordReadInfo::from(rec))
+    .with_fragment_filter(fragment_filter);
 
-    if single_end {
+    if unpaired {
         adapter = adapter.with_bam_single_fragment_from_read(|read| {
             collect_fragment_with_records_from_single_read(read)
         });

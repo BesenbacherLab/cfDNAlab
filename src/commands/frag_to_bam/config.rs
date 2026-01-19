@@ -2,7 +2,8 @@ use crate::commands::cli_common::{ChromosomeArgs, FragmentLengthArgs};
 use crate::shared::blacklist::BlacklistStrategy;
 use std::path::PathBuf;
 
-/// Convert a finaleDB-style frag file to a single-end BAM file.
+/// Convert a finaleDB-style frag file to a BAM file with unpaired reads
+/// (each read is a full fragment).
 ///
 /// The first five columns in the frag file:
 /// `Chromosome, Start, End, MapQ, Strand`.

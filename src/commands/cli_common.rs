@@ -17,8 +17,8 @@ pub const MIN_ACGT_BASES_FOR_GC_FRACTION: u32 = 10;
 pub struct IOCArgs {
     /// Indexed, coordinate-sorted BAM input file `[path]`
     ///
-    /// Can be either **paired-end** or **single-end** (set `--single-end`).
-    /// Single-end assumes the reads span their fragments exactly
+    /// Can be either **paired-end** or **unpaired** (set `--reads-are-fragments`).
+    /// Unpaired assumes the reads span their fragments exactly
     /// (so read size is fragment size).
     #[cfg_attr(
         feature = "cli",
@@ -57,8 +57,8 @@ pub struct IOCArgs {
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone)]
-pub struct SingleEndArgs {
-    /// The input is single-end and the read spans exactly the full fragment `[flag]`
+pub struct UnpairedArgs {
+    /// The input has one read per fragment and the **read spans exactly the full fragment** (e.g. Nanopore) `[flag]`
     ///
     /// Each aligned read is treated as a fragment spanning its aligned reference interval
     /// `[pos, reference_end)`. This uses the mapped span only
@@ -66,7 +66,7 @@ pub struct SingleEndArgs {
     ///
     /// Cannot be combined with `--require-proper-pair` (when available).
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
-    pub single_end: bool,
+    pub reads_are_fragments: bool,
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]

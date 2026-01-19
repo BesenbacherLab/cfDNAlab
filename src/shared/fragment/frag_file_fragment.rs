@@ -109,7 +109,7 @@ pub fn collect_fragment_with_frag_file_info(
     })
 }
 
-/// Build a `FragFileFragment` from a single read (single-end input).
+/// Build a `FragFileFragment` from a single read (unpaired input).
 pub fn collect_fragment_with_frag_file_info_from_single_read(
     read: &FragReadInfo,
 ) -> Option<FragFileFragment> {

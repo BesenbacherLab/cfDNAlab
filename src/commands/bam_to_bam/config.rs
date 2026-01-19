@@ -1,5 +1,5 @@
 use crate::commands::cli_common::{
-    ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, ScaleGenomeArgs, SingleEndArgs,
+    ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, ScaleGenomeArgs, UnpairedArgs,
     WindowSpec,
 };
 use crate::shared::blacklist::BlacklistStrategy;
@@ -30,7 +30,7 @@ use std::path::PathBuf;
 /// The fragment length is written to the AUX tag "FLEN".
 /// 
 /// For **paired-end** sequencing, the length is defined as `[forward.pos, reverse.end)`.
-/// For **single-end** sequencing, the length is defined as `[read.pos, read.end)`.
+/// For **unpaired** sequencing where each read is a fragment, the length is defined as `[read.pos, read.end)`.
 ///
 /// ## Always-on exclusion criteria
 ///
@@ -73,7 +73,7 @@ pub struct BamToBamConfig {
     pub out_bam: PathBuf,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub single_end: SingleEndArgs,
+    pub unpaired: UnpairedArgs,
 
     /// Intervals to keep overlapping fragments from `[path]`
     ///
@@ -190,7 +190,7 @@ impl BamToBamConfig {
             fragment_lengths: FragmentLengthArgs::default(),
             min_mapq: 0,
             require_proper_pair: false,
-            single_end: SingleEndArgs { single_end: false },
+            unpaired: UnpairedArgs { reads_are_fragments: false },
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::Any,

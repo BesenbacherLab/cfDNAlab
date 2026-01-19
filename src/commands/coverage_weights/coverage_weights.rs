@@ -12,7 +12,7 @@ use crate::{
         coverage::Coverage,
         fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
-        read::{default_include_read_paired_end, default_include_read_single_end},
+        read::{default_include_read_paired_end, default_include_read_unpaired},
         thread_pool::init_global_pool,
     },
 };
@@ -54,8 +54,8 @@ use std::{
 ///   cannot be created.
 pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
     let start_time = Instant::now();
-    if opt.single_end.single_end && opt.require_proper_pair {
-        bail!("--require-proper-pair cannot be used with --single-end");
+    if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
     let (chromosomes, _contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
@@ -222,9 +222,9 @@ fn process_chrom(
     };
 
     // Create fragment iterator
-    let mut iter = if opt.single_end.single_end {
+    let mut iter = if opt.unpaired.reads_are_fragments {
         let min_mapq = opt.min_mapq;
-        let include_read_fn = move |r: &Record| default_include_read_single_end(r, min_mapq);
+        let include_read_fn = move |r: &Record| default_include_read_unpaired(r, min_mapq);
         fragments_from_bam(
             reader.records().map(|r| r.map_err(anyhow::Error::from)),
             include_read_fn,

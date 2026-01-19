@@ -1,5 +1,5 @@
 use crate::commands::cli_common::{ApplyGCArgs, ScaleGenomeArgs};
-use crate::commands::cli_common::{ChromosomeArgs, IOCArgs, SingleEndArgs, WindowsArgs};
+use crate::commands::cli_common::{ChromosomeArgs, IOCArgs, UnpairedArgs, WindowsArgs};
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use std::path::PathBuf;
 
@@ -126,7 +126,7 @@ pub struct WPSSharedConfig {
     pub ioc: IOCArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub single_end: SingleEndArgs,
+    pub unpaired: UnpairedArgs,
 
     /// Prefix for output files (e.g., a sample name) `[string]`
     ///
@@ -233,7 +233,9 @@ impl WPSSharedConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs, output_prefix: &str) -> Self {
         Self {
             ioc,
-            single_end: SingleEndArgs { single_end: false },
+            unpaired: UnpairedArgs {
+                reads_are_fragments: false,
+            },
             output_prefix: output_prefix.into(),
             window_size: 120,
             decimals: 2,

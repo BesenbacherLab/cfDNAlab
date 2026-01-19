@@ -19,13 +19,11 @@ use crate::{
         bed::load_windows_from_bed,
         blacklist::{compute_blacklist_overlap, is_blacklisted},
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
-        fragment_iterator::{
-            fragments_with_indel_counts_from_bam,
-        },
+        fragment_iterator::fragments_with_indel_counts_from_bam,
         io::create_text_writer,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
-        read::{default_include_read_paired_end, default_include_read_single_end},
+        read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq,
         scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
         thread_pool::init_global_pool,
@@ -59,8 +57,8 @@ use std::{io::Write, sync::Arc, time::Instant};
 ///   the first failure.
 pub fn run(opt: &LengthsConfig) -> Result<()> {
     let start_time = Instant::now();
-    if opt.single_end.single_end && opt.require_proper_pair {
-        bail!("--require-proper-pair cannot be used with --single-end");
+    if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
@@ -347,10 +345,10 @@ fn process_chrom(
     };
 
     // Create fragment iterator
-    let single_end = opt.single_end.single_end;
-    let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if single_end {
+    let unpaired = opt.unpaired.reads_are_fragments;
+    let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if unpaired {
         let min_mapq = opt.min_mapq;
-        Box::new(move |r: &Record| default_include_read_single_end(r, min_mapq))
+        Box::new(move |r: &Record| default_include_read_unpaired(r, min_mapq))
     } else {
         let min_mapq = opt.min_mapq;
         let require_proper_pair = opt.require_proper_pair;
@@ -363,7 +361,7 @@ fn process_chrom(
         move |rec| include_read_fn(rec),
         opt.indel_mode,
         fragment_filter,
-        single_end,
+        unpaired,
     )
     .with_local_counters();
 

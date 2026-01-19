@@ -101,7 +101,7 @@ pub fn collect_fragment_with_records(
     })
 }
 
-/// Build a `WithRecordsFragment` from a single read (single-end input).
+/// Build a `WithRecordsFragment` from a single read (unpaired input).
 pub fn collect_fragment_with_records_from_single_read(
     read: &WithRecordReadInfo,
 ) -> Option<WithRecordsFragment> {

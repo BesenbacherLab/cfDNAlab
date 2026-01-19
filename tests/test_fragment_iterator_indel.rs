@@ -16,7 +16,7 @@ fn make_record(qname: &[u8], pos: i64, len: u32, is_reverse: bool) -> bam::Recor
 }
 
 #[test]
-fn yields_single_end_fragments_and_respects_filter() {
+fn yields_unpaired_fragments_and_respects_filter() {
     // Arrange
     let records = vec![
         Ok(make_record(b"r1", 5, 5, false)),  // length 5

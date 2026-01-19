@@ -20,7 +20,7 @@ use crate::{
         fragment::frag_file_fragment::FragFileFragment,
         fragment_iterator::fragments_with_frag_file_info_from_bam,
         overlaps::find_overlapping_windows,
-        read::{default_include_read_paired_end, default_include_read_single_end},
+        read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq, scale_genome::compute_window_scaling_over_fragment,
         thread_pool::init_global_pool, tiled_run::make_temp_dir, writers::open_zstd_auto_writer,
     },
@@ -91,8 +91,8 @@ pub fn run(opt: &BamToFragConfig) -> Result<()> {
 }
 
 pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
-    if opt.single_end.single_end && opt.require_proper_pair {
-        bail!("--require-proper-pair cannot be used with --single-end");
+    if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
@@ -291,10 +291,10 @@ fn process_chrom(
     };
 
     // Create fragment iterator
-    let single_end = opt.single_end.single_end;
-    let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if single_end {
+    let unpaired = opt.unpaired.reads_are_fragments;
+    let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if unpaired {
         let min_mapq = opt.min_mapq;
-        Box::new(move |r: &Record| default_include_read_single_end(r, min_mapq))
+        Box::new(move |r: &Record| default_include_read_unpaired(r, min_mapq))
     } else {
         let min_mapq = opt.min_mapq;
         let require_proper_pair = opt.require_proper_pair;
@@ -307,7 +307,7 @@ fn process_chrom(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
         move |rec| include_read_fn(rec),
         fragment_filter,
-        single_end,
+        unpaired,
     )
     .with_local_counters();
 

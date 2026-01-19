@@ -52,8 +52,8 @@ const EXTRA_PEAK_HALO_BP: u32 = 450;
 ///     Indicates whether peak calling finished and all outputs were written successfully.
 pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     let start_time = Instant::now();
-    if opt.shared_args.single_end.single_end && opt.shared_args.require_proper_pair {
-        bail!("--require-proper-pair cannot be used with --single-end");
+    if opt.shared_args.unpaired.reads_are_fragments && opt.shared_args.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
     let (chromosomes, contigs) = resolve_chromosomes_and_contigs(
         &opt.shared_args.chromosomes,

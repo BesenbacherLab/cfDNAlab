@@ -335,7 +335,7 @@ pub fn collect_fragment_with_segments(
     })
 }
 
-/// Build a fragment from a single segmented read (single-end input).
+/// Build a fragment from a single segmented read (unpaired input).
 pub fn collect_fragment_with_segments_from_single_read(
     read: &SegmentedReadInfo,
     trigger_min_gap_bp: u32,

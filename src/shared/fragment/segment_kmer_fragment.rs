@@ -441,7 +441,7 @@ pub fn collect_fragment_with_kmer_segments(
     })
 }
 
-/// Build a fragment with k-mer-safe segments from a single read (single-end input).
+/// Build a fragment with k-mer-safe segments from a single read (unpaired input).
 pub fn collect_fragment_with_kmer_segments_from_single_read(
     read: &KmerSegmentedReadInfo,
     indel_mode: IndelMode,

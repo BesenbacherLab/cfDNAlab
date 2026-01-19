@@ -5,7 +5,7 @@ use crate::{
         cli_common::{
             ApplyGCArgs, BaseSelectionArgs, ChromosomeArgs, FragmentLengthArgs,
             FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
-            SingleEndArgs, WindowsArgs,
+            UnpairedArgs, WindowsArgs,
         },
         fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame},
     },
@@ -23,7 +23,7 @@ pub struct FragmentKmersSharedArgs {
     pub ref_genome: Ref2BitRequiredArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub single_end: SingleEndArgs,
+    pub unpaired: UnpairedArgs,
 
     /// Prefix for output files (e.g., a sample name) `[string]`
     ///
@@ -180,7 +180,7 @@ impl FragmentKmersSharedArgs {
         Self {
             ioc,
             ref_genome,
-            single_end: SingleEndArgs { single_end: false },
+            unpaired: UnpairedArgs { reads_are_fragments: false },
             output_prefix: output_prefix,
             tile_size: 20_000_000,
             position_selection: FragmentPositionSelectionArgs {

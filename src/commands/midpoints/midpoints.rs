@@ -30,7 +30,7 @@ use crate::{
         fragment_iterator::fragments_from_bam,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
-        read::{default_include_read_paired_end, default_include_read_single_end},
+        read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
         scale_genome::compute_window_scaling_over_fragment,
         thread_pool::init_global_pool,
@@ -64,8 +64,8 @@ use crate::{
 ///   outputs fails.
 pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let start_time = Instant::now();
-    if opt.single_end.single_end && opt.require_proper_pair {
-        bail!("--require-proper-pair cannot be used with --single-end");
+    if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
@@ -394,9 +394,9 @@ fn process_tile(
 
     // Create fragment iterator
     let gc_tag_bytes = gc_tag.map(|t| t.as_bytes().to_vec());
-    let mut iter = if opt.single_end.single_end {
+    let mut iter = if opt.unpaired.reads_are_fragments {
         let min_mapq = opt.min_mapq;
-        let include_read_fn = move |r: &Record| default_include_read_single_end(r, min_mapq);
+        let include_read_fn = move |r: &Record| default_include_read_unpaired(r, min_mapq);
         fragments_from_bam(
             reader.records().map(|r| r.map_err(anyhow::Error::from)),
             include_read_fn,

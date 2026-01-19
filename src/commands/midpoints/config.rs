@@ -1,5 +1,5 @@
 use crate::{
-    commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs, SingleEndArgs},
+    commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs, UnpairedArgs},
     shared::blacklist::BlacklistStrategy,
 };
 use std::path::PathBuf;
@@ -16,7 +16,7 @@ use std::path::PathBuf;
 /// ## Fragment span
 ///
 /// For **paired-end** sequencing, the span is defined as `[forward.pos, reverse.end)`.
-/// For **single-end** sequencing, the span is defined as `[read.pos, read.end)`.
+/// For **unpaired** sequencing where each read is a fragment, the span is defined as `[read.pos, read.end)`.
 ///
 /// ## Always-on exclusion criteria
 ///
@@ -36,7 +36,7 @@ pub struct MidpointsConfig {
     pub ioc: IOCArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub single_end: SingleEndArgs,
+    pub unpaired: UnpairedArgs,
 
     /// Prefix for output files (e.g., a sample name) `[string]`
     ///
@@ -180,7 +180,7 @@ impl MidpointsConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs, intervals: PathBuf) -> Self {
         Self {
             ioc,
-            single_end: SingleEndArgs { single_end: false },
+            unpaired: UnpairedArgs { reads_are_fragments: false },
             output_prefix: "sites".into(),
             intervals,
             length_bins: vec![30, 1001],

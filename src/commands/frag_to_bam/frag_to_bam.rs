@@ -423,7 +423,8 @@ fn make_record(frag: &ParsedFragment, tid: i32, prefix: &str, idx: u64) -> Resul
     record.set_pos(frag.start as i64);
     record.set_insert_size(0);
     record.set_mapq(frag.mapq);
-    // Flag only the reverse strand; these are single-end records with no mate information
+    // Flag only the reverse strand
+    // These are unpaired records with no mate information
     let flags = if frag.strand == '-' { 0x10 } else { 0 };
     record.set_flags(flags);
     record.set(qname.as_bytes(), Some(&cigar), &seq, &qual);

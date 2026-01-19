@@ -1,6 +1,6 @@
 use crate::commands::cli_common::{
     ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, IOCArgs, ScaleGenomeArgs,
-    SingleEndArgs, WindowSpec,
+    UnpairedArgs, WindowSpec,
 };
 use crate::shared::blacklist::BlacklistStrategy;
 use std::path::PathBuf;
@@ -49,7 +49,7 @@ pub struct BamToFragConfig {
     pub ioc: IOCArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub single_end: SingleEndArgs,
+    pub unpaired: UnpairedArgs,
 
     /// Prefix for output file (e.g., a sample name) `[string]`
     ///
@@ -157,7 +157,7 @@ impl BamToFragConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
-            single_end: SingleEndArgs { single_end: false },
+            unpaired: UnpairedArgs { reads_are_fragments: false },
             output_prefix: "fragments".into(),
             by_bed: None,
             chromosomes,

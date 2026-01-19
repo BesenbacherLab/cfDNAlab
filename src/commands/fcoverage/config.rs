@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::commands::cli_common::{ApplyGCArgs, ScaleGenomeArgs};
 use crate::commands::cli_common::{
-    ChromosomeArgs, FragmentLengthArgs, IOCArgs, SingleEndArgs, WindowsArgs,
+    ChromosomeArgs, FragmentLengthArgs, IOCArgs, UnpairedArgs, WindowsArgs,
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 
@@ -15,7 +15,7 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 /// ## Fragment span
 ///
 /// For **paired-end** sequencing, the span is defined as `[forward.pos, reverse.end)`.
-/// For **single-end** sequencing, the span is defined as `[read.pos, read.end)`.
+/// For **unpaired** sequencing where each read is a fragment, the length is defined as `[read.pos, read.end)`.
 ///
 /// ## Windowing
 ///
@@ -72,7 +72,7 @@ pub struct FCoverageConfig {
     pub ioc: IOCArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub single_end: SingleEndArgs,
+    pub unpaired: UnpairedArgs,
 
     /// Prefix for output files (e.g., a sample name) `[string]`
     ///
@@ -203,7 +203,7 @@ impl FCoverageConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
-            single_end: SingleEndArgs { single_end: false },
+            unpaired: UnpairedArgs { reads_are_fragments: false },
             output_prefix: "coverage".into(),
             decimals: 2,
             keep_zero_runs: false,

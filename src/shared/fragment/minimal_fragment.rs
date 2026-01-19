@@ -93,7 +93,7 @@ pub fn collect_fragment(a: &MinimalReadInfo, b: &MinimalReadInfo) -> Option<Frag
     })
 }
 
-/// Build a Fragment from a single read (single-end input).
+/// Build a Fragment from a single read (unpaired input).
 pub fn collect_fragment_from_single_read(read: &MinimalReadInfo) -> Option<Fragment> {
     if read.end <= read.pos {
         return None;

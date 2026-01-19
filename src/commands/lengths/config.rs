@@ -2,7 +2,7 @@ use crate::{
     commands::{
         cli_common::{
             ApplyGCArgFileOnly, AssignToWindowArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs,
-            ScaleGenomeArgs, SingleEndArgs, WindowsArgs,
+            ScaleGenomeArgs, UnpairedArgs, WindowsArgs,
         },
         gc_bias::correct::MarginalizeLengthsWeightingScheme,
     },
@@ -13,7 +13,7 @@ use std::path::PathBuf;
 /// Count fragment lengths in a BAM-file.
 ///
 /// Fragment length: For **paired-end** sequencing, the length is defined as `end(reverse) - start(forward)`.
-/// For **single-end** sequencing, the length is defined as the `end(read) - start(read)`.
+/// For **unpaired** sequencing where each read is a fragment, the length is defined as `[read.pos, read.end)`.
 ///
 /// The default for windows is to count fragments by their overlap fraction. That is, most
 /// fragments are counted as `1.0`, while fragments overlapping the edge of a window are counted
@@ -51,7 +51,7 @@ pub struct LengthsConfig {
     pub ioc: IOCArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub single_end: SingleEndArgs,
+    pub unpaired: UnpairedArgs,
 
     /// How to handle insertions and deletions in fragments `[string]`
     ///
@@ -212,7 +212,7 @@ impl LengthsConfig {
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
             fragment_lengths: FragmentLengthArgs::default(),
-            single_end: SingleEndArgs { single_end: false },
+            unpaired: UnpairedArgs { reads_are_fragments: false },
             min_mapq: 30,
             require_proper_pair: false,
             blacklist: None,
@@ -243,8 +243,8 @@ impl LengthsConfig {
         &mut self.fragment_lengths
     }
 
-    pub fn set_single_end(&mut self, single_end: SingleEndArgs) {
-        self.single_end = single_end;
+    pub fn set_unpaired(&mut self, unpaired: UnpairedArgs) {
+        self.unpaired = unpaired;
     }
 
     pub fn set_scaling_factors(&mut self, scaling_factors: Option<PathBuf>) {

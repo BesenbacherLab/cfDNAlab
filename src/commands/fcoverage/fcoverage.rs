@@ -17,7 +17,7 @@ use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment::segment_fragment::FragmentWithSegments;
 use crate::shared::fragment_iterator::fragments_with_segments_from_bam;
-use crate::shared::read::{default_include_read_paired_end, default_include_read_single_end};
+use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
 use crate::shared::tiled_run::{
@@ -62,8 +62,8 @@ use std::{sync::Arc, time::Instant};
 ///   fails at any stage.
 pub fn run(opt: &FCoverageConfig) -> Result<()> {
     let start_time = Instant::now();
-    if opt.single_end.single_end && opt.require_proper_pair {
-        bail!("--require-proper-pair cannot be used with --single-end");
+    if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
@@ -636,10 +636,10 @@ fn process_tile(
     let gc_tag_bytes = gc_tag.map(|t| t.as_bytes().to_vec());
 
     // Create fragment iterator
-    let single_end = opt.single_end.single_end;
-    let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if single_end {
+    let unpaired = opt.unpaired.reads_are_fragments;
+    let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if unpaired {
         let min_mapq = opt.min_mapq;
-        Box::new(move |r: &Record| default_include_read_single_end(r, min_mapq))
+        Box::new(move |r: &Record| default_include_read_unpaired(r, min_mapq))
     } else {
         let min_mapq = opt.min_mapq;
         let require_proper_pair = opt.require_proper_pair;
@@ -655,7 +655,7 @@ fn process_tile(
         !opt.ignore_gap,
         gc_tag_bytes.as_deref(),
         fragment_filter,
-        single_end,
+        unpaired,
     )
     .with_local_counters();
 

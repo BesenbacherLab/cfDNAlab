@@ -83,7 +83,7 @@ common reasons. These tiers should reuse the same flag logic used across command
 #### Record classification counts
 - Total records
 - Mapped, unmapped, primary, secondary, supplementary
-- Paired, single-end, mixed
+- Paired, unpaired, mixed
 - QC failed records
 - Duplicate records
 - Read1 vs read2 counts
