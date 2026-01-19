@@ -4,7 +4,10 @@ use crate::{
         counters::GCCounters,
         gc_bias::{
             CORRECTION_CLAMP_RANGE, GC_CORRECTION_SCHEMA_VERSION,
-            binning::{CollapseAggregation, bin_greedily_by_mass, collapse_counts_by_bins},
+            binning::{
+                CollapseAggregation, bin_greedily_by_mass, collapse_counts_by_bins,
+                compute_bin_edges,
+            },
             config::GCConfig,
             counting::{
                 GCCounts, GCPrefixes, apply_gc_percent_width_correction, build_gc_prefixes,
@@ -43,7 +46,7 @@ use crate::{
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
-use ndarray::{Array2, ArrayBase, Axis, Data, DataMut, Ix2, Zip};
+use ndarray::{Array1, Array2, ArrayBase, Axis, Data, DataMut, Ix2, Zip};
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
@@ -632,7 +635,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     }?;
 
     // Length-bin frequencies (normalized) used for length-agnostic GC correction
-    let length_bin_frequencies = {
+    let length_bin_frequencies: Array1<f64> = {
         let per_length_totals = binned_gc_counts.sum_axis(Axis(1));
         let total: f64 = per_length_totals.iter().sum();
         ensure!(total > 0.0, "Total fragment count for length bins is zero");
@@ -645,10 +648,110 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         &length_bins,
         &gc_bins,
         correction_matrix.clone(),
-        length_bin_frequencies,
+        length_bin_frequencies.clone(),
         &reference_metadata,
     )?;
     correction_pkg.write_npz(&opt.ioc.output_dir.join("gc_bias_correction.npz"))?;
+
+    // Plot the avg. gc-bias across lengths for quick QC
+    #[cfg(feature = "plotters")]
+    {
+        use crate::shared::plotters::lineplot::write_line_plot_png;
+
+        println!("Start: Plotting avg. bias across lengths");
+        let gc_edges = compute_bin_edges(&gc_bins, 0, 100)?;
+        let x_values: Vec<f64> = gc_edges
+            .windows(2)
+            .map(|window| {
+                let start = window[0] as f64;
+                let end = window[1] as f64;
+                (start + end) / 2.0
+            })
+            .collect();
+
+        // Unweighted average bias
+
+        let num_gc_bins = correction_matrix.ncols();
+        let mut unweighted_bias = vec![0.0; num_gc_bins];
+        let mut unweighted_counts = vec![0usize; num_gc_bins];
+
+        for length_biases in correction_matrix.outer_iter() {
+            for (gc_idx, &correction_factor) in length_biases.iter().enumerate() {
+                if correction_factor == 0.0 {
+                    continue;
+                }
+                unweighted_bias[gc_idx] += 1.0 / correction_factor;
+                unweighted_counts[gc_idx] += 1;
+            }
+        }
+
+        for (bias, count) in unweighted_bias.iter_mut().zip(unweighted_counts.iter()) {
+            if *count > 0 {
+                *bias /= *count as f64;
+            }
+        }
+
+        // Weighted average bias
+
+        let mut weighted_bias = vec![0.0; num_gc_bins];
+        let mut weight_per_gc = vec![0.0; num_gc_bins];
+
+        for (length_biases, &length_weight) in correction_matrix
+            .outer_iter()
+            .zip(length_bin_frequencies.iter())
+        {
+            if length_weight == 0.0 {
+                continue;
+            }
+            for (gc_idx, &correction_factor) in length_biases.iter().enumerate() {
+                if correction_factor == 0.0 {
+                    continue;
+                }
+                weight_per_gc[gc_idx] += length_weight;
+                weighted_bias[gc_idx] += length_weight / correction_factor;
+            }
+        }
+
+        for (bias, weight) in weighted_bias.iter_mut().zip(weight_per_gc.iter()) {
+            if *weight > 0.0 {
+                *bias /= *weight;
+            }
+        }
+
+        // Plot the bias
+
+        let plot_path_unweighted = opt
+            .ioc
+            .output_dir
+            .join("avg_gc_bias_across_lengths_unweighted.png");
+        write_line_plot_png(
+            &plot_path_unweighted,
+            "Average GC bias across fragment lengths (unweighted)",
+            "GC bin (%)",
+            "GC bias",
+            &x_values,
+            &unweighted_bias,
+            1600,
+            1000,
+        )
+        .with_context(|| format!("writing GC bias plot to {}", plot_path_unweighted.display()))?;
+
+        let plot_path_weighted = opt
+            .ioc
+            .output_dir
+            .join("avg_gc_bias_across_lengths_weighted.png");
+        write_line_plot_png(
+            &plot_path_weighted,
+            "Average GC bias across fragment lengths (weighted by length frequency)",
+            "GC bin (%)",
+            "GC bias",
+            &x_values,
+            &weighted_bias,
+            1600,
+            1000,
+        )
+        .with_context(|| format!("writing GC bias plot to {}", plot_path_weighted.display()))?;
+    }
 
     println!("");
     println!("Statistics");
