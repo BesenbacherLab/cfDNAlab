@@ -210,6 +210,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     // Plot the global fragment length distribution as a line plot for quick QC
     #[cfg(feature = "plotters")]
     {
+        println!("Start: Plotting overall length distribution");
         let mut global_counts = vec![0f64; all_bins[0].counts.len()];
         for length_counts in &all_bins {
             for (total, count) in global_counts.iter_mut().zip(length_counts.counts.iter()) {

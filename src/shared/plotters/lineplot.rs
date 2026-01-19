@@ -123,18 +123,16 @@ where
     let y_min = y_values.iter().copied().fold(f64::INFINITY, f64::min);
     let y_max = y_values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 
-    let y_low = if y_min.is_finite() {
-        y_min.min(0.0)
-    } else {
-        0.0
-    };
-    let y_high = if y_max.is_finite() {
-        y_max.max(1.0)
-    } else {
-        1.0
-    };
+    let mut y_low = if y_min.is_finite() { y_min } else { 0.0 };
+    let mut y_high = if y_max.is_finite() { y_max } else { 1.0 };
 
-    // Pad y range when all values are identical so the axis is non-zero
+    // Ensure a non-zero span even if all values are identical
+    if (y_high - y_low).abs() < f64::EPSILON {
+        let pad = (y_low.abs() * 0.05).max(1.0);
+        y_low -= pad;
+        y_high += pad;
+    }
+
     let y_span = (y_high - y_low).abs();
     let y_pad = if y_span > 0.0 && y_span.is_finite() {
         y_span * 0.05
@@ -146,9 +144,9 @@ where
     // Keep the background clear and axis labels readable for quick QC
     drawing_area.fill(&WHITE)?;
 
-    // Reserve a modest fixed strip for axis labels. Keep x compact and y slightly wider
+    // Reserve a modest fixed strip for axis labels
     let x_label_area = 52;
-    let y_label_area = 110;
+    let y_label_area = 52;
 
     let mut chart = ChartBuilder::on(drawing_area)
         .caption(title, ("sans-serif", 22))
