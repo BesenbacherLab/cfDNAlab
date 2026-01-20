@@ -1,6 +1,10 @@
 use anyhow::{Result, ensure};
 use ndarray::Array2;
-use plotters::{coord::Shift, prelude::*};
+use plotters::{
+    coord::Shift,
+    prelude::*,
+    style::text_anchor::{HPos, Pos, VPos},
+};
 use std::path::Path;
 
 /// Output formats supported by the heatmap writer.
@@ -331,13 +335,13 @@ where
         ))?;
 
         let text = format!("{}: {:.2}", label, value);
-        let text_x = x_cursor + swatch_w + 6;
-        let text_y = y0 + swatch_h / 2 + 6; // Vertically center text with the swatch
-        legend_area.draw(&Text::new(
-            text,
-            (text_x, text_y),
-            ("sans-serif", 16).into_font().color(&BLACK),
-        ))?;
+        let text_x = x_cursor + swatch_w + 8;
+        let text_y = y0 + swatch_h / 2;
+        let text_style = ("sans-serif", 16)
+            .into_text_style(legend_area)
+            .pos(Pos::new(HPos::Left, VPos::Center))
+            .color(&BLACK);
+        legend_area.draw(&Text::new(text, (text_x, text_y), text_style))?;
 
         let step = swatch_w + h_pad + 90;
         x_cursor += step;

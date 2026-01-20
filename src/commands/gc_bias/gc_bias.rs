@@ -775,7 +775,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             None,
             None,
             Some(1.0),
-            1600,
+            1400,
             1000,
             HeatmapFormat::Png,
         )
