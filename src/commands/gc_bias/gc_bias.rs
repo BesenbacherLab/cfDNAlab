@@ -762,12 +762,12 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         )
         .with_context(|| format!("writing GC bias plot to {}", plot_path_weighted.display()))?;
 
-        // Heatmap of bias across length and GC bins
+        // Heatmap of bias across length and GC contents
         let heatmap_path = opt.ioc.output_dir.join("gc_bias_heatmap.png");
         write_heatmap(
             &heatmap_path,
             "GC bias per length and GC bin",
-            "GC bin (%)",
+            "GC (%)",
             "Fragment length (bp)",
             &bias_matrix,
             Some(&gc_edges_f),
@@ -780,6 +780,30 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             HeatmapFormat::Png,
         )
         .with_context(|| format!("writing GC bias heatmap to {}", heatmap_path.display()))?;
+
+        // Heatmap of bias across length bins and GC bins
+        let heatmap_path = opt.ioc.output_dir.join("gc_bias_heatmap.bins.png");
+        write_heatmap(
+            &heatmap_path,
+            "GC bias per length bin and GC bin",
+            "GC bin",
+            "Fragment length bin",
+            &bias_matrix,
+            None,
+            None,
+            None,
+            None,
+            Some(1.0),
+            1400,
+            1000,
+            HeatmapFormat::Png,
+        )
+        .with_context(|| {
+            format!(
+                "writing GC bias heatmap (bins) to {}",
+                heatmap_path.display()
+            )
+        })?;
     }
 
     println!("");
