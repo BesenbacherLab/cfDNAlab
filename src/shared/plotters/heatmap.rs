@@ -54,6 +54,9 @@ pub enum HeatmapFormat {
 ///     using a diverging center, yellow otherwise.
 /// - `max_color`:
 ///     Optional color for the maximum value. Defaults to orange.
+/// - `symmetric_diverging`:
+///     When true, uses the maximum absolute distance from the center to scale both
+///     sides of a diverging palette so gradients are symmetric.
 /// - `upsample_factor`:
 ///     Bilinear upsampling factor applied to the matrix before plotting to reduce visible blockiness. Use 1 to disable.
 /// - `width`:
@@ -80,6 +83,7 @@ pub fn write_heatmap<P: AsRef<Path>>(
     val_center: Option<f64>,
     min_color: Option<RGBColor>,
     max_color: Option<RGBColor>,
+    symmetric_diverging: bool,
     upsample_factor: usize,
     width: u32,
     height: u32,
@@ -134,6 +138,7 @@ pub fn write_heatmap<P: AsRef<Path>>(
                 val_center,
                 min_color,
                 max_color,
+                symmetric_diverging,
             )
         }
         HeatmapFormat::Svg => {
@@ -152,6 +157,7 @@ pub fn write_heatmap<P: AsRef<Path>>(
                 val_center,
                 min_color,
                 max_color,
+                symmetric_diverging,
             )
         }
     }
@@ -187,10 +193,12 @@ pub fn write_heatmap<P: AsRef<Path>>(
 /// - `center_val`:
 ///     Optional diverging center.
 /// - `min_color`:
-///     Optional color for the minimum value. Defaults depend on the palette: blue when
+///     Optional color for the minimum value. Defaults depend on the palette: teal when
 ///     using a diverging center, yellow otherwise.
 /// - `max_color`:
-///     Optional color for the maximum value. Defaults to a deep red.
+///     Optional color for the maximum value. Defaults to orange.
+/// - `symmetric_diverging`:
+///     When true, uses the maximum absolute distance from the center to scale both sides.
 ///
 /// Returns
 /// -------
@@ -210,6 +218,7 @@ fn draw_heatmap<DB: DrawingBackend>(
     center_val: Option<f64>,
     min_color: Option<RGBColor>,
     max_color: Option<RGBColor>,
+    symmetric_diverging: bool,
 ) -> Result<()>
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
@@ -255,7 +264,15 @@ where
             }
             let x0 = x_edges[col_idx];
             let x1 = x_edges[col_idx + 1];
-            let color = color_for_value(value, min_val, max_val, center_val, min_color, max_color);
+            let color = color_for_value(
+                value,
+                min_val,
+                max_val,
+                center_val,
+                min_color,
+                max_color,
+                symmetric_diverging,
+            );
             chart.draw_series(std::iter::once(Rectangle::new(
                 [(x0, y0), (x1, y1)],
                 color.filled(),
@@ -272,6 +289,7 @@ where
             center_val,
             min_color,
             max_color,
+            symmetric_diverging,
         )?;
     }
 
@@ -481,6 +499,8 @@ fn subdivide_edges(edges: &[f64], factor: usize) -> Result<Vec<f64>> {
 ///     Upper bound for scaling.
 /// - `center_val`:
 ///     Optional diverging center.
+/// - `symmetric_diverging`:
+///     When true, scales both sides using the maximum absolute distance from the center.
 ///
 /// Returns
 /// -------
@@ -493,6 +513,7 @@ fn color_for_value(
     center_val: Option<f64>,
     min_color: Option<RGBColor>,
     max_color: Option<RGBColor>,
+    symmetric_diverging: bool,
 ) -> RGBColor {
     // Color palettes:
     // Diverging: teal: 166669 (22,102,105), yellow: fdfdec (253,253,236), orange: 9a4613 (154,70,19)
@@ -508,7 +529,19 @@ fn color_for_value(
     let max_color = max_color.unwrap_or(default_max);
 
     if let Some(center) = center_val {
-        if value <= center {
+        if symmetric_diverging {
+            let span = (center - min_val)
+                .abs()
+                .max((max_val - center).abs())
+                .max(f64::EPSILON);
+            let offset = (value - center) / span;
+            let t = offset.clamp(-1.0, 1.0);
+            if t <= 0.0 {
+                return interpolate_rgb(min_color, center_color, -t);
+            } else {
+                return interpolate_rgb(center_color, max_color, t);
+            }
+        } else if value <= center {
             let norm = ((value - min_val) / (center - min_val).max(f64::EPSILON)).clamp(0.0, 1.0);
             return interpolate_rgb(min_color, center_color, norm);
         } else {
@@ -564,6 +597,8 @@ fn interpolate_rgb(start: RGBColor, end: RGBColor, t: f64) -> RGBColor {
 ///     Optional color for the minimum value. Defaults follow the heatmap palette.
 /// - `max_color`:
 ///     Optional color for the maximum value. Defaults follow the heatmap palette.
+/// - `symmetric_diverging`:
+///     When true, legend swatches use the symmetric diverging scaling.
 ///
 /// Returns
 /// -------
@@ -577,6 +612,7 @@ fn draw_color_legend<DB: DrawingBackend>(
     center_val: Option<f64>,
     min_color: Option<RGBColor>,
     max_color: Option<RGBColor>,
+    symmetric_diverging: bool,
 ) -> Result<()>
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
@@ -601,7 +637,15 @@ where
 
     let mut x_cursor = x0;
     for (label, value) in items.iter() {
-        let color = color_for_value(*value, min_val, max_val, center_val, min_color, max_color);
+        let color = color_for_value(
+            *value,
+            min_val,
+            max_val,
+            center_val,
+            min_color,
+            max_color,
+            symmetric_diverging,
+        );
         let fill_style = ShapeStyle {
             color: color.to_rgba(),
             filled: true,

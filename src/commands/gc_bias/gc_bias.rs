@@ -763,8 +763,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         .with_context(|| format!("writing GC bias plot to {}", plot_path_weighted.display()))?;
 
         // Heatmap sizes
-        let hm_width: u32 = 1400;
-        let hm_height: u32 = 1000;
+        let hm_width: u32 = 1000;
+        let hm_height: u32 = 700;
         let scaling_factor = (hm_height as f32 / bias_matrix.nrows() as f32)
             .max(hm_width as f32 / bias_matrix.ncols() as f32)
             .ceil() as usize;
@@ -773,7 +773,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         let heatmap_path = opt.ioc.output_dir.join("gc_bias_heatmap.png");
         write_heatmap(
             &heatmap_path,
-            "GC bias per length and GC bin",
+            "GC bias per length and GC %",
             "GC (%)",
             "Fragment length (bp)",
             &bias_matrix,
@@ -784,6 +784,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             Some(1.0),
             None,
             None,
+            true,
             scaling_factor,
             hm_width,
             hm_height,
@@ -806,6 +807,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             Some(1.0),
             None,
             None,
+            true,
             scaling_factor,
             hm_width,
             hm_height,
