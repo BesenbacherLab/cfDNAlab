@@ -198,7 +198,7 @@ pub fn write_heatmap<P: AsRef<Path>>(
 /// - `max_color`:
 ///     Optional color for the maximum value. Defaults to orange.
 /// - `symmetric_diverging`:
-///     When true, uses the maximum absolute distance from the center to scale both sides.
+///     When true, uses the maximum absolute distance from the center to scale both sides so the diverging gradients share a common curve.
 ///
 /// Returns
 /// -------
@@ -530,18 +530,19 @@ fn color_for_value(
 
     if let Some(center) = center_val {
         if symmetric_diverging {
-            let span = (center - min_val)
+            let span = (max_val - center)
                 .abs()
-                .max((max_val - center).abs())
+                .max((center - min_val).abs())
                 .max(f64::EPSILON);
-            let offset = (value - center) / span;
-            let t = offset.clamp(-1.0, 1.0);
-            if t <= 0.0 {
-                return interpolate_rgb(min_color, center_color, -t);
+            let norm = ((value - center) / span).clamp(-1.0, 1.0);
+            return if norm < 0.0 {
+                interpolate_rgb(center_color, min_color, -norm)
             } else {
-                return interpolate_rgb(center_color, max_color, t);
-            }
-        } else if value <= center {
+                interpolate_rgb(center_color, max_color, norm)
+            };
+        }
+
+        if value <= center {
             let norm = ((value - min_val) / (center - min_val).max(f64::EPSILON)).clamp(0.0, 1.0);
             return interpolate_rgb(min_color, center_color, norm);
         } else {
