@@ -149,7 +149,7 @@ where
 {
     drawing_area.fill(&WHITE)?;
 
-    let legend_height: u32 = 90;
+    let legend_height: u32 = 70;
     let (_, area_h) = drawing_area.dim_in_pixel();
     let (plot_area, legend_area) = if area_h > legend_height {
         let (upper, lower) = drawing_area.split_vertically(area_h - legend_height);
@@ -295,10 +295,10 @@ where
 
     let swatch_w: i32 = 32;
     let swatch_h: i32 = 18;
-    let v_pad: i32 = 8;
-    let h_pad: i32 = 12;
+    let v_pad: i32 = 12;
+    let h_pad: i32 = 100;
     let x0: i32 = h_pad;
-    let y0: i32 = v_pad;
+    let y0: i32 = area_h as i32 - swatch_h - v_pad;
 
     let mut items = vec![("min", min_val), ("max", max_val)];
     if let Some(center) = center_val {
@@ -308,8 +308,8 @@ where
         items.push(("mean", mean));
     }
 
+    let mut x_cursor = x0;
     for (idx, (label, value)) in items.iter().enumerate() {
-        let y = y0 + idx as i32 * (swatch_h + v_pad);
         let color = color_for_value(*value, min_val, max_val, center_val);
         let swatch_style = ShapeStyle {
             color: color.to_rgba(),
@@ -317,30 +317,22 @@ where
             stroke_width: 1,
         };
         legend_area.draw(&Rectangle::new(
-            [(x0, y), (x0 + swatch_w, y + swatch_h)],
+            [(x_cursor, y0), (x_cursor + swatch_w, y0 + swatch_h)],
             swatch_style,
         ))?;
 
-        let text = format!("{}: {:.4}", label, value);
-        let text_x = x0 + swatch_w + h_pad;
-        let text_y = y + swatch_h - 2;
+        let text = format!("{}: {:.2}", label, value);
+        let text_x = x_cursor + swatch_w + 6;
+        let text_y = y0 + swatch_h - 2;
         legend_area.draw(&Text::new(
             text,
             (text_x, text_y),
             ("sans-serif", 16).into_font().color(&BLACK),
         ))?;
-    }
 
-    // Border for the legend region to distinguish it
-    let content_height = y0 + (items.len() as i32) * (swatch_h + v_pad) + v_pad / 2;
-    let border = Rectangle::new(
-        [
-            (0, 0),
-            (area_w as i32 - 1, content_height.min(area_h as i32 - 1)),
-        ],
-        ShapeStyle::from(&BLACK).stroke_width(1),
-    );
-    legend_area.draw(&border)?;
+        let step = swatch_w + h_pad + 90;
+        x_cursor += step;
+    }
 
     Ok(())
 }
