@@ -50,10 +50,10 @@ pub enum HeatmapFormat {
 ///     Optional center value for a diverging scale. Values below use a cool gradient toward
 ///     the center and values above use a warm gradient.
 /// - `min_color`:
-///     Optional color for the minimum value. Defaults depend on the palette: blue when
+///     Optional color for the minimum value. Defaults depend on the palette: teal when
 ///     using a diverging center, yellow otherwise.
 /// - `max_color`:
-///     Optional color for the maximum value. Defaults to a deep red.
+///     Optional color for the maximum value. Defaults to orange.
 /// - `upsample_factor`:
 ///     Bilinear upsampling factor applied to the matrix before plotting to reduce visible blockiness. Use 1 to disable.
 /// - `width`:
@@ -495,13 +495,13 @@ fn color_for_value(
     max_color: Option<RGBColor>,
 ) -> RGBColor {
     // Color palettes:
-    // Diverging: blue: 12194e (18,25,78), yellow: fdfdec (253,253,236), red: 49021f (73,2,31)
-    // Single: yellow: fdfdec (253,253,236), red: 49021f (73,2,31)
+    // Diverging: teal: 166669 (22,102,105), yellow: fdfdec (253,253,236), orange: 9a4613 (154,70,19)
+    // Single: yellow: fdfdec (253,253,236), orange: 9a4613 (154,70,19)
 
     let (default_min, default_max) = if center_val.is_some() {
-        (RGBColor(18, 25, 78), RGBColor(73, 2, 31))
+        (RGBColor(22, 102, 105), RGBColor(154, 70, 19))
     } else {
-        (RGBColor(253, 253, 236), RGBColor(73, 2, 31))
+        (RGBColor(253, 253, 236), RGBColor(154, 70, 19))
     };
     let center_color = RGBColor(253, 253, 236);
     let min_color = min_color.unwrap_or(default_min);
