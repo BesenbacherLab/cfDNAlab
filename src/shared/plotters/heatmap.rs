@@ -311,8 +311,15 @@ where
     for (idx, (label, value)) in items.iter().enumerate() {
         let y = y0 + idx as i32 * (swatch_h + v_pad);
         let color = color_for_value(*value, min_val, max_val, center_val);
-        let swatch = Rectangle::new([(x0, y), (x0 + swatch_w, y + swatch_h)], color);
-        legend_area.draw(&swatch.stroke_width(1).filled())?;
+        let swatch_style = ShapeStyle {
+            color: color.to_rgba(),
+            filled: true,
+            stroke_width: 1,
+        };
+        legend_area.draw(&Rectangle::new(
+            [(x0, y), (x0 + swatch_w, y + swatch_h)],
+            swatch_style,
+        ))?;
 
         let text = format!("{}: {:.4}", label, value);
         let text_x = x0 + swatch_w + h_pad;
