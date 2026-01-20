@@ -49,6 +49,11 @@ pub enum HeatmapFormat {
 /// - `val_center`:
 ///     Optional center value for a diverging scale. Values below use a cool gradient toward
 ///     the center and values above use a warm gradient.
+/// - `min_color`:
+///     Optional color for the minimum value. Defaults depend on the palette: blue when
+///     using a diverging center, yellow otherwise.
+/// - `max_color`:
+///     Optional color for the maximum value. Defaults to a deep red.
 /// - `upsample_factor`:
 ///     Bilinear upsampling factor applied to the matrix before plotting to reduce visible blockiness. Use 1 to disable.
 /// - `width`:
@@ -73,6 +78,8 @@ pub fn write_heatmap<P: AsRef<Path>>(
     val_min: Option<f64>,
     val_max: Option<f64>,
     val_center: Option<f64>,
+    min_color: Option<RGBColor>,
+    max_color: Option<RGBColor>,
     upsample_factor: usize,
     width: u32,
     height: u32,
@@ -125,6 +132,8 @@ pub fn write_heatmap<P: AsRef<Path>>(
                 max_val,
                 mean_val,
                 val_center,
+                min_color,
+                max_color,
             )
         }
         HeatmapFormat::Svg => {
@@ -141,6 +150,8 @@ pub fn write_heatmap<P: AsRef<Path>>(
                 max_val,
                 mean_val,
                 val_center,
+                min_color,
+                max_color,
             )
         }
     }
@@ -175,6 +186,11 @@ pub fn write_heatmap<P: AsRef<Path>>(
 ///     Optional mean value shown in the legend.
 /// - `center_val`:
 ///     Optional diverging center.
+/// - `min_color`:
+///     Optional color for the minimum value. Defaults depend on the palette: blue when
+///     using a diverging center, yellow otherwise.
+/// - `max_color`:
+///     Optional color for the maximum value. Defaults to a deep red.
 ///
 /// Returns
 /// -------
@@ -192,6 +208,8 @@ fn draw_heatmap<DB: DrawingBackend>(
     max_val: f64,
     mean_val: Option<f64>,
     center_val: Option<f64>,
+    min_color: Option<RGBColor>,
+    max_color: Option<RGBColor>,
 ) -> Result<()>
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
@@ -237,7 +255,7 @@ where
             }
             let x0 = x_edges[col_idx];
             let x1 = x_edges[col_idx + 1];
-            let color = color_for_value(value, min_val, max_val, center_val);
+            let color = color_for_value(value, min_val, max_val, center_val, min_color, max_color);
             chart.draw_series(std::iter::once(Rectangle::new(
                 [(x0, y0), (x1, y1)],
                 color.filled(),
@@ -246,7 +264,15 @@ where
     }
 
     if let Some(legend_area) = legend_area {
-        draw_color_legend(&legend_area, min_val, max_val, mean_val, center_val)?;
+        draw_color_legend(
+            &legend_area,
+            min_val,
+            max_val,
+            mean_val,
+            center_val,
+            min_color,
+            max_color,
+        )?;
     }
 
     plot_area.present()?;
@@ -442,7 +468,7 @@ fn subdivide_edges(edges: &[f64], factor: usize) -> Result<Vec<f64>> {
 
 /// Map a value to a color with optional diverging center.
 ///
-/// Uses a cool-to-warm palette when a center is set, or a single plasma-inspired
+/// Uses a Blue-Yellow-Red diverging palette when a center is set, or a single Yellow-Red
 /// gradient otherwise.
 ///
 /// Parameters
@@ -460,18 +486,38 @@ fn subdivide_edges(edges: &[f64], factor: usize) -> Result<Vec<f64>> {
 /// -------
 /// - `RGBColor`:
 ///     Color for the value.
-fn color_for_value(value: f64, min_val: f64, max_val: f64, center_val: Option<f64>) -> RGBColor {
+fn color_for_value(
+    value: f64,
+    min_val: f64,
+    max_val: f64,
+    center_val: Option<f64>,
+    min_color: Option<RGBColor>,
+    max_color: Option<RGBColor>,
+) -> RGBColor {
+    // Color palettes (borrowed from Adobe's example):
+    // Diverging: blue: 12194e (18,25,78), yellow: ffffdf (255,255,223), red: 49021f (73,2,31)
+    // Single: yellow: ffffdf (255,255,223), red: 49021f (73,2,31)
+
+    let (default_min, default_max) = if center_val.is_some() {
+        (RGBColor(18, 25, 78), RGBColor(73, 2, 31))
+    } else {
+        (RGBColor(255, 255, 223), RGBColor(73, 2, 31))
+    };
+    let center_color = RGBColor(255, 255, 223);
+    let min_color = min_color.unwrap_or(default_min);
+    let max_color = max_color.unwrap_or(default_max);
+
     if let Some(center) = center_val {
         if value <= center {
             let norm = ((value - min_val) / (center - min_val).max(f64::EPSILON)).clamp(0.0, 1.0);
-            return interpolate_rgb(RGBColor(49, 130, 189), RGBColor(255, 255, 255), norm);
+            return interpolate_rgb(min_color, center_color, norm);
         } else {
             let norm = ((value - center) / (max_val - center).max(f64::EPSILON)).clamp(0.0, 1.0);
-            return interpolate_rgb(RGBColor(255, 255, 255), RGBColor(203, 24, 29), norm);
+            return interpolate_rgb(center_color, max_color, norm);
         }
     }
     let norm = ((value - min_val) / (max_val - min_val).max(f64::EPSILON)).clamp(0.0, 1.0);
-    interpolate_plasma(norm)
+    interpolate_rgb(min_color, max_color, norm)
 }
 
 /// Linearly interpolate between two RGB colors.
@@ -497,26 +543,6 @@ fn interpolate_rgb(start: RGBColor, end: RGBColor, t: f64) -> RGBColor {
     RGBColor(r as u8, g as u8, b as u8)
 }
 
-/// Lightweight plasma-inspired color map for single-scale plots.
-///
-/// Parameters
-/// ----------
-/// - `t`:
-///     Position in [0, 1].
-///
-/// Returns
-/// -------
-/// - `RGBColor`:
-///     Color at the specified position.
-fn interpolate_plasma(t: f64) -> RGBColor {
-    // Lightweight approximation of matplotlib plasma for quick contrast
-    let t = t.clamp(0.0, 1.0);
-    let r = (241.0 * t + 12.0 * (1.0 - t)) as u8;
-    let g = (103.0 * t + 7.0 * (1.0 - t)) as u8;
-    let b = (33.0 * t + 134.0 * (1.0 - t)) as u8;
-    RGBColor(r, g, b)
-}
-
 /// Draw a horizontal color legend with bordered swatches and labels.
 ///
 /// Lays out min, max, center, and mean entries when provided, using the same
@@ -534,6 +560,10 @@ fn interpolate_plasma(t: f64) -> RGBColor {
 ///     Optional mean label.
 /// - `center_val`:
 ///     Optional diverging center label.
+/// - `min_color`:
+///     Optional color for the minimum value. Defaults follow the heatmap palette.
+/// - `max_color`:
+///     Optional color for the maximum value. Defaults follow the heatmap palette.
 ///
 /// Returns
 /// -------
@@ -545,6 +575,8 @@ fn draw_color_legend<DB: DrawingBackend>(
     max_val: f64,
     mean_val: Option<f64>,
     center_val: Option<f64>,
+    min_color: Option<RGBColor>,
+    max_color: Option<RGBColor>,
 ) -> Result<()>
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
@@ -569,7 +601,7 @@ where
 
     let mut x_cursor = x0;
     for (label, value) in items.iter() {
-        let color = color_for_value(*value, min_val, max_val, center_val);
+        let color = color_for_value(*value, min_val, max_val, center_val, min_color, max_color);
         let fill_style = ShapeStyle {
             color: color.to_rgba(),
             filled: true,
