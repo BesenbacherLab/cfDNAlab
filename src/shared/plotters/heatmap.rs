@@ -149,7 +149,7 @@ where
 {
     drawing_area.fill(&WHITE)?;
 
-    let legend_height: u32 = 70;
+    let legend_height: u32 = 40;
     let (_, area_h) = drawing_area.dim_in_pixel();
     let (plot_area, legend_area) = if area_h > legend_height {
         let (upper, lower) = drawing_area.split_vertically(area_h - legend_height);
@@ -296,7 +296,7 @@ where
     let swatch_w: i32 = 32;
     let swatch_h: i32 = 18;
     let bottom_pad: i32 = 20; // Space reserved below the legend content
-    let h_pad: i32 = 80;
+    let h_pad: i32 = 80; // Aligns with heatmap
     let x0: i32 = h_pad;
     let y0: i32 = area_h as i32 - swatch_h - bottom_pad;
 
@@ -332,7 +332,7 @@ where
 
         let text = format!("{}: {:.2}", label, value);
         let text_x = x_cursor + swatch_w + 6;
-        let text_y = y0 + swatch_h - 2;
+        let text_y = y0 + swatch_h / 2 + 6; // Vertically center text with the swatch
         legend_area.draw(&Text::new(
             text,
             (text_x, text_y),
