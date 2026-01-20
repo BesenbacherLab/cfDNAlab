@@ -149,13 +149,22 @@ where
 {
     drawing_area.fill(&WHITE)?;
 
+    let legend_height: u32 = 90;
+    let (area_w, area_h) = drawing_area.dim_in_pixel();
+    let (plot_area, legend_area) = if area_h > legend_height {
+        let (upper, lower) = drawing_area.split_vertically(area_h - legend_height);
+        (upper, Some(lower))
+    } else {
+        (drawing_area.clone(), None)
+    };
+
     let x_range = *x_edges.first().unwrap()..*x_edges.last().unwrap();
     let y_range = *y_edges.first().unwrap()..*y_edges.last().unwrap();
 
     let x_label_area = 52;
     let y_label_area = 62;
 
-    let mut chart = ChartBuilder::on(drawing_area)
+    let mut chart = ChartBuilder::on(&plot_area)
         .caption(title, ("sans-serif", 22))
         .margin(20)
         .x_label_area_size(x_label_area)
@@ -187,8 +196,11 @@ where
         }
     }
 
-    draw_color_legend(drawing_area, min_val, max_val, mean_val, center_val)?;
-    drawing_area.present()?;
+    if let Some(legend_area) = legend_area {
+        draw_color_legend(&legend_area, min_val, max_val, mean_val, center_val)?;
+    }
+
+    plot_area.present()?;
     Ok(())
 }
 
@@ -269,7 +281,7 @@ fn interpolate_plasma(t: f64) -> RGBColor {
 }
 
 fn draw_color_legend<DB: DrawingBackend>(
-    drawing_area: &DrawingArea<DB, Shift>,
+    legend_area: &DrawingArea<DB, Shift>,
     min_val: f64,
     max_val: f64,
     mean_val: Option<f64>,
@@ -278,17 +290,15 @@ fn draw_color_legend<DB: DrawingBackend>(
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
 {
-    let (area_w, area_h) = drawing_area.dim_in_pixel();
-    let legend_height: i32 = 80;
-    let swatch_w: i32 = 28;
+    let (area_w, area_h) = legend_area.dim_in_pixel();
+    legend_area.fill(&WHITE)?;
+
+    let swatch_w: i32 = 32;
     let swatch_h: i32 = 18;
-    let v_pad: i32 = 6;
-    let h_pad: i32 = 10;
+    let v_pad: i32 = 8;
+    let h_pad: i32 = 12;
     let x0: i32 = h_pad;
-    let mut y0: i32 = area_h as i32 - legend_height;
-    if y0 < 0 {
-        y0 = 0;
-    }
+    let y0: i32 = v_pad;
 
     let mut items = vec![("min", min_val), ("max", max_val)];
     if let Some(center) = center_val {
@@ -301,35 +311,29 @@ where
     for (idx, (label, value)) in items.iter().enumerate() {
         let y = y0 + idx as i32 * (swatch_h + v_pad);
         let color = color_for_value(*value, min_val, max_val, center_val);
-        let swatch = Rectangle::new([(x0, y), (x0 + swatch_w, y + swatch_h)], color.filled());
-        drawing_area.draw(&swatch)?;
+        let swatch = Rectangle::new([(x0, y), (x0 + swatch_w, y + swatch_h)], color);
+        legend_area.draw(&swatch.stroke_width(1).filled())?;
 
         let text = format!("{}: {:.4}", label, value);
         let text_x = x0 + swatch_w + h_pad;
         let text_y = y + swatch_h - 2;
-        drawing_area.draw(&Text::new(
+        legend_area.draw(&Text::new(
             text,
             (text_x, text_y),
             ("sans-serif", 16).into_font().color(&BLACK),
         ))?;
     }
 
-    // Optional simple border for the legend region to distinguish it
+    // Border for the legend region to distinguish it
+    let content_height = y0 + (items.len() as i32) * (swatch_h + v_pad) + v_pad / 2;
     let border = Rectangle::new(
         [
-            (x0 - h_pad / 2, y0 - v_pad / 2),
-            (
-                area_w as i32 - h_pad / 2,
-                y0 + (items.len() as i32) * (swatch_h + v_pad),
-            ),
+            (0, 0),
+            (area_w as i32 - 1, content_height.min(area_h as i32 - 1)),
         ],
-        ShapeStyle {
-            color: BLACK.to_rgba(),
-            filled: false,
-            stroke_width: 1,
-        },
+        ShapeStyle::from(&BLACK).stroke_width(1),
     );
-    drawing_area.draw(&border)?;
+    legend_area.draw(&border)?;
 
     Ok(())
 }

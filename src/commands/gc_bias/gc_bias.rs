@@ -4,10 +4,7 @@ use crate::{
         counters::GCCounters,
         gc_bias::{
             CORRECTION_CLAMP_RANGE, GC_CORRECTION_SCHEMA_VERSION,
-            binning::{
-                CollapseAggregation, bin_greedily_by_mass, collapse_counts_by_bins,
-                compute_bin_edges,
-            },
+            binning::{CollapseAggregation, bin_greedily_by_mass, collapse_counts_by_bins},
             config::GCConfig,
             counting::{
                 GCCounts, GCPrefixes, apply_gc_percent_width_correction, build_gc_prefixes,
@@ -656,9 +653,12 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     // Plot the avg. gc-bias across lengths for quick QC
     #[cfg(feature = "plotters")]
     {
-        use crate::shared::plotters::{
-            heatmap::{HeatmapFormat, write_heatmap},
-            lineplot::write_line_plot_png,
+        use crate::{
+            commands::gc_bias::binning::compute_bin_edges,
+            shared::plotters::{
+                heatmap::{HeatmapFormat, write_heatmap},
+                lineplot::write_line_plot_png,
+            },
         };
 
         println!("Start: Plotting avg. bias across lengths");
