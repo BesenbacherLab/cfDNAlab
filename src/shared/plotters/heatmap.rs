@@ -5,6 +5,7 @@ use plotters::{
     prelude::*,
     style::text_anchor::{HPos, Pos, VPos},
 };
+use std::borrow::Cow;
 use std::path::Path;
 
 /// Output formats supported by the heatmap writer.
@@ -48,6 +49,8 @@ pub enum HeatmapFormat {
 /// - `val_center`:
 ///     Optional center value for a diverging scale. Values below use a cool gradient toward
 ///     the center and values above use a warm gradient.
+/// - `upsample_factor`:
+///     Bilinear upsampling factor applied to the matrix before plotting to reduce visible blockiness. Use 1 to disable.
 /// - `width`:
 ///     Canvas width in pixels.
 /// - `height`:
@@ -70,15 +73,23 @@ pub fn write_heatmap<P: AsRef<Path>>(
     val_min: Option<f64>,
     val_max: Option<f64>,
     val_center: Option<f64>,
+    upsample_factor: usize,
     width: u32,
     height: u32,
     format: HeatmapFormat,
 ) -> Result<()> {
-    let x_edges = resolve_edges("x", x_edges, values.ncols())?;
-    let y_edges = resolve_edges("y", y_edges, values.nrows())?;
-    let mean_val = find_finite_mean(values);
+    let upsample_factor = upsample_factor.max(1);
+    let mut x_edges = resolve_edges("x", x_edges, values.ncols())?;
+    let mut y_edges = resolve_edges("y", y_edges, values.nrows())?;
+    let mut values_to_plot: Cow<'_, Array2<f64>> = Cow::Borrowed(values);
+    if upsample_factor > 1 {
+        values_to_plot = Cow::Owned(upsample_bilinear(values, upsample_factor));
+        x_edges = subdivide_edges(&x_edges, upsample_factor)?;
+        y_edges = subdivide_edges(&y_edges, upsample_factor)?;
+    }
+    let mean_val = find_finite_mean(&values_to_plot);
 
-    let (data_min, data_max) = find_finite_min_max(values);
+    let (data_min, data_max) = find_finite_min_max(&values_to_plot);
     ensure!(
         data_min.is_finite() && data_max.is_finite(),
         "heatmap values are empty"
@@ -109,7 +120,7 @@ pub fn write_heatmap<P: AsRef<Path>>(
                 y_label,
                 &x_edges,
                 &y_edges,
-                values,
+                &values_to_plot,
                 min_val,
                 max_val,
                 mean_val,
@@ -125,7 +136,7 @@ pub fn write_heatmap<P: AsRef<Path>>(
                 y_label,
                 &x_edges,
                 &y_edges,
-                values,
+                &values_to_plot,
                 min_val,
                 max_val,
                 mean_val,
@@ -135,6 +146,40 @@ pub fn write_heatmap<P: AsRef<Path>>(
     }
 }
 
+/// Draw the heatmap and optional legend on the provided drawing area.
+///
+/// Builds axes, fills each cell using the chosen palette, and places the legend
+/// beneath the plot when there is vertical room.
+///
+/// Parameters
+/// ----------
+/// - `drawing_area`:
+///     Target drawing area from the backend.
+/// - `title`:
+///     Plot title.
+/// - `x_label`:
+///     Label for the x axis.
+/// - `y_label`:
+///     Label for the y axis.
+/// - `x_edges`:
+///     X boundaries for each column.
+/// - `y_edges`:
+///     Y boundaries for each row.
+/// - `values`:
+///     Matrix of values to render.
+/// - `min_val`:
+///     Lower bound for color scaling.
+/// - `max_val`:
+///     Upper bound for color scaling.
+/// - `mean_val`:
+///     Optional mean value shown in the legend.
+/// - `center_val`:
+///     Optional diverging center.
+///
+/// Returns
+/// -------
+/// - `Result<()>`:
+///     Ok when drawing finishes.
 fn draw_heatmap<DB: DrawingBackend>(
     drawing_area: &DrawingArea<DB, Shift>,
     title: &str,
@@ -208,6 +253,19 @@ where
     Ok(())
 }
 
+/// Find finite min and max in a matrix.
+///
+/// Skips non-finite entries so masked regions do not affect limits.
+///
+/// Parameters
+/// ----------
+/// - `values`:
+///     Matrix to scan.
+///
+/// Returns
+/// -------
+/// - `(f64, f64)`:
+///     Finite minimum and maximum.
 fn find_finite_min_max(values: &Array2<f64>) -> (f64, f64) {
     let mut min_val = f64::INFINITY;
     let mut max_val = f64::NEG_INFINITY;
@@ -224,6 +282,19 @@ fn find_finite_min_max(values: &Array2<f64>) -> (f64, f64) {
     (min_val, max_val)
 }
 
+/// Compute the mean of finite entries in a matrix.
+///
+/// Ignores non-finite values and returns `None` when no finite entries exist.
+///
+/// Parameters
+/// ----------
+/// - `values`:
+///     Matrix to average.
+///
+/// Returns
+/// -------
+/// - `Option<f64>`:
+///     Mean of finite entries, or None when empty.
 fn find_finite_mean(values: &Array2<f64>) -> Option<f64> {
     let mut sum = 0.0;
     let mut count = 0usize;
@@ -240,6 +311,23 @@ fn find_finite_mean(values: &Array2<f64>) -> Option<f64> {
     }
 }
 
+/// Resolve axis edges, defaulting to contiguous indices when missing.
+///
+/// Validates caller-supplied edges to ensure they match the expected length.
+///
+/// Parameters
+/// ----------
+/// - `name`:
+///     Axis label used in error messages.
+/// - `edges`:
+///     Optional user-provided edge vector.
+/// - `len`:
+///     Number of bins along the axis.
+///
+/// Returns
+/// -------
+/// - `Vec<f64>`:
+///     Validated edge vector.
 fn resolve_edges(name: &str, edges: Option<&[f64]>, len: usize) -> Result<Vec<f64>> {
     if let Some(edges) = edges {
         ensure!(
@@ -253,6 +341,125 @@ fn resolve_edges(name: &str, edges: Option<&[f64]>, len: usize) -> Result<Vec<f6
     Ok((0..=len).map(|i| i as f64).collect())
 }
 
+/// Bilinearly upsample a matrix by an integer factor.
+///
+/// Expands each cell smoothly so higher output resolutions do not appear blocky.
+/// Uses standard bilinear interpolation: blend along x within the nearest two
+/// source rows, then blend those row results along y.
+///
+/// Parameters
+/// ----------
+/// - `values`:
+///     Input matrix.
+/// - `factor`:
+///     Integer upsampling factor. Values below 1 are treated as 1.
+///
+/// Returns
+/// -------
+/// - `Array2<f64>`:
+///     Upsampled matrix.
+fn upsample_bilinear(values: &Array2<f64>, factor: usize) -> Array2<f64> {
+    let factor = factor.max(1);
+    if factor == 1 {
+        return values.clone();
+    }
+    let (rows, cols) = values.dim();
+    if rows == 0 || cols == 0 {
+        return values.clone();
+    }
+    let new_rows = rows * factor;
+    let new_cols = cols * factor;
+    let mut out = Array2::<f64>::zeros((new_rows, new_cols));
+
+    for r in 0..new_rows {
+        // Map the output row back to the source grid in floating point
+        let src_y = (r as f64) / factor as f64;
+        // Nearest source rows above and below
+        let y0 = src_y.floor().max(0.0) as usize;
+        let y1 = (y0 + 1).min(rows - 1);
+        // Fractional position between y0 and y1
+        let ty = (src_y - y0 as f64).clamp(0.0, 1.0);
+
+        for c in 0..new_cols {
+            // Map the output column back to the source grid in floating point
+            let src_x = (c as f64) / factor as f64;
+            // Nearest source columns left and right
+            let x0 = src_x.floor().max(0.0) as usize;
+            let x1 = (x0 + 1).min(cols - 1);
+            // Fractional position between x0 and x1
+            let tx = (src_x - x0 as f64).clamp(0.0, 1.0);
+
+            // Source cell values at the four surrounding corners
+            let v00 = values[(y0, x0)];
+            let v01 = values[(y0, x1)];
+            let v10 = values[(y1, x0)];
+            let v11 = values[(y1, x1)];
+
+            // Interpolate horizontally on the top and bottom edges
+            let v0 = v00 * (1.0 - tx) + v01 * tx;
+            let v1 = v10 * (1.0 - tx) + v11 * tx;
+
+            // Interpolate vertically between the two edges
+            out[(r, c)] = v0 * (1.0 - ty) + v1 * ty;
+        }
+    }
+    out
+}
+
+/// Subdivide axis edges to align with an upsampled matrix.
+///
+/// Inserts evenly spaced intermediate edges within each original interval.
+///
+/// Parameters
+/// ----------
+/// - `edges`:
+///     Original axis edge vector.
+/// - `factor`:
+///     Upsampling factor. Values below 1 are treated as 1.
+///
+/// Returns
+/// -------
+/// - `Vec<f64>`:
+///     Refined edge vector.
+fn subdivide_edges(edges: &[f64], factor: usize) -> Result<Vec<f64>> {
+    ensure!(edges.len() >= 2, "edges must contain at least two points");
+    let factor = factor.max(1);
+    if factor == 1 {
+        return Ok(edges.to_vec());
+    }
+    let mut out = Vec::with_capacity((edges.len() - 1) * factor + 1);
+    for window in edges.windows(2) {
+        let start = window[0];
+        let end = window[1];
+        let step = (end - start) / factor as f64;
+        for i in 0..factor {
+            out.push(start + step * i as f64);
+        }
+    }
+    out.push(*edges.last().unwrap());
+    Ok(out)
+}
+
+/// Map a value to a color with optional diverging center.
+///
+/// Uses a cool-to-warm palette when a center is set, or a single plasma-inspired
+/// gradient otherwise.
+///
+/// Parameters
+/// ----------
+/// - `value`:
+///     Value to map.
+/// - `min_val`:
+///     Lower bound for scaling.
+/// - `max_val`:
+///     Upper bound for scaling.
+/// - `center_val`:
+///     Optional diverging center.
+///
+/// Returns
+/// -------
+/// - `RGBColor`:
+///     Color for the value.
 fn color_for_value(value: f64, min_val: f64, max_val: f64, center_val: Option<f64>) -> RGBColor {
     if let Some(center) = center_val {
         if value <= center {
@@ -267,6 +474,21 @@ fn color_for_value(value: f64, min_val: f64, max_val: f64, center_val: Option<f6
     interpolate_plasma(norm)
 }
 
+/// Linearly interpolate between two RGB colors.
+///
+/// Parameters
+/// ----------
+/// - `start`:
+///     Start color.
+/// - `end`:
+///     End color.
+/// - `t`:
+///     Position in [0, 1].
+///
+/// Returns
+/// -------
+/// - `RGBColor`:
+///     Interpolated color.
 fn interpolate_rgb(start: RGBColor, end: RGBColor, t: f64) -> RGBColor {
     let t = t.clamp(0.0, 1.0);
     let r = start.0 as f64 + (end.0 as f64 - start.0 as f64) * t;
@@ -275,6 +497,17 @@ fn interpolate_rgb(start: RGBColor, end: RGBColor, t: f64) -> RGBColor {
     RGBColor(r as u8, g as u8, b as u8)
 }
 
+/// Lightweight plasma-inspired color map for single-scale plots.
+///
+/// Parameters
+/// ----------
+/// - `t`:
+///     Position in [0, 1].
+///
+/// Returns
+/// -------
+/// - `RGBColor`:
+///     Color at the specified position.
 fn interpolate_plasma(t: f64) -> RGBColor {
     // Lightweight approximation of matplotlib plasma for quick contrast
     let t = t.clamp(0.0, 1.0);
@@ -284,6 +517,28 @@ fn interpolate_plasma(t: f64) -> RGBColor {
     RGBColor(r, g, b)
 }
 
+/// Draw a horizontal color legend with bordered swatches and labels.
+///
+/// Lays out min, max, center, and mean entries when provided, using the same
+/// palette as the plot.
+///
+/// Parameters
+/// ----------
+/// - `legend_area`:
+///     Drawing area reserved for the legend.
+/// - `min_val`:
+///     Minimum value label.
+/// - `max_val`:
+///     Maximum value label.
+/// - `mean_val`:
+///     Optional mean label.
+/// - `center_val`:
+///     Optional diverging center label.
+///
+/// Returns
+/// -------
+/// - `Result<()>`:
+///     Ok when rendering succeeds.
 fn draw_color_legend<DB: DrawingBackend>(
     legend_area: &DrawingArea<DB, Shift>,
     min_val: f64,
