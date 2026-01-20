@@ -495,15 +495,15 @@ fn color_for_value(
     max_color: Option<RGBColor>,
 ) -> RGBColor {
     // Color palettes (borrowed from Adobe's example):
-    // Diverging: blue: 12194e (18,25,78), yellow: ffffdf (255,255,223), red: 49021f (73,2,31)
-    // Single: yellow: ffffdf (255,255,223), red: 49021f (73,2,31)
+    // Diverging: blue: 12194e (18,25,78), yellow: fdfdec (253,253,236), red: 49021f (73,2,31)
+    // Single: yellow: fdfdec (253,253,236), red: 49021f (73,2,31)
 
     let (default_min, default_max) = if center_val.is_some() {
         (RGBColor(18, 25, 78), RGBColor(73, 2, 31))
     } else {
-        (RGBColor(255, 255, 223), RGBColor(73, 2, 31))
+        (RGBColor(253, 253, 236), RGBColor(73, 2, 31))
     };
-    let center_color = RGBColor(255, 255, 223);
+    let center_color = RGBColor(253, 253, 236);
     let min_color = min_color.unwrap_or(default_min);
     let max_color = max_color.unwrap_or(default_max);
 
