@@ -150,7 +150,7 @@ where
     drawing_area.fill(&WHITE)?;
 
     let legend_height: u32 = 90;
-    let (area_w, area_h) = drawing_area.dim_in_pixel();
+    let (_, area_h) = drawing_area.dim_in_pixel();
     let (plot_area, legend_area) = if area_h > legend_height {
         let (upper, lower) = drawing_area.split_vertically(area_h - legend_height);
         (upper, Some(lower))
