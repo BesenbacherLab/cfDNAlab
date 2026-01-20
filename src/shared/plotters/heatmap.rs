@@ -494,7 +494,7 @@ fn color_for_value(
     min_color: Option<RGBColor>,
     max_color: Option<RGBColor>,
 ) -> RGBColor {
-    // Color palettes (borrowed from Adobe's example):
+    // Color palettes:
     // Diverging: blue: 12194e (18,25,78), yellow: fdfdec (253,253,236), red: 49021f (73,2,31)
     // Single: yellow: fdfdec (253,253,236), red: 49021f (73,2,31)
 
