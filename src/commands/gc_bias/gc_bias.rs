@@ -765,8 +765,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         // Heatmap sizes
         let hm_width: u32 = 1400;
         let hm_height: u32 = 1000;
-        let scaling_factor = (bias_matrix.nrows() as f32 / hm_height as f32)
-            .max(bias_matrix.ncols() as f32 / hm_width as f32)
+        let scaling_factor = (hm_height as f32 / bias_matrix.nrows() as f32)
+            .max(hm_width as f32 / bias_matrix.ncols() as f32)
             .ceil() as usize;
 
         // Heatmap of bias across length and GC contents
