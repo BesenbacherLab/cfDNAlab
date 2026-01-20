@@ -656,7 +656,10 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     // Plot the avg. gc-bias across lengths for quick QC
     #[cfg(feature = "plotters")]
     {
-        use crate::shared::plotters::lineplot::write_line_plot_png;
+        use crate::shared::plotters::{
+            heatmap::{HeatmapFormat, write_heatmap},
+            lineplot::write_line_plot_png,
+        };
 
         println!("Start: Plotting avg. bias across lengths");
         let gc_edges = compute_bin_edges(&gc_bins, 0, 100)?;
@@ -668,6 +671,13 @@ pub fn run(opt: &GCConfig) -> Result<()> {
                 (start + end) / 2.0
             })
             .collect();
+        let gc_edges_f: Vec<f64> = gc_edges.iter().map(|v| *v as f64).collect();
+        let length_edges = compute_bin_edges(
+            &length_bins,
+            reference_metadata.min_fragment_length as u32,
+            reference_metadata.max_fragment_length as u32,
+        )?;
+        let length_edges_f: Vec<f64> = length_edges.iter().map(|v| *v as f64).collect();
 
         // Unweighted average bias
 
@@ -697,9 +707,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         let mut weighted_bias = vec![0.0; num_gc_bins];
         let mut weight_per_gc = vec![0.0; num_gc_bins];
 
-        for (length_biases, &length_weight) in bias_matrix
-            .outer_iter()
-            .zip(length_bin_frequencies.iter())
+        for (length_biases, &length_weight) in
+            bias_matrix.outer_iter().zip(length_bin_frequencies.iter())
         {
             if length_weight == 0.0 {
                 continue;
@@ -752,6 +761,25 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             1000,
         )
         .with_context(|| format!("writing GC bias plot to {}", plot_path_weighted.display()))?;
+
+        // Heatmap of bias across length and GC bins
+        let heatmap_path = opt.ioc.output_dir.join("gc_bias_heatmap.png");
+        write_heatmap(
+            &heatmap_path,
+            "GC bias per length and GC bin",
+            "GC bin (%)",
+            "Fragment length (bp)",
+            &bias_matrix,
+            Some(&gc_edges_f),
+            Some(&length_edges_f),
+            None,
+            None,
+            Some(1.0),
+            1600,
+            1000,
+            HeatmapFormat::Png,
+        )
+        .with_context(|| format!("writing GC bias heatmap to {}", heatmap_path.display()))?;
     }
 
     println!("");
