@@ -290,15 +290,15 @@ fn draw_color_legend<DB: DrawingBackend>(
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
 {
-    let (area_w, area_h) = legend_area.dim_in_pixel();
+    let (_, area_h) = legend_area.dim_in_pixel();
     legend_area.fill(&WHITE)?;
 
     let swatch_w: i32 = 32;
     let swatch_h: i32 = 18;
-    let v_pad: i32 = 12;
-    let h_pad: i32 = 100;
+    let bottom_pad: i32 = 20; // Space reserved below the legend content
+    let h_pad: i32 = 80;
     let x0: i32 = h_pad;
-    let y0: i32 = area_h as i32 - swatch_h - v_pad;
+    let y0: i32 = area_h as i32 - swatch_h - bottom_pad;
 
     let mut items = vec![("min", min_val), ("max", max_val)];
     if let Some(center) = center_val {
@@ -309,16 +309,25 @@ where
     }
 
     let mut x_cursor = x0;
-    for (idx, (label, value)) in items.iter().enumerate() {
+    for (label, value) in items.iter() {
         let color = color_for_value(*value, min_val, max_val, center_val);
-        let swatch_style = ShapeStyle {
+        let fill_style = ShapeStyle {
             color: color.to_rgba(),
             filled: true,
+            stroke_width: 0,
+        };
+        legend_area.draw(&Rectangle::new(
+            [(x_cursor, y0), (x_cursor + swatch_w, y0 + swatch_h)],
+            fill_style,
+        ))?;
+        let border_style = ShapeStyle {
+            color: BLACK.to_rgba(),
+            filled: false,
             stroke_width: 1,
         };
         legend_area.draw(&Rectangle::new(
             [(x_cursor, y0), (x_cursor + swatch_w, y0 + swatch_h)],
-            swatch_style,
+            border_style,
         ))?;
 
         let text = format!("{}: {:.2}", label, value);
