@@ -14,6 +14,12 @@ pub enum HeatmapFormat {
     Svg,
 }
 
+/// Upsampling algorithm for heatmap rendering.
+pub enum HeatmapUpsample {
+    Nearest,
+    Bilinear,
+}
+
 /// Render a heatmap from a matrix to an image.
 ///
 /// Draws each cell as a filled rectangle spanning the provided axis edges,
@@ -59,6 +65,8 @@ pub enum HeatmapFormat {
 ///     sides of a diverging palette so gradients are symmetric.
 /// - `upsample_factor`:
 ///     Bilinear upsampling factor applied to the matrix before plotting to reduce visible blockiness. Use 1 to disable.
+/// - `upsample_method`:
+///     Algorithm used when upsampling: nearest (crisp blocks) or bilinear (smooth).
 /// - `width`:
 ///     Canvas width in pixels.
 /// - `height`:
@@ -85,6 +93,7 @@ pub fn write_heatmap<P: AsRef<Path>>(
     max_color: Option<RGBColor>,
     symmetric_diverging: bool,
     upsample_factor: usize,
+    upsample_method: HeatmapUpsample,
     width: u32,
     height: u32,
     format: HeatmapFormat,
@@ -94,7 +103,10 @@ pub fn write_heatmap<P: AsRef<Path>>(
     let mut y_edges = resolve_edges("y", y_edges, values.nrows())?;
     let mut values_to_plot: Cow<'_, Array2<f64>> = Cow::Borrowed(values);
     if upsample_factor > 1 {
-        values_to_plot = Cow::Owned(upsample_bilinear(values, upsample_factor));
+        values_to_plot = Cow::Owned(match upsample_method {
+            HeatmapUpsample::Nearest => upsample_nearest(values, upsample_factor),
+            HeatmapUpsample::Bilinear => upsample_bilinear(values, upsample_factor),
+        });
         x_edges = subdivide_edges(&x_edges, upsample_factor)?;
         y_edges = subdivide_edges(&y_edges, upsample_factor)?;
     }
@@ -383,6 +395,32 @@ fn resolve_edges(name: &str, edges: Option<&[f64]>, len: usize) -> Result<Vec<f6
         return Ok(edges.to_vec());
     }
     Ok((0..=len).map(|i| i as f64).collect())
+}
+
+/// Upsample by nearest-neighbor (pixel replication).
+///
+/// Simply repeats each cell `factor` times along both axes to preserve crisp
+/// boundaries.
+fn upsample_nearest(values: &Array2<f64>, factor: usize) -> Array2<f64> {
+    let factor = factor.max(1);
+    if factor == 1 {
+        return values.clone();
+    }
+    let (rows, cols) = values.dim();
+    let mut out = Array2::<f64>::zeros((rows * factor, cols * factor));
+    for r in 0..rows {
+        for c in 0..cols {
+            let v = values[(r, c)];
+            let row_start = r * factor;
+            let col_start = c * factor;
+            for rr in row_start..row_start + factor {
+                for cc in col_start..col_start + factor {
+                    out[(rr, cc)] = v;
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Bilinearly upsample a matrix by an integer factor.

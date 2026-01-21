@@ -656,7 +656,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         use crate::{
             commands::gc_bias::binning::compute_bin_edges,
             shared::plotters::{
-                heatmap::{HeatmapFormat, write_heatmap},
+                heatmap::{HeatmapFormat, HeatmapUpsample, write_heatmap},
                 lineplot::write_line_plot_png,
             },
         };
@@ -786,6 +786,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             None,
             true,
             scaling_factor,
+            HeatmapUpsample::Nearest,
             hm_width,
             hm_height,
             HeatmapFormat::Png,
@@ -809,6 +810,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             None,
             true,
             scaling_factor,
+            HeatmapUpsample::Nearest,
             hm_width,
             hm_height,
             HeatmapFormat::Png,

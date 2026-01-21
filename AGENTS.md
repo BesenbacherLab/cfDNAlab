@@ -81,6 +81,8 @@ Fail fast with helpful error messages; validate inputs where it helps users.
 
 Leave the codebase clearer than you found it: tidy TODOs (once solved), improve comments (but respect my changes to comments), and simplify when safe.
 
+Run `cargo check --features cli,plotters` after changes to ensure your changes actually compile.
+
 ## Testing
 
 **Be thorough.** If an output is meaningful, test its content/values—not just that it exists or runs.
