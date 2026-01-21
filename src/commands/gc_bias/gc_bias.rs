@@ -661,7 +661,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             },
         };
 
-        println!("Start: Plotting avg. bias across lengths");
+        println!("Start: Plotting GC bias");
         let gc_edges = compute_bin_edges(&gc_bins, 0, 100)?;
         let x_values: Vec<f64> = gc_edges
             .windows(2)

@@ -1,11 +1,3 @@
-use anyhow::{Context, Result, anyhow, bail};
-use fxhash::FxHashMap;
-use indicatif::{ProgressBar, ProgressStyle};
-use ndarray_npy::write_npy;
-use rayon::prelude::*;
-use rust_htslib::bam::{Read, Record};
-use std::{path::PathBuf, sync::Arc, time::Instant};
-
 use crate::{
     commands::{
         cli_common::{
@@ -40,6 +32,13 @@ use crate::{
         },
     },
 };
+use anyhow::{Context, Result, anyhow, bail};
+use fxhash::FxHashMap;
+use indicatif::{ProgressBar, ProgressStyle};
+use ndarray_npy::write_npy;
+use rayon::prelude::*;
+use rust_htslib::bam::{Read, Record};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 // Handle deletions?
 
@@ -246,6 +245,51 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
     println!("Start: Writing group index to: {:?}", &map_path);
     write_group_idx_to_name_tsv(map_path, &group_idx_to_name)?;
+
+    #[cfg(feature = "plotters")]
+    {
+        use crate::shared::plotters::lineplot::write_line_plot_png;
+        use ndarray::{Axis, s};
+
+        if window_size > 0 && num_groups > 0 {
+            println!("Start: Plotting first group's midpoint profile");
+            let first_profile: Vec<f64> = all_counts_3d_arr
+                .slice(s![0, .., ..])
+                .sum_axis(Axis(0))
+                .iter()
+                .map(|&v| v as f64)
+                .collect();
+
+            if !first_profile.is_empty() {
+                let x_values: Vec<f64> = if window_size % 2 == 1 {
+                    let center = (window_size / 2) as i64;
+                    (0..window_size)
+                        .map(|idx| (idx as i64 - center) as f64)
+                        .collect()
+                } else {
+                    (0..window_size).map(|idx| idx as f64).collect()
+                };
+
+                let plot_path = opt
+                    .ioc
+                    .output_dir
+                    .join(format!("{prefix}.midpoint_profile.first_group.png"));
+                write_line_plot_png(
+                    &plot_path,
+                    "Midpoint profile (first group, summed across lengths)",
+                    "Position",
+                    "Count",
+                    &x_values,
+                    &first_profile,
+                    1600,
+                    900,
+                )
+                .with_context(|| {
+                    format!("writing midpoint profile plot to {}", plot_path.display())
+                })?;
+            }
+        }
+    }
 
     let keep_temp = false; // TODO: Make cli arg behind a feature for dev purposes?
     if !keep_temp {
