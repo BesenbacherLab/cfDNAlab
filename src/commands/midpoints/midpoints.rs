@@ -251,38 +251,51 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         use crate::shared::plotters::lineplot::write_line_plot_png;
         use ndarray::{Axis, s};
 
-        if window_size > 0 && num_groups > 0 {
-            println!("Start: Plotting first group's midpoint profile");
-            let first_profile: Vec<f64> = all_counts_3d_arr
-                .slice(s![0, .., ..])
-                .sum_axis(Axis(0))
-                .iter()
-                .map(|&v| v as f64)
-                .collect();
+        if let Some(bad_idx) = opt
+            .plot_groups
+            .iter()
+            .copied()
+            .find(|&idx| !group_idx_to_name.contains_key(&(idx as u64)))
+        {
+            bail!(
+                "plotting: group index {} does not exist. There are {} groups (0-based).",
+                bad_idx,
+                num_groups
+            );
+        }
 
-            if !first_profile.is_empty() {
-                let x_values: Vec<f64> = if window_size % 2 == 1 {
-                    let center = (window_size / 2) as i64;
-                    (0..window_size)
-                        .map(|idx| (idx as i64 - center) as f64)
-                        .collect()
-                } else {
-                    (0..window_size).map(|idx| idx as f64).collect()
-                };
+        if window_size > 0 && num_groups > 0 && !opt.plot_groups.is_empty() {
+            let x_values: Vec<f64> = if window_size % 2 == 1 {
+                let center = (window_size / 2) as i64;
+                (0..window_size)
+                    .map(|idx| (idx as i64 - center) as f64)
+                    .collect()
+            } else {
+                (0..window_size).map(|idx| idx as f64).collect()
+            };
+
+            for &group_idx in &opt.plot_groups {
+                let profile: Vec<f64> = all_counts_3d_arr
+                    .slice(s![group_idx, .., ..])
+                    .sum_axis(Axis(0))
+                    .iter()
+                    .map(|&v| v as f64)
+                    .collect();
+
+                if profile.is_empty() {
+                    continue;
+                }
 
                 let plot_path = opt
                     .ioc
                     .output_dir
-                    .join(format!("{prefix}.midpoint_profile.first_group.png"));
+                    .join(format!("{prefix}.midpoint_profile.group_{}.png", group_idx));
+                let title = group_idx_to_name
+                    .get(&(group_idx as u64))
+                    .map(|name| format!("Midpoint profile ({})", name))
+                    .unwrap_or_else(|| format!("Midpoint profile (group {})", group_idx));
                 write_line_plot_png(
-                    &plot_path,
-                    "Midpoint profile (first group, summed across lengths)",
-                    "Position",
-                    "Count",
-                    &x_values,
-                    &first_profile,
-                    1600,
-                    900,
+                    &plot_path, &title, "Position", "Count", &x_values, &profile, 1600, 900,
                 )
                 .with_context(|| {
                     format!("writing midpoint profile plot to {}", plot_path.display())

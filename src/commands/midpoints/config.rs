@@ -174,6 +174,23 @@ pub struct MidpointsConfig {
         )
     )]
     pub ref_2bit: Option<PathBuf>,
+
+    /// Group indices to plot as midpoint profiles `[integers]`
+    ///
+    /// Comma separated list of zero-based group indices to plot after counting.
+    /// 
+    /// This plotting step is intended for quick QC of the outputs. It's not
+    /// optimized for publication etc. (although feel free!)
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_delimiter = ',',
+            default_values_t = [0_usize],
+            help_heading = "Plotting"
+        )
+    )]
+    pub plot_groups: Vec<usize>,
 }
 
 impl MidpointsConfig {
@@ -198,6 +215,7 @@ impl MidpointsConfig {
                 drop_invalid_gc: false,
             },
             ref_2bit: None,
+            plot_groups: vec![0],
         }
     }
 
