@@ -50,10 +50,10 @@ pub enum HeatmapFormat {
 ///     Optional center value for a diverging scale. Values below use a cool gradient toward
 ///     the center and values above use a warm gradient.
 /// - `min_color`:
-///     Optional color for the minimum value. Defaults depend on the palette: teal when
-///     using a diverging center, yellow otherwise.
+///     Optional color for the minimum value. Defaults depend on the palette: pink when
+///     using a diverging center, black otherwise.
 /// - `max_color`:
-///     Optional color for the maximum value. Defaults to orange.
+///     Optional color for the maximum value. Defaults to green.
 /// - `symmetric_diverging`:
 ///     When true, uses the maximum absolute distance from the center to scale both
 ///     sides of a diverging palette so gradients are symmetric.
@@ -193,10 +193,10 @@ pub fn write_heatmap<P: AsRef<Path>>(
 /// - `center_val`:
 ///     Optional diverging center.
 /// - `min_color`:
-///     Optional color for the minimum value. Defaults depend on the palette: teal when
-///     using a diverging center, yellow otherwise.
+///     Optional color for the minimum value. Defaults depend on the palette: pink when
+///     using a diverging center, pink otherwise.
 /// - `max_color`:
-///     Optional color for the maximum value. Defaults to orange.
+///     Optional color for the maximum value. Defaults to green.
 /// - `symmetric_diverging`:
 ///     When true, uses the maximum absolute distance from the center to scale both sides so the diverging gradients share a common curve.
 ///
@@ -516,15 +516,15 @@ fn color_for_value(
     symmetric_diverging: bool,
 ) -> RGBColor {
     // Color palettes:
-    // Diverging: teal: 166669 (22,102,105), yellow: fdfdec (253,253,236), orange: 9a4613 (154,70,19)
-    // Single: yellow: fdfdec (253,253,236), orange: 9a4613 (154,70,19)
+    // Diverging: pink: ff00f6 (255,0,246), black: 000000 (0,0,0), green: 0cff00 (12,255,0)
+    // Single: black: 000000 (0,0,0), green: 0cff00 (12,255,0)
 
     let (default_min, default_max) = if center_val.is_some() {
-        (RGBColor(22, 102, 105), RGBColor(154, 70, 19))
+        (RGBColor(255, 0, 246), RGBColor(12, 255, 0))
     } else {
-        (RGBColor(253, 253, 236), RGBColor(154, 70, 19))
+        (RGBColor(0, 0, 0), RGBColor(12, 255, 0))
     };
-    let center_color = RGBColor(253, 253, 236);
+    let center_color = RGBColor(0, 0, 0);
     let min_color = min_color.unwrap_or(default_min);
     let max_color = max_color.unwrap_or(default_max);
 
