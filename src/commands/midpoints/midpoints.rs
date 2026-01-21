@@ -248,6 +248,8 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
     #[cfg(feature = "plotters")]
     {
+        println!("Start: Plotting selected groups' midpoint profiles");
+
         use crate::shared::plotters::lineplot::write_line_plot_png;
         use ndarray::{Axis, s};
 
