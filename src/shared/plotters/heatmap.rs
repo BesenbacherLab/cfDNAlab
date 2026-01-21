@@ -516,13 +516,13 @@ fn color_for_value(
     symmetric_diverging: bool,
 ) -> RGBColor {
     // Color palettes:
-    // Diverging: pink: ff00f6 (255,0,246), black: 000000 (0,0,0), green: 0cff00 (12,255,0)
-    // Single: black: 000000 (0,0,0), green: 0cff00 (12,255,0)
+    // Diverging: pink: fd28f5 (253,40,245), black: 000000 (0,0,0), green: 32ff28 (50,255,40)
+    // Single: black: 000000 (0,0,0), green: 32ff28 (50,255,40)
 
     let (default_min, default_max) = if center_val.is_some() {
-        (RGBColor(255, 0, 246), RGBColor(12, 255, 0))
+        (RGBColor(253, 40, 245), RGBColor(50, 255, 40))
     } else {
-        (RGBColor(0, 0, 0), RGBColor(12, 255, 0))
+        (RGBColor(0, 0, 0), RGBColor(50, 255, 40))
     };
     let center_color = RGBColor(0, 0, 0);
     let min_color = min_color.unwrap_or(default_min);
