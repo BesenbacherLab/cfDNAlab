@@ -250,8 +250,11 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     {
         println!("Start: Plotting selected groups' midpoint profiles");
 
-        use crate::shared::plotters::lineplot::write_line_plot_png;
-        use ndarray::{Axis, s};
+        use crate::shared::plotters::{
+            heatmap::{HeatmapFormat, HeatmapUpsample, write_heatmap},
+            lineplot::write_line_plot_png,
+        };
+        use ndarray::{Array2, Axis, s};
 
         if let Some(bad_idx) = opt
             .plot_groups
@@ -275,6 +278,16 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
             } else {
                 (0..window_size).map(|idx| idx as f64).collect()
             };
+            let x_edges: Vec<f64> = if window_size % 2 == 1 {
+                let center = (window_size / 2) as f64;
+                (0..=window_size)
+                    .map(|idx| idx as f64 - center - 0.5)
+                    .collect()
+            } else {
+                (0..=window_size).map(|idx| idx as f64 - 0.5).collect()
+            };
+            let y_edges: Vec<f64> = length_bins.iter().map(|&b| b as f64).collect();
+            let num_length_bins = length_bins.len().saturating_sub(1);
 
             for &group_idx in &opt.plot_groups {
                 let profile: Vec<f64> = all_counts_3d_arr
@@ -302,6 +315,44 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
                 .with_context(|| {
                     format!("writing midpoint profile plot to {}", plot_path.display())
                 })?;
+
+                if num_length_bins > 1 {
+                    let mut heatmap_values: Array2<f64> =
+                        Array2::zeros((num_length_bins, window_size));
+                    heatmap_values.assign(
+                        &all_counts_3d_arr
+                            .slice(s![group_idx, .., ..])
+                            .mapv(f64::from),
+                    );
+
+                    let heatmap_path = opt.ioc.output_dir.join(format!(
+                        "{prefix}.midpoint_profile.group_{}.heatmap.png",
+                        group_idx
+                    ));
+                    write_heatmap(
+                        &heatmap_path,
+                        &format!("Midpoint profile by length bin ({})", title),
+                        "Position",
+                        "Fragment length (bp)",
+                        &heatmap_values,
+                        Some(&x_edges),
+                        Some(&y_edges),
+                        Some(0f64),
+                        None,
+                        None,
+                        None,
+                        None,
+                        false,
+                        1,
+                        HeatmapUpsample::Nearest,
+                        1600,
+                        900,
+                        HeatmapFormat::Png,
+                    )
+                    .with_context(|| {
+                        format!("writing midpoint heatmap to {}", heatmap_path.display())
+                    })?;
+                }
             }
         }
     }
