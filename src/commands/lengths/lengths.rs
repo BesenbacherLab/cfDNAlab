@@ -31,7 +31,7 @@ use crate::{
         thread_pool::init_global_pool,
     },
 };
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray_npy::write_npy;
@@ -319,9 +319,10 @@ fn process_chrom(
     let mut counter = LengthsCounters::default();
 
     let gc_prefixes_opt = if gc_corrector_opt.is_some() {
-        let ref_2bit = opt.ref_2bit.as_ref().ok_or_else(|| {
-            anyhow!("When GC correction is specified, --ref-2bit must also be specified")
-        })?;
+        let ref_2bit = match opt.ref_2bit.as_ref() {
+            Some(r) => r,
+            None => bail!("When GC correction is specified, --ref-2bit must also be specified"),
+        };
         let seq_bytes = read_seq(&ref_2bit, chr)?;
         Some(build_gc_prefixes(&seq_bytes))
     } else {

@@ -33,7 +33,7 @@ use crate::{
         bam::create_chromosome_reader, bed::load_windows_from_bed, thread_pool::init_global_pool,
     },
 };
-use anyhow::{Context, Result, anyhow, bail, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -636,9 +636,10 @@ pub fn wps_for_tile(
     let mut counter = FCoverageCounters::default();
 
     let gc_prefixes_opt = if gc_corrector_opt.is_some() {
-        let ref_2bit = opt.ref_2bit.as_ref().ok_or_else(|| {
-            anyhow!("When GC correction is specified, --ref-2bit must also be specified")
-        })?;
+        let ref_2bit = match opt.ref_2bit.as_ref() {
+            Some(r) => r,
+            None => bail!("When GC correction is specified, --ref-2bit must also be specified"),
+        };
         let seq_bytes = read_seq_in_range(
             &ref_2bit,
             &tile.chr,
