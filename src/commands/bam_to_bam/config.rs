@@ -28,7 +28,7 @@ use std::path::PathBuf;
 /// ## Fragment length
 ///
 /// The fragment length is written to the AUX tag "FLEN".
-/// 
+///
 /// For **paired-end** sequencing, the length is defined as `[forward.pos, reverse.end)`.
 /// For **unpaired** sequencing where each read is a fragment, the length is defined as `[read.pos, read.end)`.
 ///
@@ -190,7 +190,9 @@ impl BamToBamConfig {
             fragment_lengths: FragmentLengthArgs::default(),
             min_mapq: 0,
             require_proper_pair: false,
-            unpaired: UnpairedArgs { reads_are_fragments: false },
+            unpaired: UnpairedArgs {
+                reads_are_fragments: false,
+            },
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::Any,

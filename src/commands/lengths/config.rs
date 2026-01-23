@@ -212,7 +212,9 @@ impl LengthsConfig {
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
             fragment_lengths: FragmentLengthArgs::default(),
-            unpaired: UnpairedArgs { reads_are_fragments: false },
+            unpaired: UnpairedArgs {
+                reads_are_fragments: false,
+            },
             min_mapq: 30,
             require_proper_pair: false,
             blacklist: None,

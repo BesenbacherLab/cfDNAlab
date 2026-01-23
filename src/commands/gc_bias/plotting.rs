@@ -38,7 +38,6 @@ pub fn plot_gc_bias(
     length_bin_frequencies: &Array1<f64>,
     reference_metadata: &ReferenceGCMetadata,
 ) -> Result<()> {
-
     let gc_edges = compute_bin_edges(gc_bins, 0, 100)?;
     let x_values: Vec<f64> = gc_edges
         .windows(2)
@@ -175,7 +174,12 @@ pub fn plot_gc_bias(
         hm_height,
         HeatmapFormat::Png,
     )
-    .with_context(|| format!("writing GC bias heatmap (bins) to {}", heatmap_path.display()))?;
+    .with_context(|| {
+        format!(
+            "writing GC bias heatmap (bins) to {}",
+            heatmap_path.display()
+        )
+    })?;
 
     Ok(())
 }

@@ -362,7 +362,9 @@ impl GCConfig {
     ) -> Self {
         Self {
             ioc,
-            unpaired: UnpairedArgs { reads_are_fragments: false },
+            unpaired: UnpairedArgs {
+                reads_are_fragments: false,
+            },
             ref_genome: Ref2BitRequiredArgs { ref_2bit },
             ref_gc_dir,
             windows: WindowsArgs::default(),

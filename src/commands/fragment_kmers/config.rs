@@ -180,7 +180,9 @@ impl FragmentKmersSharedArgs {
         Self {
             ioc,
             ref_genome,
-            unpaired: UnpairedArgs { reads_are_fragments: false },
+            unpaired: UnpairedArgs {
+                reads_are_fragments: false,
+            },
             output_prefix: output_prefix,
             tile_size: 20_000_000,
             position_selection: FragmentPositionSelectionArgs {

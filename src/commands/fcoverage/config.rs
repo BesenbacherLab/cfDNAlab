@@ -203,7 +203,9 @@ impl FCoverageConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
-            unpaired: UnpairedArgs { reads_are_fragments: false },
+            unpaired: UnpairedArgs {
+                reads_are_fragments: false,
+            },
             output_prefix: "coverage".into(),
             decimals: 2,
             keep_zero_runs: false,

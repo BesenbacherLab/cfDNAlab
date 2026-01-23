@@ -178,7 +178,7 @@ pub struct MidpointsConfig {
     /// Group indices to plot as midpoint profiles `[integers]`
     ///
     /// Comma separated list of zero-based group indices to plot after counting.
-    /// 
+    ///
     /// This plotting step is intended for quick QC of the outputs. It's not
     /// optimized for publication etc. (although feel free!)
     #[cfg_attr(
@@ -197,7 +197,9 @@ impl MidpointsConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs, intervals: PathBuf) -> Self {
         Self {
             ioc,
-            unpaired: UnpairedArgs { reads_are_fragments: false },
+            unpaired: UnpairedArgs {
+                reads_are_fragments: false,
+            },
             output_prefix: "sites".into(),
             intervals,
             length_bins: vec![30, 1001],
