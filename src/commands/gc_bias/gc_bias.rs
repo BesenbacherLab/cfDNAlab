@@ -653,174 +653,18 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     // Plot the avg. gc-bias across lengths for quick QC
     #[cfg(feature = "plotters")]
     {
-        use crate::{
-            commands::gc_bias::binning::compute_bin_edges,
-            shared::plotters::{
-                heatmap::{HeatmapFormat, HeatmapUpsample, write_heatmap},
-                lineplot::write_line_plot_png,
-            },
-        };
+        use crate::commands::gc_bias::plotting::plot_gc_bias;
 
         println!("Start: Plotting GC bias");
-        let gc_edges = compute_bin_edges(&gc_bins, 0, 100)?;
-        let x_values: Vec<f64> = gc_edges
-            .windows(2)
-            .map(|window| {
-                let start = window[0] as f64;
-                let end = window[1] as f64;
-                (start + end) / 2.0
-            })
-            .collect();
-        let gc_edges_f: Vec<f64> = gc_edges.iter().map(|v| *v as f64).collect();
-        let length_edges = compute_bin_edges(
+
+        plot_gc_bias(
+            &opt.ioc.output_dir,
+            &gc_bins,
             &length_bins,
-            reference_metadata.min_fragment_length as u32,
-            reference_metadata.max_fragment_length as u32,
+            &correction_matrix,
+            &length_bin_frequencies,
+            &reference_metadata,
         )?;
-        let length_edges_f: Vec<f64> = length_edges.iter().map(|v| *v as f64).collect();
-
-        // Unweighted average bias
-
-        let num_gc_bins = correction_matrix.ncols();
-        let bias_matrix = correction_matrix.mapv(|cf| if cf == 0.0 { 0.0 } else { 1.0 / cf });
-        let mut unweighted_bias = vec![0.0; num_gc_bins];
-        let mut unweighted_counts = vec![0usize; num_gc_bins];
-
-        for length_biases in bias_matrix.outer_iter() {
-            for (gc_idx, &bias) in length_biases.iter().enumerate() {
-                if bias == 0.0 {
-                    continue;
-                }
-                unweighted_bias[gc_idx] += bias;
-                unweighted_counts[gc_idx] += 1;
-            }
-        }
-
-        for (bias, count) in unweighted_bias.iter_mut().zip(unweighted_counts.iter()) {
-            if *count > 0 {
-                *bias /= *count as f64;
-            }
-        }
-
-        // Weighted average bias
-
-        let mut weighted_bias = vec![0.0; num_gc_bins];
-        let mut weight_per_gc = vec![0.0; num_gc_bins];
-
-        for (length_biases, &length_weight) in
-            bias_matrix.outer_iter().zip(length_bin_frequencies.iter())
-        {
-            if length_weight == 0.0 {
-                continue;
-            }
-            for (gc_idx, &bias) in length_biases.iter().enumerate() {
-                if bias == 0.0 {
-                    continue;
-                }
-                weight_per_gc[gc_idx] += length_weight;
-                weighted_bias[gc_idx] += length_weight * bias;
-            }
-        }
-
-        for (bias, weight) in weighted_bias.iter_mut().zip(weight_per_gc.iter()) {
-            if *weight > 0.0 {
-                *bias /= *weight;
-            }
-        }
-
-        // Plot the bias
-
-        let plot_path_unweighted = opt
-            .ioc
-            .output_dir
-            .join("avg_gc_bias_across_lengths_unweighted.png");
-        write_line_plot_png(
-            &plot_path_unweighted,
-            "Average GC bias across fragment lengths (unweighted)",
-            "GC bin (%)",
-            "GC bias",
-            &x_values,
-            &unweighted_bias,
-            1600,
-            1000,
-        )
-        .with_context(|| format!("writing GC bias plot to {}", plot_path_unweighted.display()))?;
-
-        let plot_path_weighted = opt
-            .ioc
-            .output_dir
-            .join("avg_gc_bias_across_lengths_weighted.png");
-        write_line_plot_png(
-            &plot_path_weighted,
-            "Average GC bias across fragment lengths (weighted by length frequency)",
-            "GC bin (%)",
-            "GC bias",
-            &x_values,
-            &weighted_bias,
-            1600,
-            1000,
-        )
-        .with_context(|| format!("writing GC bias plot to {}", plot_path_weighted.display()))?;
-
-        // Heatmap sizes
-        let hm_width: u32 = 1000;
-        let hm_height: u32 = 700;
-        let scaling_factor = (hm_height as f32 / bias_matrix.nrows() as f32)
-            .max(hm_width as f32 / bias_matrix.ncols() as f32)
-            .ceil() as usize;
-
-        // Heatmap of bias across length and GC contents
-        let heatmap_path = opt.ioc.output_dir.join("gc_bias_heatmap.png");
-        write_heatmap(
-            &heatmap_path,
-            "GC bias per length and GC %",
-            "GC (%)",
-            "Fragment length (bp)",
-            &bias_matrix,
-            Some(&gc_edges_f),
-            Some(&length_edges_f),
-            None,
-            None,
-            Some(1.0),
-            None,
-            None,
-            true,
-            scaling_factor,
-            HeatmapUpsample::Nearest,
-            hm_width,
-            hm_height,
-            HeatmapFormat::Png,
-        )
-        .with_context(|| format!("writing GC bias heatmap to {}", heatmap_path.display()))?;
-
-        // Heatmap of bias across length bins and GC bins
-        let heatmap_path = opt.ioc.output_dir.join("gc_bias_heatmap.bins.png");
-        write_heatmap(
-            &heatmap_path,
-            "GC bias per length bin and GC bin",
-            "GC bin",
-            "Fragment length bin",
-            &bias_matrix,
-            None,
-            None,
-            None,
-            None,
-            Some(1.0),
-            None,
-            None,
-            true,
-            scaling_factor,
-            HeatmapUpsample::Nearest,
-            hm_width,
-            hm_height,
-            HeatmapFormat::Png,
-        )
-        .with_context(|| {
-            format!(
-                "writing GC bias heatmap (bins) to {}",
-                heatmap_path.display()
-            )
-        })?;
     }
 
     println!("");

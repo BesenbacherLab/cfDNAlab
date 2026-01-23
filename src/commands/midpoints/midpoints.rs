@@ -248,113 +248,18 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
     #[cfg(feature = "plotters")]
     {
+        use crate::commands::midpoints::plotting::plot_midpoint_profiles;
+
         println!("Start: Plotting selected groups' midpoint profiles");
 
-        use crate::shared::plotters::{
-            heatmap::{HeatmapFormat, HeatmapUpsample, write_heatmap},
-            lineplot::write_line_plot_png,
-        };
-        use ndarray::{Array2, Axis, s};
-
-        if let Some(bad_idx) = opt
-            .plot_groups
-            .iter()
-            .copied()
-            .find(|&idx| !group_idx_to_name.contains_key(&(idx as u64)))
-        {
-            bail!(
-                "plotting: group index {} does not exist. There are {} groups (0-based).",
-                bad_idx,
-                num_groups
-            );
-        }
-
-        if window_size > 0 && num_groups > 0 && !opt.plot_groups.is_empty() {
-            let x_values: Vec<f64> = if window_size % 2 == 1 {
-                let center = (window_size / 2) as i64;
-                (0..window_size)
-                    .map(|idx| (idx as i64 - center) as f64)
-                    .collect()
-            } else {
-                (0..window_size).map(|idx| idx as f64).collect()
-            };
-            let x_edges: Vec<f64> = if window_size % 2 == 1 {
-                let center = (window_size / 2) as f64;
-                (0..=window_size)
-                    .map(|idx| idx as f64 - center - 0.5)
-                    .collect()
-            } else {
-                (0..=window_size).map(|idx| idx as f64 - 0.5).collect()
-            };
-            let y_edges: Vec<f64> = length_bins.iter().map(|&b| b as f64).collect();
-            let num_length_bins = length_bins.len().saturating_sub(1);
-
-            for &group_idx in &opt.plot_groups {
-                let profile: Vec<f64> = all_counts_3d_arr
-                    .slice(s![group_idx, .., ..])
-                    .sum_axis(Axis(0))
-                    .iter()
-                    .map(|&v| v as f64)
-                    .collect();
-
-                if profile.is_empty() {
-                    continue;
-                }
-
-                let plot_path = opt
-                    .ioc
-                    .output_dir
-                    .join(format!("{prefix}.midpoint_profile.group_{}.png", group_idx));
-                let title = group_idx_to_name
-                    .get(&(group_idx as u64))
-                    .map(|name| format!("Midpoint profile ({})", name))
-                    .unwrap_or_else(|| format!("Midpoint profile (group {})", group_idx));
-                write_line_plot_png(
-                    &plot_path, &title, "Position", "Count", &x_values, &profile, 1600, 900,
-                )
-                .with_context(|| {
-                    format!("writing midpoint profile plot to {}", plot_path.display())
-                })?;
-
-                if num_length_bins > 1 {
-                    let mut heatmap_values: Array2<f64> =
-                        Array2::zeros((num_length_bins, window_size));
-                    heatmap_values.assign(
-                        &all_counts_3d_arr
-                            .slice(s![group_idx, .., ..])
-                            .mapv(f64::from),
-                    );
-
-                    let heatmap_path = opt.ioc.output_dir.join(format!(
-                        "{prefix}.midpoint_profile.group_{}.heatmap.png",
-                        group_idx
-                    ));
-                    write_heatmap(
-                        &heatmap_path,
-                        &format!("Midpoint profile by length bin ({})", title),
-                        "Position",
-                        "Fragment length (bp)",
-                        &heatmap_values,
-                        Some(&x_edges),
-                        Some(&y_edges),
-                        Some(0f64),
-                        None,
-                        None,
-                        None,
-                        None,
-                        false,
-                        1,
-                        HeatmapUpsample::Nearest,
-                        1600,
-                        900,
-                        HeatmapFormat::Png,
-                    )
-                    .with_context(|| {
-                        format!("writing midpoint heatmap to {}", heatmap_path.display())
-                    })?;
-                }
-            }
-        }
+        plot_midpoint_profiles(
+            prefix,
+            &opt.ioc.output_dir,
+            &opt.plot_groups,
+            &length_bins,
+            &group_idx_to_name,
+            all_counts_3d_arr,
+        )?;
     }
 
     let keep_temp = false; // TODO: Make cli arg behind a feature for dev purposes?

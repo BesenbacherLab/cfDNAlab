@@ -8,6 +8,8 @@ pub mod interpolation;
 pub mod load_reference_bias;
 pub mod outliers;
 pub mod package;
+#[cfg(feature = "plotters")]
+pub mod plotting;
 pub mod smoothing;
 pub mod support_masking;
 pub mod windows;
