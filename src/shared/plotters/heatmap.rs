@@ -573,9 +573,9 @@ where
     let x_range = *hist.edges.first().unwrap()..*hist.edges.last().unwrap();
     let max_y = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
-        .margin(0)
+        .margin(20)
         .x_label_area_size(52)
-        .y_label_area_size(20)
+        .y_label_area_size(62)
         .build_cartesian_2d(x_range, 0.0..max_y)?;
 
     chart
@@ -614,9 +614,9 @@ where
     let y_range = *hist.edges.first().unwrap()..*hist.edges.last().unwrap();
     let max_x = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
-        .margin(0)
-        .x_label_area_size(20)
-        .y_label_area_size(52)
+        .margin(20)
+        .x_label_area_size(52)
+        .y_label_area_size(62)
         .build_cartesian_2d(0.0..max_x, y_range)?;
 
     chart
