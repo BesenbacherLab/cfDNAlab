@@ -433,7 +433,7 @@ where
     let mut top_height = 0;
     if x_hist.is_some() {
         let (_, main_h) = main_area.dim_in_pixel();
-        let desired = 180;
+        let desired = 140;
         top_height = desired.min(main_h.saturating_sub(140));
         if top_height > 0 {
             let split = heatmap_area.split_vertically(top_height);
@@ -449,18 +449,6 @@ where
             let effective_top = top_height.min(area_h);
             let (_, lower) = area.split_vertically(effective_top);
             right_area = Some(lower);
-        } else {
-            right_area = Some(area);
-        }
-    }
-
-    // Trim legend height from the right histogram so its bottom aligns with the heatmap plot
-    if let Some(area) = right_area.take() {
-        let legend_height: u32 = 40;
-        let heatmap_h = heatmap_area.dim_in_pixel().1;
-        if heatmap_h > legend_height {
-            let (upper, _) = area.split_vertically(area.dim_in_pixel().1.saturating_sub(legend_height));
-            right_area = Some(upper);
         } else {
             right_area = Some(area);
         }
@@ -503,7 +491,12 @@ where
     }
     if let Some(area) = right_area {
         if let Some(hist) = y_hist {
-            draw_histogram_right(&area, hist, y_limits)?;
+            // Match right histogram height to the heatmap plot area to align bottoms
+            let heatmap_h = heatmap_area.dim_in_pixel().1;
+            let (_, area_h) = area.dim_in_pixel();
+            let target_h = heatmap_h.min(area_h);
+            let (aligned_area, _) = area.split_vertically(target_h);
+            draw_histogram_right(&aligned_area, hist, y_limits)?;
         }
     }
 
@@ -577,9 +570,9 @@ where
     let (x_min, x_max) = x_range;
     let max_y = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
-        .margin(12)
+        .margin(20)
         .x_label_area_size(52)
-        .y_label_area_size(0)
+        .y_label_area_size(62)
         .build_cartesian_2d(x_min..x_max, 0.0..max_y)?;
 
     chart
@@ -624,9 +617,9 @@ where
     let (y_min, y_max) = y_range;
     let max_x = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
-        .margin(12)
-        .x_label_area_size(40)
-        .y_label_area_size(0)
+        .margin(20)
+        .x_label_area_size(52)
+        .y_label_area_size(62)
         .build_cartesian_2d(0.0..max_x, y_min..y_max)?;
 
     chart
