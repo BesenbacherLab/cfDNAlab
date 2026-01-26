@@ -114,9 +114,7 @@ impl HistogramSpec {
         );
         let width = bin_width.unwrap_or(1.0);
         ensure!(width > 0.0, "Histogram bin width must be positive");
-        let edges: Vec<f64> = (0..=counts.len())
-            .map(|i| i as f64 * width)
-            .collect();
+        let edges: Vec<f64> = (0..=counts.len()).map(|i| i as f64 * width).collect();
         Self::from_binned(edges, counts)
     }
 
