@@ -45,9 +45,9 @@ const MIN_HEATMAP_WIDTH_AFTER_RIGHT: u32 = 200;
 // Padding between the heatmap and the right histogram panel, set to zero for no gap
 const RIGHT_PANEL_GAP: u32 = 0;
 // Margin inside histogram charts, lowering packs bars closer to the panel edges
-const HIST_MARGIN: u32 = 0;
+const HIST_MARGIN: u32 = 20;
 // Space for x-axis labels on histogram charts, reducing moves bars closer to the bottom edge
-const HIST_X_LABEL_AREA: u32 = 52;
+const HIST_X_LABEL_AREA: u32 = 0;
 // Space for y-axis labels on histogram charts, reducing moves bars closer to the left edge
 const HIST_Y_LABEL_AREA: u32 = 62;
 
