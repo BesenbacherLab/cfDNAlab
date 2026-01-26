@@ -491,16 +491,10 @@ where
     }
     if let Some(area) = right_area {
         if let Some(hist) = y_hist {
-            // Match right histogram height to the heatmap plot (exclude heatmap x-axis and legend)
+            // Match right histogram height to the heatmap plot area to align bottoms
             let heatmap_h = heatmap_area.dim_in_pixel().1;
-            let legend_h = 40;
-            let heatmap_margin = 20;
-            let heatmap_x_label = 52;
-            let plot_h = heatmap_h
-                .saturating_sub(legend_h + 2 * heatmap_margin + heatmap_x_label);
-
             let (_, area_h) = area.dim_in_pixel();
-            let target_h = plot_h.min(area_h);
+            let target_h = heatmap_h.min(area_h);
             let (aligned_area, _) = area.split_vertically(target_h);
             draw_histogram_right(&aligned_area, hist, y_limits)?;
         }
@@ -576,8 +570,8 @@ where
     let (x_min, x_max) = x_range;
     let max_y = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
-        .margin(12)
-        .x_label_area_size(24)
+        .margin(20)
+        .x_label_area_size(52)
         .y_label_area_size(62)
         .build_cartesian_2d(x_min..x_max, 0.0..max_y)?;
 
@@ -623,7 +617,7 @@ where
     let (y_min, y_max) = y_range;
     let max_x = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
-        .margin(12)
+        .margin(20)
         .x_label_area_size(52)
         .y_label_area_size(62)
         .build_cartesian_2d(0.0..max_x, y_min..y_max)?;
