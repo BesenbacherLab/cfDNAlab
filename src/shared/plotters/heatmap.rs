@@ -405,7 +405,7 @@ where
     let mut work_area = root_area.clone();
     let mut title_area = None;
     if x_hist.is_some() {
-        let title_height = 40;
+        let title_height = 24;
         let (_, h) = work_area.dim_in_pixel();
         if h > title_height {
             let split = work_area.split_vertically(title_height);
@@ -419,8 +419,8 @@ where
     let mut right_area = None;
     if y_hist.is_some() {
         let available_w = main_area.dim_in_pixel().0;
-        let desired = 220;
-        let right_width = desired.min(available_w.saturating_sub(200));
+        let desired = 160;
+        let right_width = desired.min(available_w.saturating_sub(140));
         if right_width > 0 {
             let split = main_area.split_horizontally(available_w.saturating_sub(right_width));
             main_area = split.0;
@@ -434,8 +434,8 @@ where
     let mut top_height = 0;
     if x_hist.is_some() {
         let (_, main_h) = main_area.dim_in_pixel();
-        let desired = 180;
-        top_height = desired.min(main_h.saturating_sub(140));
+        let desired = 110;
+        top_height = desired.min(main_h.saturating_sub(80));
         if top_height > 0 {
             let split = heatmap_area.split_vertically(top_height);
             top_area = Some(split.0);
@@ -570,12 +570,24 @@ where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
 {
     area.fill(&WHITE)?;
-    let x_range = *hist.edges.first().unwrap()..*hist.edges.last().unwrap();
+    let bin_width = if hist.edges.len() >= 2 {
+        hist.edges[1] - hist.edges[0]
+    } else {
+        1.0
+    };
+    // Nudge the upper bound inward to avoid extra padding past the last tick
+    let x_max = hist
+        .edges
+        .last()
+        .copied()
+        .unwrap_or(0.0)
+        - bin_width * 0.001;
+    let x_range = *hist.edges.first().unwrap()..x_max;
     let max_y = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
-        .margin(20)
-        .x_label_area_size(52)
-        .y_label_area_size(62)
+        .margin(0)
+        .x_label_area_size(32)
+        .y_label_area_size(0)
         .build_cartesian_2d(x_range, 0.0..max_y)?;
 
     chart
@@ -611,12 +623,23 @@ where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
 {
     area.fill(&WHITE)?;
-    let y_range = *hist.edges.first().unwrap()..*hist.edges.last().unwrap();
+    let bin_width = if hist.edges.len() >= 2 {
+        hist.edges[1] - hist.edges[0]
+    } else {
+        1.0
+    };
+    let y_max = hist
+        .edges
+        .last()
+        .copied()
+        .unwrap_or(0.0)
+        - bin_width * 0.001;
+    let y_range = *hist.edges.first().unwrap()..y_max;
     let max_x = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
-        .margin(20)
-        .x_label_area_size(52)
-        .y_label_area_size(62)
+        .margin(0)
+        .x_label_area_size(0)
+        .y_label_area_size(32)
         .build_cartesian_2d(0.0..max_x, y_range)?;
 
     chart
