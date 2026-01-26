@@ -33,7 +33,7 @@ const HEATMAP_Y_LABEL_AREA: u32 = 62;
 // Height reserved for the title when a top histogram exists, lowering moves the histogram upward
 const TITLE_HEIGHT_WITH_TOP_HIST: u32 = 40;
 // Vertical draw height for the top histogram bars, lowering makes the bars shorter without affecting the gap
-const TOP_HIST_HEIGHT: u32 = 180;
+const TOP_HIST_HEIGHT: u32 = 140;
 // Padding between the bottom of the top histogram and the start of the heatmap, set to zero for no extra gap
 const TOP_HIST_GAP_BELOW: u32 = 0;
 // Minimum height guaranteed for the heatmap after carving the top histogram and its gap, raising forces the top panel to shrink first
@@ -49,7 +49,7 @@ const HIST_MARGIN: u32 = 20;
 // Space for x-axis labels on histogram charts, reducing moves bars closer to the bottom edge
 const HIST_X_LABEL_AREA: u32 = 0;
 // Space for y-axis labels on histogram charts, reducing moves bars closer to the left edge
-const HIST_Y_LABEL_AREA: u32 = 62;
+const HIST_Y_LABEL_AREA: u32 = 0;
 
 /// Render a heatmap from a matrix to an image.
 ///
@@ -620,7 +620,9 @@ where
 
     chart
         .configure_mesh()
+        .disable_x_mesh()
         .disable_y_mesh()
+        .x_labels(0)
         .y_labels(0)
         .axis_style(&WHITE)
         .draw()?;
@@ -667,7 +669,9 @@ where
 
     chart
         .configure_mesh()
+        .disable_x_mesh()
         .disable_y_mesh()
+        .x_labels(0)
         .y_labels(0)
         .axis_style(&WHITE)
         .draw()?;
