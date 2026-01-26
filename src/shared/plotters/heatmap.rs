@@ -481,14 +481,17 @@ where
         symmetric_diverging,
     )?;
 
+    let x_limits = (*x_edges.first().unwrap(), *x_edges.last().unwrap());
+    let y_limits = (*y_edges.first().unwrap(), *y_edges.last().unwrap());
+
     if let Some(area) = top_area {
         if let Some(hist) = x_hist {
-            draw_histogram_top(&area, hist)?;
+            draw_histogram_top(&area, hist, x_limits)?;
         }
     }
     if let Some(area) = right_area {
         if let Some(hist) = y_hist {
-            draw_histogram_right(&area, hist)?;
+            draw_histogram_right(&area, hist, y_limits)?;
         }
     }
 
@@ -553,18 +556,19 @@ fn prepare_heatmap_inputs<'a>(
 fn draw_histogram_top<DB: DrawingBackend>(
     area: &DrawingArea<DB, Shift>,
     hist: &HistogramSpec,
+    x_range: (f64, f64),
 ) -> Result<()>
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
 {
     area.fill(&WHITE)?;
-    let x_range = *hist.edges.first().unwrap()..*hist.edges.last().unwrap();
+    let (x_min, x_max) = x_range;
     let max_y = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
         .margin(20)
         .x_label_area_size(52)
         .y_label_area_size(62)
-        .build_cartesian_2d(x_range, 0.0..max_y)?;
+        .build_cartesian_2d(x_min..x_max, 0.0..max_y)?;
 
     chart
         .configure_mesh()
@@ -581,8 +585,14 @@ where
     for (idx, &count) in hist.counts.iter().enumerate() {
         let left = hist.edges[idx];
         let right = hist.edges[idx + 1];
+        // Clamp bars so the histogram stops exactly at the heatmap bounds
+        let clamped_left = left.max(x_min);
+        let clamped_right = right.min(x_max);
+        if clamped_right <= clamped_left {
+            continue;
+        }
         chart.draw_series(std::iter::once(Rectangle::new(
-            [(left, 0.0), (right, count)],
+            [(clamped_left, 0.0), (clamped_right, count)],
             bar_style,
         )))?;
     }
@@ -593,18 +603,19 @@ where
 fn draw_histogram_right<DB: DrawingBackend>(
     area: &DrawingArea<DB, Shift>,
     hist: &HistogramSpec,
+    y_range: (f64, f64),
 ) -> Result<()>
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
 {
     area.fill(&WHITE)?;
-    let y_range = *hist.edges.first().unwrap()..*hist.edges.last().unwrap();
+    let (y_min, y_max) = y_range;
     let max_x = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
         .margin(20)
         .x_label_area_size(52)
         .y_label_area_size(62)
-        .build_cartesian_2d(0.0..max_x, y_range)?;
+        .build_cartesian_2d(0.0..max_x, y_min..y_max)?;
 
     chart
         .configure_mesh()
@@ -621,8 +632,14 @@ where
     for (idx, &count) in hist.counts.iter().enumerate() {
         let bottom = hist.edges[idx];
         let top = hist.edges[idx + 1];
+        // Clamp bars so the histogram ends flush with the heatmap range
+        let clamped_bottom = bottom.max(y_min);
+        let clamped_top = top.min(y_max);
+        if clamped_top <= clamped_bottom {
+            continue;
+        }
         chart.draw_series(std::iter::once(Rectangle::new(
-            [(0.0, bottom), (count, top)],
+            [(0.0, clamped_bottom), (count, clamped_top)],
             bar_style,
         )))?;
     }
