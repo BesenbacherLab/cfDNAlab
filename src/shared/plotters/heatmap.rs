@@ -22,6 +22,35 @@ pub enum HeatmapUpsample {
     Bilinear,
 }
 
+// Height reserved below the heatmap for the legend, lowering gives the heatmap more vertical room
+const LEGEND_HEIGHT: u32 = 40;
+// Outer margin around the heatmap plot, lowering pulls the plot closer to neighboring panels
+const HEATMAP_MARGIN: u32 = 20;
+// Vertical space for x-axis labels and ticks on the heatmap, reducing pulls the plot toward the legend
+const HEATMAP_X_LABEL_AREA: u32 = 52;
+// Horizontal space for y-axis labels and ticks on the heatmap, reducing pulls the plot toward the left edge
+const HEATMAP_Y_LABEL_AREA: u32 = 62;
+// Height reserved for the title when a top histogram exists, lowering moves the histogram upward
+const TITLE_HEIGHT_WITH_TOP_HIST: u32 = 40;
+// Vertical draw height for the top histogram bars, lowering makes the bars shorter without affecting the gap
+const TOP_HIST_HEIGHT: u32 = 180;
+// Padding between the bottom of the top histogram and the start of the heatmap, set to zero for no extra gap
+const TOP_HIST_GAP_BELOW: u32 = 0;
+// Minimum height guaranteed for the heatmap after carving the top histogram and its gap, raising forces the top panel to shrink first
+const MIN_HEATMAP_HEIGHT_AFTER_TOP: u32 = 140;
+// Desired width for the right histogram panel, lowering gives more width to the heatmap
+const RIGHT_PANEL_TARGET_WIDTH: u32 = 220;
+// Minimum width the heatmap keeps when allocating the right panel, raising shrinks the right panel when space is tight
+const MIN_HEATMAP_WIDTH_AFTER_RIGHT: u32 = 200;
+// Padding between the heatmap and the right histogram panel, set to zero for no gap
+const RIGHT_PANEL_GAP: u32 = 0;
+// Margin inside histogram charts, lowering packs bars closer to the panel edges
+const HIST_MARGIN: u32 = 20;
+// Space for x-axis labels on histogram charts, reducing moves bars closer to the bottom edge
+const HIST_X_LABEL_AREA: u32 = 52;
+// Space for y-axis labels on histogram charts, reducing moves bars closer to the left edge
+const HIST_Y_LABEL_AREA: u32 = 62;
+
 /// Render a heatmap from a matrix to an image.
 ///
 /// Draws each cell as a filled rectangle spanning the provided axis edges,
@@ -302,10 +331,9 @@ where
 {
     drawing_area.fill(&WHITE)?;
 
-    let legend_height: u32 = 40;
     let (_, area_h) = drawing_area.dim_in_pixel();
-    let (plot_area, legend_area) = if area_h > legend_height {
-        let (upper, lower) = drawing_area.split_vertically(area_h - legend_height);
+    let (plot_area, legend_area) = if area_h > LEGEND_HEIGHT {
+        let (upper, lower) = drawing_area.split_vertically(area_h - LEGEND_HEIGHT);
         (upper, Some(lower))
     } else {
         (drawing_area.clone(), None)
@@ -314,14 +342,11 @@ where
     let x_range = *x_edges.first().unwrap()..*x_edges.last().unwrap();
     let y_range = *y_edges.first().unwrap()..*y_edges.last().unwrap();
 
-    let x_label_area = 52;
-    let y_label_area = 62;
-
     let mut base_builder = ChartBuilder::on(&plot_area);
     let mut builder = base_builder
-        .margin(20)
-        .x_label_area_size(x_label_area)
-        .y_label_area_size(y_label_area);
+        .margin(HEATMAP_MARGIN)
+        .x_label_area_size(HEATMAP_X_LABEL_AREA)
+        .y_label_area_size(HEATMAP_Y_LABEL_AREA);
     if let Some(t) = title {
         builder = builder.caption(t, ("sans-serif", 22));
     }
@@ -404,7 +429,7 @@ where
     let mut work_area = root_area.clone();
     let mut title_area = None;
     if x_hist.is_some() {
-        let title_height = 40;
+        let title_height = TITLE_HEIGHT_WITH_TOP_HIST;
         let (_, h) = work_area.dim_in_pixel();
         if h > title_height {
             let split = work_area.split_vertically(title_height);
@@ -418,12 +443,20 @@ where
     let mut right_area = None;
     if y_hist.is_some() {
         let available_w = main_area.dim_in_pixel().0;
-        let desired = 220;
-        let right_width = desired.min(available_w.saturating_sub(200));
+        let desired = RIGHT_PANEL_TARGET_WIDTH;
+        let total_right = desired + RIGHT_PANEL_GAP;
+        let right_width =
+            total_right.min(available_w.saturating_sub(MIN_HEATMAP_WIDTH_AFTER_RIGHT));
         if right_width > 0 {
+            // First split off the combined gap+panel, then drop the gap so only the panel remains
             let split = main_area.split_horizontally(available_w.saturating_sub(right_width));
             main_area = split.0;
-            right_area = Some(split.1);
+            let mut panel_block = split.1;
+            if RIGHT_PANEL_GAP > 0 {
+                let (_, panel_only) = panel_block.split_horizontally(RIGHT_PANEL_GAP);
+                panel_block = panel_only;
+            }
+            right_area = Some(panel_block);
         }
     }
 
@@ -433,12 +466,18 @@ where
     let mut top_height = 0;
     if x_hist.is_some() {
         let (_, main_h) = main_area.dim_in_pixel();
-        let desired = 140;
-        top_height = desired.min(main_h.saturating_sub(140));
+        let total_needed = TOP_HIST_HEIGHT + TOP_HIST_GAP_BELOW;
+        top_height = total_needed.min(main_h.saturating_sub(MIN_HEATMAP_HEIGHT_AFTER_TOP));
         if top_height > 0 {
             let split = heatmap_area.split_vertically(top_height);
-            top_area = Some(split.0);
+            let panel = split.0;
             heatmap_area = split.1;
+
+            // Split the panel into the histogram draw area and a gap below it
+            let panel_h = panel.dim_in_pixel().1;
+            let hist_h = TOP_HIST_HEIGHT.min(panel_h);
+            let (hist_area, _gap) = panel.split_vertically(hist_h);
+            top_area = Some(hist_area);
         }
     }
 
@@ -461,7 +500,11 @@ where
             .into_text_style(&area)
             .pos(Pos::new(HPos::Center, VPos::Center))
             .color(&BLACK);
-        area.draw(&Text::new(title.to_string(), (w as i32 / 2, h as i32 / 2), text_style))?;
+        area.draw(&Text::new(
+            title.to_string(),
+            (w as i32 / 2, h as i32 / 2),
+            text_style,
+        ))?;
     }
 
     draw_heatmap(
@@ -570,9 +613,9 @@ where
     let (x_min, x_max) = x_range;
     let max_y = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
-        .margin(20)
-        .x_label_area_size(52)
-        .y_label_area_size(62)
+        .margin(HIST_MARGIN)
+        .x_label_area_size(HIST_X_LABEL_AREA)
+        .y_label_area_size(HIST_Y_LABEL_AREA)
         .build_cartesian_2d(x_min..x_max, 0.0..max_y)?;
 
     chart
@@ -617,9 +660,9 @@ where
     let (y_min, y_max) = y_range;
     let max_x = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
-        .margin(20)
-        .x_label_area_size(52)
-        .y_label_area_size(62)
+        .margin(HIST_MARGIN)
+        .x_label_area_size(HIST_X_LABEL_AREA)
+        .y_label_area_size(HIST_Y_LABEL_AREA)
         .build_cartesian_2d(0.0..max_x, y_min..y_max)?;
 
     chart
