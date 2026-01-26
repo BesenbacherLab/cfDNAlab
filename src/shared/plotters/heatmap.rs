@@ -454,6 +454,18 @@ where
         }
     }
 
+    // Trim legend height from the right histogram so its bottom aligns with the heatmap plot
+    if let Some(area) = right_area.take() {
+        let legend_height: u32 = 40;
+        let heatmap_h = heatmap_area.dim_in_pixel().1;
+        if heatmap_h > legend_height {
+            let (upper, _) = area.split_vertically(area.dim_in_pixel().1.saturating_sub(legend_height));
+            right_area = Some(upper);
+        } else {
+            right_area = Some(area);
+        }
+    }
+
     // Draw title above the top histogram when present
     if let Some(area) = title_area {
         let (w, h) = area.dim_in_pixel();
