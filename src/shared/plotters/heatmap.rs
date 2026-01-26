@@ -10,6 +10,8 @@ use std::path::Path;
 
 use super::histogram::HistogramSpec;
 
+const LEGEND_HEIGHT: u32 = 40;
+
 /// Output formats supported by the heatmap writer.
 pub enum HeatmapFormat {
     Png,
@@ -302,10 +304,9 @@ where
 {
     drawing_area.fill(&WHITE)?;
 
-    let legend_height: u32 = 40;
     let (_, area_h) = drawing_area.dim_in_pixel();
-    let (plot_area, legend_area) = if area_h > legend_height {
-        let (upper, lower) = drawing_area.split_vertically(area_h - legend_height);
+    let (plot_area, legend_area) = if area_h > LEGEND_HEIGHT {
+        let (upper, lower) = drawing_area.split_vertically(area_h - LEGEND_HEIGHT);
         (upper, Some(lower))
     } else {
         (drawing_area.clone(), None)
@@ -454,6 +455,17 @@ where
         }
     }
 
+    // Also trim the right panel bottom by the legend height to match the heatmap plot region
+    if let Some(area) = right_area.take() {
+        let (_, area_h) = area.dim_in_pixel();
+        if area_h > LEGEND_HEIGHT {
+            let (upper, _) = area.split_vertically(area_h - LEGEND_HEIGHT);
+            right_area = Some(upper);
+        } else {
+            right_area = Some(area);
+        }
+    }
+
     // Draw title above the top histogram when present
     if let Some(area) = title_area {
         let (w, h) = area.dim_in_pixel();
@@ -568,9 +580,10 @@ where
 
     chart
         .configure_mesh()
-        .disable_y_mesh()
+        .disable_mesh()
+        .x_desc("")
         .y_labels(0)
-        .axis_style(&WHITE)
+        .axis_style(&BLACK)
         .draw()?;
 
     let bar_style = ShapeStyle {
@@ -608,9 +621,10 @@ where
 
     chart
         .configure_mesh()
-        .disable_y_mesh()
+        .disable_mesh()
         .y_labels(0)
-        .axis_style(&WHITE)
+        .x_labels(0)
+        .axis_style(&BLACK)
         .draw()?;
 
     let bar_style = ShapeStyle {
