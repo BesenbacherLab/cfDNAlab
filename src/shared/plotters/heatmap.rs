@@ -395,29 +395,33 @@ fn draw_heatmap_with_layout<DB: DrawingBackend>(
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
 {
-    let (_, root_h) = root_area.dim_in_pixel();
+    root_area.fill(&WHITE)?;
 
-    let mut heatmap_area = root_area.clone();
+    // First, reserve space for the right histogram so the top panel width matches the heatmap.
+    let mut main_area = root_area.clone();
+    let mut right_area = None;
+    if y_hist.is_some() {
+        let available_w = main_area.dim_in_pixel().0;
+        let desired = 220;
+        let right_width = desired.min(available_w.saturating_sub(200));
+        if right_width > 0 {
+            let split = main_area.split_horizontally(available_w.saturating_sub(right_width));
+            main_area = split.0;
+            right_area = Some(split.1);
+        }
+    }
+
+    // Then carve off the top histogram from the main area so widths stay aligned.
+    let mut heatmap_area = main_area.clone();
     let mut top_area = None;
     if x_hist.is_some() {
+        let (_, main_h) = main_area.dim_in_pixel();
         let desired = 180;
-        let top_height = desired.min(root_h.saturating_sub(140));
+        let top_height = desired.min(main_h.saturating_sub(140));
         if top_height > 0 {
             let split = heatmap_area.split_vertically(top_height);
             top_area = Some(split.0);
             heatmap_area = split.1;
-        }
-    }
-
-    let mut right_area = None;
-    if y_hist.is_some() {
-        let available_w = heatmap_area.dim_in_pixel().0;
-        let desired = 220;
-        let right_width = desired.min(available_w.saturating_sub(200));
-        if right_width > 0 {
-            let split = heatmap_area.split_horizontally(available_w.saturating_sub(right_width));
-            heatmap_area = split.0;
-            right_area = Some(split.1);
         }
     }
 
@@ -515,6 +519,7 @@ fn draw_histogram_top<DB: DrawingBackend>(
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
 {
+    area.fill(&WHITE)?;
     let x_range = *hist.edges.first().unwrap()..*hist.edges.last().unwrap();
     let max_y = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
@@ -556,12 +561,13 @@ fn draw_histogram_right<DB: DrawingBackend>(
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
 {
+    area.fill(&WHITE)?;
     let y_range = *hist.edges.first().unwrap()..*hist.edges.last().unwrap();
     let max_x = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
         .margin(20)
-        .x_label_area_size(60)
-        .y_label_area_size(16)
+        .x_label_area_size(52)
+        .y_label_area_size(62)
         .build_cartesian_2d(0.0..max_x, y_range)?;
 
     chart
