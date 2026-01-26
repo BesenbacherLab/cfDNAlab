@@ -117,7 +117,7 @@ pub fn write_heatmap<P: AsRef<Path>>(
             let drawing_area = BitMapBackend::new(out_path, (width, height)).into_drawing_area();
             draw_heatmap(
                 &drawing_area,
-                title,
+                Some(title),
                 x_label,
                 y_label,
                 &x_edges,
@@ -136,7 +136,7 @@ pub fn write_heatmap<P: AsRef<Path>>(
             let drawing_area = SVGBackend::new(out_path, (width, height)).into_drawing_area();
             draw_heatmap(
                 &drawing_area,
-                title,
+                Some(title),
                 x_label,
                 y_label,
                 &x_edges,
@@ -283,7 +283,7 @@ pub fn write_heatmap_with_histograms<P: AsRef<Path>>(
 ///     Ok when drawing finishes.
 fn draw_heatmap<DB: DrawingBackend>(
     drawing_area: &DrawingArea<DB, Shift>,
-    title: &str,
+    title: Option<&str>,
     x_label: &str,
     y_label: &str,
     x_edges: &[f64],
@@ -317,12 +317,15 @@ where
     let x_label_area = 52;
     let y_label_area = 62;
 
-    let mut chart = ChartBuilder::on(&plot_area)
-        .caption(title, ("sans-serif", 22))
+    let mut base_builder = ChartBuilder::on(&plot_area);
+    let mut builder = base_builder
         .margin(20)
         .x_label_area_size(x_label_area)
-        .y_label_area_size(y_label_area)
-        .build_cartesian_2d(x_range, y_range)?;
+        .y_label_area_size(y_label_area);
+    if let Some(t) = title {
+        builder = builder.caption(t, ("sans-serif", 22));
+    }
+    let mut chart = builder.build_cartesian_2d(x_range, y_range)?;
 
     chart
         .configure_mesh()
@@ -397,8 +400,21 @@ where
 {
     root_area.fill(&WHITE)?;
 
-    // First, reserve space for the right histogram so the top panel width matches the heatmap.
-    let mut main_area = root_area.clone();
+    // First, reserve space for a title (when a top histogram is present)
+    let mut work_area = root_area.clone();
+    let mut title_area = None;
+    if x_hist.is_some() {
+        let title_height = 40;
+        let (_, h) = work_area.dim_in_pixel();
+        if h > title_height {
+            let split = work_area.split_vertically(title_height);
+            title_area = Some(split.0);
+            work_area = split.1;
+        }
+    }
+
+    // Reserve space for the right histogram so the top panel width matches the heatmap
+    let mut main_area = work_area.clone();
     let mut right_area = None;
     if y_hist.is_some() {
         let available_w = main_area.dim_in_pixel().0;
@@ -411,13 +427,14 @@ where
         }
     }
 
-    // Then carve off the top histogram from the main area so widths stay aligned.
+    // Then carve off the top histogram from the main area so widths stay aligned
     let mut heatmap_area = main_area.clone();
     let mut top_area = None;
+    let mut top_height = 0;
     if x_hist.is_some() {
         let (_, main_h) = main_area.dim_in_pixel();
         let desired = 180;
-        let top_height = desired.min(main_h.saturating_sub(140));
+        top_height = desired.min(main_h.saturating_sub(140));
         if top_height > 0 {
             let split = heatmap_area.split_vertically(top_height);
             top_area = Some(split.0);
@@ -425,9 +442,31 @@ where
         }
     }
 
+    // Align the right histogram vertical span with the heatmap by removing the top histogram height
+    if let Some(area) = right_area.take() {
+        if top_height > 0 {
+            let (_, area_h) = area.dim_in_pixel();
+            let effective_top = top_height.min(area_h);
+            let (_, lower) = area.split_vertically(effective_top);
+            right_area = Some(lower);
+        } else {
+            right_area = Some(area);
+        }
+    }
+
+    // Draw title above the top histogram when present
+    if let Some(area) = title_area {
+        let (w, h) = area.dim_in_pixel();
+        let text_style = ("sans-serif", 22)
+            .into_text_style(&area)
+            .pos(Pos::new(HPos::Center, VPos::Center))
+            .color(&BLACK);
+        area.draw(&Text::new(title.to_string(), (w as i32 / 2, h as i32 / 2), text_style))?;
+    }
+
     draw_heatmap(
         &heatmap_area,
-        title,
+        if x_hist.is_some() { None } else { Some(title) },
         x_label,
         y_label,
         x_edges,
@@ -444,12 +483,12 @@ where
 
     if let Some(area) = top_area {
         if let Some(hist) = x_hist {
-            draw_histogram_top(&area, hist, x_label)?;
+            draw_histogram_top(&area, hist)?;
         }
     }
     if let Some(area) = right_area {
         if let Some(hist) = y_hist {
-            draw_histogram_right(&area, hist, y_label)?;
+            draw_histogram_right(&area, hist)?;
         }
     }
 
@@ -514,7 +553,6 @@ fn prepare_heatmap_inputs<'a>(
 fn draw_histogram_top<DB: DrawingBackend>(
     area: &DrawingArea<DB, Shift>,
     hist: &HistogramSpec,
-    x_label: &str,
 ) -> Result<()>
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
@@ -523,17 +561,18 @@ where
     let x_range = *hist.edges.first().unwrap()..*hist.edges.last().unwrap();
     let max_y = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
-        .margin(20)
-        .x_label_area_size(52)
-        .y_label_area_size(62)
+        .margin(0)
+        .x_label_area_size(0)
+        .y_label_area_size(0)
         .build_cartesian_2d(x_range, 0.0..max_y)?;
 
     chart
         .configure_mesh()
         .disable_mesh()
-        .x_desc(x_label)
-        .y_desc("Mass")
-        .axis_desc_style(("sans-serif", 18))
+        .x_labels(0)
+        .y_labels(0)
+        .axis_style(&WHITE)
+        .label_style(("sans-serif", 1).into_text_style(area).color(&WHITE))
         .draw()?;
 
     let bar_style = ShapeStyle {
@@ -556,7 +595,6 @@ where
 fn draw_histogram_right<DB: DrawingBackend>(
     area: &DrawingArea<DB, Shift>,
     hist: &HistogramSpec,
-    y_label: &str,
 ) -> Result<()>
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
@@ -565,17 +603,18 @@ where
     let y_range = *hist.edges.first().unwrap()..*hist.edges.last().unwrap();
     let max_x = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
-        .margin(20)
-        .x_label_area_size(52)
-        .y_label_area_size(62)
+        .margin(0)
+        .x_label_area_size(0)
+        .y_label_area_size(0)
         .build_cartesian_2d(0.0..max_x, y_range)?;
 
     chart
         .configure_mesh()
         .disable_mesh()
-        .x_desc("Mass")
-        .y_desc(y_label)
-        .axis_desc_style(("sans-serif", 18))
+        .x_labels(0)
+        .y_labels(0)
+        .axis_style(&WHITE)
+        .label_style(("sans-serif", 1).into_text_style(area).color(&WHITE))
         .draw()?;
 
     let bar_style = ShapeStyle {
