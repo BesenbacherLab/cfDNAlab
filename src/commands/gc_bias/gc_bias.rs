@@ -664,6 +664,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             &correction_matrix,
             &length_bin_frequencies,
             &reference_metadata,
+            &avg_gc_pct_counts,
+            &binned_gc_counts,
         )?;
     }
 

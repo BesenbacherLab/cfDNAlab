@@ -8,6 +8,8 @@ use plotters::{
 use std::borrow::Cow;
 use std::path::Path;
 
+use super::histogram::HistogramSpec;
+
 /// Output formats supported by the heatmap writer.
 pub enum HeatmapFormat {
     Png,
@@ -98,39 +100,16 @@ pub fn write_heatmap<P: AsRef<Path>>(
     height: u32,
     format: HeatmapFormat,
 ) -> Result<()> {
-    let upsample_factor = upsample_factor.max(1);
-    let mut x_edges = resolve_edges("x", x_edges, values.ncols())?;
-    let mut y_edges = resolve_edges("y", y_edges, values.nrows())?;
-    let mut values_to_plot: Cow<'_, Array2<f64>> = Cow::Borrowed(values);
-    if upsample_factor > 1 {
-        values_to_plot = Cow::Owned(match upsample_method {
-            HeatmapUpsample::Nearest => upsample_nearest(values, upsample_factor),
-            HeatmapUpsample::Bilinear => upsample_bilinear(values, upsample_factor),
-        });
-        x_edges = subdivide_edges(&x_edges, upsample_factor)?;
-        y_edges = subdivide_edges(&y_edges, upsample_factor)?;
-    }
-    let mean_val = find_finite_mean(&values_to_plot);
-
-    let (data_min, data_max) = find_finite_min_max(&values_to_plot);
-    ensure!(
-        data_min.is_finite() && data_max.is_finite(),
-        "heatmap values are empty"
-    );
-
-    let min_val = val_min.unwrap_or(data_min);
-    let max_val = val_max.unwrap_or(data_max);
-    ensure!(
-        min_val.is_finite() && max_val.is_finite(),
-        "heatmap limits must be finite"
-    );
-    ensure!(max_val > min_val, "heatmap max must be greater than min");
-    if let Some(center) = val_center {
-        ensure!(
-            center > min_val && center < max_val,
-            "heatmap center must be within (min, max)"
-        );
-    }
+    let (x_edges, y_edges, values_to_plot, mean_val, min_val, max_val) = prepare_heatmap_inputs(
+        values,
+        x_edges,
+        y_edges,
+        val_min,
+        val_max,
+        val_center,
+        upsample_factor,
+        upsample_method,
+    )?;
 
     let out_path = out_path.as_ref();
     match format {
@@ -172,6 +151,92 @@ pub fn write_heatmap<P: AsRef<Path>>(
                 symmetric_diverging,
             )
         }
+    }
+}
+
+/// Render a heatmap with optional top and right histograms for marginal mass.
+///
+/// Splits the canvas into panels for the histograms and heatmap, keeping the
+/// legend attached to the heatmap area. When a histogram is omitted the space
+/// is returned to the heatmap so defaults remain unchanged.
+///
+/// Parameters
+/// ----------
+/// - `x_hist`:
+///     Optional histogram to render above the heatmap using the x-axis scale.
+/// - `y_hist`:
+///     Optional histogram to render to the right of the heatmap using the y-axis scale.
+pub fn write_heatmap_with_histograms<P: AsRef<Path>>(
+    out_path: P,
+    title: &str,
+    x_label: &str,
+    y_label: &str,
+    values: &Array2<f64>,
+    x_edges: Option<&[f64]>,
+    y_edges: Option<&[f64]>,
+    x_hist: Option<&HistogramSpec>,
+    y_hist: Option<&HistogramSpec>,
+    val_min: Option<f64>,
+    val_max: Option<f64>,
+    val_center: Option<f64>,
+    min_color: Option<RGBColor>,
+    max_color: Option<RGBColor>,
+    symmetric_diverging: bool,
+    upsample_factor: usize,
+    upsample_method: HeatmapUpsample,
+    width: u32,
+    height: u32,
+    format: HeatmapFormat,
+) -> Result<()> {
+    let (x_edges, y_edges, values_to_plot, mean_val, min_val, max_val) = prepare_heatmap_inputs(
+        values,
+        x_edges,
+        y_edges,
+        val_min,
+        val_max,
+        val_center,
+        upsample_factor,
+        upsample_method,
+    )?;
+
+    let out_path = out_path.as_ref();
+    match format {
+        HeatmapFormat::Png => draw_heatmap_with_layout(
+            BitMapBackend::new(out_path, (width, height)).into_drawing_area(),
+            title,
+            x_label,
+            y_label,
+            &x_edges,
+            &y_edges,
+            &values_to_plot,
+            min_val,
+            max_val,
+            mean_val,
+            val_center,
+            min_color,
+            max_color,
+            symmetric_diverging,
+            x_hist,
+            y_hist,
+        ),
+        HeatmapFormat::Svg => draw_heatmap_with_layout(
+            SVGBackend::new(out_path, (width, height)).into_drawing_area(),
+            title,
+            x_label,
+            y_label,
+            &x_edges,
+            &y_edges,
+            &values_to_plot,
+            min_val,
+            max_val,
+            mean_val,
+            val_center,
+            min_color,
+            max_color,
+            symmetric_diverging,
+            x_hist,
+            y_hist,
+        ),
     }
 }
 
@@ -306,6 +371,221 @@ where
     }
 
     plot_area.present()?;
+    Ok(())
+}
+
+fn draw_heatmap_with_layout<DB: DrawingBackend>(
+    root_area: DrawingArea<DB, Shift>,
+    title: &str,
+    x_label: &str,
+    y_label: &str,
+    x_edges: &[f64],
+    y_edges: &[f64],
+    values_to_plot: &Array2<f64>,
+    min_val: f64,
+    max_val: f64,
+    mean_val: Option<f64>,
+    val_center: Option<f64>,
+    min_color: Option<RGBColor>,
+    max_color: Option<RGBColor>,
+    symmetric_diverging: bool,
+    x_hist: Option<&HistogramSpec>,
+    y_hist: Option<&HistogramSpec>,
+) -> Result<()>
+where
+    DB::ErrorType: 'static + std::error::Error + Send + Sync,
+{
+    let (_, root_h) = root_area.dim_in_pixel();
+
+    let mut heatmap_area = root_area.clone();
+    let mut top_area = None;
+    if x_hist.is_some() {
+        let desired = 180;
+        let top_height = desired.min(root_h.saturating_sub(140));
+        if top_height > 0 {
+            let split = heatmap_area.split_vertically(top_height);
+            top_area = Some(split.0);
+            heatmap_area = split.1;
+        }
+    }
+
+    let mut right_area = None;
+    if y_hist.is_some() {
+        let available_w = heatmap_area.dim_in_pixel().0;
+        let desired = 220;
+        let right_width = desired.min(available_w.saturating_sub(200));
+        if right_width > 0 {
+            let split = heatmap_area.split_horizontally(available_w.saturating_sub(right_width));
+            heatmap_area = split.0;
+            right_area = Some(split.1);
+        }
+    }
+
+    draw_heatmap(
+        &heatmap_area,
+        title,
+        x_label,
+        y_label,
+        x_edges,
+        y_edges,
+        values_to_plot,
+        min_val,
+        max_val,
+        mean_val,
+        val_center,
+        min_color,
+        max_color,
+        symmetric_diverging,
+    )?;
+
+    if let Some(area) = top_area {
+        if let Some(hist) = x_hist {
+            draw_histogram_top(&area, hist, x_label)?;
+        }
+    }
+    if let Some(area) = right_area {
+        if let Some(hist) = y_hist {
+            draw_histogram_right(&area, hist, y_label)?;
+        }
+    }
+
+    root_area.present()?;
+    Ok(())
+}
+
+fn prepare_heatmap_inputs<'a>(
+    values: &'a Array2<f64>,
+    x_edges: Option<&[f64]>,
+    y_edges: Option<&[f64]>,
+    val_min: Option<f64>,
+    val_max: Option<f64>,
+    val_center: Option<f64>,
+    upsample_factor: usize,
+    upsample_method: HeatmapUpsample,
+) -> Result<(
+    Vec<f64>,
+    Vec<f64>,
+    Cow<'a, Array2<f64>>,
+    Option<f64>,
+    f64,
+    f64,
+)> {
+    let upsample_factor = upsample_factor.max(1);
+    let mut x_edges = resolve_edges("x", x_edges, values.ncols())?;
+    let mut y_edges = resolve_edges("y", y_edges, values.nrows())?;
+    let mut values_to_plot: Cow<'a, Array2<f64>> = Cow::Borrowed(values);
+    if upsample_factor > 1 {
+        values_to_plot = Cow::Owned(match upsample_method {
+            HeatmapUpsample::Nearest => upsample_nearest(values, upsample_factor),
+            HeatmapUpsample::Bilinear => upsample_bilinear(values, upsample_factor),
+        });
+        x_edges = subdivide_edges(&x_edges, upsample_factor)?;
+        y_edges = subdivide_edges(&y_edges, upsample_factor)?;
+    }
+    let mean_val = find_finite_mean(&values_to_plot);
+
+    let (data_min, data_max) = find_finite_min_max(&values_to_plot);
+    ensure!(
+        data_min.is_finite() && data_max.is_finite(),
+        "heatmap values are empty"
+    );
+
+    let min_val = val_min.unwrap_or(data_min);
+    let max_val = val_max.unwrap_or(data_max);
+    ensure!(
+        min_val.is_finite() && max_val.is_finite(),
+        "heatmap limits must be finite"
+    );
+    ensure!(max_val > min_val, "heatmap max must be greater than min");
+    if let Some(center) = val_center {
+        ensure!(
+            center > min_val && center < max_val,
+            "heatmap center must be within (min, max)"
+        );
+    }
+
+    Ok((x_edges, y_edges, values_to_plot, mean_val, min_val, max_val))
+}
+
+fn draw_histogram_top<DB: DrawingBackend>(
+    area: &DrawingArea<DB, Shift>,
+    hist: &HistogramSpec,
+    x_label: &str,
+) -> Result<()>
+where
+    DB::ErrorType: 'static + std::error::Error + Send + Sync,
+{
+    let x_range = *hist.edges.first().unwrap()..*hist.edges.last().unwrap();
+    let max_y = hist.max().max(1.0);
+    let mut chart = ChartBuilder::on(area)
+        .margin(20)
+        .x_label_area_size(52)
+        .y_label_area_size(62)
+        .build_cartesian_2d(x_range, 0.0..max_y)?;
+
+    chart
+        .configure_mesh()
+        .disable_mesh()
+        .x_desc(x_label)
+        .y_desc("Mass")
+        .axis_desc_style(("sans-serif", 18))
+        .draw()?;
+
+    let bar_style = ShapeStyle {
+        color: BLUE.mix(0.6).to_rgba(),
+        filled: true,
+        stroke_width: 0,
+    };
+    for (idx, &count) in hist.counts.iter().enumerate() {
+        let left = hist.edges[idx];
+        let right = hist.edges[idx + 1];
+        chart.draw_series(std::iter::once(Rectangle::new(
+            [(left, 0.0), (right, count)],
+            bar_style,
+        )))?;
+    }
+
+    Ok(())
+}
+
+fn draw_histogram_right<DB: DrawingBackend>(
+    area: &DrawingArea<DB, Shift>,
+    hist: &HistogramSpec,
+    y_label: &str,
+) -> Result<()>
+where
+    DB::ErrorType: 'static + std::error::Error + Send + Sync,
+{
+    let y_range = *hist.edges.first().unwrap()..*hist.edges.last().unwrap();
+    let max_x = hist.max().max(1.0);
+    let mut chart = ChartBuilder::on(area)
+        .margin(20)
+        .x_label_area_size(60)
+        .y_label_area_size(16)
+        .build_cartesian_2d(0.0..max_x, y_range)?;
+
+    chart
+        .configure_mesh()
+        .disable_mesh()
+        .x_desc("Mass")
+        .y_desc(y_label)
+        .axis_desc_style(("sans-serif", 18))
+        .draw()?;
+
+    let bar_style = ShapeStyle {
+        color: BLUE.mix(0.6).to_rgba(),
+        filled: true,
+        stroke_width: 0,
+    };
+    for (idx, &count) in hist.counts.iter().enumerate() {
+        let bottom = hist.edges[idx];
+        let top = hist.edges[idx + 1];
+        chart.draw_series(std::iter::once(Rectangle::new(
+            [(0.0, bottom), (count, top)],
+            bar_style,
+        )))?;
+    }
+
     Ok(())
 }
 
