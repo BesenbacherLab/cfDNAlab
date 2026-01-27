@@ -64,6 +64,8 @@ const HIST_X_LABEL_AREA: u32 = 0;
 const HIST_Y_LABEL_AREA: u32 = 0;
 // Enable debug backgrounds for histogram plot areas (top: green, right: red)
 const DEBUG_HIST_BACKGROUNDS: bool = false;
+// Fill color for histogram bars, grey by default; change to inspect layout or contrasts
+const HIST_BAR_COLOR: RGBColor = RGBColor(128, 128, 128);
 
 /// Render a heatmap from a matrix to an image.
 ///
@@ -667,7 +669,7 @@ where
         .draw()?;
 
     let bar_style = ShapeStyle {
-        color: BLUE.mix(0.6).to_rgba(),
+        color: HIST_BAR_COLOR.to_rgba(),
         filled: true,
         stroke_width: 0,
     };
@@ -719,7 +721,7 @@ where
         .draw()?;
 
     let bar_style = ShapeStyle {
-        color: BLUE.mix(0.6).to_rgba(),
+        color: HIST_BAR_COLOR.to_rgba(),
         filled: true,
         stroke_width: 0,
     };
