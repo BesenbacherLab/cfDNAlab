@@ -557,9 +557,11 @@ where
                     LEGEND_HEIGHT + HEATMAP_MARGIN_TOP + HEATMAP_MARGIN_BOTTOM + HEATMAP_X_LABEL_AREA,
                 );
             let (_, area_h) = area.dim_in_pixel();
-            let target_h = heatmap_plot_h.min(area_h);
-            // Remove top margin from the sidebar to align its top with the heatmap plot box
-            let (after_top_margin, _) = area.split_vertically(HEATMAP_MARGIN_TOP);
+            let top_offset = HEATMAP_MARGIN_TOP;
+            let usable_h = area_h.saturating_sub(top_offset);
+            let target_h = heatmap_plot_h.saturating_sub(top_offset).min(usable_h);
+            // Skip the top offset so the red box starts where the heatmap plot starts
+            let (after_top_margin, _) = area.split_vertically(top_offset);
             let (aligned_area, _) = after_top_margin.split_vertically(target_h);
             aligned_area.fill(&RED)?;
             draw_histogram_right(&aligned_area, hist, y_limits)?;
@@ -632,7 +634,8 @@ fn draw_histogram_top<DB: DrawingBackend>(
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
 {
-    area.fill(&GREEN)?;
+    // Keep panel white and only tint the plotting region for debugging alignment
+    area.fill(&WHITE)?;
     let (x_min, x_max) = x_range;
     let max_y = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
@@ -645,6 +648,8 @@ where
         .x_label_area_size(0)
         .y_label_area_size(0)
         .build_cartesian_2d(x_min..x_max, 0.0..max_y)?;
+
+    chart.plotting_area().fill(&GREEN)?;
 
     chart
         .configure_mesh()
