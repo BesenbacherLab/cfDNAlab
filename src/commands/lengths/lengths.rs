@@ -309,9 +309,9 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                     wchr_slice.len(),
                     &template_counts,
                 )?;
-                ensure!(
-                    counts.len() == wchr_slice.len(),
-                    "Expected {} windows for {} but got {}",
+            ensure!(
+                counts.len() == wchr_slice.len(),
+                "Expected {} windows for {} but got {}",
                     wchr_slice.len(),
                     chr,
                     counts.len()
@@ -863,12 +863,14 @@ fn process_tile(
     // Prepare outputs
     let mut window_idxs_chr: Vec<u64> = Vec::with_capacity(counts_by_idx.len());
     let mut counts: Vec<LengthCounts> = Vec::with_capacity(counts_by_idx.len());
+    let mut contained_flags: Vec<bool> = Vec::with_capacity(counts_by_idx.len());
     let mut crossing_window_idxs_chr: Vec<u64> = Vec::new();
     for (offset, tile_counts_opt) in counts_by_idx.into_iter().enumerate() {
         if let Some(tile_counts) = tile_counts_opt {
             let idx = (counts_start_idx + offset) as u64;
             window_idxs_chr.push(idx);
             counts.push(tile_counts.counts);
+            contained_flags.push(tile_counts.contained);
             if !windows_aligned_to_tiles && !tile_counts.contained {
                 crossing_window_idxs_chr.push(idx);
             }
@@ -893,6 +895,7 @@ fn process_tile(
         &tile.chr,
         tile.index,
         &window_idxs_chr,
+        &contained_flags,
         &counts,
     )?;
     let _ = write_cross_npy(

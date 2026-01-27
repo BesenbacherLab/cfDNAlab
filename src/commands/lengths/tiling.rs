@@ -22,6 +22,7 @@ pub fn write_partials_npz(
     chr: &str,
     tile_idx: u32,
     window_idxs_chr: &[u64],
+    contained_flags: &[bool],
     counts: &[LengthCounts],
 ) -> Result<Option<std::path::PathBuf>> {
     if window_idxs_chr.is_empty() {
@@ -39,11 +40,22 @@ pub fn write_partials_npz(
         );
     }
 
+    ensure!(
+        contained_flags.len() == window_idxs_chr.len(),
+        "contained flags length mismatch for tile {} {}",
+        chr,
+        tile_idx
+    );
+
     let path = temp_dir.join(format!("{prefix}.{chr}.{tile_idx}.npz"));
     let file = File::create(&path)?;
     let mut npz = NpzWriter::new(file);
 
     let idx_arr = Array1::from(window_idxs_chr.to_vec());
+    let contained_arr: Array1<u8> = contained_flags
+        .iter()
+        .map(|&b| if b { 1u8 } else { 0u8 })
+        .collect();
     let mut counts_arr = Array2::zeros((counts.len(), counts_len));
     for (row_idx, lc) in counts.iter().enumerate() {
         let row = ArrayView1::from(lc.counts.as_slice());
@@ -51,6 +63,7 @@ pub fn write_partials_npz(
     }
 
     npz.add_array("window_idx_chr", &idx_arr)?;
+    npz.add_array("contained", &contained_arr)?;
     npz.add_array("counts", &counts_arr)?;
     npz.finish()?;
     Ok(Some(path))
@@ -84,17 +97,16 @@ pub fn reduce_partials_for_chr(
     n_windows: usize,
     template: &LengthCounts,
 ) -> Result<Vec<LengthCounts>> {
-    // Expected contributions per window, incremented by crossing files and set to 1 later for contained windows
+    // Expected contributions per window, tracked separately for crossing and contained tiles
     let mut cross_counts: Vec<u32> = vec![0; n_windows];
-    let mut expected: Vec<u32> = vec![0; n_windows];
-    // Actual contributions observed while merging partials
+    let mut contained_counts: Vec<u32> = vec![0; n_windows];
     let mut contributions: Vec<u32> = vec![0; n_windows];
     // Accumulator for summed counts per window
     let mut counts_by_idx: Vec<LengthCounts> = std::iter::repeat_with(|| template.zeroed_like())
         .take(n_windows)
         .collect();
 
-    // First accumulate expected contributions from crossing windows
+    // First accumulate contributions from crossing windows
     for entry in
         std::fs::read_dir(temp_dir).with_context(|| format!("Listing {}", temp_dir.display()))?
     {
@@ -118,21 +130,12 @@ pub fn reduce_partials_for_chr(
         for idx in arr.iter() {
             let i = *idx as usize;
             ensure!(
-                i < expected.len(),
+                i < cross_counts.len(),
                 "Cross index {} out of bounds for chromosome {}",
                 idx,
                 chr
             );
             cross_counts[i] = cross_counts[i].saturating_add(1);
-        }
-    }
-
-    // Windows never listed in crossing files are contained within a single tile, so they expect one contribution
-    for (exp, cross) in expected.iter_mut().zip(cross_counts.iter()) {
-        if *cross == 0 {
-            *exp = 1;
-        } else {
-            *exp = *cross;
         }
     }
 
@@ -160,6 +163,9 @@ pub fn reduce_partials_for_chr(
         let idxs: Array1<u64> = npz
             .by_name("window_idx_chr")
             .with_context(|| format!("Reading window_idx_chr in {}", path.display()))?;
+        let contained: Array1<u8> = npz
+            .by_name("contained")
+            .with_context(|| format!("Reading contained in {}", path.display()))?;
         let counts: Array2<f64> = npz
             .by_name("counts")
             .with_context(|| format!("Reading counts in {}", path.display()))?;
@@ -169,12 +175,17 @@ pub fn reduce_partials_for_chr(
             path.display()
         );
         ensure!(
+            contained.len() == idxs.len(),
+            "contained length did not match idx length in {}",
+            path.display()
+        );
+        ensure!(
             counts.ncols() == template.counts.len(),
             "counts width mismatch in {}",
             path.display()
         );
 
-        for (row_idx, idx) in idxs.iter().enumerate() {
+        for (row_idx, (idx, contained_flag)) in idxs.iter().zip(contained.iter()).enumerate() {
             let i = *idx as usize;
             ensure!(
                 i < counts_by_idx.len(),
@@ -188,24 +199,24 @@ pub fn reduce_partials_for_chr(
                 *dst += *val;
             }
             contributions[i] = contributions[i].saturating_add(1);
+            if *contained_flag == 1 {
+                contained_counts[i] = contained_counts[i].saturating_add(1);
+            }
         }
     }
 
     // Validate contributions
-    for (i, ((have, want), cross)) in contributions
-        .iter()
-        .zip(expected.iter())
-        .zip(cross_counts.iter())
-        .enumerate()
-    {
+    for (i, have) in contributions.iter().enumerate() {
+        let expected = cross_counts[i].saturating_add(contained_counts[i]).max(1);
         ensure!(
-            *have == *want,
-            "Window {} on {} had {} contributions but expected {} (cross files counted {})",
+            *have == expected,
+            "Window {} on {} had {} contributions but expected {} (cross files counted {}, contained {})",
             i,
             chr,
             have,
-            want,
-            cross
+            expected,
+            cross_counts[i],
+            contained_counts[i]
         );
     }
 
