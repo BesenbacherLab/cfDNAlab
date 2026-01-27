@@ -236,12 +236,17 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     )?;
 
     let windows_lookup = windows_map.as_ref();
-    let tile_window_spans = Arc::new(precompute_tile_window_spans(&tiles, |chr| {
-        windows_lookup
-            .and_then(|m| m.get(chr))
-            .map(|w| w.as_slice())
-            .unwrap_or(&[])
-    }));
+    let tile_window_spans = Arc::new(precompute_tile_window_spans(
+        &tiles,
+        |chr| {
+            windows_lookup
+                .and_then(|m| m.get(chr))
+                .map(|w| w.as_slice())
+                .unwrap_or(&[])
+        },
+        0,
+        0,
+    ));
 
     // Compute per-chromosome window offsets and overall window count. In BED mode these offsets are
     // zero because windows already carry their global `original_idx` values.

@@ -137,9 +137,12 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let total_tiles = tiles.len();
 
     let windows_lookup = &windows_map;
-    let tile_window_spans = Arc::new(precompute_tile_window_spans(&tiles, |chr| {
-        windows_lookup.get(chr).map(|w| w.as_slice()).unwrap_or(&[])
-    }));
+    let tile_window_spans = Arc::new(precompute_tile_window_spans(
+        &tiles,
+        |chr| windows_lookup.get(chr).map(|w| w.as_slice()).unwrap_or(&[]),
+        0,
+        0,
+    ));
 
     // Where per-tile files go
     let tmp_prefix = format!("{prefix}.midpoint_profiles.tile");

@@ -162,11 +162,16 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
         build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, by_size_bp)?;
 
     let windows_lookup = windows_map.as_ref();
-    let tile_window_spans = Arc::new(precompute_tile_window_spans(&tiles, |chr| {
-        windows_lookup
-            .and_then(|m| m.get(chr).map(|w| w.as_slice()))
-            .unwrap_or(&[])
-    }));
+    let tile_window_spans = Arc::new(precompute_tile_window_spans(
+        &tiles,
+        |chr| {
+            windows_lookup
+                .and_then(|m| m.get(chr).map(|w| w.as_slice()))
+                .unwrap_or(&[])
+        },
+        0,
+        0,
+    ));
 
     // Where per-tile files go
     let positional_prefix = format!("{prefix}.pos");

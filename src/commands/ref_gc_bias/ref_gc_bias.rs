@@ -137,11 +137,16 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     );
 
     let windows_lookup = windows_map.as_ref();
-    let tile_window_spans = Arc::new(precompute_tile_window_spans(&tiles, |chr| {
-        windows_lookup
-            .and_then(|m| m.get(chr).map(|w| w.as_slice()))
-            .unwrap_or(&[])
-    }));
+    let tile_window_spans = Arc::new(precompute_tile_window_spans(
+        &tiles,
+        |chr| {
+            windows_lookup
+                .and_then(|m| m.get(chr).map(|w| w.as_slice()))
+                .unwrap_or(&[])
+        },
+        0,
+        0,
+    ));
 
     // Configure global thread‐pool size
     init_global_pool(opt.n_threads as usize)?;
