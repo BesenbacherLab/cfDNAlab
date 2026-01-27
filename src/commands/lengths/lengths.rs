@@ -50,6 +50,12 @@ struct TileCounts {
     contained: bool,
 }
 
+#[derive(Clone)]
+struct TileOutputs {
+    counters: LengthsCounters,
+    global_counts: Option<(String, LengthCounts)>,
+}
+
 /// Execute the fragment-length counting pipeline end-to-end.
 ///
 /// Parameters:
@@ -166,10 +172,10 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
 
     pb.set_position(0);
 
-    let tile_results: Vec<LengthsCounters> = tiles
+    let tile_results: Vec<TileOutputs> = tiles
         .par_iter()
         .enumerate()
-        .map(|(tile_idx, tile)| -> Result<LengthsCounters> {
+        .map(|(tile_idx, tile)| -> Result<TileOutputs> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
             let windows_chr: Option<&[(u64, u64, u64)]> = windows_map
                 .as_ref()
@@ -214,8 +220,8 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
 
     // Collect counters
     let mut global_counter = LengthsCounters::default();
-    for counter in tile_results {
-        global_counter += counter;
+    for tile_out in &tile_results {
+        global_counter += tile_out.counters.clone();
     }
 
     println!("Start: Reducing temporary tile files");
@@ -225,23 +231,20 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
 
     match &window_opt {
         WindowSpec::Global => {
-            // One window per chromosome -> collapse after
+            let mut counts_by_chr: FxHashMap<String, LengthCounts> = FxHashMap::default();
+            for tile_out in &tile_results {
+                if let Some((chr, counts)) = &tile_out.global_counts {
+                    let entry = counts_by_chr
+                        .entry(chr.clone())
+                        .or_insert_with(|| template_counts.zeroed_like());
+                    entry.merge_from(counts)?;
+                }
+            }
             for chr in &chromosomes {
-                let counts = reduce_partials_for_chr(
-                    chr,
-                    &temp_dir,
-                    partials_prefix,
-                    cross_prefix,
-                    1,
-                    &template_counts,
-                )?;
-                ensure!(
-                    counts.len() == 1,
-                    "Expected 1 window for {} but got {}",
-                    chr,
-                    counts.len()
-                );
-                all_bins.push(counts.into_iter().next().unwrap());
+                let counts = counts_by_chr
+                    .remove(chr)
+                    .context("Global mode missing counts for chromosome")?;
+                all_bins.push(counts);
             }
             all_bins = vec![LengthCounts::collapse(&all_bins)?];
         }
@@ -500,7 +503,7 @@ fn process_tile(
     temp_dir: &Path,
     partials_prefix: &str,
     cross_prefix: &str,
-) -> Result<LengthsCounters> {
+) -> Result<TileOutputs> {
     // One BAM reader per tile
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
     debug_assert_eq!(_tid_check as u32, tile.tid as u32);
@@ -530,7 +533,10 @@ fn process_tile(
         fetch_span_for_tile(tile, tile_window_span, windows_chr, window_opt, chrom_len)
     else {
         // Skip tiles with no relevant windows
-        return Ok(counter);
+        return Ok(TileOutputs {
+            counters: counter,
+            global_counts: None,
+        });
     };
 
     reader
@@ -854,7 +860,7 @@ fn process_tile(
     // Get counters from iterator
     counter.add_from_snapshot(iter.counters_snapshot());
 
-    // Prepare temporary artifacts
+    // Prepare outputs
     let mut window_idxs_chr: Vec<u64> = Vec::with_capacity(counts_by_idx.len());
     let mut counts: Vec<LengthCounts> = Vec::with_capacity(counts_by_idx.len());
     let mut crossing_window_idxs_chr: Vec<u64> = Vec::new();
@@ -867,6 +873,18 @@ fn process_tile(
                 crossing_window_idxs_chr.push(idx);
             }
         }
+    }
+
+    if matches!(window_opt, WindowSpec::Global) {
+        debug_assert_eq!(counts.len(), 1);
+        let chr_counts = counts
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| template.zeroed_like());
+        return Ok(TileOutputs {
+            counters: counter,
+            global_counts: Some((tile.chr.clone(), chr_counts)),
+        });
     }
 
     let _ = write_partials_npz(
@@ -885,5 +903,8 @@ fn process_tile(
         &crossing_window_idxs_chr,
     )?;
 
-    Ok(counter)
+    Ok(TileOutputs {
+        counters: counter,
+        global_counts: None,
+    })
 }
