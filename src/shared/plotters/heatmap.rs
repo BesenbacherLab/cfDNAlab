@@ -39,13 +39,13 @@ const HEATMAP_Y_LABEL_AREA: u32 = 62;
 // Height reserved for the title when a top histogram exists, lowering moves the histogram upward
 const TITLE_HEIGHT_WITH_TOP_HIST: u32 = 50;
 // Vertical draw height for the top histogram bars, lowering makes the bars shorter without affecting the gap
-const TOP_HIST_HEIGHT: u32 = 100;
+const TOP_HIST_HEIGHT: u32 = 700;
 // Padding between the bottom of the top histogram and the start of the heatmap, set to zero for no extra gap
 const TOP_HIST_GAP_BELOW: u32 = 0;
 // Minimum height guaranteed for the heatmap after carving the top histogram and its gap, raising forces the top panel to shrink first
 const MIN_HEATMAP_HEIGHT_AFTER_TOP: u32 = 140;
 // Desired width for the right histogram panel, lowering gives more width to the heatmap
-const RIGHT_PANEL_TARGET_WIDTH: u32 = 100;
+const RIGHT_PANEL_TARGET_WIDTH: u32 = 70;
 // Minimum width the heatmap keeps when allocating the right panel, raising shrinks the right panel when space is tight
 const MIN_HEATMAP_WIDTH_AFTER_RIGHT: u32 = 200;
 // Padding between the heatmap and the right histogram panel, set to zero for no gap
@@ -64,8 +64,8 @@ const HIST_X_LABEL_AREA: u32 = 0;
 const HIST_Y_LABEL_AREA: u32 = 0;
 // Enable debug backgrounds for histogram plot areas (top: green, right: red)
 const DEBUG_HIST_BACKGROUNDS: bool = false;
-// Fill color for histogram bars, grey by default; change to inspect layout or contrasts
-const HIST_BAR_COLOR: RGBColor = RGBColor(128, 128, 128);
+// Fill color for histogram bars
+const HIST_BAR_COLOR: RGBColor = RGBColor(161, 174, 177);
 
 /// Render a heatmap from a matrix to an image.
 ///
@@ -554,12 +554,9 @@ where
     if let Some(area) = right_area {
         if let Some(hist) = y_hist {
             // Match right histogram height to the heatmap plot box (exclude legend and x-axis area) and tint for debugging
-            let heatmap_plot_h = heatmap_area
-                .dim_in_pixel()
-                .1
-                .saturating_sub(
-                    LEGEND_HEIGHT + HEATMAP_MARGIN_TOP + HEATMAP_MARGIN_BOTTOM + HEATMAP_X_LABEL_AREA,
-                );
+            let heatmap_plot_h = heatmap_area.dim_in_pixel().1.saturating_sub(
+                LEGEND_HEIGHT + HEATMAP_MARGIN_TOP + HEATMAP_MARGIN_BOTTOM + HEATMAP_X_LABEL_AREA,
+            );
             let (_, area_h) = area.dim_in_pixel();
             let top_pad = HEATMAP_MARGIN_TOP;
             let target_h = heatmap_plot_h.min(area_h.saturating_sub(top_pad));
