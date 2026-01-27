@@ -55,7 +55,7 @@ const HIST_MARGIN_TOP: u32 = 0;
 // Margin below histogram bars inside their panels, set to zero to let bars touch the panel bottom
 const HIST_MARGIN_BOTTOM: u32 = 0;
 // Margin to the left of histogram bars inside their panels, set to zero to let bars touch the panel left edge
-const HIST_MARGIN_LEFT: u32 = 20;
+const HIST_MARGIN_LEFT: u32 = 0;
 // Margin to the right of histogram bars inside their panels, set to zero to let bars touch the panel right edge
 const HIST_MARGIN_RIGHT: u32 = 0;
 // Space for x-axis labels on histogram charts, set to zero to remove histogram x-axis
