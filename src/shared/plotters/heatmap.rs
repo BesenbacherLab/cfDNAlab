@@ -62,6 +62,8 @@ const HIST_MARGIN_RIGHT: u32 = 0;
 const HIST_X_LABEL_AREA: u32 = 0;
 // Space for y-axis labels on histogram charts, set to zero to remove histogram y-axis
 const HIST_Y_LABEL_AREA: u32 = 0;
+// Enable debug backgrounds for histogram plot areas (top: green, right: red)
+const DEBUG_HIST_BACKGROUNDS: bool = false;
 
 /// Render a heatmap from a matrix to an image.
 ///
@@ -563,7 +565,9 @@ where
             let (pad_area, rest) = area.split_vertically(top_pad);
             pad_area.fill(&WHITE)?;
             let (aligned_area, _) = rest.split_vertically(target_h);
-            aligned_area.fill(&RED)?;
+            if DEBUG_HIST_BACKGROUNDS {
+                aligned_area.fill(&RED)?;
+            }
             draw_histogram_right(&aligned_area, hist, y_limits)?;
         }
     }
@@ -649,7 +653,9 @@ where
         .y_label_area_size(0)
         .build_cartesian_2d(x_min..x_max, 0.0..max_y)?;
 
-    chart.plotting_area().fill(&GREEN)?;
+    if DEBUG_HIST_BACKGROUNDS {
+        chart.plotting_area().fill(&GREEN)?;
+    }
 
     chart
         .configure_mesh()
