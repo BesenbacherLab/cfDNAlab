@@ -85,6 +85,7 @@ pub fn reduce_partials_for_chr(
     template: &LengthCounts,
 ) -> Result<Vec<LengthCounts>> {
     // Expected contributions per window, incremented by crossing files and set to 1 later for contained windows
+    let mut cross_counts: Vec<u32> = vec![0; n_windows];
     let mut expected: Vec<u32> = vec![0; n_windows];
     // Actual contributions observed while merging partials
     let mut contributions: Vec<u32> = vec![0; n_windows];
@@ -122,14 +123,16 @@ pub fn reduce_partials_for_chr(
                 idx,
                 chr
             );
-            expected[i] = expected[i].saturating_add(1);
+            cross_counts[i] = cross_counts[i].saturating_add(1);
         }
     }
 
     // Windows never listed in crossing files are contained within a single tile, so they expect one contribution
-    for exp in expected.iter_mut() {
-        if *exp == 0 {
+    for (exp, cross) in expected.iter_mut().zip(cross_counts.iter()) {
+        if *cross == 0 {
             *exp = 1;
+        } else {
+            *exp = *cross;
         }
     }
 
@@ -189,14 +192,20 @@ pub fn reduce_partials_for_chr(
     }
 
     // Validate contributions
-    for (i, (have, want)) in contributions.iter().zip(expected.iter()).enumerate() {
+    for (i, ((have, want), cross)) in contributions
+        .iter()
+        .zip(expected.iter())
+        .zip(cross_counts.iter())
+        .enumerate()
+    {
         ensure!(
             *have == *want,
-            "Window {} on {} had {} contributions but expected {}",
+            "Window {} on {} had {} contributions but expected {} (cross files counted {})",
             i,
             chr,
             have,
-            want
+            want,
+            cross
         );
     }
 
