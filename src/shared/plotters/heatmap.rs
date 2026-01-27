@@ -39,7 +39,7 @@ const HEATMAP_Y_LABEL_AREA: u32 = 62;
 // Height reserved for the title when a top histogram exists, lowering moves the histogram upward
 const TITLE_HEIGHT_WITH_TOP_HIST: u32 = 50;
 // Vertical draw height for the top histogram bars, lowering makes the bars shorter without affecting the gap
-const TOP_HIST_HEIGHT: u32 = 700;
+const TOP_HIST_HEIGHT: u32 = 70;
 // Padding between the bottom of the top histogram and the start of the heatmap, set to zero for no extra gap
 const TOP_HIST_GAP_BELOW: u32 = 0;
 // Minimum height guaranteed for the heatmap after carving the top histogram and its gap, raising forces the top panel to shrink first
