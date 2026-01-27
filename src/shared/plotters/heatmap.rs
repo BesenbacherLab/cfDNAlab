@@ -557,12 +557,12 @@ where
                     LEGEND_HEIGHT + HEATMAP_MARGIN_TOP + HEATMAP_MARGIN_BOTTOM + HEATMAP_X_LABEL_AREA,
                 );
             let (_, area_h) = area.dim_in_pixel();
-            let top_offset = HEATMAP_MARGIN_TOP;
-            let usable_h = area_h.saturating_sub(top_offset);
-            let target_h = heatmap_plot_h.saturating_sub(top_offset).min(usable_h);
-            // Skip the top offset so the red box starts where the heatmap plot starts
-            let (after_top_margin, _) = area.split_vertically(top_offset);
-            let (aligned_area, _) = after_top_margin.split_vertically(target_h);
+            let top_pad = HEATMAP_MARGIN_TOP;
+            let target_h = heatmap_plot_h.min(area_h.saturating_sub(top_pad));
+            // Carve off a top padding band (kept white) and draw the sidebar just below it without shortening height
+            let (pad_area, rest) = area.split_vertically(top_pad);
+            pad_area.fill(&WHITE)?;
+            let (aligned_area, _) = rest.split_vertically(target_h);
             aligned_area.fill(&RED)?;
             draw_histogram_right(&aligned_area, hist, y_limits)?;
         }
