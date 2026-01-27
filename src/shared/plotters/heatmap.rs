@@ -541,12 +541,12 @@ where
     if let Some(area) = right_area {
         if let Some(hist) = y_hist {
             // Match right histogram height to the heatmap plot box (exclude legend and x-axis area) and tint for debugging
-            let heatmap_h = heatmap_area
+            let heatmap_plot_h = heatmap_area
                 .dim_in_pixel()
                 .1
-                .saturating_sub(HEATMAP_MARGIN * 2 + HEATMAP_X_LABEL_AREA);
+                .saturating_sub(LEGEND_HEIGHT + HEATMAP_MARGIN * 2 + HEATMAP_X_LABEL_AREA);
             let (_, area_h) = area.dim_in_pixel();
-            let target_h = heatmap_h.min(area_h);
+            let target_h = heatmap_plot_h.min(area_h);
             let (aligned_area, _) = area.split_vertically(target_h);
             aligned_area.fill(&RED)?;
             draw_histogram_right(&aligned_area, hist, y_limits)?;
@@ -673,7 +673,6 @@ fn draw_histogram_right<DB: DrawingBackend>(
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
 {
-    area.fill(&WHITE)?;
     let (y_min, y_max) = y_range;
     let max_x = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
