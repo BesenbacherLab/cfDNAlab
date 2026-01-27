@@ -33,13 +33,13 @@ const HEATMAP_Y_LABEL_AREA: u32 = 62;
 // Height reserved for the title when a top histogram exists, lowering moves the histogram upward
 const TITLE_HEIGHT_WITH_TOP_HIST: u32 = 40;
 // Vertical draw height for the top histogram bars, lowering makes the bars shorter without affecting the gap
-const TOP_HIST_HEIGHT: u32 = 140;
+const TOP_HIST_HEIGHT: u32 = 100;
 // Padding between the bottom of the top histogram and the start of the heatmap, set to zero for no extra gap
 const TOP_HIST_GAP_BELOW: u32 = 0;
 // Minimum height guaranteed for the heatmap after carving the top histogram and its gap, raising forces the top panel to shrink first
 const MIN_HEATMAP_HEIGHT_AFTER_TOP: u32 = 140;
 // Desired width for the right histogram panel, lowering gives more width to the heatmap
-const RIGHT_PANEL_TARGET_WIDTH: u32 = 220;
+const RIGHT_PANEL_TARGET_WIDTH: u32 = 100;
 // Minimum width the heatmap keeps when allocating the right panel, raising shrinks the right panel when space is tight
 const MIN_HEATMAP_WIDTH_AFTER_RIGHT: u32 = 200;
 // Padding between the heatmap and the right histogram panel, set to zero for no gap
@@ -619,13 +619,14 @@ where
     let (x_min, x_max) = x_range;
     let max_y = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
-        .margin(0)
+        // Align horizontally with the heatmap by matching its left/right insets
         .margin_top(HIST_MARGIN_TOP)
         .margin_bottom(HIST_MARGIN_BOTTOM)
-        .margin_left(HIST_MARGIN_LEFT)
-        .margin_right(HIST_MARGIN_RIGHT)
-        .x_label_area_size(HIST_X_LABEL_AREA)
-        .y_label_area_size(HIST_Y_LABEL_AREA)
+        .margin_left(HEATMAP_MARGIN + HEATMAP_Y_LABEL_AREA)
+        .margin_right(HEATMAP_MARGIN)
+        // No axes for the histogram, so keep label areas at zero
+        .x_label_area_size(0)
+        .y_label_area_size(0)
         .build_cartesian_2d(x_min..x_max, 0.0..max_y)?;
 
     chart
