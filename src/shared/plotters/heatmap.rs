@@ -24,8 +24,14 @@ pub enum HeatmapUpsample {
 
 // Height reserved below the heatmap for the legend, lowering gives the heatmap more vertical room
 const LEGEND_HEIGHT: u32 = 40;
-// Outer margin around the heatmap plot, lowering pulls the plot closer to neighboring panels
-const HEATMAP_MARGIN: u32 = 20;
+// Top margin around the heatmap plot, lowering pulls the plot closer to the top histogram
+const HEATMAP_MARGIN_TOP: u32 = 4;
+// Right margin around the heatmap plot, lowering pulls the plot closer to the right histogram
+const HEATMAP_MARGIN_RIGHT: u32 = 4;
+// Left margin around the heatmap plot, keep unchanged to preserve axis label spacing
+const HEATMAP_MARGIN_LEFT: u32 = 10;
+// Bottom margin around the heatmap plot, keep unchanged to preserve x-axis spacing
+const HEATMAP_MARGIN_BOTTOM: u32 = 10;
 // Vertical space for x-axis labels and ticks on the heatmap, reducing pulls the plot toward the legend
 const HEATMAP_X_LABEL_AREA: u32 = 52;
 // Horizontal space for y-axis labels and ticks on the heatmap, reducing pulls the plot toward the left edge
@@ -350,7 +356,10 @@ where
 
     let mut base_builder = ChartBuilder::on(&plot_area);
     let mut builder = base_builder
-        .margin(HEATMAP_MARGIN)
+        .margin_top(HEATMAP_MARGIN_TOP)
+        .margin_right(HEATMAP_MARGIN_RIGHT)
+        .margin_bottom(HEATMAP_MARGIN_BOTTOM)
+        .margin_left(HEATMAP_MARGIN_LEFT)
         .x_label_area_size(HEATMAP_X_LABEL_AREA)
         .y_label_area_size(HEATMAP_Y_LABEL_AREA);
     if let Some(t) = title {
@@ -544,10 +553,14 @@ where
             let heatmap_plot_h = heatmap_area
                 .dim_in_pixel()
                 .1
-                .saturating_sub(LEGEND_HEIGHT + HEATMAP_MARGIN * 2 + HEATMAP_X_LABEL_AREA);
+                .saturating_sub(
+                    LEGEND_HEIGHT + HEATMAP_MARGIN_TOP + HEATMAP_MARGIN_BOTTOM + HEATMAP_X_LABEL_AREA,
+                );
             let (_, area_h) = area.dim_in_pixel();
             let target_h = heatmap_plot_h.min(area_h);
-            let (aligned_area, _) = area.split_vertically(target_h);
+            // Remove top margin from the sidebar to align its top with the heatmap plot box
+            let (after_top_margin, _) = area.split_vertically(HEATMAP_MARGIN_TOP);
+            let (aligned_area, _) = after_top_margin.split_vertically(target_h);
             aligned_area.fill(&RED)?;
             draw_histogram_right(&aligned_area, hist, y_limits)?;
         }
@@ -619,15 +632,15 @@ fn draw_histogram_top<DB: DrawingBackend>(
 where
     DB::ErrorType: 'static + std::error::Error + Send + Sync,
 {
-    area.fill(&WHITE)?;
+    area.fill(&GREEN)?;
     let (x_min, x_max) = x_range;
     let max_y = hist.max().max(1.0);
     let mut chart = ChartBuilder::on(area)
         // Align horizontally with the heatmap by matching its left/right insets
         .margin_top(HIST_MARGIN_TOP)
         .margin_bottom(HIST_MARGIN_BOTTOM)
-        .margin_left(HEATMAP_MARGIN + HEATMAP_Y_LABEL_AREA)
-        .margin_right(HEATMAP_MARGIN)
+        .margin_left(HEATMAP_MARGIN_LEFT + HEATMAP_Y_LABEL_AREA)
+        .margin_right(HEATMAP_MARGIN_RIGHT)
         // No axes for the histogram, so keep label areas at zero
         .x_label_area_size(0)
         .y_label_area_size(0)
