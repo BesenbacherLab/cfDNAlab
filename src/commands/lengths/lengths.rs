@@ -663,10 +663,13 @@ fn process_tile(
     let get_gc_weight = {
         let gc_corrector = gc_corrector_opt.as_ref();
         let gc_prefixes = gc_prefixes_opt.as_ref();
+        let fetch_start = tile.fetch_start;
         move |fragment: &FragmentWithIndelCounts| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
-                    corrector.correct_fragment(fragment.start as u64, fragment.end as u64, prefixes)
+                    let rel_start = (fragment.start - fetch_start) as u64;
+                    let rel_end = (fragment.end - fetch_start) as u64;
+                    corrector.correct_fragment(rel_start, rel_end, prefixes)
                 }
                 _ => Ok(None),
             }
