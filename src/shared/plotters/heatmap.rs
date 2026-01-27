@@ -31,7 +31,7 @@ const HEATMAP_X_LABEL_AREA: u32 = 52;
 // Horizontal space for y-axis labels and ticks on the heatmap, reducing pulls the plot toward the left edge
 const HEATMAP_Y_LABEL_AREA: u32 = 62;
 // Height reserved for the title when a top histogram exists, lowering moves the histogram upward
-const TITLE_HEIGHT_WITH_TOP_HIST: u32 = 40;
+const TITLE_HEIGHT_WITH_TOP_HIST: u32 = 50;
 // Vertical draw height for the top histogram bars, lowering makes the bars shorter without affecting the gap
 const TOP_HIST_HEIGHT: u32 = 100;
 // Padding between the bottom of the top histogram and the start of the heatmap, set to zero for no extra gap
@@ -540,11 +540,15 @@ where
     }
     if let Some(area) = right_area {
         if let Some(hist) = y_hist {
-            // Match right histogram height to the heatmap plot area to align bottoms
-            let heatmap_h = heatmap_area.dim_in_pixel().1;
+            // Match right histogram height to the heatmap plot box (exclude legend and x-axis area) and tint for debugging
+            let heatmap_h = heatmap_area
+                .dim_in_pixel()
+                .1
+                .saturating_sub(HEATMAP_MARGIN * 2 + HEATMAP_X_LABEL_AREA);
             let (_, area_h) = area.dim_in_pixel();
             let target_h = heatmap_h.min(area_h);
             let (aligned_area, _) = area.split_vertically(target_h);
+            aligned_area.fill(&RED)?;
             draw_histogram_right(&aligned_area, hist, y_limits)?;
         }
     }
