@@ -45,7 +45,10 @@ fn counts_reference_lengths_global_window() -> Result<()> {
 
     run(&cfg)?;
 
-    let npy_path = out_dir.path().join("all_length_counts.npy");
+    let prefix = cfg.output_prefix.trim();
+    let npy_path = out_dir
+        .path()
+        .join(format!("{prefix}.length_counts.npy"));
     assert!(npy_path.exists());
     let arr: Array2<f64> = read_npy(&npy_path)?;
     assert_eq!(arr.shape(), &[1, 191]);
