@@ -1033,6 +1033,8 @@ fn process_tile(
                 };
 
                 // Find all overlapping windows
+
+                // Calculate what part needs to overlap to some degree
                 let (interval_start, interval_end) = match opt.window_assignment.assign_by {
                     WindowAssigner::Midpoint => {
                         let midpoint =

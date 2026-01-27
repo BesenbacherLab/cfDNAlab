@@ -152,7 +152,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
 
     // Window size when --by-size (otherwise None)
     let by_size_bp: Option<u64> = match &window_opt {
-        WindowSpec::Size(bp) => Some(*bp as u64),
+        WindowSpec::Size(bp) => Some(*bp),
         _ => None,
     };
 
@@ -237,7 +237,6 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<FCoverageCounters> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
-            // Per-chrom projections
             let windows_chr: Option<&[(u64, u64, u64)]> = windows_map
                 .as_ref()
                 .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
@@ -253,7 +252,6 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
             // Decide tile mode and file name
             let (action_prefix, extensions) = if windowed {
                 match opt.per_window {
-                    // We need
                     CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
                         (positional_prefix, "tsv.zst")
                     }
@@ -364,7 +362,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
             pb.inc(1);
             Ok(counter)
         })
-        .collect::<anyhow::Result<_>>()?;
+        .collect::<anyhow::Result<_>>()?; // Short-circuits on the first Err
 
     pb.finish_with_message("| Finished counting");
 
@@ -604,13 +602,11 @@ fn process_tile(
             None => bail!("When GC correction is specified, --ref-2bit must also be specified"),
         };
         let seq_bytes = read_seq_in_range(
-            &ref_2bit,
+            ref_2bit,
             &tile.chr,
             // NOTE: Need for full fetch span to get GC of overlapping fragments!
             (tile.fetch_start as usize)..(tile.fetch_end as usize),
         )?;
-        // apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_chr, tile.fetch_start as u64);
-
         Some(build_gc_prefixes(&seq_bytes))
     } else {
         None

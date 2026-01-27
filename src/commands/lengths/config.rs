@@ -53,6 +53,23 @@ pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
 
+    /// Prefix for output files (e.g., a sample name) `[string]`
+    ///
+    /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
+    ///
+    /// Examples produce files like:
+    ///   `<prefix>.length_counts.npy`
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            short = 'x',
+            default_value = "lengths",
+            help_heading = "Core"
+        )
+    )]
+    pub output_prefix: String,
+
     /// How to handle insertions and deletions in fragments `[string]`
     ///
     /// Deletions: Both 'D' and 'N' in the cigar string are considered deletions.
@@ -84,6 +101,14 @@ pub struct LengthsConfig {
         )
     )]
     pub indel_mode: IndelMode,
+
+    /// Size of tiles to parallelize over `[integer]`
+    ///
+    /// Chromosomes are processed in tiles of this size to reduce memory usage.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
+    pub tile_size: u32,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub windows: WindowsArgs,
@@ -206,6 +231,7 @@ impl LengthsConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
+            output_prefix: "lengths".to_string(),
             indel_mode: IndelMode::Ignore,
             windows: WindowsArgs::default(),
             window_assignment: AssignToWindowArgs::default(),
@@ -215,6 +241,7 @@ impl LengthsConfig {
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
+            tile_size: 20000000,
             min_mapq: 30,
             require_proper_pair: false,
             blacklist: None,
@@ -255,6 +282,10 @@ impl LengthsConfig {
 
     pub fn set_min_mapq(&mut self, min_mapq: u8) {
         self.min_mapq = min_mapq;
+    }
+
+    pub fn set_tile_size(&mut self, tile_size: u32) {
+        self.tile_size = tile_size;
     }
 
     pub fn set_require_proper_pair(&mut self, require: bool) {
