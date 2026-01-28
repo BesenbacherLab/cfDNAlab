@@ -1179,7 +1179,7 @@ mod tests_postprocess {
     }
 
     #[test]
-    fn partition_safe_and_tail_across_scope_expands_entire_suffix() {
+    fn partition_safe_and_tail_across_scope_keeps_boundary_suffix_only() {
         let windows = vec![
             win("chr1", 0, 4, "g1", None),
             win("chr1", 5, 7, "g2", None),
@@ -1196,7 +1196,33 @@ mod tests_postprocess {
             CoordinateSet::Resized,
             None,
         );
-        assert!(safe.is_empty());
+        assert_eq!(safe.len(), 2);
+        assert_eq!(snapshot(&tail).len(), 1);
+    }
+
+    #[test]
+    fn partition_safe_and_tail_across_scope_keeps_overlap_chain_in_tail() {
+        let windows = vec![
+            // Early windows that should finalize
+            win("chr1", 0, 4, "g1", None),
+            win("chr1", 15, 18, "g2", None),
+            // Overlap/merge chain near the boundary - each link extends reach
+            win("chr1", 40, 45, "g3", None),
+            win("chr1", 47, 49, "g4", None), // within margin of previous end
+            win("chr1", 52, 54, "g5", None), // extends chain to boundary so all three stay in tail
+        ];
+        let (safe, tail) = partition_safe_and_tail(
+            windows,
+            None,
+            MergeScope::Across,
+            Some(3),
+            CoordinateSet::Resized,
+            CoordinateSet::Resized,
+            None,
+            CoordinateSet::Resized,
+            None,
+        );
+        assert_eq!(snapshot(&safe).len(), 2);
         assert_eq!(snapshot(&tail).len(), 3);
     }
 }
