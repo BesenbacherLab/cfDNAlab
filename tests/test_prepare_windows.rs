@@ -11,12 +11,23 @@ mod tests_prepare_windows_pipeline {
     use flate2::{Compression, write::GzEncoder};
     use std::fs;
     use std::io::{BufWriter, Read, Write};
-    use tempfile::TempDir;
+    use tempfile::{NamedTempFile, TempDir};
     use zstd::Decoder as ZstdDecoder;
 
     fn write_temp_file(dir: &TempDir, name: &str, lines: &[&str]) -> Result<std::path::PathBuf> {
         let path = dir.path().join(name);
         fs::write(&path, lines.join("\n") + "\n")?;
+        Ok(path)
+    }
+
+    fn write_chrom_sizes(dir: &TempDir, sizes: &[(&str, u32)]) -> Result<std::path::PathBuf> {
+        let path = dir.path().join("chrom.sizes");
+        let content = sizes
+            .iter()
+            .map(|(chrom, size)| format!("{chrom}\t{size}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&path, content + "\n")?;
         Ok(path)
     }
 
@@ -37,12 +48,14 @@ mod tests_prepare_windows_pipeline {
         let tmpdir = TempDir::new()?;
         let input = write_temp_file(&tmpdir, "windows.tsv", &["chr1\t0\t10", "chr1\t10\t20"])?;
         let output = tmpdir.path().join("out.tsv");
+        let chrom_sizes = write_chrom_sizes(&tmpdir, &[("chr1", 1000)])?;
 
         let mut cfg = PrepareConfig::default();
         cfg.input = input;
         cfg.output = output.clone();
         cfg.header = HeaderMode::Absent;
         cfg.oob = OobPolicy::Allow;
+        cfg.chrom_sizes = Some(chrom_sizes);
 
         // Act
         let lines = run_pipeline(&cfg)?;
@@ -148,6 +161,7 @@ mod tests_prepare_windows_pipeline {
             &["chr1\t10\t14\tA", "chr1\t20\t24\tA", "chr1\t40\t44\tA"],
         )?;
         let output = tmpdir.path().join("out.tsv");
+        let chrom_sizes = write_chrom_sizes(&tmpdir, &[("chr1", 1000)])?;
 
         let mut cfg = PrepareConfig::default();
         cfg.input = input;
@@ -160,6 +174,7 @@ mod tests_prepare_windows_pipeline {
         cfg.merge_gap = Some(0);
         cfg.merge_label = MergeLabel::Join;
         cfg.merge_on = CoordinateSet::Resized;
+        cfg.chrom_sizes = Some(chrom_sizes);
 
         let lines = run_pipeline(&cfg)?;
         assert_eq!(
@@ -179,6 +194,7 @@ mod tests_prepare_windows_pipeline {
             &["chr1\t10\t14\tA", "chr1\t20\t24\tA", "chr1\t40\t44\tA"],
         )?;
         let output = tmpdir.path().join("out.tsv");
+        let chrom_sizes = write_chrom_sizes(&tmpdir, &[("chr1", 1000)])?;
 
         let mut cfg = PrepareConfig::default();
         cfg.input = input;
@@ -191,6 +207,7 @@ mod tests_prepare_windows_pipeline {
         cfg.merge_gap = Some(6);
         cfg.merge_label = MergeLabel::Join;
         cfg.merge_on = CoordinateSet::Original;
+        cfg.chrom_sizes = Some(chrom_sizes);
 
         // Act
         let lines = run_pipeline(&cfg)?;
@@ -219,6 +236,7 @@ mod tests_prepare_windows_pipeline {
             &["chr1\t10\t12\tA", "chr1\t40\t42\tB", "chr1\t80\t82\tC"],
         )?;
         let output = tmpdir.path().join("out.tsv");
+        let chrom_sizes = write_chrom_sizes(&tmpdir, &[("chr1", 1000)])?;
 
         let mut cfg = PrepareConfig::default();
         cfg.input = input;
@@ -276,6 +294,7 @@ mod tests_prepare_windows_pipeline {
             "bin".to_string(),
         ];
         cfg.oob = OobPolicy::Allow;
+        cfg.chrom_sizes = Some(chrom_sizes);
 
         // Act
         let lines = run_pipeline(&cfg)?;
@@ -293,6 +312,7 @@ mod tests_prepare_windows_pipeline {
         let input = write_temp_file(&tmpdir, "input.tsv", &["chr1\t20\t30"])?;
         let near = write_temp_file(&tmpdir, "near.tsv", &["chr1\t0\t10\tSITE"])?;
         let output = tmpdir.path().join("out.tsv");
+        let chrom_sizes = write_chrom_sizes(&tmpdir, &[("chr1", 1000)])?;
 
         let mut cfg = PrepareConfig::default();
         cfg.input = input;
@@ -313,6 +333,7 @@ mod tests_prepare_windows_pipeline {
             "bin".to_string(),
         ];
         cfg.oob = OobPolicy::Allow;
+        cfg.chrom_sizes = Some(chrom_sizes);
 
         // Act
         let lines = run_pipeline(&cfg)?;
@@ -636,6 +657,7 @@ mod tests_prepare_windows_pipeline {
             &["chr1\t10\t20", "chr1\t10\t20", "chr1\t20\t22"],
         )?;
         let output = tmpdir.path().join("out.tsv");
+        let chrom_sizes = write_chrom_sizes(&tmpdir, &[("chr1", 1000)])?;
 
         let mut cfg = PrepareConfig::default();
         cfg.input = input;
@@ -646,6 +668,7 @@ mod tests_prepare_windows_pipeline {
         cfg.min_distance_within_group = Some(4);
         cfg.distance_policy = DistancePolicy::KeepFirst;
         cfg.oob = OobPolicy::Allow;
+        cfg.chrom_sizes = Some(chrom_sizes);
 
         // Act
         let lines = run_pipeline(&cfg)?;
@@ -662,6 +685,7 @@ mod tests_prepare_windows_pipeline {
         let tmpdir = TempDir::new()?;
         let input = write_temp_file(&tmpdir, "input.tsv", &["chr1\t5\t10"])?;
         let output = tmpdir.path().join("out.tsv");
+        let chrom_sizes = write_chrom_sizes(&tmpdir, &[("chr1", 1000)])?;
 
         let mut cfg = PrepareConfig::default();
         cfg.input = input;
@@ -669,6 +693,7 @@ mod tests_prepare_windows_pipeline {
         cfg.header = HeaderMode::Absent;
         cfg.flank = Some(vec![3, 7]);
         cfg.oob = OobPolicy::Allow;
+        cfg.chrom_sizes = Some(chrom_sizes);
 
         // Act
         let lines = run_pipeline(&cfg)?;
@@ -732,6 +757,7 @@ mod tests_prepare_windows_pipeline {
         let blacklist = write_temp_file(&tmpdir, "mask.bed", &["chr1\t38\t50"])?;
         let near = write_temp_file(&tmpdir, "near.tsv", &["chr1\t8\t12\tN1", "chr2\t0\t10\tN2"])?;
         let output = tmpdir.path().join("out.tsv");
+        let chrom_sizes = write_chrom_sizes(&tmpdir, &[("chr1", 1000), ("chr2", 1000)])?;
 
         let mut cfg = PrepareConfig::default();
         cfg.input = input;
@@ -760,6 +786,7 @@ mod tests_prepare_windows_pipeline {
             "near-name".to_string(),
             "bin".to_string(),
         ];
+        cfg.chrom_sizes = Some(chrom_sizes);
 
         // Act
         let lines = run_pipeline(&cfg)?;
@@ -1392,7 +1419,7 @@ mod tests_resizers {
         let mut cfg = base_config();
         cfg.resize = Some(5);
         // Odd input length and odd target size yield a single centered placement
-        let transformed = apply_size_transform(10, 21, None, &cfg).expect("resize");
+        let transformed = apply_size_transform(10, 21, Some(100), &cfg).expect("resize");
         // Midpoint is 10 + (21 - 10) / 2 = 15, size 5 spans 13-18
         assert_eq!(transformed, Some((13, 18)));
     }
@@ -1402,7 +1429,7 @@ mod tests_resizers {
         let mut cfg = base_config();
         cfg.resize = Some(6);
         // Even input length and even target size yield a single centered placement
-        let transformed = apply_size_transform(10, 22, None, &cfg).expect("resize");
+        let transformed = apply_size_transform(10, 22, Some(100), &cfg).expect("resize");
         // Midpoint is 10 + (22 - 10) / 2 = 16, size 6 spans 13-19
         assert_eq!(transformed, Some((13, 19)));
     }
@@ -1412,7 +1439,7 @@ mod tests_resizers {
         let mut cfg = base_config();
         cfg.resize = Some(3);
         // Even input length and odd target size have two equally centered placements
-        let transformed = apply_size_transform(10, 16, None, &cfg).expect("resize");
+        let transformed = apply_size_transform(10, 16, Some(100), &cfg).expect("resize");
         // Midpoint is 10 + (16 - 10) / 2 = 13, size 3 can be 11-14 or 12-15
         let left = (11, 14);
         let right = (12, 15);
@@ -1426,7 +1453,7 @@ mod tests_resizers {
         let mut cfg = base_config();
         cfg.resize = Some(4);
         // Odd input length and even target size have two equally centered placements
-        let transformed = apply_size_transform(10, 15, None, &cfg).expect("resize");
+        let transformed = apply_size_transform(10, 15, Some(100), &cfg).expect("resize");
         // Midpoint is 10 + (15 - 10) / 2 = 12, size 4 can be 10-14 or 11-15
         let left = (10, 14);
         let right = (11, 15);
@@ -1454,12 +1481,12 @@ mod tests_resizers {
     }
 
     #[test]
-    fn flank_allow_saturates_to_zero() {
+    fn flank_allow_drops_underflow() {
         let mut cfg = base_config();
         cfg.flank = Some(vec![10, 0]);
         cfg.oob = OobPolicy::Allow;
-        let transformed = apply_size_transform(2, 4, None, &cfg).expect("allow");
-        assert_eq!(transformed, Some((0, 4)));
+        let transformed = apply_size_transform(2, 4, Some(50), &cfg).expect("allow");
+        assert!(transformed.is_none());
     }
 
     #[test]
@@ -2385,6 +2412,9 @@ mod tests_stdio {
         cfg.header = HeaderMode::Absent;
         cfg.oob = OobPolicy::Allow;
         cfg.resize = Some(8);
+        let chrom_sizes = NamedTempFile::new()?;
+        fs::write(chrom_sizes.path(), "chr1\t1000\n")?;
+        cfg.chrom_sizes = Some(chrom_sizes.path().to_path_buf());
 
         let input = "chr1\t0\t5\nchr1\t5\t10\n";
         let output = run_with_piped_stdio(input, || run(&cfg))?;
