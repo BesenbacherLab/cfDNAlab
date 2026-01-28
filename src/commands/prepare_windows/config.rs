@@ -833,7 +833,9 @@ pub struct PrepareConfig {
 
     /// Chromosome sizes file (FAI or two-column sizes) `[path]`
     ///
-    /// Required when either `--resize` or `--flank` are specified.
+    /// Required when either `--resize` or `--flank` is specified. When no size transformation
+    /// is specified, the windows are only checked for out-of-bounds when
+    /// `--chrom-sizes` is specified (otherwise ignored).
     #[cfg_attr(
         feature = "cli",
         clap(
