@@ -752,6 +752,7 @@ mod tests_prepare_windows_pipeline {
                 "chr1\t16\t21\tA",
                 "chr1\t40\t45\tB",
                 "chr2\t0\t5\tC",
+                "chr2\t10\t22\tD",
             ],
         )?;
         let blacklist = write_temp_file(&tmpdir, "mask.bed", &["chr1\t38\t50"])?;
@@ -792,15 +793,16 @@ mod tests_prepare_windows_pipeline {
         let lines = run_pipeline(&cfg)?;
 
         // Assert
+        // Under OOB allow, the first chr2 window underflows and is dropped. The second survives and is resized
         let expected_left = vec![
             "chr1\t7\t24\tA\t=\tN1\tclose".to_string(),
-            "chr2\t0\t8\tC\t=\tN2\tclose".to_string(),
+            "chr2\t11\t21\tD\t=\tN2\tclose".to_string(),
         ];
         // When resize parity is ambiguous, placement can shift by one bp depending on the
         // deterministic hash choice (left vs right). Accept either centred placement.
         let expected_right = vec![
             "chr1\t8\t24\tA\t=\tN1\tclose".to_string(),
-            "chr2\t0\t8\tC\t=\tN2\tclose".to_string(),
+            "chr2\t11\t21\tD\t=\tN2\tclose".to_string(),
         ];
         assert!(
             lines == expected_left || lines == expected_right,
@@ -2424,7 +2426,14 @@ mod tests_stdio {
             .lines()
             .filter(|line| line.starts_with("chr"))
             .collect();
-        assert_eq!(lines, vec!["chr1\t0\t6\t", "chr1\t4\t12\t"]);
+        // With OOB allow the first window underflows after resize and is dropped - only the second remains
+        let expected_left = vec!["chr1\t3\t11\t"];
+        let expected_right = vec!["chr1\t4\t12\t"];
+        assert!(
+            lines == expected_left || lines == expected_right,
+            "unexpected output: {:?}",
+            lines
+        );
         Ok(())
     }
 }
