@@ -5,8 +5,8 @@ use crate::commands::prepare_windows::config::{OobPolicy, PrepareConfig};
 /// Apply resize or flank transform to a window.
 ///
 /// The function returns final coordinates and ensures they are valid with respect
-/// to chromosome bounds according to the out-of-bounds policy when a size
-/// transform is applied.
+/// to chromosome bounds according to the out-of-bounds policy when `chrom_size_bp`
+/// is specified (underflow always checked).
 ///
 /// Resizing centers the new window on the midpoint of the original interval.
 /// When the input length and target size have different parity (odd/even),
