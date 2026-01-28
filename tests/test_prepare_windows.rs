@@ -1161,7 +1161,7 @@ mod tests_postprocess {
     }
 
     #[test]
-    fn partition_safe_and_tail_with_margin_defers_suffix() {
+    fn partition_safe_and_tail_retains_last_window_when_min_distance_crosses_chunk() {
         let windows = vec![
             win("chr1", 0, 5, "g1", None),
             win("chr1", 10, 15, "g1", None),
@@ -1177,13 +1177,11 @@ mod tests_postprocess {
             CoordinateSet::Resized,
             None,
         );
-        assert!(safe.is_empty());
+        // The first window cannot reach the boundary. Only the suffix remains in tail
+        assert_eq!(snapshot(&safe), snapshot(&[win("chr1", 0, 5, "g1", None)]));
         assert_eq!(
             snapshot(&tail),
-            snapshot(&[
-                win("chr1", 0, 5, "g1", None),
-                win("chr1", 10, 15, "g1", None)
-            ])
+            snapshot(&[win("chr1", 10, 15, "g1", None)])
         );
     }
 
