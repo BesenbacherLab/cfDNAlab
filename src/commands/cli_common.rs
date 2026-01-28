@@ -207,8 +207,14 @@ impl WindowsArgs {
     }
 }
 
+// TODO: In the future we might want to add window-based overlap variants (WindowProportion etc.). Not relevant yet.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 /// How to assign a fragment to windows.
+/// 
+/// NOTE: This only considers the proportion of **fragment positions**
+/// overlapping the window. For window sizes smaller than fragments
+/// this means a fragment could overlap a window fully but 
+/// have < 100% of fragment positions inside the window.
 pub enum WindowAssigner {
     /// Count up the fraction of overlapping fragment bases.
     #[default]
@@ -252,7 +258,7 @@ impl FromStr for WindowAssigner {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
 pub struct AssignToWindowArgs {
-    /// The fragment positions that should overlap a window for it to be counted in that window,
+    /// The **fragment positions** that should overlap a window for it to be counted in that window,
     /// OR the option to count the fraction of overlapping bases `[string]`
     ///
     /// Possible values:
@@ -265,6 +271,10 @@ pub struct AssignToWindowArgs {
     /// Midpoints for even-sized fragments are randomly selected as either the left or right base
     /// to avoid bias.
     ///
+    /// **NOTE**: In the rare case where windows are smaller than fragments, it's still
+    /// the proportion of the fragment positions that overlap that is considered. If the window
+    /// size is 30% of the fragment size, that fragment cannot overlap more than 30%.
+    /// 
     /// **NOTE**: Ignored when no windows are specified.
     #[cfg_attr(
         feature = "cli",

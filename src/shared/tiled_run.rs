@@ -361,7 +361,7 @@ pub fn build_tiles(
         while start < chrom_len {
             let core_end = (start.saturating_add(effective_tile_bp)).min(chrom_len);
 
-            // Halos do not need to be aligned; they are just fetch guards.
+            // Halos do not need to be aligned, they are just fetch guards
             let fetch_start = start.saturating_sub(halo_bp);
             let fetch_end = (core_end.saturating_add(halo_bp)).min(chrom_len);
 
