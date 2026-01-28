@@ -555,7 +555,8 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         // Resized coordinates are computed per record even when merging uses originals
         // Transform to resized coordinates
         let chrom_size = current_chrom_size;
-        let Some((resized_start, resized_end)) = apply_size_transform(start, end, chrom_size, cfg)
+        let Some((resized_start, resized_end)) =
+            apply_size_transform(start, end, chrom_size, cfg)?
         else {
             continue;
         };

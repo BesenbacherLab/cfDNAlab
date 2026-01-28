@@ -1,3 +1,5 @@
+use anyhow::{Result, bail};
+
 use crate::commands::prepare_windows::config::{OobPolicy, PrepareConfig};
 
 /// Apply resize or flank transform to a window.
@@ -45,9 +47,10 @@ pub fn apply_size_transform(
     end: u32,
     chrom_size_bp: Option<u32>,
     cfg: &PrepareConfig,
-) -> Option<(u32, u32)> {
-    let (mut out_start, mut out_end) = (start, end);
+) -> Result<Option<(u32, u32)>> {
     let mut transformed = false;
+    let mut intended_start_i: i64 = start as i64;
+    let mut intended_end_i: i64 = end as i64;
 
     if let Some(size) = cfg.resize {
         transformed = true;
@@ -57,8 +60,8 @@ pub fn apply_size_transform(
         let half = size / 2;
         let parity_matches = (length % 2) == (size % 2);
         if parity_matches {
-            out_start = midpoint.saturating_sub(half);
-            out_end = out_start.saturating_add(size);
+            intended_start_i = midpoint.saturating_sub(half) as i64;
+            intended_end_i = intended_start_i + size as i64;
         } else {
             // Resolve left or right deterministically to avoid bias
             let decision_seed = cfg.seed.unwrap_or(0);
@@ -75,49 +78,65 @@ pub fn apply_size_transform(
             } else {
                 1
             };
-            let start_i = midpoint_i - half_i + offset;
-            out_start = if start_i < 0 { 0 } else { start_i as u32 };
-            out_end = out_start.saturating_add(size);
+            intended_start_i = midpoint_i - half_i + offset;
+            intended_end_i = intended_start_i + size as i64;
         }
     } else if let Some(flanks) = cfg.flank.as_ref() {
         transformed = true;
         let left = flanks[0];
         let right = flanks[1];
-        // Allow zero and directionality; negative values are clipped later by policy
+        // Allow zero and directionality. Negative values are clipped later by policy
         let new_start = (start as i64) - (left as i64);
         let new_end = (end as i64) + (right as i64);
-        out_start = if new_start < 0 { 0 } else { new_start as u32 };
-        out_end = if new_end < 0 { 0 } else { new_end as u32 };
-        if out_end < out_start {
-            return None;
+        intended_start_i = new_start;
+        intended_end_i = new_end;
+        if intended_end_i < intended_start_i {
+            return Ok(None);
         }
     }
 
-    // Out-of-bounds handling: apply when (a) a transform occurred or (b) caller
-    // provided chromosome sizes and requested trim/drop. If sizes are absent,
-    // skip OOB checks even for trim/drop to keep behavior consistent with the
-    // caller's knowledge.
-    let apply_oob = transformed || !matches!(cfg.oob, OobPolicy::Allow);
-    if !apply_oob || chrom_size_bp.is_none() {
-        return Some((out_start, out_end));
+    // Resizing/flanking without chromosome sizes is not allowed: we cannot
+    // enforce OOB policies or preserve centering correctly
+    if transformed && chrom_size_bp.is_none() {
+        bail!(
+            "resize/flank requested without chromosome sizes. Provide chrom sizes to enforce OOB policy"
+        );
+    }
+
+    let underflow = intended_start_i < 0;
+    let overflow = chrom_size_bp
+        .map(|size| intended_end_i > size as i64)
+        .unwrap_or(false);
+
+    // Handle underflow (drop or trim)
+    if underflow {
+        match cfg.oob {
+            OobPolicy::Allow => {
+                eprintln!("Warning: window underflowed chromosome start. Dropping.");
+                return Ok(None);
+            }
+            OobPolicy::Drop => {
+                return Ok(None);
+            }
+            OobPolicy::Trim => {
+                intended_start_i = 0;
+            }
+        }
+    }
+
+    // When bounds are unknown, don't check overflow
+    if chrom_size_bp.is_none() || !overflow {
+        return Ok(Some((intended_start_i as u32, intended_end_i as u32)));
     }
 
     let size = chrom_size_bp.expect("chromosome sizes required for trim/drop policies");
     match cfg.oob {
-        OobPolicy::Allow => Some((out_start, out_end)),
+        OobPolicy::Allow => Ok(Some((intended_start_i as u32, intended_end_i as u32))),
         OobPolicy::Trim => {
-            let s = out_start.min(size);
-            let e = out_end.min(size);
-            if e <= s { None } else { Some((s, e)) }
+            let s = intended_start_i as u32;
+            let e = intended_end_i.min(size as i64) as u32;
+            if e <= s { Ok(None) } else { Ok(Some((s, e))) }
         }
-        OobPolicy::Drop => {
-            if out_start >= size || out_end > size {
-                None
-            } else if out_end <= out_start {
-                None
-            } else {
-                Some((out_start, out_end))
-            }
-        }
+        OobPolicy::Drop => Ok(None),
     }
 }

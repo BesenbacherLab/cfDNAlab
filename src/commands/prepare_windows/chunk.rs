@@ -235,7 +235,7 @@ pub fn process_and_write_chunk(
                     window.original_end,
                     chrom_size,
                     cfg,
-                ) {
+                )? {
                     window.resized_start = resized_start;
                     window.resized_end = resized_end;
                     resized_after_merge.push(window);
@@ -328,7 +328,7 @@ pub fn process_and_write_chunk(
                     window.original_end,
                     chrom_size,
                     cfg,
-                ) {
+                )? {
                     window.resized_start = resized_start;
                     window.resized_end = resized_end;
                     resized_after_merge.push(window);

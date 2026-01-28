@@ -1396,7 +1396,7 @@ mod tests_resizers {
         // Odd input length and odd target size yield a single centered placement
         let transformed = apply_size_transform(10, 21, None, &cfg).expect("resize");
         // Midpoint is 10 + (21 - 10) / 2 = 15, size 5 spans 13-18
-        assert_eq!(transformed, (13, 18));
+        assert_eq!(transformed, Some((13, 18)));
     }
 
     #[test]
@@ -1406,7 +1406,7 @@ mod tests_resizers {
         // Even input length and even target size yield a single centered placement
         let transformed = apply_size_transform(10, 22, None, &cfg).expect("resize");
         // Midpoint is 10 + (22 - 10) / 2 = 16, size 6 spans 13-19
-        assert_eq!(transformed, (13, 19));
+        assert_eq!(transformed, Some((13, 19)));
     }
 
     #[test]
@@ -1418,7 +1418,7 @@ mod tests_resizers {
         // Midpoint is 10 + (16 - 10) / 2 = 13, size 3 can be 11-14 or 12-15
         let left = (11, 14);
         let right = (12, 15);
-        assert!(transformed == left || transformed == right);
+        assert!(transformed == Some(left) || transformed == Some(right));
 
         // TODO: Add examples (different seeds) that shows each outcome (regression tests)
     }
@@ -1432,7 +1432,7 @@ mod tests_resizers {
         // Midpoint is 10 + (15 - 10) / 2 = 12, size 4 can be 10-14 or 11-15
         let left = (10, 14);
         let right = (11, 15);
-        assert!(transformed == left || transformed == right);
+        assert!(transformed == Some(left) || transformed == Some(right));
 
         // TODO: Add examples (different seeds) that shows each outcome (regression tests)
     }
@@ -1443,7 +1443,7 @@ mod tests_resizers {
         cfg.flank = Some(vec![5, 5]);
         cfg.oob = OobPolicy::Trim;
         let transformed = apply_size_transform(3, 5, Some(10), &cfg).expect("trim");
-        assert_eq!(transformed, (0, 10));
+        assert_eq!(transformed, Some((0, 10)));
     }
 
     #[test]
@@ -1451,7 +1451,7 @@ mod tests_resizers {
         let mut cfg = base_config();
         cfg.flank = Some(vec![5, 5]);
         cfg.oob = OobPolicy::Drop;
-        let transformed = apply_size_transform(3, 5, Some(6), &cfg);
+        let transformed = apply_size_transform(3, 5, Some(6), &cfg).expect("drop");
         assert!(transformed.is_none());
     }
 
@@ -1461,14 +1461,14 @@ mod tests_resizers {
         cfg.flank = Some(vec![10, 0]);
         cfg.oob = OobPolicy::Allow;
         let transformed = apply_size_transform(2, 4, None, &cfg).expect("allow");
-        assert_eq!(transformed, (0, 4));
+        assert_eq!(transformed, Some((0, 4)));
     }
 
     #[test]
     fn trim_policy_returns_none_when_interval_collapses() {
         let mut cfg = base_config();
         cfg.oob = OobPolicy::Trim;
-        let transformed = apply_size_transform(10, 11, Some(10), &cfg);
+        let transformed = apply_size_transform(10, 11, Some(10), &cfg).expect("trim collapse");
         assert!(transformed.is_none());
     }
 
@@ -1479,7 +1479,7 @@ mod tests_resizers {
         cfg.oob = OobPolicy::Drop;
 
         // Act
-        let transformed = apply_size_transform(5, 15, None, &cfg);
+        let transformed = apply_size_transform(5, 15, None, &cfg).expect("no transform");
 
         // Assert
         assert_eq!(transformed, Some((5, 15)));

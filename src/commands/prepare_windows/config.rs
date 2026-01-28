@@ -846,13 +846,18 @@ pub struct PrepareConfig {
     )]
     pub chrom_sizes: Option<PathBuf>,
 
-    /// Policy for windows going out of bounds after size transformations `[string]`
+    /// Policy for windows going out of bounds `[string]`
+    ///
+    /// Negative coordinates are always caught.
+    /// Coordinates beyond the chromosome length
+    /// are checked when `--chrom-sizes` is specified.
     ///
     /// - `"drop"`: Drop out-of-bounds windows (default).
     ///
     /// - `"trim"`: Trim to chromosome bounds.
     ///
-    /// - `"allow"`: Allow out-of-bounds (unsafe).
+    /// - `"allow"`: Allow out-of-bounds (unsafe). 
+    ///   Windows with negative coordinates are dropped with a warning.
     #[cfg_attr(
         feature = "cli",
         clap(
