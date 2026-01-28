@@ -426,10 +426,11 @@ mod tests_lengths_tiling_reducer {
         let dir = tmp.path();
         let template = LengthCounts::new(10, 11); // two-length template
 
-        let idxs = Array1::from(vec![0u64]);
-        let contained = Array1::from(vec![0u8]);
-        // Fortran-order array so rows are not standard-layout
-        let counts = Array2::from_shape_vec((1, 2).f(), vec![1.0, 0.5]).unwrap();
+        // Two rows, both targeting window 0, but stored in Fortran order so each
+        // row slice is non-contiguous and should be rejected.
+        let idxs = Array1::from(vec![0u64, 0u64]);
+        let contained = Array1::from(vec![1u8, 1u8]);
+        let counts = Array2::from_shape_vec((2, 2).f(), vec![1.0, 0.5, 2.0, 1.5]).unwrap();
         let path = dir.join("partials.chr1.0.npz");
         let file = File::create(&path).unwrap();
         let mut npz = NpzWriter::new(file);
