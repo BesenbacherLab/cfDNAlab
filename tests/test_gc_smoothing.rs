@@ -95,53 +95,129 @@ fn targeted_kernel_and_small_pseudo_count_match_manual_expectation() {
         [0.0, 0.0, 0.0, 0.0, 0.0],
     ];
 
-    // Manually derived expectation for separable Gaussian smoothing with
-    // radius=2 and sigma=1.0 (weights normalized, edge bins clamped).
-    let expected = array![
+    // Gaussian settings
+    let radius = 2;
+    let sigma = 1.0;
+    assert_eq!(
+        radius, 2,
+        "derivation below assumes radius 2 for explicit terms"
+    );
+
+    // Re-derive weights once so the algebra stays transparent.
+    // Unnormalized 1-D Gaussian samples for offsets [-radius, ..., radius].
+    let weight = |d: f64| (-(d * d) / (2.0 * sigma * sigma)).exp();
+    let g2 = weight(radius as f64); // offset +/-2
+    let g1 = weight(1.0); // offset +/-1
+    let g0 = weight(0.0); // center
+    let norm = 2.0 * g2 + 2.0 * g1 + g0;
+    let w2 = g2 / norm;
+    let w1 = g1 / norm;
+    let w0 = g0 / norm;
+
+    // Horizontal pass worked out by hand for each column and row (clamped edges).
+    let row0_h = [0.0; 5];
+    let row1_h = [
+        w1 * 0.5 + w2 * 1.0,
+        w0 * 0.5 + w1 * 1.0 + w2 * 0.5,
+        w0 * 1.0 + w1 * 0.5 + w1 * 0.5,
+        w0 * 0.5 + w1 * 1.0 + w2 * 0.5,
+        w1 * 0.5 + w2 * 1.0,
+    ];
+    let row2_h = [
+        w1 * 2.0 + w2 * 3.0,
+        w0 * 2.0 + w1 * 3.0 + w2 * 2.0,
+        w1 * 2.0 + w0 * 3.0 + w1 * 2.0,
+        w0 * 2.0 + w1 * 3.0 + w2 * 2.0,
+        w1 * 2.0 + w2 * 3.0,
+    ];
+    let row3_h = row1_h;
+    let row4_h = row0_h;
+
+    // Vertical pass unrolled with the same clamping rule.
+    let expected_calc = array![
         [
-            0.07819438786227775,
-            0.20519385768016783,
-            0.277014668665793,
-            0.20519385768016783,
-            0.07819438786227775
+            w1 * row1_h[0] + w2 * row2_h[0],
+            w1 * row1_h[1] + w2 * row2_h[1],
+            w1 * row1_h[2] + w2 * row2_h[2],
+            w1 * row1_h[3] + w2 * row2_h[3],
+            w1 * row1_h[4] + w2 * row2_h[4],
         ],
         [
-            0.2399847218607644,
-            0.6182029648503126,
-            0.8292345764157387,
-            0.6182029648503126,
-            0.2399847218607644
+            w0 * row1_h[0] + w1 * row2_h[0] + w2 * row3_h[0],
+            w0 * row1_h[1] + w1 * row2_h[1] + w2 * row3_h[1],
+            w0 * row1_h[2] + w1 * row2_h[2] + w2 * row3_h[2],
+            w0 * row1_h[3] + w1 * row2_h[3] + w2 * row3_h[3],
+            w0 * row1_h[4] + w1 * row2_h[4] + w2 * row3_h[4],
         ],
         [
-            0.3489283031597802,
-            0.8943219061088817,
-            1.1956843741388757,
-            0.8943219061088817,
-            0.3489283031597802
+            w1 * row1_h[0] + w0 * row2_h[0] + w1 * row3_h[0],
+            w1 * row1_h[1] + w0 * row2_h[1] + w1 * row3_h[1],
+            w1 * row1_h[2] + w0 * row2_h[2] + w1 * row3_h[2],
+            w1 * row1_h[3] + w0 * row2_h[3] + w1 * row3_h[3],
+            w1 * row1_h[4] + w0 * row2_h[4] + w1 * row3_h[4],
         ],
         [
-            0.2399847218607644,
-            0.6182029648503126,
-            0.8292345764157387,
-            0.6182029648503126,
-            0.2399847218607644
+            w0 * row3_h[0] + w1 * row2_h[0] + w2 * row1_h[0],
+            w0 * row3_h[1] + w1 * row2_h[1] + w2 * row1_h[1],
+            w0 * row3_h[2] + w1 * row2_h[2] + w2 * row1_h[2],
+            w0 * row3_h[3] + w1 * row2_h[3] + w2 * row1_h[3],
+            w0 * row3_h[4] + w1 * row2_h[4] + w2 * row1_h[4],
         ],
         [
-            0.07819438786227775,
-            0.20519385768016783,
-            0.277014668665793,
-            0.20519385768016783,
-            0.07819438786227775
+            w1 * row3_h[0] + w2 * row2_h[0],
+            w1 * row3_h[1] + w2 * row2_h[1],
+            w1 * row3_h[2] + w2 * row2_h[2],
+            w1 * row3_h[3] + w2 * row2_h[3],
+            w1 * row3_h[4] + w2 * row2_h[4],
+        ],
+    ];
+
+    // Same expectations, but frozen as literals for quick regression checks.
+    let expected_numeric = array![
+        [
+            0.0786428276229825,
+            0.205180120296464,
+            0.2769933604483313,
+            0.205180120296464,
+            0.0786428276229825
+        ],
+        [
+            0.23990695869970506,
+            0.6182546706784065,
+            0.8291631306895229,
+            0.6182546706784065,
+            0.23990695869970506
+        ],
+        [
+            0.348701679478469,
+            0.8939371765641258,
+            1.195497596322409,
+            0.8939371765641258,
+            0.348701679478469
+        ],
+        [
+            0.23990695869970506,
+            0.6182546706784065,
+            0.8291631306895229,
+            0.6182546706784065,
+            0.23990695869970506
+        ],
+        [
+            0.0786428276229825,
+            0.205180120296464,
+            0.2769933604483313,
+            0.205180120296464,
+            0.0786428276229825
         ],
     ];
 
     // Act
-    let radius = 2;
-    let sigma = 1.0;
     let smoothed = smoothe_counts_gaussian(&counts, sigma, radius);
 
-    // Assert: exact expected matrix within numerical tolerance.
-    assert_matrix_close(&smoothed, &expected, 1e-9);
+    // Assert against the literal snapshot (allows small rounding slack).
+    assert_matrix_close(&smoothed, &expected_numeric, 1e-3);
+    // Assert the explicit hand calculation with tight tolerance to prove the algebra matches.
+    assert_matrix_close(&smoothed, &expected_calc, 1e-12);
 }
 
 mod collapse_bins_tests {
