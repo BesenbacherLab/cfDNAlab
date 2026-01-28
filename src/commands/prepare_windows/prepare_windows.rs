@@ -42,6 +42,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::{env, fs, mem};
@@ -150,24 +151,37 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     let stream_temp_dir = make_temp_dir(temp_dir_guard.path(), "prepare_windows_stream")
         .context("create stream temp dir")?;
 
-    // Best-effort cleanup when interrupted (Ctrl+C)
+    // Best-effort cleanup when interrupted (Ctrl+C). Install once per process and
+    // ignore duplicate registration errors that arise when tests invoke this code repeatedly.
     let cleanup_done = Arc::new(AtomicBool::new(false));
     let cleanup_path = temp_dir_guard.path().to_path_buf();
     {
-        let cleanup_done = cleanup_done.clone();
-        ctrlc::set_handler(move || {
-            if cleanup_done.swap(true, Ordering::SeqCst) {
-                return;
+        static CTRL_C_HANDLER_INSTALLED: OnceLock<()> = OnceLock::new();
+        if CTRL_C_HANDLER_INSTALLED.get().is_none() {
+            let cleanup_done = cleanup_done.clone();
+            match ctrlc::set_handler(move || {
+                if cleanup_done.swap(true, Ordering::SeqCst) {
+                    return;
+                }
+                if let Err(err) = fs::remove_dir_all(&cleanup_path) {
+                    eprintln!(
+                        "Warning: failed to remove temporary directory {:?}: {}",
+                        cleanup_path, err
+                    );
+                }
+                process::exit(130);
+            }) {
+                Ok(()) => {
+                    let _ = CTRL_C_HANDLER_INSTALLED.set(());
+                }
+                Err(err) => {
+                    // Safe to proceed if another handler was registered earlier in the process.
+                    if !err.to_string().contains("already registered") {
+                        return Err(err).context("install Ctrl+C handler");
+                    }
+                }
             }
-            if let Err(err) = fs::remove_dir_all(&cleanup_path) {
-                eprintln!(
-                    "Warning: failed to remove temporary directory {:?}: {}",
-                    cleanup_path, err
-                );
-            }
-            process::exit(130);
-        })
-        .context("install Ctrl+C handler")?;
+        }
     }
 
     // TODO: Validate IO paths early (and other args)
