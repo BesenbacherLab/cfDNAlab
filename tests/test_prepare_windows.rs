@@ -11,7 +11,7 @@ mod tests_prepare_windows_pipeline {
     use flate2::{Compression, write::GzEncoder};
     use std::fs;
     use std::io::{BufWriter, Read, Write};
-    use tempfile::{NamedTempFile, TempDir};
+    use tempfile::TempDir;
     use zstd::Decoder as ZstdDecoder;
 
     fn write_temp_file(dir: &TempDir, name: &str, lines: &[&str]) -> Result<std::path::PathBuf> {
@@ -236,7 +236,6 @@ mod tests_prepare_windows_pipeline {
             &["chr1\t10\t12\tA", "chr1\t40\t42\tB", "chr1\t80\t82\tC"],
         )?;
         let output = tmpdir.path().join("out.tsv");
-        let chrom_sizes = write_chrom_sizes(&tmpdir, &[("chr1", 1000)])?;
 
         let mut cfg = PrepareConfig::default();
         cfg.input = input;
@@ -274,6 +273,7 @@ mod tests_prepare_windows_pipeline {
         let input = write_temp_file(&tmpdir, "input.tsv", &["chr1\t20\t30"])?;
         let near = write_temp_file(&tmpdir, "near.tsv", &["chr1\t0\t10\tSITE"])?;
         let output = tmpdir.path().join("out.tsv");
+        let chrom_sizes = write_chrom_sizes(&tmpdir, &[("chr1", 1000)])?;
 
         let mut cfg = PrepareConfig::default();
         cfg.input = input;
@@ -2328,10 +2328,12 @@ mod tests_stdio {
     };
     use libc;
     use std::{
+        fs,
         io::Read,
         os::fd::{FromRawFd, RawFd},
         path::PathBuf,
     };
+    use tempfile::NamedTempFile;
 
     fn run_with_piped_stdio<F>(input: &str, f: F) -> Result<String>
     where
