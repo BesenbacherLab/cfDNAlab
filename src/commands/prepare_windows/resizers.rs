@@ -93,21 +93,24 @@ pub fn apply_size_transform(
         }
     }
 
-    if !transformed {
+    // Out-of-bounds handling: apply when (a) a transform occurred or (b) caller
+    // provided chromosome sizes and requested trim/drop. If sizes are absent,
+    // skip OOB checks even for trim/drop to keep behavior consistent with the
+    // caller's knowledge.
+    let apply_oob = transformed || !matches!(cfg.oob, OobPolicy::Allow);
+    if !apply_oob || chrom_size_bp.is_none() {
         return Some((out_start, out_end));
     }
 
-    // Out-of-bounds handling
+    let size = chrom_size_bp.expect("chromosome sizes required for trim/drop policies");
     match cfg.oob {
         OobPolicy::Allow => Some((out_start, out_end)),
         OobPolicy::Trim => {
-            let size = chrom_size_bp.expect("chromosome sizes required for trim/drop policies");
             let s = out_start.min(size);
             let e = out_end.min(size);
             if e <= s { None } else { Some((s, e)) }
         }
         OobPolicy::Drop => {
-            let size = chrom_size_bp.expect("chromosome sizes required for trim/drop policies");
             if out_start >= size || out_end > size {
                 None
             } else if out_end <= out_start {
