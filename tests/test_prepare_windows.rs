@@ -793,16 +793,19 @@ mod tests_prepare_windows_pipeline {
         let lines = run_pipeline(&cfg)?;
 
         // Assert
-        // Under OOB allow, the first chr2 window underflows and is dropped. The second survives and is resized
+        // Under OOB allow, the first chr2 window underflows and is dropped. The second survives and is resized.
+        // Merge on original coordinates then resize to 10 bp:
+        // - chr1 A windows merge to 10..21 then resize to either 10..20 (left) or 11..21 (right) because parity is ambiguous.
+        // - chr2 D resizes from 10..22 to 11..21 (unique placement).
         let expected_left = vec![
-            "chr1\t7\t24\tA\t=\tN1\tclose".to_string(),
-            "chr2\t11\t21\tD\t=\tN2\tclose".to_string(),
+            "chr1\t10\t20\tA\t=\tN1\tclose".to_string(),
+            "chr2\t11\t21\tD\t+\tN2\tclose".to_string(),
         ];
         // When resize parity is ambiguous, placement can shift by one bp depending on the
         // deterministic hash choice (left vs right). Accept either centred placement.
         let expected_right = vec![
-            "chr1\t8\t24\tA\t=\tN1\tclose".to_string(),
-            "chr2\t11\t21\tD\t=\tN2\tclose".to_string(),
+            "chr1\t11\t21\tA\t=\tN1\tclose".to_string(),
+            "chr2\t11\t21\tD\t+\tN2\tclose".to_string(),
         ];
         assert!(
             lines == expected_left || lines == expected_right,
