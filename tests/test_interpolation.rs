@@ -63,14 +63,14 @@ mod zero_interpolator_tests {
     }
 
     #[test]
-    fn edge_run_is_filled_using_zero_padding() -> anyhow::Result<()> {
-        // Run at the left edge is interpolated by mirroring the right anchor
-        // and padding with zeros, producing a simple ramp.
+    fn edge_run_with_single_anchor_is_left_unchanged() -> anyhow::Result<()> {
+        // Run at the left edge has only one real anchor, so we skip interpolation
+        // instead of inventing a slope with fabricated padding.
         let mut histogram = vec![0.0, 0.0, 0.0, 3.0];
 
         fill_zero_bins_with_polynomial(&mut histogram, 1, 2, 2)?;
 
-        assert_slice_close(&histogram, &[0.0, 1.0, 2.0, 3.0], 1e-9);
+        assert_slice_close(&histogram, &[0.0, 0.0, 0.0, 3.0], 1e-9);
 
         Ok(())
     }
@@ -243,15 +243,16 @@ mod unsupported_interpolator_tests {
     }
 
     #[test]
-    fn unsupported_interp_edge_run_is_filled_using_zero_padding() -> anyhow::Result<()> {
-        // Run at the left edge is interpolated by mirroring the right anchor
-        // and padding with zeros, producing a simple ramp.
+    fn unsupported_interp_edge_run_with_single_anchor_is_left_unchanged() -> anyhow::Result<()> {
+        // Run at the left edge has only one supported anchor, interpolation is
+        // skipped to avoid fabricating a slope from padded zeros.
         let mut histogram = vec![0.0, 0.0, 0.0, 3.0];
         let mut mask = vec![false, false, false, true];
 
         fill_unsupported_bins_with_polynomial(&mut histogram, &mut mask, 1, 2, 2, true)?;
 
-        assert_slice_close(&histogram, &[0.0, 1.0, 2.0, 3.0], 1e-9);
+        assert_slice_close(&histogram, &[0.0, 0.0, 0.0, 3.0], 1e-9);
+        assert_eq!(mask, vec![false, false, false, true]);
 
         Ok(())
     }

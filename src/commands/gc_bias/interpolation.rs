@@ -1,12 +1,13 @@
 ///! NOTE: This code was generated. TODO: Validate that it's correct.
 use anyhow::{Result, ensure};
 
-/// Fill zero-valued histogram bins by fitting local weighted polynomials.
-///
-/// Technical details: Operates in-place, keeps the original non-zero bins as anchors,
-/// interpolates contiguous zero runs while clamping to the neighbouring anchor range,
-/// and mirrors boundary values (or zeros) when one side lacks real anchors so the fit
-/// remains well conditioned.
+/// Fill zero-valued histogram bins by fitting local weighted polynomials when enough real anchors exist.
+/// 
+/// Operates in-place when there are at least `polynomial_degree + 1`
+/// genuine non-zero anchor bins in the original data. Contiguous zero runs are
+/// interpolated with a single weighted polynomial and clamped to the neighbouring
+/// anchor range. When anchors are insufficient, the run is left unchanged to avoid
+/// fabricating edge behaviour.
 ///
 /// Parameters
 /// ----------
@@ -15,14 +16,14 @@ use anyhow::{Result, ensure};
 /// - `polynomial_degree`:
 ///     Degree of the fitting polynomial (1 = linear, 2 = quadratic, etc.).
 /// - `min_neighbours`:
-///     Minimum total anchors (real or padded) required before fitting.
+///     Minimum total anchors required before fitting.
 /// - `max_neighbours_per_side`:
 ///     Cap on how many anchors to take from each side of the zero run.
 ///
 /// Returns
 /// -------
 /// - `Ok(())`:
-///     Interpolation succeeded or no action was required.
+///     Interpolation succeeded or was skipped due to insufficient anchors.
 /// - `Err`:
 ///     Validation failed (empty histogram or invalid tuning parameters).
 pub fn fill_zero_bins_with_polynomial(
@@ -124,10 +125,11 @@ pub fn fill_zero_bins_with_polynomial(
 
 /// Interpolate unsupported bins using nearby supported anchors.
 ///
-/// Technical details: Treats every `false` entry in `support_mask` as a gap, fits a weighted
-/// polynomial between the closest supported neighbours, clamps interpolated values to the anchor
-/// range, and updates the mask entry to `true` once a value has been synthesized. The anchor set
-/// only reflects the original support so interpolation never bootstraps from synthetic values.
+/// Treats every `false` entry in `support_mask` as a gap and fits a weighted
+/// polynomial between supported neighbours when at least `polynomial_degree + 1`
+/// genuine anchors exist. Interpolated values are clamped to the anchor range and
+/// optionally mark the mask as supported. If there are too few real anchors, the
+/// run is skipped rather than inventing edge behaviour.
 ///
 /// Parameters
 /// ----------

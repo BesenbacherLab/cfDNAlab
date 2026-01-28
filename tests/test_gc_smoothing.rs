@@ -115,7 +115,7 @@ fn targeted_kernel_and_small_pseudo_count_match_manual_expectation() {
     let w0 = g0 / norm;
 
     // Horizontal pass worked out by hand for each column and row (clamped edges).
-    let row0_h = [0.0; 5];
+    // let row0_h = [0.0; 5];
     let row1_h = [
         w1 * 0.5 + w2 * 1.0,
         w0 * 0.5 + w1 * 1.0 + w2 * 0.5,
@@ -131,7 +131,7 @@ fn targeted_kernel_and_small_pseudo_count_match_manual_expectation() {
         w1 * 2.0 + w2 * 3.0,
     ];
     let row3_h = row1_h;
-    let row4_h = row0_h;
+    // let row4_h = row0_h;
 
     // Vertical pass unrolled with the same clamping rule.
     let expected_calc = array![
