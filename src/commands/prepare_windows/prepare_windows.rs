@@ -410,14 +410,12 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         HeaderMode::Absent => {}
     }
 
-    // Map from chromosome to size if trimming/dropping is enabled
-    let has_size_transform = cfg.resize.is_some() || cfg.flank.is_some();
-    let chrom_sizes_map: FxHashMap<String, u32> = if has_size_transform
-        && matches!(cfg.oob, OobPolicy::Trim | OobPolicy::Drop)
-        && cfg.chrom_sizes.is_some()
-    {
+    // Map from chromosome to size whenever sizes are supplied. Size data is required
+    // for resize/flank transforms and enables early OOB validation even when no transform
+    // is active
+    let chrom_sizes_map: FxHashMap<String, u32> = if let Some(path) = cfg.chrom_sizes.as_ref() {
         println!("Start: Loading chromosome sizes");
-        load_chrom_sizes(cfg.chrom_sizes.as_ref().unwrap())?
+        load_chrom_sizes(path)?
     } else {
         FxHashMap::default()
     };
@@ -555,8 +553,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         // Resized coordinates are computed per record even when merging uses originals
         // Transform to resized coordinates
         let chrom_size = current_chrom_size;
-        let Some((resized_start, resized_end)) =
-            apply_size_transform(start, end, chrom_size, cfg)?
+        let Some((resized_start, resized_end)) = apply_size_transform(start, end, chrom_size, cfg)?
         else {
             continue;
         };

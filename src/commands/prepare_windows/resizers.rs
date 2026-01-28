@@ -95,18 +95,7 @@ pub fn apply_size_transform(
         }
     }
 
-    // Resizing/flanking without chromosome sizes is not allowed: we cannot
-    // enforce OOB policies or preserve centering correctly
-    if transformed && chrom_size_bp.is_none() {
-        bail!(
-            "resize/flank requested without chromosome sizes. Provide chrom sizes to enforce OOB policy"
-        );
-    }
-
     let underflow = intended_start_i < 0;
-    let overflow = chrom_size_bp
-        .map(|size| intended_end_i > size as i64)
-        .unwrap_or(false);
 
     // Handle underflow (drop or trim)
     if underflow {
@@ -124,6 +113,23 @@ pub fn apply_size_transform(
         }
     }
 
+    if matches!(cfg.oob, OobPolicy::Allow) {
+        // No check is requested
+        return Ok(Some((intended_start_i as u32, intended_end_i as u32)));
+    }
+
+    // Resizing/flanking without chromosome sizes is not allowed: we cannot
+    // enforce OOB policies or preserve centering correctly
+    if transformed && chrom_size_bp.is_none() {
+        bail!(
+            "resize/flank requested without chromosome sizes. Provide chrom sizes to enforce OOB policy"
+        );
+    }
+
+    let overflow = chrom_size_bp
+        .map(|size| intended_end_i > size as i64)
+        .unwrap_or(false);
+
     // When bounds are unknown, don't check overflow
     if chrom_size_bp.is_none() || !overflow {
         return Ok(Some((intended_start_i as u32, intended_end_i as u32)));
@@ -131,12 +137,12 @@ pub fn apply_size_transform(
 
     let size = chrom_size_bp.expect("chromosome sizes required for trim/drop policies");
     match cfg.oob {
-        OobPolicy::Allow => Ok(Some((intended_start_i as u32, intended_end_i as u32))),
         OobPolicy::Trim => {
             let s = intended_start_i as u32;
             let e = intended_end_i.min(size as i64) as u32;
             if e <= s { Ok(None) } else { Ok(Some((s, e))) }
         }
         OobPolicy::Drop => Ok(None),
+        _ => unreachable!("OobPolicy::Allow already handled"),
     }
 }
