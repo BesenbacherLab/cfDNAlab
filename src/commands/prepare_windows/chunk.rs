@@ -724,6 +724,18 @@ pub fn apply_near_annotations(
             &cfg.near_direction,
             is_signed_mode,
         ) else {
+            // Near intervals exist on this chromosome, but none satisfy the configured direction/edge for this window
+            if cfg.distance_max.is_some() {
+                let should_warn = near_idx.warned_no_direction.insert(chrom.to_string());
+                if should_warn {
+                    eprintln!(
+                        "Warning: Chromosome '{}' has near intervals, but no interval matched --near-direction/--near-edge for at least one window. Those windows are dropped because --distance-max is set.",
+                        chrom
+                    );
+                }
+                continue;
+            }
+            // Keep window unchanged when distance-max is not set
             retained.push(window);
             continue;
         };

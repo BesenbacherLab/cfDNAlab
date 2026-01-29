@@ -25,7 +25,7 @@ use std::path::PathBuf;
 /// - Adjusts coordinates by resizing to a specific size or adding flanks to the
 ///   current sizes (trimmed to chromosome limits).
 ///
-/// - Merges windows based either within groups or across groups.
+/// - Merges windows, either within groups or across groups.
 ///
 /// - Builds labels by combining input columns and/or binning distances to elements
 ///   in the `near` file (e.g., proximal/distal TSS sites).
@@ -71,10 +71,6 @@ use std::path::PathBuf;
 ///     (using the original coordinates). These could be slightly shifted duplicates
 ///     from multiple experiments.
 ///
-///   - Remove one/more binding sites if they lie too close to another binding site from
-///     the same transcription factor. Shown for demo purposes, it is unclear whether this
-///     step is meaningful (see `--min-distance-within-group`).
-///
 ///   - Proximity to TSS sites (`--near` and `--distance-bins`). Keep only distal binding sites
 ///     within 100kb from a TSS site (`--distance-max`).
 ///     
@@ -109,7 +105,7 @@ use std::path::PathBuf;
 ///
 ///     --resize 2001 --chrom-sizes hg38.chrom.sizes  \
 ///
-///     --deduplicate keep-first --min-distance-within-group 50  \
+///     --deduplicate keep-first \
 ///
 ///     --cluster-min-overlaps 15  \
 ///
@@ -430,6 +426,14 @@ pub struct PrepareConfig {
 
     /// BED-like file with target intervals to compute nearest distance to `[path]`
     ///
+    /// Each window can be annotated and filtered based on its distance to the nearest
+    /// "near-interval", using specifiable distance bins.
+    /// For signed distances, the distance is negative when the window lies upstream
+    /// of the near-interval and positive when downstream.
+    ///
+    /// A common usecase is to annotate/filter windows based on the proximity
+    /// to TSS sites (1-bp intervals with defined strands).
+    ///
     /// Expected columns:
     ///   `chromosome`, `start`, `end`, optional `strand`, optional `group`.
     ///
@@ -437,33 +441,49 @@ pub struct PrepareConfig {
     /// When omitted, all intervals default to the `+` strand.
     ///
     /// Use `--near-group-cols` to point to group columns.
-    /// When omitted, `near-name` is empty and not available for filtering.
     ///
     /// - `strand` is one of `+`, `-`, or `.` (unknown). If absent, `+` is assumed.
     ///
     /// - Group names must be ASCII alphanumerics and cannot be the string `none`.
     ///
-    /// - Intervals must be half-open. Duplicate edges are resolved by `--near-duplicates`.
+    /// - Intervals must be half-open (start=inclusive, end=exclusive).
+    ///   Duplicate edges are resolved by `--near-duplicates`.
     ///
-    /// Distance:
+    /// **Distance**:
     ///
     ///   - Overlap: Distance is `0`.
     ///
-    ///   - Otherwise: Distance is the minimum from the window's edges to the selected
-    ///     target edge(s) (see `--near-edge`).
+    ///   - Otherwise: Distance is the minimum from the window's considered edges
+    ///     to the selected target edge(s) of the near-intervals (see `--near-edge`).
     ///
-    /// If you specify TSS sites, provide 1-bp intervals at the strand-specific TSS.
+    /// **Labels**:
     ///
-    /// When `--near` is specified, the labels `near-side` and `near-name` become available
+    /// Supplying near-intervals makes the labels `near-side` and `near-name`
+    /// (when `--near-group-cols` is specified) available
     /// for use in `--compose`, `--out-labels`, and `--exclude-labels`.
     ///
-    /// Near-side label prefix:
+    /// Near-side label prefix (strand-aware):
     ///
-    ///   `-` = upstream, `+` = downstream, `=` = overlap.
+    ///   `-` = window lies upstream of the near-interval
     ///
-    /// This prefix is included even when using `--distance-sign absolute`.
+    ///   `+` = window lies downstream of the near-interval
     ///
-    /// When no near intervals exist for a chromosome:
+    ///   `=` = window overlaps the near-interval
+    ///
+    /// Signed distances use the same orientation: the window lying upstream of
+    /// near-interval has a negative distance, downstream is positive.
+    ///
+    /// The prefix is still included when `--distance-sign absolute` is selected.
+    ///
+    /// - If upstream/downstream tie and `--near-ties annotate`, both sides are reported on the
+    ///   same window by expanding its labels. Output columns show paired comma-separated values
+    ///   (e.g., `near-side: -,+` and `near-name: GeneA,GeneB`). When composing these labels,
+    ///   the side+name pairs are joined first, e.g.:
+    ///   `--compose near=near-side,near-name` -> `-.GeneA,+.GeneB`.
+    ///
+    /// **No near-interval on chromosome or in targeted direction**:
+    ///
+    /// When no near-intervals exist for a chromosome:
     ///
     ///   - If `--distance-max` is set, windows on that chromosome are dropped. Otherwise:
     ///
@@ -471,22 +491,30 @@ pub struct PrepareConfig {
     ///
     ///   - `near-side` (and `near-name` when configured) are set to `[NONE]`.
     ///
-    /// **Upstream/Downstream definition (strand-aware)**
+    /// When a chromosome has near-intervals but none match the configured `--near-direction`
+    /// or `--near-edge` for a given window:
     ///
-    /// `Upstream/Downstream` are defined **relative to the near interval's annotated strand**:
+    /// - If `--distance-max` is set, the window is dropped with a warning.
     ///
-    /// - For a `+` near interval: upstream is to the left (smaller genomic coordinates); downstream is to the right.
+    /// - Otherwise, the window is kept (near labels remain empty).
     ///
-    /// - For a `-` near interval: upstream is to the right (larger genomic coordinates); downstream is to the left.
+    /// **Upstream/Downstream definition (strand-aware)**:
     ///
-    /// - For an unknown strand (`.`): upstream/downstream are derived from genomic placement to the chosen target edge(s)
+    /// `Upstream/Downstream` are defined **relative to the near-interval's annotated strand**:
+    ///
+    /// - For a `+`-stranded near-interval: upstream means the window is to the left
+    ///   (smaller genomic coordinates) of the near-interval; downstream is to the right.
+    ///
+    /// - For a `-`-stranded near-interval: upstream is to the right (larger genomic coordinates); downstream is to the left.
+    ///
+    /// - For an unknown strand (`.`): upstream/downstream are derived from genomic placement
     ///   (falls back to genomic-nearest semantics).
     ///
     /// **Examples**
     ///
-    /// Legend: '===' near interval, '###' window, '---' empty span. Signs are relative to the near-interval's strand.
+    /// Legend: '===' near-interval, '###' window, '---' empty span. Signs are relative to the near-interval's strand.
     ///
-    /// Case A: near is `+` strand
+    /// Case A: near is on `+`-strand
     ///
     /// ```text
     ///
@@ -498,7 +526,7 @@ pub struct PrepareConfig {
     ///     
     /// ```
     ///
-    /// Case B: near is `-` strand
+    /// Case B: near is on `-`-strand
     ///
     /// ```text
     ///
@@ -521,16 +549,9 @@ pub struct PrepareConfig {
     /// |        touch (=) ^^^    near    ^^^ overlap (=)
     ///
     /// ```
-    ///
-    /// **Ties and overlaps**:
-    ///
-    /// - Overlap yields distance 0 and `near-side` label prefix `=`.
-    ///
-    /// - If upstream/downstream tie and `--near-ties annotate`, both sides are reported,
-    ///   e.g. `-GeneA/+GeneB`.
     #[cfg_attr(
         feature = "cli",
-        clap(long, value_parser, help_heading = "Distance to near intervals")
+        clap(long, value_parser, help_heading = "Distance to near-intervals")
     )]
     pub near: Option<PathBuf>,
 
@@ -549,7 +570,7 @@ pub struct PrepareConfig {
             default_value = "auto",
             ignore_case = true,
             hide_possible_values = true,
-            help_heading = "Distance to near intervals"
+            help_heading = "Distance to near-intervals"
         )
     )]
     pub near_header: HeaderMode,
@@ -567,7 +588,7 @@ pub struct PrepareConfig {
             long,
             value_parser,
             requires = "near",
-            help_heading = "Distance to near intervals"
+            help_heading = "Distance to near-intervals"
         )
     )]
     pub near_strand_col: Option<String>,
@@ -587,7 +608,7 @@ pub struct PrepareConfig {
             value_parser,
             num_args = 1..,
             requires = "near",
-            help_heading = "Distance to near intervals"
+            help_heading = "Distance to near-intervals"
         )
     )]
     pub near_group_cols: Vec<String>,
@@ -600,11 +621,13 @@ pub struct PrepareConfig {
     ///
     /// - `"nearest"`: Use whichever genomic edge is closer (default).
     ///
-    /// - `"upstream"`: Use the edge that is upstream of each near interval given its strand (`+` uses left edge, `-` uses right edge).
+    /// - `"upstream"`: Use the edge towards the upstream side of the near-interval,
+    ///   given its strand (`+`-strand uses left edge, `-` uses right edge).
     ///
-    /// - `"downstream"`: Use the edge that is downstream of each near interval given its strand (`+` uses right edge, `-` uses left edge).
+    /// - `"downstream"`: Use the edge towards the downstream side of the near-interval,
+    ///   given its strand (`+`-strand uses right edge, `-` uses left edge).
     ///
-    /// If a near interval's strand is unknown (`.`), "upstream"/"downstream" fall back to `"nearest"`.
+    /// If a near-interval's strand is unknown (`.`), "upstream"/"downstream" fall back to `"nearest"`.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -613,24 +636,20 @@ pub struct PrepareConfig {
             default_value = "nearest",
             ignore_case = true,
             hide_possible_values = true,
-            help_heading = "Distance to near intervals"
+            help_heading = "Distance to near-intervals"
         )
     )]
     pub near_edge: NearEdge,
 
-    /// Directionality of distance classification `[string]`
+    /// Which near-intervals are considered (upstream/downstream/both) `[string]`
     ///
-    /// - `"upstream"`: Consider only near intervals that lie upstream (or overlap) relative to each near interval's strand.
+    /// - `"upstream"`: Keep hits where the window is upstream of the near-interval (or overlaps it).
     ///
-    /// - `"downstream"`: Consider only near intervals that lie downstream (or overlap) relative to each near interval's strand.
+    /// - `"downstream"`: Keep hits where the window is downstream of the near-interval (or overlaps it).
     ///
-    /// - `"both"`: Consider upstream and downstream (default).
+    /// - `"both"`: Keep upstream, downstream, and overlaps (default).
     ///
-    /// When the near interval strand is unknown, "upstream"/"downstream" are interpreted as
-    /// genomic directions. That means "upstream" only keeps near intervals that lie before
-    /// (lower coordinates) the window, and "downstream" only keeps intervals after it.
-    ///
-    /// Overlaps are always allowed, returning zero distance.
+    /// See `--near` for definitions of up-/downstream.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -639,14 +658,15 @@ pub struct PrepareConfig {
             default_value = "both",
             ignore_case = true,
             hide_possible_values = true,
-            help_heading = "Distance to near intervals"
+            help_heading = "Distance to near-intervals"
         )
     )]
     pub near_direction: NearDirection,
 
-    /// How to respond when multiple near intervals tie for the minimum distance `[string]`
+    /// How to respond when multiple near-intervals tie for the minimum distance `[string]`
     ///
-    /// - `"annotate"`: keep the window and include both sides in the near label (e.g. `-A/+B`).
+    /// - `"annotate"`: keep the window and include both sides. `near-side` becomes `-,+`
+    ///   and `near-name` becomes `A,B`.
     ///
     /// - `"drop"`: discard the window when a tie occurs.
     #[cfg_attr(
@@ -657,7 +677,7 @@ pub struct PrepareConfig {
             default_value = "annotate",
             ignore_case = true,
             hide_possible_values = true,
-            help_heading = "Distance to near intervals"
+            help_heading = "Distance to near-intervals"
         )
     )]
     pub near_ties: NearTiePolicy,
@@ -675,7 +695,7 @@ pub struct PrepareConfig {
     ///  - `"drop-all"`: Drop the entire set of duplicates.
     ///
     ///  - `"merge"`: Merge groups across identical edges (and sometimes strands) into one record.
-    ///    Group names are joined with "`__`" in stable input order, with duplicates removed. Missing groups are ignored.
+    ///    Group names are joined with "`__`", with duplicates removed. Missing groups are ignored.
     ///
     /// Key used to detect “identical edges” depends on `--near-edge`:
     ///
@@ -685,12 +705,12 @@ pub struct PrepareConfig {
     #[cfg_attr(
         feature = "cli",
         clap(
-            long = "near-duplicates",
+            long,
             value_enum,
             default_value = "error",
             ignore_case = true,
             hide_possible_values = true,
-            help_heading = "Distance to near intervals"
+            help_heading = "Distance to near-intervals"
         )
     )]
     pub near_duplicates: NearDuplicatesPolicy,
@@ -704,8 +724,7 @@ pub struct PrepareConfig {
     /// Labels must be ASCII alphanumerics and cannot be the string `none`.
     ///
     /// When specified, the label `bin` becomes available.
-    /// Chromosomes without near intervals use the special bin `[NO-NEAR]`.
-    /// Requires `--near`.
+    /// Chromosomes without near-intervals use the special bin `[NO-NEAR]`.
     ///
     /// **Examples**:
     ///
@@ -718,7 +737,8 @@ pub struct PrepareConfig {
             long,
             value_parser,
             num_args = 1..,
-            help_heading = "Distance to near intervals"
+            requires = "near",
+            help_heading = "Distance to near-intervals"
         )
     )]
     pub distance_bins: Option<Vec<String>>,
@@ -731,9 +751,9 @@ pub struct PrepareConfig {
     ///
     /// **Distance sign (when `--distance-sign signed`):**
     ///
-    /// - Upstream of the near interval -> **negative** distance.
+    /// - Window is **upstream** of the near-interval -> **negative** distance.
     ///
-    /// - Downstream of the near interval -> **positive** distance.
+    /// - Window is **downstream** of the near-interval -> **positive** distance.
     ///
     /// - Overlap/touch -> `0` distance.
     #[cfg_attr(
@@ -743,7 +763,8 @@ pub struct PrepareConfig {
             value_enum,
             default_value = "absolute",
             ignore_case = true,
-            help_heading = "Distance to near intervals"
+            requires = "near",
+            help_heading = "Distance to near-intervals"
         )
     )]
     pub distance_sign: DistSign,
@@ -751,13 +772,14 @@ pub struct PrepareConfig {
     /// Maximum absolute distance to keep `[integer]`
     ///
     /// Windows with `|distance| > --distance-max` are dropped prior to binning.
-    /// Windows without any near intervals are dropped when this is set.
+    /// When specified, windows without any near-intervals are dropped.
     #[cfg_attr(
         feature = "cli",
         clap(
             long,
             value_parser = clap::value_parser!(u32),
-            help_heading = "Distance to near intervals"
+            requires = "near",
+            help_heading = "Distance to near-intervals"
         )
     )]
     pub distance_max: Option<u32>,
@@ -780,7 +802,7 @@ pub struct PrepareConfig {
             default_value = "resized",
             ignore_case = true,
             hide_possible_values = true,
-            help_heading = "Distance to near intervals"
+            help_heading = "Distance to near-intervals"
         )
     )]
     pub distance_from: CoordinateSet,
@@ -856,7 +878,7 @@ pub struct PrepareConfig {
     ///
     /// - `"trim"`: Trim to chromosome bounds.
     ///
-    /// - `"allow"`: Allow out-of-bounds (unsafe). 
+    /// - `"allow"`: Allow out-of-bounds (unsafe).
     ///   Windows with negative coordinates are dropped with a warning.
     #[cfg_attr(
         feature = "cli",
@@ -1148,9 +1170,9 @@ pub enum NearEdge {
     Right,
     /// Use whichever genomic edge is closer.
     Nearest,
-    /// Use the edge that is upstream of the near interval given its annotated strand orientation.
+    /// Use the edge that is upstream of the near-interval given its annotated strand orientation.
     Upstream,
-    /// Use the edge that is downstream of the near interval given its annotated strand orientation.
+    /// Use the edge that is downstream of the near-interval given its annotated strand orientation.
     Downstream,
 }
 

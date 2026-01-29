@@ -45,7 +45,11 @@ The base pieces you can reference anywhere
 * `input` — original group from `--group-cols`.
   - When windows carry multiple groups, values are joined with `__` in stable order.
   - Missing group values are written as `[NA]` so each label keeps the same number of segments.
-* `near-side` — one of `- + =` relative to the near interval strand.
+* `near-side` — one of `- + =` describing where the window sits relative to the near interval **and its strand**:
+  - `-` window upstream of the near interval
+  - `+` window downstream of the near interval
+  - `=` window overlaps the near interval
+  Distances are oriented the same way - strand flips upstream/downstream for `-` strand intervals.
   - When a chromosome has no near intervals, this is `[NONE]`.
 * `near-name` — the group name from the near file.
   - Missing group values are written as `[NA]` so each label keeps the same number of segments.

@@ -32,6 +32,7 @@ pub struct NearIndex {
     pub group_name_to_id: FxHashMap<String, u32>,
     pub group_id_to_name: Vec<String>,
     pub warned_no_near: FxHashSet<String>,
+    pub warned_no_direction: FxHashSet<String>,
 }
 
 /// Where the nearest interval sits relative to the window.
@@ -296,7 +297,8 @@ pub fn load_near_index(
 /// to the selected target edges (left, right, or nearest).
 ///
 /// Signed distances:
-/// - Target interval being *upstream* of the window gives a negative distance. *Downstream* gives a positive distance.
+/// - Window upstream of the near interval (lies to the left in genomic order for `+` strand) yields a negative distance.
+/// - Window downstream of the near interval yields a positive distance.
 ///
 /// Parameters
 /// ----------
@@ -334,14 +336,14 @@ pub fn nearest_edge_distance(
         return None;
     }
 
-    // Move cursor to the last interval whose end <= window_start.
+    // Move cursor to the last interval whose end <= window_start
     while near_chrom.cursor + 1 < n
         && near_chrom.intervals[near_chrom.cursor + 1].end <= window_start
     {
         near_chrom.cursor += 1;
     }
 
-    // Determine upstream/downstream candidate indices based on the cursor position.
+    // Determine upstream/downstream candidate indices based on the cursor position
     let upstream_idx: Option<usize> = if near_chrom.intervals[near_chrom.cursor].end <= window_start
     {
         Some(near_chrom.cursor)
@@ -392,10 +394,12 @@ pub fn nearest_edge_distance(
 
         // Evaluate one target edge against both window edges
         let mut consider_edge = |target_edge_bp: i32| {
-            let distance_to_window_start = target_edge_bp - window_start as i32;
-            let distance_to_window_end = target_edge_bp - window_end as i32;
+            // Positive means the window lies downstream (to the right for '+' strand)
+            // of the near edge. Negative means the window is upstream.
+            let distance_to_window_start = window_start as i32 - target_edge_bp;
+            let distance_to_window_end = window_end as i32 - target_edge_bp;
 
-            // Choose the closer of {to-start, to-end}; prefer start on ties
+            // Choose the closer of {to-start, to-end}. Prefer start on ties
             let chosen_signed_distance =
                 if distance_to_window_start.abs() <= distance_to_window_end.abs() {
                     distance_to_window_start
@@ -424,7 +428,7 @@ pub fn nearest_edge_distance(
                 consider_edge(interval.start as i32);
                 consider_edge(interval.end as i32);
             }
-            // Use the edge that is upstream of the near interval given its annotated strand orientation.
+            // Use the edge that is upstream of the near interval given its annotated strand orientation
             NearEdge::Upstream => match interval.strand {
                 Strand::Plus => consider_edge(interval.start as i32),
                 Strand::Minus => consider_edge(interval.end as i32),
@@ -434,7 +438,7 @@ pub fn nearest_edge_distance(
                     consider_edge(interval.end as i32);
                 }
             },
-            // Use the edge that is downstream of the near interval given its annotated strand orientation.
+            // Use the edge that is downstream of the near interval given its annotated strand orientation
             NearEdge::Downstream => match interval.strand {
                 Strand::Plus => consider_edge(interval.end as i32),
                 Strand::Minus => consider_edge(interval.start as i32),
@@ -475,7 +479,7 @@ pub fn nearest_edge_distance(
         }
     }
 
-    // Build at most two candidates: upstream and downstream.
+    // Build at most two candidates: upstream and downstream
     let mut upstream_hit: Option<NearHit> = None;
     if let Some(ui) = upstream_idx {
         let iv = near_chrom.intervals[ui];
@@ -484,7 +488,7 @@ pub fn nearest_edge_distance(
         let (strand_relative_side, strand_relative_distance) =
             orient_by_strand(genomic_side, genomic_distance, iv.strand, signed);
 
-        // Filter by requested direction(s). Overlap would have returned already.
+        // Filter by requested direction(s). Overlap would have returned already
         let from_considered_side = match directions {
             NearDirection::Both => true,
             NearDirection::Upstream => {
