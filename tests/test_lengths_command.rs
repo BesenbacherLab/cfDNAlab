@@ -282,7 +282,7 @@ mod tests_lengths_command {
         assert!((arr_mid[(1, len_idx)] - 1.0).abs() < 1e-6);
         assert!((arr_mid.sum() - 1.0).abs() < 1e-6);
         // PROPORTION=0.3 counts windows with at least 30% overlap:
-        // window 0 overlap is 20/60 ≈ 0.33, window 1 overlap is 40/60 ≈ 0.67 
+        // window 0 overlap is 20/60 ≈ 0.33, window 1 overlap is 40/60 ≈ 0.67
         // (overlap is fragment positions inside the window, not window-bases covered)
         assert!((arr_prop[(0, len_idx)] - 1.0).abs() < 1e-6);
         assert!((arr_prop[(1, len_idx)] - 1.0).abs() < 1e-6);

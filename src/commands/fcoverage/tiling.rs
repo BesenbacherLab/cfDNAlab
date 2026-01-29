@@ -190,7 +190,6 @@ pub fn adapt_fetch_to_extreme_windows(
             clamp_fetch_to_window_span(tile, chrom_len_u64, min_ws, max_we)
         }
         TileMode::AggregatesBySize { window_bp, .. } => {
-            
             // TODO: Rename variables to meaningful names
             let cs = tile.core_start as u64;
             let ce = tile.core_end as u64;

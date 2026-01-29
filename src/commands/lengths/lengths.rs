@@ -309,9 +309,9 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                     wchr_slice.len(),
                     &template_counts,
                 )?;
-            ensure!(
-                counts.len() == wchr_slice.len(),
-                "Expected {} windows for {} but got {}",
+                ensure!(
+                    counts.len() == wchr_slice.len(),
+                    "Expected {} windows for {} but got {}",
                     wchr_slice.len(),
                     chr,
                     counts.len()

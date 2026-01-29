@@ -2,7 +2,7 @@
 use anyhow::{Result, ensure};
 
 /// Fill zero-valued histogram bins by fitting local weighted polynomials when enough real anchors exist.
-/// 
+///
 /// Operates in-place when there are at least `polynomial_degree + 1`
 /// genuine non-zero anchor bins in the original data. Contiguous zero runs are
 /// interpolated with a single weighted polynomial and clamped to the neighbouring

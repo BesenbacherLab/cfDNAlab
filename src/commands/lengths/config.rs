@@ -61,12 +61,7 @@ pub struct LengthsConfig {
     ///   `<prefix>.length_counts.npy`
     #[cfg_attr(
         feature = "cli",
-        clap(
-            long,
-            short = 'x',
-            default_value = "lengths",
-            help_heading = "Core"
-        )
+        clap(long, short = 'x', default_value = "lengths", help_heading = "Core")
     )]
     pub output_prefix: String,
 
