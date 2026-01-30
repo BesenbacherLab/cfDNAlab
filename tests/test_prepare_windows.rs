@@ -258,9 +258,9 @@ mod tests_prepare_windows_pipeline {
         assert_eq!(
             lines,
             vec![
-                "chr1\t6\t8\t+\tprox".to_string(),
-                "chr1\t52\t54\t-\tmid".to_string(),
-                "chr1\t150\t152\t-\tfar".to_string(),
+                "chr1\t6\t8\t-\tprox".to_string(),
+                "chr1\t52\t54\t+\tmid".to_string(),
+                "chr1\t150\t152\t+\tfar".to_string(),
             ],
         );
         Ok(())
@@ -301,7 +301,7 @@ mod tests_prepare_windows_pipeline {
 
         // Assert
         // Resized 15..35 yields a 5 bp distance bin and output keeps resized coordinates
-        assert_eq!(lines, vec!["chr1\t15\t35\t-\tSITE\tnear".to_string()]);
+        assert_eq!(lines, vec!["chr1\t15\t35\t+\tSITE\tnear".to_string()]);
         Ok(())
     }
 
@@ -340,7 +340,7 @@ mod tests_prepare_windows_pipeline {
 
         // Assert
         // Original 20..30 yields a 10 bp distance bin while output keeps resized coordinates
-        assert_eq!(lines, vec!["chr1\t15\t35\t-\tSITE\tfar".to_string()]);
+        assert_eq!(lines, vec!["chr1\t15\t35\t+\tSITE\tfar".to_string()]);
         Ok(())
     }
 
@@ -416,7 +416,7 @@ mod tests_prepare_windows_pipeline {
 
         assert_eq!(
             lines,
-            vec!["chr1\t0\t10\t+\tTARG", "chr1\t150\t160\t-\tTARG"],
+            vec!["chr1\t0\t10\t-\tTARG", "chr1\t150\t160\t+\tTARG"],
         );
         Ok(())
     }
@@ -447,8 +447,8 @@ mod tests_prepare_windows_pipeline {
         assert_eq!(
             lines,
             vec![
-                "chr1\t0\t10\t+".to_string(),
-                "chr1\t150\t160\t-".to_string()
+                "chr1\t0\t10\t-".to_string(),
+                "chr1\t150\t160\t+".to_string()
             ]
         );
         Ok(())
