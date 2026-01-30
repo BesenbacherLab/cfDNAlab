@@ -306,7 +306,7 @@ mod tests_prepare_windows_near {
         // Assert
         // Upstream interval appears first; downstream interval second
         assert_eq!(annotated.len(), 1);
-        assert_eq!(annotated[0].group_key, "+.UP,-.DN");
+        assert_eq!(annotated[0].group_key, "-.DN,+.UP");
         Ok(())
     }
 

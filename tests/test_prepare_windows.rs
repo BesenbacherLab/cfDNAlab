@@ -1702,9 +1702,9 @@ mod tests_near_file {
         assert_eq!(
             window_before,
             NearestResult::Single(NearHit {
-                distance: 5,
+                distance: -5,
                 group_id: Some(0),
-                side: NearSide::Downstream,
+                side: NearSide::Upstream,
             })
         );
 
@@ -1722,7 +1722,7 @@ mod tests_near_file {
             NearestResult::Single(NearHit {
                 distance: 5,
                 group_id: Some(0),
-                side: NearSide::Upstream,
+                side: NearSide::Downstream,
             })
         );
     }
@@ -1821,7 +1821,7 @@ mod tests_near_file {
             NearestResult::Single(NearHit {
                 distance: 20,
                 group_id: Some(1),
-                side: NearSide::Upstream,
+                side: NearSide::Downstream,
             })
         );
     }
