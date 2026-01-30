@@ -6,7 +6,9 @@ use crate::commands::prepare_windows::{
         build_tuple_compositions, normalize_label_tuples, render_label_for_key,
     },
     mergers::merge_windows,
-    near_file::{NearHit, NearIndex, NearSide, NearTie, NearestResult, nearest_edge_distance},
+    near_file::{
+        NearIndex, NearTie, NearWindowSide, NearestDistance, NearestResult, nearest_edge_distance,
+    },
     order::{WindowSortOrder, sort_windows_in_place},
     parsers::DistanceBins,
     postprocess::{
@@ -37,7 +39,7 @@ const OUTPUT_SORT_SEPARATOR: char = '\t';
 impl NearAnnotation {
     // Keep this as a small helper to avoid repeating lookup and filtering logic
     fn from_hit(
-        hit: &NearHit,
+        hit: &NearestDistance,
         near_index: &NearIndex,
         distance_bins: Option<&DistanceBins>,
         distance_sign: DistSign,
@@ -55,10 +57,10 @@ impl NearAnnotation {
         };
 
         let bin = distance_bins.and_then(|bins| bins.match_label(distance_for_bin));
-        let near_side = match hit.side {
-            NearSide::Upstream => "-",
-            NearSide::Downstream => "+",
-            NearSide::Overlap => "=",
+        let near_side = match hit.window_side {
+            NearWindowSide::Upstream => "-",
+            NearWindowSide::Downstream => "+",
+            NearWindowSide::Overlap => "=",
         }
         .to_string();
         let near_name = hit
@@ -74,7 +76,7 @@ impl NearAnnotation {
 
     fn push_from_hit(
         annotations: &mut Vec<Self>,
-        hit: &NearHit,
+        hit: &NearestDistance,
         near_index: &NearIndex,
         distance_bins: Option<&DistanceBins>,
         distance_sign: DistSign,

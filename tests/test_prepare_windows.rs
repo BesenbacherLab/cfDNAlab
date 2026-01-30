@@ -1610,8 +1610,8 @@ mod tests_near_file {
     use cfdnalab::commands::prepare_windows::{
         config::{NearDirection, NearEdge},
         near_file::{
-            NearChrom, NearDuplicatesPolicy, NearHit, NearInterval, NearSide, NearestResult,
-            Strand, load_near_index, nearest_edge_distance,
+            NearChrom, NearDuplicatesPolicy, NearInterval, NearWindowSide, NearestDistance,
+            NearestResult, Strand, load_near_index, nearest_edge_distance,
         },
     };
     use tempfile::TempDir;
@@ -1683,10 +1683,10 @@ mod tests_near_file {
         .unwrap();
         assert_eq!(
             overlap,
-            NearestResult::Single(NearHit {
+            NearestResult::Single(NearestDistance {
                 distance: 0,
                 group_id: Some(0),
-                side: NearSide::Overlap,
+                side: NearWindowSide::Overlap,
             })
         );
 
@@ -1701,10 +1701,10 @@ mod tests_near_file {
         .unwrap();
         assert_eq!(
             window_before,
-            NearestResult::Single(NearHit {
+            NearestResult::Single(NearestDistance {
                 distance: -5,
                 group_id: Some(0),
-                side: NearSide::Upstream,
+                side: NearWindowSide::Upstream,
             })
         );
 
@@ -1719,10 +1719,10 @@ mod tests_near_file {
         .unwrap();
         assert_eq!(
             window_after,
-            NearestResult::Single(NearHit {
+            NearestResult::Single(NearestDistance {
                 distance: 5,
                 group_id: Some(0),
-                side: NearSide::Downstream,
+                side: NearWindowSide::Downstream,
             })
         );
     }
@@ -1749,10 +1749,10 @@ mod tests_near_file {
         .unwrap();
         assert_eq!(
             on_boundary,
-            NearestResult::Single(NearHit {
+            NearestResult::Single(NearestDistance {
                 distance: 0,
                 group_id: Some(0),
-                side: NearSide::Overlap,
+                side: NearWindowSide::Overlap,
             })
         );
     }
@@ -1818,10 +1818,10 @@ mod tests_near_file {
         .unwrap();
         assert_eq!(
             dist,
-            NearestResult::Single(NearHit {
+            NearestResult::Single(NearestDistance {
                 distance: 20,
                 group_id: Some(1),
-                side: NearSide::Downstream,
+                side: NearWindowSide::Downstream,
             })
         );
     }
@@ -1859,18 +1859,18 @@ mod tests_near_file {
             NearestResult::Tie(tie) => {
                 assert_eq!(
                     tie.upstream,
-                    Some(NearHit {
+                    Some(NearestDistance {
                         distance: -5,
                         group_id: Some(1),
-                        side: NearSide::Upstream,
+                        side: NearWindowSide::Upstream,
                     })
                 );
                 assert_eq!(
                     tie.downstream,
-                    Some(NearHit {
+                    Some(NearestDistance {
                         distance: 5,
                         group_id: Some(2),
-                        side: NearSide::Downstream,
+                        side: NearWindowSide::Downstream,
                     })
                 );
             }

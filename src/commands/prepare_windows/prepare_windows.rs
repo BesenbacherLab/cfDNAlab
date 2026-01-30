@@ -694,7 +694,7 @@ fn available_atomic_parts(cfg: &PrepareConfig) -> FxHashSet<AtomicLabelPart> {
     let mut parts: FxHashSet<AtomicLabelPart> = FxHashSet::default();
     parts.insert(AtomicLabelPart::Input);
     if cfg.near.is_some() {
-        parts.insert(AtomicLabelPart::NearSide);
+        parts.insert(AtomicLabelPart::NearWindowSide);
         if !cfg.near_group_cols.is_empty() {
             parts.insert(AtomicLabelPart::NearName);
         }

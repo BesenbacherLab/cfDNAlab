@@ -46,7 +46,7 @@ use std::collections::BTreeSet;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum AtomicLabelPart {
     Input,
-    NearSide,
+    NearWindowSide,
     NearName,
     Bin,
     Cluster,
@@ -56,7 +56,7 @@ impl AtomicLabelPart {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Input => "input",
-            Self::NearSide => "near-side",
+            Self::NearWindowSide => "near-side",
             Self::NearName => "near-name",
             Self::Bin => "bin",
             Self::Cluster => "cluster",
@@ -66,7 +66,7 @@ impl AtomicLabelPart {
     pub fn from_token(token: &str) -> Option<Self> {
         match token {
             "input" => Some(Self::Input),
-            "near-side" => Some(Self::NearSide),
+            "near-side" => Some(Self::NearWindowSide),
             "near-name" => Some(Self::NearName),
             "bin" => Some(Self::Bin),
             "cluster" => Some(Self::Cluster),
@@ -192,7 +192,7 @@ impl LabelSchema {
         }
         let mut known: Vec<String> = vec![
             AtomicLabelPart::Input.as_str().to_string(),
-            AtomicLabelPart::NearSide.as_str().to_string(),
+            AtomicLabelPart::NearWindowSide.as_str().to_string(),
             AtomicLabelPart::NearName.as_str().to_string(),
             AtomicLabelPart::Bin.as_str().to_string(),
             AtomicLabelPart::Cluster.as_str().to_string(),
@@ -266,7 +266,7 @@ impl LabelTuple {
 fn atomic_value<'a>(tuple: &'a LabelTuple, part: AtomicLabelPart) -> &'a str {
     match part {
         AtomicLabelPart::Input => tuple.input.as_str(),
-        AtomicLabelPart::NearSide => tuple.near_side.as_deref().unwrap_or(""),
+        AtomicLabelPart::NearWindowSide => tuple.near_side.as_deref().unwrap_or(""),
         AtomicLabelPart::NearName => tuple.near_name.as_deref().unwrap_or(""),
         AtomicLabelPart::Bin => tuple.bin.as_deref().unwrap_or(""),
         AtomicLabelPart::Cluster => tuple.cluster.as_deref().unwrap_or(""),
@@ -369,7 +369,7 @@ fn render_atomic_label(tuples: &[LabelTuple], part: AtomicLabelPart) -> String {
             return first_value.to_string();
         }
         let non_input_parts: BTreeSet<AtomicLabelPart> = [
-            AtomicLabelPart::NearSide,
+            AtomicLabelPart::NearWindowSide,
             AtomicLabelPart::NearName,
             AtomicLabelPart::Bin,
             AtomicLabelPart::Cluster,

@@ -13,7 +13,8 @@ mod tests_prepare_windows_near {
     };
     use cfdnalab::commands::prepare_windows::near_file::NearDuplicatesPolicy;
     use cfdnalab::commands::prepare_windows::near_file::{
-        NearChrom, NearHit, NearInterval, NearSide, NearestResult, Strand, nearest_edge_distance,
+        NearChrom, NearInterval, NearWindowSide, NearestDistance, NearestResult, Strand,
+        nearest_edge_distance,
     };
     use cfdnalab::commands::prepare_windows::parsers::parse_distance_bins;
     use cfdnalab::commands::prepare_windows::prepare_windows::Window;
@@ -85,9 +86,14 @@ mod tests_prepare_windows_near {
         .expect("hit");
 
         // Assert
-        if let NearestResult::Single(NearHit { distance, side, .. }) = result {
+        if let NearestResult::Single(NearestDistance {
+            distance,
+            window_side,
+            ..
+        }) = result
+        {
             assert_eq!(distance, -40);
-            assert_eq!(side, NearSide::Upstream);
+            assert_eq!(window_side, NearWindowSide::Upstream);
         } else {
             panic!("expected single upstream hit");
         }
@@ -121,9 +127,14 @@ mod tests_prepare_windows_near {
         .expect("hit");
 
         // Assert
-        if let NearestResult::Single(NearHit { distance, side, .. }) = result {
+        if let NearestResult::Single(NearestDistance {
+            distance,
+            window_side,
+            ..
+        }) = result
+        {
             assert_eq!(distance, -20); // flipped by strand
-            assert_eq!(side, NearSide::Upstream); // genomic downstream becomes upstream on -
+            assert_eq!(window_side, NearWindowSide::Upstream); // genomic downstream becomes upstream on -
         } else {
             panic!("expected single upstream hit");
         }
@@ -168,10 +179,10 @@ mod tests_prepare_windows_near {
             NearestResult::Tie(tie) => {
                 let upstream = tie.upstream.expect("upstream");
                 let downstream = tie.downstream.expect("downstream");
-                assert_eq!(upstream.distance, 5);
-                assert_eq!(upstream.side, NearSide::Downstream); // window is downstream of left interval
-                assert_eq!(downstream.distance, -5);
-                assert_eq!(downstream.side, NearSide::Upstream); // window is upstream of right interval
+                assert_eq!(upstream.distance, -5);
+                assert_eq!(upstream.window_side, NearWindowSide::Upstream); // window lies upstream of right interval
+                assert_eq!(downstream.distance, 5);
+                assert_eq!(downstream.window_side, NearWindowSide::Downstream); // window lies downstream of left interval
             }
             _ => panic!("expected tie"),
         }
@@ -337,9 +348,14 @@ mod tests_prepare_windows_near {
         .expect("hit");
 
         // Assert
-        if let NearestResult::Single(NearHit { distance, side, .. }) = result {
+        if let NearestResult::Single(NearestDistance {
+            distance,
+            window_side,
+            ..
+        }) = result
+        {
             assert_eq!(distance, 0);
-            assert_eq!(side, NearSide::Overlap);
+            assert_eq!(window_side, NearWindowSide::Overlap);
         } else {
             panic!("expected overlap hit");
         }
@@ -372,10 +388,15 @@ mod tests_prepare_windows_near {
         .expect("hit");
 
         // Assert
-        if let NearestResult::Single(NearHit { distance, side, .. }) = result {
+        if let NearestResult::Single(NearestDistance {
+            distance,
+            window_side,
+            ..
+        }) = result
+        {
             // Falls back to nearest edge: right edge at 110 is closest, window downstream so +20
             assert_eq!(distance, 20);
-            assert_eq!(side, NearSide::Downstream);
+            assert_eq!(window_side, NearWindowSide::Downstream);
         } else {
             panic!("expected downstream hit");
         }
@@ -705,9 +726,14 @@ mod tests_prepare_windows_near {
         .expect("hit");
 
         // Assert
-        if let NearestResult::Single(NearHit { distance, side, .. }) = result {
+        if let NearestResult::Single(NearestDistance {
+            distance,
+            window_side,
+            ..
+        }) = result
+        {
             assert_eq!(distance, 0);
-            assert_eq!(side, NearSide::Overlap);
+            assert_eq!(window_side, NearWindowSide::Overlap);
         } else {
             panic!("expected touch -> overlap hit");
         }
@@ -757,16 +783,26 @@ mod tests_prepare_windows_near {
         .expect("hit2");
 
         // Assert
-        if let NearestResult::Single(NearHit { distance, side, .. }) = first {
+        if let NearestResult::Single(NearestDistance {
+            distance,
+            window_side,
+            ..
+        }) = first
+        {
             assert!(distance > 0); // window 90-95 is downstream of upstream edge 100 on +
-            assert_eq!(side, NearSide::Downstream);
+            assert_eq!(window_side, NearWindowSide::Downstream);
         } else {
             panic!("expected downstream hit vs + strand upstream edge");
         }
-        if let NearestResult::Single(NearHit { distance, side, .. }) = second {
+        if let NearestResult::Single(NearestDistance {
+            distance,
+            window_side,
+            ..
+        }) = second
+        {
             // On - strand upstream edge is right coordinate 210; window 220-225 is upstream (positive genomic) but flips sign
             assert!(distance < 0);
-            assert_eq!(side, NearSide::Upstream);
+            assert_eq!(window_side, NearWindowSide::Upstream);
         } else {
             panic!("expected upstream hit vs - strand upstream edge");
         }
@@ -815,16 +851,26 @@ mod tests_prepare_windows_near {
         .expect("hit2");
 
         // Assert
-        if let NearestResult::Single(NearHit { distance, side, .. }) = first {
+        if let NearestResult::Single(NearestDistance {
+            distance,
+            window_side,
+            ..
+        }) = first
+        {
             assert!(distance < 0); // downstream edge on + is right edge 110; window left -> upstream negative
-            assert_eq!(side, NearSide::Upstream);
+            assert_eq!(window_side, NearWindowSide::Upstream);
         } else {
             panic!("expected upstream hit vs + strand downstream edge");
         }
-        if let NearestResult::Single(NearHit { distance, side, .. }) = second {
+        if let NearestResult::Single(NearestDistance {
+            distance,
+            window_side,
+            ..
+        }) = second
+        {
             // On - strand downstream edge is left coordinate 200; window right -> downstream positive
             assert!(distance > 0);
-            assert_eq!(side, NearSide::Downstream);
+            assert_eq!(window_side, NearWindowSide::Downstream);
         } else {
             panic!("expected downstream hit vs - strand downstream edge");
         }
@@ -884,9 +930,14 @@ mod tests_prepare_windows_near {
         .expect("hit");
 
         // Assert: nearest edge is start=100, window is upstream so negative distance
-        if let NearestResult::Single(NearHit { distance, side, .. }) = result {
+        if let NearestResult::Single(NearestDistance {
+            distance,
+            window_side,
+            ..
+        }) = result
+        {
             assert!(distance < 0);
-            assert_eq!(side, NearSide::Upstream);
+            assert_eq!(window_side, NearWindowSide::Upstream);
         } else {
             panic!("expected upstream hit with unknown strand");
         }
@@ -1025,9 +1076,14 @@ mod tests_prepare_windows_near {
         .expect("hit");
 
         // Assert
-        if let NearestResult::Single(NearHit { distance, side, .. }) = result {
+        if let NearestResult::Single(NearestDistance {
+            distance,
+            window_side,
+            ..
+        }) = result
+        {
             assert_eq!(distance, 2); // nearest edge at 10 vs window end 8 -> distance 2
-            assert_eq!(side, NearSide::Upstream);
+            assert_eq!(window_side, NearWindowSide::Upstream);
         } else {
             panic!("expected upstream hit after cursor rewind");
         }
@@ -1060,9 +1116,14 @@ mod tests_prepare_windows_near {
         .expect("hit");
 
         // Assert
-        if let NearestResult::Single(NearHit { distance, side, .. }) = result {
+        if let NearestResult::Single(NearestDistance {
+            distance,
+            window_side,
+            ..
+        }) = result
+        {
             assert_eq!(distance, 0);
-            assert_eq!(side, NearSide::Overlap);
+            assert_eq!(window_side, NearWindowSide::Overlap);
         } else {
             panic!("expected overlap hit");
         }
@@ -1308,12 +1369,12 @@ mod tests_prepare_windows_near {
         .expect("right hit");
 
         // Assert: left edge distance is far, right edge is close
-        if let NearestResult::Single(NearHit { distance, .. }) = left {
+        if let NearestResult::Single(NearestDistance { distance, .. }) = left {
             assert_eq!(distance, 90);
         } else {
             panic!("left edge expected single hit");
         }
-        if let NearestResult::Single(NearHit { distance, .. }) = right {
+        if let NearestResult::Single(NearestDistance { distance, .. }) = right {
             assert_eq!(distance, -5);
         } else {
             panic!("right edge expected single hit");

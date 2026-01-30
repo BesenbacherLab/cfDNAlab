@@ -284,7 +284,7 @@ fn split_key_value(input: &str, context: &str) -> Result<(String, String)> {
 fn atomic_value_for_tuple(tuple: &LabelTuple, part: AtomicLabelPart) -> &str {
     match part {
         AtomicLabelPart::Input => tuple.input.as_str(),
-        AtomicLabelPart::NearSide => tuple.near_side.as_deref().unwrap_or(""),
+        AtomicLabelPart::NearWindowSide => tuple.near_side.as_deref().unwrap_or(""),
         AtomicLabelPart::NearName => tuple.near_name.as_deref().unwrap_or(""),
         AtomicLabelPart::Bin => tuple.bin.as_deref().unwrap_or(""),
         AtomicLabelPart::Cluster => tuple.cluster.as_deref().unwrap_or(""),

@@ -35,34 +35,33 @@ pub struct NearIndex {
     pub warned_no_direction: FxHashSet<String>,
 }
 
-/// Where the nearest interval sits relative to the window.
+/// Where the window sits relative to the nearest interval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NearSide {
+pub enum NearWindowSide {
     Upstream,
     Downstream,
     Overlap,
 }
 
-// TODO: Rename ("hit" is a bad name)
-/// Distance, group id, and side for a single nearest hit.
+/// Distance, group id, and window-relative side for a selected nearest interval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NearHit {
+pub struct NearestDistance {
     pub distance: i32,
     pub group_id: Option<u32>,
-    pub side: NearSide,
+    pub window_side: NearWindowSide,
 }
 
 /// Captures the upstream and downstream hits when a tie happens.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct NearTie {
-    pub upstream: Option<NearHit>,
-    pub downstream: Option<NearHit>,
+    pub upstream: Option<NearestDistance>,
+    pub downstream: Option<NearestDistance>,
 }
 
 /// Result of the nearest-edge lookup: either one hit or a tie.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NearestResult {
-    Single(NearHit),
+    Single(NearestDistance),
     Tie(NearTie),
 }
 
@@ -297,7 +296,7 @@ pub fn load_near_index(
 /// to the selected target edges (left, right, or nearest).
 ///
 /// Signed distances:
-/// - Window upstream of the near interval (lies to the left in genomic order for `+` strand) yields a negative distance.
+/// - Window upstream of the near interval (lies to the left in genomic order for `+`-strand) yields a negative distance.
 /// - Window downstream of the near interval yields a positive distance.
 ///
 /// Parameters
@@ -343,17 +342,16 @@ pub fn nearest_edge_distance(
         near_chrom.cursor += 1;
     }
 
-    // Determine upstream/downstream candidate indices based on the cursor position
-    let upstream_idx: Option<usize> = if near_chrom.intervals[near_chrom.cursor].end <= window_start
-    {
+    // Determine left/right candidate indices based on the cursor position
+    let left_idx: Option<usize> = if near_chrom.intervals[near_chrom.cursor].end <= window_start {
         Some(near_chrom.cursor)
     } else {
         None
     };
-    let downstream_idx: Option<usize> = match upstream_idx {
-        Some(ui) => {
-            if ui + 1 < n {
-                Some(ui + 1)
+    let right_idx: Option<usize> = match left_idx {
+        Some(li) => {
+            if li + 1 < n {
+                Some(li + 1)
             } else {
                 None
             }
@@ -367,14 +365,14 @@ pub fn nearest_edge_distance(
         }
     };
 
-    // If the downstream candidate overlaps the window (any overlap), we are at the site
-    if let Some(di) = downstream_idx {
-        let iv = near_chrom.intervals[di];
+    // If the right candidate overlaps the window (any overlap), we are at the site
+    if let Some(ri) = right_idx {
+        let iv = near_chrom.intervals[ri];
         if window_start < iv.end && window_end > iv.start {
-            return Some(NearestResult::Single(NearHit {
+            return Some(NearestResult::Single(NearestDistance {
                 distance: 0,
                 group_id: iv.group_id,
-                side: NearSide::Overlap,
+                window_side: NearWindowSide::Overlap,
             }));
         }
     }
@@ -387,10 +385,10 @@ pub fn nearest_edge_distance(
         which_edge: &NearEdge,
         window_start: u32,
         window_end: u32,
-    ) -> (i32, NearSide) {
+    ) -> (i32, NearWindowSide) {
         // Best candidate across the considered edges of this interval
         let mut best_signed_distance: i32 = i32::MAX;
-        let mut best_side: NearSide = NearSide::Overlap;
+        let mut best_side: NearWindowSide = NearWindowSide::Overlap;
 
         // Evaluate one target edge against both window edges
         let mut consider_edge = |target_edge_bp: i32| {
@@ -408,11 +406,11 @@ pub fn nearest_edge_distance(
                 };
 
             let side_of_target = if chosen_signed_distance < 0 {
-                NearSide::Upstream
+                NearWindowSide::Upstream
             } else if chosen_signed_distance > 0 {
-                NearSide::Downstream
+                NearWindowSide::Downstream
             } else {
-                NearSide::Overlap
+                NearWindowSide::Overlap
             };
 
             if chosen_signed_distance.abs() < best_signed_distance.abs() {
@@ -456,18 +454,18 @@ pub fn nearest_edge_distance(
     // Helper: Orient genomic distance/side into strand-relative space using iv.strand
     #[inline]
     fn orient_by_strand(
-        genomic_side: NearSide,
+        genomic_side: NearWindowSide,
         genomic_dist: i32,
         iv_strand: Strand,
         signed: bool,
-    ) -> (NearSide, i32) {
+    ) -> (NearWindowSide, i32) {
         let (side, dist) = match iv_strand {
             Strand::Plus | Strand::Unknown => (genomic_side, genomic_dist),
             Strand::Minus => {
                 let flipped_side = match genomic_side {
-                    NearSide::Upstream => NearSide::Downstream,
-                    NearSide::Downstream => NearSide::Upstream,
-                    NearSide::Overlap => NearSide::Overlap,
+                    NearWindowSide::Upstream => NearWindowSide::Downstream,
+                    NearWindowSide::Downstream => NearWindowSide::Upstream,
+                    NearWindowSide::Overlap => NearWindowSide::Overlap,
                 };
                 (flipped_side, -genomic_dist)
             }
@@ -479,10 +477,10 @@ pub fn nearest_edge_distance(
         }
     }
 
-    // Build at most two candidates: upstream and downstream
-    let mut upstream_hit: Option<NearHit> = None;
-    if let Some(ui) = upstream_idx {
-        let iv = near_chrom.intervals[ui];
+    // Build at most two candidates: interval to the right (window is upstream) and to the left (window is downstream)
+    let mut upstream_hit: Option<NearestDistance> = None;
+    if let Some(ri) = right_idx {
+        let iv = near_chrom.intervals[ri];
         let (genomic_distance, genomic_side) =
             edge_distance(&iv, which_edge, window_start, window_end);
         let (strand_relative_side, strand_relative_distance) =
@@ -492,25 +490,28 @@ pub fn nearest_edge_distance(
         let from_considered_side = match directions {
             NearDirection::Both => true,
             NearDirection::Upstream => {
-                matches!(strand_relative_side, NearSide::Upstream | NearSide::Overlap)
+                matches!(
+                    strand_relative_side,
+                    NearWindowSide::Upstream | NearWindowSide::Overlap
+                )
             }
             NearDirection::Downstream => matches!(
                 strand_relative_side,
-                NearSide::Downstream | NearSide::Overlap
+                NearWindowSide::Downstream | NearWindowSide::Overlap
             ),
         };
         if from_considered_side {
-            upstream_hit = Some(NearHit {
+            upstream_hit = Some(NearestDistance {
                 distance: strand_relative_distance,
                 group_id: iv.group_id,
-                side: strand_relative_side,
+                window_side: strand_relative_side,
             });
         }
     }
 
-    let mut downstream_hit: Option<NearHit> = None;
-    if let Some(di) = downstream_idx {
-        let iv = near_chrom.intervals[di];
+    let mut downstream_hit: Option<NearestDistance> = None;
+    if let Some(li) = left_idx {
+        let iv = near_chrom.intervals[li];
         let (genomic_distance, genomic_side) =
             edge_distance(&iv, which_edge, window_start, window_end);
         let (strand_relative_side, strand_relative_distance) =
@@ -519,18 +520,21 @@ pub fn nearest_edge_distance(
         let from_considered_side = match directions {
             NearDirection::Both => true,
             NearDirection::Upstream => {
-                matches!(strand_relative_side, NearSide::Upstream | NearSide::Overlap)
+                matches!(
+                    strand_relative_side,
+                    NearWindowSide::Upstream | NearWindowSide::Overlap
+                )
             }
             NearDirection::Downstream => matches!(
                 strand_relative_side,
-                NearSide::Downstream | NearSide::Overlap
+                NearWindowSide::Downstream | NearWindowSide::Overlap
             ),
         };
         if from_considered_side {
-            downstream_hit = Some(NearHit {
+            downstream_hit = Some(NearestDistance {
                 distance: strand_relative_distance,
                 group_id: iv.group_id,
-                side: strand_relative_side,
+                window_side: strand_relative_side,
             });
         }
     }

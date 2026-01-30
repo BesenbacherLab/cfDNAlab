@@ -38,7 +38,7 @@ mod tests_prepare_windows_helpers {
     fn all_available_parts() -> FxHashSet<AtomicLabelPart> {
         let mut parts: FxHashSet<AtomicLabelPart> = FxHashSet::default();
         parts.insert(AtomicLabelPart::Input);
-        parts.insert(AtomicLabelPart::NearSide);
+        parts.insert(AtomicLabelPart::NearWindowSide);
         parts.insert(AtomicLabelPart::NearName);
         parts.insert(AtomicLabelPart::Bin);
         parts.insert(AtomicLabelPart::Cluster);
