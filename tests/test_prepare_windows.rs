@@ -365,7 +365,9 @@ mod tests_prepare_windows_pipeline {
         cfg.oob = OobPolicy::Allow;
 
         let lines = run_pipeline(&cfg)?;
-        assert_eq!(lines, vec!["chr1\t10\t20\t+,-\tDN,UP".to_string()]);
+        // Upstream side (window left of DN interval) is '-', downstream side (window right of UP interval) is '+'
+        // Ordering follows upstream then downstream.
+        assert_eq!(lines, vec!["chr1\t10\t20\t-,+\tDN,UP".to_string()]);
         Ok(())
     }
 
