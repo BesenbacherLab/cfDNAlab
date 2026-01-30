@@ -652,7 +652,7 @@ mod tests_prepare_windows_near {
             group_id: None,
             strand: Strand::Plus,
         }];
-        let mut near_index = make_near_index(intervals);
+        let near_index = make_near_index(intervals);
         let mut cfg = PrepareConfig::default();
         cfg.near_direction = NearDirection::Upstream; // window downstream
         cfg.distance_bins = Some(vec!["prox:<5".to_string()]);
@@ -839,7 +839,7 @@ mod tests_prepare_windows_near {
             group_id: None,
             strand: Strand::Plus,
         }];
-        let mut near_index = make_near_index(intervals);
+        let near_index = make_near_index(intervals);
         let mut cfg = PrepareConfig::default();
         cfg.distance_max = Some(1);
 
@@ -890,98 +890,6 @@ mod tests_prepare_windows_near {
         } else {
             panic!("expected upstream hit with unknown strand");
         }
-    }
-
-    #[test]
-    fn parse_distance_bins_rejects_reversed_range() {
-        // Arrange / Act
-        let result = parse_distance_bins(&vec!["bad:10-5".to_string()]);
-
-        // Assert
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_distance_bins_accepts_zero_length_range() -> Result<()> {
-        // Arrange / Act
-        let bins = parse_distance_bins(&vec!["zero:0-0".to_string()])?;
-
-        // Assert
-        assert_eq!(bins.match_label(0), Some("zero"));
-        assert_eq!(bins.match_label(1), None);
-        Ok(())
-    }
-
-    #[test]
-    fn distance_max_drops_when_direction_and_edge_block_hits() {
-        // Arrange: interval exists but edge/direction filter makes it invisible; distance_max should drop window
-        let intervals = vec![NearInterval {
-            start: 100,
-            end: 110,
-            group_id: None,
-            strand: Strand::Plus,
-        }];
-        let mut near_index = make_near_index(intervals);
-        let mut cfg = PrepareConfig::default();
-        cfg.distance_max = Some(50);
-        cfg.near_direction = NearDirection::Upstream;
-        cfg.near_edge = NearEdge::Downstream; // window upstream, edge choice blocks
-
-        let windows = vec![build_window("chr1", 10, 20, "A")]; // upstream of interval
-
-        // Act
-        let result = apply_near_annotations(
-            windows,
-            &mut Some(near_index),
-            &cfg,
-            None,
-            CoordinateSet::Resized,
-        );
-
-        // Assert
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn cross_chromosome_no_near_sets_none_labels() -> Result<()> {
-        // Arrange: chr1 has intervals; chr2 lacks them. Chr2 windows should be labeled [NONE]/[NO-NEAR] with bins
-        let mut idx = cfdnalab::commands::prepare_windows::near_file::NearIndex::default();
-        idx.per_chrom.insert(
-            "chr1".to_string(),
-            NearChrom {
-                intervals: vec![NearInterval {
-                    start: 0,
-                    end: 10,
-                    group_id: None,
-                    strand: Strand::Plus,
-                }],
-                cursor: 0,
-            },
-        );
-
-        let mut cfg = PrepareConfig::default();
-        cfg.near_group_cols = vec!["3".to_string()];
-        cfg.distance_bins = Some(vec!["prox:<5".to_string()]);
-        let bins = parse_distance_bins(cfg.distance_bins.as_ref().unwrap())?;
-
-        let windows = vec![build_window("chr2", 50, 60, "A")];
-
-        // Act
-        let result = apply_near_annotations(
-            windows,
-            &mut Some(idx),
-            &cfg,
-            Some(&bins),
-            CoordinateSet::Resized,
-        );
-
-        // Assert
-        assert_eq!(result.len(), 1);
-        let tuple = &result[0].label_tuples[0];
-        assert_eq!(tuple.near_side.as_deref(), Some("[NONE]"));
-        assert_eq!(tuple.near_name.as_deref(), Some("[NONE]"));
-        assert_eq!(tuple.bin.as_deref(), Some("[NO-NEAR]"));
-        Ok(())
     }
 
     #[test]
@@ -1169,7 +1077,7 @@ mod tests_prepare_windows_near {
             group_id: None,
             strand: Strand::Plus,
         }];
-        let mut near_index = make_near_index(intervals);
+        let near_index = make_near_index(intervals);
         let mut cfg = PrepareConfig::default();
         cfg.distance_max = Some(50);
         cfg.near_direction = NearDirection::Upstream;
@@ -1251,7 +1159,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn signed_bins_split_around_zero() -> Result<()> {
         // Arrange: signed mode, bins straddle zero to classify upstream/overlap/downstream
-        let mut near_index = make_near_index(vec![NearInterval {
+        let near_index = make_near_index(vec![NearInterval {
             start: 100,
             end: 110,
             group_id: None,
@@ -1308,7 +1216,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn absolute_mode_still_emits_direction_prefix() -> Result<()> {
         // Arrange: distance_sign absolute but near-side should include +/- based on position
-        let mut near_index = make_near_index(vec![NearInterval {
+        let near_index = make_near_index(vec![NearInterval {
             start: 100,
             end: 110,
             group_id: None,
@@ -1337,7 +1245,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn far_hit_dropped_by_distance_max_absolute() {
         // Arrange: absolute distance beyond max drops window
-        let mut near_index = make_near_index(vec![NearInterval {
+        let near_index = make_near_index(vec![NearInterval {
             start: 0,
             end: 10,
             group_id: None,
@@ -1436,7 +1344,7 @@ mod tests_prepare_windows_near {
     fn signed_bins_classify_upstream_overlap_and_downstream() -> Result<()> {
         // Arrange
         // Signed distances with bins that straddle zero; upstream negative, downstream positive, overlap zero
-        let mut near_index = make_near_index(vec![NearInterval {
+        let near_index = make_near_index(vec![NearInterval {
             start: 1000,
             end: 1010,
             group_id: None,
@@ -1512,7 +1420,7 @@ mod tests_prepare_windows_near {
         // dist1: upstream beyond -2500
         // prox: between -2500 and +500 (inclusive)
         // dist2: downstream beyond +500
-        let mut near_index = make_near_index(vec![NearInterval {
+        let near_index = make_near_index(vec![NearInterval {
             start: 5000,
             end: 5001,
             group_id: None,

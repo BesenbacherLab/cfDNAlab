@@ -19,14 +19,14 @@ pub struct NearInterval {
 }
 
 /// Per-chromosome near intervals, sorted and validated.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct NearChrom {
     pub intervals: Vec<NearInterval>,
     pub cursor: usize,
 }
 
 /// Index holding near intervals per chromosome and a compact group-id interner.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct NearIndex {
     pub per_chrom: FxHashMap<String, NearChrom>,
     pub group_name_to_id: FxHashMap<String, u32>,
