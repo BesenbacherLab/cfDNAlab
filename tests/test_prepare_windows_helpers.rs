@@ -696,8 +696,9 @@ mod tests_prepare_windows_helpers {
     #[test]
     fn should_keep_tail_for_cross_chunk_merge_gap_zero() -> Result<()> {
         // Arrange
-        // Cross-chunk merges with gap zero can still happen at the boundary
-        // The last window per merge group must stay in the tail for the next chunk
+        // Gap zero still allows a merge at the chunk boundary
+        // Only groups whose final span reaches the boundary must stay in the tail
+        // A ends at 30 while the boundary is 40 from B, so only B is kept
         let windows = vec![
             build_window("chr1", 10, 20, "A"),
             build_window("chr1", 20, 30, "A"),
@@ -719,9 +720,43 @@ mod tests_prepare_windows_helpers {
         );
 
         // Assert
+        assert_eq!(safe_prefix.len(), 2);
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].start_for(CoordinateSet::Resized), 40);
+        Ok(())
+    }
+
+    #[test]
+    fn should_keep_merge_chain_in_tail_when_gap_zero() -> Result<()> {
+        // Arrange
+        // Gap zero keeps the whole touching chain that reaches the boundary
+        // Group A ends well before the boundary, so it is safe to write
+        // Group B forms a chain (20-25-30-35) that can merge across chunks, so keep all of B
+        let windows = vec![
+            build_window("chr1", 0, 5, "A"),
+            build_window("chr1", 20, 25, "B"),
+            build_window("chr1", 25, 30, "B"),
+            build_window("chr1", 30, 35, "B"),
+        ];
+
+        // Act
+        let (safe_prefix, tail) = partition_safe_and_tail(
+            windows,
+            None,
+            MergeScope::Within,
+            Some(0),
+            CoordinateSet::Resized,
+            CoordinateSet::Resized,
+            None,
+            CoordinateSet::Resized,
+            None,
+        );
+
+        // Assert
         assert_eq!(safe_prefix.len(), 1);
-        assert_eq!(tail.len(), 2);
+        assert_eq!(tail.len(), 3);
         assert_eq!(tail[0].start_for(CoordinateSet::Resized), 20);
+        assert_eq!(tail[2].end_for(CoordinateSet::Resized), 35);
         Ok(())
     }
 
