@@ -475,13 +475,19 @@ pub struct PrepareConfig {
     ///
     /// The prefix is still included when `--distance-sign absolute` is selected.
     ///
-    /// - If the left and right intervals tie and `--near-ties annotate`, both sides are reported on the
-    ///   same window by expanding its labels. Output columns show paired comma-separated values
-    ///   (e.g., `win-direction: -,+` and `near-name: GeneA,GeneB`). When composing these labels,
-    ///   the side+name pairs are joined first, e.g.:
-    ///   `--compose near=win-direction,near-name` -> `-.GeneA,+.GeneB`. Note that the two
-    ///   intervals can have different strands, so `win-direction` can also be any combination of
-    ///   `+` and `-`, e.g. `+,+`.
+    /// If the left and right intervals tie and `--near-ties annotate`, both sides are reported on the
+    /// same window by expanding its labels. Output columns show paired comma-separated values
+    /// (e.g., `win-direction: -,+` and `near-name: GeneA,GeneB`). When composing these labels,
+    /// the side+name pairs are joined first, e.g.:
+    /// `--compose near=win-direction,near-name` -> `-.GeneA,+.GeneB`. Note that the two
+    /// intervals can have different strands, so `win-direction` can also be any combination of
+    /// `+` and `-`, e.g. `+,+`.
+    ///
+    /// Output labels **compact identical values** after merges and tie
+    /// expansion: if every surviving tuple has the same `win-direction`, it is written once
+    /// (e.g., `+,+` -> `+`). If any tuple differs (e.g., a merged `-`), the list is kept. Use a
+    /// composition such as `--compose near=win-direction,near-name --out-labels input near` when
+    /// you need the side–name pairings preserved regardless of this compaction.
     ///
     /// **No near-interval on chromosome or in targeted direction**:
     ///
@@ -668,9 +674,10 @@ pub struct PrepareConfig {
     /// How to respond when multiple near-intervals tie for the minimum distance `[string]`
     ///
     /// - `"annotate"`: keep the window and include both sides as (left interval, right interval).
-    ///   `win-direction` becomes one of {`-,+`, `+,-`, `-,-`, `+,+`}
+    ///   `win-direction` becomes one of {`-,+`, `+,-`, `-` short for `-,-`, `+` short for `+,+`}
     ///   and `near-name` becomes `A,B`. When combined in a composition, they are paired
-    ///   as e.g. '+A,+B'.
+    ///   as e.g. '+A,+B'. **NOTE**: The `+,+ => +` compaction only happens in the final output annotation
+    ///   when all values of `win-direction` are the same.
     ///
     /// - `"drop"`: discard the window when a tie occurs.
     #[cfg_attr(

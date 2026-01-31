@@ -73,6 +73,7 @@ This matters for compositions and filtering:
 * Lists are used only when other parts differ and we need to preserve the pairings.
 * With merging completed before near lookup, bin values are single-valued. The only expected multi-bin case is annotated near ties with signed bins.
 * Duplicate tuples created during merges or tie expansion are removed without changing their order.
+* For atomic parts other than `input`, **all-equal values collapse to a single value** (e.g., two `win-direction` values `+,+` write as `+`). Pairings to `near-name` are preserved only via compositions such as `near=win-direction,near-name`. Use a composition when you need side–name association in the output or downstream filters.
 
 Compact example:
 

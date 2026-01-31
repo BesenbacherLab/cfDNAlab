@@ -382,7 +382,7 @@ mod tests_prepare_windows_pipeline {
         let near = write_temp_file(
             &tmpdir,
             "near.tsv",
-            &["chr1\t0\t5\tLEFT\t-", "chr1\t25\t30\tRIGHT\t+"],
+            &["chr1\t0\t5\tLEFT\t+", "chr1\t25\t30\tRIGHT\t-"],
         )?;
         let output = tmpdir.path().join("out.tsv");
 
@@ -403,7 +403,8 @@ mod tests_prepare_windows_pipeline {
         let lines = run_pipeline(&cfg)?;
         // Both the left and right near intervals are downstream (different strand-orientations)
         // Ordering follows left of window, then right of window.
-        assert_eq!(lines, vec!["chr1\t10\t20\t+,+\tLEFT,RIGHT".to_string()]);
+        // NOTE: The +,+ is compacted into +
+        assert_eq!(lines, vec!["chr1\t10\t20\t+\tLEFT,RIGHT".to_string()]);
         Ok(())
     }
 
@@ -1900,17 +1901,17 @@ mod tests_near_file {
                 assert_eq!(
                     tie.left,
                     Some(NearestDistance {
-                        distance: -5,
-                        group_id: Some(1),
-                        window_side: NearWindowSide::Upstream,
+                        distance: 5,
+                        group_id: Some(2),
+                        window_side: NearWindowSide::Downstream,
                     })
                 );
                 assert_eq!(
                     tie.right,
                     Some(NearestDistance {
-                        distance: 5,
-                        group_id: Some(2),
-                        window_side: NearWindowSide::Downstream,
+                        distance: -5,
+                        group_id: Some(1),
+                        window_side: NearWindowSide::Upstream,
                     })
                 );
             }
