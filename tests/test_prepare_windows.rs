@@ -1902,7 +1902,7 @@ mod tests_near_file {
                     tie.left,
                     Some(NearestDistance {
                         distance: 5,
-                        group_id: Some(2),
+                        group_id: Some(1),
                         window_side: NearWindowSide::Downstream,
                     })
                 );
@@ -1910,7 +1910,7 @@ mod tests_near_file {
                     tie.right,
                     Some(NearestDistance {
                         distance: -5,
-                        group_id: Some(1),
+                        group_id: Some(2),
                         window_side: NearWindowSide::Upstream,
                     })
                 );
