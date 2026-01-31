@@ -104,7 +104,7 @@ mod tests_prepare_windows_pipeline {
         cfg.group_cols = vec!["3".to_string()];
         cfg.out_labels = vec![
             "input".to_string(),
-            "near-side".to_string(),
+            "win-direction".to_string(),
             "near-name".to_string(),
             "bin".to_string(),
         ];
@@ -250,7 +250,7 @@ mod tests_prepare_windows_pipeline {
             "mid:5-15".to_string(),
             "far:>15".to_string(),
         ]);
-        cfg.out_labels = vec!["near-side".to_string(), "bin".to_string()];
+        cfg.out_labels = vec!["win-direction".to_string(), "bin".to_string()];
         cfg.oob = OobPolicy::Allow;
 
         let lines = run_pipeline(&cfg)?;
@@ -289,7 +289,7 @@ mod tests_prepare_windows_pipeline {
         cfg.distance_from = CoordinateSet::Resized;
         cfg.flank = Some(vec![5, 5]);
         cfg.out_labels = vec![
-            "near-side".to_string(),
+            "win-direction".to_string(),
             "near-name".to_string(),
             "bin".to_string(),
         ];
@@ -328,7 +328,7 @@ mod tests_prepare_windows_pipeline {
         cfg.distance_from = CoordinateSet::Original;
         cfg.flank = Some(vec![5, 5]);
         cfg.out_labels = vec![
-            "near-side".to_string(),
+            "win-direction".to_string(),
             "near-name".to_string(),
             "bin".to_string(),
         ];
@@ -345,10 +345,14 @@ mod tests_prepare_windows_pipeline {
     }
 
     #[test]
-    fn should_annotate_ties_with_directional_groups() -> Result<()> {
+    fn should_annotate_ties_with_directional_groups_upstream_downstream() -> Result<()> {
         let tmpdir = TempDir::new()?;
         let input = write_temp_file(&tmpdir, "input.tsv", &["chr1\t10\t20"])?;
-        let near = write_temp_file(&tmpdir, "near.tsv", &["chr1\t0\t5\tUP", "chr1\t25\t30\tDN"])?;
+        let near = write_temp_file(
+            &tmpdir,
+            "near.tsv",
+            &["chr1\t0\t5\tLEFT", "chr1\t25\t30\tRIGHT"],
+        )?;
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
@@ -361,13 +365,45 @@ mod tests_prepare_windows_pipeline {
         cfg.near_edge = NearEdge::Nearest;
         cfg.near_direction = NearDirection::Both;
         cfg.distance_sign = DistSign::Signed;
-        cfg.out_labels = vec!["near-side".to_string(), "near-name".to_string()];
+        cfg.out_labels = vec!["win-direction".to_string(), "near-name".to_string()];
         cfg.oob = OobPolicy::Allow;
 
         let lines = run_pipeline(&cfg)?;
-        // Upstream side (window left of DN interval) is '-', downstream side (window right of UP interval) is '+'
-        // Ordering follows upstream then downstream.
-        assert_eq!(lines, vec!["chr1\t10\t20\t-,+\tDN,UP".to_string()]);
+        // Downstream side (window right of first interval) is '+'
+        // Upstream side (window left of second interval) is '-'
+        assert_eq!(lines, vec!["chr1\t10\t20\t+,-\tLEFT,RIGHT".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn should_annotate_ties_with_directional_groups_downstream_downstream() -> Result<()> {
+        let tmpdir = TempDir::new()?;
+        let input = write_temp_file(&tmpdir, "input.tsv", &["chr1\t10\t20"])?;
+        let near = write_temp_file(
+            &tmpdir,
+            "near.tsv",
+            &["chr1\t0\t5\tLEFT\t-", "chr1\t25\t30\tRIGHT\t+"],
+        )?;
+        let output = tmpdir.path().join("out.tsv");
+
+        let mut cfg = PrepareConfig::default();
+        cfg.input = input;
+        cfg.output = output;
+        cfg.header = HeaderMode::Absent;
+        cfg.near = Some(near);
+        cfg.near_header = HeaderMode::Absent;
+        cfg.near_group_cols = vec!["3".to_string()];
+        cfg.near_strand_col = Some("4".to_string());
+        cfg.near_edge = NearEdge::Nearest;
+        cfg.near_direction = NearDirection::Both;
+        cfg.distance_sign = DistSign::Signed;
+        cfg.out_labels = vec!["win-direction".to_string(), "near-name".to_string()];
+        cfg.oob = OobPolicy::Allow;
+
+        let lines = run_pipeline(&cfg)?;
+        // Both the left and right near intervals are downstream (different strand-orientations)
+        // Ordering follows left of window, then right of window.
+        assert_eq!(lines, vec!["chr1\t10\t20\t+,+\tLEFT,RIGHT".to_string()]);
         Ok(())
     }
 
@@ -375,7 +411,11 @@ mod tests_prepare_windows_pipeline {
     fn should_drop_ties_when_configured() -> Result<()> {
         let tmpdir = TempDir::new()?;
         let input = write_temp_file(&tmpdir, "input.tsv", &["chr1\t10\t20"])?;
-        let near = write_temp_file(&tmpdir, "near.tsv", &["chr1\t0\t5\tUP", "chr1\t25\t30\tDN"])?;
+        let near = write_temp_file(
+            &tmpdir,
+            "near.tsv",
+            &["chr1\t0\t5\tLEFT", "chr1\t25\t30\tRIGHT"],
+        )?;
         let output = tmpdir.path().join("out.tsv");
 
         let mut cfg = PrepareConfig::default();
@@ -411,7 +451,7 @@ mod tests_prepare_windows_pipeline {
         cfg.near_group_cols = vec!["3".to_string()];
         cfg.near_edge = NearEdge::Nearest;
         cfg.distance_sign = DistSign::Absolute; // Direction prefix should still appear
-        cfg.out_labels = vec!["near-side".to_string(), "near-name".to_string()];
+        cfg.out_labels = vec!["win-direction".to_string(), "near-name".to_string()];
         cfg.oob = OobPolicy::Allow;
 
         let lines = run_pipeline(&cfg)?;
@@ -439,7 +479,7 @@ mod tests_prepare_windows_pipeline {
         cfg.near_header = HeaderMode::Absent;
         cfg.near_edge = NearEdge::Nearest;
         cfg.distance_sign = DistSign::Absolute; // Direction prefix should still appear
-        cfg.out_labels = vec!["near-side".to_string()];
+        cfg.out_labels = vec!["win-direction".to_string()];
         cfg.oob = OobPolicy::Allow;
 
         // Act
@@ -785,7 +825,7 @@ mod tests_prepare_windows_pipeline {
         cfg.group_cols = vec!["3".to_string()];
         cfg.out_labels = vec![
             "input".to_string(),
-            "near-side".to_string(),
+            "win-direction".to_string(),
             "near-name".to_string(),
             "bin".to_string(),
         ];
@@ -1686,7 +1726,7 @@ mod tests_near_file {
             NearestResult::Single(NearestDistance {
                 distance: 0,
                 group_id: Some(0),
-                side: NearWindowSide::Overlap,
+                window_side: NearWindowSide::Overlap,
             })
         );
 
@@ -1704,7 +1744,7 @@ mod tests_near_file {
             NearestResult::Single(NearestDistance {
                 distance: -5,
                 group_id: Some(0),
-                side: NearWindowSide::Upstream,
+                window_side: NearWindowSide::Upstream,
             })
         );
 
@@ -1722,7 +1762,7 @@ mod tests_near_file {
             NearestResult::Single(NearestDistance {
                 distance: 5,
                 group_id: Some(0),
-                side: NearWindowSide::Downstream,
+                window_side: NearWindowSide::Downstream,
             })
         );
     }
@@ -1752,7 +1792,7 @@ mod tests_near_file {
             NearestResult::Single(NearestDistance {
                 distance: 0,
                 group_id: Some(0),
-                side: NearWindowSide::Overlap,
+                window_side: NearWindowSide::Overlap,
             })
         );
     }
@@ -1821,7 +1861,7 @@ mod tests_near_file {
             NearestResult::Single(NearestDistance {
                 distance: 20,
                 group_id: Some(1),
-                side: NearWindowSide::Downstream,
+                window_side: NearWindowSide::Downstream,
             })
         );
     }
@@ -1858,19 +1898,19 @@ mod tests_near_file {
         match result {
             NearestResult::Tie(tie) => {
                 assert_eq!(
-                    tie.upstream,
+                    tie.left,
                     Some(NearestDistance {
                         distance: -5,
                         group_id: Some(1),
-                        side: NearWindowSide::Upstream,
+                        window_side: NearWindowSide::Upstream,
                     })
                 );
                 assert_eq!(
-                    tie.downstream,
+                    tie.right,
                     Some(NearestDistance {
                         distance: 5,
                         group_id: Some(2),
-                        side: NearWindowSide::Downstream,
+                        window_side: NearWindowSide::Downstream,
                     })
                 );
             }

@@ -177,8 +177,8 @@ mod tests_prepare_windows_near {
         // Assert
         match result {
             NearestResult::Tie(tie) => {
-                let upstream = tie.upstream.expect("upstream");
-                let downstream = tie.downstream.expect("downstream");
+                let upstream = tie.left.expect("left");
+                let downstream = tie.right.expect("right");
                 assert_eq!(upstream.distance, -5);
                 assert_eq!(upstream.window_side, NearWindowSide::Upstream); // window lies upstream of right interval
                 assert_eq!(downstream.distance, 5);
@@ -288,9 +288,9 @@ mod tests_prepare_windows_near {
         cfg.near_ties = NearTiePolicy::Annotate;
         cfg.distance_sign = DistSign::Signed;
         cfg.out_labels = vec!["near".to_string()];
-        cfg.compose = vec!["near=near-side,near-name".parse().expect("compose")];
+        cfg.compose = vec!["near=win-direction,near-name".parse().expect("compose")];
 
-        let schema = label_schema_from_compose(&["near=near-side,near-name"]);
+        let schema = label_schema_from_compose(&["near=win-direction,near-name"]);
         let near_key = schema.resolve_key("near")?;
         let out_keys = schema.resolve_keys(&cfg.out_labels)?;
 
@@ -977,7 +977,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn label_rendering_composes_single_value_when_only_input_differs() -> Result<()> {
         // Arrange
-        // Two tuples differ only in input; composition depends on near-side so it should collapse to one value
+        // Two tuples differ only in input; composition depends on win-direction so it should collapse to one value
         let tuples = vec![
             LabelTuple {
                 input: "A".into(),
@@ -994,7 +994,7 @@ mod tests_prepare_windows_near {
                 cluster: None,
             },
         ];
-        let schema = label_schema_from_compose(&["core=near-side,near-name"]);
+        let schema = label_schema_from_compose(&["core=win-direction,near-name"]);
         let core_key = schema.resolve_key("core")?;
         let compositions = build_tuple_compositions(&tuples, &schema);
 
@@ -1010,7 +1010,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn label_rendering_keeps_order_when_parts_differ() -> Result<()> {
         // Arrange
-        // Tuples differ in near-side; composition uses near-side+near-name so it should comma-join in tuple order
+        // Tuples differ in win-direction; composition uses win-direction+near-name so it should comma-join in tuple order
         let tuples = vec![
             LabelTuple {
                 input: "A".into(),
@@ -1027,7 +1027,7 @@ mod tests_prepare_windows_near {
                 cluster: None,
             },
         ];
-        let schema = label_schema_from_compose(&["near=near-side,near-name"]);
+        let schema = label_schema_from_compose(&["near=win-direction,near-name"]);
         let near_key = schema.resolve_key("near")?;
         let compositions = build_tuple_compositions(&tuples, &schema);
 
@@ -1233,7 +1233,7 @@ mod tests_prepare_windows_near {
             "at:0-0".to_string(),
             "down:>0".to_string(),
         ]);
-        cfg.out_labels = vec!["near-side".to_string(), "bin".to_string()];
+        cfg.out_labels = vec!["win-direction".to_string(), "bin".to_string()];
         let bins = parse_distance_bins(cfg.distance_bins.as_ref().unwrap())?;
 
         // Upstream window
@@ -1276,7 +1276,7 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn absolute_mode_still_emits_direction_prefix() -> Result<()> {
-        // Arrange: distance_sign absolute but near-side should include +/- based on position
+        // Arrange: distance_sign absolute but win-direction should include +/- based on position
         let near_index = make_near_index(vec![NearInterval {
             start: 100,
             end: 110,
@@ -1285,7 +1285,7 @@ mod tests_prepare_windows_near {
         }]);
         let mut cfg = PrepareConfig::default();
         cfg.distance_sign = DistSign::Absolute;
-        cfg.out_labels = vec!["near-side".to_string()];
+        cfg.out_labels = vec!["win-direction".to_string()];
 
         let windows = vec![build_window("chr1", 50, 60, "A")]; // upstream
 
@@ -1418,7 +1418,7 @@ mod tests_prepare_windows_near {
             "at:0-0".to_string(),
             "downstream:>0".to_string(),
         ]);
-        cfg.out_labels = vec!["near-side".to_string(), "bin".to_string()];
+        cfg.out_labels = vec!["win-direction".to_string(), "bin".to_string()];
         let bins = parse_distance_bins(cfg.distance_bins.as_ref().unwrap())?;
 
         // Upstream window at 800..820 -> nearest edge 1000 => distance -180
@@ -1494,7 +1494,7 @@ mod tests_prepare_windows_near {
             "dist1:<-2500".to_string(),
             "dist2:>500".to_string(),
         ]);
-        cfg.out_labels = vec!["near-side".to_string(), "bin".to_string()];
+        cfg.out_labels = vec!["win-direction".to_string(), "bin".to_string()];
         let bins = parse_distance_bins(cfg.distance_bins.as_ref().unwrap())?;
 
         // Very upstream: distance about -4000 should fall in dist1

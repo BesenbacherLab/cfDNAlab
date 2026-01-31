@@ -281,9 +281,9 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             HeaderMode::Auto => detect_header(path, cfg.sep).unwrap_or(false),
         };
 
-        let consider_strand_in_dups =
-            matches!(cfg.near_edge, NearEdge::Upstream | NearEdge::Downstream)
-                && near_strand_col.is_some();
+        // When a strand column is present, always consider strand when resolving identical-edge runs
+        // so mixed-strand duplicates do not merge and flip orientation labels.
+        let consider_strand_in_dups = near_strand_col.is_some();
         Some(load_near_index(
             path,
             cfg.sep,

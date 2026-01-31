@@ -33,7 +33,7 @@ pub struct MinPerRule {
 ///
 /// Use this to turn `KEY=TERM` strings into validated label keys that
 /// can be applied during filtering. Rules that target unavailable labels
-/// are rejected early. Terms are kept as raw strings so near-side symbols
+/// are rejected early. Terms are kept as raw strings so win-direction symbols
 /// and composition values can be matched exactly.
 ///
 /// Parameters

@@ -99,7 +99,7 @@ mod tests_prepare_windows_helpers {
     #[test]
     fn should_parse_compose_specs_and_resolve_keys() -> Result<()> {
         // Arrange
-        let schema = build_schema(&["core=input,bin", "report=core,near-side"])?;
+        let schema = build_schema(&["core=input,bin", "report=core,win-direction"])?;
 
         // Act
         let core_key = schema.resolve_key("core")?;
@@ -140,7 +140,7 @@ mod tests_prepare_windows_helpers {
     #[test]
     fn should_reject_compose_name_near_side_keyword() -> Result<()> {
         // Arrange
-        let specs = ["near-side=input"];
+        let specs = ["win-direction=input"];
 
         // Act
         let result = build_schema(&specs);
@@ -231,7 +231,7 @@ mod tests_prepare_windows_helpers {
         // Arrange
         let schema = build_schema(&[])?;
         let available_parts = input_only_parts();
-        let specs = vec!["near-side=+".to_string()];
+        let specs = vec!["win-direction=+".to_string()];
 
         // Act
         let result = parse_exclude_rules(&specs, &schema, &available_parts);
@@ -244,7 +244,7 @@ mod tests_prepare_windows_helpers {
     #[test]
     fn should_reject_exclude_rules_with_unavailable_composition_parts() -> Result<()> {
         // Arrange
-        let schema = build_schema(&["core=input,near-side"])?;
+        let schema = build_schema(&["core=input,win-direction"])?;
         let available_parts = input_only_parts();
         let specs = vec!["core=A.B".to_string()];
 
@@ -259,7 +259,7 @@ mod tests_prepare_windows_helpers {
     #[test]
     fn should_reject_compose_with_unavailable_parts() -> Result<()> {
         // Arrange
-        let schema = build_schema(&["core=input,near-side"])?;
+        let schema = build_schema(&["core=input,win-direction"])?;
         let available_parts = input_only_parts();
 
         // Act
@@ -382,7 +382,7 @@ mod tests_prepare_windows_helpers {
     #[test]
     fn should_reject_exclude_rules_with_wrong_nested_composition_parts() -> Result<()> {
         // Arrange
-        let schema = build_schema(&["core=input,bin", "report=core,near-side"])?;
+        let schema = build_schema(&["core=input,bin", "report=core,win-direction"])?;
         let available_parts = all_available_parts();
         let specs = vec!["report=A.B".to_string()];
 
@@ -397,7 +397,7 @@ mod tests_prepare_windows_helpers {
     #[test]
     fn should_accept_exclude_rules_with_correct_nested_composition_parts() -> Result<()> {
         // Arrange
-        let schema = build_schema(&["core=input,bin", "report=core,near-side"])?;
+        let schema = build_schema(&["core=input,bin", "report=core,win-direction"])?;
         let available_parts = all_available_parts();
         let specs = vec!["report=A.B.C".to_string()];
 
@@ -483,7 +483,7 @@ mod tests_prepare_windows_helpers {
         // Arrange
         let schema = build_schema(&[])?;
         let available_parts = input_only_parts();
-        let merge_key = schema.resolve_key("near-side")?;
+        let merge_key = schema.resolve_key("win-direction")?;
 
         // Act
         let result = validate_available_keys(
@@ -580,8 +580,8 @@ mod tests_prepare_windows_helpers {
         // Arrange
         let schema = build_schema(&[
             "core=input,bin",
-            "report=core,near-side",
-            "swap=near-side,bin,input",
+            "report=core,win-direction",
+            "swap=win-direction,bin,input",
         ])?;
         let available_parts = all_available_parts();
         let specs = vec!["report=120".to_string(), "swap=250".to_string()];

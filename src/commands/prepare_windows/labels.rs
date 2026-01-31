@@ -1,3 +1,8 @@
+use crate::commands::prepare_windows::config::ComposeSpec;
+use anyhow::{Result as AnyResult, bail};
+use fxhash::{FxHashMap, FxHashSet};
+use std::collections::BTreeSet;
+
 /// Label validation helpers and reserved words.
 
 pub const RESERVED_LABEL_NONE: &str = "none";
@@ -7,7 +12,7 @@ pub const NO_NEAR_BIN_LABEL: &str = "[NO-NEAR]";
 
 const RESERVED_LABELS: [&str; 6] = [
     "input",
-    "near-side",
+    "win-direction",
     "near-name",
     "bin",
     "cluster",
@@ -37,11 +42,6 @@ pub fn validate_label_token(token: &str, context: &str) -> Result<(), String> {
     Ok(())
 }
 
-use crate::commands::prepare_windows::config::ComposeSpec;
-use anyhow::{Result as AnyResult, bail};
-use fxhash::FxHashMap;
-use std::collections::BTreeSet;
-
 /// Atomic label parts carried by each window.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum AtomicLabelPart {
@@ -56,7 +56,7 @@ impl AtomicLabelPart {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Input => "input",
-            Self::NearWindowSide => "near-side",
+            Self::NearWindowSide => "win-direction",
             Self::NearName => "near-name",
             Self::Bin => "bin",
             Self::Cluster => "cluster",
@@ -66,7 +66,7 @@ impl AtomicLabelPart {
     pub fn from_token(token: &str) -> Option<Self> {
         match token {
             "input" => Some(Self::Input),
-            "near-side" => Some(Self::NearWindowSide),
+            "win-direction" => Some(Self::NearWindowSide),
             "near-name" => Some(Self::NearName),
             "bin" => Some(Self::Bin),
             "cluster" => Some(Self::Cluster),
@@ -77,7 +77,7 @@ impl AtomicLabelPart {
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum LabelKey {
-    /// Reference an atomic label part like `input` or `near-side`.
+    /// Reference an atomic label part like `input` or `win-direction`.
     Atomic(AtomicLabelPart),
     /// Reference a named composition by index in the schema composition list.
     ///
@@ -316,18 +316,18 @@ pub fn build_tuple_compositions(tuples: &[LabelTuple], schema: &LabelSchema) -> 
         .collect()
 }
 
-/// Sort and deduplicate label tuples for stable output.
+/// Deduplicate label tuples while preserving their existing order.
 ///
-/// This keeps tuple order deterministic so comma-separated lists preserve
-/// pairings across label columns.
+/// This keeps tuple order aligned with how tuples were built (e.g., merge then
+/// tie expansion) so comma-separated lists preserve pairings across label columns.
 ///
 /// Parameters
 /// ----------
 /// - `tuples`:
 ///     Label tuples to normalize.
 pub fn normalize_label_tuples(tuples: &mut Vec<LabelTuple>) {
-    tuples.sort();
-    tuples.dedup();
+    let mut seen: FxHashSet<LabelTuple> = FxHashSet::default();
+    tuples.retain(|tuple| seen.insert(tuple.clone()));
 }
 
 #[inline]

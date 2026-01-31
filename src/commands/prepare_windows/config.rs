@@ -458,11 +458,11 @@ pub struct PrepareConfig {
     ///
     /// **Labels**:
     ///
-    /// Supplying near-intervals makes the labels `near-side` and `near-name`
+    /// Supplying near-intervals makes the labels `win-direction` and `near-name`
     /// (when `--near-group-cols` is specified) available
     /// for use in `--compose`, `--out-labels`, and `--exclude-labels`.
     ///
-    /// Near-side label prefix (strand-aware):
+    /// Win-direction label prefix (strand-aware):
     ///
     ///   `-` = window lies upstream of the near-interval
     ///
@@ -475,11 +475,13 @@ pub struct PrepareConfig {
     ///
     /// The prefix is still included when `--distance-sign absolute` is selected.
     ///
-    /// - If upstream/downstream tie and `--near-ties annotate`, both sides are reported on the
+    /// - If the left and right intervals tie and `--near-ties annotate`, both sides are reported on the
     ///   same window by expanding its labels. Output columns show paired comma-separated values
-    ///   (e.g., `near-side: -,+` and `near-name: GeneA,GeneB`). When composing these labels,
+    ///   (e.g., `win-direction: -,+` and `near-name: GeneA,GeneB`). When composing these labels,
     ///   the side+name pairs are joined first, e.g.:
-    ///   `--compose near=near-side,near-name` -> `-.GeneA,+.GeneB`.
+    ///   `--compose near=win-direction,near-name` -> `-.GeneA,+.GeneB`. Note that the two
+    ///   intervals can have different strands, so `win-direction` can also be any combination of
+    ///   `+` and `-`, e.g. `+,+`.
     ///
     /// **No near-interval on chromosome or in targeted direction**:
     ///
@@ -489,7 +491,7 @@ pub struct PrepareConfig {
     ///
     ///   - If `--distance-bins` is set, `bin` is set to `[NO-NEAR]`.
     ///
-    ///   - `near-side` (and `near-name` when configured) are set to `[NONE]`.
+    ///   - `win-direction` (and `near-name` when configured) are set to `[NONE]`.
     ///
     /// When a chromosome has near-intervals but none match the configured `--near-direction`
     /// or `--near-edge` for a given window:
@@ -665,8 +667,10 @@ pub struct PrepareConfig {
 
     /// How to respond when multiple near-intervals tie for the minimum distance `[string]`
     ///
-    /// - `"annotate"`: keep the window and include both sides. `near-side` becomes `-,+`
-    ///   and `near-name` becomes `A,B`.
+    /// - `"annotate"`: keep the window and include both sides as (left interval, right interval).
+    ///   `win-direction` becomes one of {`-,+`, `+,-`, `-,-`, `+,+`}
+    ///   and `near-name` becomes `A,B`. When combined in a composition, they are paired
+    ///   as e.g. '+A,+B'.
     ///
     /// - `"drop"`: discard the window when a tie occurs.
     #[cfg_attr(
@@ -684,7 +688,8 @@ pub struct PrepareConfig {
 
     /// Policy for identical near-interval edges `[string]`
     ///
-    /// Identical edges are records on the same chromosome with the same `(start, end, ('--near-edge'-dependent) strand)`.
+    /// Identical edges are records on the same chromosome with the same `(start, end)` and,
+    /// when a strand column is provided, the same `strand`.
     ///
     /// Multiple groups at the exact same site create an ambiguous "nearest" unless resolved.
     ///
@@ -694,14 +699,14 @@ pub struct PrepareConfig {
     ///
     ///  - `"drop-all"`: Drop the entire set of duplicates.
     ///
-    ///  - `"merge"`: Merge groups across identical edges (and sometimes strands) into one record.
+    ///  - `"merge"`: Merge groups across identical edges (and strands when present) into one record.
     ///    Group names are joined with "`__`", with duplicates removed. Missing groups are ignored.
     ///
-    /// Key used to detect “identical edges” depends on `--near-edge`:
+    /// Key used to detect “identical edges”:
     ///
-    /// - If `--near-edge` is `upstream` or `downstream`, duplicates are keyed by `(start, end, strand)`.
+    /// - When `--near-strand-col` is set, duplicates are keyed by `(start, end, strand)`.
     ///
-    /// - Otherwise (`left`, `right`, `nearest`), duplicates are keyed by `(start, end)` and `strand` is ignored.
+    /// - When no strand column is present, duplicates are keyed by `(start, end)` while `strand` is ignored.
     #[cfg_attr(
         feature = "cli",
         clap(

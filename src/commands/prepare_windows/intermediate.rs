@@ -37,7 +37,7 @@ pub fn write_intermediate_window<W: Write>(
 
 /// Write intermediate windows as `chrom start end tuples`.
 ///
-/// The tuple field stores `input|near-side|near-name|bin|cluster` values
+/// The tuple field stores `input|win-direction|near-name|bin|cluster` values
 /// joined by `;` for multiple tuples.
 ///
 /// Parameters

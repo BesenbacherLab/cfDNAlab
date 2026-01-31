@@ -45,7 +45,7 @@ The base pieces you can reference anywhere
 * `input` — original group from `--group-cols`.
   - When windows carry multiple groups, values are joined with `__` in stable order.
   - Missing group values are written as `[NA]` so each label keeps the same number of segments.
-* `near-side` — one of `- + =` describing where the window sits relative to the near interval **and its strand**:
+* `win-direction` — one of `- + =` describing where the window sits relative to the near interval **and its strand**:
   - `-` window upstream of the near interval
   - `+` window downstream of the near interval
   - `=` window overlaps the near interval
@@ -72,6 +72,7 @@ This matters for compositions and filtering:
 * Multi-label windows are written in a compact form when only the `input` value differs.
 * Lists are used only when other parts differ and we need to preserve the pairings.
 * With merging completed before near lookup, bin values are single-valued. The only expected multi-bin case is annotated near ties with signed bins.
+* Duplicate tuples created during merges or tie expansion are removed without changing their order.
 
 Compact example:
 
@@ -82,7 +83,7 @@ Compact example:
 
 List example (near ties with signed bins):
 
-* Tuple list: `[input=A, near-side=-, bin=up]` and `[input=A, near-side=+, bin=down]`
+* Tuple list: `[input=A, win-direction=-, bin=up]` and `[input=A, win-direction=+, bin=down]`
 * `input` column: `A`
 * `bin` column: `up,down`
 * `core = input bin` column: `A.up,A.down`
@@ -193,10 +194,10 @@ Examples
 
 ```bash
 --out-labels input bin
---out-labels input near-side near-name
+--out-labels input win-direction near-name
 --out-labels input core report
   --compose core=input,bin
-  --compose report=core,near-side
+  --compose report=core,win-direction
 ```
 
 ---
@@ -306,7 +307,7 @@ You can set several min-per rules. Each rule is a key and a threshold.
   - **Any-member** counting: A window with `input = A__B` adds one to `A` and one to `B`.
   - The window satisfies `input=N` if **any** of its input groups ends up with a count at least `N`.
 
-* Atomic parts (`near-side`, `near-name`, `bin`):
+* Atomic parts (`win-direction`, `near-name`, `bin`):
   - Each window adds one to every distinct value it carries for that part.
   - This can be more than one bucket when near ties create multiple tuples.
   - The window satisfies the rule if any of its buckets reaches the threshold.
@@ -354,7 +355,7 @@ When any `--min-per` rule excludes label values for a key, those values are remo
 ## Separators and formatting
 
 * Parts inside a composition are joined with a dot.
-  Example: `input.bin.near-side`.
+  Example: `input.bin.win-direction`.
 * Multiple `input` values are joined with `__`.
   Example: `A__B.prox`.
 * Multiple distinct labels inside a single column are joined with `,`.
@@ -396,7 +397,7 @@ Two compositions and filtering on both:
 
 ```bash
 --compose core=input,bin
---compose report=core,near-side
+--compose report=core,win-direction
 --out-labels input report
 --min-per core=150 report=80
 ```

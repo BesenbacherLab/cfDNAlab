@@ -671,23 +671,23 @@ pub fn apply_near_annotations(
                     } else if distance_bins.is_some() {
                         if include_name {
                             eprintln!(
-                                "Warning: Chromosome '{}' has no near intervals. Windows will keep near-side/near-name as '{}' and bin as '{}'.",
+                                "Warning: Chromosome '{}' has no near intervals. Windows will keep win-direction/near-name as '{}' and bin as '{}'.",
                                 chrom, NO_NEAR_LABEL, NO_NEAR_BIN_LABEL
                             );
                         } else {
                             eprintln!(
-                                "Warning: Chromosome '{}' has no near intervals. Windows will keep near-side as '{}' and bin as '{}'.",
+                                "Warning: Chromosome '{}' has no near intervals. Windows will keep win-direction as '{}' and bin as '{}'.",
                                 chrom, NO_NEAR_LABEL, NO_NEAR_BIN_LABEL
                             );
                         }
                     } else if include_name {
                         eprintln!(
-                            "Warning: Chromosome '{}' has no near intervals. Windows will keep near-side/near-name as '{}'.",
+                            "Warning: Chromosome '{}' has no near intervals. Windows will keep win-direction/near-name as '{}'.",
                             chrom, NO_NEAR_LABEL
                         );
                     } else {
                         eprintln!(
-                            "Warning: Chromosome '{}' has no near intervals. Windows will keep near-side as '{}'.",
+                            "Warning: Chromosome '{}' has no near intervals. Windows will keep win-direction as '{}'.",
                             chrom, NO_NEAR_LABEL
                         );
                     }
@@ -755,15 +755,12 @@ pub fn apply_near_annotations(
                     cfg.distance_max,
                 );
             }
-            NearestResult::Tie(NearTie {
-                upstream,
-                downstream,
-            }) => {
+            NearestResult::Tie(NearTie { left, right }) => {
                 if matches!(cfg.near_ties, NearTiePolicy::Drop) {
                     continue;
                 }
                 // Keep both sides when ties are allowed, so downstream filters can decide
-                if let Some(hit) = upstream.as_ref() {
+                if let Some(hit) = left.as_ref() {
                     NearAnnotation::push_from_hit(
                         &mut annotations,
                         hit,
@@ -773,7 +770,7 @@ pub fn apply_near_annotations(
                         cfg.distance_max,
                     );
                 }
-                if let Some(hit) = downstream.as_ref() {
+                if let Some(hit) = right.as_ref() {
                     NearAnnotation::push_from_hit(
                         &mut annotations,
                         hit,
