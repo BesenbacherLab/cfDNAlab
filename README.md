@@ -1,6 +1,6 @@
 # cfDNAlab
 
-Ultra-fast command-line tools for analysis of cell-free DNA. Extract *fragment coverage*, *midpoint coverage*, and *fragment lengths* across the whole genome (or in windows) in mere seconds or minutes. Apply sample-specific GC correction and large-scale genomic smoothing.
+Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. Apply sample-specific GC correction and large-scale genomic smoothing.
 
 Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaired data where each read represents a full fragment. Written in rust for *speed*.
 
@@ -47,12 +47,12 @@ The following commands are currently available:
 | **Normalization**                    | Precompute normalization/correction factors to enable their use in the feature extraction commands                                                                                                                     |
 | `cfdna gc-bias`, `cfdna ref-gc-bias` | Calculate GC-bias for correcting a sample in the main commands                                                                                                                                                         |
 | `cfdna coverage-weights`             | Calculate scaling factors for normalizing/smoothing coverage across the genome                                                                                                                                         |
-| **Converters**                       | Convert BAM->frag->BAM or BAM->BAM                                                                                                                                                                                     |
-| `cfdna bam-to-bam`                   | Apply our read filters and write GC correction and coverage weight tags to a BAM file                                                                                                                                  |
+| **Conversion**                       | Convert BAM > frag > BAM or BAM > BAM                                                                                                                                                                                  |
+| `cfdna bam-to-bam`                   | Apply our filters and/or write GC correction and coverage weight tags to a BAM file                                                                                                                                    |
 | `cfdna bam-to-frag`                  | Write fragment coordinates to a "frag" file (bed-like tsv file)                                                                                                                                                        |
 | `cfdna frag-to-bam`                  | Convert fragment coordinates to a single-read unpaired BAM file                                                                                                                                                        |
 
-Planned: `cfdna ends` (end-motifs, breakpoint motifs), `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks` (call windowed protection score peaks). Let us know about other fragmentomics features you would like to extract with `cfDNAlab`.
+Planned: `cfdna ends` (end-motifs, breakpoint motifs), `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks` (call windowed protection score peaks). Let us know what other fragmentomics features you would like to extract with `cfDNAlab`.
 
 
 ### Common options
@@ -87,6 +87,9 @@ Planned: `cfdna ends` (end-motifs, breakpoint motifs), `cfdna fragment-kmers` (c
  - Should I order the BAM files differently to allow pairing of reads into fragments?
    - No, we expect BAM files to be *coordinate-sorted* and indexed.
  
+ - How do I run the command for unpaired data?
+   - Most commands accept `--reads-are-fragments`. Each read is then assumed to represent a full fragment.
+
  - How did you use LLMs (AI) in this project?
    - OpenAI's codex models were used for pair programming to speed up development and testing. All released code have been designed and validated by us.
 
@@ -117,6 +120,7 @@ cfdna ref-gc-bias \
 
 cfdna gc-bias \
   ...
+  --ref-gc-dir <path>/
 
 ```
 
@@ -143,17 +147,15 @@ cfdna fcoverage \
 
 ### Genomic smoothing pipeline
 
-For some commands, like `cfdna midpoints`, you may want all genomic regions to have a similar contribution to the features. E.g. to reduce the effect of copy number alterations. 
+For some commands, like `cfdna midpoints`, you may want all genomic regions to have approximately the same contribution to the features. E.g., to reduce the effect of copy number alterations. 
 
 **Simplified**, this can be achieved by calculating the fragment coverage in a kilo/megabase resolution and dividing the contribution of each fragment (`1.0` or the gc-weight) with the coverage value.
 
-**More detailed**, for a more smooth scaling, `cfdna coverage-weights` builds a smoothed normalization map:
+**More detailed**, for a more smooth scaling, `cfdna coverage-weights` builds a smoothed normalization map using a sliding window:
 
-A) It splits the genome into "stride-bins" (default: 500kb) and counts the average positional fragment coverage in each bin.
+*A*) It splits the genome into "stride-bins" (default: 500kb) and counts the average positional fragment coverage in each bin.
 
-B) It smoothes each bin with a triangular weighting kernel, that weights the coverage of the neighbouring stride-bins by how many overlapping megabins (default: 5Mb) they are part of. 
-
-E.g.: 
+*B*) It smoothes each bin with a triangular weighting kernel, that weights the coverage of the neighbouring stride-bins by how many overlapping megabins (default: 5Mb) they are part of. E.g.: 
 
 Using a megabin-size of `6` and stride size of `2` for demonstrational purposes:
 
@@ -161,34 +163,36 @@ Using a megabin-size of `6` and stride size of `2` for demonstrational purposes:
 
 `[A] [B] [C] [D] [E] [F] [G] ...`
 
-**Overlapping megabins** (`MB*`) (each covers 3 stride-bins). **`W_D`**, the number of overlapping megabins,
-is the (unnormalized) weight of each stride-bin in the weighted-average coverage for stride-bin `D`:
+**Overlapping megabins** (`MB*`) each cover 3 stride-bins. 
+**`W_D`** weights each stride-bin by how many `D`-overlapping megabins it is part of. 
+Stride-bin `B` is only part of one megabin that overlaps `D`, so its (unnormalized) weight is 1. 
+In contrast, stride-bin `D` is naturally part of all three megabins, so its weight is 3:
 
-```text
+<pre>
 
-MB1: [A][B][C]
+<i>MB1</i>: [A][B][C]
 
-MB2:    [B][C][**D**]
+MB2:    [B][C][<b>D</b>]
 
-MB3:       [C][**D**][E]
+MB3:       [C][<b>D</b>][E]
 
-MB4:          [**D**][E][F]
+MB4:          [<b>D</b>][E][F]
 
-MB5:             [E][F][G]
+<i>MB5</i>:             [E][F][G]
 
 W_D: [0][1][2][3][2][1][0]
 
-```
+</pre>
 
-So, the further away a stride-bin is from the center stride-bin, the less it contributes to the smoothed average coverage.
+$$smoothCoverage_{D} = (0A + 1B + 2C + 3D + 2E + 1F + 0G) / (1+2+3+2+1)$$
 
-C) Finally, the values are *inverted* to `1/coverage` to become multiplicative scaling factors (one per stride-bin). A fragment can be scaled by multiplying its contribution (`1.0` or the gc-weight) with the scaling factor of the stride-bin it's located in. 
+*C*) Finally, the values are **inverted** with $1/smoothCoverage$ to become multiplicative scaling factors (one per stride-bin). A fragment's contribution (`1.0` or the gc-weight) can then be scaled by multiplying by the scaling factor of the stride-bin it's located in.
 
 You can think of this approach as a very fast alternative to e.g. Gaussian smoothing.
 
-This can be achieved with two steps:
+The genomic smoothing can be achieved in two steps:
 
-1) Calculate the coverage-based scaling factors that leads to such genomic smoothing:
+1) Calculate the coverage-based scaling factors:
 
 ```bash
 
