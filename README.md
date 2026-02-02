@@ -97,7 +97,9 @@ Planned: `cfdna ends` (end-motifs, breakpoint motifs), `cfdna fragment-kmers` (c
 
 ## Recipes
 
-We aimed for high flexibility so the commands are useful for both established and more novel usecases. This led to the commands having many options. The following recipes (examples) will get you quickly up and running with common cfDNA analyses. Then you can dive into the options when needed. The final example is a full pipeline for running everything (but without the explanations in the separate examples).
+We aim for high flexibility to make the commands useful for both established and novel use cases. This leads to commands having many options. The following recipes (examples) will get you quickly up and running with common cfDNA analyses. 
+
+The final example is a full pipeline for running everything (but without the explanations from the separate examples).
 
 ### GC correction pipeline
 
@@ -135,7 +137,7 @@ cfdna fcoverage \
 
 ```
 
-If you prefer a different/custom GC-bias tool, the feature extraction commands also accepts reading a GC weight (how much a fragment should contribute) from an aux tag in the BAM file:
+If you prefer a different/custom GC-bias tool, the feature extraction commands also accept reading a GC weight (how much a fragment should contribute) from an aux tag in the BAM file:
 
 ```bash
 
@@ -149,7 +151,7 @@ cfdna fcoverage \
 
 For some commands, like `cfdna midpoints`, you may want all genomic regions to have approximately the same contribution to the features. E.g., to reduce the effect of copy number alterations. 
 
-**Simplified**, this can be achieved by calculating the fragment coverage in a kilo/megabase resolution and dividing the contribution of each fragment (`1.0` or the gc-weight) with the coverage value.
+**Simplified**, this can be achieved by calculating the fragment coverage in a kilo/megabase resolution and dividing the contribution of each fragment (`1.0` or the gc-weight) by the coverage value.
 
 **More detailed**, for a more smooth scaling, `cfdna coverage-weights` builds a smoothed normalization map using a sliding window:
 
@@ -213,7 +215,7 @@ cfdna midpoints \
 
 ### Fragment coverage
 
-Fragment coverage measures how many fragments overlap each genomic position. In contrast to many non-cfDNA-tools, we (optionally)count the gap between paired reads along with the aligned bases of the reads. We avoid double counting when reads overlap. When no GC correction or genomic smoothing is applied, each fragment counts `1` in the overlapping (aligned / gap) positions. GC correction and/or genomic smoothing changes this to a weight (floating point).
+Fragment coverage measures how many fragments overlap each genomic position. In contrast to many non-cfDNA-tools, we (optionally) count the gap between paired reads along with the aligned bases of the reads. We avoid double counting when reads overlap. When no GC correction or genomic smoothing is applied, each fragment counts `1` in the overlapping (aligned / gap) positions. GC correction and/or genomic smoothing changes this to a weight (floating point).
 
 ```bash
 
@@ -225,7 +227,7 @@ cfdna fcoverage \
   
 # Add GC correction and / or genomic smoothing
   --gc ... \
-  --scale-genome ...
+  --scaling-factors ...
 
 ```
 
@@ -272,32 +274,32 @@ MINLENGTH=30
 MAXLENGTH=600
 
 # Coverage weights for genomic smoothing
-cfdna coverage-weights --bam $BAM --output-dir $OUT/coverage_weights --min-fragment-length $MINLENGTH --max-fragment-length $$MAXLENGTH --n-threads $THREADS 
+cfdna coverage-weights --bam $BAM --output-dir $OUT/coverage_weights --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --n-threads $THREADS 
 
 # GC bias correction matrix
-cfdna gc-bias --bam $BAM --output-dir $OUT/gc_bias --min-fragment-length $MINLENGTH --max-fragment-length $$MAXLENGTH --scale-genome $OUT/coverage_weights --n-threads $THREADS 
+cfdna gc-bias --bam $BAM --output-dir $OUT/gc_bias --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --n-threads $THREADS 
 
 # Fragment coverage
-cfdna fcoverage --bam $BAM --output-dir $OUT/coverage --min-fragment-length $MINLENGTH --max-fragment-length $$MAXLENGTH --gc $OUT/gc_bias --scale-genome $OUT/coverage_weights --blacklist $BLACKLIST --n-threads $THREADS 
+cfdna fcoverage --bam $BAM --output-dir $OUT/coverage --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc $OUT/gc_bias --scaling-factors $OUT/coverage_weights/<prefix>.scaling_factors.tsv --blacklist $BLACKLIST --n-threads $THREADS 
 
 # Fragment lengths (global)
-cfdna lengths --bam $BAM --output-dir $OUT/lengths_$(MINLENGTH)_$(MAXLENGTH) --min-fragment-length $MINLENGTH --max-fragment-length $$MAXLENGTH --gc $OUT/gc_bias --scale-genome $OUT/coverage_weights --blacklist $BLACKLIST --n-threads $THREADS 
+cfdna lengths --bam $BAM --output-dir $OUT/lengths_$MINLENGTH_$MAXLENGTH --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc $OUT/gc_bias --scaling-factors $OUT/coverage_weights/<prefix>.scaling_factors.tsv --blacklist $BLACKLIST --n-threads $THREADS 
 
 # Fragment lengths in 5Mb bins 
 # E.g., to calculate short/long ratios from (100-150bp, 151-220bp)
-cfdna lengths --bam $BAM --output-dir $OUT/lengths_per_5mb_100_220 --by-size 5000000 --min-fragment-length 100 --max-fragment-length 220 --gc $OUT/gc_bias --scale-genome $OUT/coverage_weights --blacklist $BLACKLIST --n-threads $THREADS
+cfdna lengths --bam $BAM --output-dir $OUT/lengths_per_5mb_100_220 --by-size 5000000 --min-fragment-length 100 --max-fragment-length 220 --gc $OUT/gc_bias --scaling-factors $OUT/coverage_weights/<prefix>.scaling_factors.tsv --blacklist $BLACKLIST --n-threads $THREADS
 
 # Transition probabilities in the first 10bp from each end
-cfdna transitions --bam $BAM --output-dir $OUT --orders 1 --frame nearest --positions '..10' --min-fragment-length $MINLENGTH --max-fragment-length $$MAXLENGTH --gc $OUT/gc_bias --scale-genome $OUT/coverage_weights --blacklist $BLACKLIST --n-threads $THREADS
+cfdna transitions --bam $BAM --output-dir $OUT --orders 1 --frame nearest --positions '..10' --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc $OUT/gc_bias --scaling-factors $OUT/coverage_weights/<prefix>.scaling_factors.tsv --blacklist $BLACKLIST --n-threads $THREADS
 
 # End motifs
 cfdna ends ... # NOT IMPLEMENTED YET (breakpoint motif example also?)
 
 # Nucleosome peaks from windowed protection scores
-cfdna wps-peaks --bam $BAM --output-dir $OUT/wps_peaks --min-fragment-length 120 --max-fragment-length 180 --window-size 120 --gc $OUT/gc_bias --scale-genome $OUT/coverage_weights --blacklist $BLACKLIST --n-threads $THREADS
+cfdna wps-peaks --bam $BAM --output-dir $OUT/wps_peaks --min-fragment-length 120 --max-fragment-length 180 --window-size 120 --gc $OUT/gc_bias --scaling-factors $OUT/coverage_weights/<prefix>.scaling_factors.tsv --blacklist $BLACKLIST --n-threads $THREADS
 
 # Statistics on nucleosome peaks per 5Mb
-cfdna wps-peaks --bam $BAM --output-dir $OUT/wps_peaks_statistics_per_5mb --by-size 5000000 --per-window stats --min-fragment-length 120 --max-fragment-length 180 --window-size 120 --gc $OUT/gc_bias --scale-genome $OUT/coverage_weights --blacklist $BLACKLIST --n-threads $THREADS
+cfdna wps-peaks --bam $BAM --output-dir $OUT/wps_peaks_statistics_per_5mb --by-size 5000000 --per-window stats --min-fragment-length 120 --max-fragment-length 180 --window-size 120 --gc $OUT/gc_bias --scaling-factors $OUT/coverage_weights/<prefix>.scaling_factors.tsv --blacklist $BLACKLIST --n-threads $THREADS
 
 ```
 
@@ -305,12 +307,12 @@ cfdna wps-peaks --bam $BAM --output-dir $OUT/wps_peaks_statistics_per_5mb --by-s
 
 ## TODO
 
-    - Figure out --output-prefix (default to remove prefix?) and use consistently across commmands!
-    - Bin chromosomes for higher parallelization where meaningful.
-    - Allow input BED files to be compressed.
-    - Check / optimize RAM usage in `cfdna coverage-weights`.
-    - Find way to handle deletion of temp dirs when command fails (and not in debug mode)
-    - Fix double-counting of reads and fragments in stats counters around tile edges (fetch halo-related)
+ - Figure out --output-prefix (default to remove prefix?) and use consistently across commands!
+ - Bin chromosomes for higher parallelization where meaningful.
+ - Allow input BED files to be compressed.
+ - Check / optimize RAM usage in `cfdna coverage-weights`.
+ - Find way to handle deletion of temp dirs when command fails (and not in debug mode)
+ - Fix double-counting of reads and fragments in stats counters around tile edges (fetch halo-related)
 
 ---
 
