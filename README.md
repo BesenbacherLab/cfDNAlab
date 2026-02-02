@@ -165,11 +165,11 @@ Using a megabin-size of `6` and stride size of `2` for demonstrational purposes:
 **Overlapping megabins** (`MB*`) (each covers 3 stride-bins). **`W_D`**, the number of overlapping megabins,
 is the (unnormalized) weight of each stride-bin in the weighted-average coverage for stride-bin `D`:
 
-```html
+```markdown
 
 MB1: [A][B][C]
 
-MB2:    [B][C][<b>D</b>]
+MB2:    [B][C][**D**]
 
 MB3:       [C][D][E]
 
