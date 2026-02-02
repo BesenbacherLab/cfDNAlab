@@ -150,9 +150,9 @@ For some commands, like `cfdna midpoints`, you may want all genomic regions to h
 
 **More detailed**, for a more smooth scaling, `cfdna coverage-weights` builds a smoothed normalization map using a sliding window:
 
-A) It splits the genome into "stride-bins" (default: 500kb) and counts the average positional fragment coverage in each bin.
+*A*) It splits the genome into "stride-bins" (default: 500kb) and counts the average positional fragment coverage in each bin.
 
-B) It smoothes each bin with a triangular weighting kernel, that weights the coverage of the neighbouring stride-bins by how many overlapping megabins (default: 5Mb) they are part of. E.g.: 
+*B*) It smoothes each bin with a triangular weighting kernel, that weights the coverage of the neighbouring stride-bins by how many overlapping megabins (default: 5Mb) they are part of. E.g.: 
 
 Using a megabin-size of `6` and stride size of `2` for demonstrational purposes:
 
@@ -183,7 +183,7 @@ W_D: [0][1][2][3][2][1][0]
 
 $$smoothCoverage_{D} = (0A + 1B + 2C + 3D + 2E + 1F + 0G) / (1+2+3+2+1)$$
 
-C) Finally, the values are *inverted* with $1/smoothCoverage$ to become multiplicative scaling factors (one per stride-bin). A fragment's contribution (`1.0` or the gc-weight) can then be scaled by multiplying by the scaling factor of the stride-bin it's located in.
+*C*) Finally, the values are **inverted** with $1/smoothCoverage$ to become multiplicative scaling factors (one per stride-bin). A fragment's contribution (`1.0` or the gc-weight) can then be scaled by multiplying by the scaling factor of the stride-bin it's located in.
 
 You can think of this approach as a very fast alternative to e.g. Gaussian smoothing.
 
