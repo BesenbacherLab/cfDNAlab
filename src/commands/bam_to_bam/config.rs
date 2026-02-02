@@ -29,8 +29,11 @@ use std::path::PathBuf;
 ///
 /// The fragment length is written to the AUX tag "FLEN".
 ///
-/// For **paired-end** sequencing, the length is defined as `end(reverse) - start(forward)`.
-/// For **unpaired** sequencing where each read is a fragment, the length is defined as `end(read) - start(read)`.
+/// Definition:
+///
+/// **Paired-end**: `end(reverse) - start(forward)`.
+///
+/// **Unpaired** where each read is a fragment: `end(read) - start(read)`.
 ///
 /// ## Always-on exclusion criteria
 ///

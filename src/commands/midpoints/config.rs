@@ -13,10 +13,11 @@ use std::path::PathBuf;
 /// E.g., groups can be transcription factors with windows being binding sites. We then
 /// get the overall midpoint profile per transcription factor.
 ///
-/// ## Fragment span
+/// ## Fragment span definition
 ///
-/// For **paired-end** sequencing, the span is defined as `[forward.pos, reverse.end)`.
-/// For **unpaired** sequencing where each read is a fragment, the span is defined as `[read.pos, read.end)`.
+/// **Paired-end**: `[forward.pos, reverse.end)`.
+///
+/// **Unpaired** where each read is a fragment: `[read.pos, read.end)`.
 ///
 /// ## Always-on exclusion criteria
 ///

@@ -17,10 +17,11 @@ use std::path::PathBuf;
 /// The full fragment span is counted without consideration of deletions and gaps.
 /// This is fine for genome-scale normalization that reduces relative changes in coverage across the genome.
 ///
-/// ## Fragment span
+/// ## Fragment span definition
 ///
-/// For **paired-end** sequencing, the span is defined as `[forward.pos, reverse.end)`.
-/// For **unpaired** sequencing where each read is a fragment, the length is defined as `[read.pos, read.end)`.
+/// **Paired-end**: `[forward.pos, reverse.end)`.
+///
+/// **Unpaired** where each read is a fragment: `[read.pos, read.end)`.
 ///
 /// ## Smoothing
 ///

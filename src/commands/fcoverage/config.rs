@@ -12,10 +12,11 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 /// By default, the entire fragment span is counted, except for
 /// deletions and skipped regions that are not covered by the other read.
 ///
-/// ## Fragment span
+/// ## Fragment span definition
 ///
-/// For **paired-end** sequencing, the span is defined as `[forward.pos, reverse.end)`.
-/// For **unpaired** sequencing where each read is a fragment, the span is defined as `[read.pos, read.end)`.
+/// **Paired-end**: `[forward.pos, reverse.end)`.
+///
+/// **Unpaired** where each read is a fragment: `[read.pos, read.end)`.
 ///
 /// ## Windowing
 ///

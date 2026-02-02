@@ -12,8 +12,13 @@ use std::path::PathBuf;
 
 /// Count fragment lengths in a BAM-file.
 ///
-/// **Fragment length**: For **paired-end** sequencing, the length is defined as `end(reverse) - start(forward)`.
-/// For **unpaired** sequencing where each read is a fragment, the length is defined as `end(read) - start(read)`.
+/// ## Fragment length definition
+///
+/// **Paired-end**: `end(reverse) - start(forward)`.
+///
+/// **Unpaired** where each read is a fragment: `end(read) - start(read)`.
+///
+/// See also `--indel-mode` for optionally adjusting the length to presence of indels.
 ///
 /// ## GC correction
 ///
