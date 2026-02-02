@@ -12,7 +12,6 @@ default = [
     "cmd_fcoverage",
     "cmd_gc_bias",
     "cmd_lengths",
-    "cmd_prepare_windows",
     "cmd_midpoints",
     "cmd_ref_gc_bias",
 ]
