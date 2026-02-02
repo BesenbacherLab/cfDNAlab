@@ -166,8 +166,8 @@ Using a megabin-size of `6` and stride size of `2` for demonstrational purposes:
 is the (unnormalized) weight of each stride-bin in the weighted-average coverage for stride-bin `D`:
 
 <pre>
-
-<span style="color:#808080 !important;">MB1: [A][B][C]</span>
+$${\color{red}Red}$$
+MB1: [A][B][C]
 
 MB2:    [B][C][<b>D</b>]
 
