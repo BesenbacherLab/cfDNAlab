@@ -164,7 +164,8 @@ Using a megabin-size of `6` and stride size of `2` for demonstrational purposes:
 
 **Overlapping megabins** (`MB*`) each cover 3 stride-bins. 
 **`W_D`** weights each stride-bin by how many `D`-overlapping megabins it is part of. 
-Stride-bin `B` is only part of one megabin that overlaps `D`, so its (unnormalized) weight is 1:
+Stride-bin `B` is only part of one megabin that overlaps `D`, so its (unnormalized) weight is 1. 
+In contrast, stride-bin `D` is naturally part of all three megabins, so its weight is 3:
 
 <pre>
 
@@ -182,9 +183,7 @@ W_D: [0][1][2][3][2][1][0]
 
 </pre>
 
-The further away a stride-bin is from the center stride-bin, the less it contributes to the smoothed average coverage. The MB1 and MB5 bins do not contribute since they don't overlap the center bin.
-
-C) Finally, the values are *inverted* to `1/coverage` to become multiplicative scaling factors (one per stride-bin). A fragment can be scaled by multiplying its contribution (`1.0` or the gc-weight) with the scaling factor of the stride-bin it's located in. 
+C) Finally, the values are *inverted* to `1/coverage` to become multiplicative scaling factors (one per stride-bin). A fragment can be scaled by multiplying its contribution (`1.0` or the gc-weight) with the scaling factor of the stride-bin it's located in.
 
 You can think of this approach as a very fast alternative to e.g. Gaussian smoothing.
 
