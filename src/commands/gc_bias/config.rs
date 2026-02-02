@@ -145,7 +145,7 @@ pub struct GCConfig {
     pub ref_gc_dir: PathBuf,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub windows: WindowsArgs,
+    pub windows: GCWindowsArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub window_assignment: AssignToWindowArgs,
@@ -367,7 +367,7 @@ impl GCConfig {
             },
             ref_genome: Ref2BitRequiredArgs { ref_2bit },
             ref_gc_dir,
-            windows: WindowsArgs::default(),
+            windows: GCWindowsArgs::default(),
             window_assignment: AssignToWindowArgs::default(),
             chromosomes,
             tile_size: DEFAULT_TILE_SIZE,
@@ -396,7 +396,7 @@ impl GCConfig {
         self.ref_gc_dir = ref_gc_dir;
     }
 
-    pub fn set_windows(&mut self, windows: WindowsArgs) {
+    pub fn set_windows(&mut self, windows: GCWindowsArgs) {
         self.windows = windows;
     }
 

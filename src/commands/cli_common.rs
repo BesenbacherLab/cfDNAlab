@@ -158,7 +158,7 @@ pub enum WindowSpec {
 #[cfg_attr(
     feature = "cli",
     clap(
-        // At most one of the two flags; if none -> Global in `resolve()`
+        // At most one of the two flags. If none -> Global in `resolve()`
         group = clap::ArgGroup::new("windows")
             .args(&["by_size", "by_bed"])
             .multiple(false)
@@ -172,8 +172,7 @@ pub struct WindowsArgs {
     #[cfg_attr(
         feature = "cli",
         clap(
-            long = "by-size",
-            alias = "by",
+            long,
             value_parser,
             group = "windows",
             help_heading = "Windows (select max. one arg.)"
@@ -185,7 +184,7 @@ pub struct WindowsArgs {
     #[cfg_attr(
         feature = "cli",
         clap(
-            long = "by-bed",
+            long,
             value_parser,
             group = "windows",
             help_heading = "Windows (select max. one arg.)"
@@ -203,6 +202,71 @@ impl WindowsArgs {
             WindowSpec::Bed(p)
         } else {
             WindowSpec::Global
+        }
+    }
+}
+
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[cfg_attr(
+    feature = "cli",
+    clap(
+        // At most one of the three flags. If none ->` by-size 100000` in `resolve()`
+        group = clap::ArgGroup::new("gc_windows")
+            .args(&["global", "by_size", "by_bed"])
+            .multiple(false)
+    )
+)]
+#[derive(Debug, Clone, Default)]
+pub struct GCWindowsArgs {
+    /// Window definition: a fixed window size `[integer]`
+    ///
+    /// Default window definition is `--by-size 100000` window.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_parser,
+            group = "gc_windows",
+            help_heading = "Windows (select max. one arg.)"
+        )
+    )]
+    pub by_size: Option<u64>,
+
+    /// Window definition: a BED file of windows `[path]`
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_parser,
+            group = "gc_windows",
+            help_heading = "Windows (select max. one arg.)"
+        )
+    )]
+    pub by_bed: Option<PathBuf>,
+
+    /// Window definition: one global window `[flag]`
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            group = "gc_windows",
+            help_heading = "Windows (select max. one arg.)"
+        )
+    )]
+    pub global: bool,
+}
+
+impl GCWindowsArgs {
+    /// If neither flag is set, default to `by-size 100000`.
+    pub fn resolve_windows(&self) -> WindowSpec {
+        if let Some(n) = self.by_size {
+            WindowSpec::Size(n)
+        } else if let Some(p) = self.by_bed.clone() {
+            WindowSpec::Bed(p)
+        } else if self.global {
+            WindowSpec::Global
+        } else {
+            WindowSpec::Size(100000)
         }
     }
 }
