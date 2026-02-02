@@ -1,6 +1,6 @@
 # cfDNAlab
 
-Ultra-fast command-line tools for analysis of cell-free DNA. Extract *fragment coverage*, *midpoint coverage*, and *fragment lengths* across the whole genome (or in windows) in mere seconds or minutes. Apply sample-specific GC correction and large-scale genomic smoothing.
+Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. Apply sample-specific GC correction and large-scale genomic smoothing.
 
 Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaired data where each read represents a full fragment. Written in rust for *speed*.
 
@@ -47,12 +47,12 @@ The following commands are currently available:
 | **Normalization**                    | Precompute normalization/correction factors to enable their use in the feature extraction commands                                                                                                                     |
 | `cfdna gc-bias`, `cfdna ref-gc-bias` | Calculate GC-bias for correcting a sample in the main commands                                                                                                                                                         |
 | `cfdna coverage-weights`             | Calculate scaling factors for normalizing/smoothing coverage across the genome                                                                                                                                         |
-| **Converters**                       | Convert BAM->frag->BAM or BAM->BAM                                                                                                                                                                                     |
+| **Conversion**                       | Convert BAM > frag > BAM or BAM > BAM                                                                                                                                                                                  |
 | `cfdna bam-to-bam`                   | Apply our read filters and write GC correction and coverage weight tags to a BAM file                                                                                                                                  |
 | `cfdna bam-to-frag`                  | Write fragment coordinates to a "frag" file (bed-like tsv file)                                                                                                                                                        |
 | `cfdna frag-to-bam`                  | Convert fragment coordinates to a single-read unpaired BAM file                                                                                                                                                        |
 
-Planned: `cfdna ends` (end-motifs, breakpoint motifs), `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks` (call windowed protection score peaks). Let us know about other fragmentomics features you would like to extract with `cfDNAlab`.
+Planned: `cfdna ends` (end-motifs, breakpoint motifs), `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks` (call windowed protection score peaks). Let us know what other fragmentomics features you would like to extract with `cfDNAlab`.
 
 
 ### Common options
@@ -117,6 +117,7 @@ cfdna ref-gc-bias \
 
 cfdna gc-bias \
   ...
+  --ref-gc-dir <path>/
 
 ```
 
@@ -168,11 +169,11 @@ is the (unnormalized) weight of each stride-bin in the weighted-average coverage
 
 MB1: [A][B][C]
 
-MB2:    [B][C][**D**]
+MB2:    [B][C][`D`]
 
-MB3:       [C][**D**][E]
+MB3:       [C][D][E]
 
-MB4:          [**D**][E][F]
+MB4:          [D][E][F]
 
 MB5:             [E][F][G]
 
