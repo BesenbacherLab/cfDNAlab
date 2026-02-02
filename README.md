@@ -1,4 +1,4 @@
-# cfDNAlab
+# cfDNAlab  <a href='https://github.com/ludvigolsen/cfdnalab'><img src='https://raw.githubusercontent.com/ludvigolsen/cfdnalab/main/cfdnalab_logo_257x285_250dpi.png' align="right" height="160" /></a>
 
 Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. Apply sample-specific GC correction and large-scale genomic smoothing.
 
