@@ -15,7 +15,7 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 /// ## Fragment span
 ///
 /// For **paired-end** sequencing, the span is defined as `[forward.pos, reverse.end)`.
-/// For **unpaired** sequencing where each read is a fragment, the length is defined as `[read.pos, read.end)`.
+/// For **unpaired** sequencing where each read is a fragment, the span is defined as `[read.pos, read.end)`.
 ///
 /// ## Windowing
 ///

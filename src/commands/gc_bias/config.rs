@@ -87,12 +87,15 @@ impl Default for OutlierScopeArg {
 /// The observed distribution of cfDNA fragments is corrected to a precomputed reference bias.
 ///
 /// Requirements: Please precompute the reference GC bias with `cfdna ref-gc-bias`.
-/// This file can be reused for all samples (aligned to the same assembly).
+/// This file can be reused for all samples aligned to the same assembly.
+///
+/// **NOTE**: This command is highly flexible, enabling experimentation. The default values have been
+/// tuned and should be useful in most use cases. Start with the example below.
 ///
 /// The most extreme GC and shortest-length bins get interpolated corrections based on neighbours
 /// to avoid extreme corrections due to sparsity.
 ///
-/// Combinations of GC fractions and fragment lengths that are either theoretically unobservable
+/// The combinations of GC fractions and fragment lengths that are either theoretically unobservable
 /// or *very* rarely observed in the **reference genome** are interpolated from surrounding counts.
 /// Other combinations with post-smoothing zero counts in the *cfDNA* remains zero in the correction matrix.
 /// The final correction matrix thus works for all possible GC x Length combinations.
@@ -100,7 +103,7 @@ impl Default for OutlierScopeArg {
 /// ## Fragment length
 ///
 /// For **paired-end** sequencing, the length is defined as `end(reverse) - start(forward)`.
-/// For **unpaired** sequencing where each read is a fragment, the length is defined as `[read.pos, read.end)`.
+/// For **unpaired** sequencing where each read is a fragment, the length is defined as `end(read) - start(read)`.
 ///
 /// ## Windowing
 ///
@@ -110,6 +113,24 @@ impl Default for OutlierScopeArg {
 ///
 /// The counts of each window are divided by their window-mean and scaled by the number of
 /// valid ACGT positions in the window. The windows are then averaged.
+///
+/// ## Example
+///
+/// ```bash
+///
+/// cfdna gc-bias --bam {BAM_FILE} --output-dir {PATH}/gc_bias \
+/// 
+///   --ref-genome {PATH}/hg38.2bit \ # Or some other assembly
+/// 
+///   --ref-gc-dir {REFERENCE_GC_DIRECTORY} \
+/// 
+///   --min-fragment-length 30 --max-fragment-length 1000 \
+/// 
+///   --blacklist {PATH}/encode_blacklist.bed # Or some other blacklist(s)
+/// 
+/// ```
+///
+/// Besides these arguments, the default values should work in most cases.
 ///
 /// ## Always-on exclusion criteria
 ///
