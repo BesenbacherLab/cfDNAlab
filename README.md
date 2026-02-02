@@ -183,7 +183,7 @@ W_D: [0][1][2][3][2][1][0]
 
 </pre>
 
-$$smoothCoverage_{D} = (0*A + 1*B + 2*C + 3*D + 2*E + 1*F + 0*G) / (1+2+3+2+1)$$
+$$smoothCoverage_{D} = (0A + 1B + 2C + 3D + 2E + 1F + 0G) / (1+2+3+2+1)$$
 
 C) Finally, the values are *inverted* to `1/coverage` to become multiplicative scaling factors (one per stride-bin). A fragment can be scaled by multiplying its contribution (`1.0` or the gc-weight) with the scaling factor of the stride-bin it's located in.
 
