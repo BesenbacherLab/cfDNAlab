@@ -293,17 +293,29 @@ mod pretty {
             _ => (Style::new().dimmed(), false),    // H4+
         };
 
+        // H2 headings get uppercase text and breathing room above the line
+        let header_text = if hashes == 2 {
+            text.to_uppercase()
+        } else {
+            text.to_string()
+        };
+
         let on = format!("{sty}");
         let off = format!("{sty:#}");
 
         let mut out = String::with_capacity(line.len() + 32);
+        if hashes == 2 {
+            out.push('\n'); // Padding above instead of below
+        }
         out.push_str(&on);
-        out.push_str(text);
+        out.push_str(&header_text);
         out.push_str(&off);
-        out.push('\n');
+        if hashes != 2 {
+            out.push('\n');
+        }
 
         if underline {
-            let bar_len = text.chars().count().min(64);
+            let bar_len = header_text.chars().count().min(64);
             out.push_str(&"─".repeat(bar_len));
         }
         Some(out)

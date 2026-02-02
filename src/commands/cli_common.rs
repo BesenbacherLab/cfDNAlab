@@ -442,9 +442,7 @@ pub struct ScaleGenomeArgs {
     ///
     /// The scaling-bin-overlapping parts of the fragments are counted as the scaling factor of the bin (`w=sf`).
     ///
-    /// File Requirements
-    ///
-    /// -----------------
+    /// ## File Requirements
     ///
     /// The TSV file **must** have a header. Column names are matched **case-insensitively**.
     ///
