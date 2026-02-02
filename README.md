@@ -273,11 +273,11 @@ THREADS=12
 MINLENGTH=30
 MAXLENGTH=600
 
-# Coverage weights for genomic smoothing
-cfdna coverage-weights --bam $BAM --output-dir $OUT/coverage_weights --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --n-threads $THREADS 
-
 # GC bias correction matrix
 cfdna gc-bias --bam $BAM --output-dir $OUT/gc_bias --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --n-threads $THREADS 
+
+# Coverage weights for genomic smoothing
+cfdna coverage-weights --bam $BAM --output-dir $OUT/coverage_weights --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --n-threads $THREADS 
 
 # Fragment coverage
 cfdna fcoverage --bam $BAM --output-dir $OUT/coverage --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc $OUT/gc_bias --scaling-factors $OUT/coverage_weights/<prefix>.scaling_factors.tsv --blacklist $BLACKLIST --n-threads $THREADS 
