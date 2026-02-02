@@ -48,7 +48,7 @@ The following commands are currently available:
 | `cfdna gc-bias`, `cfdna ref-gc-bias` | Calculate GC-bias for correcting a sample in the main commands                                                                                                                                                         |
 | `cfdna coverage-weights`             | Calculate scaling factors for normalizing/smoothing coverage across the genome                                                                                                                                         |
 | **Conversion**                       | Convert BAM > frag > BAM or BAM > BAM                                                                                                                                                                                  |
-| `cfdna bam-to-bam`                   | Apply our read filters and write GC correction and coverage weight tags to a BAM file                                                                                                                                  |
+| `cfdna bam-to-bam`                   | Apply our filters and/or write GC correction and coverage weight tags to a BAM file                                                                                                                                    |
 | `cfdna bam-to-frag`                  | Write fragment coordinates to a "frag" file (bed-like tsv file)                                                                                                                                                        |
 | `cfdna frag-to-bam`                  | Convert fragment coordinates to a single-read unpaired BAM file                                                                                                                                                        |
 
@@ -87,6 +87,9 @@ Planned: `cfdna ends` (end-motifs, breakpoint motifs), `cfdna fragment-kmers` (c
  - Should I order the BAM files differently to allow pairing of reads into fragments?
    - No, we expect BAM files to be *coordinate-sorted* and indexed.
  
+ - How do I run the command for unpaired data?
+   - Most commands accept `--reads-are-fragments`. Each read is then assumed to represent a full fragment.
+
  - How did you use LLMs (AI) in this project?
    - OpenAI's codex models were used for pair programming to speed up development and testing. All released code have been designed and validated by us.
 
