@@ -162,7 +162,7 @@ Using a megabin-size of `6` and stride size of `2` for demonstrational purposes:
 
 `[A] [B] [C] [D] [E] [F] [G] ...`
 
-**Overlapping megabins** (`MB*`) (each cover 3 stride-bins). 
+**Overlapping megabins** (`MB*`) each cover 3 stride-bins. 
 **`W_D`** weights each stride-bin by how many `D`-overlapping megabins it is part of. 
 Stride-bin `B` is only part of one megabin that overlaps `D`, so its (unnormalized) weight is 1:
 
