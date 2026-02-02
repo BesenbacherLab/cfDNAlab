@@ -167,7 +167,7 @@ is the (unnormalized) weight of each stride-bin in the weighted-average coverage
 
 <pre>
 
-<span style="color:#808080;">MB1: [A][B][C]</span>
+<span style="color:#808080 !important;">MB1: [A][B][C]</span>
 
 MB2:    [B][C][<b>D</b>]
 
