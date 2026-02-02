@@ -148,7 +148,7 @@ For some commands, like `cfdna midpoints`, you may want all genomic regions to h
 
 **Simplified**, this can be achieved by calculating the fragment coverage in a kilo/megabase resolution and dividing the contribution of each fragment (`1.0` or the gc-weight) with the coverage value.
 
-**More detailed**, for a more smooth scaling, `cfdna coverage-weights` builds a smoothed normalization map:
+**More detailed**, for a more smooth scaling, `cfdna coverage-weights` builds a smoothed normalization map using a sliding window:
 
 A) It splits the genome into "stride-bins" (default: 500kb) and counts the average positional fragment coverage in each bin.
 
@@ -162,8 +162,9 @@ Using a megabin-size of `6` and stride size of `2` for demonstrational purposes:
 
 `[A] [B] [C] [D] [E] [F] [G] ...`
 
-**Overlapping megabins** (`MB*`) (each covers 3 stride-bins). **`W_D`**, the number of overlapping megabins,
-is the (unnormalized) weight of each stride-bin in the weighted-average coverage for stride-bin `D`:
+**Overlapping megabins** (`MB*`) (each covers 3 stride-bins). 
+**`W_D`** weights each stride-bin by how many megabins that overlap stride-bin `D` they are part of. 
+Stride-bin `B` is only part of one of the megabins overlapping `D`, so it has an (unnormalized) weight of 1:
 
 <pre>
 
@@ -181,7 +182,7 @@ W_D: [0][1][2][3][2][1][0]
 
 </pre>
 
-So, the further away a stride-bin is from the center stride-bin, the less it contributes to the smoothed average coverage.
+The further away a stride-bin is from the center stride-bin, the less it contributes to the smoothed average coverage. The MB1 and MB5 bins do not contribute since they don't overlap the center bin.
 
 C) Finally, the values are *inverted* to `1/coverage` to become multiplicative scaling factors (one per stride-bin). A fragment can be scaled by multiplying its contribution (`1.0` or the gc-weight) with the scaling factor of the stride-bin it's located in. 
 
