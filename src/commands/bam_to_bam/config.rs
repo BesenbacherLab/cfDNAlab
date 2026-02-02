@@ -15,7 +15,7 @@ use std::path::PathBuf;
 /// **NOTE**: This is **not** needed for running other `cfDNAlab` tools.
 /// Those tools will **not** automatically use the correction tags.
 ///
-/// ## Genomic smoothing (scale-genome)
+/// ## Genomic smoothing (--scaling-factors)
 ///
 /// The coverage weight that would normally be **multiplied** with the fragment's count value (`1.0`)
 /// is written as the AUX tag `COV` in the read(s).
