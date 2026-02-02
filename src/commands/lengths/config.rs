@@ -12,17 +12,8 @@ use std::path::PathBuf;
 
 /// Count fragment lengths in a BAM-file.
 ///
-/// Fragment length: For **paired-end** sequencing, the length is defined as `end(reverse) - start(forward)`.
-/// For **unpaired** sequencing where each read is a fragment, the length is defined as `[read.pos, read.end)`.
-///
-/// The default for windows is to count fragments by their overlap fraction. That is, most
-/// fragments are counted as `1.0`, while fragments overlapping the edge of a window are counted
-/// as the fraction it overlaps the window (`< 1.0`). For consequtive non-overlapping windows,
-/// this conserves the total mass, as an edge-overlapping fragment will count `f` in one window
-/// and `1-f` in the other window. To get base-weighted counts (i.e. coverage in the window),
-/// you can multiply the output counts by their lengths (`C'[L] = L * C[L]`). **Other options**
-/// include counting the full fragment if the *fragment midpoint* or a given *proportion* of
-/// positions overlaps the window.
+/// **Fragment length**: For **paired-end** sequencing, the length is defined as `end(reverse) - start(forward)`.
+/// For **unpaired** sequencing where each read is a fragment, the length is defined as `end(read) - start(read)`.
 ///
 /// ## GC correction
 ///
@@ -32,6 +23,17 @@ use std::path::PathBuf;
 ///
 /// The length-dimension of the original correction matrix is averaged out with
 /// a specifiable weighting scheme (`--gc-length-weighting`).
+///
+/// ## Window assignment
+///
+/// The default for windows is to count fragments by their overlap fraction. That is, most
+/// fragments are counted as `1.0`, while fragments overlapping the edge of a window are counted
+/// as the fraction it overlaps the window (`< 1.0`). For consequtive non-overlapping windows,
+/// this conserves the total mass, as an edge-overlapping fragment will count `f` in one window
+/// and `1-f` in the other window. To get base-weighted counts (i.e. coverage in the window),
+/// you can multiply the output counts by their lengths (`C'[L] = L * C[L]`). **Other options**
+/// include counting the full fragment if the *fragment midpoint* or a given *proportion* of
+/// positions overlaps the window.
 ///
 /// ## Always-on exclusion criteria
 ///

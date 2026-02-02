@@ -308,8 +308,6 @@ cfdna wps-peaks --bam $BAM --output-dir $OUT/wps_peaks_statistics_per_5mb --by-s
 ## TODO
 
  - Figure out --output-prefix (default to remove prefix?) and use consistently across commands!
- - Bin chromosomes for higher parallelization where meaningful.
- - Allow input BED files to be compressed.
  - Check / optimize RAM usage in `cfdna coverage-weights`.
  - Find way to handle deletion of temp dirs when command fails (and not in debug mode)
  - Fix double-counting of reads and fragments in stats counters around tile edges (fetch halo-related)
