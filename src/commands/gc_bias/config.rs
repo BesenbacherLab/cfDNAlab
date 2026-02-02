@@ -92,6 +92,8 @@ impl Default for OutlierScopeArg {
 /// **NOTE**: This command is highly flexible, enabling experimentation. The default values have been
 /// tuned and should be useful in most use cases. Start with the example below.
 ///
+/// ## Interpolations
+///
 /// The most extreme GC and shortest-length bins get interpolated corrections based on neighbours
 /// to avoid extreme corrections due to sparsity.
 ///
@@ -110,7 +112,6 @@ impl Default for OutlierScopeArg {
 /// Technical GC bias is assumed to be a "global" bias. To control how each region of the genome
 /// (which may have amplified/reduced coverage) contributes to the calculation of this global bias,
 /// we can calculate the bias in genomic windows and combine them via weighted averaging:
-///
 /// The counts of each window are divided by their window-mean and scaled by the number of
 /// valid ACGT positions in the window. The windows are then averaged.
 ///
@@ -119,15 +120,15 @@ impl Default for OutlierScopeArg {
 /// ```bash
 ///
 /// cfdna gc-bias --bam {BAM_FILE} --output-dir {PATH}/gc_bias \
-/// 
+///
 ///   --ref-genome {PATH}/hg38.2bit \ # Or some other assembly
-/// 
+///
 ///   --ref-gc-dir {REFERENCE_GC_DIRECTORY} \
-/// 
+///
 ///   --min-fragment-length 30 --max-fragment-length 1000 \
-/// 
+///
 ///   --blacklist {PATH}/encode_blacklist.bed # Or some other blacklist(s)
-/// 
+///
 /// ```
 ///
 /// Besides these arguments, the default values should work in most cases.
