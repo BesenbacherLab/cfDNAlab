@@ -171,9 +171,9 @@ MB1: [A][B][C]
 
 MB2:    [B][C][<b>D</b>]
 
-MB3:       [C][D][E]
+MB3:       [C][<b>D</b>][E]
 
-MB4:          [D][E][F]
+MB4:          [<b>D</b>][E][F]
 
 MB5:             [E][F][G]
 
