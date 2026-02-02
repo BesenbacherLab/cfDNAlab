@@ -187,9 +187,9 @@ $$smoothCoverage_{D} = (0A + 1B + 2C + 3D + 2E + 1F + 0G) / (1+2+3+2+1)$$
 
 You can think of this approach as a very fast alternative to e.g. Gaussian smoothing.
 
-This can be achieved with two steps:
+The genomic smoothing can be achieved in two steps:
 
-1) Calculate the coverage-based scaling factors that leads to such genomic smoothing:
+1) Calculate the coverage-based scaling factors:
 
 ```bash
 
