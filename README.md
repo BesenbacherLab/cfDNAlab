@@ -165,11 +165,11 @@ Using a megabin-size of `6` and stride size of `2` for demonstrational purposes:
 **Overlapping megabins** (`MB*`) (each covers 3 stride-bins). **`W_D`**, the number of overlapping megabins,
 is the (unnormalized) weight of each stride-bin in the weighted-average coverage for stride-bin `D`:
 
-```markdown
+<pre>
 
 MB1: [A][B][C]
 
-MB2:    [B][C][**D**]
+MB2:    [B][C][<b>D</b>]
 
 MB3:       [C][D][E]
 
@@ -179,7 +179,7 @@ MB5:             [E][F][G]
 
 W_D: [0][1][2][3][2][1][0]
 
-```
+</pre>
 
 So, the further away a stride-bin is from the center stride-bin, the less it contributes to the smoothed average coverage.
 
