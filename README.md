@@ -251,12 +251,8 @@ cfdna lengths \
 
 ```bash
 
-# Optional preparation of intervals to count midpoints in
-cfdna prepare_windows ...
-
 # Count midpoints, summed per group and position
 cfdna midpoints ...
-
 
 ```
 
@@ -269,6 +265,7 @@ The below does not show the midpoint profiles. See the separate examples above.
 BAM="..." # ?
 OUT="..." # sample specific
 BLACKLIST="..." # ?
+ASSEMBLY="..."
 THREADS=12
 MINLENGTH=30
 MAXLENGTH=600
@@ -288,18 +285,6 @@ cfdna lengths --bam $BAM --output-dir $OUT/lengths_$MINLENGTH_$MAXLENGTH --min-f
 # Fragment lengths in 5Mb bins 
 # E.g., to calculate short/long ratios from (100-150bp, 151-220bp)
 cfdna lengths --bam $BAM --output-dir $OUT/lengths_per_5mb_100_220 --by-size 5000000 --min-fragment-length 100 --max-fragment-length 220 --gc $OUT/gc_bias --scaling-factors $OUT/coverage_weights/<prefix>.scaling_factors.tsv --blacklist $BLACKLIST --n-threads $THREADS
-
-# Transition probabilities in the first 10bp from each end
-cfdna transitions --bam $BAM --output-dir $OUT --orders 1 --frame nearest --positions '..10' --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc $OUT/gc_bias --scaling-factors $OUT/coverage_weights/<prefix>.scaling_factors.tsv --blacklist $BLACKLIST --n-threads $THREADS
-
-# End motifs
-cfdna ends ... # NOT IMPLEMENTED YET (breakpoint motif example also?)
-
-# Nucleosome peaks from windowed protection scores
-cfdna wps-peaks --bam $BAM --output-dir $OUT/wps_peaks --min-fragment-length 120 --max-fragment-length 180 --window-size 120 --gc $OUT/gc_bias --scaling-factors $OUT/coverage_weights/<prefix>.scaling_factors.tsv --blacklist $BLACKLIST --n-threads $THREADS
-
-# Statistics on nucleosome peaks per 5Mb
-cfdna wps-peaks --bam $BAM --output-dir $OUT/wps_peaks_statistics_per_5mb --by-size 5000000 --per-window stats --min-fragment-length 120 --max-fragment-length 180 --window-size 120 --gc $OUT/gc_bias --scaling-factors $OUT/coverage_weights/<prefix>.scaling_factors.tsv --blacklist $BLACKLIST --n-threads $THREADS
 
 ```
 
