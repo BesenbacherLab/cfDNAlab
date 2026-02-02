@@ -169,7 +169,7 @@ is the (unnormalized) weight of each stride-bin in the weighted-average coverage
 
 MB1: [A][B][C]
 
-MB2:    [B][C][`D`]
+MB2:    [B][C][<b>D</b>]
 
 MB3:       [C][D][E]
 
