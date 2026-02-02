@@ -244,6 +244,7 @@ impl LabelSchema {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct LabelTuple {
     pub input: String,
+    // TODO: Should be near_window_side?
     pub near_side: Option<String>,
     pub near_name: Option<String>,
     pub bin: Option<String>,

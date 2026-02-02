@@ -177,12 +177,12 @@ mod tests_prepare_windows_near {
         // Assert
         match result {
             NearestResult::Tie(tie) => {
-                let upstream = tie.left.expect("left");
-                let downstream = tie.right.expect("right");
-                assert_eq!(upstream.distance, -5);
-                assert_eq!(upstream.window_side, NearWindowSide::Upstream); // window lies upstream of right interval
-                assert_eq!(downstream.distance, 5);
-                assert_eq!(downstream.window_side, NearWindowSide::Downstream); // window lies downstream of left interval
+                let left_hit = tie.left.expect("left");
+                let right_hit = tie.right.expect("right");
+                assert_eq!(left_hit.distance, 5); // window lies downstream of left interval (right edge 10)
+                assert_eq!(left_hit.window_side, NearWindowSide::Downstream);
+                assert_eq!(right_hit.distance, -5); // window lies upstream of right interval (left edge 30)
+                assert_eq!(right_hit.window_side, NearWindowSide::Upstream);
             }
             _ => panic!("expected tie"),
         }
@@ -274,7 +274,7 @@ mod tests_prepare_windows_near {
             },
         ];
         let mut near_index = cfdnalab::commands::prepare_windows::near_file::NearIndex::default();
-        near_index.group_id_to_name = vec!["UP".to_string(), "DN".to_string()];
+        near_index.group_id_to_name = vec!["LEFT".to_string(), "RIGHT".to_string()];
         near_index.per_chrom.insert(
             "chr1".to_string(),
             NearChrom {
@@ -315,9 +315,9 @@ mod tests_prepare_windows_near {
         }
 
         // Assert
-        // Upstream interval appears first; downstream interval second
         assert_eq!(annotated.len(), 1);
-        assert_eq!(annotated[0].group_key, "-.DN,+.UP");
+        // Downstream (left interval) first, upstream (right interval) second
+        assert_eq!(annotated[0].group_key, "+.LEFT,-.RIGHT");
         Ok(())
     }
 
@@ -428,7 +428,10 @@ mod tests_prepare_windows_near {
         cfg.oob = cfdnalab::commands::prepare_windows::config::OobPolicy::Allow;
         let bins = parse_distance_bins(cfg.distance_bins.as_ref().unwrap())?;
 
-        let windows = vec![build_window("chr1", 20, 30, "A")]; // resized to 15-35
+        let mut window = build_window("chr1", 20, 30, "A");
+        window.resized_start = 15;
+        window.resized_end = 35;
+        let windows = vec![window]; // resized coordinates now differ from original
 
         // Act
         let result = apply_near_annotations(
@@ -789,10 +792,10 @@ mod tests_prepare_windows_near {
             ..
         }) = first
         {
-            assert!(distance > 0); // window 90-95 is downstream of upstream edge 100 on +
-            assert_eq!(window_side, NearWindowSide::Downstream);
+            assert!(distance < 0); // window 90-95 is upstream of upstream edge 100 on +
+            assert_eq!(window_side, NearWindowSide::Upstream);
         } else {
-            panic!("expected downstream hit vs + strand upstream edge");
+            panic!("expected upstream hit vs + strand upstream edge");
         }
         if let NearestResult::Single(NearestDistance {
             distance,
@@ -868,11 +871,11 @@ mod tests_prepare_windows_near {
             ..
         }) = second
         {
-            // On - strand downstream edge is left coordinate 200; window right -> downstream positive
-            assert!(distance > 0);
-            assert_eq!(window_side, NearWindowSide::Downstream);
+            // On - strand downstream edge is left coordinate 200; window right -> upstream with flipped sign
+            assert!(distance < 0);
+            assert_eq!(window_side, NearWindowSide::Upstream);
         } else {
-            panic!("expected downstream hit vs - strand downstream edge");
+            panic!("expected upstream hit vs - strand downstream edge");
         }
     }
 
