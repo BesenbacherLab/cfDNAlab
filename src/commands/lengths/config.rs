@@ -26,7 +26,7 @@ use std::path::PathBuf;
 ///
 /// Weight the contribution of each fragment based on their GC contents.
 ///
-/// Note: The GC percentage is calculated from the full genomic coordinates (does not consider `--indel_mode`).
+/// Note: The GC percentage is calculated from the full genomic coordinates (does not consider `--indel-mode`).
 ///
 /// The length-dimension of the original correction matrix is averaged out with
 /// a specifiable weighting scheme (`--gc-length-weighting`).
@@ -45,7 +45,7 @@ use std::path::PathBuf;
 /// fragments are counted as `1.0` (before correction/scaling), while fragments overlapping the
 /// edge of a window are counted as the fraction it overlaps the window (`< 1.0`).
 ///  
-/// For consequtive non-overlapping windows, this conserves the total mass, as an edge-overlapping
+/// For consecutive non-overlapping windows, this conserves the total mass, as an edge-overlapping
 /// fragment will count `f` in one window and `1-f` in the other window.
 ///
 /// To get base-weighted counts (i.e. coverage in the window), you can multiply the output
@@ -98,15 +98,22 @@ pub struct LengthsConfig {
     /// Possible values:
     ///
     /// - `"ignore"`:
-    ///   Ignore whether indels are present or not. Lengths are calculated from the reference coordinates `end(reverse) - start(forward)`.
+    ///   Ignore whether indels are present or not.
+    ///
+    ///   Lengths are calculated from the reference coordinates `end(reverse) - start(forward)`.
     ///
     /// - `"adjust"`:
-    ///   Adjust the reference length by the observed insertions and deletions in the
-    ///   observed bases (we cannot adjust in the mate-gap).
-    ///   Outside the mate-overlap, all indels and deletions are adjusted for.
-    ///   **Overlap**: In the mate-overlap, both reads must agree on the position-level,
-    ///   with the shortest insertion selected per position.
-    ///   Only overlap-positions were both reads have the indel are adjusted for.
+    ///   Adjust the reference length by the observed insertions and deletions
+    ///   (we cannot adjust in the mate-gap).
+    ///
+    ///   For bases only covered by a single read, all insertions and deletions are adjusted for.
+    ///
+    ///   In the mate-overlap, only adjust when both reads show the indel at the same reference position.
+    ///   
+    ///   Deletions: subtract the reference bases deleted in both reads.
+    ///     
+    ///   Insertions: add the shortest insertion length per position.
+    ///
     ///   **NOTE**: Blacklist exclusion and calculation of scaling weights (--scaling-factors)
     ///   use the full reference span.
     ///
@@ -196,7 +203,6 @@ pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub gc: ApplyGCArgFileOnly,
 
-    // TODO: Pretty sure about this claim, but I'm unsure whether the binning could affect this? Check
     /// How to weight the fragment length bins when estimating the global GC bias correction `[string]`
     ///
     /// To GC correct a fragment length distribution, the correction weights should be **length-agnostic**.
@@ -208,12 +214,16 @@ pub struct LengthsConfig {
     ///
     /// We have three weighting options when averaging the fragment-length-wise correction curves:
     ///     
-    /// - `"equal"` weighting (default): Each fragment length bin counts the same.
+    /// - `"equal"` weighting (default): Length-agnostic but rare bins may introduce noise.
+    ///
+    ///   Each fragment length bin counts the same.
     ///   This keeps the correction independent of the count distribution we're trying to estimate,
     ///   but very rare fragment length bins contribute the same as the most present fragment lengths.
     ///   For low-coverage BAM files, this *could* make the correction more volatile to outliers.
     ///
-    /// - `"coverage"`-based weighting: Each fragment length bin is weighted by how often it was observed
+    /// - `"coverage"`-based weighting: Works for the majority of fragments but biases correction based on target distribution.
+    ///
+    ///   Each fragment length bin is weighted by how often it was observed
     ///   in `cfdna gc-bias`. This should work better for the majority of the observed fragments
     ///   **BUT biases** the correction based on the fragment length distribution we are trying to estimate
     ///   (assuming the same BAM-file was used to estimate the GC bias).
@@ -230,11 +240,11 @@ pub struct LengthsConfig {
     )]
     pub gc_length_weighting: MarginalizeLengthsWeightingScheme,
 
-    /// Optional 2bit reference genome file [path]
+    /// 2bit reference genome file [path]
     ///
-    /// NOTE: Required for GC correction, otherwise ignored.
+    /// NOTE: Required when specifying `--gc-file`.
     ///
-    /// E.g., "hg38.2bit" from UCSC ( https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/hg38.2bit ).
+    /// E.g., "hg38.2bit" from UCSC (https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/hg38.2bit).
     #[cfg_attr(
         feature = "cli",
         clap(
