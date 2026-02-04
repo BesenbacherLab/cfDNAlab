@@ -1,8 +1,6 @@
 use crate::commands::cli_common::*;
 use std::path::PathBuf;
 
-// TODO: Do we need to add end-offset here, if users use it when calculating gc bias in cfDNA?
-
 /// Count GC fraction per fragment length at a sampled number of starting positions in the reference genome.
 /// This 2D count distribution can serve as the expected GC bias in GC correction.
 ///
