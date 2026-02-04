@@ -65,11 +65,10 @@ mod tests {
             fetch_start: 90,
             fetch_end: 200,
         };
-        // TODO: Is this really the expected behaviour??
-        // Windows far left. After halo subtraction, span is still left of fetch_start
-        let res = clamp_fetch_to_window_span(&tile, 300, 10, 20).unwrap();
-        // Left clamp to fetch_start=90; right clamp to fetch_end=200
-        assert_eq!(res, (90, 200));
+        // Windows far left. Even after adding halos the span ends before fetch_start,
+        // so there is nothing to fetch and the range is discarded
+        let res = clamp_fetch_to_window_span(&tile, 300, 10, 20);
+        assert!(res.is_none());
     }
 
     #[test]
@@ -85,8 +84,26 @@ mod tests {
         };
         // Windows extend beyond chrom_len=100
         let res = clamp_fetch_to_window_span(&tile, 100, 80, 150).unwrap();
-        // Right clamp to chrom_len=100; left widened by halo but clamped to fetch_start=40
-        assert_eq!(res, (40, 100));
+        // Left bound follows the nearest window minus halo (80-10) = 70, not the original fetch_start,
+        // because there is no window support between 40 and 70; right clamp hits chrom_len=100
+        assert_eq!(res, (70, 100));
+    }
+
+    #[test]
+    fn clamp_fetch_returns_none_when_windows_right_of_tile() {
+        let tile = Tile {
+            chr: "chr1".to_string(),
+            tid: 0,
+            index: 0,
+            core_start: 100,
+            core_end: 150,
+            fetch_start: 90,
+            fetch_end: 200,
+        };
+        // Windows sit to the right of the tile; even after halo expansion the span begins at 210-10=200,
+        // matching fetch_end, so start >= end and the fetch range is discarded
+        let res = clamp_fetch_to_window_span(&tile, 230, 210, 220);
+        assert!(res.is_none());
     }
 
     #[test]
@@ -140,9 +157,11 @@ mod tests {
         // For tile0, window 0 ends before core start (100) and should be dropped; expect windows 1..3
         assert_eq!(span0.first_idx, 1);
         assert_eq!(span0.last_idx_exclusive, 3);
-        // For tile1, window 1 ends before core start (150) and should be dropped; expect windows 2..4
+        // For tile1, window 1 ends before core start (150) and should be dropped; expect windows 2..3 
+        // because window 3 starts at the core end and does not overlap the half-open core
+        // Halos are zero here, so filtering and overlap are based on the core interval only
         assert_eq!(span1.first_idx, 2);
-        assert_eq!(span1.last_idx_exclusive, 4);
+        assert_eq!(span1.last_idx_exclusive, 3);
     }
 
     #[test]

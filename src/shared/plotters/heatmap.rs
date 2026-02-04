@@ -612,13 +612,25 @@ fn prepare_heatmap_inputs<'a>(
         "heatmap values are empty"
     );
 
-    let min_val = val_min.unwrap_or(data_min);
-    let max_val = val_max.unwrap_or(data_max);
+    let mut min_val = val_min.unwrap_or(data_min);
+    let mut max_val = val_max.unwrap_or(data_max);
     ensure!(
         min_val.is_finite() && max_val.is_finite(),
         "heatmap limits must be finite"
     );
-    ensure!(max_val > min_val, "heatmap max must be greater than min");
+    if max_val <= min_val {
+        let spans_match = (max_val - min_val).abs() <= f64::EPSILON;
+        let data_is_constant = (data_max - data_min).abs() <= f64::EPSILON;
+        if spans_match && data_is_constant {
+            // Expand a collapsed range when all values are identical so plots still render
+            let anchor = data_min.abs().max(1.0);
+            let padding = (anchor * 0.05).max(1.0);
+            min_val = data_min - padding;
+            max_val = data_max + padding;
+        } else {
+            ensure!(max_val > min_val, "heatmap max must be greater than min");
+        }
+    }
     if let Some(center) = val_center {
         ensure!(
             center > min_val && center < max_val,

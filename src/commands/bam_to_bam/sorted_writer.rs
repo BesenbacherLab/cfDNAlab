@@ -83,11 +83,38 @@ pub struct RecordEntry {
 /// Example
 /// -------
 /// ```rust
-/// let mut sorter = WindowSorter::new(max_fragment_length);
-/// // Stream fragments:
-/// sorter.push(record_entry, &mut writer)?;
-/// // End of stream:
+/// use cfdnalab::commands::bam_to_bam::sorted_writer::{
+///     RecordEntry, RecordTags, RecordWriter, WindowSorter,
+/// };
+/// use anyhow::Result;
+/// use rust_htslib::bam::Record;
+/// use std::sync::Arc;
+///
+/// struct Sink;
+/// impl RecordWriter for Sink {
+///     fn write_entry(&mut self, _entry: RecordEntry) -> Result<()> {
+///         Ok(())
+///     }
+/// }
+///
+/// # fn main() -> Result<()> {
+/// let mut sorter = WindowSorter::new(200);
+/// let record = Record::new();
+/// let entry = RecordEntry {
+///     start: 10,
+///     end: 60,
+///     record,
+///     tags: Arc::new(RecordTags {
+///         fragment_length: 50,
+///         coverage_weight: None,
+///         gc_weight: None,
+///     }),
+/// };
+/// let mut writer = Sink;
+/// sorter.push(entry, &mut writer)?;
 /// sorter.flush_all(&mut writer)?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 pub struct WindowSorter {

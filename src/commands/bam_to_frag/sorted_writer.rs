@@ -77,11 +77,24 @@ impl PartialOrd for Entry {
 /// Example
 /// -------
 /// ```rust
-/// let mut sorter = WindowSorter::new(max_fragment_length);
-/// // Stream fragments:
-/// sorter.push(Entry { start, end, line }, &mut writer)?;
-/// // End of stream:
+/// use cfdnalab::commands::bam_to_frag::sorted_writer::{Entry, WindowSorter};
+/// use anyhow::Result;
+/// use std::io::Cursor;
+///
+/// # fn main() -> Result<()> {
+/// let mut sorter = WindowSorter::new(200);
+/// let mut writer = Cursor::new(Vec::new());
+/// sorter.push(
+///     Entry {
+///         start: 10,
+///         end: 60,
+///         line: "chr1\t10\t60\n".to_string(),
+///     },
+///     &mut writer,
+/// )?;
 /// sorter.flush_all(&mut writer)?;
+/// # Ok(())
+/// # }
 /// ```
 
 pub struct WindowSorter {

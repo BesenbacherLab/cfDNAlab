@@ -19,6 +19,7 @@ enum Stage {
 /// ```rust
 /// use cfdnalab::shared::coverage::Coverage;
 /// use cfdnalab::shared::fragment::minimal_fragment::Fragment;
+/// use cfdnalab::shared::gc_tag::GcTagValue;
 ///
 /// # use anyhow::Result;
 /// # fn demo() -> Result<()> {
@@ -26,10 +27,23 @@ enum Stage {
 /// let mut cp = Coverage::new(length);
 ///
 /// // Unweighted fragment
-/// cp.add_fragment(Fragment { tid: 0, start: 100, end: 200 })?;
+/// cp.add_fragment(Fragment {
+///     tid: 0,
+///     start: 100,
+///     end: 200,
+///     gc_tag: GcTagValue::default(),
+/// })?;
 ///
 /// // GC-weighted fragment
-/// cp.add_fragment_weighted(Fragment { tid: 0, start: 150, end: 250 }, 0.87)?;
+/// cp.add_fragment_weighted(
+///     Fragment {
+///         tid: 0,
+///         start: 150,
+///         end: 250,
+///         gc_tag: GcTagValue::default(),
+///     },
+///     0.87,
+/// )?;
 ///
 /// // Optional blacklist
 /// cp.set_blacklist_mask(&vec![(120, 140), (150, 153)])?;
