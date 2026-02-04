@@ -314,8 +314,6 @@ cfdna lengths \
 
 Multiple studies have used profiled the midpoint coverage around e.g. transcription factor binding sites (summed per transcription factor, per position) [REFS]. This can inform about the binding activity of different transcription factors related to cancer.
 
-A common binding site window size is `2001bp`, centered around the binding site center.
-
 ```bash
 
 cfdna midpoints --help
@@ -342,6 +340,12 @@ cfdna midpoints \
 ```
 
 [TODO: Note on how to get griffin-like profiles]
+
+#### Intervals
+
+The intervals must have the same fixed size. A common binding site window size is `2001bp`, centered around the binding site center. The expected columns are: `chromosome, start, end, group_name` (where `group_name` is the group to collapse profiles by, e.g., the transcription factor ID). The intervals should be sorted by chromosome and start-coordinates.
+
+Consider removing intervals that lie closer than half the maximum fragment length from any blacklisted region, to reduce mappability biases. 
 
 ### Everything combined
 
@@ -384,6 +388,61 @@ cfdna lengths --bam $BAM --output-dir $OUT/lengths_per_5mb_100_220 --by-size 500
 cfdna midpoints --bam $BAM --output-dir $OUT/midpoints --intervals $MIDPOINT_INTERVALS --blacklist $BLACKLIST --length-bins $MINLENGTH $(($MAXLENGTH+1)) --gc-file $OUT/gc_bias/gc_bias_correction.npz --ref-2bit $ASSEMBLY --scaling-factors $OUT/coverage_weights/$SAMPLE_NAME.scaling_factors.tsv --n-threads $THREADS
 
 ```
+
+---
+
+## Unpaired (--reads-are-fragments)
+
+If you have Nanopore-sequenced cell-free DNA (or similar) where each read represents the full fragment, you can supply the `--reads-are-fragments` flag. This will consider each read a full fragment. 
+
+Simplest example:
+
+```bash
+
+cfdna fcoverage --help
+
+cfdna fcoverage \
+  --bam <sample>.bam \                          # Coordinate-sorted bam file with cfDNA
+  --output-dir <sample_directory>/coverage \    # Where to write files
+  --output-prefix <sample_id> \                 # A file prefix to identify the sample (optional)
+  --reads-are-fragments                         # Consider each read a fragment
+
+```
+
+---
+
+## Output formats
+
+The various commands produce either Numpy arrays (`.npy`, `.npz`), `.tsv.zst`, `.bedgraph.zst`, or text/json files.
+
+Numpy files can be read with python:
+
+```python
+
+import numpy as np
+
+x = np.load("path_to/file.npy")
+y = np.load("path_to/file.npz")
+
+```
+
+zstd-compressed files can be decompressed with:
+
+```bash
+
+zstd -d path_to/file.tsv.zst
+
+# Read with cat
+zstdcat path_to/file.tsv.zst
+
+```
+
+Tip: Bedgraph files can be converted to bigwig files for indexed lookup.
+
+File columns: [TODO: Check correctness]
+
+- Bedgraph: `chromosome  start  end  value`
+- Scaling factors TSV: `chromosome  start  end  scaling_factor`
 
 ---
 
