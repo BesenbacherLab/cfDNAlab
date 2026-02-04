@@ -17,7 +17,7 @@ This document explains how we turn the selection specs into the exact positions 
    Turn the surviving bases into **contiguous windows** ("runs"), e.g. `[start ... end]`.
 
 4. **Final step (k-independent):**
-   Apply a single `--step` **after** intersection, using the **first spec’s frame** as the stepping origin. This does not change the runs, it only marks every Nth eligible base as a candidate count site: in forward orientation the k-mer starts at that base; in reverse orientation the k-mer spans backward from that base by k−1 bases. 
+   Apply a single `--step` **after** intersection, using the **first spec’s frame** as the stepping origin. This does not change the runs, it only marks every Nth eligible base as a candidate count site: in forward orientation the k-mer starts at that base; in reverse orientation the k-mer spans backward from that base by k−1 bases.
    <br />Still no k-mer length involved.
 
 5. **k-mer fit (k-dependent):**
@@ -77,26 +77,25 @@ Each frame turns its positions string into **eligible bases** (k-independent). E
 
 * **Mid**
   Works in signed offsets around the middle. Counting is performed in the forward direction (left -> right).
-  - Let **center** be `floor(fragment length / 2)`.
-  - For **odd** lengths, index `center` is the physical middle.
-  - For **even** lengths (L = 2m), there are two central bases: `m-1` and `m`. To avoid a 1bp bias and to keep windows the same size as for odd-length fragments, we **choose which central base is offset `0` per fragment** using a stable hash of the fragment (deterministic, no random state). The other central base becomes `+1` or `-1` accordingly.
-  
-  **Stepping origin** when `Mid` is first frame: offset `0`; stepping is symmetric (..., −step, 0, +step, ...).
-  
-  Mid does **not** forbid k-mers from crossing the midpoint.
+  * Let **center** be `floor(fragment length / 2)`.
+  * For **odd** lengths, index `center` is the physical middle.
+  * For **even** lengths (L = 2m), there are two central bases: `m-1` and `m`. To avoid a 1bp bias and to keep windows the same size as for odd-length fragments, we **choose which central base is offset `0` per fragment** using a stable hash of the fragment (deterministic, no random state). The other central base becomes `+1` or `-1` accordingly.
 
+  **Stepping origin** when `Mid` is first frame: offset `0`; stepping is symmetric (..., −step, 0, +step, ...).
+
+  Mid does **not** forbid k-mers from crossing the midpoint.
 
 ---
 
 ## Multiple specs
 
 * The **first** spec is the **primary** spec. It decides how results are expressed:
-  - Which frame the reported positions refer to (`Left`, `Right`, `Mid`, `Nearest`, `Per-End`).
-  - Which strand/orientation is used when counting (forward vs reverse; reverse means bases are complemented).
-  - The output structure:
-    - One or two tracks (`Per-End`).
-    - Folded around the middle (`Nearest`) or unfolded.
-  - Which origin to `--step` from.
+  * Which frame the reported positions refer to (`Left`, `Right`, `Mid`, `Nearest`, `Per-End`).
+  * Which strand/orientation is used when counting (forward vs reverse; reverse means bases are complemented).
+  * The output structure:
+    * One or two tracks (`Per-End`).
+    * Folded around the middle (`Nearest`) or unfolded.
+  * Which origin to `--step` from.
 * Later specs **only filter**. They can only remove eligible bases.
 * We intersect **eligible bases** across all specs before any stepping or k-mer checks.
 
@@ -106,7 +105,7 @@ Each frame turns its positions string into **eligible bases** (k-independent). E
 
 Intersecting several specs can produce several **disjoint regions**. We compress the surviving bases into inclusive **runs**:
 
-```
+```text
 [ start0 ... end0 ], [ start1 ... end1 ], ...
 ```
 
@@ -183,7 +182,6 @@ Command:
 ### Opportunities
 
 Some offsets have fewer chances to receive counts, e.g. when a window selection is bigger than a given fragment. To allow normalization even when using weighted counts, we also output **opportunities** per offset, per k: the number of times a k-mer could have been counted at that offset after intersection, run formation, final step, k-span fit, and segment clipping. Rates can be derived as `counts / opportunities` when desired.
-
 
 ---
 

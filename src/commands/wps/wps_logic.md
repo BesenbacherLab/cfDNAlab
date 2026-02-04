@@ -14,7 +14,7 @@ For each genomic center `c` we place a window of width `window_size` around that
 
 The WPS at `c` is:
 
-```
+```text
 WPS(c) = protected_fragments(c) - endpoint_hits(c)
 ```
 

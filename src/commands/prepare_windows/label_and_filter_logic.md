@@ -43,19 +43,20 @@ The parts inside `--compose` are comma separated.
 The base pieces you can reference anywhere
 
 * `input` — original group from `--group-cols`.
-  - When windows carry multiple groups, values are joined with `__` in stable order.
-  - Missing group values are written as `[NA]` so each label keeps the same number of segments.
+  * When windows carry multiple groups, values are joined with `__` in stable order.
+  * Missing group values are written as `[NA]` so each label keeps the same number of segments.
 * `win-direction` — one of `- + =` describing where the window sits relative to the near interval **and its strand**:
-  - `-` window upstream of the near interval
-  - `+` window downstream of the near interval
-  - `=` window overlaps the near interval
+  * `-` window upstream of the near interval
+  * `+` window downstream of the near interval
+  * `=` window overlaps the near interval
   Distances are oriented the same way - strand flips upstream/downstream for `-` strand intervals.
-  - When a chromosome has no near intervals, this is `[NONE]`.
+
+  * When a chromosome has no near intervals, this is `[NONE]`.
 * `near-name` — the group name from the near file.
-  - Missing group values are written as `[NA]` so each label keeps the same number of segments.
-  - When a chromosome has no near intervals, this is `[NONE]`.
+  * Missing group values are written as `[NA]` so each label keeps the same number of segments.
+  * When a chromosome has no near intervals, this is `[NONE]`.
 * `bin` — the distance bin label.
-  - When a chromosome has no near intervals, this is `[NO-NEAR]` if `--distance-bins` is set.
+  * When a chromosome has no near intervals, this is `[NO-NEAR]` if `--distance-bins` is set.
 * `cluster` — set to `cluster` for windows that meet the overlap threshold, otherwise `none`.
 
 If a value is missing, it is empty.
@@ -101,9 +102,9 @@ A named composition is a label you define by listing parts in order. The tool jo
 
 * `<PARTS...>` can include atomic parts and names of **earlier** compositions.
 * Compositions form a directed acyclic graph.
-  - Cycles and references to unknown names are rejected with a clear error
+  * Cycles and references to unknown names are rejected with a clear error
 * The join character is a dot between parts. We **do not drop empty parts**.
-  - If a part is missing, we leave an empty segment so splitting later is consistent.
+  * If a part is missing, we leave an empty segment so splitting later is consistent.
 
 ### Compositions when a window has multiple tuples
 
@@ -126,14 +127,14 @@ When a window has more than one label tuple (after a merge or a near tie), a com
 **What gets written**
 
 * If only `input` varies, we compact the label.
-  - `core` column -> `A__B.prox`
+  * `core` column -> `A__B.prox`
 * If other parts differ, we write a list to preserve pairings.
-  - Example: near ties with signed bins -> `core` column -> `A.up,A.down`
+  * Example: near ties with signed bins -> `core` column -> `A.up,A.down`
 
 **What gets counted**
 
 * If you set `--min-per core=N`, counting uses the **expanded values**
-  - The example window contributes `+1` to bucket `A.prox` and `+1` to bucket `B.prox`
+  * The example window contributes `+1` to bucket `A.prox` and `+1` to bucket `B.prox`
 * The window **passes** the `core=N` rule if **any** of its buckets reaches at least `N` in the final counts
 
 **Recursive interaction with `--min-per`**
@@ -208,10 +209,10 @@ Examples
 Use `--merge-on` to choose which coordinates define merging.
 
 * **Resized**:
-  - Merge uses resized coordinates.
+  * Merge uses resized coordinates.
 * **Original**:
-  - Merge uses original coordinates.
-  - If resizing is configured, the merged window is resized after merging.
+  * Merge uses original coordinates.
+  * If resizing is configured, the merged window is resized after merging.
 
 When no resize or flank is configured, resized coordinates match the originals.
 
@@ -227,9 +228,9 @@ Distance binning uses a single coordinate choice. Resized coordinates are the de
 Use `--distance-from` to select the coordinate set.
 
 * **Resized**:
-  - Distances and bins are computed on the resized coordinates.
+  * Distances and bins are computed on the resized coordinates.
 * **Original**:
-  - Distances and bins are computed on the original coordinates.
+  * Distances and bins are computed on the original coordinates.
 
 When no resize or flank is configured, resized coordinates match the originals.
 
@@ -305,17 +306,17 @@ You can set several min-per rules. Each rule is a key and a threshold.
 **Counting rules by key**
 
 * `input`:
-  - **Any-member** counting: A window with `input = A__B` adds one to `A` and one to `B`.
-  - The window satisfies `input=N` if **any** of its input groups ends up with a count at least `N`.
+  * **Any-member** counting: A window with `input = A__B` adds one to `A` and one to `B`.
+  * The window satisfies `input=N` if **any** of its input groups ends up with a count at least `N`.
 
 * Atomic parts (`win-direction`, `near-name`, `bin`):
-  - Each window adds one to every distinct value it carries for that part.
-  - This can be more than one bucket when near ties create multiple tuples.
-  - The window satisfies the rule if any of its buckets reaches the threshold.
+  * Each window adds one to every distinct value it carries for that part.
+  * This can be more than one bucket when near ties create multiple tuples.
+  * The window satisfies the rule if any of its buckets reaches the threshold.
 
 * Named compositions:
-  - If the composition produces multiple labels for a window, it uses the same any-member logic.
-  - If the composition produces a single label, it behaves like a single-valued atomic key.
+  * If the composition produces multiple labels for a window, it uses the same any-member logic.
+  * If the composition produces a single label, it behaves like a single-valued atomic key.
 
 **Pruning label assignments during recursive filtering**
 
@@ -341,14 +342,16 @@ When any `--min-per` rule excludes label values for a key, those values are remo
 14. Build named compositions from the current atomic parts for each tuple.
 15. Apply label exclusion rules and drop any windows that match.
 16. **Recursive filtering loop**
+
    Repeat the following until nothing changes:
 
-   * Compute counts for every key referenced by `--min-per` on the **current** window assignments.
-   * For each key, determine which label values meet its threshold.
-   * For every window and for every key:
-     - If the window's assignment for that key is single-valued and that value does not meet the threshold, drop the window.
-     - If the window's assignment for that key has multiple values, remove the values that do not meet the threshold. If no values remain for that key, drop the window.
-   * Rebuild any compositions affected by these removals (for example, compositions that include `input`).
+* Compute counts for every key referenced by `--min-per` on the **current** window assignments.
+* For each key, determine which label values meet its threshold.
+* For every window and for every key:
+  * If the window's assignment for that key is single-valued and that value does not meet the threshold, drop the window.
+  * If the window's assignment for that key has multiple values, remove the values that do not meet the threshold. If no values remain for that key, drop the window.
+* Rebuild any compositions affected by these removals (for example, compositions that include `input`).
+
 17. Write the requested columns from the final stable state in the order given by `--out-labels`.
 
 ---
@@ -362,8 +365,8 @@ When any `--min-per` rule excludes label values for a key, those values are remo
 * Multiple distinct labels inside a single column are joined with `,`.
   Example: `A.up,A.down`.
 * Missing atomic values are written as empty fields.
-  - Missing parts in a composition appear as empty segments between dots so every composition keeps the same number of fields after splitting.
-  - Example: `A..prox` means the middle part is empty.
+  * Missing parts in a composition appear as empty segments between dots so every composition keeps the same number of fields after splitting.
+  * Example: `A..prox` means the middle part is empty.
 
 ---
 

@@ -17,13 +17,13 @@ This generated report captures the behavior that currently ships in `cfdna wps-p
    - Optional scaling factors are loaded and later used to rescale per-position WPS after the core calculation (identical to `cfdna wps`).
 
 2. **Tile construction**
-  - `build_tiles` splits chromosomes into overlapping tiles. Each tile’s core is surrounded by a symmetric halo large enough to cover the WPS window. When `wps_for_tile` runs it extends both sides by `window_left + EXTRA_PEAK_HALO_BP` on the start and `window_right + EXTRA_PEAK_HALO_BP` on the end. The left extension also drives `initial_segment_marker`, ensuring the first peak in the tile is aware of the last masked region upstream.
+   - `build_tiles` splits chromosomes into overlapping tiles. Each tile’s core is surrounded by a symmetric halo large enough to cover the WPS window. When `wps_for_tile` runs it extends both sides by `window_left + EXTRA_PEAK_HALO_BP` on the start and `window_right + EXTRA_PEAK_HALO_BP` on the end. The left extension also drives `initial_segment_marker`, ensuring the first peak in the tile is aware of the last masked region upstream.
    - For fixed-size windows, `build_tiles` also reports whether tile boundaries align with window boundaries. When aligned, downstream code can treat stats as pure bin aggregates without streaming per-peak data.
 
 3. **Per-tile WPS computation**
-  - `peaks_for_tile` calls `wps_for_tile` in positional mode. It ignores per-window aggregation at this stage and requests both the WPS vector and the associated mask.
-  - `wps_for_tile` enforces fragment-level filters declared in `WPSSharedConfig`: fragment length bounds, MAPQ cutoff, inward orientation, required proper pair (depending on config), and blacklist checks.
-  - The mask returned by `wps_for_tile` marks chromosome edges, dilated blacklist regions, and any bases whose baseline window would leave the fetch halo. `peaks_for_tile` pads/truncates the mask to match the WPS length before sending both downstream.
+   - `peaks_for_tile` calls `wps_for_tile` in positional mode. It ignores per-window aggregation at this stage and requests both the WPS vector and the associated mask.
+   - `wps_for_tile` enforces fragment-level filters declared in `WPSSharedConfig`: fragment length bounds, MAPQ cutoff, inward orientation, required proper pair (depending on config), and blacklist checks.
+   - The mask returned by `wps_for_tile` marks chromosome edges, dilated blacklist regions, and any bases whose baseline window would leave the fetch halo. `peaks_for_tile` pads/truncates the mask to match the WPS length before sending both downstream.
 
 4. **Signal conditioning** (`PeakSignalProcessingOptions`)
    - **Smoothing:** Enabled unless `--no-smoothing` is passed. The Savitzky Golay filter uses a 21 bp, order-2 kernel (`SG_HALF_WINDOW = 10`). Masked positions split the signal into independent segments; each segment is mirrored on both sides before convolution.
@@ -32,15 +32,15 @@ This generated report captures the behavior that currently ships in `cfdna wps-p
 
 5. **Peak detection** (`call_peaks.rs`)
    - Residuals (i.e. median-subtracted smoothed WPS) are scanned left to right. Masked bases and `NaN`s finalize the current run.
-  - Short gaps (`MAX_GAP = 5 bp`) are bridged by inserting zeros, so minor dips do not break a run. Snyder’s script does the same by pushing `0` values while `ipos <= cend + 5` (see `snyder_code.md`).
+   - Short gaps (`MAX_GAP = 5 bp`) are bridged by inserting zeros, so minor dips do not break a run. Snyder’s script does the same by pushing `0` values while `ipos <= cend + 5` (see `snyder_code.md`).
    - Runs shorter than 50 bp or longer than 450 bp are discarded (`MIN_LENGTH = 50`, `MAX_LENGTH = 150`, `MAX_RUN_LENGTH = 3 * MAX_LENGTH`).
-  - A run is filtered through its own median: only positions with residuals >= run median survive.
-  - Surviving positions are collapsed into sub windows. For runs up to 150 bp the densest sub window (by summed residual) is reported once. For longer runs (<= 450 bp) every contiguous sub window whose length sits within 50-150 bp and whose max residual exceeds `--min-peak-height` becomes a peak.
-  - Each `PeakCall` records: chromosome, inclusive start, exclusive end, `peak_position` (where the residual reaches its max), `height` (that max), and `segment_id`. The `segment_id` equals the barrier marker that was active when the run started and is incremented every time a mask or run reset occurs. Stats use it to avoid crossing masked gaps.
+   - A run is filtered through its own median: only positions with residuals >= run median survive.
+   - Surviving positions are collapsed into sub windows. For runs up to 150 bp the densest sub window (by summed residual) is reported once. For longer runs (<= 450 bp) every contiguous sub window whose length sits within 50-150 bp and whose max residual exceeds `--min-peak-height` becomes a peak.
+   - Each `PeakCall` records: chromosome, inclusive start, exclusive end, `peak_position` (where the residual reaches its max), `height` (that max), and `segment_id`. The `segment_id` equals the barrier marker that was active when the run started and is incremented every time a mask or run reset occurs. Stats use it to avoid crossing masked gaps.
    - Peaks are clipped to the tile core before being persisted to ensure no peaks are included in more than one tile.
 
 6. **Tile outputs and persistence**
-  - Every tile writes its peaks to `tmp.<prefix>.tile.<chrom>.<idx>.peaks.tmp`. When stats are requested the tile also returns `WindowStatsContribution` structs in-memory (not on disk) so the writer can stitch aligned windows without re-reading peaks.
+   - Every tile writes its peaks to `tmp.<prefix>.tile.<chrom>.<idx>.peaks.tmp`. When stats are requested the tile also returns `WindowStatsContribution` structs in-memory (not on disk) so the writer can stitch aligned windows without re-reading peaks.
    - Non-windowed runs call `GlobalWriter` to concatenate every tile file into `<prefix>.wps.peaks.tsv.zst` with the header `chromosome start end peak_position height`.
    - When windows are requested (`--by-bed` or `--by-size`), `WindowOutputWriter` orchestrates the merge:
      - **Window sources**
@@ -48,8 +48,8 @@ This generated report captures the behavior that currently ships in `cfdna wps-p
        - `WindowSource::FixedSizeBuffered`: used when tile and window boundaries do not align. `FixedSizeWindows` streams windows per chromosome, maintains `next_start` and `next_idx`, and can spawn windows that begin before the current tile so long as they overlap it.
        - `WindowSource::FixedSizeAligned`: used when tiles align with bins. Because windows are deterministic, stats do not need to examine peaks directly; the writer only needs the per-window contributions that `peaks_for_tile` precomputed.
      - **Output modes**
-      - `Unique`: per-window merge of peaks by genomic position. Peaks sharing the same base keep only the highest height. Outputs `chromosome start end height` (start=end-1).
-      - `Indexed`: all peaks inside a window are written individually along with the zero-based window index. Peaks are not deduplicated.
+     - `Unique`: per-window merge of peaks by genomic position. Peaks sharing the same base keep only the highest height. Outputs `chromosome start end height` (start=end-1).
+     - `Indexed`: all peaks inside a window are written individually along with the zero-based window index. Peaks are not deduplicated.
        - `Stats`: per-window peak counts plus average and median inter-peak distances.
      - `WindowAccumulator` keeps state for all windows overlapping the running tile. It stores either a `BTreeMap` (unique) or a `Vec<PeakCall>` (indexed). For stats it stores counts, first/last peaks, first/last segments, and a histogram of observed distances.
      - Completed windows are flushed when their end coordinate drops behind the end of the current tile. A chromosome change flushes any remaining windows.
@@ -57,7 +57,7 @@ This generated report captures the behavior that currently ships in `cfdna wps-p
 7. **Stats computation**
    - For each tile the code optionally pre-computes `WindowStatsContribution` objects. Each contribution covers one window and contains: peak count, first/last peak position, first/last segment ID, sum of distances, and a histogram keyed by distance (bp).
    - `compute_window_stats_contributions` enforces that distances are only measured within the same `segment_id`, so masked gaps or tile boundaries do not inflate inter-peak spacing.
-   - When the writer processes tiles in stats mode: 
+   - When the writer processes tiles in stats mode:
      - If contributions exist (window-aligned fixed-size runs), it merges them through `apply_stats_contribution`. This function also stitches the distance between the last peak of the previous tile and the first peak of the new tile **if** both belong to the same window **and** share the same `segment_id`.
      - If no contributions exist (BED windows or buffered fixed-size windows), peaks are streamed through `WindowAccumulator.push_peak` to build the histogram directly.
    - Average distances are `distance_sum / total_distances`. Medians are computed from the histogram via cumulative rank.
@@ -105,6 +105,6 @@ This generated report captures the behavior that currently ships in `cfdna wps-p
 | Stats stitching     | Distances across tiles are only counted when both peaks share a `segment_id`. The doc only states that masking should break runs but does not describe segment-aware stitching.                                                    | Doc should clarify that stats purposely ignore masked gaps even if windows overlap tiles. |
 | Window merging      | Unique per-window outputs merge overlapping BED windows up front. Logic doc simply says “Peaks outside windows are ignored.”                                                                                                       | Document the pre-merge behavior so users know why duplicate positions disappear.          |
 | Default threshold   | Implementation defaults to 3.0. Logic doc calls the Snyder cutoff “TODO: tune default empirically” but does not state the current value.                                                                                           | Keep doc synchronized.                                                                    |
-| Experimental status | Config docstrings now mark `fragment-kmers`, `visualize-positions`, and `wps-peaks` as experimental features gated behind Cargo flags. `peak_calling_logic.md` does not mention that the subcommand can be disabled at build time. |
+| Experimental status | Config docstrings now mark `fragment-kmers`, `visualize-positions`, and `wps-peaks` as experimental features gated behind Cargo flags. `peak_calling_logic.md` does not mention that the subcommand can be disabled at build time. |  |
 
 These differences do not block the current implementation but should be reconciled when the doc is next updated so that the design doc matches reality.

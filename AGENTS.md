@@ -1,6 +1,7 @@
 # AGENTS.md
 
 ## Code Style
+
 - **Write for humans.** Prefer clear, direct language over buzzwords or slang. Comments should help a typical programmer understand intent and edge cases.
 - **Comment generously.** Explain *why* as well as *what*. If you remove outdated comments, **add** updated ones so net documentation never decreases.
 - **Keep code simple.** Choose the simplest readable approach unless a more complex solution brings substantial gains (speed/memory). If complexity seems warranted, briefly note the trade-off or ask before proceeding.
@@ -12,11 +13,12 @@
 Help strings are defined via docstrings in the config files. This needs to be useful for any newcomer or experienced user.
 
 ## Docstrings
+
 Docstrings should read like a short tutorial, then details, then structured sections. You may also add examples when they are relevant.
 
 Bullet points in CLI-facing documentation (config files) should have a newline between them, otherwise CLI collapses the sentences.
 
-Reduce the number of semi-colons in docstrings and comments. Use comma or dot instead. 
+Reduce the number of semi-colons in docstrings and comments. Use comma or dot instead.
 
 In-line comments start with title-cased first word and does not have a terminal dot *in the end*. E.g. `// A comment`
 
@@ -25,12 +27,14 @@ Never use "…" or similar non-ascii symbols. They don't work in the terminal. U
 Adapt to my language. If I use "center", don't use "centre". Don't use words/phrases that humans rarely use when unnecessary, like "emit", "bubbles up"/"bubbling".
 
 **Order**
+
 1. **Summary (pedagogical):** What this does and when to use it. (The pedagogical part is implicit, not explicit, don't add "friendly summary" etc.)
 2. **Technical details:** Key behavior, assumptions, edge cases, complexity notes.
 3. **Parameters**
 4. **Returns**
 
 **Template**
+
 ```python
 def fn(...):
     """
@@ -95,11 +99,11 @@ IMPORTANT! When developing new tests, do NOT run the tests before you've finishe
 
 Include at least:
 
- - Happy-path tests (expected inputs).
+- Happy-path tests (expected inputs).
 
- - Edge-case tests (empty/small/large inputs, boundary values).
+- Edge-case tests (empty/small/large inputs, boundary values).
 
- - Regression tests for previously fixed bugs.
+- Regression tests for previously fixed bugs.
 
 See the below testing best-behaviors and try to follow them. Without proper tests validating logic, code is useless.
 

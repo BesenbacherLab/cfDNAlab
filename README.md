@@ -1,4 +1,4 @@
-# cfDNAlab  <a href='https://github.com/ludvigolsen/cfdnalab'><img src='https://raw.githubusercontent.com/ludvigolsen/cfdnalab/main/cfdnalab_logo_257x285_250dpi.png' align="right" height="160" /></a>
+# cfDNAlab <a href='https://github.com/ludvigolsen/cfdnalab'><img src='https://raw.githubusercontent.com/ludvigolsen/cfdnalab/main/cfdnalab_logo_257x285_250dpi.png' align="right" height="160" /></a>
 
 Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. Apply sample-specific GC correction and large-scale genomic smoothing.
 
@@ -6,7 +6,7 @@ Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaire
 
 The commands are **highly flexible** with many options and good default settings. See [recipes](#recipes) in the end of this README for usage examples.
 
-The package is in alpha-stage (being developed). Multiple additional commands are currently being built. 
+The package is in alpha-stage (being developed). Multiple additional commands are currently being built.
 Suggest a tool or feature [here](https://github.com/LudvigOlsen/cfDNAlab/issues/new/choose)!
 
 ---
@@ -18,24 +18,25 @@ Suggest a tool or feature [here](https://github.com/LudvigOlsen/cfDNAlab/issues/
 You may need a few dependencies that can be installed as a conda environment with:
 
 ```bash
-$ conda create -n cfdnalab rust=1.87.0 zstandard perl fontconfig conda-forge::llvmdev conda-forge::clangdev
-$ conda activate cfdnalab
+conda create -n cfdnalab rust=1.87.0 zstandard perl fontconfig conda-forge::llvmdev conda-forge::clangdev
+conda activate cfdnalab
 ```
 
 Compile and install:
 
 ```bash
-$ cargo install --git https://github.com/ludvigolsen/cfDNAlab
-$ cfdna --help
+cargo install --git https://github.com/ludvigolsen/cfDNAlab
+cfdna --help
 # or clone + build
-$ git clone https://github.com/ludvigolsen/cfDNAlab
-$ cd cfdnalab && cargo build --release --features cli,plotters
-$ target/release/cfdna --help
+git clone https://github.com/ludvigolsen/cfDNAlab
+cd cfdnalab && cargo build --release --features cli,plotters
+target/release/cfdna --help
 ```
 
 ---
 
 ## Commands
+
 The following commands are currently available:
 
 | Command                              | Description                                                                                                                                                                                                            |
@@ -54,26 +55,25 @@ The following commands are currently available:
 
 Planned: `cfdna ends` (end-motifs, breakpoint motifs), `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks` (call windowed protection score peaks). Let us know what other fragmentomics features you would like to extract with `cfDNAlab`.
 
-
 ### Common options
 
- - **GC bias correction**: Perform GC bias correction by weighting the contribution of each fragment by their GC content.
+- **GC bias correction**: Perform GC bias correction by weighting the contribution of each fragment by their GC content.
 
- - **Blacklist filtering**: Supply BED files with regions to exclude. The implementation is specific to each tool (filtering of full fragments or just the overlapping positions).
- 
- - **Windowing**: Perform the command in genomic windows. Either a single global window (default), windows specified in a BED file, or via a fixed window size. Assign fragments to windows by how they overlap.
- 
- - **Genomic smoothing**: Scale the contribution of fragments by their coverage in megabase-scale overlapping bins. This reduces the effect of amplifications and deletions.
+- **Blacklist filtering**: Supply BED files with regions to exclude. The implementation is specific to each tool (filtering of full fragments or just the overlapping positions).
+
+- **Windowing**: Perform the command in genomic windows. Either a single global window (default), windows specified in a BED file, or via a fixed window size. Assign fragments to windows by how they overlap.
+
+- **Genomic smoothing**: Scale the contribution of fragments by their coverage in megabase-scale overlapping bins. This reduces the effect of amplifications and deletions.
 
 ---
 
 ## FAQ
 
- - How is *fragment* coverage different from the outputs of similar tools like `mosdepth` and `samtools`?
-   - `mosdepth` counts the coverage of aligned bases per *read* [TODO: Not that simple]. `fcoverage` instead first collects the paired reads into a fragment and then counts the coverage of the aligned bases and (optionally) the gap between mate reads.  (TODO on samtools!).
- 
- - How do you define a "fragment" in paired-end sequencing data?
-   - We define the *fragment* as the bases from the start of the forward read till the end of the reverse read (`[start(forward), end(reverse))`) for *inwardly directed* pairs only (i.e., where `start(forward) <= start(reverse)`), as suggested by Wang, H. et al. 2025. Some methods exclude deletions and skipped-regions.
+- How is *fragment* coverage different from the outputs of similar tools like `mosdepth` and `samtools`?
+  - `mosdepth` counts the coverage of aligned bases per *read* [TODO: Not that simple]. `fcoverage` instead first collects the paired reads into a fragment and then counts the coverage of the aligned bases and (optionally) the gap between mate reads. (TODO on samtools!).
+
+- How do you define a "fragment" in paired-end sequencing data?
+  - We define the *fragment* as the bases from the start of the forward read till the end of the reverse read (`[start(forward), end(reverse))`) for *inwardly directed* pairs only (i.e., where `start(forward) <= start(reverse)`), as suggested by Wang, H. et al. 2025. Some methods exclude deletions and skipped-regions.
 
   Fragment visualization:
 
@@ -83,21 +83,21 @@ Planned: `cfdna ends` (end-motifs, breakpoint motifs), `cfdna fragment-kmers` (c
   Forward   5' |>>>>>>>| 3'     
   Reverse        3' |<<<<<<<<| 5' 
   ``` 
- 
- - Should I order the BAM files differently to allow pairing of reads into fragments?
-   - No, we expect BAM files to be *coordinate-sorted* and indexed.
- 
- - How do I run the command for unpaired data?
-   - Most commands accept `--reads-are-fragments`. Each read is then assumed to represent a full fragment.
 
- - How did you use LLMs (AI) in this project?
-   - OpenAI's codex models were used for pair programming to speed up development and testing. All code for the released commands have been designed and validated by us.
+- Should I order the BAM files differently to allow pairing of reads into fragments?
+  - No, we expect BAM files to be *coordinate-sorted* and indexed.
+
+- How do I run the command for unpaired data?
+  - Most commands accept `--reads-are-fragments`. Each read is then assumed to represent a full fragment.
+
+- How did you use LLMs (AI) in this project?
+  - OpenAI's codex models were used for pair programming to speed up development and testing. All code for the released commands have been designed and validated by us.
 
 ---
 
 ## Recipes
 
-We aim for high flexibility to make the commands useful for both established and novel use cases. This leads to commands having many options. The following recipes (examples) will get you quickly up and running with common cfDNA analyses. 
+We aim for high flexibility to make the commands useful for both established and novel use cases. This leads to commands having many options. The following recipes (examples) will get you quickly up and running with common cfDNA analyses.
 
 The final example is a full pipeline for running everything (but without the explanations from the separate examples).
 
@@ -109,7 +109,7 @@ The final example is a full pipeline for running everything (but without the exp
 
 Fragmentomics features are vulnerable to biases from various sample-handling and sequencing processes, such as PCR amplification. `cfDNAlab` commands thus allow the correction of the commonly observed **GC-bias**.
 
-This requires only a few steps: 
+This requires only a few steps:
 
 1) Calculate the "expected" GC bias in the reference genome assembly (e.g., hg38). This can be **REUSED for all samples** aligned to that assembly:
 
@@ -146,7 +146,6 @@ cfdna gc-bias \
 
 3) Provide the correction factors when running the feature extraction commands **on the same BAM file**:
 
-
 ```bash
 
 cfdna fcoverage \
@@ -170,7 +169,7 @@ cfdna fcoverage \
 
 ### Genomic smoothing pipeline
 
-For some commands, like `cfdna midpoints`, you may want all genomic regions to have approximately the same contribution to the features. E.g., to reduce the effect of copy number alterations. 
+For some commands, like `cfdna midpoints`, you may want all genomic regions to have approximately the same contribution to the features. E.g., to reduce the effect of copy number alterations.
 
 **Simplified**, this can be achieved by calculating the fragment coverage in a kilo/megabase resolution and dividing the contribution of each fragment (`1.0` or the gc-weight) by the coverage value.
 
@@ -178,7 +177,7 @@ For some commands, like `cfdna midpoints`, you may want all genomic regions to h
 
 **A**) It splits the genome into "stride-bins" (default: 500kb) and counts the average positional fragment coverage in each bin.
 
-**B**) It smoothes each bin with a triangular weighting kernel, that weights the coverage of the neighbouring stride-bins by how many overlapping megabins (default: 5Mb) they are part of. E.g.: 
+**B**) It smoothes each bin with a triangular weighting kernel, that weights the coverage of the neighbouring stride-bins by how many overlapping megabins (default: 5Mb) they are part of. E.g.:
 
 Using a megabin-size of `6` and stride size of `2` for demonstrational purposes:
 
@@ -186,9 +185,9 @@ Using a megabin-size of `6` and stride size of `2` for demonstrational purposes:
 
 `[A] [B] [C] [D] [E] [F] [G] ...`
 
-**Overlapping megabins** (`MB*`) each cover 3 stride-bins. 
-**`W_D`** weights each stride-bin by how many `D`-overlapping megabins it is part of. 
-Stride-bin `B` is only part of one megabin that overlaps `D`, so its (unnormalized) weight is 1. 
+**Overlapping megabins** (`MB*`) each cover 3 stride-bins.
+**`W_D`** weights each stride-bin by how many `D`-overlapping megabins it is part of.
+Stride-bin `B` is only part of one megabin that overlaps `D`, so its (unnormalized) weight is 1.
 In contrast, stride-bin `D` is naturally part of all three megabins, so its weight is 3:
 
 <pre>
@@ -245,7 +244,7 @@ cfdna midpoints \
 
 ### Fragment coverage
 
-Fragment coverage measures how many fragments overlap each genomic position. In contrast to many non-cfDNA-tools, we (optionally) count the gap between paired reads along with the aligned bases of the reads. We avoid double counting when reads overlap. 
+Fragment coverage measures how many fragments overlap each genomic position. In contrast to many non-cfDNA-tools, we (optionally) count the gap between paired reads along with the aligned bases of the reads. We avoid double counting when reads overlap.
 
 When no GC correction or genomic smoothing is applied, each fragment is counted as `1` in the overlapping (aligned / gap) positions. Using GC correction and/or genomic smoothing changes this to a weight (floating point).
 
@@ -260,7 +259,7 @@ cfdna fcoverage \
   --n-threads 12 \                              # Use 12 CPU cores (speed vs. RAM tradeoff)
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed \  # Tip: Use the same blacklists everywhere / per sample!
-  
+
   # OPTIONS:
 
   # Average per 1Mb positions
@@ -292,7 +291,7 @@ cfdna lengths \
   --n-threads 12 \                              # Use 12 CPU cores (speed vs. RAM tradeoff)
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed \  # Tip: Use the same blacklists everywhere / per sample!
-  
+
   # OPTIONS:
 
   # Adjust lengths to indels
@@ -326,7 +325,7 @@ cfdna midpoints \
   --intervals <fixed_size_intervals>.tsv \      # The grouped fixed-size intervals (see --help)
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed \  # Tip: Use the same blacklists everywhere / per sample!
-  
+
   # OPTIONS:
 
   # Separate counts per 10bp lengths (last edge is exclusive, 1000bp is excluded)
@@ -343,10 +342,9 @@ cfdna midpoints \
 
 The **intervals** must have the same fixed size. A common binding site window size is `2001bp`, centered around the binding site center. The expected columns are: `chromosome, start, end, group_name` (where `group_name` is the group to collapse profiles by, e.g., the transcription factor ID). The intervals should be sorted by chromosome and start-coordinates.
 
-Consider removing intervals that lie closer than half the maximum fragment length from any blacklisted region, to reduce mappability biases. 
+Consider removing intervals that lie closer than half the maximum fragment length from any blacklisted region, to reduce mappability biases.
 
 ### Everything combined
-
 
 [TODO: Add output-prefix for remaining commands]
 
@@ -391,7 +389,7 @@ cfdna midpoints --bam $BAM --output-dir $OUT/midpoints --intervals $MIDPOINT_INT
 
 ## Unpaired (--reads-are-fragments)
 
-If you have Nanopore-sequenced cell-free DNA (or similar) where each read represents the full fragment, you can supply the `--reads-are-fragments` flag. This will consider each read a full fragment. 
+If you have Nanopore-sequenced cell-free DNA (or similar) where each read represents the full fragment, you can supply the `--reads-are-fragments` flag. This will consider each read a full fragment.
 
 Simplest example:
 
@@ -446,4 +444,4 @@ File columns: [TODO: Check correctness]
 
 ## References
 
- - Wang, H., Mennea, P.D., Chan, Y.K.E. et al. A standardized framework for robust fragmentomic feature extraction from cell-free DNA sequencing data. Genome Biol 26, 141 (2025). https://doi.org/10.1186/s13059-025-03607-5
+- Wang, H., Mennea, P.D., Chan, Y.K.E. et al. A standardized framework for robust fragmentomic feature extraction from cell-free DNA sequencing data. Genome Biol 26, 141 (2025). <https://doi.org/10.1186/s13059-025-03607-5>

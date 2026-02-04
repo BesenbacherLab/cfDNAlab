@@ -1,6 +1,7 @@
 Generated ideas for future commands.
 
 ## Fragmentomics-like feature ideas not covered today
+
 - Fragment end coverage for 5' ends only, with strand-aware counts
 - End site diversity per window, using entropy or Gini to describe end clustering
 - End site spacing distribution and periodicity from adjacent end positions
@@ -22,7 +23,9 @@ Generated ideas for future commands.
 - End phase shift relative to WPS or nucleosome peak centers
 
 ## Derived features from existing outputs
+
 These can be computed from the windowed output of `cfdna lengths` and should not be new commands.
+
 - Short to long fragment ratios inside coarse genomic bins
 - Size band ratios for canonical cfDNA bands, reported by contig or read group
 - Fragment length quantiles, mean, and variance by window
@@ -30,8 +33,10 @@ These can be computed from the windowed output of `cfdna lengths` and should not
 - Mono, di, and tri nucleosome band ratios from length bins
 
 ## Less obvious tumor or tissue signal ideas
+
 These are higher risk and higher reward ideas that could help classify cancer vs control
 or estimate tissue of origin. Most need optional annotations or external atlases.
+
 - Fragment end enrichment against tissue specific open chromatin atlases
 - End density phase shift relative to known nucleosome dyads in different tissues
 - Cut site periodicity strength differences between active and inactive chromatin
@@ -52,6 +57,7 @@ or estimate tissue of origin. Most need optional annotations or external atlases
 - Fragmentation signatures around tissue specific methylation proxy regions
 
 ## Command ideas to make these available
+
 - `cfdna end-hotspots`:
   - Identify windows with enriched end density over local background
   - Output scores and ranked windows for downstream review
