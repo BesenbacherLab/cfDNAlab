@@ -206,26 +206,28 @@ pub struct LengthsConfig {
     /// How to weight the fragment length bins when estimating the global GC bias correction `[string]`
     ///
     /// To GC correct a fragment length distribution, the correction weights should be **length-agnostic**.
-    /// *If* we were to use the default `fragment length bin x GC percentage bin` correction matrix, which
-    /// has an independent GC correction curve per fragment length bin, the corrected counts per fragment length
-    /// would have the same distributional shape as the original counts
-    /// (assuming we're correcting the exact same fragments seen by `cfdna gc-bias`).
-    /// We thus average out the fragment length dimension to get the overall GC bias.
+    ///
+    /// The default `fragment-length x GC` matrix has one correction curve per length bin,
+    /// so using it would preserve the original length distribution (assuming we're correcting the
+    /// same fragments seen by `cfdna gc-bias`).
+    ///
+    /// We therefore average out the fragment length dimension to get a single, length-agnostic GC bias curve.
     ///
     /// We have three weighting options when averaging the fragment-length-wise correction curves:
     ///     
-    /// - `"equal"` weighting (default): Length-agnostic but rare bins may introduce noise.
+    /// - `"equal"` weighting (default): Weight every length bin the same.
     ///
-    ///   Each fragment length bin counts the same.
-    ///   This keeps the correction independent of the count distribution we're trying to estimate,
-    ///   but very rare fragment length bins contribute the same as the most present fragment lengths.
+    ///   Keeps the correction independent of the distribution we are trying to estimate.
+    ///
+    ///   Downside: Rare fragment length bins contribute the same as the most present fragment lengths.
+    ///   
     ///   For low-coverage BAM files, this *could* make the correction more volatile to outliers.
     ///
-    /// - `"coverage"`-based weighting: Works for the majority of fragments but biases correction based on target distribution.
+    /// - `"coverage"`-based weighting: Weight lengths by how often they were observed in `cfdna gc-bias`.
     ///
-    ///   Each fragment length bin is weighted by how often it was observed
-    ///   in `cfdna gc-bias`. This should work better for the majority of the observed fragments
-    ///   **BUT biases** the correction based on the fragment length distribution we are trying to estimate
+    ///   This should work better for the majority of the observed fragments **BUT**:
+    ///
+    ///   Downside: **Biases** the correction based on the length distribution we are trying to estimate
     ///   (assuming the same BAM-file was used to estimate the GC bias).
     ///
     /// - `"max-coverage"` weighting: Use the GC curve for the most-observed fragment length bin.
