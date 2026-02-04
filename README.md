@@ -91,7 +91,7 @@ Planned: `cfdna ends` (end-motifs, breakpoint motifs), `cfdna fragment-kmers` (c
    - Most commands accept `--reads-are-fragments`. Each read is then assumed to represent a full fragment.
 
  - How did you use LLMs (AI) in this project?
-   - OpenAI's codex models were used for pair programming to speed up development and testing. All released code have been designed and validated by us.
+   - OpenAI's codex models were used for pair programming to speed up development and testing. All code for the released commands have been designed and validated by us.
 
 ---
 
@@ -101,18 +101,29 @@ We aim for high flexibility to make the commands useful for both established and
 
 The final example is a full pipeline for running everything (but without the explanations from the separate examples).
 
+**Assembly**: The below examples use file names specific to the hg38 assembly, but any assembly (hg19 etc.) should work. Just be consistent, of course. Note that most commands use only the autosomes (`chr1-chr22`) by default (see `--chromosomes` in help files).
+
+**Fragment length range**: The min/max fragment length range defaults to `30-1000bp`. This can be specified via `--min-fragment-length` and `--max-fragment-length`. We suggest keeping this range for the `ref-gc-bias`, `gc-bias`, and `coverage-weights` commands (unless you want to support longer fragments than 1000bp). In the downstream feature extraction commands you can then narrow the range, if you want.
+
 ### GC correction pipeline
 
 Fragmentomics features are vulnerable to biases from various sample-handling and sequencing processes, such as PCR amplification. `cfDNAlab` commands thus allow the correction of the commonly observed **GC-bias**.
 
 This requires only a few steps: 
 
-1) Calculate the "expected" GC bias in the reference genome assembly (e.g., hg38). This can be **reused** for all samples aligned to that assembly:
+1) Calculate the "expected" GC bias in the reference genome assembly (e.g., hg38). This can be **REUSED for all samples** aligned to that assembly:
 
 ```bash
 
+cfdna ref-gc-bias --help
+
+# Run once per assembly
 cfdna ref-gc-bias \
-  ...
+  --ref-2bit <path>/hg38.2bit \
+  --output-dir <ref_gc_directory> \
+  --n-threads 12 \
+  --blacklist <path>/hg38-blacklist.v2.bed \
+  --blacklist <path>/<another_blacklist>.bed  # As many as you want
 
 ```
 
@@ -120,20 +131,29 @@ cfdna ref-gc-bias \
 
 ```bash
 
+cfdna gc-bias --help
+
 cfdna gc-bias \
-  ...
-  --ref-gc-dir <path>/
+  --bam <sample>.bam \
+  --output-dir <sample_directory>/gc_bias \
+  --n-threads 12 \
+  --ref-2bit <path>/hg38.2bit \
+  --ref-gc-dir <ref_gc_directory> \
+  --blacklist <path>/hg38-blacklist.v2.bed \
+  --blacklist <path>/<another_blacklist>.bed  # Should match those specified in ref-gc-bias!
 
 ```
 
-3) Provide the correction factors when running the feature extraction commands:
+3) Provide the correction factors when running the feature extraction commands **on the same BAM file**:
 
 
 ```bash
 
 cfdna fcoverage \
-  ...
-  --gc-file <path>/gc_bias_correction.npz
+  --bam <sample>.bam \
+  ... \  # See fcoverage example
+  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
+  --ref-2bit <path>/hg38.2bit
 
 ```
 
@@ -142,7 +162,8 @@ If you prefer a different/custom GC-bias tool, the feature extraction commands a
 ```bash
 
 cfdna fcoverage \
-  ...
+  --bam <sample>.bam \
+  ... \  # See fcoverage example
   --gc-tag 'GC'
 
 ```
@@ -155,9 +176,9 @@ For some commands, like `cfdna midpoints`, you may want all genomic regions to h
 
 **More detailed**, for a more smooth scaling, `cfdna coverage-weights` builds a smoothed normalization map using a sliding window:
 
-*A*) It splits the genome into "stride-bins" (default: 500kb) and counts the average positional fragment coverage in each bin.
+**A**) It splits the genome into "stride-bins" (default: 500kb) and counts the average positional fragment coverage in each bin.
 
-*B*) It smoothes each bin with a triangular weighting kernel, that weights the coverage of the neighbouring stride-bins by how many overlapping megabins (default: 5Mb) they are part of. E.g.: 
+**B**) It smoothes each bin with a triangular weighting kernel, that weights the coverage of the neighbouring stride-bins by how many overlapping megabins (default: 5Mb) they are part of. E.g.: 
 
 Using a megabin-size of `6` and stride size of `2` for demonstrational purposes:
 
@@ -188,7 +209,7 @@ W_D: [0][1][2][3][2][1][0]
 
 $$smoothCoverage_{D} = (0A + 1B + 2C + 3D + 2E + 1F + 0G) / (1+2+3+2+1)$$
 
-*C*) Finally, the values are **inverted** with $1/smoothCoverage$ to become multiplicative scaling factors (one per stride-bin). A fragment's contribution (`1.0` or the gc-weight) can then be scaled by multiplying by the scaling factor of the stride-bin it's located in.
+**C**) Finally, the values are **inverted** with $1/smoothCoverage$ to become multiplicative scaling factors (one per stride-bin). A fragment's contribution (`1.0` or the gc-weight) can then be scaled by multiplying by the scaling factor of the stride-bin it's located in.
 
 You can think of this approach as a very fast alternative to e.g. Gaussian smoothing.
 
@@ -198,35 +219,60 @@ The genomic smoothing can be achieved in two steps:
 
 ```bash
 
+cfdna coverage-weights --help
+
 cfdna coverage-weights \
-  ...
+  --bam <sample>.bam \
+  --output-dir <sample_directory>/coverage_weights \
+  --output-prefix <sample_id> \
+  --n-threads 12 \
+  --blacklist <path>/hg38-blacklist.v2.bed \
+  --blacklist <path>/<another_blacklist>.bed  # Tip: Use the same blacklists everywhere / per sample!
+
 
 ```
 
-2) Provide the scaling factors when running the feature extraction commands:
+2) Provide the scaling factors when running the feature extraction commands **on the same BAM file**:
 
 ```bash
 
 cfdna midpoints \
-  ...
-  --scaling-factors <path>/<prefix>.scaling_factors.tsv
+  --bam <sample>.bam \
+  ...  # See midpoints example
+  --scaling-factors <sample_directory>/coverage_weights/<sample_id>.scaling_factors.tsv
 
 ```
 
 ### Fragment coverage
 
-Fragment coverage measures how many fragments overlap each genomic position. In contrast to many non-cfDNA-tools, we (optionally) count the gap between paired reads along with the aligned bases of the reads. We avoid double counting when reads overlap. When no GC correction or genomic smoothing is applied, each fragment counts `1` in the overlapping (aligned / gap) positions. GC correction and/or genomic smoothing changes this to a weight (floating point).
+Fragment coverage measures how many fragments overlap each genomic position. In contrast to many non-cfDNA-tools, we (optionally) count the gap between paired reads along with the aligned bases of the reads. We avoid double counting when reads overlap. 
+
+When no GC correction or genomic smoothing is applied, each fragment is counted as `1` in the overlapping (aligned / gap) positions. Using GC correction and/or genomic smoothing changes this to a weight (floating point).
 
 ```bash
 
+cfdna fcoverage --help
+
 cfdna fcoverage \
-  --bam sample.bam \                      # coordinate-sorted bam file with paired-end cfDNA
-  --output-dir results \                  # where to write files
-  --n-threads 12 \                        # use 12 CPU cores (max. one per chromosome)
-  --blacklist encode_blacklist.bed        # exclude ENCODE blacklist intervals
+  --bam <sample>.bam \                          # Coordinate-sorted bam file with cfDNA
+  --output-dir <sample_directory>/coverage \    # Where to write files
+  --output-prefix <sample_id> \                 # A file prefix to identify the sample (optional)
+  --n-threads 12 \                              # Use 12 CPU cores (speed vs. RAM tradeoff)
+  --blacklist <path>/hg38-blacklist.v2.bed \
+  --blacklist <path>/<another_blacklist>.bed \  # Tip: Use the same blacklists everywhere / per sample!
   
-# Add GC correction and / or genomic smoothing
-  --gc ... \
+  # OPTIONS:
+
+  # Average per 1Mb positions
+  --by-size 1000000 \
+  --per-window 'average' \
+  # OR sums per interval in a bed file
+  --by-bed <path>/<some_intervals>.bed \
+  --per-window 'total' \
+
+  # Add GC correction and / or genomic smoothing (see above)
+  --gc-file ... \
+  --ref-2bit <path>/hg38.2bit \
   --scaling-factors ...
 
 ```
@@ -235,70 +281,109 @@ cfdna fcoverage \
 
 Multiple studies have used fragment lengths (count distributions) to detect cancer [REFS].
 
-NOTE: For fragment lengths, we use the same GC correction for all lengths (based only on GC contents). 
-
 ```bash
 
+cfdna lengths --help
+
 cfdna lengths \
-  --bam sample.bam \                      # coordinate-sorted bam file with paired-end cfDNA
-  --output-dir results \                  # where to write files
-  --n-threads 12 \                        # use 12 CPU cores (max. one per chromosome)
-  --blacklist encode_blacklist.bed        # exclude ENCODE blacklist intervals
+  --bam <sample>.bam \                          # Coordinate-sorted bam file with cfDNA
+  --output-dir <sample_directory>/lengths \     # Where to write files
+  --output-prefix <sample_id> \                 # A file prefix to identify the sample (optional)
+  --n-threads 12 \                              # Use 12 CPU cores (speed vs. RAM tradeoff)
+  --blacklist <path>/hg38-blacklist.v2.bed \
+  --blacklist <path>/<another_blacklist>.bed \  # Tip: Use the same blacklists everywhere / per sample!
+  
+  # OPTIONS:
+
+  # Adjust lengths to indels
+  --indel-mode 'adjust' \
+
+  # Separate counts per 1Mb positions
+  --by-size 1000000 \
+  # OR supply a bed file
+  --by-bed <path>/<some_intervals>.bed \
+
+  # Add GC correction and / or genomic smoothing (see above)
+  --gc-file ... \
+  --ref-2bit <path>/hg38.2bit \
+  --scaling-factors ...
 
 ```
 
 ### Fragment midpoint profiles
 
+Multiple studies have used profiled the midpoint coverage around e.g. transcription factor binding sites (summed per transcription factor, per position) [REFS]. This can inform about the binding activity of different transcription factors related to cancer.
+
+A common binding site window size is `2001bp`, centered around the binding site center.
+
 ```bash
 
-# Count midpoints, summed per group and position
-cfdna midpoints ...
+cfdna midpoints --help
+
+cfdna midpoints \
+  --bam <sample>.bam \                          # Coordinate-sorted bam file with cfDNA
+  --output-dir <sample_directory>/midpoints \   # Where to write files
+  --output-prefix <sample_id> \                 # A file prefix to identify the sample (optional)
+  --n-threads 12 \                              # Use 12 CPU cores (speed vs. RAM tradeoff)
+  --intervals <fixed_size_intervals>.tsv \      # The grouped fixed-size intervals (see --help)
+  --blacklist <path>/hg38-blacklist.v2.bed \
+  --blacklist <path>/<another_blacklist>.bed \  # Tip: Use the same blacklists everywhere / per sample!
+  
+  # OPTIONS:
+
+  # Separate counts per 10bp lengths (last edge is exclusive, 1000bp is excluded)
+  --length-bins {30..1000..10} \
+
+  # Add GC correction and / or genomic smoothing (see above)
+  --gc-file ... \
+  --ref-2bit <path>/hg38.2bit \
+  --scaling-factors ...
 
 ```
+
+[TODO: Note on how to get griffin-like profiles]
 
 ### Everything combined
 
-The below does not show the midpoint profiles. See the separate examples above.
+
+[TODO: Add output-prefix for remaining commands]
 
 ```bash
 
-BAM="..." # ?
-OUT="..." # sample specific
-BLACKLIST="..." # ?
-ASSEMBLY="..."
+BAM="..."                  # The cfDNA sample
+OUT="..."                  # Sample specific directory
+SAMPLE_NAME="..."          # Sample ID for filename prefix
+BLACKLIST="..."            # One or more (repeat argument per file)
+ASSEMBLY="..."             # E.g. hg38.2bit
+REF_GC="..."               # Precompute with `cfdna ref-gc-bias`
+MIDPOINT_INTERVALS="..."   # Fixed-size intervals BED-like tsv-file
 THREADS=12
 MINLENGTH=30
-MAXLENGTH=600
+MAXLENGTH=1000
 
 # GC bias correction matrix
-cfdna gc-bias --bam $BAM --output-dir $OUT/gc_bias --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --n-threads $THREADS 
+cfdna gc-bias --bam $BAM --output-dir $OUT/gc_bias --ref-2bit $ASSEMBLY --ref-gc-dir $REF_GC --blacklist $BLACKLIST --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --n-threads $THREADS 
 
 # Coverage weights for genomic smoothing
-cfdna coverage-weights --bam $BAM --output-dir $OUT/coverage_weights --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --n-threads $THREADS 
+cfdna coverage-weights --bam $BAM --output-dir $OUT/coverage_weights --output-prefix $SAMPLE_NAME --blacklist $BLACKLIST --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --n-threads $THREADS 
 
-# Fragment coverage
-cfdna fcoverage --bam $BAM --output-dir $OUT/coverage --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc $OUT/gc_bias --scaling-factors $OUT/coverage_weights/<prefix>.scaling_factors.tsv --blacklist $BLACKLIST --n-threads $THREADS 
+# Fragment coverage per position
+cfdna fcoverage --bam $BAM --output-dir $OUT/coverage --output-prefix $SAMPLE_NAME --blacklist $BLACKLIST --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc-file $OUT/gc_bias/gc_bias_correction.npz --ref-2bit $ASSEMBLY --n-threads $THREADS 
+
+# Fragment coverage in 5Mb bins (averaged)
+cfdna fcoverage --bam $BAM --output-dir $OUT/coverage_per_5Mb --output-prefix $SAMPLE_NAME --blacklist $BLACKLIST --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc-file $OUT/gc_bias/gc_bias_correction.npz --ref-2bit $ASSEMBLY --n-threads $THREADS --by-size 5000000 --per-window 'average'
 
 # Fragment lengths (global)
-cfdna lengths --bam $BAM --output-dir $OUT/lengths_$MINLENGTH_$MAXLENGTH --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc $OUT/gc_bias --scaling-factors $OUT/coverage_weights/<prefix>.scaling_factors.tsv --blacklist $BLACKLIST --n-threads $THREADS 
+cfdna lengths --bam $BAM --output-dir $OUT/lengths_$MINLENGTH_$MAXLENGTH --blacklist $BLACKLIST  --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc-file $OUT/gc_bias/gc_bias_correction.npz --ref-2bit $ASSEMBLY --scaling-factors $OUT/coverage_weights/$SAMPLE_NAME.scaling_factors.tsv --n-threads $THREADS 
 
 # Fragment lengths in 5Mb bins 
 # E.g., to calculate short/long ratios from (100-150bp, 151-220bp)
-cfdna lengths --bam $BAM --output-dir $OUT/lengths_per_5mb_100_220 --by-size 5000000 --min-fragment-length 100 --max-fragment-length 220 --gc $OUT/gc_bias --scaling-factors $OUT/coverage_weights/<prefix>.scaling_factors.tsv --blacklist $BLACKLIST --n-threads $THREADS
+cfdna lengths --bam $BAM --output-dir $OUT/lengths_per_5mb_100_220 --by-size 5000000 --blacklist $BLACKLIST --min-fragment-length 100 --max-fragment-length 220 --gc-file $OUT/gc_bias/gc_bias_correction.npz --ref-2bit $ASSEMBLY --scaling-factors $OUT/coverage_weights/$SAMPLE_NAME.scaling_factors.tsv --n-threads $THREADS
 
 # Midpoint profiles (very fast alternative to Griffin)
-cfdna midpoints --bam $BAM --output-dir $OUT/midpoints ...
+cfdna midpoints --bam $BAM --output-dir $OUT/midpoints --intervals $MIDPOINT_INTERVALS --blacklist $BLACKLIST --length-bins $MINLENGTH $(($MAXLENGTH+1)) --gc-file $OUT/gc_bias/gc_bias_correction.npz --ref-2bit $ASSEMBLY --scaling-factors $OUT/coverage_weights/$SAMPLE_NAME.scaling_factors.tsv --n-threads $THREADS
 
 ```
-
----
-
-## TODO
-
- - Figure out --output-prefix (default to remove prefix?) and use consistently across commands!
- - Check / optimize RAM usage in `cfdna coverage-weights`.
- - Find way to handle deletion of temp dirs when command fails (and not in debug mode)
- - Fix double-counting of reads and fragments in stats counters around tile edges (fetch halo-related)
 
 ---
 
