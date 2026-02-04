@@ -511,7 +511,7 @@ pub struct ApplyGCArgs {
     )]
     pub gc_tag: Option<String>,
 
-    /// Whether to drop fragments where the GC correction could no be calculated `[path]`
+    /// Whether to drop fragments where the GC correction could not be calculated `[path]`
     ///
     /// If a GC correction weight could not be computed/retrieved for a fragment,
     /// the default is to weight it as `1.0` (no correction). If you prefer to
@@ -537,7 +537,7 @@ pub struct ApplyGCArgFileOnly {
     )]
     pub gc_file: Option<PathBuf>,
 
-    /// Whether to drop fragments where the GC correction could no be calculated `[path]`
+    /// Whether to drop fragments where the GC correction could not be calculated `[path]`
     ///
     /// If a GC correction weight could not be computed for a fragment,
     /// the default is to weight it as `1.0` (no correction). If you prefer to

@@ -18,16 +18,16 @@ use std::path::PathBuf;
 /// ## Genomic smoothing (--scaling-factors)
 ///
 /// The coverage weight that would normally be **multiplied** with the fragment's count value (`1.0`)
-/// is written as the AUX tag `COV` in the read(s).
+/// is written as the AUX tag "`COV`" in the read(s).
 ///
 /// ## GC bias correction
 ///
 /// The GC bias correction weight that would normally be **multiplied** with the fragment's count
-/// value (`1.0` or the smoothed value) is written as the AUX tag `GC` in the read(s).
+/// value (`1.0` or the smoothed value) is written as the AUX tag "`GC`" in the read(s).
 ///
 /// ## Fragment length
 ///
-/// The fragment length is written to the AUX tag "FLEN".
+/// The fragment length is written to the AUX tag "`FLEN`".
 ///
 /// Definition:
 ///
@@ -95,7 +95,7 @@ pub struct BamToBamConfig {
     ///
     /// Many tools expect BAM files to be sorted as `chr1, chr10, chr11, ...`. By default,
     /// we thus sort the specified chromosomes lexicographically. This is different to other
-    /// commands in `cfDNAlab`, which directly use the passed order of chromosomes.
+    /// commands in `cfDNAlab`, which use the passed order of chromosomes.
     #[cfg_attr(
         feature = "cli",
         clap(long = "skip-chromosome-sort", help_heading = "Core")
@@ -118,7 +118,7 @@ pub struct BamToBamConfig {
 
     /// Only count properly paired reads `[flag]`
     ///
-    /// This is NOT recommended by default, as it trims the tails of the length distribution.
+    /// This is **NOT** recommended by default, as it trims the tails of the length distribution.
     ///
     /// Note, that we only keep inward-directed fragments within a specified length range, so
     /// there's no real need for proper-pair filtering.

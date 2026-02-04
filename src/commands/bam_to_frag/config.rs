@@ -89,7 +89,7 @@ pub struct BamToFragConfig {
 
     /// Only count properly paired reads `[flag]`
     ///
-    /// This is NOT recommended by default, as it trims the tails of the length distribution.
+    /// This is **NOT** recommended by default, as it trims the tails of the length distribution.
     /// It may be useful to match the files in FinaleDB.
     ///
     /// Note, that we only keep inward-directed fragments within a specified length range, so

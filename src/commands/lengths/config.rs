@@ -12,13 +12,15 @@ use std::path::PathBuf;
 
 /// Count fragment lengths in a BAM-file.
 ///
+/// Writes an `.npy` file with shape (# windows, # lengths).
+///
 /// ## Fragment length definition
 ///
 /// **Paired-end**: `end(reverse) - start(forward)`.
 ///
 /// **Unpaired** where each read is a fragment: `end(read) - start(read)`.
 ///
-/// See also `--indel-mode` for optionally adjusting the length to presence of indels.
+/// See also `--indel-mode` for adjusting the length to present indels.
 ///
 /// ## GC correction
 ///
@@ -29,16 +31,33 @@ use std::path::PathBuf;
 /// The length-dimension of the original correction matrix is averaged out with
 /// a specifiable weighting scheme (`--gc-length-weighting`).
 ///
+/// ## Genomic smoothing (--scaling-factors)
+///
+/// Weight how genomic regions contribute to the length distribution, e.g. to reduce the
+/// influence of copy number alterations. This weights the contribution of each fragment
+/// by region-wise precomputed scaling factors.
+///
+/// Can be precomputed with `cfdna coverage-weights`.
+///
 /// ## Window assignment
 ///
-/// The default for windows is to count fragments by their overlap fraction. That is, most
-/// fragments are counted as `1.0`, while fragments overlapping the edge of a window are counted
-/// as the fraction it overlaps the window (`< 1.0`). For consequtive non-overlapping windows,
-/// this conserves the total mass, as an edge-overlapping fragment will count `f` in one window
-/// and `1-f` in the other window. To get base-weighted counts (i.e. coverage in the window),
-/// you can multiply the output counts by their lengths (`C'[L] = L * C[L]`). **Other options**
-/// include counting the full fragment if the *fragment midpoint* or a given *proportion* of
-/// positions overlaps the window.
+/// By default, fragments are counted by their window-overlap fraction. That is, most
+/// fragments are counted as `1.0` (before correction/scaling), while fragments overlapping the
+/// edge of a window are counted as the fraction it overlaps the window (`< 1.0`).
+///  
+/// For consequtive non-overlapping windows, this conserves the total mass, as an edge-overlapping
+/// fragment will count `f` in one window and `1-f` in the other window.
+///
+/// To get base-weighted counts (i.e. coverage in the window), you can multiply the output
+/// counts by their lengths (`C'[L] = L * C[L]`; Remember to account for the minimum fragment
+/// length offset).
+///
+/// Other options include counting the full fragment if the *fragment midpoint* or a given
+/// *proportion* of positions overlaps the window.
+///
+/// ## Blacklisting
+///
+/// Ignores fragments that overlap blacklisted regions with a given proportion.
 ///
 /// ## Always-on exclusion criteria
 ///
@@ -135,7 +154,7 @@ pub struct LengthsConfig {
 
     /// Only count properly paired reads `[flag]`
     ///
-    /// This is NOT recommended by default as it trims the tails of the length distribution.
+    /// This is **NOT** recommended by default as it trims the tails of the length distribution.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
@@ -196,7 +215,7 @@ pub struct LengthsConfig {
     ///
     /// - `"coverage"`-based weighting: Each fragment length bin is weighted by how often it was observed
     ///   in `cfdna gc-bias`. This should work better for the majority of the observed fragments
-    ///   **but biases** the correction based on the fragment length distribution we are trying to estimate
+    ///   **BUT biases** the correction based on the fragment length distribution we are trying to estimate
     ///   (assuming the same BAM-file was used to estimate the GC bias).
     ///
     /// - `"max-coverage"` weighting: Use the GC curve for the most-observed fragment length bin.

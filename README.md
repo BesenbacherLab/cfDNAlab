@@ -286,6 +286,9 @@ cfdna lengths --bam $BAM --output-dir $OUT/lengths_$MINLENGTH_$MAXLENGTH --min-f
 # E.g., to calculate short/long ratios from (100-150bp, 151-220bp)
 cfdna lengths --bam $BAM --output-dir $OUT/lengths_per_5mb_100_220 --by-size 5000000 --min-fragment-length 100 --max-fragment-length 220 --gc $OUT/gc_bias --scaling-factors $OUT/coverage_weights/<prefix>.scaling_factors.tsv --blacklist $BLACKLIST --n-threads $THREADS
 
+# Midpoint profiles (very fast alternative to Griffin)
+cfdna midpoints --bam $BAM --output-dir $OUT/midpoints ...
+
 ```
 
 ---
