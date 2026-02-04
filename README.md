@@ -103,7 +103,7 @@ The final example is a full pipeline for running everything (but without the exp
 
 **Assembly**: The below examples use file names specific to the hg38 assembly, but any assembly (hg19 etc.) should work. Just be consistent, of course. Note that most commands use only the autosomes (`chr1-chr22`) by default (see `--chromosomes` in help files).
 
-**Fragment length range**: The min/max fragment length range defaults to `30bp -> 1000bp`. This can be specified via `--min-fragment-length` and `--max-fragment-length`. We suggest keeping this range for the `ref-gc-bias`, `gc-bias`, and `coverage-weights` commands (unless you want to support longer fragments than 1000bp). In the downstream feature extraction commands you can then narrow the range, if you want.
+**Fragment length range**: The min/max fragment length range defaults to `30-1000bp`. This can be specified via `--min-fragment-length` and `--max-fragment-length`. We suggest keeping this range for the `ref-gc-bias`, `gc-bias`, and `coverage-weights` commands (unless you want to support longer fragments than 1000bp). In the downstream feature extraction commands you can then narrow the range, if you want.
 
 ### GC correction pipeline
 
@@ -153,7 +153,7 @@ cfdna fcoverage \
   --bam <sample>.bam \
   ... \  # See fcoverage example
   --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
-  --ref-2bit <path>/hg38.2bit \
+  --ref-2bit <path>/hg38.2bit
 
 ```
 
@@ -273,7 +273,7 @@ cfdna fcoverage \
   # Add GC correction and / or genomic smoothing (see above)
   --gc-file ... \
   --ref-2bit <path>/hg38.2bit \
-  --scaling-factors ... \
+  --scaling-factors ...
 
 ```
 
@@ -306,7 +306,7 @@ cfdna lengths \
   # Add GC correction and / or genomic smoothing (see above)
   --gc-file ... \
   --ref-2bit <path>/hg38.2bit \
-  --scaling-factors ... \
+  --scaling-factors ...
 
 ```
 
@@ -337,7 +337,7 @@ cfdna midpoints \
   # Add GC correction and / or genomic smoothing (see above)
   --gc-file ... \
   --ref-2bit <path>/hg38.2bit \
-  --scaling-factors ... \
+  --scaling-factors ...
 
 ```
 
