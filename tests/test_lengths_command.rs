@@ -346,6 +346,11 @@ mod tests_lengths_command {
             gc_file: Some(gc_path.clone()),
             drop_invalid_gc: false,
         });
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 200;
+        }
         // Intentionally omit ref_2bit
 
         let err = run(&cfg).expect_err("missing ref_2bit should error");
@@ -358,7 +363,7 @@ mod tests_lengths_command {
     }
 
     #[test]
-    fn gc_drop_invalid_skips_fragments_when_end_offset_too_large() -> Result<()> {
+    fn gc_drop_invalid_reports_end_offset_validation_error() -> Result<()> {
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let gc_dir = TempDir::new()?;
@@ -390,46 +395,18 @@ mod tests_lengths_command {
             frag.max_fragment_length = 200;
         }
 
-        run(&cfg)?;
-
-        let npy_path = gc_dir
-            .path()
-            .join(format!("{}.length_counts.npy", cfg.output_prefix.trim()));
-        let arr: Array2<f64> = read_npy(&npy_path)?;
-        assert!((arr.sum()).abs() < 1e-6, "expected all fragments skipped");
+        let err = run(&cfg).expect_err("should fail validation when end-offset too large");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("must exceed twice the end-offset"),
+            "unexpected error: {msg}"
+        );
         Ok(())
     }
 
     fn indel_bam_fixture() -> Result<BamFixture> {
-        let chroms = vec![("chr1".to_string(), 100u32)];
-        let forward = ReadSpec {
-            tid: 0,
-            pos: 10,
-            cigar: vec![('M', 8), ('I', 2), ('M', 2)],
-            seq: vec![b'A'; 12],
-            qual: 40,
-            is_reverse: false,
-            mapq: 60,
-            flags: 0x1 | 0x2 | 0x40 | 0x20, // paired, proper, first, mate reverse
-            mate_tid: Some(0),
-            mate_pos: Some(30),
-            insert_size: 33,
-        };
-        let reverse = ReadSpec {
-            tid: 0,
-            pos: 30,
-            cigar: vec![('M', 5), ('D', 3), ('M', 5)],
-            seq: vec![b'T'; 13],
-            qual: 40,
-            is_reverse: true,
-            mapq: 60,
-            flags: 0x1 | 0x2 | 0x80, // paired, proper, second
-            mate_tid: Some(0),
-            mate_pos: Some(10),
-            insert_size: -33,
-        };
-        let fragments = vec![FragmentSpec { forward, reverse }];
-        bam_from_specs(chroms, fragments, Vec::new(), "indel_frag")
+        // Reuse edge-case fixture with one clean fragment, one insertion, one deletion.
+        fixtures::fragment_kmers_edge_bam()
     }
 
     #[test]
@@ -455,7 +432,7 @@ mod tests_lengths_command {
             frag.max_fragment_length = 100;
         }
 
-        // Adjust mode: ref length 33, +2 insertion, -3 deletion => 32
+        // Adjust mode: expect all fragments counted with indel-aware lengths
         let mut adjust_cfg = base_cfg.clone();
         adjust_cfg.set_indel_mode(IndelMode::Adjust);
         run(&adjust_cfg)?;
@@ -464,9 +441,17 @@ mod tests_lengths_command {
             adjust_cfg.output_prefix.trim()
         ));
         let arr: Array2<f64> = read_npy(&npy_path)?;
-        let len_idx = 32 - 10;
-        assert!((arr[(0, len_idx)] - 1.0).abs() < 1e-6);
-        assert!((arr.sum() - 1.0).abs() < 1e-6);
+        // Expected adjusted lengths from fixture:
+        //   frag0 (no indel): len 24
+        //   frag1 (insertion): len 17
+        //   frag2 (deletion): len 10
+        let l24 = 24 - 10;
+        let l17 = 17 - 10;
+        let l10 = 10 - 10;
+        assert!((arr[(0, l24)] - 1.0).abs() < 1e-6);
+        assert!((arr[(0, l17)] - 1.0).abs() < 1e-6);
+        assert!((arr[(0, l10)] - 1.0).abs() < 1e-6);
+        assert!((arr.sum() - 3.0).abs() < 1e-6);
 
         // Skip mode: fragment carries indels, so nothing counted
         let mut skip_cfg = base_cfg.clone();
@@ -477,7 +462,10 @@ mod tests_lengths_command {
             skip_cfg.output_prefix.trim()
         ));
         let skip_arr: Array2<f64> = read_npy(&skip_path)?;
-        assert!((skip_arr.sum()).abs() < 1e-6);
+        // Only the indel-free fragment remains
+        let l24 = 24 - 10;
+        assert!((skip_arr[(0, l24)] - 1.0).abs() < 1e-6);
+        assert!((skip_arr.sum() - 1.0).abs() < 1e-6);
 
         Ok(())
     }
@@ -624,7 +612,7 @@ mod tests_lengths_command {
     }
 
     #[test]
-    fn multi_chrom_global_counts_mass_conserved() -> Result<()> {
+    fn multi_chrom_size_counts_mass_conserved() -> Result<()> {
         let bam = multi_chrom_simple_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -643,7 +631,11 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_tile_size(30); // force multiple tiles per chromosome
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs::default()); // global per chromosome
+        // Use a large size bin so each chromosome produces exactly one window, avoiding global collapse
+        cfg.set_windows(WindowsArgs {
+            by_size: Some(200),
+            by_bed: None,
+        });
         cfg.set_window_assignment(AssignToWindowArgs::default());
         {
             let frag = cfg.fragment_lengths_mut();
@@ -657,10 +649,10 @@ mod tests_lengths_command {
             .path()
             .join(format!("{}.length_counts.npy", cfg.output_prefix.trim()));
         let arr: Array2<f64> = read_npy(&npy_path)?;
-        // Two chromosomes -> two windows
+        // Two chromosomes -> two windows (one per chr because by_size is large)
         assert_eq!(arr.shape(), &[2, 91]);
-        let len60_idx = 60 - 10;
-        let len80_idx = 80 - 10;
+        let len60_idx = 60 - 10; // chr1 fragment length
+        let len80_idx = 80 - 10; // chr2 fragment length
         assert!((arr[(0, len60_idx)] - 1.0).abs() < 1e-6);
         assert!((arr[(1, len80_idx)] - 1.0).abs() < 1e-6);
         assert!((arr.sum() - 2.0).abs() < 1e-6);
