@@ -150,9 +150,9 @@ cfdna gc-bias \
 ```bash
 
 cfdna fcoverage \
-  --bam <sample>.bam> \
+  --bam <sample>.bam \
   ... \  # See fcoverage example
-  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz
+  --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
   --ref-2bit <path>/hg38.2bit \
 
 ```
@@ -267,7 +267,7 @@ cfdna fcoverage \
   --by-size 1000000 \
   --per-window 'average' \
   # OR sums per interval in a bed file
-  --by-bed <path>/<some_intervals>.bed
+  --by-bed <path>/<some_intervals>.bed \
   --per-window 'total' \
 
   # Add GC correction and / or genomic smoothing (see above)
@@ -301,7 +301,7 @@ cfdna lengths \
   # Separate counts per 1Mb positions
   --by-size 1000000 \
   # OR supply a bed file
-  --by-bed <path>/<some_intervals>.bed
+  --by-bed <path>/<some_intervals>.bed \
 
   # Add GC correction and / or genomic smoothing (see above)
   --gc-file ... \
@@ -331,8 +331,8 @@ cfdna midpoints \
   
   # OPTIONS:
 
-  # Separate counts per 10bp lengths
-  --length-bins {30..1001..10} \
+  # Separate counts per 10bp lengths (last edge is exclusive, 1000bp is excluded)
+  --length-bins {30..1000..10} \
 
   # Add GC correction and / or genomic smoothing (see above)
   --gc-file ... \
@@ -381,7 +381,7 @@ cfdna lengths --bam $BAM --output-dir $OUT/lengths_$MINLENGTH_$MAXLENGTH --black
 cfdna lengths --bam $BAM --output-dir $OUT/lengths_per_5mb_100_220 --by-size 5000000 --blacklist $BLACKLIST --min-fragment-length 100 --max-fragment-length 220 --gc-file $OUT/gc_bias/gc_bias_correction.npz --ref-2bit $ASSEMBLY --scaling-factors $OUT/coverage_weights/$SAMPLE_NAME.scaling_factors.tsv --n-threads $THREADS
 
 # Midpoint profiles (very fast alternative to Griffin)
-cfdna midpoints --bam $BAM --output-dir $OUT/midpoints --blacklist $BLACKLIST --length-bins $MINLENGTH $MAXLENGTH --gc-file $OUT/gc_bias/gc_bias_correction.npz --ref-2bit $ASSEMBLY --scaling-factors $OUT/coverage_weights/$SAMPLE_NAME.scaling_factors.tsv --n-threads $THREADS
+cfdna midpoints --bam $BAM --output-dir $OUT/midpoints --intervals $MIDPOINT_INTERVALS --blacklist $BLACKLIST --length-bins $MINLENGTH $(($MAXLENGTH+1)) --gc-file $OUT/gc_bias/gc_bias_correction.npz --ref-2bit $ASSEMBLY --scaling-factors $OUT/coverage_weights/$SAMPLE_NAME.scaling_factors.tsv --n-threads $THREADS
 
 ```
 
