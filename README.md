@@ -341,9 +341,7 @@ cfdna midpoints \
 
 [TODO: Note on how to get griffin-like profiles]
 
-#### Intervals
-
-The intervals must have the same fixed size. A common binding site window size is `2001bp`, centered around the binding site center. The expected columns are: `chromosome, start, end, group_name` (where `group_name` is the group to collapse profiles by, e.g., the transcription factor ID). The intervals should be sorted by chromosome and start-coordinates.
+The **intervals** must have the same fixed size. A common binding site window size is `2001bp`, centered around the binding site center. The expected columns are: `chromosome, start, end, group_name` (where `group_name` is the group to collapse profiles by, e.g., the transcription factor ID). The intervals should be sorted by chromosome and start-coordinates.
 
 Consider removing intervals that lie closer than half the maximum fragment length from any blacklisted region, to reduce mappability biases. 
 
