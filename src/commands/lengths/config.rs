@@ -227,8 +227,7 @@ pub struct LengthsConfig {
     ///
     ///   This should work better for the majority of the observed fragments **BUT**:
     ///
-    ///   Downside: **Biases** the correction based on the length distribution we are trying to estimate
-    ///   (assuming the same BAM-file was used to estimate the GC bias).
+    ///   Downside: **Biases** the correction based on the length distribution we are trying to estimate.
     ///
     /// - `"max-coverage"` weighting: Use the GC curve for the most-observed fragment length bin.
     #[cfg_attr(
