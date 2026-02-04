@@ -236,12 +236,12 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    fn build_gc_package(path: &std::path::Path) -> Result<()> {
+    fn build_gc_package(path: &std::path::Path, end_offset: u64) -> Result<()> {
         // Two length bins: [10,60) and [60,200]; two GC bins: [0,50) and [50,101]
         let correction_matrix = array![[1.0_f64, 1.0_f64], [2.0_f64, 10.0_f64]];
         let package = GCCorrectionPackage {
             version: GC_CORRECTION_SCHEMA_VERSION,
-            end_offset: 0,
+            end_offset,
             length_edges: vec![10, 60, 200],
             gc_edges: vec![0, 50, 101],
             length_bin_frequencies: array![1.0_f64, 3.0_f64],
@@ -257,7 +257,7 @@ mod tests_lengths_command {
         let ref_twobit = simple_reference_twobit()?;
         let gc_dir = TempDir::new()?;
         let gc_path = gc_dir.path().join("gc_pkg.npz");
-        build_gc_package(&gc_path)?;
+        build_gc_package(&gc_path, 0)?;
 
         let expected = |scheme: MarginalizeLengthsWeightingScheme| -> f64 {
             match scheme {
@@ -319,6 +319,84 @@ mod tests_lengths_command {
             );
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn gc_requires_ref_2bit_errors() -> Result<()> {
+        let bam = simple_inward_bam()?;
+        let gc_dir = TempDir::new()?;
+        let gc_path = gc_dir.path().join("gc_pkg.npz");
+        build_gc_package(&gc_path, 0)?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: gc_dir.path().to_path_buf(),
+                n_threads: 2,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path.clone()),
+            drop_invalid_gc: false,
+        });
+        // Intentionally omit ref_2bit
+
+        let err = run(&cfg).expect_err("missing ref_2bit should error");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("--ref-2bit"),
+            "unexpected error message: {msg}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn gc_drop_invalid_skips_fragments_when_end_offset_too_large() -> Result<()> {
+        let bam = simple_inward_bam()?;
+        let ref_twobit = simple_reference_twobit()?;
+        let gc_dir = TempDir::new()?;
+        let gc_path = gc_dir.path().join("gc_pkg.npz");
+        // Choose large end_offset so offset_start >= offset_end, causing GC weight failure
+        build_gc_package(&gc_path, 40)?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: gc_dir.path().to_path_buf(),
+                n_threads: 2,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path.clone()),
+            drop_invalid_gc: true,
+        });
+        cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 200;
+        }
+
+        run(&cfg)?;
+
+        let npy_path = gc_dir
+            .path()
+            .join(format!("{}.length_counts.npy", cfg.output_prefix.trim()));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert!((arr.sum()).abs() < 1e-6, "expected all fragments skipped");
         Ok(())
     }
 
