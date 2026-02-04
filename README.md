@@ -273,7 +273,7 @@ cfdna fcoverage \
   # Add GC correction and / or genomic smoothing (see above)
   --gc-file ... \
   --ref-2bit <path>/hg38.2bit \
-  --scaling-factors ...\
+  --scaling-factors ... \
 
 ```
 
@@ -306,7 +306,7 @@ cfdna lengths \
   # Add GC correction and / or genomic smoothing (see above)
   --gc-file ... \
   --ref-2bit <path>/hg38.2bit \
-  --scaling-factors ...\
+  --scaling-factors ... \
 
 ```
 
@@ -337,7 +337,7 @@ cfdna midpoints \
   # Add GC correction and / or genomic smoothing (see above)
   --gc-file ... \
   --ref-2bit <path>/hg38.2bit \
-  --scaling-factors ...\
+  --scaling-factors ... \
 
 ```
 
