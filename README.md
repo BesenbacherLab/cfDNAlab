@@ -293,15 +293,6 @@ cfdna midpoints --bam $BAM --output-dir $OUT/midpoints ...
 
 ---
 
-## TODO
-
- - Figure out --output-prefix (default to remove prefix?) and use consistently across commands!
- - Check / optimize RAM usage in `cfdna coverage-weights`.
- - Find way to handle deletion of temp dirs when command fails (and not in debug mode)
- - Fix double-counting of reads and fragments in stats counters around tile edges (fetch halo-related)
-
----
-
 ## References
 
  - Wang, H., Mennea, P.D., Chan, Y.K.E. et al. A standardized framework for robust fragmentomic feature extraction from cell-free DNA sequencing data. Genome Biol 26, 141 (2025). https://doi.org/10.1186/s13059-025-03607-5
