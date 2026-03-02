@@ -40,6 +40,7 @@ impl From<&Record> for MinimalReadInfo {
             pos: r.pos() as u32,
             end: r.reference_end() as u32,
             is_reverse: r.is_reverse(),
+            // Default tag value so tag reads are opt-in at iterator level
             gc_tag: GcTagValue::default(),
         }
     }

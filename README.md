@@ -228,7 +228,6 @@ cfdna coverage-weights \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed  # Tip: Use the same blacklists everywhere / per sample!
 
-
 ```
 
 2) Provide the scaling factors when running the feature extraction commands **on the same BAM file**:

@@ -454,7 +454,7 @@ fn process_tile(
         }
     };
 
-    let correct_gc = opt.gc.gc_file.is_some();
+    let correct_gc_from_file = opt.gc.gc_file.is_some();
     let fetch_start = tile.fetch_start;
 
     // Iterate fragments and add coverage
@@ -512,7 +512,7 @@ fn process_tile(
         } else {
             // File-based correction path
             let gc_weight_opt = get_gc_weight(&fragment, fetch_start)?;
-            match (gc_weight_opt, correct_gc) {
+            match (gc_weight_opt, correct_gc_from_file) {
                 (Some(w), true) => w,
                 (None, true) => {
                     counter.gc_failed_fragments += 1;

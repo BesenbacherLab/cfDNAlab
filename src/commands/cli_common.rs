@@ -477,7 +477,7 @@ pub struct ScaleGenomeArgs {
             .multiple(false)))]
 #[derive(Debug, Clone, Default)]
 pub struct ApplyGCArgs {
-    /// Optional path to GC correction file *made from the same BAM file* with `gc-bias` `[path]`
+    /// Optional path to GC correction file *made from the same BAM file* with `cfdna gc-bias` `[path]`
     ///
     /// The file is usually called `gc_bias_correction.npz`.
     ///
@@ -496,7 +496,7 @@ pub struct ApplyGCArgs {
     /// Optional aux tag to get GC weight from when using external GC correction packages `[path]`
     ///
     /// Packages like `GCParagon` and `GCfix` allow saving GC weights directly to the reads
-    /// in a BAM file. They often assign a "gc" aux tag.
+    /// in a BAM file. They often assign a "GC" aux tag.
     ///
     /// The average per-read weight is used to count the fragment. When any of the reads have a zero-weight,
     /// the fragment gets a zero-weight.
