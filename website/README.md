@@ -30,9 +30,9 @@ Open the URL printed by Docusaurus in your browser.
 npm run build
 ```
 
-Build output is written to `website/.generated-site/`.
+Build output is written to `website/generated-site/`.
 
 ## Generated folders
 
 - `website/docs/generated/cli/` is auto-generated and must not be edited manually.
-- `website/.generated-site/` is generated build output and must not be committed.
+- `website/generated-site/` is generated build output and must not be committed.

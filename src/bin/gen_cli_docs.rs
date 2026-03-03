@@ -74,8 +74,8 @@ fn run(args: &Cli) -> Result<()> {
     }
     docs.sort_by(|left, right| left.name.cmp(&right.name));
 
-    write_generated_readme(&args.out_dir)?;
-    write_index_page(&args.out_dir, &docs)?;
+    write_generated_notice(&args.out_dir)?;
+    write_overview_page(&args.out_dir, &docs)?;
     for command_doc in &docs {
         write_command_page(&args.out_dir, command_doc)?;
     }
@@ -164,22 +164,24 @@ fn command_help_text(root_command: &clap::Command, command_name: &str) -> Result
 }
 
 #[cfg(all(feature = "cli", feature = "docs_gen"))]
-fn write_generated_readme(out_dir: &Path) -> Result<()> {
-    let readme_text = format!(
-        "{GENERATED_MARKER}\n{GENERATED_SOURCE}\n\n# Generated CLI docs\n\nThis folder is generated.\n\nDo not edit files here manually.\n\nRegenerate with:\n\n```bash\ncargo run --bin gen_cli_docs --features cli,docs_gen,cmd_bam_to_bam,cmd_bam_to_frag,cmd_frag_to_bam,cmd_coverage_weights,cmd_fcoverage,cmd_gc_bias,cmd_lengths,cmd_midpoints,cmd_ref_gc_bias -- --out-dir website/docs/generated/cli --scope release\n```\n"
-    );
-    fs::write(out_dir.join("README.md"), readme_text)
-        .with_context(|| format!("writing {}", out_dir.join("README.md").display()))?;
+fn write_generated_notice(out_dir: &Path) -> Result<()> {
+    let notice_text = "AUTO-GENERATED DIRECTORY - DO NOT EDIT\nSource: cfdna Clap config and command tree\n\nRegenerate with:\n\ncargo run --bin gen_cli_docs --features cli,docs_gen,cmd_bam_to_bam,cmd_bam_to_frag,cmd_frag_to_bam,cmd_coverage_weights,cmd_fcoverage,cmd_gc_bias,cmd_lengths,cmd_midpoints,cmd_ref_gc_bias -- --out-dir website/docs/generated/cli --scope release\n";
+    fs::write(out_dir.join("GENERATED_NOTICE.txt"), notice_text).with_context(|| {
+        format!(
+            "writing {}",
+            out_dir.join("GENERATED_NOTICE.txt").display()
+        )
+    })?;
     Ok(())
 }
 
 #[cfg(all(feature = "cli", feature = "docs_gen"))]
-fn write_index_page(out_dir: &Path, docs: &[CommandDoc]) -> Result<()> {
+fn write_overview_page(out_dir: &Path, docs: &[CommandDoc]) -> Result<()> {
     let mut body = String::new();
     body.push_str(GENERATED_MARKER);
     body.push('\n');
     body.push_str(GENERATED_SOURCE);
-    body.push_str("\n\n# CLI Reference\n\n");
+    body.push_str("\n\n# CLI Reference Overview\n\n");
     body.push_str("Auto-generated command reference pages.\n\n");
     for command_doc in docs {
         body.push_str(&format!(
@@ -187,8 +189,8 @@ fn write_index_page(out_dir: &Path, docs: &[CommandDoc]) -> Result<()> {
             command_doc.name, command_doc.name
         ));
     }
-    fs::write(out_dir.join("index.md"), body)
-        .with_context(|| format!("writing {}", out_dir.join("index.md").display()))?;
+    fs::write(out_dir.join("overview.md"), body)
+        .with_context(|| format!("writing {}", out_dir.join("overview.md").display()))?;
     Ok(())
 }
 
@@ -200,12 +202,34 @@ fn write_command_page(out_dir: &Path, doc: &CommandDoc) -> Result<()> {
     body.push_str(GENERATED_SOURCE);
     body.push_str("\n\n");
     body.push_str(&format!("# {}\n\n", doc.title));
-    body.push_str("```text\n");
+    let fence = code_fence_for_content(doc.help_text.trim_end());
+    body.push_str(&format!("{fence}text\n"));
     body.push_str(doc.help_text.trim_end());
-    body.push_str("\n```\n");
+    body.push('\n');
+    body.push_str(&fence);
+    body.push('\n');
     fs::write(out_dir.join(format!("{}.md", doc.name)), body)
         .with_context(|| format!("writing command page for {}", doc.name))?;
     Ok(())
+}
+
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
+fn code_fence_for_content(content: &str) -> String {
+    let mut longest_run = 0usize;
+    let mut current_run = 0usize;
+    for character in content.chars() {
+        if character == '`' {
+            current_run += 1;
+            if current_run > longest_run {
+                longest_run = current_run;
+            }
+        } else {
+            current_run = 0;
+        }
+    }
+
+    let fence_len = std::cmp::max(3, longest_run + 1);
+    "`".repeat(fence_len)
 }
 
 #[cfg(all(feature = "cli", feature = "docs_gen"))]

@@ -3,7 +3,7 @@
 
 # cfdna coverage-weights
 
-```text
+````text
 Extract fragment coverage in large genomic bins ("megabins") with a rolling window and calculate normalizing scaling factors for smoothing the genome.
 
 Outputs scaling factors per stride to allow other methods to apply the normalization (by weighting fragment counts).
@@ -166,4 +166,4 @@ Chromosome Selection (select max. one arg.):
 
       --chromosomes-file <CHROMOSOMES_FILE>
           File with chromosome names to process (one per line)
-```
+````

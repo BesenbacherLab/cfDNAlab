@@ -6,14 +6,13 @@ const config = {
   tagline: 'Fast and transparent cfDNA command-line analysis',
   favicon: 'img/cfdnalab_logo_257x285_250dpi.png',
 
-  url: 'https://example.github.io',
+  url: 'https://ludvigolsen.github.io',
   baseUrl: '/cfdnalab/',
 
-  organizationName: 'example',
+  organizationName: 'ludvigolsen',
   projectName: 'cfdnalab',
 
   onBrokenLinks: 'throw',
-  onBrokenMarkdownLinks: 'throw',
   onBrokenAnchors: 'warn',
 
   i18n: {
@@ -70,7 +69,7 @@ const config = {
             label: 'Docs'
           },
           {
-            href: 'https://github.com/example/cfdnalab',
+            href: 'https://github.com/ludvigolsen/cfdnalab',
             label: 'GitHub',
             position: 'right'
           }
@@ -88,7 +87,7 @@ const config = {
               },
               {
                 label: 'CLI Reference',
-                to: '/docs/generated/cli/index'
+                to: '/docs/generated/cli/overview'
               }
             ]
           }
@@ -109,7 +108,10 @@ const config = {
 
   themes: [],
   markdown: {
-    mermaid: false
+    mermaid: false,
+    hooks: {
+      onBrokenMarkdownLinks: 'throw'
+    }
   },
 
   headTags: [
@@ -123,8 +125,7 @@ const config = {
   ],
 
   clientModules: [],
-  titleDelimiter: '·',
-  outDir: '.generated-site'
+  titleDelimiter: '·'
 };
 
 module.exports = config;

@@ -3,7 +3,7 @@
 
 # cfdna gc-bias
 
-```text
+````text
 Calculate a multiplicative GC correction matrix based on the GC fraction and length of fragments in a BAM-file.
 
 The observed distribution of cfDNA fragments is corrected to a precomputed reference bias.
@@ -246,4 +246,4 @@ Outliers:
           Used when `--outlier-method` is one of `iqr`, `stddev`, or `mad`.
           
           [default: 3]
-```
+````

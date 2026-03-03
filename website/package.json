@@ -4,17 +4,20 @@
   "private": true,
   "scripts": {
     "start": "docusaurus start",
-    "build": "docusaurus build",
-    "serve": "docusaurus serve .generated-site",
+    "build": "docusaurus build --out-dir generated-site",
+    "serve": "docusaurus serve --dir generated-site",
     "clear": "docusaurus clear"
   },
   "dependencies": {
-    "@docusaurus/core": "latest",
-    "@docusaurus/preset-classic": "latest",
-    "@easyops-cn/docusaurus-search-local": "latest",
-    "clsx": "latest",
-    "react": "latest",
-    "react-dom": "latest"
+    "@docusaurus/core": "3.9.2",
+    "@docusaurus/preset-classic": "3.9.2",
+    "@easyops-cn/docusaurus-search-local": "0.55.1",
+    "clsx": "2.1.1",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.0.4"
   },
   "engines": {
     "node": ">=20"

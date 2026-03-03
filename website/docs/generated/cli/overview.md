@@ -1,7 +1,7 @@
 <!-- AUTO-GENERATED FILE - DO NOT EDIT -->
 <!-- Source: cfdna Clap config and command tree -->
 
-# CLI Reference
+# CLI Reference Overview
 
 Auto-generated command reference pages.
 

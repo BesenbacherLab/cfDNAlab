@@ -8,7 +8,7 @@ function HeroButtons() {
       <Link className="button button--primary button--lg" to="/docs/get-started/installation">
         Get Started
       </Link>
-      <Link className="button button--secondary button--lg" to="/docs/generated/cli/index">
+      <Link className="button button--secondary button--lg" to="/docs/generated/cli/overview">
         Command Reference
       </Link>
       <Link className="button button--secondary button--lg" to="/docs/release-notes">
