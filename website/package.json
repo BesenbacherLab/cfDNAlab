@@ -1,0 +1,22 @@
+{
+  "name": "cfdnalab-docs",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "docusaurus start",
+    "build": "docusaurus build",
+    "serve": "docusaurus serve .generated-site",
+    "clear": "docusaurus clear"
+  },
+  "dependencies": {
+    "@docusaurus/core": "latest",
+    "@docusaurus/preset-classic": "latest",
+    "@easyops-cn/docusaurus-search-local": "latest",
+    "clsx": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

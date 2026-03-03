@@ -1,0 +1,53 @@
+:root {
+  --ifm-color-primary: #195d7f;
+  --ifm-color-primary-dark: #165371;
+  --ifm-color-primary-darker: #144f6b;
+  --ifm-color-primary-darkest: #103f56;
+  --ifm-color-primary-light: #1c678d;
+  --ifm-color-primary-lighter: #1e6b93;
+  --ifm-color-primary-lightest: #247bb0;
+  --ifm-code-font-size: 92%;
+}
+
+.heroSection {
+  min-height: calc(100vh - 60px);
+  display: grid;
+  place-items: center;
+  padding: 2rem 1rem;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(25, 93, 127, 0.15), transparent 40%),
+    radial-gradient(circle at 80% 70%, rgba(30, 107, 147, 0.12), transparent 45%),
+    linear-gradient(180deg, #f7fbfd 0%, #eef5f8 100%);
+}
+
+.heroInner {
+  width: min(900px, 100%);
+  text-align: center;
+}
+
+.heroLogo {
+  width: min(220px, 40vw);
+  height: auto;
+  margin-bottom: 1rem;
+}
+
+.heroInner h1 {
+  margin: 0;
+  font-size: clamp(2.2rem, 5vw, 3.4rem);
+  letter-spacing: 0.02em;
+}
+
+.heroInner p {
+  margin: 1rem auto 0;
+  width: min(700px, 95%);
+  font-size: 1.1rem;
+  line-height: 1.6;
+}
+
+.heroActions {
+  margin-top: 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: center;
+}
