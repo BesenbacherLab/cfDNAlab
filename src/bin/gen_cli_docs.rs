@@ -38,6 +38,26 @@ struct CommandDoc {
     help_text: String,
 }
 
+#[derive(Debug, Clone)]
+struct ParsedHelp {
+    intro_markdown: String,
+    usage: Option<String>,
+    sections: Vec<ParsedSection>,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedSection {
+    title: String,
+    options: Vec<ParsedOption>,
+    notes: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedOption {
+    signature: String,
+    description_lines: Vec<String>,
+}
+
 #[cfg(not(all(feature = "cli", feature = "docs_gen")))]
 fn main() {
     eprintln!("This binary requires --features cli,docs_gen");
@@ -166,12 +186,8 @@ fn command_help_text(root_command: &clap::Command, command_name: &str) -> Result
 #[cfg(all(feature = "cli", feature = "docs_gen"))]
 fn write_generated_notice(out_dir: &Path) -> Result<()> {
     let notice_text = "AUTO-GENERATED DIRECTORY - DO NOT EDIT\nSource: cfdna Clap config and command tree\n\nRegenerate with:\n\ncargo run --bin gen_cli_docs --features cli,docs_gen,cmd_bam_to_bam,cmd_bam_to_frag,cmd_frag_to_bam,cmd_coverage_weights,cmd_fcoverage,cmd_gc_bias,cmd_lengths,cmd_midpoints,cmd_ref_gc_bias -- --out-dir website/docs/generated/cli --scope release\n";
-    fs::write(out_dir.join("GENERATED_NOTICE.txt"), notice_text).with_context(|| {
-        format!(
-            "writing {}",
-            out_dir.join("GENERATED_NOTICE.txt").display()
-        )
-    })?;
+    fs::write(out_dir.join("GENERATED_NOTICE.txt"), notice_text)
+        .with_context(|| format!("writing {}", out_dir.join("GENERATED_NOTICE.txt").display()))?;
     Ok(())
 }
 
@@ -196,40 +212,236 @@ fn write_overview_page(out_dir: &Path, docs: &[CommandDoc]) -> Result<()> {
 
 #[cfg(all(feature = "cli", feature = "docs_gen"))]
 fn write_command_page(out_dir: &Path, doc: &CommandDoc) -> Result<()> {
+    let parsed_help = parse_help_text(&doc.help_text, &doc.name);
+
     let mut body = String::new();
     body.push_str(GENERATED_MARKER);
     body.push('\n');
     body.push_str(GENERATED_SOURCE);
     body.push_str("\n\n");
     body.push_str(&format!("# {}\n\n", doc.title));
-    let fence = code_fence_for_content(doc.help_text.trim_end());
-    body.push_str(&format!("{fence}text\n"));
-    body.push_str(doc.help_text.trim_end());
-    body.push('\n');
-    body.push_str(&fence);
-    body.push('\n');
+
+    if !parsed_help.intro_markdown.is_empty() {
+        body.push_str(&parsed_help.intro_markdown);
+        body.push_str("\n\n");
+    }
+
+    if let Some(usage_line) = parsed_help.usage {
+        body.push_str("\n<hr class=\"cli-usage-separator\" />\n\n");
+        body.push_str("## Usage\n\n");
+        body.push_str("`");
+        body.push_str(&usage_line);
+        body.push_str("`\n\n");
+    }
+
+    for section in parsed_help.sections {
+        body.push_str(&format!("## {}\n\n", section.title));
+
+        let has_notes = !section.notes.is_empty();
+        let has_options = !section.options.is_empty();
+
+        for note_line in &section.notes {
+            body.push_str(&note_line);
+            body.push('\n');
+        }
+        if has_notes && has_options {
+            body.push('\n');
+        }
+
+        for option in section.options {
+            body.push_str("- `");
+            body.push_str(&option.signature);
+            body.push_str("`\n");
+
+            if !option.description_lines.is_empty() {
+                body.push('\n');
+                for description_line in option.description_lines {
+                    if description_line.is_empty() {
+                        body.push_str("  \n");
+                    } else {
+                        if is_nested_bullet_line(&description_line) {
+                            body.push_str("    ");
+                        } else {
+                            body.push_str("  ");
+                        }
+                        body.push_str(&description_line);
+                        body.push('\n');
+                    }
+                }
+            }
+            body.push('\n');
+        }
+    }
+
     fs::write(out_dir.join(format!("{}.md", doc.name)), body)
         .with_context(|| format!("writing command page for {}", doc.name))?;
     Ok(())
 }
 
 #[cfg(all(feature = "cli", feature = "docs_gen"))]
-fn code_fence_for_content(content: &str) -> String {
-    let mut longest_run = 0usize;
-    let mut current_run = 0usize;
-    for character in content.chars() {
-        if character == '`' {
-            current_run += 1;
-            if current_run > longest_run {
-                longest_run = current_run;
-            }
-        } else {
-            current_run = 0;
+fn parse_help_text(help_text: &str, command_name: &str) -> ParsedHelp {
+    let lines: Vec<&str> = help_text.lines().collect();
+    let usage_line_index = lines
+        .iter()
+        .position(|line| line.trim_start().starts_with("Usage: "));
+
+    let intro_markdown = usage_line_index
+        .map(|index| lines[..index].join("\n"))
+        .unwrap_or_else(|| help_text.to_string())
+        .trim_end()
+        .to_string();
+
+    let mut usage = None;
+    let mut start_index = 0usize;
+    if let Some(index) = usage_line_index {
+        let usage_suffix = lines[index]
+            .trim_start()
+            .strip_prefix("Usage:")
+            .unwrap_or("")
+            .trim();
+
+        if !usage_suffix.is_empty() {
+            usage = Some(format!("cfdna {}", usage_suffix));
+        } else if !command_name.is_empty() {
+            usage = Some(format!("cfdna {}", command_name));
         }
+        start_index = index + 1;
     }
 
-    let fence_len = std::cmp::max(3, longest_run + 1);
-    "`".repeat(fence_len)
+    let mut sections = Vec::new();
+    let mut current_section: Option<ParsedSection> = None;
+    let mut line_index = start_index;
+
+    while line_index < lines.len() {
+        let current_line = lines[line_index];
+        let trimmed_line = current_line.trim();
+
+        if trimmed_line.is_empty() {
+            line_index += 1;
+            continue;
+        }
+
+        if is_section_header_line(current_line) {
+            if let Some(section) = current_section.take() {
+                sections.push(section);
+            }
+            current_section = Some(ParsedSection {
+                title: trimmed_line.trim_end_matches(':').to_string(),
+                options: Vec::new(),
+                notes: Vec::new(),
+            });
+            line_index += 1;
+            continue;
+        }
+
+        if is_option_signature_line(current_line) {
+            if current_section.is_none() {
+                current_section = Some(ParsedSection {
+                    title: "Options".to_string(),
+                    options: Vec::new(),
+                    notes: Vec::new(),
+                });
+            }
+
+            let signature = trimmed_line.to_string();
+            let mut description_lines = Vec::new();
+            line_index += 1;
+
+            while line_index < lines.len() {
+                let next_line = lines[line_index];
+                let trimmed_next = next_line.trim();
+
+                if is_section_header_line(next_line) || is_option_signature_line(next_line) {
+                    break;
+                }
+
+                if trimmed_next.is_empty() {
+                    let has_content = description_lines
+                        .last()
+                        .map(|line: &String| !line.is_empty())
+                        .unwrap_or(false);
+                    if has_content {
+                        description_lines.push(String::new());
+                    }
+                    line_index += 1;
+                    continue;
+                }
+
+                description_lines.push(trimmed_next.to_string());
+                line_index += 1;
+            }
+
+            if let Some(section) = current_section.as_mut() {
+                section.options.push(ParsedOption {
+                    signature,
+                    description_lines,
+                });
+            }
+            continue;
+        }
+
+        if current_section.is_none() {
+            current_section = Some(ParsedSection {
+                title: "Details".to_string(),
+                options: Vec::new(),
+                notes: Vec::new(),
+            });
+        }
+        if let Some(section) = current_section.as_mut() {
+            section.notes.push(trimmed_line.to_string());
+        }
+        line_index += 1;
+    }
+
+    if let Some(section) = current_section.take() {
+        sections.push(section);
+    }
+
+    ParsedHelp {
+        intro_markdown,
+        usage,
+        sections,
+    }
+}
+
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
+fn is_section_header_line(line: &str) -> bool {
+    let trimmed_line = line.trim();
+    if trimmed_line.is_empty() || !trimmed_line.ends_with(':') {
+        return false;
+    }
+    let has_no_leading_whitespace = line
+        .chars()
+        .next()
+        .map(|character| !character.is_whitespace());
+    has_no_leading_whitespace.unwrap_or(false)
+}
+
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
+fn is_option_signature_line(line: &str) -> bool {
+    let trimmed_line = line.trim_start();
+    if trimmed_line.is_empty() {
+        return false;
+    }
+    let is_indented = line.len() > trimmed_line.len();
+    if !is_indented || !trimmed_line.starts_with('-') {
+        return false;
+    }
+
+    // Real clap option signature lines look like:
+    //   -h, --help
+    //   --some-option <VALUE>
+    // while prose bullets look like:
+    //   - something
+    // Require a non-whitespace character immediately after the first dash.
+    let mut characters = trimmed_line.chars();
+    let _first_dash = characters.next();
+    matches!(characters.next(), Some(character) if !character.is_whitespace())
+}
+
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
+fn is_nested_bullet_line(line: &str) -> bool {
+    line.starts_with("- ") || line.starts_with("* ")
 }
 
 #[cfg(all(feature = "cli", feature = "docs_gen"))]

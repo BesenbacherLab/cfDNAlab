@@ -9,6 +9,34 @@
   --ifm-code-font-size: 92%;
 }
 
+/* Docs typography tuning
+   Keeps pages readable while making section hierarchy a bit tighter */
+.theme-doc-markdown {
+  font-size: 1.11rem;
+  line-height: 1.7;
+}
+
+.theme-doc-markdown h2 {
+  font-size: 1.65rem;
+}
+
+/* Force TOC sizing, Docusaurus theme styles can otherwise keep it tiny */
+.theme-doc-toc-desktop .table-of-contents {
+  font-size: 1rem !important;
+}
+
+.theme-doc-toc-desktop .table-of-contents__link {
+  font-size: 1rem !important;
+  line-height: 1.6 !important;
+}
+
+/* Explicit separator before the generated Usage block */
+.theme-doc-markdown .cli-usage-separator {
+  border: 0;
+  border-top: 2px solid var(--ifm-color-emphasis-400);
+  margin: 3rem 0 1.2rem !important;
+}
+
 .heroSection {
   min-height: calc(100vh - 60px);
   display: grid;
