@@ -122,7 +122,7 @@ impl Default for OutlierScopeArg {
 ///
 /// cfdna gc-bias --bam {BAM_FILE} --output-dir {PATH}/gc_bias \
 ///
-///   --ref-genome {PATH}/hg38.2bit \ # Or some other assembly
+///   --ref-2bit {PATH}/hg38.2bit \ # Or some other assembly
 ///
 ///   --ref-gc-dir {REFERENCE_GC_DIRECTORY} \
 ///

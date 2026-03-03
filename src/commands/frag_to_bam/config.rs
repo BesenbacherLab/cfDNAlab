@@ -5,12 +5,24 @@ use std::path::PathBuf;
 /// Convert a finaleDB-style frag file to a BAM file with unpaired reads
 /// (each read is a full fragment).
 ///
-/// The first five columns in the frag file:
+/// Each read in the new BAM file represents a fragment from the frag file.
+///
+/// The first five columns in the frag file should be:
 /// `Chromosome, Start, End, MapQ, Strand`.
 ///
-/// Other columns are ignored.
+/// ## Extra columns
 ///
-/// Each read in the new BAM file represents a fragment from the frag file.
+/// Optional extra columns can be transferred to BAM AUX tags when column names are known.
+///
+/// The recognized names and respective AUX tags are:
+///
+/// - `gc_weight` -> `GC`
+///
+/// - `scaling_weight` -> `COV`
+///
+/// - `flen` -> `FLEN`
+///
+/// ## BAM file
 ///
 /// The BAM header contains all contigs from `--chrom-sizes` in the `--chrom-sizes` order.
 ///
@@ -56,9 +68,26 @@ pub struct FragToBamConfig {
     )]
     pub output_prefix: String,
 
+    /// Optional header file with tab-separated column names for the frag file [path]
+    ///
+    /// Supply this when you want to transfer extra columns
+    /// (`gc_weight`, `scaling_weight`, and/or `flen`) to AUX tags
+    /// in the BAM file and the frag file has no inline header row.
+    ///
+    /// **Auto-detection**: The command also tries to auto-detect a companion header file
+    /// named `<prefix>.frag.header.tsv` when the frag path follows
+    /// `<prefix>.frag.tsv` (optionally with `.gz` or `.zst`).
+    ///
+    /// When no headers are supplied/detected or found inline, the command still accepts
+    /// headerless 5-column frag files.
+    ///
+    /// Use `--ignore-extras` when you want to ignore all extra columns after the first five.
+    #[cfg_attr(feature = "cli", clap(long, value_parser, help_heading = "Core"))]
+    pub frag_header: Option<PathBuf>,
+
     /// File with chromosome sizes (FAI or two-column sizes) for the BAM header `[path]`
     ///
-    /// E.g. the USCS `hg38.chrom.sizes` file (or similar for your assembly).
+    /// E.g. the UCSC `hg38.chrom.sizes` file (or similar for your assembly).
     #[cfg_attr(feature = "cli", clap(long, value_parser, help_heading = "Core"))]
     pub chrom_sizes: PathBuf,
 
@@ -75,6 +104,24 @@ pub struct FragToBamConfig {
         feature = "cli",
         clap(long, alias = "mq", default_value = "0", value_parser = clap::value_parser!(u8).range(0..), help_heading="Filtering"))]
     pub min_mapq: u8,
+
+    /// Ignore all frag columns after the first five `[flag]`
+    ///
+    /// This disables mapping extra columns to BAM AUX tags.
+    /// It also allows headers with extra names that are not supported for AUX mapping.
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
+    pub ignore_extras: bool,
+
+    /// Allow unknown extra header columns and ignore them `[flag]`
+    ///
+    /// By default, unknown extra columns cause an error to prevent silent mistakes.
+    ///
+    /// With this flag, unknown extra columns are ignored with a warning, while known
+    /// extra columns (`gc_weight`, `scaling_weight`, `flen`) are still transferred.
+    ///
+    /// If you want to ignore all extras, use `--ignore-extras` instead.
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
+    pub allow_unknown_extras: bool,
 
     /// Optional BED file(s) with blacklisted regions `[path]`
     #[cfg_attr(
@@ -125,8 +172,11 @@ impl FragToBamConfig {
             output_prefix: "fragments".into(),
             chromosomes,
             chrom_sizes,
+            frag_header: None,
             fragment_lengths: FragmentLengthArgs::default(),
             min_mapq: 0,
+            ignore_extras: false,
+            allow_unknown_extras: false,
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::Any,
@@ -153,12 +203,24 @@ impl FragToBamConfig {
         self.chrom_sizes = chrom_sizes;
     }
 
+    pub fn set_frag_header(&mut self, frag_header: Option<PathBuf>) {
+        self.frag_header = frag_header;
+    }
+
     pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
         &mut self.fragment_lengths
     }
 
     pub fn set_min_mapq(&mut self, min_mapq: u8) {
         self.min_mapq = min_mapq;
+    }
+
+    pub fn set_ignore_extras(&mut self, ignore_extras: bool) {
+        self.ignore_extras = ignore_extras;
+    }
+
+    pub fn set_allow_unknown_extras(&mut self, allow_unknown_extras: bool) {
+        self.allow_unknown_extras = allow_unknown_extras;
     }
 
     pub fn set_blacklist(&mut self, blacklist: Option<Vec<PathBuf>>) {

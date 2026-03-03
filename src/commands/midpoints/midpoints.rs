@@ -104,9 +104,8 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     // Ensure all windows have the same length
     let window_size = ensure_uniform_window_len(&windows_map)?;
 
-    // Prepare length bins
-    let mut length_bins = opt.length_bins.clone();
-    length_bins.sort_unstable();
+    // Parse and validate fragment-length bins once so all tiles use the same edges
+    let length_bins = opt.resolve_length_bins()?;
     let num_length_bins = length_bins.len();
     let min_fragment_length = length_bins[0];
     let max_fragment_length = length_bins[num_length_bins - 1] - 1;

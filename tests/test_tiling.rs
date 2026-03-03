@@ -157,7 +157,7 @@ mod tests {
         // For tile0, window 0 ends before core start (100) and should be dropped; expect windows 1..3
         assert_eq!(span0.first_idx, 1);
         assert_eq!(span0.last_idx_exclusive, 3);
-        // For tile1, window 1 ends before core start (150) and should be dropped; expect windows 2..3 
+        // For tile1, window 1 ends before core start (150) and should be dropped; expect windows 2..3
         // because window 3 starts at the core end and does not overlap the half-open core
         // Halos are zero here, so filtering and overlap are based on the core interval only
         assert_eq!(span1.first_idx, 2);

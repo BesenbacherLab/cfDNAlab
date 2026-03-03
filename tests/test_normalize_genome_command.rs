@@ -16,15 +16,57 @@ fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
     }
 }
 
-#[test]
-fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
-    let bam = simple_inward_bam()?;
-    let out_dir = TempDir::new()?;
+#[derive(Debug)]
+struct ScalingRow {
+    chromosome: String,
+    start: u64,
+    end: u64,
+    avg_pos_cov: f64,
+    avg_overlapping_pos_cov: f64,
+    scaling_factor: f64,
+}
 
+fn parse_scaling_rows(tsv_path: &std::path::Path) -> Result<Vec<ScalingRow>> {
+    let content = std::fs::read_to_string(tsv_path)?;
+    let mut lines = content.lines();
+    let header = lines.next().unwrap_or("");
+    assert_eq!(
+        header,
+        "chromosome\tstart\tend\tavg_pos_cov\tavg_overlapping_pos_cov\tscaling_factor"
+    );
+
+    let mut rows = Vec::new();
+    for line in lines {
+        let parts: Vec<&str> = line.split('\t').collect();
+        assert_eq!(parts.len(), 6, "Unexpected column count for line: {line}");
+        rows.push(ScalingRow {
+            chromosome: parts[0].to_string(),
+            start: parts[1].parse()?,
+            end: parts[2].parse()?,
+            avg_pos_cov: parts[3].parse()?,
+            avg_overlapping_pos_cov: parts[4].parse()?,
+            scaling_factor: parts[5].parse()?,
+        });
+    }
+    Ok(rows)
+}
+
+fn assert_approx(actual: f64, expected: f64, tolerance: f64, label: &str) {
+    let difference = (actual - expected).abs();
+    assert!(
+        difference <= tolerance,
+        "{label}: expected {expected}, got {actual} (difference {difference}, tolerance {tolerance})"
+    );
+}
+
+fn make_simple_coverage_weights_config(
+    out_dir: &std::path::Path,
+    bam: &std::path::Path,
+) -> CoverageWeightsConfig {
     let mut cfg = CoverageWeightsConfig::new(
         IOCArgs {
-            bam: bam.bam.clone(),
-            output_dir: out_dir.path().to_path_buf(),
+            bam: bam.to_path_buf(),
+            output_dir: out_dir.to_path_buf(),
             n_threads: 2,
         },
         base_chromosomes(&["chr1"]),
@@ -39,26 +81,28 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
         frag.min_fragment_length = 10;
         frag.max_fragment_length = 200;
     }
+    cfg
+}
+
+#[test]
+fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+
+    let cfg = make_simple_coverage_weights_config(out_dir.path(), &bam.bam);
 
     run(&cfg)?;
 
     let tsv_path = out_dir.path().join("coverage.scaling_factors.tsv");
     assert!(tsv_path.exists());
-    let content = std::fs::read_to_string(&tsv_path)?;
-    let mut lines = content.lines();
-    let header = lines.next().unwrap_or("");
-    assert!(header.contains("chromosome"));
+    let rows = parse_scaling_rows(&tsv_path)?;
     let mut saw_zero = false;
     let mut saw_non_zero = false;
-    for line in lines {
-        let parts: Vec<&str> = line.split('\t').collect();
-        assert_eq!(parts.len(), 6);
-        let start: u64 = parts[1].parse().unwrap();
-        let scaling: f64 = parts[5].parse().unwrap();
-        if scaling == 0.0 {
+    for row in rows {
+        if row.scaling_factor == 0.0 {
             saw_zero = true;
         }
-        if start >= 20 && start < 80 && scaling > 0.0 {
+        if row.start >= 20 && row.start < 80 && row.scaling_factor > 0.0 {
             saw_non_zero = true;
         }
     }
@@ -67,6 +111,129 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
         saw_non_zero,
         "expected covered stride bin with positive scaling"
     );
+
+    Ok(())
+}
+
+#[test]
+fn given_simple_fragment_when_coverage_weights_run_then_output_bins_cover_chromosome_without_gaps()
+-> Result<()> {
+    // Arrange
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let cfg = make_simple_coverage_weights_config(out_dir.path(), &bam.bam);
+
+    // Act
+    run(&cfg)?;
+    let tsv_path = out_dir.path().join("coverage.scaling_factors.tsv");
+    let rows = parse_scaling_rows(&tsv_path)?;
+
+    // Assert
+    assert_eq!(
+        rows.len(),
+        10,
+        "Expected 10 stride bins for chr1 length 200 and stride 20"
+    );
+    assert_eq!(rows[0].chromosome, "chr1");
+    assert_eq!(rows[0].start, 0);
+    assert_eq!(rows[0].end, 20);
+
+    for (row_index, row) in rows.iter().enumerate() {
+        assert_eq!(row.chromosome, "chr1");
+        assert_eq!(
+            row.end - row.start,
+            20,
+            "Expected fixed stride-sized bins in this fixture"
+        );
+        if row_index > 0 {
+            let previous = &rows[row_index - 1];
+            assert_eq!(
+                row.start, previous.end,
+                "Expected bins to be contiguous without gaps or overlaps"
+            );
+        }
+    }
+    assert_eq!(rows.last().unwrap().end, 200);
+
+    Ok(())
+}
+
+#[test]
+fn given_simple_fragment_when_coverage_weights_run_then_scaling_values_match_hand_derivation()
+-> Result<()> {
+    // Arrange
+    //
+    // Fixture:
+    // - Chromosome length = 200
+    // - One fragment spans [20,80), so average stride-bin coverage (stride=20) is:
+    //   [0, 1, 1, 1, 0, 0, 0, 0, 0, 0]
+    // - With bin-size=40 and stride=20, half-window=(40/20)-1=1
+    //   triangular weights are [1,2,1]
+    // - Hand-derived avg-overlapping-position-coverage per bin:
+    //   [1/3, 3/4, 1, 3/4, 1/4, 0, 0, 0, 0, 0]
+    // - Mean over non-zero bins:
+    //   (1/3 + 3/4 + 1 + 3/4 + 1/4) / 5 = 37/60
+    // - Scaling factors are inverted normalized overlap:
+    //   scaling = 1 / (overlap / (37/60))
+    //   -> [37/20, 37/45, 37/60, 37/45, 37/15, 0, 0, 0, 0, 0]
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let cfg = make_simple_coverage_weights_config(out_dir.path(), &bam.bam);
+
+    // Act
+    run(&cfg)?;
+    let tsv_path = out_dir.path().join("coverage.scaling_factors.tsv");
+    let rows = parse_scaling_rows(&tsv_path)?;
+
+    // Assert
+    let expected_avg_pos_cov = [0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let expected_avg_overlap = [
+        1.0 / 3.0,
+        3.0 / 4.0,
+        1.0,
+        3.0 / 4.0,
+        1.0 / 4.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    ];
+    let expected_scaling = [
+        37.0 / 20.0,
+        37.0 / 45.0,
+        37.0 / 60.0,
+        37.0 / 45.0,
+        37.0 / 15.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    ];
+
+    assert_eq!(rows.len(), 10);
+    for row_index in 0..rows.len() {
+        let row = &rows[row_index];
+        assert_approx(
+            row.avg_pos_cov,
+            expected_avg_pos_cov[row_index],
+            1e-6,
+            &format!("avg_pos_cov at row {row_index}"),
+        );
+        assert_approx(
+            row.avg_overlapping_pos_cov,
+            expected_avg_overlap[row_index],
+            1e-6,
+            &format!("avg_overlapping_pos_cov at row {row_index}"),
+        );
+        assert_approx(
+            row.scaling_factor,
+            expected_scaling[row_index],
+            1e-6,
+            &format!("scaling_factor at row {row_index}"),
+        );
+    }
 
     Ok(())
 }

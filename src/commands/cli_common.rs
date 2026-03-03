@@ -438,7 +438,7 @@ impl ChromosomeArgs {
 pub struct ScaleGenomeArgs {
     /// Optional path to *non-negative* scaling factors for normalizing/smoothing the genome `[path]`
     ///
-    /// `.tsv` file as produced by `cfdna coverage-weights` containing a scaling factor to *multipy* by per **scaling-bin**.
+    /// `.tsv` file as produced by `cfdna coverage-weights` containing a scaling factor to *multiply* by per **scaling-bin**.
     ///
     /// The scaling-bin-overlapping parts of the fragments are counted as the scaling factor of the bin (`w=sf`).
     ///
@@ -493,7 +493,7 @@ pub struct ApplyGCArgs {
     )]
     pub gc_file: Option<PathBuf>,
 
-    /// Optional aux tag to get GC weight from when using external GC correction packages `[path]`
+    /// Optional aux tag to get GC weight from when using external GC correction packages `[string]`
     ///
     /// Packages like `GCParagon` and `GCfix` allow saving GC weights directly to the reads
     /// in a BAM file. They often assign a "GC" aux tag.
@@ -511,7 +511,7 @@ pub struct ApplyGCArgs {
     )]
     pub gc_tag: Option<String>,
 
-    /// Whether to drop fragments where the GC correction could not be calculated `[path]`
+    /// Whether to drop fragments where the GC correction could not be calculated `[flag]`
     ///
     /// If a GC correction weight could not be computed/retrieved for a fragment,
     /// the default is to weight it as `1.0` (no correction). If you prefer to
@@ -537,7 +537,7 @@ pub struct ApplyGCArgFileOnly {
     )]
     pub gc_file: Option<PathBuf>,
 
-    /// Whether to drop fragments where the GC correction could not be calculated `[path]`
+    /// Whether to drop fragments where the GC correction could not be calculated `[flag]`
     ///
     /// If a GC correction weight could not be computed for a fragment,
     /// the default is to weight it as `1.0` (no correction). If you prefer to
@@ -876,4 +876,152 @@ pub fn load_scaling_map(
     } else {
         Ok(FxHashMap::with_hasher(Default::default()))
     }
+}
+
+/// A single fragment-length bin.
+///
+/// Bins are half-open intervals `[start, end)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LengthBin {
+    pub start: u32,
+    pub end: u32,
+    pub label: String,
+}
+
+/// A validated, ordered set of fragment-length bins.
+///
+/// Bins must be strictly increasing and contiguous so they can be converted
+/// to a unique edge vector (`[e0, e1, ..., eN]`) used by midpoint counting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LengthBins {
+    bins: Vec<LengthBin>,
+}
+
+impl LengthBins {
+    /// Construct validated length bins.
+    pub fn new(bins: Vec<LengthBin>) -> Result<Self> {
+        ensure!(!bins.is_empty(), "length bins must not be empty");
+
+        let mut previous_end: Option<u32> = None;
+        for length_bin in &bins {
+            ensure!(
+                length_bin.start < length_bin.end,
+                "invalid length-bin {}-{}: start must be < end",
+                length_bin.start,
+                length_bin.end
+            );
+            if let Some(prev_end) = previous_end {
+                ensure!(
+                    length_bin.start == prev_end,
+                    "length bins must be contiguous, expected next start {} but got {}",
+                    prev_end,
+                    length_bin.start
+                );
+            }
+            previous_end = Some(length_bin.end);
+        }
+
+        Ok(Self { bins })
+    }
+
+    /// Convert bins into the edge vector expected by midpoint counting.
+    ///
+    /// Example:
+    /// - `[30,80), [80,150), [150,220)` -> `[30, 80, 150, 220]`
+    pub fn to_edges(&self) -> Vec<u32> {
+        let mut edges = Vec::with_capacity(self.bins.len() + 1);
+        edges.push(self.bins[0].start);
+        for length_bin in &self.bins {
+            edges.push(length_bin.end);
+        }
+        edges
+    }
+}
+
+/// Parse the `--length-bins` CLI string into validated `LengthBins`.
+///
+/// Accepted forms:
+/// * `start:end:step` for regular bins.
+/// * `None` -> 1-bp bins spanning `[min_length, max_length]`.
+pub fn parse_length_bins(
+    raw: Option<&str>,
+    min_length: u32,
+    max_length: u32,
+) -> Result<LengthBins> {
+    let max_edge = max_length
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("max fragment length too large to build bin edges"))?;
+
+    if min_length > max_length {
+        bail!(
+            "min fragment length ({}) must be <= max fragment length ({})",
+            min_length,
+            max_length
+        );
+    }
+
+    let bins = if let Some(raw) = raw {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            bail!("length bins string is empty");
+        }
+
+        if raw.contains(':') {
+            let parts: Vec<&str> = raw.split(':').collect();
+            if parts.len() != 3 {
+                bail!("length bins range must be start:end:step");
+            }
+            let start: u32 = parts[0].trim().parse().context("parse length-bins start")?;
+            let end: u32 = parts[1].trim().parse().context("parse length-bins end")?;
+            let step: u32 = parts[2].trim().parse().context("parse length-bins step")?;
+            if step == 0 {
+                bail!("length-bins step must be > 0");
+            }
+            if start >= end {
+                bail!("length-bins start must be < end");
+            }
+            let mut bins = Vec::new();
+            let mut pos = start;
+            while pos < end {
+                let next = (pos + step).min(end);
+                bins.push(LengthBin {
+                    start: pos,
+                    end: next,
+                    label: format!("{}-{}", pos, next),
+                });
+                pos = next;
+            }
+            bins
+        } else {
+            bail!(
+                "length bins must be provided as start:end:step (explicit start-end lists are not supported)"
+            );
+        }
+    } else {
+        let mut bins = Vec::new();
+        let start = min_length;
+        let end = max_edge;
+        for length in start..end {
+            bins.push(LengthBin {
+                start: length,
+                end: length + 1,
+                label: format!("{}-{}", length, length + 1),
+            });
+        }
+        bins
+    };
+
+    for bin in &bins {
+        if bin.start < min_length || bin.end > max_edge {
+            bail!(
+                "length-bin {}-{} outside min/max fragment length ({}, {})",
+                bin.start,
+                bin.end,
+                min_length,
+                max_length
+            );
+        }
+    }
+
+    LengthBins::new(bins)
 }

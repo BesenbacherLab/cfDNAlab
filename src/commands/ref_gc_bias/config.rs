@@ -131,7 +131,7 @@ pub struct RefGCBiasConfig {
              value_parser = clap::value_parser!(u8).range(1..10), help_heading="Smoothing"))]
     pub smoothing_radius: u8,
 
-    /// Whether to skip the smoothing of raw GC counts`[flag]`
+    /// Whether to skip the smoothing of raw GC counts `[flag]`
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Smoothing"))]
     pub skip_smoothing: bool,
 

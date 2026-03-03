@@ -13,14 +13,14 @@ use fxhash::{FxHashMap, FxHashSet};
 use rust_htslib::bam::{
     self, Format, Header,
     header::HeaderRecord,
-    record::{Cigar, CigarString, Record},
+    record::{Aux, Cigar, CigarString, Record},
 };
 use std::collections::hash_map::Entry;
 use std::{
     fs,
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Instant,
 };
 
@@ -42,6 +42,27 @@ struct ParsedFragment {
     end: u64,
     mapq: u8,
     strand: char,
+    gc_weight: Option<f32>,
+    scaling_weight: Option<f32>,
+    flen: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+struct FragColumnIndices {
+    chromosome: usize,
+    start: usize,
+    end: usize,
+    mapq: usize,
+    strand: usize,
+    gc_weight: Option<usize>,
+    scaling_weight: Option<usize>,
+    flen: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct FragColumnLayout {
+    indices: FragColumnIndices,
+    skip_first_non_empty_line: bool,
 }
 
 /// Execute the frag-to-bam conversion.
@@ -82,6 +103,7 @@ pub fn run(opt: &FragToBamConfig) -> Result<()> {
 
 fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
     ensure_output_dir(&opt.output_dir)?;
+    let column_layout = resolve_frag_column_layout(opt)?;
 
     let (chrom_sizes_order, chrom_sizes) = load_chrom_sizes_with_order(&opt.chrom_sizes)
         .context("Loading chromosome sizes for BAM header")?;
@@ -142,6 +164,7 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
 
     /* First pass - validate and filter fragments */
 
+    let mut non_empty_lines_seen = 0_u64;
     for (line_idx, line_res) in reader.lines().enumerate() {
         let line_number = line_idx as u64 + 1;
         counters.lines += 1;
@@ -149,7 +172,11 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
         if line.trim().is_empty() {
             continue;
         }
-        let frag = parse_frag_line(&line, line_number)?;
+        non_empty_lines_seen += 1;
+        if column_layout.skip_first_non_empty_line && non_empty_lines_seen == 1 {
+            continue;
+        }
+        let frag = parse_frag_line(&line, line_number, &column_layout.indices)?;
 
         if !allowed_chromosomes.contains(&frag.chrom) {
             counters.rejected_chromosome += 1;
@@ -260,8 +287,15 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
         };
         writeln!(
             writer,
-            "{}\t{}\t{}\t{}\t{}",
-            frag.chrom, frag.start, frag.end, frag.mapq, frag.strand
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            frag.chrom,
+            frag.start,
+            frag.end,
+            frag.mapq,
+            frag.strand,
+            format_optional_f32(frag.gc_weight),
+            format_optional_f32(frag.scaling_weight),
+            format_optional_u32(frag.flen),
         )
         .with_context(|| format!("Writing temp fragment for line {}", line_number))?;
         counters.written += 1;
@@ -305,7 +339,7 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
             let line = line_res.with_context(|| {
                 format!("Reading temp fragment line {} for {}", line_number, chr)
             })?;
-            let frag = parse_frag_line(&line, line_number)?;
+            let frag = parse_temp_fragment_line(&line, line_number)?;
             let tid = *tid_lookup
                 .get(&frag.chrom)
                 .expect("tid lookup constructed for all chromosomes");
@@ -352,39 +386,29 @@ fn build_header(
     Ok((header, tid_lookup))
 }
 
-fn parse_frag_line(line: &str, line_number: u64) -> Result<ParsedFragment> {
-    let mut parts = line.split('\t');
-    let chrom = parts
-        .next()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("Missing chromosome on line {}", line_number))?;
-    let start: u64 = parts
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("Missing start on line {}", line_number))?
-        .trim()
+fn parse_frag_line(
+    line: &str,
+    line_number: u64,
+    indices: &FragColumnIndices,
+) -> Result<ParsedFragment> {
+    let columns: Vec<&str> = line.split('\t').collect();
+
+    let chrom =
+        get_required_column(&columns, indices.chromosome, "chromosome", line_number)?.to_string();
+    let start: u64 = get_required_column(&columns, indices.start, "start", line_number)?
         .parse()
         .with_context(|| format!("Invalid start coordinate on line {}", line_number))?;
-    let end: u64 = parts
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("Missing end on line {}", line_number))?
-        .trim()
+    let end: u64 = get_required_column(&columns, indices.end, "end", line_number)?
         .parse()
         .with_context(|| format!("Invalid end coordinate on line {}", line_number))?;
-    let mapq: u8 = parts
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("Missing mapq on line {}", line_number))?
-        .trim()
+    let mapq: u8 = get_required_column(&columns, indices.mapq, "mapq", line_number)?
         .parse()
         .with_context(|| format!("Invalid mapq on line {}", line_number))?;
-    let strand = parts
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("Missing strand on line {}", line_number))?
-        .trim()
+    let strand = get_required_column(&columns, indices.strand, "strand", line_number)?
         .as_bytes()
         .get(0)
         .copied()
-        .map(|b| b as char)
+        .map(|base| base as char)
         .ok_or_else(|| anyhow::anyhow!("Missing strand on line {}", line_number))?;
     if strand != '+' && strand != '-' {
         bail!("Strand must be '+' or '-' on line {}", line_number);
@@ -403,6 +427,19 @@ fn parse_frag_line(line: &str, line_number: u64) -> Result<ParsedFragment> {
         end,
         mapq,
         strand,
+        gc_weight: parse_optional_f32_column(
+            &columns,
+            indices.gc_weight,
+            "gc_weight",
+            line_number,
+        )?,
+        scaling_weight: parse_optional_f32_column(
+            &columns,
+            indices.scaling_weight,
+            "scaling_weight",
+            line_number,
+        )?,
+        flen: parse_optional_u32_column(&columns, indices.flen, "flen", line_number)?,
     })
 }
 
@@ -428,5 +465,380 @@ fn make_record(frag: &ParsedFragment, tid: i32, prefix: &str, idx: u64) -> Resul
     let flags = if frag.strand == '-' { 0x10 } else { 0 };
     record.set_flags(flags);
     record.set(qname.as_bytes(), Some(&cigar), &seq, &qual);
+
+    if let Some(gc_weight) = frag.gc_weight {
+        record
+            .push_aux(b"GC", Aux::Float(gc_weight))
+            .with_context(|| {
+                format!(
+                    "Failed writing GC aux tag for fragment {}:{}-{}",
+                    frag.chrom, frag.start, frag.end
+                )
+            })?;
+    }
+    if let Some(scaling_weight) = frag.scaling_weight {
+        record
+            .push_aux(b"COV", Aux::Float(scaling_weight))
+            .with_context(|| {
+                format!(
+                    "Failed writing COV aux tag for fragment {}:{}-{}",
+                    frag.chrom, frag.start, frag.end
+                )
+            })?;
+    }
+    if let Some(fragment_length_tag) = frag.flen {
+        record
+            .push_aux(b"FLEN", Aux::U32(fragment_length_tag))
+            .with_context(|| {
+                format!(
+                    "Failed writing FLEN aux tag for fragment {}:{}-{}",
+                    frag.chrom, frag.start, frag.end
+                )
+            })?;
+    }
+
     Ok(record)
+}
+
+fn parse_temp_fragment_line(line: &str, line_number: u64) -> Result<ParsedFragment> {
+    let columns: Vec<&str> = line.split('\t').collect();
+    if columns.len() != 8 {
+        bail!(
+            "Invalid temporary fragment row at line {}. Expected 8 columns, got {}",
+            line_number,
+            columns.len()
+        );
+    }
+    let indices = FragColumnIndices {
+        chromosome: 0,
+        start: 1,
+        end: 2,
+        mapq: 3,
+        strand: 4,
+        gc_weight: Some(5),
+        scaling_weight: Some(6),
+        flen: Some(7),
+    };
+    parse_frag_line(line, line_number, &indices)
+}
+
+fn get_required_column<'a>(
+    columns: &'a [&str],
+    index: usize,
+    column_name: &str,
+    line_number: u64,
+) -> Result<&'a str> {
+    columns
+        .get(index)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Missing {} value on line {} (expected column index {})",
+                column_name,
+                line_number,
+                index
+            )
+        })
+}
+
+fn parse_optional_f32_column(
+    columns: &[&str],
+    index: Option<usize>,
+    column_name: &str,
+    line_number: u64,
+) -> Result<Option<f32>> {
+    let Some(column_index) = index else {
+        return Ok(None);
+    };
+    let value = columns
+        .get(column_index)
+        .map(|value| value.trim())
+        .unwrap_or("");
+    if value.is_empty() || value == "." || value.eq_ignore_ascii_case("na") {
+        return Ok(None);
+    }
+    let parsed: f32 = value
+        .parse()
+        .with_context(|| format!("Invalid {} value on line {}", column_name, line_number))?;
+    if !parsed.is_finite() {
+        bail!("{} must be finite on line {}", column_name, line_number);
+    }
+    Ok(Some(parsed))
+}
+
+fn parse_optional_u32_column(
+    columns: &[&str],
+    index: Option<usize>,
+    column_name: &str,
+    line_number: u64,
+) -> Result<Option<u32>> {
+    let Some(column_index) = index else {
+        return Ok(None);
+    };
+    let value = columns
+        .get(column_index)
+        .map(|value| value.trim())
+        .unwrap_or("");
+    if value.is_empty() || value == "." || value.eq_ignore_ascii_case("na") {
+        return Ok(None);
+    }
+    let parsed: u32 = value
+        .parse()
+        .with_context(|| format!("Invalid {} value on line {}", column_name, line_number))?;
+    Ok(Some(parsed))
+}
+
+fn format_optional_f32(value: Option<f32>) -> String {
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| ".".to_string())
+}
+
+fn format_optional_u32(value: Option<u32>) -> String {
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| ".".to_string())
+}
+
+fn resolve_frag_column_layout(opt: &FragToBamConfig) -> Result<FragColumnLayout> {
+    let first_non_empty_line = read_first_non_empty_line(&opt.frag)?;
+    let inline_header_columns = first_non_empty_line
+        .as_deref()
+        .and_then(|line| detect_inline_header_columns(line));
+
+    let explicit_header = if let Some(path) = &opt.frag_header {
+        Some((path.clone(), read_header_columns(path)?))
+    } else {
+        None
+    };
+
+    let companion_header = if explicit_header.is_none() {
+        if let Some(path) = infer_companion_header_path(&opt.frag) {
+            if path.exists() {
+                Some((path.clone(), read_header_columns(&path)?))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if inline_header_columns.is_some() {
+        if let Some((explicit_path, _)) = &explicit_header {
+            bail!(
+                "Conflicting headers detected: both --frag-header ({}) and an inline header row in {}. Use only one header source",
+                explicit_path.display(),
+                opt.frag.display()
+            );
+        }
+        if let Some((companion_path, _)) = &companion_header {
+            bail!(
+                "Conflicting headers detected: both companion header file ({}) and an inline header row in {}. Use only one header source",
+                companion_path.display(),
+                opt.frag.display()
+            );
+        }
+    }
+
+    let use_inline_header =
+        explicit_header.is_none() && companion_header.is_none() && inline_header_columns.is_some();
+    let header_columns = explicit_header
+        .map(|(_, columns)| columns)
+        .or_else(|| companion_header.map(|(_, columns)| columns))
+        .or(inline_header_columns);
+
+    let indices = if let Some(columns) = header_columns {
+        resolve_indices_from_header(&columns, opt.ignore_extras, opt.allow_unknown_extras)?
+    } else {
+        resolve_default_indices(opt.ignore_extras)
+    };
+
+    Ok(FragColumnLayout {
+        indices,
+        skip_first_non_empty_line: use_inline_header,
+    })
+}
+
+fn read_first_non_empty_line(path: &Path) -> Result<Option<String>> {
+    let reader = open_text_reader(path)
+        .with_context(|| format!("Opening fragment file {}", path.display()))?;
+    for line_result in reader.lines() {
+        let line = line_result?;
+        if !line.trim().is_empty() {
+            return Ok(Some(line));
+        }
+    }
+    Ok(None)
+}
+
+fn detect_inline_header_columns(line: &str) -> Option<Vec<String>> {
+    let columns: Vec<String> = line.split('\t').map(normalize_column_name).collect();
+    let has_required_names = find_column_index(&columns, &["chromosome", "chrom"]).is_some()
+        && find_column_index(&columns, &["start"]).is_some()
+        && find_column_index(&columns, &["end"]).is_some()
+        && find_column_index(&columns, &["mapq", "min_mapq"]).is_some()
+        && find_column_index(&columns, &["strand", "read1_strand"]).is_some();
+    if has_required_names {
+        Some(columns)
+    } else {
+        None
+    }
+}
+
+fn read_header_columns(path: &Path) -> Result<Vec<String>> {
+    let reader = open_text_reader(path)
+        .with_context(|| format!("Opening header file {}", path.display()))?;
+    for line_result in reader.lines() {
+        let line = line_result?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let columns: Vec<String> = line.split('\t').map(normalize_column_name).collect();
+        if columns.is_empty() {
+            continue;
+        }
+        return Ok(columns);
+    }
+    bail!("Header file {} was empty", path.display());
+}
+
+fn normalize_column_name(name: &str) -> String {
+    name.trim().to_ascii_lowercase()
+}
+
+fn resolve_indices_from_header(
+    columns: &[String],
+    ignore_extras: bool,
+    allow_unknown_extras: bool,
+) -> Result<FragColumnIndices> {
+    let chromosome_index = find_column_index(columns, &["chromosome", "chrom"])
+        .ok_or_else(|| anyhow::anyhow!("Could not find chromosome column in header"))?;
+    let start_index = find_column_index(columns, &["start"])
+        .ok_or_else(|| anyhow::anyhow!("Could not find start column in header"))?;
+    let end_index = find_column_index(columns, &["end"])
+        .ok_or_else(|| anyhow::anyhow!("Could not find end column in header"))?;
+    let mapq_index = find_column_index(columns, &["mapq", "min_mapq"])
+        .ok_or_else(|| anyhow::anyhow!("Could not find mapq column in header"))?;
+    let strand_index = find_column_index(columns, &["strand", "read1_strand"])
+        .ok_or_else(|| anyhow::anyhow!("Could not find strand column in header"))?;
+
+    if !ignore_extras {
+        validate_extra_column_names(columns, allow_unknown_extras)?;
+    }
+
+    let gc_weight_index = if ignore_extras {
+        None
+    } else {
+        find_column_index(columns, &["gc_weight"])
+    };
+    let scaling_weight_index = if ignore_extras {
+        None
+    } else {
+        find_column_index(columns, &["scaling_weight"])
+    };
+    let flen_index = if ignore_extras {
+        None
+    } else {
+        find_column_index(columns, &["flen"])
+    };
+
+    Ok(FragColumnIndices {
+        chromosome: chromosome_index,
+        start: start_index,
+        end: end_index,
+        mapq: mapq_index,
+        strand: strand_index,
+        gc_weight: gc_weight_index,
+        scaling_weight: scaling_weight_index,
+        flen: flen_index,
+    })
+}
+
+fn resolve_default_indices(_ignore_extras: bool) -> FragColumnIndices {
+    FragColumnIndices {
+        chromosome: 0,
+        start: 1,
+        end: 2,
+        mapq: 3,
+        strand: 4,
+        gc_weight: None,
+        scaling_weight: None,
+        flen: None,
+    }
+}
+
+fn find_column_index(columns: &[String], aliases: &[&str]) -> Option<usize> {
+    columns.iter().position(|column| {
+        aliases
+            .iter()
+            .any(|alias| column == &alias.trim().to_ascii_lowercase())
+    })
+}
+
+fn validate_extra_column_names(columns: &[String], allow_unknown_extras: bool) -> Result<()> {
+    let unsupported_columns = collect_unsupported_extra_columns(columns);
+    if unsupported_columns.is_empty() {
+        return Ok(());
+    }
+
+    if allow_unknown_extras {
+        eprintln!(
+            "Warning: Ignoring unsupported frag header column name(s): {}. Recognized extra columns are gc_weight, scaling_weight, and flen",
+            unsupported_columns.join(", ")
+        );
+        Ok(())
+    } else {
+        bail!(
+            "Unsupported frag header column name(s): {}. Extra columns must be named exactly gc_weight, scaling_weight, or flen. Use --ignore-extras to ignore all extra columns or --allow-unknown-extras to ignore only unknown names",
+            unsupported_columns.join(", ")
+        );
+    }
+}
+
+fn collect_unsupported_extra_columns(columns: &[String]) -> Vec<String> {
+    let mut unsupported_columns = Vec::new();
+    for column_name in columns {
+        let is_core_column = matches!(
+            column_name.as_str(),
+            "chromosome"
+                | "chrom"
+                | "start"
+                | "end"
+                | "mapq"
+                | "min_mapq"
+                | "strand"
+                | "read1_strand"
+        );
+        let is_supported_extra = matches!(
+            column_name.as_str(),
+            "gc_weight" | "scaling_weight" | "flen"
+        );
+        if !is_core_column && !is_supported_extra {
+            unsupported_columns.push(column_name.clone());
+        }
+    }
+    unsupported_columns.sort();
+    unsupported_columns.dedup();
+    unsupported_columns
+}
+
+fn infer_companion_header_path(frag_path: &Path) -> Option<PathBuf> {
+    let file_name = frag_path.file_name()?.to_str()?;
+    const KNOWN_SUFFIXES: [&str; 4] = [
+        ".frag.tsv.gz",
+        ".frag.tsv.zst",
+        ".frag.tsv.bgz",
+        ".frag.tsv",
+    ];
+    for suffix in KNOWN_SUFFIXES {
+        if let Some(prefix) = file_name.strip_suffix(suffix) {
+            let header_name = format!("{prefix}.frag.header.tsv");
+            return Some(frag_path.with_file_name(header_name));
+        }
+    }
+    None
 }

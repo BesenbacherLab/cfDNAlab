@@ -110,7 +110,7 @@ pub struct CoverageWeightsConfig {
 
     /// Size (bp) of stride [integer]
     ///
-    /// **NOTE**: `--bin_size` must be divisible by `stride`. I.e., `bin_size % stride` == 0`.
+    /// **NOTE**: `--bin-size` must be divisible by `stride`. I.e., `--bin-size % stride` == 0`.
     ///
     /// A normalizing scaling factor is calculated per stride as the (inverse) weighted average coverage of the overlapping large-scale bins.
     ///

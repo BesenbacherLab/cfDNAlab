@@ -1,7 +1,10 @@
 use crate::{
-    commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs, UnpairedArgs},
+    commands::cli_common::{
+        ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs, UnpairedArgs, parse_length_bins,
+    },
     shared::blacklist::BlacklistStrategy,
 };
+use anyhow::{Context, Result, ensure};
 use std::path::PathBuf;
 
 /// Count positional fragment **midpoint** coverage in groups of genomic windows.
@@ -73,24 +76,29 @@ pub struct MidpointsConfig {
     )]
     pub intervals: PathBuf,
 
-    /// Edges of fragment length bins to count in `[path]`
+    /// Edges of fragment length bins to count in `[string(s)]`
     ///
-    /// The last edge is *exclusive*.
+    /// Accepted forms:
+    ///
+    /// - A single value with `start:end:step`:
+    ///   Creates contiguous bins from `start` to `end` (end-exclusive) in `step` increments.
+    ///   Example: `30:1000:10` -> bins `[30,40), [40,50), ..., [990,1000)`.
+    ///
+    /// - Multiple integer values interpreted as bin edges:
+    ///   Example: `--length-bins 30 80 150 220 500 1001` -> bins `[30,80), [80,150), ..., [500,1001)`.
     ///
     /// **NOTE**: Memory consumption increases linearly with the number of bins.
-    ///
-    /// Example: `--length-bins 30 80 150 220 500 1001` or `--length-bins {30..1001..10}` for `30 40 50 ... 1001`
     #[cfg_attr(
         feature = "cli",
         clap(
             long,
-            value_parser = clap::value_parser!(u32).range(10..),
-            num_args = 2.., // At least two edges per occurrence
-            default_values_t = [30_u32, 1001_u32],
+            value_parser,
+            num_args = 1..,
+            default_values_t = [String::from("30"), String::from("1001")],
             help_heading = "Core"
         )
     )]
-    pub length_bins: Vec<u32>,
+    pub length_bins: Vec<String>,
 
     /// Size of tiles to parallelize over `[integer]`
     ///
@@ -203,7 +211,7 @@ impl MidpointsConfig {
             },
             output_prefix: "sites".into(),
             intervals,
-            length_bins: vec![30, 1001],
+            length_bins: vec!["30".to_string(), "1001".to_string()],
             tile_size: 63_000_000,
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
@@ -226,8 +234,46 @@ impl MidpointsConfig {
         self.output_prefix = prefix.into();
     }
 
-    pub fn set_length_bins(&mut self, bins: Vec<u32>) {
-        self.length_bins = bins;
+    pub fn set_length_bins(&mut self, edges: Vec<u32>) {
+        assert!(
+            edges.len() >= 2,
+            "length bin edges must contain at least two values"
+        );
+        self.length_bins = edges.into_iter().map(|edge| edge.to_string()).collect();
+    }
+
+    pub fn set_length_bins_spec<S: Into<String>>(&mut self, spec: S) {
+        self.length_bins = vec![spec.into()];
+    }
+
+    pub fn resolve_length_bins(&self) -> Result<Vec<u32>> {
+        if self.length_bins.len() == 1 {
+            let raw_spec = self.length_bins[0].trim();
+            if raw_spec.contains(':') || raw_spec.contains('-') || raw_spec.contains(',') {
+                let parsed = parse_length_bins(Some(raw_spec), 10, u32::MAX - 1)?;
+                return Ok(parsed.to_edges());
+            }
+        }
+
+        let mut edges = Vec::with_capacity(self.length_bins.len());
+        for raw_edge in &self.length_bins {
+            let edge = raw_edge
+                .trim()
+                .parse::<u32>()
+                .with_context(|| format!("failed parsing length bin edge '{}'", raw_edge))?;
+            ensure!(edge >= 10, "length bin edges must be >= 10");
+            edges.push(edge);
+        }
+
+        ensure!(
+            edges.len() >= 2,
+            "length bin edges must contain at least two values"
+        );
+        ensure!(
+            edges.windows(2).all(|window| window[0] < window[1]),
+            "length bin edges must be strictly increasing"
+        );
+        Ok(edges)
     }
 
     pub fn set_tile_size(&mut self, tile_size: u32) {

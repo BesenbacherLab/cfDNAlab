@@ -25,7 +25,7 @@ conda activate cfdnalab
 Compile and install:
 
 ```bash
-cargo install --git https://github.com/ludvigolsen/cfDNAlab
+cargo install --git https://github.com/ludvigolsen/cfDNAlab --release --features cli,plotters
 cfdna --help
 # or clone + build
 git clone https://github.com/ludvigolsen/cfDNAlab
