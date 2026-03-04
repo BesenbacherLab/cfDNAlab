@@ -6,3 +6,5 @@ cargo run --bin gen_cli_docs \
   -- \
   --out-dir website/docs/generated/cli \
   --scope release
+
+./scripts/docs/generate_release_notes.sh

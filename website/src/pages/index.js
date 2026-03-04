@@ -1,6 +1,7 @@
 import clsx from 'clsx';
 import Layout from '@theme/Layout';
 import Link from '@docusaurus/Link';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 
 function HeroButtons() {
   return (
@@ -11,7 +12,7 @@ function HeroButtons() {
       <Link className="button button--secondary button--lg" to="/docs/generated/cli/overview">
         Command Reference
       </Link>
-      <Link className="button button--secondary button--lg" to="/docs/release-notes">
+      <Link className="button button--secondary button--lg" to="/docs/generated/release-notes">
         Release Notes
       </Link>
     </div>
@@ -19,6 +20,8 @@ function HeroButtons() {
 }
 
 export default function Home() {
+  const logoUrl = useBaseUrl('/img/cfdnalab_logo_257x285_250dpi.png');
+
   return (
     <Layout
       title="cfDNAlab"
@@ -27,15 +30,17 @@ export default function Home() {
       <main className={clsx('heroSection')}>
         <div className="heroInner">
           <img
-            src="/img/cfdnalab_logo_257x285_250dpi.png"
+            src={logoUrl}
             alt="cfDNAlab logo"
             className="heroLogo"
           />
           <h1>cfDNAlab</h1>
-          <p>
-            A command-line toolkit for cfDNA analytics with clear contracts,
-            reproducible workflows, and release-grade validation.
-          </p>
+          <div className="heroTaglineWrap">
+            <p className="heroTagline">
+              Extract <b>fragmentation features</b> from sequenced cell-free DNA
+              with an ultra-fast, highly-flexible but easy-to-use command line tool.
+            </p>
+          </div>
           <HeroButtons />
         </div>
       </main>

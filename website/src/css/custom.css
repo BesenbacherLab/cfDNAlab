@@ -65,11 +65,19 @@
   letter-spacing: 0.02em;
 }
 
-.heroInner p {
-  margin: 1rem auto 0;
-  width: min(700px, 95%);
+.heroTagline {
+  margin: 1rem 0 0;
+  max-width: min(720px, 92%);
+  width: 100%;
   font-size: 1.1rem;
   line-height: 1.6;
+  text-align: center;
+}
+
+.heroTaglineWrap {
+  display: flex;
+  justify-content: center;
+  width: 100%;
 }
 
 .heroActions {

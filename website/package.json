@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "prestart": "../scripts/docs/generate_release_notes.sh",
     "start": "docusaurus start",
+    "prebuild": "../scripts/docs/generate_release_notes.sh",
     "build": "docusaurus build --out-dir generated-site",
     "serve": "docusaurus serve --dir generated-site",
     "clear": "docusaurus clear"

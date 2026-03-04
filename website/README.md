@@ -35,4 +35,5 @@ Build output is written to `website/generated-site/`.
 ## Generated folders
 
 - `website/docs/generated/cli/` is auto-generated and must not be edited manually.
+- `website/docs/generated/release-notes.md` is auto-generated from `CHANGELOG`.
 - `website/generated-site/` is generated build output and must not be committed.

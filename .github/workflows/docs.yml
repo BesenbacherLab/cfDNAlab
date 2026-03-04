@@ -23,7 +23,7 @@ jobs:
         run: ./scripts/docs/generate_cli_docs.sh
 
       - name: Verify generated docs are committed
-        run: git diff --exit-code -- website/docs/generated/cli
+        run: git diff --exit-code -- website/docs/generated/cli website/docs/generated/release-notes.md
 
   build-site:
     runs-on: ubuntu-latest
