@@ -3,14 +3,18 @@
 mod fixtures;
 
 use anyhow::Result;
-use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
+use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, ScaleGenomeArgs, WindowsArgs};
 use cfdnalab::commands::fcoverage::config::FCoverageConfig;
 use cfdnalab::commands::fcoverage::fcoverage::run;
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
 use cfdnalab::shared::fragment::minimal_fragment::collect_fragment_from_records;
 use cfdnalab::shared::read::default_include_read_paired_end;
-use fixtures::{read_zst_to_string, simple_inward_bam};
+use fixtures::{
+    bam_from_specs, paired_fragment, read_zst_to_string, simple_inward_bam, write_bed,
+    write_scaling_factors,
+};
 use rust_htslib::bam::{Read, Reader};
+use std::path::Path;
 use tempfile::TempDir;
 
 fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
@@ -20,25 +24,18 @@ fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
     }
 }
 
-#[test]
-fn per_position_outputs_basic_fragment() -> Result<()> {
-    let bam = simple_inward_bam()?;
-    let out_dir = TempDir::new()?;
-
+fn base_config(bam_path: &Path, output_dir: &Path) -> FCoverageConfig {
     let mut cfg = FCoverageConfig::new(
         IOCArgs {
-            bam: bam.bam.clone(),
-            output_dir: out_dir.path().to_path_buf(),
+            bam: bam_path.to_path_buf(),
+            output_dir: output_dir.to_path_buf(),
             n_threads: 2,
         },
         base_chromosomes(&["chr1"]),
     );
     cfg.set_output_prefix("testcov");
-    cfg.set_decimals(2);
     cfg.set_tile_size(1_000);
-    cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_ignore_gap(false);
-    cfg.set_keep_zero_runs(false);
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
     {
@@ -46,6 +43,27 @@ fn per_position_outputs_basic_fragment() -> Result<()> {
         frag.min_fragment_length = 10;
         frag.max_fragment_length = 200;
     }
+    cfg
+}
+
+fn overlapping_fragment_bam() -> Result<fixtures::BamFixture> {
+    bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        vec![paired_fragment(20, 60, 20), paired_fragment(30, 40, 20)],
+        Vec::new(),
+        "overlapping_fcoverage",
+    )
+}
+
+#[test]
+fn per_position_outputs_basic_fragment() -> Result<()> {
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(2);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_keep_zero_runs(false);
 
     let mut reader = Reader::from_path(&bam.bam)?;
     let mut accepted = (0, 0);
@@ -99,28 +117,11 @@ fn by_size_total_and_average_outputs() -> Result<()> {
     let mut windows = WindowsArgs::default();
     windows.by_size = Some(40);
 
-    let mut cfg = FCoverageConfig::new(
-        IOCArgs {
-            bam: bam.bam.clone(),
-            output_dir: out_dir.path().to_path_buf(),
-            n_threads: 2,
-        },
-        base_chromosomes(&["chr1"]),
-    );
-    cfg.set_output_prefix("testcov");
+    let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(2);
-    cfg.set_tile_size(1_000);
     cfg.set_per_window(CoverageWindowAction::Total);
     cfg.set_keep_zero_runs(true);
-    cfg.set_ignore_gap(false);
     cfg.set_windows(windows);
-    cfg.set_min_mapq(0);
-    cfg.set_require_proper_pair(false);
-    {
-        let frag = cfg.fragment_lengths_mut();
-        frag.min_fragment_length = 10;
-        frag.max_fragment_length = 200;
-    }
 
     run(&cfg)?;
 
@@ -140,6 +141,246 @@ fn by_size_total_and_average_outputs() -> Result<()> {
     assert!(
         second.ends_with("40\t0"),
         "expected total coverage 40, got: {second}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn by_bed_unique_positions_merge_overlapping_windows() -> Result<()> {
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("windows.bed");
+    write_bed(
+        &bed_path,
+        &[
+            ("chr1", 15, 30, "window_a"),
+            ("chr1", 25, 40, "window_b"),
+            ("chr1", 70, 90, "window_c"),
+        ],
+    )?;
+
+    let mut windows = WindowsArgs::default();
+    windows.by_bed = Some(bed_path);
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_per_window(CoverageWindowAction::OnlyIncludeThesePositionsUnique);
+    cfg.set_keep_zero_runs(false);
+    cfg.set_windows(windows);
+
+    // Manual expectations:
+    // - The single fragment covers [20, 80) with coverage 1 everywhere.
+    // - unique-positions flattens overlapping BED windows before counting:
+    //   [15, 30) and [25, 40) -> [15, 40), while [70, 90) stays separate.
+    // - Intersecting those flattened windows with the covered span gives
+    //   [20, 40) and [70, 80).
+    // - Zero runs outside those intersections are omitted.
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(lines, vec!["chr1\t20\t40\t1", "chr1\t70\t80\t1"]);
+
+    Ok(())
+}
+
+#[test]
+fn by_bed_indexed_positions_keep_window_indices_and_overlap_duplicates() -> Result<()> {
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("windows.bed");
+    write_bed(
+        &bed_path,
+        &[
+            ("chr1", 15, 30, "window_a"),
+            ("chr1", 25, 40, "window_b"),
+            ("chr1", 70, 90, "window_c"),
+        ],
+    )?;
+
+    let mut windows = WindowsArgs::default();
+    windows.by_bed = Some(bed_path);
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_per_window(CoverageWindowAction::OnlyIncludeThesePositionsIndexed);
+    cfg.set_keep_zero_runs(false);
+    cfg.set_windows(windows);
+
+    // Manual expectations:
+    // - The fragment still covers [20, 80) with value 1.
+    // - indexed-positions keeps each original BED window separate and appends
+    //   its original 0-based window index.
+    // - Window 0 contributes [20, 30), window 1 contributes [25, 40), and
+    //   window 2 contributes [70, 80).
+    // - The overlap [25, 30) is intentionally duplicated because the windows
+    //   are reported independently.
+    run(&cfg)?;
+
+    let output_path = out_dir
+        .path()
+        .join("testcov.per_position_per_window.tsv.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "chr1\t20\t30\t1\t0",
+            "chr1\t25\t40\t1\t1",
+            "chr1\t70\t80\t1\t2",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn by_size_rejects_positional_per_window_modes() -> Result<()> {
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+
+    for action in [
+        CoverageWindowAction::OnlyIncludeThesePositionsUnique,
+        CoverageWindowAction::OnlyIncludeThesePositionsIndexed,
+    ] {
+        let mut windows = WindowsArgs::default();
+        windows.by_size = Some(40);
+
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        cfg.set_per_window(action);
+        cfg.set_windows(windows);
+
+        let err = run(&cfg).expect_err("by-size positional window mode should fail");
+        let err_text = err.to_string();
+        assert!(
+            err_text.contains("in --by-size mode, --per-window can only be 'average' or 'total'"),
+            "unexpected error for {action:?}: {err_text}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn scaling_keeps_fractional_outputs_and_applies_rounding() -> Result<()> {
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let scaling_path = out_dir.path().join("scaling.tsv");
+    write_scaling_factors(
+        &scaling_path,
+        &[("chr1", 0, 50, 1.24), ("chr1", 50, 200, 1.26)],
+    )?;
+
+    let mut scale_genome = ScaleGenomeArgs::default();
+    scale_genome.scaling_factors = Some(scaling_path);
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(1);
+    cfg.set_keep_zero_runs(false);
+    cfg.set_scale_genome(scale_genome);
+
+    // Manual expectations:
+    // - Unscaled positional coverage is 1 on [20, 80).
+    // - Scaling bins split that covered region at 50bp:
+    //   [20, 50) gets 1 * 1.24 = 1.24
+    //   [50, 80) gets 1 * 1.26 = 1.26
+    // - With decimals=1, those become 1.2 and 1.3 in the bedGraph output.
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(lines, vec!["chr1\t20\t50\t1.2", "chr1\t50\t80\t1.3"]);
+
+    Ok(())
+}
+
+#[test]
+fn unique_positions_split_one_merged_window_into_multiple_runs() -> Result<()> {
+    let bam = overlapping_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("windows_multi_run.bed");
+    write_bed(
+        &bed_path,
+        &[("chr1", 15, 45, "window_a"), ("chr1", 45, 85, "window_b")],
+    )?;
+
+    let mut windows = WindowsArgs::default();
+    windows.by_bed = Some(bed_path);
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_per_window(CoverageWindowAction::OnlyIncludeThesePositionsUnique);
+    cfg.set_keep_zero_runs(false);
+    cfg.set_windows(windows);
+
+    // Manual expectations:
+    // - Fragment 1 covers [20, 80)
+    // - Fragment 2 covers [30, 70)
+    // - Combined positional coverage is:
+    //   [20, 30) -> 1
+    //   [30, 70) -> 2
+    //   [70, 80) -> 1
+    // - unique-positions first merges the touching BED windows
+    //   [15, 45) and [45, 85) -> [15, 85)
+    // - Intersecting [15, 85) with the covered span keeps the same three runs
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec!["chr1\t20\t30\t1", "chr1\t30\t70\t2", "chr1\t70\t80\t1",]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn indexed_positions_repeat_window_index_for_each_run_and_duplicate_overlap() -> Result<()> {
+    let bam = overlapping_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("windows_multi_run_indexed.bed");
+    write_bed(
+        &bed_path,
+        &[("chr1", 15, 75, "window_a"), ("chr1", 25, 85, "window_b")],
+    )?;
+
+    let mut windows = WindowsArgs::default();
+    windows.by_bed = Some(bed_path);
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_per_window(CoverageWindowAction::OnlyIncludeThesePositionsIndexed);
+    cfg.set_keep_zero_runs(false);
+    cfg.set_windows(windows);
+
+    // Manual expectations:
+    // - The two fragments still create coverage runs
+    //   [20, 30) -> 1, [30, 70) -> 2, [70, 80) -> 1
+    // - indexed-positions keeps each BED window separate:
+    //   Window 0 = [15, 75) intersects those runs as
+    //     [20, 30) -> 1, [30, 70) -> 2, [70, 75) -> 1
+    //   Window 1 = [25, 85) intersects those runs as
+    //     [25, 30) -> 1, [30, 70) -> 2, [70, 80) -> 1
+    // - Each emitted run carries the original 0-based window index
+    // - The overlap between the two BED windows is intentionally duplicated
+    run(&cfg)?;
+
+    let output_path = out_dir
+        .path()
+        .join("testcov.per_position_per_window.tsv.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "chr1\t20\t30\t1\t0",
+            "chr1\t30\t70\t2\t0",
+            "chr1\t70\t75\t1\t0",
+            "chr1\t25\t30\t1\t1",
+            "chr1\t30\t70\t2\t1",
+            "chr1\t70\t80\t1\t1",
+        ]
     );
 
     Ok(())
