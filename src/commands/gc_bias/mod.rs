@@ -1,0 +1,19 @@
+pub mod binning;
+pub mod config;
+pub mod correct;
+pub mod counting;
+pub mod cross_tile_parts;
+pub mod gc_bias;
+pub mod interpolation;
+pub mod load_reference_bias;
+pub mod outliers;
+pub mod package;
+#[cfg(feature = "plotters")]
+pub mod plotting;
+pub mod smoothing;
+pub mod support_masking;
+pub mod windows;
+
+// Constants
+pub const CORRECTION_CLAMP_RANGE: (f64, f64) = (0.1, 10.0);
+pub const GC_CORRECTION_SCHEMA_VERSION: u32 = 1;

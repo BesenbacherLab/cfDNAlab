@@ -1,9 +1,7 @@
-pub mod cli_common;
-mod counters;
-pub mod ends;
-pub mod gc;
-pub mod lengths;
-mod utils;
+#[cfg(feature = "cli")]
+pub mod cli_app;
+pub mod commands;
+pub mod shared;
 
 // Curate the top-level API:
 // pub use lengths::compute_lengths;

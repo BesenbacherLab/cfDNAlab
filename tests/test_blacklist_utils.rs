@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests_merge_intervals {
-    use cfdna_utils::cfdna_utils::blacklist::merge_intervals;
+    use cfdnalab::shared::blacklist::load::merge_intervals;
 
     #[test]
     fn empty_input() {
@@ -73,13 +73,13 @@ mod tests_merge_intervals {
 
 #[cfg(test)]
 mod tests_seq_blacklisting {
-    use cfdna_utils::cfdna_utils::blacklist::{apply_blacklist_mask_to_seq, BLACKLIST_BYTE};
+    use cfdnalab::shared::blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE};
 
     #[test]
     fn mask_simple() {
         let mut seq = b"ACGTACGT".to_vec();
         let ivs = vec![(2, 4), (6, 8)]; // mask "GT" and last "GT"
-        apply_blacklist_mask_to_seq(&mut seq, &ivs);
+        apply_blacklist_mask_to_seq(&mut seq, &ivs, 0);
         assert_eq!(seq, b"ACXXACXX");
     }
 
@@ -87,7 +87,7 @@ mod tests_seq_blacklisting {
     fn mask_past_end_is_safe() {
         let mut seq = b"AAAA".to_vec();
         let ivs = vec![(2, 10)]; // interval overhangs chromosome
-        apply_blacklist_mask_to_seq(&mut seq, &ivs);
+        apply_blacklist_mask_to_seq(&mut seq, &ivs, 0);
         assert_eq!(seq, b"AAXX");
     }
 
@@ -95,14 +95,66 @@ mod tests_seq_blacklisting {
     fn no_intervals_no_change() {
         let original = b"TGCA".to_vec();
         let mut seq = original.clone();
-        apply_blacklist_mask_to_seq(&mut seq, &[]);
+        apply_blacklist_mask_to_seq(&mut seq, &[], 0);
         assert_eq!(seq, original);
     }
 
     #[test]
     fn uses_correct_byte() {
         let mut seq = b"GGGG".to_vec();
-        apply_blacklist_mask_to_seq(&mut seq, &[(0, 4)]);
+        apply_blacklist_mask_to_seq(&mut seq, &[(0, 4)], 0);
         assert!(seq.iter().all(|&b| b == BLACKLIST_BYTE));
+    }
+
+    #[test]
+    fn masks_with_offset_slice() {
+        let mut seq = b"ACGTACGT".to_vec();
+        let ivs = vec![(4, 6)];
+        apply_blacklist_mask_to_seq(&mut seq, &ivs, 2);
+        assert_eq!(seq, b"ACXXACGT");
+    }
+}
+
+#[cfg(test)]
+mod tests_load_blacklists {
+    use anyhow::Result;
+    use cfdnalab::shared::blacklist::load::load_blacklists;
+    use tempfile::NamedTempFile;
+
+    fn write_bed(lines: &[&str]) -> Result<NamedTempFile> {
+        let mut file = NamedTempFile::new()?;
+        use std::io::Write;
+        for line in lines {
+            writeln!(file, "{}", line)?;
+        }
+        Ok(file)
+    }
+
+    #[test]
+    fn should_filter_by_min_size_and_whitelist() -> Result<()> {
+        // Arrange
+        let bed = write_bed(&["chr1\t0\t3", "chr1\t10\t20", "chr2\t5\t30"])?;
+        let whitelist = vec!["chr1".to_string()];
+
+        // Act
+        let map = load_blacklists(&[bed.path()], 5, 0, Some(whitelist.as_slice()))?;
+
+        // Assert
+        assert_eq!(map.get("chr1").unwrap().as_slice(), &[(10, 20)]);
+        assert!(map.get("chr2").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn should_expand_by_halo_before_merging() -> Result<()> {
+        // Arrange
+        let bed = write_bed(&["chrX\t100\t110", "chrX\t112\t120"])?;
+
+        // Act
+        let map = load_blacklists(&[bed.path()], 1, 2, None)?;
+
+        // Assert
+        assert_eq!(map.get("chrX").unwrap().as_slice(), &[(98, 122)]);
+        Ok(())
     }
 }

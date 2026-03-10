@@ -21,3 +21,11 @@ target
 #.idea/
 
 Cargo.lock
+
+src/commands/wps_peaks/snyder_code.md
+
+src/commands/gc_bias/window_streaming_logic.md
+
+src/commands/prepare_windows/test_to_make.md
+
+.DS_Store

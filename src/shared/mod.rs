@@ -1,0 +1,26 @@
+pub mod bam;
+pub mod base;
+pub mod bed;
+pub mod blacklist;
+pub mod coverage;
+pub mod formatters;
+pub mod frag_file;
+pub mod fragment;
+pub mod fragment_iterator;
+pub mod gc_tag;
+pub mod indel_mode;
+pub mod io;
+pub mod iterator_counter;
+pub mod kmers;
+pub mod midpoint;
+pub mod overlaps;
+pub mod read;
+pub mod reference;
+pub mod sampling;
+pub mod scale_genome;
+pub mod thread_pool;
+pub mod tiled_run;
+pub mod writers;
+// Plotting helpers gated behind the plotters feature
+#[cfg(feature = "plotters")]
+pub mod plotters;

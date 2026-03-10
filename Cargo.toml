@@ -4,12 +4,45 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = []
+default = [
+    "cmd_bam_to_bam",
+    "cmd_bam_to_frag",
+    "cmd_frag_to_bam",
+    "cmd_coverage_weights",
+    "cmd_fcoverage",
+    "cmd_gc_bias",
+    "cmd_lengths",
+    "cmd_midpoints",
+    "cmd_ref_gc_bias",
+]
 cli = ["clap"]
+docs_gen = []
+cmd_bam_to_bam = []
+cmd_bam_to_frag = []
+cmd_frag_to_bam = []
+cmd_coverage_weights = []
+cmd_fcoverage = []
+cmd_fragment_kmers = []
+cmd_fragment_kmers_tests = ["cmd_fragment_kmers"]
+cmd_gc_bias = []
+cmd_lengths = []
+cmd_prepare_windows = []
+cmd_midpoints = []
+cmd_ref_gc_bias = []
+cmd_ref_gc_counts = []
+cmd_visualize_positions = ["cmd_fragment_kmers"]
+cmd_visualize_positions_tests = ["cmd_visualize_positions"]
+cmd_wps = ["cmd_fcoverage"]
+cmd_wps_peaks = ["cmd_wps", "staged-sg-filter"]
 
 [dependencies]
 anyhow = "1.0.98"
+arrayvec = "0.7.6"
+bincode = { version = "2.0.1", features = ["serde"] }
+chrono = { version = "0.4.42", features = ["clock"] }
 clap = { version = "4.5.37", features = ["derive"], optional = true }
+ctrlc = "3.5.1"
+flate2 = "1.1.2"
 fxhash = "0.2.1"
 indicatif = { version = "0.17.11", default-features = false, features = ["rayon", "unicode-width"] }
 ndarray = "0.16.1"
@@ -17,17 +50,29 @@ ndarray-npy = "0.9.1"
 needletail = { version = "0.6.3", default-features = false, features = ["flate2", "zstd"] }
 num-traits = "0.2.19"
 num_cpus = "1.17.0"
+plotters = { version = "0.3.7", optional = true }
 rand = "0.9.1"
 rayon = "1.10.0"
 rust-htslib = "0.50.0"
+serde = { version = "1.0.228", features = ["derive"] }
 smallvec = "1.15.1"
+staged-sg-filter = { version = "0.2.3", optional = true }
+strum = "0.27.2"
+strum_macros = "0.27.2"
+tempfile = "3.20.0"
 twobit = "0.2.1"
 zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
+zstd = { version = "0.13.3", features = ["zstdmt"] }
 
 [dev-dependencies]
-tempfile = "3.20.0"
+libc = "0.2"
 
 [[bin]]
 name = "cfdna"
 path = "src/bin/cfdna.rs"
 required-features = ["cli"]
+
+[[bin]]
+name = "gen_cli_docs"
+path = "src/bin/gen_cli_docs.rs"
+required-features = ["cli", "docs_gen"]
