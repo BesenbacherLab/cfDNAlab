@@ -33,6 +33,17 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 ///
 /// Without windowing, positional coverage are outputted for the selected chromosomes.
 ///
+/// ## Positional output and tiles
+///
+/// **Positional** outputs are written tile by tile to keep memory use low.
+/// This means coverage segments can be split at genomic tile boundaries even when the
+/// coverage value stays the same.
+/// The covered positions and coverage values stay the same, but the bedGraph rows
+/// may be shorter than they would be in a single-pass whole-chromosome run.
+///
+/// Reduced outputs like per-window `average` and `total` are merged across tiles,
+/// so tile boundaries should not affect their final values.
+///
 /// ## Blacklisting
 ///
 /// Positions in blacklisted regions are set to `f32::NaN` (and thus not included in sums or averages).
@@ -130,7 +141,7 @@ pub struct FCoverageConfig {
     ///   Excludes all positions that do not overlap a window from the output.
     ///   **NOTE**: The output is first sorted by chromosome, tile index, and window start.
     ///   Then the coverage segments are sorted by start- and end coordinates.
-    ///   Window indices may thus not be contiguous and coverage-segments crossing genomic tile boundaries are split.
+    ///   Window indices may thus not be contiguous.
     ///   Depending on your needs, sort downstream.
     ///   
     ///   
@@ -152,6 +163,8 @@ pub struct FCoverageConfig {
     ///
     /// Disable counting of the gap between reads (i.e., `[forward.end, reverse.start)`)
     /// when the two reads do not overlap.
+    ///
+    /// Cannot be used with `--reads-are-fragments`.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub ignore_gap: bool,
 

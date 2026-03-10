@@ -39,7 +39,7 @@ Priority order is based on release risk versus implementation effort.
 5. Expand smoke-only command tests to cover key behavior toggles.
 - `bam-to-frag`: currently mostly one smoke path.
 - `midpoints`: currently one integration path.
-- `fcoverage`: currently basic positional and by-size tests only.
+- `fcoverage`: command-level coverage is now broad. Remaining work is mostly edge-combination saturation rather than missing core behavior tests.
 
 ### P2: release process quality
 
@@ -133,19 +133,49 @@ Manual validation targets:
 
 Current state:
 
-- Command tests cover basic per-position output and by-size total/average.
+- CLI smoke covers a minimal successful invocation.
+
+- Command tests now cover:
+  - basic per-position output.
+  - `--keep-zero-runs` toggling for positional output.
+  - `--ignore-gap` for paired reads, plus rejection in unpaired mode.
+  - unpaired mode basic behavior, plus rejection of `--require-proper-pair`.
+  - conservation of total covered bases between positional output and `--by-size total`.
+  - tile-size invariance of those totals across multiple tile sizes.
+  - `--by-size total` and `--by-size average`, including a non-aligned tile-size average case.
+  - `--by-bed average` and `--by-bed total`.
+  - `--per-window unique-positions` with overlapping BED windows.
+  - `--per-window indexed-positions` with preserved original window indices.
+  - multi-run positional output within a single window for both positional BED modes.
+  - explicit rejection of `--by-size` with positional per-window modes.
+  - blacklist masking in positional output, including a blacklist interval that crosses a tile boundary.
+  - blacklist-aware totals in aggregated output, including tile-size invariance when the blacklist crosses a tile boundary.
+  - non-integer positional output with scaling and rounding.
+  - GC-tag weighting in both unpaired mode and paired-end averaging mode.
+  - paired GC-tag edge cases, including invalid-mate fallback and zero-mate zeroing behavior.
+  - GC-tag missing or invalid fallback behavior, plus `--drop-invalid-gc`.
+  - GC-file validation for missing `--ref-2bit`.
+  - GC-file weighting from a tiny reference package, plus `--drop-invalid-gc` fallback/drop behavior.
+  - blacklist-aware averages with an explicit masked-denominator check.
+  - cross-tile `--by-bed` aggregate reduction with exact output invariance across tile sizes.
+
+- Internal coverage and window result helpers also have dedicated unit tests in `tests/test_coverage.rs`,
+  including blacklist-aware positional windows and aggregate calculations.
 
 Easy wins:
 
-- Add tests for `--per-window unique-positions` and `indexed-positions` (`--by-bed` only).
-- Add explicit negative test for invalid combo: `--by-size` with positional-per-window modes.
-- Add one test with GC or scaling enabled to verify non-integer output handling and rounding behavior.
-TODO: Yeah, do all these. Those are important tests
+- No obvious high-impact easy wins remain in the core `fcoverage` command paths.
+
+- Remaining work is mostly combinatorial saturation if we want even more release confidence, for example:
+  - pairing GC-file correction with more aggregate/window modes.
+  - checking summary statistics text for GC-failure reporting.
+  - adding another blacklist + `--by-bed average` combination test if we want one more denominator check through the BED reducer.
 
 Manual validation targets:
 
-- Compare per-position versus by-size totals on tiny fixtures for conservation checks.
-- Validate zero-run behavior toggled by `--keep-zero-runs`.
+- Spot-check one GC-corrected run and confirm the summary statistics look sane.
+
+- Spot-check one positional output with a very small tile size to make sure the documented segment splitting is understandable.
 
 ## 6) cfdna midpoints
 

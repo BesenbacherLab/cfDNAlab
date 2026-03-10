@@ -65,6 +65,9 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
+    if opt.unpaired.reads_are_fragments && opt.ignore_gap {
+        bail!("--ignore-gap cannot be used with --reads-are-fragments");
+    }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
