@@ -20,7 +20,7 @@ function HeroButtons() {
 }
 
 export default function Home() {
-  const logoUrl = useBaseUrl('/img/cfdnalab_logo_257x285_250dpi.png');
+  const logoUrl = useBaseUrl('/img/cfdnalab_logo_400x255_144dpi.png');
 
   return (
     <Layout
@@ -34,7 +34,6 @@ export default function Home() {
             alt="cfDNAlab logo"
             className="heroLogo"
           />
-          <h1>cfDNAlab</h1>
           <div className="heroTaglineWrap">
             <p className="heroTagline">
               Extract <b>fragmentation features</b> from sequenced cell-free DNA
