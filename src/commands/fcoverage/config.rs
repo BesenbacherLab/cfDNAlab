@@ -1,36 +1,64 @@
 use std::path::PathBuf;
 
-use crate::commands::cli_common::ScaleGenomeArgs;
-use crate::commands::cli_common::{ChromosomeArgs, FragmentLengthArgs, IOCArgs, WindowsArgs};
+use crate::commands::cli_common::{ApplyGCArgs, ScaleGenomeArgs};
+use crate::commands::cli_common::{
+    ChromosomeArgs, FragmentLengthArgs, IOCArgs, UnpairedArgs, WindowsArgs,
+};
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 
 /// Count positional **fragment** coverage across the genome.
 ///
-/// Only paired-end fragments with both reads present are counted. By default,
-/// the entire fragment span `[start(forward), end(reverse))` is counted, except for
+/// In paired-end mode, only fragments with both reads present are considered.
+/// By default, the entire fragment span is counted, except for
 /// deletions and skipped regions that are not covered by the other read.
+///
+/// ## Fragment span definition
+///
+/// **Paired-end**: `[forward.pos, reverse.end)`.
+///
+/// **Unpaired** where each read is a fragment: `[read.pos, read.end)`.
 ///
 /// ## Windowing
 ///
 /// When specifying windows (`--by-bed` or `--by-size`), one of the following outputs
 /// is possible:
 ///
-///  - Get the average coverage per window (default).
-///
-///  - Get the total coverage per window.
+///  - Get the average (default) or total coverage per window.
 ///
 ///  - Get the positional coverage for the included windows only (`--by-bed` *only*).
 ///    Excludes all positions that do not overlap a window from the output.
 ///    Choose between:
 ///     1) Indexed: Adds the original window index as an output column and keeps duplicate positions.
-///     2) Unique: Overlapping windows are merged to reduce duplicate positions.
+///     2) Unique: Overlapping windows are merged to avoid duplicate positions.
 ///
-/// Without windowing, positional coverage for the selected chromosomes are outputted.
+/// Without windowing, positional coverage are outputted for the selected chromosomes.
+///
+/// ## Positional output and tiles
+///
+/// **Positional** outputs are written tile by tile to keep memory use low.
+/// This means coverage segments can be split at genomic tile boundaries even when the
+/// coverage value stays the same.
+/// The covered positions and coverage values stay the same, but the bedGraph rows
+/// may be shorter than they would be in a single-pass whole-chromosome run.
+///
+/// Reduced outputs like per-window `average` and `total` are merged across tiles,
+/// so tile boundaries should not affect their final values.
 ///
 /// ## Blacklisting
 ///
 /// Positions in blacklisted regions are set to `f32::NaN` (and thus not included in sums or averages).
-/// Set `--nan-policy` to change how these positions are handled in the output (positional coverage outputs only).
+///
+/// ## GC correction
+///
+/// Reduce the global GC bias (common technically-induced bias) in the coverage
+/// by weighting the contribution of fragments. Two options:
+///
+/// `--gc-file`: Weight the contribution of each fragment by its length and GC content using a precomputed
+/// correction matrix from `cfdna gc-bias`. The GC correction matrix should be calculated from the same BAM file,
+/// as the bias is sample-specific.
+///
+/// `--gc-tag`: Weight the contribution of each fragment by a weight saved as an aux tag in the BAM reads.
+/// Allows using external GC packages like `GCParagon` and `GCfix` (both use the tag "GC").
 ///
 /// ## Temporary files
 ///
@@ -42,16 +70,21 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 ///
 /// The following criteria always exclude a read:
 ///
-/// The read or mate read is unmapped.
-/// The read is mapped to a different `tid` than the mate.
 /// The read is secondary, supplementary or duplicate.
 /// The read failed quality check.
+///
+/// **Paired-end input only**:
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct FCoverageConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub unpaired: UnpairedArgs,
 
     /// Prefix for output files (e.g., a sample name) `[string]`
     ///
@@ -106,6 +139,12 @@ pub struct FCoverageConfig {
     /// - `"indexed-positions"`: Get the positional coverage for the included windows only (`--by-bed` *only*).
     ///   Adds the original window index as an output column and keeps duplicate positions.
     ///   Excludes all positions that do not overlap a window from the output.
+    ///   **NOTE**: The output is first sorted by chromosome, tile index, and window start.
+    ///   Then the coverage segments are sorted by start- and end coordinates.
+    ///   Window indices may thus not be contiguous.
+    ///   Depending on your needs, sort downstream.
+    ///   
+    ///   
     ///
     /// **NOTE**: Ignored when no windows are specified.
     #[cfg_attr(
@@ -124,6 +163,8 @@ pub struct FCoverageConfig {
     ///
     /// Disable counting of the gap between reads (i.e., `[forward.end, reverse.start)`)
     /// when the two reads do not overlap.
+    ///
+    /// Cannot be used with `--reads-are-fragments`.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub ignore_gap: bool,
 
@@ -146,6 +187,8 @@ pub struct FCoverageConfig {
     pub min_mapq: u8,
 
     /// Only count properly paired reads `[flag]`
+    ///
+    /// Not recommended, as we already select only inward-directed read pairs within fragment length bounds.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
@@ -154,17 +197,35 @@ pub struct FCoverageConfig {
     #[cfg_attr(
         feature = "cli", clap(short = 'b', long, value_parser, num_args = 1.., action = clap::ArgAction::Append, help_heading = "Filtering"))]
     pub blacklist: Option<Vec<PathBuf>>,
-    // #[cfg_attr(feature = "cli", clap(flatten))]
-    // gc: GCArgs,
 
-    // #[cfg_attr(feature = "cli", clap(flatten))]
-    // two_bit: TwoBitArgs,
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub gc: ApplyGCArgs,
+
+    /// Optional 2bit reference genome file [path]
+    ///
+    /// NOTE: Required for GC correction, otherwise ignored.
+    ///
+    /// E.g., "hg38.2bit" from UCSC ( https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/hg38.2bit ).
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            short = 'r',
+            long,
+            value_parser,
+            required = false,
+            help_heading = "GC Correction"
+        )
+    )]
+    pub ref_2bit: Option<PathBuf>,
 }
 
 impl FCoverageConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
+            unpaired: UnpairedArgs {
+                reads_are_fragments: false,
+            },
             output_prefix: "coverage".into(),
             decimals: 2,
             keep_zero_runs: false,
@@ -174,13 +235,16 @@ impl FCoverageConfig {
             windows: WindowsArgs::default(),
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
-            fragment_lengths: FragmentLengthArgs {
-                min_fragment_length: 20,
-                max_fragment_length: 1000,
-            },
+            fragment_lengths: FragmentLengthArgs::default(),
             min_mapq: 30,
             require_proper_pair: false,
             blacklist: None,
+            gc: ApplyGCArgs {
+                gc_file: None,
+                gc_tag: None,
+                drop_invalid_gc: false,
+            },
+            ref_2bit: None,
         }
     }
 
@@ -190,6 +254,10 @@ impl FCoverageConfig {
 
     pub fn set_decimals(&mut self, decimals: u8) {
         self.decimals = decimals;
+    }
+
+    pub fn set_scale_genome(&mut self, scale_genome: ScaleGenomeArgs) {
+        self.scale_genome = scale_genome;
     }
 
     pub fn set_keep_zero_runs(&mut self, keep: bool) {
@@ -224,7 +292,11 @@ impl FCoverageConfig {
         self.require_proper_pair = require;
     }
 
-    pub fn set_scale_genome(&mut self, scale: ScaleGenomeArgs) {
-        self.scale_genome = scale;
+    pub fn set_gc(&mut self, gc: ApplyGCArgs) {
+        self.gc = gc;
+    }
+
+    pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
+        self.ref_2bit = ref_2bit;
     }
 }

@@ -39,7 +39,7 @@ pub fn nearest_guard_bounds(length: u32, k_span: u32) -> Option<NearestGuardBoun
         half.saturating_add(span.saturating_sub(1))
     };
 
-    // Clamp to valid domain.
+    // Clamp to valid domain (full length)
     let latest_start = len.saturating_sub(span);
     max_forward_start = max_forward_start.min(latest_start);
     min_reverse_anchor = min_reverse_anchor.min(len.saturating_sub(1));

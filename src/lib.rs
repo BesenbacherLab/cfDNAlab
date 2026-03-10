@@ -1,3 +1,5 @@
+#[cfg(feature = "cli")]
+pub mod cli_app;
 pub mod commands;
 pub mod shared;
 

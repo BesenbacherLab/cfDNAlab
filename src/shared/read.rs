@@ -1,8 +1,12 @@
 use rust_htslib::bam::Record;
 use rust_htslib::bam::record::Aux;
 
-/// Whether to include the read or continue
-pub fn default_include_read(rec: &Record, require_proper_pair: bool, min_mapq: u8) -> bool {
+/// Whether to include the read or continue (paired-end sequencing).
+pub fn default_include_read_paired_end(
+    rec: &Record,
+    require_proper_pair: bool,
+    min_mapq: u8,
+) -> bool {
     !(rec.is_unmapped()
         || rec.is_mate_unmapped()
         || rec.tid() != rec.mtid()
@@ -12,6 +16,16 @@ pub fn default_include_read(rec: &Record, require_proper_pair: bool, min_mapq: u
         || rec.is_duplicate()
         || rec.is_quality_check_failed()
         || (require_proper_pair && !rec.is_proper_pair())
+        || rec.mapq() < min_mapq) as bool
+}
+
+/// Whether to include the read or continue (unpaired sequencing where each read is a fragment).
+pub fn default_include_read_unpaired(rec: &Record, min_mapq: u8) -> bool {
+    !(rec.is_unmapped()
+        || rec.is_secondary()
+        || rec.is_supplementary()
+        || rec.is_duplicate()
+        || rec.is_quality_check_failed()
         || rec.mapq() < min_mapq) as bool
 }
 

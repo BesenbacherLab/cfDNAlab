@@ -85,17 +85,25 @@ macro_rules! counter_struct {
 // Declarations
 
 counter_struct!(GCCounters;);
-counter_struct!(FragmentKmersCounters; blacklisted_fragments: u64);
+counter_struct!(FragmentKmersCounters;
+    blacklisted_fragments: u64,
+    gc_failed_fragments: u64,
+    gc_out_of_range_tags: u64
+);
 counter_struct!(CoverageWeightsCounters;);
-counter_struct!(FCoverageCounters;);
+counter_struct!(FCoverageCounters; gc_failed_fragments: u64, gc_out_of_range_tags: u64);
 // If FCoverage’s counted_fragments should come from yielded in the snapshot,
 // add a custom method/override below as needed.
 
 counter_struct!(LengthsCounters;
     blacklisted_fragments: u64,
-    gc_excl_fragments: u64
+    gc_failed_fragments: u64
 );
 
 counter_struct!(ProfileGroupsCounters;
-    blacklisted_fragments: u64
+    blacklisted_fragments: u64,
+    gc_failed_fragments: u64,
+    gc_out_of_range_tags: u64,
 );
+
+counter_struct!(BamToFragCounters; blacklisted_fragments: u64, gc_failed_fragments: u64);

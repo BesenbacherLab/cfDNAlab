@@ -3,10 +3,11 @@ use std::path::PathBuf;
 use crate::{
     commands::{
         cli_common::{
-            ChromosomeArgs, FragmentLengthArgs, FragmentPositionSelectionArgs, IOCArgs,
-            Ref2BitRequiredArgs, ScaleGenomeArgs, WindowsArgs,
+            ApplyGCArgs, BaseSelectionArgs, ChromosomeArgs, FragmentLengthArgs,
+            FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
+            UnpairedArgs, WindowsArgs,
         },
-        visualize_positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame},
+        fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame},
     },
     shared::{blacklist::BlacklistStrategy, indel_mode::IndelMode},
 };
@@ -20,6 +21,9 @@ pub struct FragmentKmersSharedArgs {
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ref_genome: Ref2BitRequiredArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub unpaired: UnpairedArgs,
 
     /// Prefix for output files (e.g., a sample name) `[string]`
     ///
@@ -91,6 +95,9 @@ pub struct FragmentKmersSharedArgs {
     pub position_selection: FragmentPositionSelectionArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
+    pub base_selection: BaseSelectionArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
     pub windows: WindowsArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
@@ -104,6 +111,10 @@ pub struct FragmentKmersSharedArgs {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
 
+    /// Suppress progress reporting and status messages. [internal]
+    #[cfg_attr(feature = "cli", clap(skip))]
+    pub quiet: bool,
+
     /// Minimum mapping quality to include `[integer]`
     #[cfg_attr(
         feature = "cli",
@@ -112,7 +123,7 @@ pub struct FragmentKmersSharedArgs {
 
     /// Only count properly paired reads `[flag]`
     ///
-    /// This is NOT recommended by default as it trims the tails of the length distribution.
+    /// This is **NOT** recommended by default as it trims the tails of the length distribution.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 
@@ -140,7 +151,7 @@ pub struct FragmentKmersSharedArgs {
     /// The fragment positions that should overlap blacklisted regions for it to be excluded `[string]`
     ///
     /// Possible values:
-    ///     "any", "all", "midpoint", or "proportion=<threshold>"
+    ///     `"any"`, `"all"`, `"midpoint"`, or `"proportion=<threshold>"`
     ///
     /// Example of proportion: `--blacklist-strategy proportion=0.2` (no space around `=`)
     #[cfg_attr(
@@ -154,6 +165,9 @@ pub struct FragmentKmersSharedArgs {
         )
     )]
     pub blacklist_strategy: BlacklistStrategy,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub gc: ApplyGCArgs,
 }
 
 impl FragmentKmersSharedArgs {
@@ -166,12 +180,17 @@ impl FragmentKmersSharedArgs {
         Self {
             ioc,
             ref_genome,
+            unpaired: UnpairedArgs {
+                reads_are_fragments: false,
+            },
             output_prefix: output_prefix,
             tile_size: 20_000_000,
             position_selection: FragmentPositionSelectionArgs {
-                frame: ReferenceFrame::Left,
-                positions: "..".to_string(),
-                step: 1,
+                frame: vec![ReferenceFrame::Left],
+                positions: vec!["..".to_string()],
+                step: vec![1],
+            },
+            base_selection: BaseSelectionArgs {
                 bases_from: BasesFrom::Reference,
                 mismatch_bases_from: MismatchBasesFrom::NearestRead,
             },
@@ -180,15 +199,18 @@ impl FragmentKmersSharedArgs {
             windows: WindowsArgs::default(),
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
-            fragment_lengths: FragmentLengthArgs {
-                min_fragment_length: 20,
-                max_fragment_length: 1000,
-            },
+            fragment_lengths: FragmentLengthArgs::default(),
+            quiet: false,
             min_mapq: 30,
             require_proper_pair: false,
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::default(),
+            gc: ApplyGCArgs {
+                gc_file: None,
+                gc_tag: None,
+                drop_invalid_gc: false,
+            },
         }
     }
 
@@ -214,6 +236,10 @@ impl FragmentKmersSharedArgs {
 
     pub fn set_position_selection(&mut self, position_selection: FragmentPositionSelectionArgs) {
         self.position_selection = position_selection;
+    }
+
+    pub fn set_base_selection(&mut self, base_selection: BaseSelectionArgs) {
+        self.base_selection = base_selection;
     }
 
     pub fn set_ignore_gap(&mut self, ignore_gap: bool) {
@@ -243,11 +269,17 @@ impl FragmentKmersSharedArgs {
     pub fn set_require_proper_pair(&mut self, require: bool) {
         self.require_proper_pair = require;
     }
+
+    pub fn set_gc(&mut self, gc: ApplyGCArgs) {
+        self.gc = gc;
+    }
 }
 
 // TODO: Add minimum or min mean base quality filtering!
 
 /// Count k-mers within the fragments in a BAM-file.
+///
+/// **Experimental**: enable via `--features cmd_fragment_kmers` during `cargo build/install`.
 ///
 /// Whereas the `cfdna ends` tool extracts end-motifs, this tool extracts k-mers
 /// from all the **selected positions** in the fragment.
@@ -258,10 +290,12 @@ impl FragmentKmersSharedArgs {
 ///
 /// The following criteria always exclude a read:
 ///
-/// The read or mate read is unmapped.
-/// The read is mapped to a different `tid` than the mate.
 /// The read is secondary, supplementary or duplicate.
 /// The read failed quality check.
+///
+/// **Paired-end input only**:
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
@@ -351,6 +385,10 @@ impl FragmentKmersConfig {
         self.shared_args.set_position_selection(position_selection);
     }
 
+    pub fn set_base_selection(&mut self, base_selection: BaseSelectionArgs) {
+        self.shared_args.set_base_selection(base_selection);
+    }
+
     pub fn set_ignore_gap(&mut self, ignore_gap: bool) {
         self.shared_args.set_ignore_gap(ignore_gap);
     }
@@ -383,11 +421,19 @@ impl FragmentKmersConfig {
         self.shared_args.fragment_lengths_mut()
     }
 
+    pub fn set_quiet(&mut self, quiet: bool) {
+        self.shared_args.quiet = quiet;
+    }
+
     pub fn set_min_mapq(&mut self, min_mapq: u8) {
         self.shared_args.set_min_mapq(min_mapq);
     }
 
     pub fn set_require_proper_pair(&mut self, require: bool) {
         self.shared_args.set_require_proper_pair(require);
+    }
+
+    pub fn set_gc(&mut self, gc: ApplyGCArgs) {
+        self.shared_args.set_gc(gc);
     }
 }

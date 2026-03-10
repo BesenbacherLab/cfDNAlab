@@ -8,12 +8,15 @@ use crate::{
         },
     },
     shared::{
-        bam::create_chromosome_reader, coverage::Coverage, fragment::minimal_fragment::Fragment,
-        fragment_iterator::fragments_from_bam, read::default_include_read,
+        bam::create_chromosome_reader,
+        coverage::Coverage,
+        fragment::minimal_fragment::Fragment,
+        fragment_iterator::fragments_from_bam,
+        read::{default_include_read_paired_end, default_include_read_unpaired},
         thread_pool::init_global_pool,
     },
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -25,28 +28,37 @@ use std::{
     time::Instant,
 };
 
-/// Execute the genome-normalisation pipeline and emit stride-level scaling factors.
+/// Calculates weights for genomic smoothing using large bins and a stride.
 ///
-/// Implementation details:
+/// Technical details:
 /// - Resolves chromosomes, prepares output directories, and loads optional blacklists before
 ///   scanning each chromosome in parallel.
 /// - Converts fragments into coverage profiles, smooths them with a triangular kernel, and writes
 ///   the resulting statistics to a TSV file.
-/// - Tracks iterator counters so the summary in the terminal reflects acceptance, blacklist hits,
-///   and fragment counts.
+/// - Tracks iterator counters so the printed summary reflects accepted fragments, blacklist hits,
+///   and other bookkeeping numbers.
 ///
-/// Parameters:
-/// - `opt`: Fully resolved configuration for the `normalize-genome` command.
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Fully resolved configuration for the `coverage-weights` command.
 ///
-/// Returns:
-/// - `Ok(())` when the scaling-factor TSV is written successfully.
+/// Returns
+/// -------
+/// - `Ok(())`:
+///     Scaling factors were written successfully.
 ///
-/// Errors:
+/// Errors
+/// ------
 /// - Returns an error if the BAM cannot be read, blacklist files are invalid, or the output file
 ///   cannot be created.
 pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
     let start_time = Instant::now();
-    let (chromosomes, _contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc)?;
+    if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --reads-are-fragments");
+    }
+    let (chromosomes, _contigs) =
+        resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
     opt.check_bin_sizes()?;
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
     pb.set_style(
@@ -209,19 +221,32 @@ fn process_chrom(
         move |f: &Fragment| lengths.contains(f.len())
     };
 
-    // Wrap to use opt
-    let include_read_fn = {
-        let opt = (*opt).clone();
-        move |r: &Record| default_include_read(r, opt.require_proper_pair, opt.min_mapq)
-    };
-
     // Create fragment iterator
-    let mut iter = fragments_from_bam(
-        reader.records().map(|r| r.map_err(anyhow::Error::from)),
-        include_read_fn,
-        fragment_filter,
-    )
-    .with_local_counters();
+    let mut iter = if opt.unpaired.reads_are_fragments {
+        let min_mapq = opt.min_mapq;
+        let include_read_fn = move |r: &Record| default_include_read_unpaired(r, min_mapq);
+        fragments_from_bam(
+            reader.records().map(|r| r.map_err(anyhow::Error::from)),
+            include_read_fn,
+            None,
+            fragment_filter,
+            true,
+        )
+        .with_local_counters()
+    } else {
+        let min_mapq = opt.min_mapq;
+        let require_proper_pair = opt.require_proper_pair;
+        let include_read_fn =
+            move |r: &Record| default_include_read_paired_end(r, require_proper_pair, min_mapq);
+        fragments_from_bam(
+            reader.records().map(|r| r.map_err(anyhow::Error::from)),
+            include_read_fn,
+            None,
+            fragment_filter,
+            false,
+        )
+        .with_local_counters()
+    };
 
     // Iterate fragments and add fragment to coverage
     for fragment_res in iter.by_ref() {

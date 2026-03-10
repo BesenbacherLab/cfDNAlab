@@ -1,20 +1,22 @@
-use std::num::NonZeroUsize;
-use std::path::PathBuf;
-
+use crate::commands::{
+    cli_common::{BaseSelectionArgs, FragmentPositionSelectionArgs},
+    fragment_kmers::{
+        parse::parse_positions,
+        positions::{BasesFrom, ReferenceFrame},
+    },
+    visualize_positions::{Style, VizConfig, parse::parse_lengths},
+};
 use anyhow::{Context, Result, anyhow};
 #[cfg(feature = "cli")]
 use clap::Parser;
-
-use crate::commands::{
-    cli_common::FragmentPositionSelectionArgs,
-    visualize_positions::{
-        BasesFrom, ReferenceFrame, Style, VizConfig, parse_lengths, parse_positions,
-    },
-};
+use fxhash::FxHashSet;
+use std::path::PathBuf;
 
 const MIN_FRAGMENT_LENGTH: u32 = 10;
 
 /// `fragment-kmers` helper: Draw which fragment bases will be counted for a given frame and range setup.
+///
+/// **Experimental**: enable via `--features cmd_fragment_kmers cmd_visualize_positions` during `cargo build/install`.
 ///
 /// Use this helper to prototype the “where to count” arguments (`--frame`, `--positions`, `--step`, `--bases-from`, `--mismatch-bases-from`),
 /// before you run `cfdna fragment-kmers` on a BAM file. For every fragment length you request, the selected
@@ -24,10 +26,27 @@ const MIN_FRAGMENT_LENGTH: u32 = 10;
 /// Describe your selections with the **1-based inclusive** grammar (`A..B`, `A..-B`, `..half`, `5..half-3`,
 /// `-60..60` (`mid`-frame-only), and friends) and the diagram will show the regions counted by
 /// `cfdna fragment-kmers`, assuming the same arguments are passed.
+///
+/// To ensure the exact same positional and filtering logic is shared between this visualizer
+/// and `fragment-kmers`, we synthesize fragments of the specified lengths, run it through
+/// `fragment-kmers` with positional counting, and, finally, reconstruct the counted positions.
 #[cfg_attr(feature = "cli", derive(Parser, Clone))]
 pub struct VisualizePositionsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub position_selection: FragmentPositionSelectionArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub base_selection: BaseSelectionArgs,
+
+    /// Working directory used to stage synthetic inputs and fragment-kmers outputs `[path]`.
+    ///
+    /// The command creates a temporary sub-directory inside this folder,
+    /// which is removed again upon completion.
+    #[cfg_attr(
+        feature = "cli",
+        arg(long, value_parser, required = true, help_heading = "Visualization")
+    )]
+    pub work_dir: PathBuf,
 
     /// Explicit fragment lengths to sketch (comma-separated) `[integers]`.
     ///
@@ -130,8 +149,7 @@ pub struct VisualizePositionsConfig {
 
 impl VisualizePositionsConfig {
     pub fn build(&self) -> Result<VizConfig> {
-        let step = NonZeroUsize::new(self.position_selection.step)
-            .ok_or_else(|| anyhow!("--step must be at least 1 (example: --step 3)"))?;
+        let position_specs = self.position_selection.clone().into_positional_specs()?;
 
         let fragment_lengths = if let Some(list) = &self.lengths {
             list.clone()
@@ -154,20 +172,26 @@ impl VisualizePositionsConfig {
             }
         }
 
-        let positions = parse_positions(
-            self.position_selection.frame,
-            &self.position_selection.positions,
-        )
-        .with_context(|| {
-            format!(
-                "invalid --positions \"{}\" for frame {}",
-                self.position_selection.positions,
-                self.position_selection.frame.as_str()
-            )
-        })?;
+        let position_specs = position_specs
+            .iter()
+            .map(|ps| parse_positions(ps))
+            .collect::<Result<Vec<_>, _>>()
+            .with_context(|| {
+                format!(
+                    "invalid --positions in one of the specifications \"{}\"",
+                    position_specs
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                )
+            })?;
 
-        if self.position_selection.frame == ReferenceFrame::Mid
-            && self.position_selection.bases_from == BasesFrom::NearestRead
+        let present_frames: FxHashSet<ReferenceFrame> =
+            position_specs.iter().map(|ps| ps.frame).collect();
+
+        if present_frames.contains(&ReferenceFrame::Mid)
+            && self.base_selection.bases_from == BasesFrom::NearestRead
         {
             return Err(anyhow!(
                 "`--bases-from nearest-read` is incompatible with the `mid` frame. Choose a different bases-from mode."
@@ -187,12 +211,9 @@ impl VisualizePositionsConfig {
         }
 
         Ok(VizConfig {
-            frame: self.position_selection.frame,
-            positions,
-            positions_input: self.position_selection.positions.clone(),
-            step,
-            bases: self.position_selection.bases_from,
-            mismatch_bases_from: self.position_selection.mismatch_bases_from,
+            position_specs,
+            bases: self.base_selection.bases_from,
+            mismatch_bases_from: self.base_selection.mismatch_bases_from,
             kmer_sizes: self.kmer_sizes.clone(),
             fragment_lengths,
             style: self.style,

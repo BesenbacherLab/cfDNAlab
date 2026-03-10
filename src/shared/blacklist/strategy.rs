@@ -3,7 +3,7 @@ use std::str::FromStr;
 /// Blacklist strategy for fragment/read/interval filtering
 ///
 /// Possible values:
-///     "any", "all", "midpoint", or "proportion=<threshold>" [string]
+///     `"any"`, `"all"`, `"midpoint"`, or `"proportion=<threshold>"` [string]
 ///
 /// Example of proportion: `--blacklist_strategy proportion=0.2` (no space around `=`)
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

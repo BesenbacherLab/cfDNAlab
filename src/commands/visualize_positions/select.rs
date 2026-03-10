@@ -1,12 +1,12 @@
-use std::convert::TryFrom;
-use std::num::NonZeroUsize;
+use fxhash::FxHashMap;
 
-use crate::shared::kmers::nearest_guard::nearest_guard_bounds;
-
-use super::model::{
-    AxisBounds, LengthVisualization, LinearRange, MidRange, NearestRange, PositionsSpec,
-    ReferenceFrame, Track,
+use super::model::{AxisBounds, LengthVisualization, Track};
+use crate::commands::fragment_kmers::nearest_frame_guard::NearestFrameGuard;
+use crate::commands::fragment_kmers::parse::PositionalSelectionSpec;
+use crate::commands::fragment_kmers::positions::{
+    AllowedWindows, PositionGroup, PositionSelection, PositionSelectionCache, ReferenceFrame,
 };
+use crate::commands::fragment_kmers::selection::{SelectionDecision, evaluate_selection};
 
 /// How aggressively the visualization should clamp selections to read coverage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,37 +22,143 @@ pub enum ReadClamp {
 /// Build the set of tracks for a single fragment length.
 pub fn build_tracks_for_length(
     length: u32,
-    frame: ReferenceFrame,
-    positions: &PositionsSpec,
-    step: NonZeroUsize,
+    position_selection_spec: &PositionalSelectionSpec,
     read_clamp: ReadClamp,
 ) -> LengthVisualization {
-    let tracks = match frame {
-        ReferenceFrame::Left => vec![build_linear_track(
-            "left",
-            length,
-            expect_linear(positions),
-            step,
-        )],
-        ReferenceFrame::Right => vec![build_linear_track(
-            "right",
-            length,
-            expect_linear(positions),
-            step,
-        )],
+    let cache = PositionSelectionCache::new(
+        vec![position_selection_spec.clone()],
+        &[0u8],
+        length,
+        length,
+    )
+    .expect("failed to build position cache");
+    let selections = cache.offsets(length, 1u8).unwrap_or(&[]);
+
+    let mut tracks = match position_selection_spec.frame {
+        ReferenceFrame::Left => {
+            let indices = selections
+                .iter()
+                .filter(|sel| sel.group() == PositionGroup::Left)
+                .map(|sel| (sel.offset() + 1) as i32)
+                .collect();
+            vec![Track {
+                name: "left".to_string(),
+                axis: AxisBounds::new(1, length as i32),
+                selected_indices: dedup_sorted(indices),
+            }]
+        }
+        ReferenceFrame::Right => {
+            let indices = selections
+                .iter()
+                .filter(|sel| sel.group() == PositionGroup::Right)
+                .map(|sel| (length as i32) - sel.offset() as i32)
+                .collect();
+            vec![Track {
+                name: "right".to_string(),
+                axis: AxisBounds::new(1, length as i32),
+                selected_indices: dedup_sorted(indices),
+            }]
+        }
         ReferenceFrame::PerEnd => {
-            let range = expect_linear(positions);
+            let left = selections
+                .iter()
+                .filter(|sel| sel.group() == PositionGroup::Left)
+                .map(|sel| (sel.offset() + 1) as i32)
+                .collect();
+            let right = selections
+                .iter()
+                .filter(|sel| sel.group() == PositionGroup::Right)
+                .map(|sel| (length as i32) - sel.offset() as i32)
+                .collect();
             vec![
-                build_linear_track("left", length, range, step),
-                build_linear_track("right", length, range, step),
+                Track {
+                    name: "left".to_string(),
+                    axis: AxisBounds::new(1, length as i32),
+                    selected_indices: dedup_sorted(left),
+                },
+                Track {
+                    name: "right".to_string(),
+                    axis: AxisBounds::new(1, length as i32),
+                    selected_indices: dedup_sorted(right),
+                },
             ]
         }
-        ReferenceFrame::Nearest => build_nearest_tracks(length, expect_nearest(positions), step),
-        ReferenceFrame::Mid => vec![build_mid_track(length, expect_mid(positions), step)],
+        ReferenceFrame::Nearest => {
+            let left_positions = dedup_sorted(
+                selections
+                    .iter()
+                    .filter(|sel| sel.group() == PositionGroup::Left)
+                    .filter_map(|sel| {
+                        map_linear_position(length, sel.offset(), PositionGroup::Left)
+                    })
+                    .collect(),
+            );
+            let right_positions = dedup_sorted(
+                selections
+                    .iter()
+                    .filter(|sel| sel.group() == PositionGroup::Right)
+                    .filter_map(|sel| {
+                        map_linear_position(length, sel.offset(), PositionGroup::Right)
+                    })
+                    .collect(),
+            );
+            let fragment_positions = dedup_sorted({
+                let mut values = left_positions.clone();
+                values.extend(right_positions.iter().copied());
+                values
+            });
+            let distances = fold_fragment_positions(length, &fragment_positions);
+            let mut tracks = vec![
+                Track {
+                    name: "fragment".to_string(),
+                    axis: AxisBounds::new(1, length as i32),
+                    selected_indices: fragment_positions,
+                },
+                Track {
+                    name: "nearest".to_string(),
+                    axis: AxisBounds::new(1, (length / 2).max(1) as i32),
+                    selected_indices: distances,
+                },
+            ];
+            if !left_positions.is_empty() {
+                tracks.push(Track {
+                    name: "left".to_string(),
+                    axis: AxisBounds::new(1, length as i32),
+                    selected_indices: left_positions,
+                });
+            }
+            if !right_positions.is_empty() {
+                tracks.push(Track {
+                    name: "right".to_string(),
+                    axis: AxisBounds::new(1, length as i32),
+                    selected_indices: right_positions,
+                });
+            }
+            tracks
+        }
+        ReferenceFrame::Mid => {
+            let center = (length as i64) / 2;
+            let indices = selections
+                .iter()
+                .filter(|sel| sel.group() == PositionGroup::Mid)
+                .map(|sel| sel.offset() as i64 - center)
+                .filter(|val| *val >= i64::from(i32::MIN) && *val <= i64::from(i32::MAX))
+                .map(|val| val as i32)
+                .collect();
+            vec![Track {
+                name: "mid".to_string(),
+                axis: mid_axis_bounds(length),
+                selected_indices: dedup_sorted(indices),
+            }]
+        }
     };
 
-    let mut tracks = tracks;
-    apply_read_clamp(&mut tracks, frame, length, read_clamp);
+    apply_read_clamp(
+        &mut tracks,
+        position_selection_spec.frame,
+        length,
+        read_clamp,
+    );
 
     LengthVisualization {
         fragment_length: length,
@@ -60,448 +166,399 @@ pub fn build_tracks_for_length(
     }
 }
 
-fn build_linear_track(label: &str, length: u32, range: &LinearRange, step: NonZeroUsize) -> Track {
-    let axis_end = length as i32;
-    let axis = AxisBounds::new(1, axis_end);
-    let indices = collect_linear_indices(length, range);
-    Track {
-        name: label.to_string(),
-        axis,
-        selected_indices: apply_stride(indices, step),
-    }
-}
-
-fn collect_linear_indices(length: u32, range: &LinearRange) -> Vec<i32> {
-    let axis_start = 1i32;
-    let axis_end = length as i32;
-    match *range {
-        LinearRange::All => inclusive_range(axis_start, axis_end),
-        LinearRange::Closed { start, end } => {
-            clamp_range_to_domain(start as i32, end as i32, axis_start, axis_end)
-                .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
-        }
-        LinearRange::From { start } => {
-            clamp_range_to_domain(start as i32, axis_end, axis_start, axis_end)
-                .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
-        }
-        LinearRange::To { end } => {
-            clamp_range_to_domain(axis_start, end as i32, axis_start, axis_end)
-                .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
-        }
-        LinearRange::TrimOtherEnd {
-            start,
-            other_end_trim,
-        } => {
-            let raw_end = length as i64 - other_end_trim as i64;
-            if raw_end < 1 {
-                Vec::new()
-            } else {
-                let end = raw_end.min(length as i64) as i32;
-                clamp_range_to_domain(start as i32, end, axis_start, axis_end)
-                    .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
-            }
-        }
-        LinearRange::ToHalf { minus } => {
-            let half = length / 2;
-            if half == 0 {
-                Vec::new()
-            } else {
-                let high = half.saturating_sub(minus) as i32;
-                if high <= 0 {
-                    Vec::new()
-                } else {
-                    clamp_range_to_domain(axis_start, high, axis_start, axis_end)
-                        .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
-                }
-            }
-        }
-        LinearRange::FromToHalf { start, minus } => {
-            let half = length / 2;
-            if half == 0 {
-                Vec::new()
-            } else {
-                let high = half.saturating_sub(minus) as i32;
-                if high <= 0 {
-                    Vec::new()
-                } else {
-                    clamp_range_to_domain(start as i32, high, axis_start, axis_end)
-                        .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
-                }
-            }
-        }
-    }
-}
-
-fn build_nearest_tracks(length: u32, range: &NearestRange, step: NonZeroUsize) -> Vec<Track> {
-    let half = (length / 2) as u32;
-    let axis_end = if half == 0 { 1 } else { half as i32 };
-    let folded = collect_nearest_indices(half, range);
-    let folded = apply_stride(folded, step);
-    let nearest_track = Track {
-        name: "nearest".to_string(),
-        axis: AxisBounds::new(1, axis_end),
-        selected_indices: folded.clone(),
-    };
-
-    let fragment_track = Track {
-        name: "fragment".to_string(),
-        axis: AxisBounds::new(1, length as i32),
-        selected_indices: unfold_nearest_indices(length, &folded),
-    };
-
-    vec![fragment_track, nearest_track]
-}
-
 /// Build helper tracks that illustrate the valid k-mer start bases for the requested kmer_sizes.
 pub fn build_kmer_start_overlays(
-    frame: ReferenceFrame,
+    position_selection_spec: &PositionalSelectionSpec,
     length: u32,
     base_tracks: &[Track],
     kmer_sizes: &[u8],
-) -> Vec<Track> {
+) -> FxHashMap<u8, Vec<Track>> {
+    let mut overlay_per_k: FxHashMap<u8, Vec<Track>> = FxHashMap::default();
     if length == 0 || kmer_sizes.is_empty() || base_tracks.is_empty() {
-        return Vec::new();
+        return overlay_per_k;
     }
 
-    match frame {
-        ReferenceFrame::Left => build_linear_forward_overlays(length, base_tracks, kmer_sizes),
-        ReferenceFrame::Right => build_linear_reverse_overlays(length, base_tracks, kmer_sizes),
-        ReferenceFrame::PerEnd => build_per_end_overlays(length, base_tracks, kmer_sizes),
-        ReferenceFrame::Nearest => build_nearest_overlays(length, base_tracks, kmer_sizes),
-        ReferenceFrame::Mid => build_mid_overlays(length, base_tracks, kmer_sizes),
+    let cache = match PositionSelectionCache::new(
+        vec![position_selection_spec.clone()],
+        kmer_sizes,
+        length,
+        length,
+    ) {
+        Ok(cache) => cache,
+        Err(_) => return overlay_per_k,
+    };
+
+    for &k in kmer_sizes {
+        let selections = cache.offsets(length, k).unwrap_or(&[]);
+        let windows = match cache.windows(length, k) {
+            Some(w) => w,
+            None => continue,
+        };
+
+        let overlay = match position_selection_spec.frame {
+            ReferenceFrame::Left => {
+                build_left_overlays(length, selections, windows, base_tracks, kmer_sizes)
+            }
+            ReferenceFrame::Right => {
+                build_right_overlays(length, selections, windows, base_tracks, kmer_sizes)
+            }
+            ReferenceFrame::PerEnd => {
+                build_per_end_overlays(length, selections, windows, base_tracks, kmer_sizes)
+            }
+            ReferenceFrame::Nearest => {
+                build_nearest_overlays(length, selections, windows, base_tracks, kmer_sizes)
+            }
+            ReferenceFrame::Mid => {
+                build_mid_overlays(length, selections, windows, base_tracks, kmer_sizes)
+            }
+        };
+        overlay_per_k.insert(k, overlay);
     }
+
+    overlay_per_k
 }
 
-fn build_linear_forward_overlays(
+fn build_left_overlays(
     length: u32,
+    selections: &[PositionSelection],
+    windows: &AllowedWindows,
     base_tracks: &[Track],
     kmer_sizes: &[u8],
 ) -> Vec<Track> {
+    let base = match base_tracks.iter().find(|track| track.name == "left") {
+        Some(track) => track,
+        None => return Vec::new(),
+    };
     let mut overlays = Vec::new();
-    for &kmer_size in kmer_sizes {
-        let k_len = u32::from(kmer_size);
-        for track in base_tracks {
-            let mut overlay = track.clone();
-            overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
-            overlay.selected_indices = linear_forward_starts(track, length, k_len);
-            overlays.push(overlay);
-        }
+    for &k in kmer_sizes {
+        let mut overlay = base.clone();
+        overlay.name = format!("{} k-mer starts (k={})", base.name, k);
+        overlay.selected_indices = dedup_sorted(left_kmer_starts(length, selections, windows, k));
+        clamp_overlay_axis(&mut overlay, length, k);
+        overlays.push(overlay);
     }
     overlays
 }
 
-fn build_linear_reverse_overlays(
+fn build_right_overlays(
     length: u32,
+    selections: &[PositionSelection],
+    windows: &AllowedWindows,
     base_tracks: &[Track],
     kmer_sizes: &[u8],
 ) -> Vec<Track> {
+    let base = match base_tracks.iter().find(|track| track.name == "right") {
+        Some(track) => track,
+        None => return Vec::new(),
+    };
     let mut overlays = Vec::new();
-    for &kmer_size in kmer_sizes {
-        let k_len = u32::from(kmer_size);
-        for track in base_tracks {
-            let mut overlay = track.clone();
-            overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
-            overlay.selected_indices = linear_reverse_starts(track, k_len, length);
-            overlays.push(overlay);
-        }
+    for &k in kmer_sizes {
+        let mut overlay = base.clone();
+        overlay.name = format!("{} k-mer starts (k={})", base.name, k);
+        overlay.selected_indices = dedup_sorted(right_kmer_starts(length, selections, windows, k));
+        clamp_overlay_axis(&mut overlay, length, k);
+        overlays.push(overlay);
     }
     overlays
 }
 
-fn build_per_end_overlays(length: u32, base_tracks: &[Track], kmer_sizes: &[u8]) -> Vec<Track> {
+fn build_per_end_overlays(
+    length: u32,
+    selections: &[PositionSelection],
+    windows: &AllowedWindows,
+    base_tracks: &[Track],
+    kmer_sizes: &[u8],
+) -> Vec<Track> {
+    let left_base = match base_tracks.iter().find(|track| track.name == "left") {
+        Some(track) => track,
+        None => return Vec::new(),
+    };
+    let right_base = match base_tracks.iter().find(|track| track.name == "right") {
+        Some(track) => track,
+        None => return Vec::new(),
+    };
     let mut overlays = Vec::new();
-    for &kmer_size in kmer_sizes {
-        let k_len = u32::from(kmer_size);
-        for track in base_tracks {
-            let mut overlay = track.clone();
-            overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
-            if track.name.eq_ignore_ascii_case("right") {
-                overlay.selected_indices = linear_reverse_starts(track, k_len, length);
-            } else {
-                overlay.selected_indices = linear_forward_starts(track, length, k_len);
+    for &k in kmer_sizes {
+        let mut left_overlay = left_base.clone();
+        left_overlay.name = format!("{} k-mer starts (k={})", left_base.name, k);
+        left_overlay.selected_indices =
+            dedup_sorted(left_kmer_starts(length, selections, windows, k));
+        clamp_overlay_axis(&mut left_overlay, length, k);
+        overlays.push(left_overlay);
+
+        let mut right_overlay = right_base.clone();
+        right_overlay.name = format!("{} k-mer starts (k={})", right_base.name, k);
+        right_overlay.selected_indices =
+            dedup_sorted(right_kmer_starts(length, selections, windows, k));
+        clamp_overlay_axis(&mut right_overlay, length, k);
+        overlays.push(right_overlay);
+    }
+    overlays
+}
+
+fn build_nearest_overlays(
+    length: u32,
+    selections: &[PositionSelection],
+    windows: &AllowedWindows,
+    base_tracks: &[Track],
+    kmer_sizes: &[u8],
+) -> Vec<Track> {
+    let fragment_base = match base_tracks.iter().find(|track| track.name == "fragment") {
+        Some(track) => track,
+        None => return Vec::new(),
+    };
+    let nearest_base = match base_tracks.iter().find(|track| track.name == "nearest") {
+        Some(track) => track,
+        None => return Vec::new(),
+    };
+    let left_base = base_tracks.iter().find(|track| track.name == "left");
+    let right_base = base_tracks.iter().find(|track| track.name == "right");
+
+    let mut overlays = Vec::new();
+    for &k in kmer_sizes {
+        let (fragment_starts, left_starts, right_starts) =
+            nearest_fragment_kmer_starts(length, selections, windows, k);
+        if fragment_starts.is_empty() && left_starts.is_empty() && right_starts.is_empty() {
+            continue;
+        }
+
+        let mut fragment_overlay = fragment_base.clone();
+        fragment_overlay.name = format!("{} k-mer starts (k={})", fragment_base.name, k);
+        fragment_overlay.selected_indices = fragment_starts.clone();
+        overlays.push(fragment_overlay);
+
+        let mut nearest_overlay = nearest_base.clone();
+        nearest_overlay.name = format!("{} k-mer starts (k={})", nearest_base.name, k);
+        nearest_overlay.selected_indices = fold_fragment_positions(length, &fragment_starts);
+        overlays.push(nearest_overlay);
+
+        if let Some(base) = left_base {
+            if !left_starts.is_empty() {
+                let mut overlay = base.clone();
+                overlay.name = format!("{} k-mer starts (k={})", base.name, k);
+                overlay.selected_indices = left_starts;
+                overlays.push(overlay);
             }
-            overlays.push(overlay);
         }
-    }
-    overlays
-}
-
-fn build_mid_overlays(length: u32, base_tracks: &[Track], kmer_sizes: &[u8]) -> Vec<Track> {
-    let mut overlays = Vec::new();
-    for &kmer_size in kmer_sizes {
-        let k_len = u32::from(kmer_size);
-        for track in base_tracks {
-            let mut overlay = track.clone();
-            overlay.name = format!("{} k-mer starts (k={})", track.name, k_len);
-            overlay.selected_indices = mid_starts(track, length, k_len);
-            overlays.push(overlay);
-        }
-    }
-    overlays
-}
-
-fn build_nearest_overlays(length: u32, base_tracks: &[Track], kmer_sizes: &[u8]) -> Vec<Track> {
-    let mut overlays = Vec::new();
-    let fragment_track = base_tracks.iter().find(|track| track.name == "fragment");
-    let nearest_track = base_tracks.iter().find(|track| track.name == "nearest");
-
-    for &kmer_size in kmer_sizes {
-        let k_len = u32::from(kmer_size);
-        if let Some(fragment) = fragment_track {
-            let mut overlay = fragment.clone();
-            overlay.name = format!("fragment k-mer starts (k={})", k_len);
-            let fragment_starts = nearest_fragment_starts(fragment, length, k_len);
-            overlay.selected_indices = fragment_starts.clone();
-            if let Some(max_start) = length
-                .checked_sub(u32::from(k_len))
-                .and_then(|value| value.checked_add(1))
-            {
-                if let Ok(max_start_i32) = i32::try_from(max_start) {
-                    overlay.axis.end = overlay.axis.end.min(max_start_i32);
-                }
-            }
-            overlays.push(overlay);
-            if let Some(nearest) = nearest_track {
-                let folded = folded_distances_from_fragment(&fragment_starts, length);
-                let mut overlay = nearest.clone();
-                overlay.name = format!("nearest k-mer starts (k={})", k_len);
-                overlay.selected_indices = folded;
+        if let Some(base) = right_base {
+            if !right_starts.is_empty() {
+                let mut overlay = base.clone();
+                overlay.name = format!("{} k-mer starts (k={})", base.name, k);
+                overlay.selected_indices = right_starts;
                 overlays.push(overlay);
             }
         }
     }
-
     overlays
 }
 
-fn linear_forward_starts(track: &Track, length: u32, k_len: u32) -> Vec<i32> {
-    if k_len == 0 {
-        return Vec::new();
-    }
-    let max_start = length.saturating_sub(k_len).saturating_add(1);
-    track
-        .selected_indices
-        .iter()
-        .copied()
-        .filter(|&idx| idx > 0 && (idx as u32) <= max_start)
-        .collect()
-}
-
-fn linear_reverse_starts(track: &Track, k_len: u32, length: u32) -> Vec<i32> {
-    if k_len == 0 {
-        return Vec::new();
-    }
-    let k_span = k_len as i32;
-    track
-        .selected_indices
-        .iter()
-        .copied()
-        .filter_map(|idx| {
-            if idx <= 0 {
-                return None;
-            }
-            let start = idx - (k_span - 1);
-            if start >= 1 && (start as u32) <= length {
-                Some(start)
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-fn mid_starts(track: &Track, length: u32, k_len: u32) -> Vec<i32> {
-    if k_len == 0 || length == 0 {
-        return Vec::new();
-    }
-    let center = (length / 2) as i64;
-    let max_start = length.saturating_sub(k_len) as i64;
-    track
-        .selected_indices
-        .iter()
-        .copied()
-        .filter(|&idx| {
-            let offset = center + idx as i64;
-            offset >= 0 && offset <= max_start
-        })
-        .collect()
-}
-
-fn nearest_fragment_starts(track: &Track, length: u32, k_len: u32) -> Vec<i32> {
-    if k_len == 0 || length == 0 || k_len > length {
-        return Vec::new();
-    }
-    let Some(bounds) = nearest_guard_bounds(length, k_len) else {
-        return Vec::new();
+fn build_mid_overlays(
+    length: u32,
+    selections: &[PositionSelection],
+    windows: &AllowedWindows,
+    base_tracks: &[Track],
+    kmer_sizes: &[u8],
+) -> Vec<Track> {
+    let base = match base_tracks.iter().find(|track| track.name == "mid") {
+        Some(track) => track,
+        None => return Vec::new(),
     };
-    let len = length as u64;
-    let span = k_len as u64;
-    let min_reverse_start = bounds.min_reverse_start(k_len);
-    let half = (length / 2) as u32;
+    let mut overlays = Vec::new();
+    for &k in kmer_sizes {
+        let mut overlay = base.clone();
+        overlay.name = format!("{} k-mer starts (k={})", base.name, k);
+        overlay.selected_indices = dedup_sorted(mid_kmer_starts(length, selections, windows, k));
+        overlays.push(overlay);
+    }
+    overlays
+}
 
-    let mut starts: Vec<i32> = Vec::new();
-    for &idx in &track.selected_indices {
-        if idx <= 0 {
-            continue;
-        }
-        let idx_u32 = idx as u32;
-        if idx_u32 <= half {
-            let start_0 = (idx_u32 - 1) as u64;
-            debug_assert!(start_0 + span <= len);
-            if start_0 <= bounds.max_forward_start {
-                starts.push(idx);
-            }
+fn clamp_overlay_axis(overlay: &mut Track, length: u32, k: u8) {
+    if let Some(max_start) = length
+        .checked_sub(u32::from(k))
+        .and_then(|value| value.checked_add(1))
+    {
+        let max_start_i32 = if max_start > i32::MAX as u32 {
+            i32::MAX
         } else {
-            let anchor = (idx_u32 - 1) as u64;
-            if anchor < bounds.min_reverse_anchor {
-                continue;
-            }
-            let start_0 = anchor.saturating_sub(span.saturating_sub(1));
-            debug_assert!(start_0 + span <= len);
-            if start_0 < min_reverse_start {
-                continue;
-            }
-            let start_1 = (start_0 + 1) as i32;
-            if start_1 > 0 && start_1 <= length as i32 {
-                starts.push(start_1);
-            }
-        }
-    }
-    starts.sort_unstable();
-    starts.dedup();
-    starts
-}
-
-fn collect_nearest_indices(half: u32, range: &NearestRange) -> Vec<i32> {
-    if half == 0 {
-        return Vec::new();
-    }
-    let axis_start = 1i32;
-    let axis_end = half as i32;
-    match *range {
-        NearestRange::All => inclusive_range(axis_start, axis_end),
-        NearestRange::Closed { start, end } => {
-            clamp_range_to_domain(start as i32, end as i32, axis_start, axis_end)
-                .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
-        }
-        NearestRange::From { start } => {
-            clamp_range_to_domain(start as i32, axis_end, axis_start, axis_end)
-                .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
-        }
-        NearestRange::ToHalf { minus } => {
-            let high = half.saturating_sub(minus);
-            if high == 0 {
-                Vec::new()
-            } else {
-                clamp_range_to_domain(axis_start, high as i32, axis_start, axis_end)
-                    .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
-            }
-        }
-        NearestRange::FromToHalf { start, minus } => {
-            let high = half.saturating_sub(minus);
-            if high == 0 {
-                Vec::new()
-            } else {
-                clamp_range_to_domain(start as i32, high as i32, axis_start, axis_end)
-                    .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
-            }
-        }
+            max_start as i32
+        };
+        overlay.axis.end = overlay.axis.end.min(max_start_i32);
     }
 }
 
-fn build_mid_track(length: u32, range: &MidRange, step: NonZeroUsize) -> Track {
-    let axis = mid_axis_bounds(length);
-    let indices = collect_mid_indices(length, range);
-    Track {
-        name: "mid".to_string(),
-        axis,
-        selected_indices: apply_mid_stride(indices, step),
+fn default_ranges(length: u32, k_len: u32) -> (Option<(u64, u64)>, Option<(u64, u64)>) {
+    if length == 0 {
+        return (None, None);
     }
-}
-
-fn mid_axis_bounds(length: u32) -> AxisBounds {
-    let half = (length / 2) as i32;
-    if length % 2 == 0 {
-        AxisBounds::new(-half, half - 1)
+    let forward_max = length.saturating_sub(k_len) as u64;
+    let forward = Some((0, forward_max));
+    let reverse_min = k_len.saturating_sub(1) as u64;
+    let reverse_max = length as u64 - 1;
+    let reverse = if reverse_min > reverse_max {
+        None
     } else {
-        AxisBounds::new(-half, half)
-    }
+        Some((reverse_min, reverse_max))
+    };
+    (forward, reverse)
 }
 
-fn collect_mid_indices(length: u32, range: &MidRange) -> Vec<i32> {
-    let axis = mid_axis_bounds(length);
-    match *range {
-        MidRange::All => inclusive_range(axis.start, axis.end),
-        MidRange::Closed { neg, pos } => {
-            let start = -(neg as i32);
-            let end = pos as i32;
-            clamp_range_to_domain(start, end, axis.start, axis.end)
-                .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
-        }
-        MidRange::LeftOpen { neg } => {
-            let start = -(neg as i32);
-            clamp_range_to_domain(start, 0, axis.start, axis.end)
-                .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
-        }
-        MidRange::RightOpen { pos } => {
-            let end = pos as i32;
-            clamp_range_to_domain(0, end, axis.start, axis.end)
-                .map_or_else(Vec::new, |(s, e)| inclusive_range(s, e))
-        }
-    }
-}
-
-fn apply_mid_stride(indices: Vec<i32>, step: NonZeroUsize) -> Vec<i32> {
-    if indices.len() <= 1 || step.get() == 1 {
-        return indices;
-    }
-
-    if let Some(origin_idx) = indices.iter().position(|&value| value == 0) {
-        let origin_idx = origin_idx as i64;
-        let step_span = step.get() as i64;
-        return indices
-            .into_iter()
-            .enumerate()
-            .filter_map(|(idx, value)| {
-                let idx = idx as i64;
-                if (idx - origin_idx).rem_euclid(step_span) == 0 {
-                    Some(value)
-                } else {
-                    None
+fn left_kmer_starts(
+    length: u32,
+    selections: &[PositionSelection],
+    windows: &AllowedWindows,
+    k: u8,
+) -> Vec<i32> {
+    let k_len = u32::from(k);
+    let span = k_len as u64;
+    let (forward_range, reverse_range) = default_ranges(length, k_len);
+    selections
+        .iter()
+        .filter(|sel| sel.group() == PositionGroup::Left)
+        .filter_map(|sel| {
+            match evaluate_selection(
+                *sel,
+                windows,
+                None,
+                span,
+                sel.offset() as u64,
+                forward_range,
+                reverse_range,
+            ) {
+                SelectionDecision::IncludeForward { start_offset_0 } => {
+                    Some((start_offset_0 + 1) as i32)
                 }
-            })
-            .collect();
-    }
-
-    apply_stride(indices, step)
-}
-
-fn apply_stride(indices: Vec<i32>, step: NonZeroUsize) -> Vec<i32> {
-    if indices.len() <= 1 || step.get() == 1 {
-        return indices;
-    }
-    indices
-        .into_iter()
-        .enumerate()
-        .filter_map(|(idx, value)| {
-            if idx % step.get() == 0 {
-                Some(value)
-            } else {
-                None
+                _ => None,
             }
         })
         .collect()
 }
 
-fn inclusive_range(start: i32, end: i32) -> Vec<i32> {
-    if start > end {
-        Vec::new()
-    } else {
-        (start..=end).collect()
-    }
+fn right_kmer_starts(
+    length: u32,
+    selections: &[PositionSelection],
+    windows: &AllowedWindows,
+    k: u8,
+) -> Vec<i32> {
+    let k_len = u32::from(k);
+    let span = k_len as u64;
+    let (forward_range, reverse_range) = default_ranges(length, k_len);
+    selections
+        .iter()
+        .filter(|sel| sel.group() == PositionGroup::Right)
+        .filter_map(|sel| {
+            match evaluate_selection(
+                *sel,
+                windows,
+                None,
+                span,
+                sel.offset() as u64,
+                forward_range,
+                reverse_range,
+            ) {
+                SelectionDecision::IncludeReverse { start_offset_0, .. } => {
+                    let value = length as i64 - start_offset_0 as i64 - k_len as i64 + 1;
+                    if value >= i64::from(i32::MIN) && value <= i64::from(i32::MAX) {
+                        Some(value as i32)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        })
+        .collect()
 }
 
-fn folded_distances_from_fragment(starts: &[i32], length: u32) -> Vec<i32> {
+fn nearest_fragment_kmer_starts(
+    length: u32,
+    selections: &[PositionSelection],
+    windows: &AllowedWindows,
+    k: u8,
+) -> (Vec<i32>, Vec<i32>, Vec<i32>) {
+    let k_len = u32::from(k);
+    let guard = NearestFrameGuard::by_flag(true, length, k_len);
+    let span = k_len as u64;
+    let (forward_range, reverse_range) = default_ranges(length, k_len);
+    let mut left = Vec::new();
+    let mut right = Vec::new();
+    for sel in selections {
+        let start = match evaluate_selection(
+            *sel,
+            windows,
+            guard.as_ref(),
+            span,
+            sel.offset() as u64,
+            forward_range,
+            reverse_range,
+        ) {
+            SelectionDecision::IncludeForward { start_offset_0 } => {
+                map_linear_position(length, start_offset_0 as u32, PositionGroup::Left)
+            }
+            SelectionDecision::IncludeReverse { start_offset_0, .. } => {
+                let value = start_offset_0.saturating_add(1);
+                if value == 0 || value > u64::from(length) {
+                    None
+                } else {
+                    Some(value as i32)
+                }
+            }
+            _ => None,
+        };
+        if let Some(value) = start {
+            if sel.group() == PositionGroup::Right {
+                right.push(value);
+            } else {
+                left.push(value);
+            }
+        }
+    }
+    let left = dedup_sorted(left);
+    let right = dedup_sorted(right);
+    let mut fragment = left.clone();
+    fragment.extend(right.iter().copied());
+    let fragment = dedup_sorted(fragment);
+    (fragment, left, right)
+}
+
+fn mid_kmer_starts(
+    length: u32,
+    selections: &[PositionSelection],
+    windows: &AllowedWindows,
+    k: u8,
+) -> Vec<i32> {
+    let k_len = u32::from(k);
+    let span = k_len as u64;
+    let (forward_range, reverse_range) = default_ranges(length, k_len);
+    let center = (length as i64) / 2;
+    selections
+        .iter()
+        .filter(|sel| sel.group() == PositionGroup::Mid)
+        .filter_map(|sel| {
+            match evaluate_selection(
+                *sel,
+                windows,
+                None,
+                span,
+                sel.offset() as u64,
+                forward_range,
+                reverse_range,
+            ) {
+                SelectionDecision::IncludeForward { start_offset_0 } => {
+                    let value = start_offset_0 as i64 - center;
+                    if value >= i64::from(i32::MIN) && value <= i64::from(i32::MAX) {
+                        Some(value as i32)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn fold_fragment_positions(length: u32, starts: &[i32]) -> Vec<i32> {
     if length == 0 {
         return Vec::new();
     }
@@ -518,7 +575,6 @@ fn folded_distances_from_fragment(starts: &[i32], length: u32) -> Vec<i32> {
             length - start_u32 + 1
         };
         if distance > 0 {
-            debug_assert!(distance <= half.max(1));
             distances.push(distance as i32);
         }
     }
@@ -527,70 +583,36 @@ fn folded_distances_from_fragment(starts: &[i32], length: u32) -> Vec<i32> {
     distances
 }
 
-fn clamp_range_to_domain(
-    mut start: i32,
-    mut end: i32,
-    domain_start: i32,
-    domain_end: i32,
-) -> Option<(i32, i32)> {
-    if domain_start > domain_end {
-        return None;
+fn dedup_sorted(mut values: Vec<i32>) -> Vec<i32> {
+    if values.len() <= 1 {
+        return values;
     }
-    if end < domain_start || start > domain_end {
-        return None;
+    values.sort_unstable();
+    values.dedup();
+    values
+}
+
+fn map_linear_position(length: u32, offset: u32, group: PositionGroup) -> Option<i32> {
+    match group {
+        PositionGroup::Left | PositionGroup::Right => {
+            let value = offset.saturating_add(1);
+            if value == 0 || value > length {
+                None
+            } else {
+                Some(value as i32)
+            }
+        }
+        PositionGroup::Mid => None,
     }
-    start = start.max(domain_start);
-    end = end.min(domain_end);
-    if start > end {
-        None
+}
+
+fn mid_axis_bounds(length: u32) -> AxisBounds {
+    let half = (length / 2) as i32;
+    if length % 2 == 0 {
+        AxisBounds::new(-half, half - 1)
     } else {
-        Some((start, end))
+        AxisBounds::new(-half, half)
     }
-}
-
-fn expect_linear(positions: &PositionsSpec) -> &LinearRange {
-    match positions {
-        PositionsSpec::Linear(range) => range,
-        _ => panic!("expected linear range for linear frame"),
-    }
-}
-
-fn expect_nearest(positions: &PositionsSpec) -> &NearestRange {
-    match positions {
-        PositionsSpec::Nearest(range) => range,
-        _ => panic!("expected nearest range for nearest frame"),
-    }
-}
-
-fn expect_mid(positions: &PositionsSpec) -> &MidRange {
-    match positions {
-        PositionsSpec::Mid(range) => range,
-        _ => panic!("expected mid range for mid frame"),
-    }
-}
-
-fn unfold_nearest_indices(length: u32, folded: &[i32]) -> Vec<i32> {
-    if length == 0 || folded.is_empty() {
-        return Vec::new();
-    }
-    let mut positions = Vec::with_capacity(folded.len() * 2);
-    let max_pos = length as i32;
-    for &distance in folded {
-        if distance <= 0 {
-            continue;
-        }
-        let left = distance;
-        let right = max_pos - distance + 1;
-        if (1..=max_pos).contains(&left) {
-            positions.push(left);
-        }
-        if (1..=max_pos).contains(&right) {
-            positions.push(right);
-        }
-    }
-    positions.sort_unstable();
-    positions.dedup();
-    positions
 }
 
 fn apply_read_clamp(
@@ -617,8 +639,52 @@ fn apply_read_clamp(
 
 fn clamp_track_nearest(track: &mut Track, frame: ReferenceFrame, half: i32, right_start: i32) {
     match frame {
-        ReferenceFrame::Left => track.selected_indices.retain(|&idx| idx <= half),
-        ReferenceFrame::Right => track.selected_indices.retain(|&idx| idx >= right_start),
+        ReferenceFrame::Nearest => {
+            if track.name == "fragment" {
+                if let Some(&idx) = track
+                    .selected_indices
+                    .iter()
+                    .find(|&&idx| !(idx <= half || idx >= right_start))
+                {
+                    panic!(
+                        "Nearest-read clamp detected nearest fragment track index {} outside <= {} or >= {}.",
+                        idx, half, right_start
+                    );
+                }
+                track
+                    .selected_indices
+                    .retain(|&idx| idx <= half || idx >= right_start);
+            } else if track.name == "left" {
+                if let Some(&idx) = track.selected_indices.iter().find(|&&idx| idx > half) {
+                    panic!(
+                        "Nearest-read clamp detected nearest left track index {} outside <= {}.",
+                        idx, half
+                    );
+                }
+                track.selected_indices.retain(|&idx| idx <= half);
+            } else if track.name == "right" {
+                if let Some(&idx) = track
+                    .selected_indices
+                    .iter()
+                    .find(|&&idx| idx < right_start)
+                {
+                    panic!(
+                        "Nearest-read clamp detected nearest right track index {} outside >= {}.",
+                        idx, right_start
+                    );
+                }
+                track.selected_indices.retain(|&idx| idx >= right_start);
+            }
+        }
+        ReferenceFrame::Mid => {
+            track.selected_indices.retain(|&idx| idx.abs() <= half);
+        }
+        ReferenceFrame::Left => {
+            track.selected_indices.retain(|&idx| idx <= half);
+        }
+        ReferenceFrame::Right => {
+            track.selected_indices.retain(|&idx| idx >= right_start);
+        }
         ReferenceFrame::PerEnd => {
             if track.name == "left" {
                 track.selected_indices.retain(|&idx| idx <= half);
@@ -626,21 +692,51 @@ fn clamp_track_nearest(track: &mut Track, frame: ReferenceFrame, half: i32, righ
                 track.selected_indices.retain(|&idx| idx >= right_start);
             }
         }
-        ReferenceFrame::Nearest => {
-            if track.name == "fragment" {
-                track
-                    .selected_indices
-                    .retain(|&idx| idx <= half || idx >= right_start);
-            }
-        }
-        ReferenceFrame::Mid => {
-            track.selected_indices.retain(|&idx| idx.abs() <= half);
-        }
     }
 }
 
 fn clamp_track_both_reads(track: &mut Track, frame: ReferenceFrame, half: i32, right_start: i32) {
     match frame {
+        ReferenceFrame::Nearest => {
+            if track.name == "fragment" {
+                if let Some(&idx) = track
+                    .selected_indices
+                    .iter()
+                    .find(|&&idx| !(idx <= half || idx >= right_start))
+                {
+                    panic!(
+                        "Both-read clamp detected nearest fragment track index {} outside <= {} or >= {}.",
+                        idx, half, right_start
+                    );
+                }
+                track
+                    .selected_indices
+                    .retain(|&idx| idx <= half || idx >= right_start);
+            } else if track.name == "left" {
+                if let Some(&idx) = track.selected_indices.iter().find(|&&idx| idx > half) {
+                    panic!(
+                        "Both-read clamp detected nearest left track index {} outside <= {}.",
+                        idx, half
+                    );
+                }
+                track.selected_indices.retain(|&idx| idx <= half);
+            } else if track.name == "right" {
+                if let Some(&idx) = track
+                    .selected_indices
+                    .iter()
+                    .find(|&&idx| idx < right_start)
+                {
+                    panic!(
+                        "Both-read clamp detected nearest right track index {} outside >= {}.",
+                        idx, right_start
+                    );
+                }
+                track.selected_indices.retain(|&idx| idx >= right_start);
+            }
+        }
+        ReferenceFrame::Mid => {
+            track.selected_indices.retain(|&idx| idx.abs() <= half);
+        }
         ReferenceFrame::Left | ReferenceFrame::Right => {
             track
                 .selected_indices
@@ -652,16 +748,6 @@ fn clamp_track_both_reads(track: &mut Track, frame: ReferenceFrame, half: i32, r
             } else if track.name == "right" {
                 track.selected_indices.retain(|&idx| idx >= right_start);
             }
-        }
-        ReferenceFrame::Nearest => {
-            if track.name == "fragment" {
-                track
-                    .selected_indices
-                    .retain(|&idx| idx <= half || idx >= right_start);
-            }
-        }
-        ReferenceFrame::Mid => {
-            track.selected_indices.retain(|&idx| idx.abs() <= half);
         }
     }
 }

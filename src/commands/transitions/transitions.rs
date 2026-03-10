@@ -16,8 +16,9 @@ use std::time::Instant;
 
 /// Normalise positional k-mer counts into transition probabilities.
 ///
-/// Converts the raw counts produced by `fragment-kmers` into per-prefix transition frequencies so
-/// every slice along the motif axis sums to one for a fixed `(window, position, prefix)` triple.
+/// Converts the (possibly scaled and/or corrected) counts produced by `fragment-kmers` into
+/// per-prefix transition frequencies so every slice along the motif axis sums to one for a
+/// fixed `(window, position, prefix)` triple.
 ///
 /// Parameters
 /// ----------
@@ -141,13 +142,12 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
 
     let kmer_sizes = opt.orders.iter().map(|o| o + 1).collect();
 
+    let mut fk_shared_args = opt.shared_args.clone();
+    fk_shared_args.ioc = tmp_ioc;
+    fk_shared_args.output_prefix = "fragment_kmers".to_string();
+
     let mut fk_cfg = FragmentKmersConfig {
-        shared_args: FragmentKmersSharedArgs::new(
-            tmp_ioc,
-            opt.shared_args.ref_genome.clone(),
-            opt.shared_args.chromosomes.clone(),
-            "fragment_kmers".to_string(),
-        ),
+        shared_args: fk_shared_args,
         kmer_sizes: kmer_sizes,
         canonical: false,
         positional_counts: true,
@@ -222,6 +222,9 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
     println!("");
     println!("Statistics");
     println!("----------");
+    println!(
+        "  Note: A few reads/fragments may be counted twice in the statistics (only) around the parallelization tiles."
+    );
 
     // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
@@ -239,9 +242,24 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
         "  Blacklist-excluded fragments: {}",
         global_counter.blacklisted_fragments
     );
-    // if opt.gc.bin_by_gc {
-    //     println!("GC-excluded reads: {}", global_counter.base.gc_excl);
-    // }
+    if opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some() {
+        let gc_fail_action = if opt.shared_args.gc.drop_invalid_gc {
+            "fragment skipped"
+        } else {
+            "fragment counted with weight 1.0"
+        };
+        println!(
+            "  GC correction failures ({}): {}",
+            gc_fail_action, global_counter.gc_failed_fragments
+        );
+        if opt.shared_args.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
+            println!(
+                "  GC tag values outside [0, {:.0}] treated as invalid: {}",
+                crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
+                global_counter.gc_out_of_range_tags
+            );
+        }
+    }
     println!(
         "  Fragments counted one or more times: {}",
         global_counter.base.counted_fragments

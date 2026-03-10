@@ -1,3 +1,4 @@
+use crate::commands::prepare_windows::labels::{MISSING_GROUP_LABEL, validate_label_token};
 use anyhow::{Context, Result, bail};
 
 /* Parse distance bins */
@@ -61,6 +62,11 @@ pub fn parse_distance_bins(specs: &[String]) -> Result<DistanceBins> {
             .split_once(':')
             .with_context(|| format!("Invalid distance bin spec (missing ':'): '{}'", spec))?;
 
+        let label = label.trim();
+        if let Err(message) = validate_label_token(label, "distance bin label") {
+            bail!(message);
+        }
+
         let expr = expr.trim();
         let parsed = if let Some(num) = expr.strip_prefix("<=") {
             DistanceExpr::Le(num.parse::<i32>().context("Parsing <=N")?)
@@ -85,7 +91,7 @@ pub fn parse_distance_bins(specs: &[String]) -> Result<DistanceBins> {
         };
 
         rules.push(DistanceBin {
-            label: label.trim().to_string(),
+            label: label.to_string(),
             expr: parsed,
         });
     }
@@ -258,7 +264,12 @@ pub fn parse_record_line(
         let mut parts: Vec<&str> = Vec::with_capacity(cols.group.len());
         for &idx in &cols.group {
             let val = fields.get(idx).unwrap_or(&"").trim();
-            if !val.is_empty() {
+            if val.is_empty() {
+                parts.push(MISSING_GROUP_LABEL);
+            } else {
+                if let Err(message) = validate_label_token(val, "input group label") {
+                    bail!(message);
+                }
                 parts.push(val);
             }
         }
@@ -303,7 +314,7 @@ pub fn parse_cols_indices(cols_spec: &str) -> Result<(usize, usize, usize)> {
 }
 
 #[inline]
-fn parse_single_index(s: &str) -> Result<usize> {
+pub(crate) fn parse_single_index(s: &str) -> Result<usize> {
     let idx = s
         .parse::<usize>()
         .with_context(|| format!("Expecting 0-based index, got '{}'", s))?;

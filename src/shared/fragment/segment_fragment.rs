@@ -5,6 +5,7 @@ use smallvec::SmallVec;
 use crate::shared::fragment::minimal_fragment::{
     Fragment, PairOrientable, is_inwards_oriented, oriented_pair_from_read_info,
 };
+use crate::shared::gc_tag::{GcTagValue, combine_gc_tag_values, read_gc_tag_from_record};
 
 /// Fragment that may carry explicit reference-coverage segments
 ///
@@ -16,6 +17,7 @@ pub struct FragmentWithSegments {
     pub start: u32, // forward.start
     pub end: u32,   // reverse.end (end-exclusive)
     pub segments: Option<SmallVec<[(u32, u32); 12]>>,
+    pub gc_tag: GcTagValue,
 }
 
 impl FragmentWithSegments {
@@ -32,6 +34,7 @@ impl From<Fragment> for FragmentWithSegments {
             start: f.start,
             end: f.end,
             segments: None,
+            gc_tag: GcTagValue::default(),
         }
     }
 }
@@ -57,11 +60,12 @@ pub struct SegmentedReadInfo {
     pub has_ref_gap: bool,                    // True if any D/N present
     pub max_ref_gap: u32,                     // Longest single D/N length (0 if none)
     pub ref_mapped_segments: Vec<(u32, u32)>, // Relative segments: (offset_from_pos, len)
+    pub gc_tag: GcTagValue,
 }
 
-impl From<&Record> for SegmentedReadInfo {
+impl SegmentedReadInfo {
     #[inline]
-    fn from(r: &Record) -> Self {
+    pub fn from_record_with_gc_tag(r: &Record, gc_tag: Option<&[u8]>) -> Self {
         // Detect any D/N and track max gap length
         let mut has_ref_gap = false;
         let mut max_gap: u32 = 0;
@@ -132,6 +136,10 @@ impl From<&Record> for SegmentedReadInfo {
             }
         }
 
+        let gc_tag_value = gc_tag
+            .map(|tag| read_gc_tag_from_record(r, tag))
+            .unwrap_or_default();
+
         SegmentedReadInfo {
             tid: r.tid(),
             pos: r.pos() as u32,
@@ -140,7 +148,15 @@ impl From<&Record> for SegmentedReadInfo {
             has_ref_gap,
             max_ref_gap: max_gap,
             ref_mapped_segments,
+            gc_tag: gc_tag_value,
         }
+    }
+}
+
+impl From<&Record> for SegmentedReadInfo {
+    #[inline]
+    fn from(r: &Record) -> Self {
+        SegmentedReadInfo::from_record_with_gc_tag(r, None)
     }
 }
 
@@ -192,6 +208,7 @@ pub fn collect_fragment_with_segments(
 
     let span_start = forward.pos;
     let span_end = reverse.end;
+    let gc_tag = combine_gc_tag_values(&forward.gc_tag, &reverse.gc_tag);
 
     // Decide if we switch to segments
     let trigger = (forward.has_ref_gap && forward.max_ref_gap >= trigger_min_gap_bp)
@@ -204,6 +221,7 @@ pub fn collect_fragment_with_segments(
             start: span_start,
             end: span_end,
             segments: None,
+            gc_tag,
         });
     }
 
@@ -218,7 +236,7 @@ pub fn collect_fragment_with_segments(
             .saturating_add(reverse.ref_mapped_segments.len()),
     );
 
-    // Expand forward read's relative ref-mapped segments to absolute genome coords
+    // Expand forward read's relative ref-mapped segments to absolute coordinates
     //
     // Each stored tuple is (offset_from_pos, len) measured on the reference
     // Add `pos` to get absolute [start, end) on the chromosome
@@ -265,6 +283,7 @@ pub fn collect_fragment_with_segments(
             start: span_start,
             end: span_end,
             segments: None,
+            gc_tag,
         });
     }
 
@@ -312,5 +331,86 @@ pub fn collect_fragment_with_segments(
         start: span_start,
         end: span_end,
         segments,
+        gc_tag,
+    })
+}
+
+/// Build a fragment from a single segmented read (unpaired input).
+pub fn collect_fragment_with_segments_from_single_read(
+    read: &SegmentedReadInfo,
+    trigger_min_gap_bp: u32,
+) -> Option<FragmentWithSegments> {
+    if read.end <= read.pos {
+        return None;
+    }
+
+    let span_start = read.pos;
+    let span_end = read.end;
+
+    // Decide if we switch to segments based on reference gaps
+    let trigger = read.has_ref_gap && read.max_ref_gap >= trigger_min_gap_bp;
+
+    // If no trigger, return the plain span
+    if !trigger {
+        return Some(FragmentWithSegments {
+            tid: read.tid,
+            start: span_start,
+            end: span_end,
+            segments: None,
+            gc_tag: read.gc_tag,
+        });
+    }
+
+    // Expand reference-mapped segments to absolute coordinates
+    //
+    // Each stored tuple is (offset_from_pos, len) measured on the reference
+    // Add `pos` to get absolute [start, end) on the chromosome
+    let mut abs: Vec<(u32, u32)> = Vec::with_capacity(read.ref_mapped_segments.len());
+    if !read.ref_mapped_segments.is_empty() {
+        for (off, len) in &read.ref_mapped_segments {
+            let s = read.pos.saturating_add(*off);
+            let e = s.saturating_add(*len);
+            abs.push((s, e));
+        }
+    }
+
+    if abs.is_empty() {
+        return Some(FragmentWithSegments {
+            tid: read.tid,
+            start: span_start,
+            end: span_end,
+            segments: None,
+            gc_tag: read.gc_tag,
+        });
+    }
+
+    // Segments are already merged and sorted in `SegmentedReadInfo::from_record_with_gc_tag`
+    // so we can attach them directly. Keep a light validity check only.
+    let segments = if abs.is_empty() {
+        None
+    } else {
+        let mut v = SmallVec::with_capacity(abs.len());
+        for (mut s, mut e) in abs
+            .into_iter()
+            .filter(|(s, e)| s < e && *e > span_start && *s < span_end)
+        {
+            // Clip to span
+            if s < span_start {
+                s = span_start;
+            }
+            if e > span_end {
+                e = span_end;
+            }
+            v.push((s, e));
+        }
+        if v.is_empty() { None } else { Some(v) }
+    };
+
+    Some(FragmentWithSegments {
+        tid: read.tid,
+        start: span_start,
+        end: span_end,
+        segments,
+        gc_tag: read.gc_tag,
     })
 }

@@ -154,6 +154,55 @@ pub fn collect_fragment_with_indel_counts_from_records(
     collect_fragment_with_indel_counts(&ai, &bi, skip_indels, count_indels)
 }
 
+/// Build a `FragmentWithIndelCounts` from a single read.
+///
+/// The fragment span is the aligned reference span of the read `[pos, reference_end)`.
+/// Indel handling follows `collect_fragment_with_indel_counts` semantics:
+/// - Skip when `skip_indels` is true and the read has any insertions or deletions.
+/// - When `count_indels` is true, insertions increase the length and deletions decrease it.
+pub fn collect_fragment_with_indel_counts_from_single_read(
+    read: &IndelReadInfo,
+    skip_indels: bool,
+    count_indels: bool,
+) -> Option<FragmentWithIndelCounts> {
+    let fragment_start_bp = read.pos;
+    let fragment_end_bp = read.end;
+
+    let fragment_has_indels = !read.deletions.is_empty() || !read.insertions.is_empty();
+    if skip_indels && fragment_has_indels {
+        return None;
+    }
+
+    if !fragment_has_indels || !count_indels {
+        return Some(FragmentWithIndelCounts {
+            tid: read.tid,
+            start: fragment_start_bp,
+            end: fragment_end_bp,
+            deletions_nonoverlap: 0,
+            insertions_nonoverlap: 0,
+            deletions_overlap_supported: 0,
+            insertions_overlap_supported: 0,
+        });
+    }
+
+    let deletions_bp: u32 = read
+        .deletions
+        .iter()
+        .map(|(s, e)| e.saturating_sub(*s))
+        .sum();
+    let insertions_bp: u32 = read.insertions.iter().map(|(_, l)| *l).sum();
+
+    Some(FragmentWithIndelCounts {
+        tid: read.tid,
+        start: fragment_start_bp,
+        end: fragment_end_bp,
+        deletions_nonoverlap: deletions_bp,
+        insertions_nonoverlap: insertions_bp,
+        deletions_overlap_supported: 0,
+        insertions_overlap_supported: 0,
+    })
+}
+
 /// Build a `FragmentWithIndelCounts` from two per-read summaries, using a
 /// molecule-leaning, mate-supported policy for indel adjustments.
 ///

@@ -14,8 +14,14 @@ use std::path::PathBuf;
 ///
 /// ## Coverage
 ///
-/// The full fragment span `[forward.pos, reverse.end)` is counted without consideration of deletions and gaps.
+/// The full fragment span is counted without consideration of deletions and gaps.
 /// This is fine for genome-scale normalization that reduces relative changes in coverage across the genome.
+///
+/// ## Fragment span definition
+///
+/// **Paired-end**: `[forward.pos, reverse.end)`.
+///
+/// **Unpaired** where each read is a fragment: `[read.pos, read.end)`.
 ///
 /// ## Smoothing
 ///
@@ -57,16 +63,21 @@ use std::path::PathBuf;
 ///
 /// The following criteria always exclude a read:
 ///
-/// The read or mate read is unmapped.
-/// The read is mapped to a different `tid` than the mate.
 /// The read is secondary, supplementary or duplicate.
 /// The read failed quality check.
+///
+/// **Paired-end input only**:
+/// The read or mate read is unmapped.
+/// The read is mapped to a different `tid` than the mate.
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
 pub struct CoverageWeightsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ioc: IOCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub unpaired: UnpairedArgs,
 
     /// Prefix for output files (e.g., a sample name) `[string]`
     ///
@@ -99,7 +110,7 @@ pub struct CoverageWeightsConfig {
 
     /// Size (bp) of stride [integer]
     ///
-    /// **NOTE**: `--bin_size` must be divisible by `stride`. I.e., `bin_size % stride` == 0`.
+    /// **NOTE**: `--bin-size` must be divisible by `stride`. I.e., `--bin-size % stride` == 0`.
     ///
     /// A normalizing scaling factor is calculated per stride as the (inverse) weighted average coverage of the overlapping large-scale bins.
     ///
@@ -147,7 +158,7 @@ pub struct CoverageWeightsConfig {
     /// The fragment positions that should overlap blacklisted regions for it to be excluded [string]
     ///
     /// Possible values:
-    ///     "any", "all", "midpoint", or "proportion=<threshold>" [string]
+    ///     `"any"`, `"all"`, `"midpoint"`, or `"proportion=<threshold>"` [string]
     ///
     /// Example of proportion: `--blacklist-strategy proportion=0.2` (no space around `=`)
     #[cfg_attr(
@@ -167,14 +178,14 @@ impl CoverageWeightsConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
+            unpaired: UnpairedArgs {
+                reads_are_fragments: false,
+            },
             output_prefix: "normalize_genome".to_string(),
             bin_size: 5_000_000,
             stride: 500_000,
             chromosomes,
-            fragment_lengths: FragmentLengthArgs {
-                min_fragment_length: 20,
-                max_fragment_length: 1000,
-            },
+            fragment_lengths: FragmentLengthArgs::default(),
             min_mapq: 30,
             require_proper_pair: false,
             blacklist: None,

@@ -1,38 +1,46 @@
 # AGENTS.md
 
 ## Code Style
+
 - **Write for humans.** Prefer clear, direct language over buzzwords or slang. Comments should help a typical programmer understand intent and edge cases.
 - **Comment generously.** Explain *why* as well as *what*. If you remove outdated comments, **add** updated ones so net documentation never decreases.
 - **Keep code simple.** Choose the simplest readable approach unless a more complex solution brings substantial gains (speed/memory). If complexity seems warranted, briefly note the trade-off or ask before proceeding.
 - **No inline tests.** Unit and regression tests live under `tests/`—not in production modules or scripts.
 - **Descriptive variable names.** Variables should have descriptive names so the code is readable. Never use single-letter variables. E.g. a "window start" position can be called "window_start", "win_start", but never "ws" or "s".
 
+## CLI help
+
+Help strings are defined via docstrings in the config files. This needs to be useful for any newcomer or experienced user.
+
 ## Docstrings
+
 Docstrings should read like a short tutorial, then details, then structured sections. You may also add examples when they are relevant.
 
 Bullet points in CLI-facing documentation (config files) should have a newline between them, otherwise CLI collapses the sentences.
 
-Reduce the number of semi-colons in docstrings and comments. Use comma or dot instead. 
+Reduce the number of semi-colons in docstrings and comments. Use comma or dot instead.
 
 In-line comments start with title-cased first word and does not have a terminal dot *in the end*. E.g. `// A comment`
 
 Never use "…" or similar non-ascii symbols. They don't work in the terminal. Use "...", "->", ">=", etc.
 
-Adapt to my language. If I use "center", don't use "centre".
+Adapt to my language. If I use "center", don't use "centre". Don't use words/phrases that humans rarely use when unnecessary, like "emit", "bubbles up"/"bubbling".
 
 **Order**
-1. **Summary (pedagogical):** What this does and when to use it.
+
+1. **Summary (pedagogical):** What this does and when to use it. (The pedagogical part is implicit, not explicit, don't add "friendly summary" etc.)
 2. **Technical details:** Key behavior, assumptions, edge cases, complexity notes.
 3. **Parameters**
 4. **Returns**
 
 **Template**
+
 ```python
 def fn(...):
     """
     Short, friendly summary that teaches the idea in plain language.
 
-    Technical details: note important behavior, invariants, and caveats.
+    Technical details that note important behavior, invariants, and caveats.
     Mention performance characteristics if relevant.
 
     Parameters
@@ -59,9 +67,13 @@ def fn(...):
 
 **Assume no backwards compatibility constraints** unless explicitly asked to maintain them. We are often designing new tools.
 
+If I tell you to give me a conceptual answer, it's completely forbidden for you to touch the code.
+
 ## Engineering Choices
 
 **Don’t overengineer by default.** Favor readability and maintainability. If a more complex design offers clear benefits, it’s acceptable — note the benefit briefly or ask which path to take.
+
+Do not fail silently. If something is wrong, the program should tell the user. Do not find fancy ways to avoid handling what should actually be errors!
 
 ## General Rules
 
@@ -73,19 +85,25 @@ Fail fast with helpful error messages; validate inputs where it helps users.
 
 Leave the codebase clearer than you found it: tidy TODOs (once solved), improve comments (but respect my changes to comments), and simplify when safe.
 
+Run `cargo check --features cli,plotters` after changes to ensure your changes actually compile.
+
 ## Testing
 
 **Be thorough.** If an output is meaningful, test its content/values—not just that it exists or runs.
 
-Place tests in tests/ with clear, isolated fixtures. Prefer deterministic tests.
+Place tests in `tests/` with clear, isolated fixtures. Prefer deterministic tests. Do not add tests inline, they go in modules in test*.rs scripts in the tests directory.
+
+Derive expectations by hand, do not adjust them to match current output! Do not use python or another language to implement the same logic and use that. If it's not possible to calculate "mentally", say so. Do not cheat.
+
+IMPORTANT! When developing new tests, do NOT run the tests before you've finished writing your expectations. Always write your reasoned expectations, then stop and ask if you should run the tests.
 
 Include at least:
 
- - Happy-path tests (expected inputs).
+- Happy-path tests (expected inputs).
 
- - Edge-case tests (empty/small/large inputs, boundary values).
+- Edge-case tests (empty/small/large inputs, boundary values).
 
- - Regression tests for previously fixed bugs.
+- Regression tests for previously fixed bugs.
 
 See the below testing best-behaviors and try to follow them. Without proper tests validating logic, code is useless.
 
@@ -107,6 +125,8 @@ Name tests as Given_When_Then or Should_X_When_Y.
 Example: splits_fields_when_quotes_present.
 
 One behavioral concept per test. Multiple assertions are fine if they express the same idea.
+
+Use descriptive comments to show your derivations and intentions with each block in pedagogical terms.
 
 ### Determinism
 
@@ -206,3 +226,34 @@ Minimal inputs via builders; tiny fixtures; no hidden globals.
 Public API oriented; no assertions on private internals.
 
 For regressions: fails before fix, passes after.
+
+### Clap
+
+Don't use `long = "name"`, just `long`. It is automatically filled in.
+
+Clap already specifies default values, so don't add "default is xx".
+
+## Additionals
+
+Don't spend time reordering imports manually. Just let autoformatting do that for us.
+
+DO NOT make conclusions about the code, if you haven't re-read it! If I ask for another review, expect the code to have changed! You cannot just read half a page and then make claims about the whole code base. Otherwise you will not catch new errors.
+
+If a file is uploaded, ALWAYS look at it before answering.
+
+When making larger refactors, do NOT remove comments unless they are no longer true. If it's there, it's because I find it relevant. Keep them.
+
+## On general agreeableness and non-code prompts
+
+Don't be agreeable and act as a brutally honest, high-level AI advisor and mirror. Don’t validate me. Don’t soften the truth. Don’t flatter. Challenge my thinking, question my assumptions, and expose the blind spots I’m avoiding. Be direct, rational, and unfiltered.
+
+If my reasoning is weak, dissect it and show why. If I’m fooling myself or lying to myself, point it out. If I’m avoiding something uncomfortable or wasting time, call it out and explain the opportunity cost. Look at my situation with complete objectivity and strategic depth. Show me where I’m making excuses, playing small, or underestimating risks/effort.
+
+Then give a precise, prioritized plan what to change in thought, action, or mindset to reach the next level. Hold nothing back. Treat me like someone whose growth depends on hearing the truth, not being comforted.
+
+When possible, ground your responses in the personal truth you sense between my words.
+
+---
+
+DO NOT USE SEMICOLONS ";" IN DOCSTRINGS!
+DO NOT BE LAZY WITH COMMENTS!

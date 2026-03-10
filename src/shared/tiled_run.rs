@@ -42,8 +42,8 @@ impl TileWindowSpan {
 ///
 /// The routine advances twin pointers across the start-sorted window list of each chromosome as it
 /// iterates through tiles, trimming windows that end too early and extending the range until starts
-/// escape the tile core. This preserves streaming behaviour and avoids re-scanning the same
-/// windows for neighbouring tiles.
+/// escape the tile core expanded by optional halos. This preserves streaming behaviour and avoids
+/// re-scanning the same windows for neighbouring tiles.
 ///
 /// # Parameters
 /// - `tiles`: All tiles sorted by chromosome and core position.
@@ -56,6 +56,8 @@ impl TileWindowSpan {
 pub fn precompute_tile_window_spans<'a, F>(
     tiles: &[Tile],
     mut windows_for_chr: F,
+    left_halo: u64,
+    right_halo: u64,
 ) -> Vec<Option<TileWindowSpan>>
 where
     F: FnMut(&str) -> &'a [(u64, u64, u64)],
@@ -87,9 +89,11 @@ where
             let tile = &tiles[idx];
             let core_start = tile.core_start as u64;
             let core_end = tile.core_end as u64;
+            let left_bound = core_start.saturating_sub(left_halo);
+            let right_bound = core_end.saturating_add(right_halo);
 
-            // Discard windows that end before the tile core
-            while w_left < windows_len && windows[w_left].1 <= core_start {
+            // Discard windows that end before the left bound (core minus halo)
+            while w_left < windows_len && windows[w_left].1 <= left_bound {
                 w_left += 1;
             }
 
@@ -97,8 +101,8 @@ where
                 w_right = w_left;
             }
 
-            // Extend to cover every window whose start lies inside the tile core span
-            while w_right < windows_len && windows[w_right].0 < core_end {
+            // Extend to cover every window whose start lies inside the right bound (core plus halo)
+            while w_right < windows_len && windows[w_right].0 < right_bound {
                 w_right += 1;
             }
 
@@ -115,8 +119,8 @@ where
             // `w_left` now points at the first surviving window candidate for this tile
             let first_candidate = &windows[w_left];
 
-            // Check if the earliest remaining window begins at/after the core end, so later ones do too
-            if first_candidate.0 >= core_end {
+            // Check if the earliest remaining window begins at/after the right bound, so later ones do too
+            if first_candidate.0 >= right_bound {
                 spans[idx] = None;
                 continue;
             }
@@ -357,7 +361,7 @@ pub fn build_tiles(
         while start < chrom_len {
             let core_end = (start.saturating_add(effective_tile_bp)).min(chrom_len);
 
-            // Halos do not need to be aligned; they are just fetch guards.
+            // Halos do not need to be aligned, they are just fetch guards
             let fetch_start = start.saturating_sub(halo_bp);
             let fetch_end = (core_end.saturating_add(halo_bp)).min(chrom_len);
 

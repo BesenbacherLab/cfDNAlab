@@ -1,3 +1,8 @@
+//! Runner for fragment-kmers extraction from a BAM file.
+//!
+//! The intended positional selection logic is specified in the
+//! `positional_selection_logic.md` document.
+
 use crate::{
     commands::{
         cli_common::{
@@ -5,8 +10,20 @@ use crate::{
             resolve_chromosomes_and_contigs,
         },
         counters::FragmentKmersCounters,
-        fragment_kmers::{config::*, positional_output::*, positions::*, tiling::*, windows::*},
-        visualize_positions::{BasesFrom, ReferenceFrame, parse_positions},
+        fragment_kmers::{
+            config::*,
+            nearest_frame_guard::NearestFrameGuard,
+            parse::*,
+            positional_output::*,
+            positions::*,
+            selection::{SelectionDecision, evaluate_selection},
+            tiling::*,
+            windows::*,
+        },
+        gc_bias::{
+            correct::{GCCorrector, load_gc_corrector},
+            counting::build_gc_prefixes,
+        },
     },
     shared::{
         bam::create_chromosome_reader,
@@ -17,12 +34,11 @@ use crate::{
         io::create_text_writer,
         kmers::{
             kmer_codec::{KmerCodes, KmerSpec, build_kmer_specs, build_left_aligned_codes_per_k},
-            nearest_guard::nearest_guard_bounds,
             process_counts::{DecodedCounts, prepare_decoded_counts, split_and_decode_counts},
             write::write_decoded_counts_matrix,
         },
         overlaps::find_overlapping_windows,
-        read::default_include_read,
+        read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
         scale_genome::apply_scaling_to_coverage_in_place,
         thread_pool::init_global_pool,
@@ -31,12 +47,12 @@ use crate::{
         },
     },
 };
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{convert::TryInto, io::Write, num::NonZeroUsize, path::Path, sync::Arc, time::Instant};
+use std::{convert::TryInto, io::Write, path::Path, sync::Arc, time::Instant};
 
 /// Execute the fragment kmers counting pipeline end-to-end.
 ///
@@ -61,49 +77,80 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
     let start_time = Instant::now();
     let global_counter = run_inner(opt)?;
 
-    println!("");
-    println!("Statistics");
-    println!("----------");
+    if !opt.shared_args.quiet {
+        println!();
+        println!("Statistics");
+        println!("----------");
+        println!(
+            "  Note: A few reads/fragments may be counted twice in the statistics (only) around the parallelization tiles."
+        );
 
-    // Print summary statistics and execution time
-    let elapsed = start_time.elapsed();
-    println!("  Total reads: {}", global_counter.base.total_reads);
-    println!(
-        "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
-        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
-            / global_counter.base.total_reads as f64
-            * 100.0,
-        global_counter.base.accepted_forward,
-        global_counter.base.accepted_reverse
-    );
-    println!(
-        "  Blacklist-excluded fragments: {}",
-        global_counter.blacklisted_fragments
-    );
-    // if opt.gc.bin_by_gc {
-    //     println!("GC-excluded reads: {}", global_counter.base.gc_excl);
-    // }
-    println!(
-        "  Fragments counted one or more times: {}",
-        global_counter.base.counted_fragments
-    );
-    println!("----------");
-    println!("Elapsed time: {:.2?}", elapsed);
+        // Print summary statistics and execution time
+        let elapsed = start_time.elapsed();
+        println!("  Total reads: {}", global_counter.base.total_reads);
+        println!(
+            "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
+            global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
+            (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
+                / global_counter.base.total_reads as f64
+                * 100.0,
+            global_counter.base.accepted_forward,
+            global_counter.base.accepted_reverse
+        );
+        println!(
+            "  Blacklist-excluded fragments: {}",
+            global_counter.blacklisted_fragments
+        );
+        if opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some() {
+            let gc_fail_action = if opt.shared_args.gc.drop_invalid_gc {
+                "fragment skipped"
+            } else {
+                "fragment counted with weight 1.0"
+            };
+            println!(
+                "  GC correction failures ({}): {}",
+                gc_fail_action, global_counter.gc_failed_fragments
+            );
+            if opt.shared_args.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
+                println!(
+                    "  GC tag values outside [0, {:.0}] treated as invalid: {}",
+                    crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
+                    global_counter.gc_out_of_range_tags
+                );
+            }
+        }
+        println!(
+            "  Fragments counted one or more times: {}",
+            global_counter.base.counted_fragments
+        );
+        println!("----------");
+        println!("Elapsed time: {:.2?}", elapsed);
+    }
     Ok(())
 }
 
 pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
-    let (chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.shared_args.chromosomes, &opt.shared_args.ioc)?;
+    if opt.shared_args.unpaired.reads_are_fragments && opt.shared_args.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --reads-are-fragments");
+    }
+    let (chromosomes, contigs) = resolve_chromosomes_and_contigs(
+        &opt.shared_args.chromosomes,
+        &opt.shared_args.ioc.bam.as_path(),
+    )?;
     let window_opt = opt.shared_args.windows.resolve_windows();
+    let position_specs = opt
+        .shared_args
+        .position_selection
+        .clone()
+        .into_positional_specs()?;
     let prefix = opt.shared_args.output_prefix.trim();
+    let quiet = opt.shared_args.quiet;
 
     // Create output directory
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;
 
     // Load blacklist intervals if provided
-    if opt.shared_args.blacklist.is_some() {
+    if opt.shared_args.blacklist.is_some() && !quiet {
         println!("Start: Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
@@ -116,10 +163,13 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            println!("Start: Loading window coordinates");
+            if !quiet {
+                println!("Start: Loading window coordinates");
+            }
             Some(load_windows_from_bed(
                 bed,
                 Some(chromosomes.as_slice()),
+                None,
                 None,
             )?)
         }
@@ -129,31 +179,41 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     let kmer_specs: FxHashMap<u8, KmerSpec> = build_kmer_specs(&opt.kmer_sizes)?;
 
     let positional_cache = {
-        if opt.shared_args.position_selection.bases_from != BasesFrom::Reference {
+        if opt.shared_args.base_selection.bases_from != BasesFrom::Reference {
             bail!("position selection currently supports bases-from=reference only");
         }
-        let positions_spec = parse_positions(
-            opt.shared_args.position_selection.frame,
-            &opt.shared_args.position_selection.positions,
-        )
-        .context("failed to parse --positions for fragment-kmers")?;
-        let step = NonZeroUsize::new(opt.shared_args.position_selection.step)
-            .ok_or_else(|| anyhow!("--step must be at least 1"))?;
+        // Parse each positions specification
+        let position_specs = position_specs
+            .iter()
+            .map(|ps| parse_positions(ps))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let kmer_sizes: Vec<u8> = kmer_specs.keys().cloned().collect();
+
         Arc::new(PositionSelectionCache::new(
-            opt.shared_args.position_selection.frame,
-            &positions_spec,
-            step,
+            position_specs,
+            &kmer_sizes,
             opt.shared_args.fragment_lengths.min_fragment_length,
             opt.shared_args.fragment_lengths.max_fragment_length,
         )?)
     };
 
     // Load genomic scaling factors
-    if opt.shared_args.scale_genome.scaling_factors.is_some() {
+    if opt.shared_args.scale_genome.scaling_factors.is_some() && !quiet {
         println!("Start: Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
         load_scaling_map(&opt.shared_args.scale_genome, &chromosomes, &contigs)?;
+
+    // Load GC correction package if specified
+    if opt.shared_args.gc.gc_file.is_some() {
+        println!("Start: Loading GC correction matrix");
+    }
+    let gc_corrector = load_gc_corrector(
+        opt.shared_args.gc.gc_file.as_ref(),
+        opt.shared_args.fragment_lengths.min_fragment_length,
+        opt.shared_args.fragment_lengths.max_fragment_length,
+    )?;
 
     // Build temporary directory
     let temp_dir = make_temp_dir(&opt.shared_args.ioc.output_dir, prefix)
@@ -176,12 +236,17 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     )?;
 
     let windows_lookup = windows_map.as_ref();
-    let tile_window_spans = Arc::new(precompute_tile_window_spans(&tiles, |chr| {
-        windows_lookup
-            .and_then(|m| m.get(chr))
-            .map(|w| w.as_slice())
-            .unwrap_or(&[])
-    }));
+    let tile_window_spans = Arc::new(precompute_tile_window_spans(
+        &tiles,
+        |chr| {
+            windows_lookup
+                .and_then(|m| m.get(chr))
+                .map(|w| w.as_slice())
+                .unwrap_or(&[])
+        },
+        0,
+        0,
+    ));
 
     // Compute per-chromosome window offsets and overall window count. In BED mode these offsets are
     // zero because windows already carry their global `original_idx` values.
@@ -199,11 +264,16 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
             .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
             .unwrap(),
     );
+    if quiet {
+        pb.set_draw_target(ProgressDrawTarget::hidden());
+    }
 
     // Configure global thread‐pool size
     init_global_pool(opt.shared_args.ioc.n_threads as usize)?;
 
-    println!("Start: Counting per chromosome");
+    if !quiet {
+        println!("Start: Counting per chromosome");
+    }
 
     pb.set_position(0);
 
@@ -249,6 +319,7 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
                 tile_span.as_ref(),
                 blacklist_chr,
                 scaling_chr,
+                gc_corrector.clone(),
                 counts_path.as_path(),
             )?;
             pb.inc(1);
@@ -256,9 +327,15 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
         })
         .collect::<Result<_>>()?; // short-circuits on the first Err
 
-    pb.finish_with_message("| Finished counting");
+    if !quiet {
+        pb.finish_with_message("| Finished counting");
+    } else {
+        pb.finish_and_clear();
+    }
 
-    println!("Start: Reducing per-tile counts");
+    if !quiet {
+        println!("Start: Reducing per-tile counts");
+    }
 
     let mut global_counter = FragmentKmersCounters::default();
     let mut tile_results_by_chr: FxHashMap<String, Vec<TileResult>> = FxHashMap::default();
@@ -316,7 +393,9 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
 
         let (_, motifs_by_k) = prepare_decoded_counts(&flattened, opt.canonical, &kmer_specs);
 
-        println!("Start: Writing positional counts to disk");
+        if !quiet {
+            println!("Start: Writing positional counts to disk");
+        }
         write_positional_output(
             &positional_decoded,
             &motifs_by_k,
@@ -333,7 +412,9 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
             prepare_decoded_counts(&all_bins, opt.canonical, &kmer_specs);
 
         // Write final counts to output_dir
-        println!("Start: Writing counts to disk");
+        if !quiet {
+            println!("Start: Writing counts to disk");
+        }
         write_decoded_counts_matrix(
             &prepared_counts,
             &kmer_specs,
@@ -357,7 +438,9 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     // Write window coordinates as BED file to output_dir
     // Write bins BED file
     if !matches!(window_opt, WindowSpec::Global) {
-        println!("Start: Writing window coordinates to disk");
+        if !quiet {
+            println!("Start: Writing window coordinates to disk");
+        }
         let bins_path = opt.shared_args.ioc.output_dir.join("bins.bed");
         let mut bed_writer = create_text_writer(&bins_path).context("Create bed fail")?;
         for (chr, start, end, _, overlap_perc) in &bin_info {
@@ -380,11 +463,30 @@ fn process_tile(
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_intervals: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
+    gc_corrector_opt: Option<GCCorrector>,
     counts_path: &Path,
 ) -> anyhow::Result<TileResult> {
     // Open a fresh BAM reader for this thread
     let (mut reader, tid, chrom_len) =
         create_chromosome_reader(&opt.shared_args.ioc.bam, &tile.chr)?;
+
+    // Initialize counters (default -> 0s)
+    let mut counter = FragmentKmersCounters::default();
+
+    let gc_prefixes_opt = if gc_corrector_opt.is_some() {
+        // NOTE: This sequence uses fetch coordinates for enabling GC correction
+        // for all fetched fragments. It is only used to build the GC and ACGT prefixes.
+        // The later sequence used for kmer extraction uses tile core coordinates.
+        let seq_bytes = read_seq_in_range(
+            &opt.shared_args.ref_genome.ref_2bit,
+            &tile.chr,
+            // NOTE: Need for full fetch span to get GC of overlapping fragments!
+            (tile.fetch_start as usize)..(tile.fetch_end as usize),
+        )?;
+        Some(build_gc_prefixes(&seq_bytes))
+    } else {
+        None
+    };
 
     let fetch_span = determine_fetch_span(tile, window_ctx, tile_window_span, chrom_len);
     let Some((fetch_from, fetch_to)) = fetch_span else {
@@ -435,7 +537,7 @@ fn process_tile(
     // Sparse map keyed by original window index -> kmer counts
     let mut counts_by_window: FxHashMap<u64, FxHashMap<CountKey, f64>> = FxHashMap::default();
 
-    // Streaming pointers and single fetch for this chr
+    // Streaming pointers
     let mut bl_ptr = 0; // Blacklist interval
     let mut wd_ptr = tile_window_span
         .and_then(|span| (!span.is_empty()).then_some(span.first_idx))
@@ -452,33 +554,58 @@ fn process_tile(
         move |f: &FragmentWithKmerSegments| lengths.contains(f.len())
     };
 
-    // Wrap to use opt
-    let include_read_fn = {
-        let opt = (*opt).clone();
-        move |r: &Record| {
-            default_include_read(
-                r,
-                opt.shared_args.require_proper_pair,
-                opt.shared_args.min_mapq,
-            )
-        }
-    };
-
     // Create fragment iterator
+    let gc_tag_bytes = opt
+        .shared_args
+        .gc
+        .gc_tag
+        .as_deref()
+        .map(|t| t.as_bytes().to_vec());
+    let unpaired = opt.shared_args.unpaired.reads_are_fragments;
+    let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if unpaired {
+        let min_mapq = opt.shared_args.min_mapq;
+        Box::new(move |r: &Record| default_include_read_unpaired(r, min_mapq))
+    } else {
+        let min_mapq = opt.shared_args.min_mapq;
+        let require_proper_pair = opt.shared_args.require_proper_pair;
+        Box::new(move |r: &Record| {
+            default_include_read_paired_end(r, require_proper_pair, min_mapq)
+        })
+    };
     let mut iter = fragments_with_kmer_segments_from_bam(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
-        include_read_fn,
+        move |rec| include_read_fn(rec),
         opt.shared_args.indel_mode,
         !opt.shared_args.ignore_gap,
         0,
+        gc_tag_bytes.as_deref(),
         fragment_filter,
+        unpaired,
     )
     .with_local_counters();
 
-    // Initialize counters (default -> 0s)
-    let mut counter = FragmentKmersCounters::default();
+    let get_gc_weight = {
+        let gc_corrector = gc_corrector_opt.as_ref();
+        let gc_prefixes = gc_prefixes_opt.as_ref();
+        move |fragment: &FragmentWithKmerSegments, fetch_start: u32| -> Result<Option<f64>> {
+            match (gc_corrector, gc_prefixes) {
+                (Some(corrector), Some(prefixes)) => {
+                    let rel_start = (fragment.start - fetch_start) as u64;
+                    let rel_end = (fragment.end - fetch_start) as u64;
+                    corrector.correct_fragment(rel_start, rel_end, prefixes)
+                }
+                _ => Ok(None),
+            }
+        }
+    };
+
+    let correct_gc = opt.shared_args.gc.gc_file.is_some();
+    let fetch_start = tile.fetch_start;
 
     let store_positions = opt.positional_counts;
+    let has_nearest_frame = position_cache
+        .present_frames
+        .contains(&ReferenceFrame::Nearest);
 
     // Iterate fragments and add coverage
     for fragment_res in iter.by_ref() {
@@ -498,15 +625,51 @@ fn process_tile(
             continue;
         }
 
-        let cache = position_cache.as_ref();
-        let selected_offsets = match cache.offsets(fragment.len()) {
-            Some(slice) if !slice.is_empty() => slice,
-            _ => {
-                continue;
+        // Get GC correction weight
+        let gc_weight = if opt.shared_args.gc.gc_tag.is_some() {
+            if fragment.gc_tag.had_invalid {
+                counter.gc_failed_fragments += 1;
+                if fragment.gc_tag.was_out_of_range {
+                    counter.gc_out_of_range_tags += 1;
+                }
+                if opt.shared_args.gc.drop_invalid_gc {
+                    continue;
+                } else {
+                    1.0
+                }
+            } else if let Some(tag_w) = fragment.gc_tag.weight {
+                tag_w as f64
+            } else {
+                counter.gc_failed_fragments += 1;
+                if opt.shared_args.gc.drop_invalid_gc {
+                    continue;
+                } else {
+                    1.0
+                }
+            }
+        } else {
+            let gc_weight_opt = get_gc_weight(&fragment, fetch_start)?;
+            match (gc_weight_opt, correct_gc) {
+                (Some(w), true) => w,
+                (None, true) => {
+                    // Tried but failed to make a GC correction weight
+                    counter.gc_failed_fragments += 1;
+                    if opt.shared_args.gc.drop_invalid_gc {
+                        continue;
+                    } else {
+                        1.0
+                    }
+                }
+                (None, false) => 1.0, // No correction
+                (Some(_), false) => unreachable!(),
             }
         };
+
+        // TODO: Does first, last need to be recalculated every iteration?
+        let cache = position_cache.as_ref();
         let (first, last) = cache
-            .bounds(fragment.len())
+            // Use smallest possible k to include all positions in interval for overlap
+            .bounds(fragment.len(), cache.offsets.keys().copied().min().unwrap())
             .expect("non-empty offsets must have bounds");
         let interval_start = fragment.start as u64 + first as u64;
         let interval_end = fragment.start as u64 + last as u64 + 1;
@@ -543,15 +706,16 @@ fn process_tile(
                 .or_insert_with(FxHashMap::default);
             count_kmers_at_positions(
                 &fragment,
-                selected_offsets,
+                cache,
                 store_positions,
                 &positional_codes_by_k,
                 kmer_specs,
                 counts,
                 positional_scaling_weights.as_deref(),
+                gc_weight,
                 tile.core_start,
                 tile.core_end,
-                opt.shared_args.position_selection.frame,
+                has_nearest_frame,
             );
         }
     }
@@ -588,22 +752,17 @@ fn process_tile(
 
 pub fn count_kmers_at_positions(
     fragment: &FragmentWithKmerSegments,
-    selections: &[PositionSelection],
+    cache: &PositionSelectionCache,
     store_positions: bool,
     positional_codes_by_k: &FxHashMap<u8, KmerCodes>,
     kmer_specs: &FxHashMap<u8, KmerSpec>,
     counts: &mut FxHashMap<CountKey, f64>,
-    weights: Option<&[f32]>,
+    scaling_weights: Option<&[f32]>,
+    gc_weight: f64,
     tile_core_start: u32,
     tile_core_end: u32,
-    frame: ReferenceFrame,
+    apply_nearest_guard: bool,
 ) {
-    if selections.is_empty() {
-        // Some frames filter out every position for a fragment of a given length
-        // Abandon early so we do not waste time on segment bookkeeping
-        return;
-    }
-
     // We perform comparisons in absolute genome coordinates first, then translate
     // back to fragment-relative offsets only after clipping
     let fragment_start = fragment.start as u64;
@@ -617,6 +776,22 @@ pub fn count_kmers_at_positions(
             .get(&k)
             .expect("missing positional codes for requested k");
         let k_span = k as u64;
+        let selections = match cache.offsets(fragment.len(), k) {
+            Some(slice) if !slice.is_empty() => slice,
+            _ => {
+                continue;
+            }
+        };
+        if selections.is_empty() {
+            // Some frames filter out every position for a fragment of a given length
+            continue;
+        }
+
+        // In count_kmers_at_positions, fetch windows once per k/fragment length
+        let windows = match cache.windows(fragment.len(), k) {
+            Some(w) => w,
+            None => continue,
+        };
 
         // Selections are sorted by offset. We stream through them once per k
         // using a single cursor so the overall complexity stays linear in the number
@@ -632,14 +807,8 @@ pub fn count_kmers_at_positions(
         //     left  boundary = L/2 - 1 (0-based), right boundary = L/2
         //     forward:  start + (k-1) <= left_boundary   -> start <= (L/2) - k
         //     reverse:  start >= right_boundary          -> anchor(offset) >= (L/2) + (k-1)
-        let mut nearest_left_max_start: Option<u64> = None; // inclusive start
-        let mut nearest_right_min_anchor: Option<u64> = None; // inclusive anchor
-        if matches!(frame, ReferenceFrame::Nearest) {
-            if let Some(bounds) = nearest_guard_bounds(fragment.len() as u32, k as u32) {
-                nearest_left_max_start = Some(bounds.max_forward_start);
-                nearest_right_min_anchor = Some(bounds.min_reverse_anchor);
-            }
-        }
+        let nearest_guard =
+            NearestFrameGuard::by_flag(apply_nearest_guard, fragment.len() as u32, k as u32);
 
         // Fragments may be gapped by indels, so we examine each contiguous segment
         // and clip it to the tile coordinates before accepting offsets
@@ -753,25 +922,22 @@ pub fn count_kmers_at_positions(
                     continue;
                 }
 
-                match selection.orientation() {
-                    PositionOrientation::Forward => {
-                        let Some((forward_min, forward_max)) = forward_range else {
-                            idx += 1;
-                            continue;
-                        };
-                        if offset < forward_min || offset > forward_max {
-                            idx += 1;
-                            continue;
-                        }
+                let decision = evaluate_selection(
+                    selection,
+                    windows,
+                    nearest_guard.as_ref(),
+                    k_span,
+                    offset,
+                    forward_range,
+                    reverse_range,
+                );
 
-                        // Nearest-frame guard: keep left-side starts that do NOT cross the midpoint
-                        if let Some(max_start) = nearest_left_max_start {
-                            if offset > max_start {
-                                idx += 1;
-                                continue;
-                            }
-                        }
-
+                match decision {
+                    SelectionDecision::SkipAdvance => {
+                        idx += 1;
+                        continue;
+                    }
+                    SelectionDecision::IncludeForward { .. } => {
                         let start_local = match idx_abs.checked_sub(tile_start) {
                             Some(val) => val as usize,
                             None => {
@@ -788,10 +954,11 @@ pub fn count_kmers_at_positions(
                         }
 
                         // We look up weights using the same tile-relative index as the positional codes
-                        let weight = match weights {
+                        let weight = match scaling_weights {
                             Some(w) => unsafe { *w.get_unchecked(start_local) as f64 },
                             None => 1.0,
-                        };
+                        } * gc_weight;
+
                         // Record the forward kmer code emitted at this start position
                         let key = CountKey {
                             k,
@@ -801,34 +968,14 @@ pub fn count_kmers_at_positions(
                         };
                         *counts.entry(key).or_insert(0.0) += weight;
                     }
-                    PositionOrientation::Reverse => {
-                        let Some((reverse_min, reverse_max)) = reverse_range else {
-                            idx += 1;
-                            continue;
-                        };
-                        if offset < reverse_min || offset > reverse_max {
-                            idx += 1;
-                            continue;
-                        }
-
-                        let Some(kmer_start_abs) = idx_abs.checked_sub(k_span.saturating_sub(1))
-                        else {
-                            // The reverse kmer would extend past the segment start
-                            idx += 1;
-                            continue;
-                        };
-
+                    SelectionDecision::IncludeReverse {
+                        start_offset_0,
+                        anchor_offset_0,
+                    } => {
+                        let kmer_start_abs = fragment_start + start_offset_0;
                         if kmer_start_abs < tile_start || kmer_start_abs < seg_start {
                             idx += 1;
                             continue;
-                        }
-
-                        // Nearest-frame guard: anchor must be far enough right so the k-mer starts on/right of midpoint
-                        if let Some(min_anchor) = nearest_right_min_anchor {
-                            if offset < min_anchor {
-                                idx += 1;
-                                continue;
-                            }
                         }
 
                         let start_local = match kmer_start_abs.checked_sub(tile_start) {
@@ -838,14 +985,21 @@ pub fn count_kmers_at_positions(
                                 continue;
                             }
                         };
-                        let end_local = (idx_abs - tile_start) as usize;
-                        // Reverse kmers borrow the weight of their terminal base in the tile
-                        let weight = match weights {
+
+                        let end_local =
+                            match (fragment_start + anchor_offset_0).checked_sub(tile_start) {
+                                Some(val) => val as usize,
+                                None => {
+                                    idx += 1;
+                                    continue;
+                                }
+                            };
+
+                        let weight = match scaling_weights {
                             Some(w) => unsafe { *w.get_unchecked(end_local) as f64 },
                             None => 1.0,
-                        };
+                        } * gc_weight;
 
-                        // Record the reverse-complement code keyed by its true start position
                         let key = CountKey {
                             k,
                             code: codes.get(start_local),

@@ -10,12 +10,15 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::{
     emit_bedgraph_runs, emit_windowed_runs, write_final_row,
 };
+use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
+use crate::commands::gc_bias::counting::build_gc_prefixes;
 use crate::shared::coverage::Coverage;
 use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment::segment_fragment::FragmentWithSegments;
 use crate::shared::fragment_iterator::fragments_with_segments_from_bam;
-use crate::shared::read::default_include_read;
+use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
+use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
 use crate::shared::tiled_run::{
     Tile, TileMode, TileWindowSpan, build_tiles, make_temp_dir, overlapping_windows_for_tile,
@@ -32,7 +35,7 @@ use crate::{
         bam::create_chromosome_reader, bed::load_windows_from_bed, thread_pool::init_global_pool,
     },
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -59,7 +62,14 @@ use std::{sync::Arc, time::Instant};
 ///   fails at any stage.
 pub fn run(opt: &FCoverageConfig) -> Result<()> {
     let start_time = Instant::now();
-    let (chromosomes, contigs) = resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc)?;
+    if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
+        bail!("--require-proper-pair cannot be used with --reads-are-fragments");
+    }
+    if opt.unpaired.reads_are_fragments && opt.ignore_gap {
+        bail!("--ignore-gap cannot be used with --reads-are-fragments");
+    }
+    let (chromosomes, contigs) =
+        resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
     let prefix = opt.output_prefix.trim();
 
@@ -75,7 +85,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             println!("Start: Loading window coordinates");
-            let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None)?;
+            let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             if matches!(
                 opt.per_window,
                 CoverageWindowAction::OnlyIncludeThesePositionsUnique
@@ -112,10 +122,22 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
         load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
 
+    // Load GC correction package if specified
+    if opt.gc.gc_file.is_some() {
+        println!("Start: Loading GC correction matrix");
+    }
+    let gc_corrector = load_gc_corrector(
+        opt.gc.gc_file.as_ref(),
+        opt.fragment_lengths.min_fragment_length,
+        opt.fragment_lengths.max_fragment_length,
+    )?;
+
     // Decide mode once
     let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
     let masked = opt.blacklist.is_some();
-    let has_scaling = opt.scale_genome.scaling_factors.is_some();
+    let has_scaling_or_correction = opt.scale_genome.scaling_factors.is_some()
+        || opt.gc.gc_file.is_some()
+        || opt.gc.gc_tag.is_some();
 
     // Some actions cannot be used with `--by-size`
     if matches!(window_opt, WindowSpec::Size(_))
@@ -133,7 +155,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
 
     // Window size when --by-size (otherwise None)
     let by_size_bp: Option<u64> = match &window_opt {
-        WindowSpec::Size(bp) => Some(*bp as u64),
+        WindowSpec::Size(bp) => Some(*bp),
         _ => None,
     };
 
@@ -143,11 +165,16 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
         build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, by_size_bp)?;
 
     let windows_lookup = windows_map.as_ref();
-    let tile_window_spans = Arc::new(precompute_tile_window_spans(&tiles, |chr| {
-        windows_lookup
-            .and_then(|m| m.get(chr).map(|w| w.as_slice()))
-            .unwrap_or(&[])
-    }));
+    let tile_window_spans = Arc::new(precompute_tile_window_spans(
+        &tiles,
+        |chr| {
+            windows_lookup
+                .and_then(|m| m.get(chr).map(|w| w.as_slice()))
+                .unwrap_or(&[])
+        },
+        0,
+        0,
+    ));
 
     // Where per-tile files go
     let positional_prefix = format!("{prefix}.pos");
@@ -171,7 +198,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
             CoverageWindowAction::Average | CoverageWindowAction::Total => opt.decimals as i32,
             CoverageWindowAction::OnlyIncludeThesePositionsUnique
             | CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
-                if has_scaling {
+                if has_scaling_or_correction {
                     opt.decimals as i32
                 } else {
                     0
@@ -179,7 +206,11 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
             }
         }
     } else {
-        if has_scaling { opt.decimals as i32 } else { 0 }
+        if has_scaling_or_correction {
+            opt.decimals as i32
+        } else {
+            0
+        }
     };
 
     let total_tiles = tiles.len();
@@ -202,13 +233,13 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     pb.set_position(0);
 
     let tile_window_spans_for_threads = tile_window_spans.clone();
+    let gc_tag = opt.gc.gc_tag.as_deref();
 
     let tile_results: Vec<FCoverageCounters> = tiles
         .par_iter()
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<FCoverageCounters> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
-            // Per-chrom projections
             let windows_chr: Option<&[(u64, u64, u64)]> = windows_map
                 .as_ref()
                 .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
@@ -224,7 +255,6 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
             // Decide tile mode and file name
             let (action_prefix, extensions) = if windowed {
                 match opt.per_window {
-                    // We need
                     CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
                         (positional_prefix, "tsv.zst")
                     }
@@ -327,15 +357,25 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
                 tile_span.as_ref(),
                 blacklist_chr,
                 scaling_chr,
+                gc_corrector.clone(), // Quite small memory footprint
+                gc_tag,
                 mode,
                 decimals_to_use,
             )?;
             pb.inc(1);
             Ok(counter)
         })
-        .collect::<anyhow::Result<_>>()?;
+        .collect::<anyhow::Result<_>>()?; // Short-circuits on the first Err
 
     pb.finish_with_message("| Finished counting");
+
+    // Release per-tile inputs before merging outputs
+    drop(tile_window_spans_for_threads);
+    drop(tile_window_spans);
+    drop(tiles);
+    drop(blacklist_map);
+    drop(scaling_map);
+    drop(gc_corrector);
 
     // Collect counters
     for counter in tile_results {
@@ -495,6 +535,9 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     println!("");
     println!("Statistics");
     println!("----------");
+    println!(
+        "  Note: A few reads/fragments may be counted twice in the statistics (only) around the parallelization tiles."
+    );
 
     // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
@@ -508,9 +551,26 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
         global_counter.base.accepted_forward,
         global_counter.base.accepted_reverse
     );
-    // if opt.gc.bin_by_gc {
-    //     println!("GC-excluded reads: {}", global_counter.base.gc_excl);
-    // }
+    if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
+        let gc_fail_action = if opt.gc.drop_invalid_gc {
+            "fragment skipped"
+        } else {
+            "fragment counted with weight 1.0"
+        };
+        println!(
+            "  GC correction failures ({}): {}",
+            gc_fail_action, global_counter.gc_failed_fragments
+        );
+    }
+    if opt.gc.gc_tag.is_some() {
+        if global_counter.gc_out_of_range_tags > 0 {
+            println!(
+                "  GC tag values outside [0, {:.0}] treated as invalid: {}",
+                crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
+                global_counter.gc_out_of_range_tags
+            );
+        }
+    }
     println!(
         "  Fragments counted one or more times: {}",
         global_counter.base.counted_fragments
@@ -527,6 +587,8 @@ fn process_tile(
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_chr: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
+    gc_corrector_opt: Option<GCCorrector>,
+    gc_tag: Option<&str>,
     mode: TileMode,
     decimals: i32,
 ) -> Result<FCoverageCounters> {
@@ -536,6 +598,22 @@ fn process_tile(
 
     // Counters
     let mut counter = FCoverageCounters::default();
+
+    let gc_prefixes_opt = if gc_corrector_opt.is_some() {
+        let ref_2bit = match opt.ref_2bit.as_ref() {
+            Some(r) => r,
+            None => bail!("When GC correction is specified, --ref-2bit must also be specified"),
+        };
+        let seq_bytes = read_seq_in_range(
+            ref_2bit,
+            &tile.chr,
+            // NOTE: Need for full fetch span to get GC of overlapping fragments!
+            (tile.fetch_start as usize)..(tile.fetch_end as usize),
+        )?;
+        Some(build_gc_prefixes(&seq_bytes))
+    } else {
+        None
+    };
 
     // Adapt the fetch coordinates to the present windows (*in windowed mode!*)
     // When no windows are present, skip this tile
@@ -560,29 +638,130 @@ fn process_tile(
         move |f: &FragmentWithSegments| lengths.contains(f.len())
     };
 
-    // Wrap to use opt
-    let include_read_fn = {
-        let opt = (*opt).clone();
-        move |r: &Record| default_include_read(r, opt.require_proper_pair, opt.min_mapq)
-    };
+    let gc_tag_bytes = gc_tag.map(|t| t.as_bytes().to_vec());
 
     // Create fragment iterator
+    let unpaired = opt.unpaired.reads_are_fragments;
+    let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if unpaired {
+        let min_mapq = opt.min_mapq;
+        Box::new(move |r: &Record| default_include_read_unpaired(r, min_mapq))
+    } else {
+        let min_mapq = opt.min_mapq;
+        let require_proper_pair = opt.require_proper_pair;
+        Box::new(move |r: &Record| {
+            default_include_read_paired_end(r, require_proper_pair, min_mapq)
+        })
+    };
+
     let mut iter = fragments_with_segments_from_bam(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
-        include_read_fn,
+        move |rec| include_read_fn(rec),
         1,
         !opt.ignore_gap,
+        gc_tag_bytes.as_deref(),
         fragment_filter,
+        unpaired,
     )
     .with_local_counters();
 
     // Iterate fragments and add coverage
-    for fragment_res in iter.by_ref() {
-        let fragment = fragment_res.context("reading fragment")?;
-        counter.base.counted_fragments += 1;
+    // Separate branches for with/without GC correction
+    if let Some(gc_corrector) = gc_corrector_opt {
+        let gc_prefixes =
+            gc_prefixes_opt.expect("When GC correction is enabled, the gc_prefixes should be set");
+        let fetch_start = tile.fetch_start;
+        let fetch_end = tile.fetch_end;
+        for fragment_res in iter.by_ref() {
+            let fragment = fragment_res.context("reading fragment")?;
 
-        // Clip and add to tile core coverage (segments respected)
-        add_fragment_clipped_to_core(&mut cp, &fragment, 1.0, tile.core_start, tile.core_end)?;
+            if fragment.start < fetch_start || fragment.end > fetch_end {
+                // Fragment won't overlap the tile core (assuming correct max_fragment_length halo!)
+                // Note that more fragments (smaller than max_fragment_length) could be outside the tiles
+                continue;
+            }
+
+            let rel_start = (fragment.start - fetch_start) as u64;
+            let rel_end = (fragment.end - fetch_start) as u64;
+
+            let weight = match gc_corrector.correct_fragment(rel_start, rel_end, &gc_prefixes)? {
+                Some(weight) => weight,
+                None => {
+                    counter.gc_failed_fragments += 1;
+                    if opt.gc.drop_invalid_gc {
+                        continue;
+                    } else {
+                        1.0
+                    }
+                }
+            };
+
+            // Clip and add to tile core coverage (segments respected)
+            let was_counted = add_fragment_clipped_to_core(
+                &mut cp,
+                &fragment,
+                weight as f32,
+                tile.core_start,
+                tile.core_end,
+            )?;
+
+            if was_counted {
+                counter.base.counted_fragments += 1;
+            }
+        }
+    } else if gc_tag.is_some() {
+        for fragment_res in iter.by_ref() {
+            let fragment = fragment_res.context("reading fragment")?;
+
+            let gc_weight = if fragment.gc_tag.had_invalid {
+                counter.gc_failed_fragments += 1;
+                if fragment.gc_tag.was_out_of_range {
+                    counter.gc_out_of_range_tags += 1;
+                }
+                if opt.gc.drop_invalid_gc {
+                    continue;
+                } else {
+                    1.0
+                }
+            } else if let Some(w) = fragment.gc_tag.weight {
+                w
+            } else {
+                counter.gc_failed_fragments += 1;
+                if opt.gc.drop_invalid_gc {
+                    continue;
+                } else {
+                    1.0
+                }
+            };
+
+            let was_counted = add_fragment_clipped_to_core(
+                &mut cp,
+                &fragment,
+                gc_weight as f32,
+                tile.core_start,
+                tile.core_end,
+            )?;
+
+            if was_counted {
+                counter.base.counted_fragments += 1;
+            }
+        }
+    } else {
+        for fragment_res in iter.by_ref() {
+            let fragment = fragment_res.context("reading fragment")?;
+
+            // Clip and add to tile core coverage (segments respected)
+            let was_counted = add_fragment_clipped_to_core(
+                &mut cp,
+                &fragment,
+                1.0,
+                tile.core_start,
+                tile.core_end,
+            )?;
+
+            if was_counted {
+                counter.base.counted_fragments += 1;
+            }
+        }
     }
 
     // Finalize coverage
@@ -947,8 +1126,9 @@ fn add_clipped_blacklist_to_cp(
 /// - `core_end`: Exclusive end of the tile core in absolute coordinates.
 ///
 /// # Returns
-/// `Ok(())` when the contribution is applied successfully, or an error bubbling from the coverage
-/// accumulator.
+/// - `Ok(true)` if the fragment contributes at least one base to the tile core.
+/// - `Ok(false)` if every segment falls outside the core after clipping.
+/// - An error when the coverage accumulator rejects the update.
 #[inline]
 pub fn add_fragment_clipped_to_core(
     cp: &mut Coverage,
@@ -956,8 +1136,9 @@ pub fn add_fragment_clipped_to_core(
     weight: f32,
     core_start: u32,
     core_end: u32,
-) -> Result<()> {
+) -> Result<bool> {
     // Use explicit segments if present
+    let mut counted = false;
     if let Some(segments) = &fragment.segments {
         for &(seg_start_abs, seg_end_abs) in segments {
             let s = seg_start_abs.max(core_start);
@@ -969,8 +1150,10 @@ pub fn add_fragment_clipped_to_core(
                     tid: fragment.tid,
                     start: s - core_start,
                     end: e - core_start,
+                    gc_tag: Default::default(),
                 };
                 cp.add_fragment_weighted(local, weight)?;
+                counted = true;
             }
         }
     } else {
@@ -984,9 +1167,12 @@ pub fn add_fragment_clipped_to_core(
                 tid: fragment.tid,
                 start: s - core_start,
                 end: e - core_start,
+                gc_tag: Default::default(),
             };
+
             cp.add_fragment_weighted(local, weight)?;
+            counted = true;
         }
     }
-    Ok(())
+    Ok(counted)
 }

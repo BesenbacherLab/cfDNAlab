@@ -1,6 +1,9 @@
 pub mod config;
 pub mod fragment_kmers;
+pub mod nearest_frame_guard;
+pub mod parse;
 pub mod positional_output;
 pub mod positions;
+pub mod selection;
 pub mod tiling;
 pub mod windows;
