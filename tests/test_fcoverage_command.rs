@@ -10,8 +10,8 @@ use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
 use cfdnalab::shared::fragment::minimal_fragment::collect_fragment_from_records;
 use cfdnalab::shared::read::default_include_read_paired_end;
 use fixtures::{
-    bam_from_specs, paired_fragment, read_zst_to_string, simple_inward_bam, write_bed,
-    write_scaling_factors,
+    LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, bam_from_specs, long_fragment_bam, paired_fragment,
+    read_zst_to_string, simple_inward_bam, write_bed, write_scaling_factors,
 };
 use rust_htslib::bam::{Read, Reader};
 use std::path::Path;
@@ -104,6 +104,152 @@ fn per_position_outputs_basic_fragment() -> Result<()> {
     assert!(
         text.contains("chr1\t20\t80\t1"),
         "expected contiguous coverage run, got: {text}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn per_position_keep_zero_runs_toggles_zero_segments() -> Result<()> {
+    let bam = simple_inward_bam()?;
+
+    let out_dir_without_zeros = TempDir::new()?;
+    let mut cfg_without_zeros = base_config(&bam.bam, out_dir_without_zeros.path());
+    cfg_without_zeros.set_decimals(0);
+    cfg_without_zeros.set_per_window(CoverageWindowAction::Average);
+    cfg_without_zeros.set_keep_zero_runs(false);
+
+    // Manual expectations:
+    // - The single fragment covers [20, 80) with coverage 1.
+    // - The rest of chr1, with length 200, has coverage 0.
+    // - When keep_zero_runs=false, only the covered run is written.
+    run(&cfg_without_zeros)?;
+
+    let without_zeros_path = out_dir_without_zeros
+        .path()
+        .join("testcov.per_position.bedgraph.zst");
+    let without_zeros_text = read_zst_to_string(&without_zeros_path)?;
+    let without_zeros_lines: Vec<_> = without_zeros_text.lines().collect();
+    assert_eq!(without_zeros_lines, vec!["chr1\t20\t80\t1"]);
+
+    let out_dir_with_zeros = TempDir::new()?;
+    let mut cfg_with_zeros = base_config(&bam.bam, out_dir_with_zeros.path());
+    cfg_with_zeros.set_decimals(0);
+    cfg_with_zeros.set_per_window(CoverageWindowAction::Average);
+    cfg_with_zeros.set_keep_zero_runs(true);
+
+    // With keep_zero_runs=true, the zero-coverage flanks are kept as separate runs.
+    run(&cfg_with_zeros)?;
+
+    let with_zeros_path = out_dir_with_zeros
+        .path()
+        .join("testcov.per_position.bedgraph.zst");
+    let with_zeros_text = read_zst_to_string(&with_zeros_path)?;
+    let with_zeros_lines: Vec<_> = with_zeros_text.lines().collect();
+    assert_eq!(
+        with_zeros_lines,
+        vec!["chr1\t0\t20\t0", "chr1\t20\t80\t1", "chr1\t80\t200\t0"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn per_position_and_by_size_totals_conserve_total_covered_bases() -> Result<()> {
+    let bam = long_fragment_bam("fcoverage_conservation_fixture")?;
+    let expected_total_coverage =
+        (LONG_FRAGMENT_STARTS.len() as u64) * (LONG_FRAGMENT_LENGTH as u64);
+    let tile_sizes = [1_000_u32, 1_100, 1_500, 1_700, 2_300];
+    let mut positional_totals = Vec::new();
+    let mut by_size_totals = Vec::new();
+
+    // Manual expectations:
+    // - The fixture contains 10 fragments.
+    // - Each fragment spans 600 bp.
+    // - Total covered bases are therefore 10 * 600 = 6000, regardless of overlaps.
+    // - Changing tile size must not change that total for either positional output
+    //   or by-size total windows.
+    for tile_size in tile_sizes {
+        let positional_out_dir = TempDir::new()?;
+        let mut positional_cfg = base_config(&bam.bam, positional_out_dir.path());
+        positional_cfg.set_decimals(0);
+        positional_cfg.set_per_window(CoverageWindowAction::Average);
+        positional_cfg.set_keep_zero_runs(false);
+        positional_cfg.set_tile_size(tile_size);
+        {
+            let frag = positional_cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 100;
+            frag.max_fragment_length = 700;
+        }
+
+        run(&positional_cfg)?;
+
+        let positional_path = positional_out_dir
+            .path()
+            .join("testcov.per_position.bedgraph.zst");
+        let positional_text = read_zst_to_string(&positional_path)?;
+        let positional_total: u64 = positional_text
+            .lines()
+            .map(|line| {
+                let cols: Vec<_> = line.split('\t').collect();
+                let start = cols[1].parse::<u64>().expect("bedgraph start should parse");
+                let end = cols[2].parse::<u64>().expect("bedgraph end should parse");
+                let value = cols[3]
+                    .parse::<u64>()
+                    .expect("bedgraph value should parse as integer");
+                (end - start) * value
+            })
+            .sum();
+        assert_eq!(
+            positional_total, expected_total_coverage,
+            "unexpected positional total for tile_size={tile_size}"
+        );
+        positional_totals.push(positional_total);
+
+        let by_size_out_dir = TempDir::new()?;
+        let mut by_size_windows = WindowsArgs::default();
+        by_size_windows.by_size = Some(500);
+
+        let mut by_size_cfg = base_config(&bam.bam, by_size_out_dir.path());
+        by_size_cfg.set_decimals(0);
+        by_size_cfg.set_per_window(CoverageWindowAction::Total);
+        by_size_cfg.set_keep_zero_runs(true);
+        by_size_cfg.set_tile_size(tile_size);
+        by_size_cfg.set_windows(by_size_windows);
+        {
+            let frag = by_size_cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 100;
+            frag.max_fragment_length = 700;
+        }
+
+        run(&by_size_cfg)?;
+
+        let totals_path = by_size_out_dir.path().join("testcov.total.tsv.zst");
+        let totals_text = read_zst_to_string(&totals_path)?;
+        let by_size_total: u64 = totals_text
+            .lines()
+            .skip(1)
+            .map(|line| {
+                let cols: Vec<_> = line.split('\t').collect();
+                cols[3]
+                    .parse::<u64>()
+                    .expect("total_coverage should parse as integer")
+            })
+            .sum();
+        assert_eq!(
+            by_size_total, expected_total_coverage,
+            "unexpected by-size total for tile_size={tile_size}"
+        );
+        by_size_totals.push(by_size_total);
+    }
+
+    assert_eq!(
+        positional_totals,
+        vec![expected_total_coverage; tile_sizes.len()]
+    );
+    assert_eq!(
+        by_size_totals,
+        vec![expected_total_coverage; tile_sizes.len()]
     );
 
     Ok(())

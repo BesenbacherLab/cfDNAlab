@@ -128,7 +128,7 @@ pub struct FCoverageConfig {
     /// - `"indexed-positions"`: Get the positional coverage for the included windows only (`--by-bed` *only*).
     ///   Adds the original window index as an output column and keeps duplicate positions.
     ///   Excludes all positions that do not overlap a window from the output.
-    ///   **NOTE**: The output is first sorted by chromosome, tile index, and window start. 
+    ///   **NOTE**: The output is first sorted by chromosome, tile index, and window start.
     ///   Then the coverage segments are sorted by start- and end coordinates.
     ///   Window indices may thus not be contiguous and coverage-segments crossing genomic tile boundaries are split.
     ///   Depending on your needs, sort downstream.
