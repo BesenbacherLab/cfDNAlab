@@ -1,35 +1,37 @@
-# Fragment Midpoint Recipes
+# Extract Fragment Coverage
 
-Multiple studies have profiled midpoint coverage around e.g. transcription factor binding sites (summed per transcription factor, per position) [REFS]. This can inform about the binding activity of different transcription factors related to cancer.
+Fragment coverage measures how many fragments overlap each genomic position. In contrast to many non-cfDNA-tools, we (optionally) count the gap between paired reads along with the aligned bases of the reads. We avoid double counting when reads overlap.
+
+When no GC correction or genomic smoothing is applied, each fragment is counted as `1` in the overlapping (aligned / gap) positions. Using GC correction and/or genomic smoothing changes this to a weight (floating point).
 
 ## Base command
 
 ```bash
-cfdna midpoints --help
+cfdna fcoverage --help
 
-cfdna midpoints \
+cfdna fcoverage \
   --bam <sample>.bam \
-  --output-dir <sample_directory>/midpoints \
+  --output-dir <sample_directory>/coverage \
   --output-prefix <sample_id> \
   --n-threads 12 \
-  --intervals <fixed_size_intervals>.tsv \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed \
-  --length-bins {30..1000..10}
+  --by-size 1000000 \
+  --per-window 'average'
 ```
 
 ## GC-bias correction example
 
 ```bash
-cfdna midpoints \
+cfdna fcoverage \
   --bam <sample>.bam \
-  --output-dir <sample_directory>/midpoints \
+  --output-dir <sample_directory>/coverage \
   --output-prefix <sample_id> \
   --n-threads 12 \
-  --intervals <fixed_size_intervals>.tsv \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed \
-  --length-bins {30..1000..10} \
+  --by-size 1000000 \
+  --per-window 'average' \
   --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
   --ref-2bit <path>/hg38.2bit
 ```
@@ -37,33 +39,31 @@ cfdna midpoints \
 ## Genomic smoothing example
 
 ```bash
-cfdna midpoints \
+cfdna fcoverage \
   --bam <sample>.bam \
-  --output-dir <sample_directory>/midpoints \
+  --output-dir <sample_directory>/coverage \
   --output-prefix <sample_id> \
   --n-threads 12 \
-  --intervals <fixed_size_intervals>.tsv \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed \
-  --length-bins {30..1000..10} \
+  --by-size 1000000 \
+  --per-window 'average' \
   --scaling-factors <sample_directory>/coverage_weights/<sample_id>.scaling_factors.tsv
 ```
 
 ## GC-bias correction + genomic smoothing
 
 ```bash
-cfdna midpoints \
+cfdna fcoverage \
   --bam <sample>.bam \
-  --output-dir <sample_directory>/midpoints \
+  --output-dir <sample_directory>/coverage \
   --output-prefix <sample_id> \
   --n-threads 12 \
-  --intervals <fixed_size_intervals>.tsv \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed \
-  --length-bins {30..1000..10} \
+  --by-size 1000000 \
+  --per-window 'average' \
   --gc-file <sample_directory>/gc_bias/gc_bias_correction.npz \
   --ref-2bit <path>/hg38.2bit \
   --scaling-factors <sample_directory>/coverage_weights/<sample_id>.scaling_factors.tsv
 ```
-
-The intervals must have the same fixed size. The expected columns are: `chromosome, start, end, group_name` (where `group_name` is the group to collapse profiles by, e.g., the transcription factor ID). The intervals should be sorted by chromosome and start coordinates.

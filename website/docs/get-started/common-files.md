@@ -126,4 +126,4 @@ project/
 
 ## Next step
 
-Once you have these files in place, continue with [Quickstart](./quickstart.md) to find the right command and guide for your workflow.
+Once you have these files in place, continue with the **Guides** section to find the right workflow for your analysis.

@@ -1,4 +1,4 @@
-# Genomic Smoothing Pipeline
+# Genomic Smoothing
 
 For some commands, like `cfdna midpoints`, you may want all genomic regions to have approximately the same contribution to the features, for example to reduce the effect of copy number alterations.
 

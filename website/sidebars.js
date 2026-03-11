@@ -8,18 +8,17 @@ const sidebars = {
       items: [
         'get-started/installation',
         'get-started/common-files',
-        'get-started/quickstart'
       ]
     },
     {
       type: 'category',
       label: 'Guides',
       items: [
-        'guides/gc-bias-pipeline',
-        'guides/genomic-smoothing-pipeline',
-        'guides/fcoverage-recipes',
-        'guides/lengths-recipes',
-        'guides/midpoints-recipes'
+        'guides/correct_gc_bias_guide',
+        'guides/genomic_smoothing_guide',
+        'guides/fragment_coverage_guide',
+        'guides/fragment_lengths_guide',
+        'guides/fragment_midpoints_guide'
       ]
     },
     {

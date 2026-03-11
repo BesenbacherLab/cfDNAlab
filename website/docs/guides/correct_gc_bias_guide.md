@@ -1,4 +1,4 @@
-# GC-Bias Correction Pipeline
+# Correct GC-Bias
 
 Fragmentomics features are vulnerable to biases from various sample-handling and sequencing processes, such as PCR amplification. `cfDNAlab` commands thus allow the correction of the commonly observed GC-bias.
 
