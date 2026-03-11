@@ -24,6 +24,9 @@ cfdna --help
 ## Build from source
 
 ```bash
+# Once downloaded, enter the directory
+cd cfDNAlab
+# Then build it as so:
 cargo build --release --features cli,plotters
 ```
 

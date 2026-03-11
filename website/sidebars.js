@@ -5,7 +5,11 @@ const sidebars = {
     {
       type: 'category',
       label: 'Get Started',
-      items: ['get-started/installation', 'get-started/quickstart']
+      items: [
+        'get-started/installation',
+        'get-started/common-files',
+        'get-started/quickstart'
+      ]
     },
     {
       type: 'category',
