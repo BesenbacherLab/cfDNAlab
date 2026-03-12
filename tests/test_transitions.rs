@@ -188,11 +188,12 @@ mod transitions_command_tests {
         cfg.set_save_sparse(false);
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        cfg.set_position_selection(single_position_selection(ReferenceFrame::Left, "1..3", 1));
+        cfg.set_position_selection(single_position_selection(ReferenceFrame::Left, "1..4", 1));
         {
             let lengths = cfg.fragment_lengths_mut();
-            lengths.min_fragment_length = 4;
-            lengths.max_fragment_length = 4;
+            // The synthetic fragments span [0, 24) and [4, 28), so both have length 24.
+            lengths.min_fragment_length = 24;
+            lengths.max_fragment_length = 24;
         }
 
         run_transitions(&cfg)?;
@@ -238,7 +239,7 @@ mod transitions_command_tests {
             .map(|line| line.to_string())
             .collect();
 
-        // `fragment-kmers` stores offsets as zero-based integers. With "1..3" we expect
+        // `fragment-kmers` stores offsets as zero-based integers. With "1..4" we expect
         // offsets {0,1,2} in the dense output. Record the index of each offset so we can
         // slice the frequency array with explicit intent
         let positions: Vec<i32> = fs::read_to_string(&positions_path)?
@@ -248,15 +249,15 @@ mod transitions_command_tests {
         let offset0_idx = positions
             .iter()
             .position(|&p| p == 0)
-            .expect("offset 0 should be present for position range 1..3");
+            .expect("offset 0 should be present for position range 1..4");
         let offset1_idx = positions
             .iter()
             .position(|&p| p == 1)
-            .expect("offset 1 should be present for position range 1..3");
+            .expect("offset 1 should be present for position range 1..4");
         let offset2_idx = positions
             .iter()
             .position(|&p| p == 2)
-            .expect("offset 2 should be present for position range 1..3");
+            .expect("offset 2 should be present for position range 1..4");
 
         // Forward fragments begin at positions 0 and 4, so offsets 0..2 observe two different dinucleotides each:
         // offset 0 -> {"AA", "AG"}, offset 1 -> {"AC", "GT"}, offset 2 -> {"CG", "TT"}.
