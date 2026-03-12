@@ -8,7 +8,7 @@ use crate::{
         tiled_run::make_temp_dir,
     },
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use fxhash::{FxHashMap, FxHashSet};
 use rust_htslib::bam::{
     self, Format, Header,
@@ -186,10 +186,12 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
             None => {
                 // First chromosome encountered
                 current_chr = Some(frag.chrom.clone());
-                current_chrom_len = *chrom_sizes
-                    .get(&frag.chrom)
-                    .expect("chromosome length available for first chromosome")
-                    as u64;
+                current_chrom_len = *chrom_sizes.get(&frag.chrom).ok_or_else(|| {
+                    anyhow!(
+                        "Chromosome '{}' from the fragment file was not found in --chrom-sizes",
+                        frag.chrom
+                    )
+                })? as u64;
                 last_start = Some(frag.start);
                 bl_ptr = 0;
                 chroms_observed.push(frag.chrom.clone());
@@ -221,10 +223,12 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
                     );
                 }
                 current_chr = Some(frag.chrom.clone());
-                current_chrom_len = *chrom_sizes
-                    .get(&frag.chrom)
-                    .expect("chromosome length available for next chromosome")
-                    as u64;
+                current_chrom_len = *chrom_sizes.get(&frag.chrom).ok_or_else(|| {
+                    anyhow!(
+                        "Chromosome '{}' from the fragment file was not found in --chrom-sizes",
+                        frag.chrom
+                    )
+                })? as u64;
                 last_start = Some(frag.start);
                 bl_ptr = 0;
                 chroms_observed.push(frag.chrom.clone());

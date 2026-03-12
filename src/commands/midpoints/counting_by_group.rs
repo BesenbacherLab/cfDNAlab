@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use ndarray::{Array1, ArrayView1, ArrayView3, ShapeBuilder};
 
 /// Count array for fragment coverage across fragment lengths.
@@ -394,7 +394,10 @@ impl ProfileGroupsCounts {
     {
         // Move destination counts behind a Mutex for shared accumulation.
         let acc = Arc::new(Mutex::new(std::mem::take(&mut self.counts)));
-        let dest_len = acc.lock().unwrap().len();
+        let dest_len = acc
+            .lock()
+            .map_err(|poisoned| anyhow!("profile-group accumulator mutex poisoned: {}", poisoned))?
+            .len();
 
         paths.par_iter().try_for_each(|p| -> Result<()> {
             // Read as 1D ndarray
@@ -412,7 +415,13 @@ impl ProfileGroupsCounts {
                 );
             }
             // Accumulate while holding the lock
-            let mut guard = acc.lock().unwrap();
+            let mut guard = acc.lock().map_err(|poisoned| {
+                anyhow!(
+                    "profile-group accumulator mutex poisoned while merging {:?}: {}",
+                    p.as_ref(),
+                    poisoned
+                )
+            })?;
             for (dst, s) in guard.iter_mut().zip(src.iter()) {
                 *dst += *s;
             }
@@ -421,9 +430,11 @@ impl ProfileGroupsCounts {
 
         // Restore the accumulated vector
         self.counts = Arc::try_unwrap(acc)
-            .expect("Accumulator still has multiple references")
+            .map_err(|_| anyhow!("profile-group accumulator still has multiple references"))?
             .into_inner()
-            .expect("Mutex poisoned");
+            .map_err(|poisoned| {
+                anyhow!("profile-group accumulator mutex poisoned: {}", poisoned)
+            })?;
 
         Ok(())
     }

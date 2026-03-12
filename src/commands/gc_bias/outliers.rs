@@ -242,15 +242,37 @@ pub fn apply_outliers_to_matrix(
         OutlierScope::PerLength => {
             for (row_idx, mut row) in matrix.axis_iter_mut(Axis(0)).enumerate() {
                 let mask_row = support_mask.map(|m| m.row(row_idx));
-                let mask_slice = mask_row.as_ref().map(|r| r.as_slice().unwrap());
-                let row_stats = apply_row(row.as_slice_mut().unwrap(), mask_slice);
+                let mask_values =
+                    mask_row.map(|row_mask| row_mask.iter().copied().collect::<Vec<_>>());
+                let mask_slice = mask_values.as_deref();
+
+                // Fall back to a temporary buffer if ndarray gives us a non-contiguous row view
+                let row_stats = if let Some(row_slice) = row.as_slice_mut() {
+                    apply_row(row_slice, mask_slice)
+                } else {
+                    let mut row_values = row.iter().copied().collect::<Vec<_>>();
+                    let row_stats = apply_row(&mut row_values, mask_slice);
+                    for (slot, value) in row.iter_mut().zip(row_values.into_iter()) {
+                        *slot = value;
+                    }
+                    row_stats
+                };
                 total_stats.add(row_stats);
             }
         }
         OutlierScope::Global => {
             let mask = support_mask.map(|m| m.iter().copied().collect::<Vec<_>>());
             let mask_slice = mask.as_deref();
-            let stats = apply_row(matrix.as_slice_mut().unwrap(), mask_slice);
+            let stats = if let Some(matrix_slice) = matrix.as_slice_mut() {
+                apply_row(matrix_slice, mask_slice)
+            } else {
+                let mut values = matrix.iter().copied().collect::<Vec<_>>();
+                let stats = apply_row(&mut values, mask_slice);
+                for (slot, value) in matrix.iter_mut().zip(values.into_iter()) {
+                    *slot = value;
+                }
+                stats
+            };
             total_stats.add(stats);
         }
     }

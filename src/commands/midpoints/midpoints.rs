@@ -522,7 +522,7 @@ fn process_tile(
                     }
                 }
                 (None, false) => 1.0, // No correction
-                (Some(_), false) => unreachable!(),
+                (Some(_), false) => bail!("unexpected GC weight when GC correction is disabled"),
             }
         };
 

@@ -72,8 +72,6 @@ pub fn read_md_tag(rec: &Record) -> Option<String> {
     }
 }
 
-// TODO: Requires testing!
-
 /// Parse an MD tag string into mismatch positions
 ///
 /// Given an MD tag (e.g. "10A5^AC2" or "100"), returns two parallel vectors:

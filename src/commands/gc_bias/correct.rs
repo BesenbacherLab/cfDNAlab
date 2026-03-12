@@ -28,19 +28,19 @@ impl GCCorrector {
         let length_min = *package
             .length_edges
             .first()
-            .expect("GC correction package contained no length edges");
+            .ok_or_else(|| anyhow!("GC correction package contained no length edges"))?;
         let length_max = *package
             .length_edges
             .last()
-            .expect("GC correction package contained no length edges");
+            .ok_or_else(|| anyhow!("GC correction package contained no length edges"))?;
         let gc_min = *package
             .gc_edges
             .first()
-            .expect("GC correction package contained no GC edges");
+            .ok_or_else(|| anyhow!("GC correction package contained no GC edges"))?;
         let gc_max = *package
             .gc_edges
             .last()
-            .expect("GC correction package contained no GC edges");
+            .ok_or_else(|| anyhow!("GC correction package contained no GC edges"))?;
 
         Ok(GCCorrector {
             correction_matrix: package.correction_matrix.clone(),
@@ -65,7 +65,13 @@ impl GCCorrector {
         end: u64,
         gc_prefixes: &GCPrefixes,
     ) -> Result<Option<f64>> {
-        let fragment_length = end.checked_sub(start).expect("fragment end precedes start") as usize;
+        let fragment_length = end.checked_sub(start).ok_or_else(|| {
+            anyhow!(
+                "GC correction: fragment end {} precedes start {}",
+                end,
+                start
+            )
+        })? as usize;
         let offset_start = start.saturating_add(self.end_offset) as usize;
         let offset_end = end.saturating_sub(self.end_offset) as usize;
         ensure!(

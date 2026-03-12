@@ -86,23 +86,9 @@ These are blockers. The tool should not be publicly released until these are res
 
 ---
 
-- [ ] **T1-6: Fix changelog version mismatch**
-  - **Location:** `CHANGELOG` (line 3) vs `Cargo.toml` (line 3)
-  - **Severity:** HIGH
-  - **Description:** `CHANGELOG` says `v/ 0.0.1` while `Cargo.toml` says `0.1.0`. These must be consistent. Additionally, the `v/` formatting looks like a typo (should be `v0.1.0` or similar).
-
----
-
 ### TIER 2 — Strongly Recommended Before Release
 
 These are not strict blockers but represent significant quality issues. Shipping without addressing them creates risk.
-
----
-
-- [ ] **T2-1: Fix typo in user-facing error message (`indel_mode.rs`)**
-  - **Location:** `src/shared/indel_mode.rs:30`
-  - **Severity:** HIGH (user-facing)
-  - **Description:** The error message reads `"Use 'ignore', 'adjus', or 'skip'"` — missing the `t` in `'adjust'`. This is shown to users when they provide an invalid `--indel-mode` value. Simple one-character fix.
 
 ---
 
@@ -124,10 +110,11 @@ These are not strict blockers but represent significant quality issues. Shipping
     | Manual reimplementation of std methods | 7 | Yes |
     | Other | ~153 | Mixed |
   - **Action:** Run `cargo clippy --fix --lib -p cfdnalab` to auto-fix ~214 warnings, then manually address the remainder. For a public release, zero clippy warnings is the standard expectation.
+  NOTE: I ran the autofix. Rest are still there, including some things I disagreed on.
 
 ---
 
-- [ ] **T2-3: Replace `unreachable!()` with proper error handling in released commands**
+- [x] **T2-3: Replace `unreachable!()` with proper error handling in released commands**
   - **Locations:**
     - `src/commands/bam_to_bam/bam_to_bam.rs:352`
     - `src/commands/lengths/lengths.rs:770`
@@ -140,7 +127,7 @@ These are not strict blockers but represent significant quality issues. Shipping
 
 ---
 
-- [ ] **T2-4: Fix NaN panic risk in interpolation sort**
+- [x] **T2-4: Fix NaN panic risk in interpolation sort**
   - **Location:** `src/commands/gc_bias/interpolation.rs:280-281`
   - **Severity:** HIGH
   - **Description:** The code sorts anchor points by distance using:
@@ -153,7 +140,7 @@ These are not strict blockers but represent significant quality issues. Shipping
 
 ---
 
-- [ ] **T2-5: Add integration tests for `coverage-weights` command**
+- [x] **T2-5: Add integration tests for `coverage-weights` command**
   - **Location:** `tests/` (missing file)
   - **Severity:** HIGH
   - **Description:** The `coverage-weights` command has **no integration test file at all**. This is a released command that users depend on for genomic smoothing. The striding and triangular overlap logic is tested in isolation, but the full command pipeline (BAM → stride bins → smoothed weights → TSV output) is never tested end-to-end.
@@ -219,10 +206,10 @@ These are not strict blockers but represent significant quality issues. Shipping
     - `src/lib.rs:7-8` — commented-out `pub use` statements
   - **Severity:** MEDIUM
   - **Description:** Large blocks of commented-out code are confusing to contributors and reviewers. If the code is needed later, it's in git history. Remove for a clean release.
-
+  [NOTE: The idea of things being in git history is ridiculous. No one remembers what is in git history ever...]
 ---
 
-- [ ] **T2-13: Remove stale TODO comment on `read.rs`**
+- [x] **T2-13: Remove stale TODO comment on `read.rs`**
   - **Location:** `src/shared/read.rs:75`
   - **Severity:** LOW
   - **Description:** Comment says `// TODO: Requires testing!` for `parse_md_tag()`. However, `tests/test_parse_md_tags.rs` exists and does test this function. The TODO is stale and should be removed.
@@ -235,7 +222,7 @@ These improve the robustness of the tool and prevent panics on edge cases or cor
 
 ---
 
-- [ ] **T3-1: Replace `.expect()` chains in `gc_bias/correct.rs` with error propagation**
+- [x] **T3-1: Replace `.expect()` chains in `gc_bias/correct.rs` with error propagation**
   - **Location:** `src/commands/gc_bias/correct.rs:31, 35, 39, 43, 68`
   - **Severity:** HIGH
   - **Description:** `GCCorrector::from_package()` has 4 consecutive `.expect()` calls on edge vector first/last elements, plus one `.expect("fragment end precedes start")`. If a user provides a corrupted or truncated `.npz` GC correction file, these panic instead of returning a helpful error.
@@ -243,7 +230,7 @@ These improve the robustness of the tool and prevent panics on edge cases or cor
 
 ---
 
-- [ ] **T3-2: Replace `.expect()` calls in `frag_to_bam.rs` chromosome lookup**
+- [x] **T3-2: Replace `.expect()` calls in `frag_to_bam.rs` chromosome lookup**
   - **Location:** `src/commands/frag_to_bam/frag_to_bam.rs:191, 226`
   - **Severity:** HIGH
   - **Description:** `expect("chromosome length available for first/next chromosome")` panics if a chromosome from the fragment file doesn't exist in the reference. This can happen if the user provides mismatched files.
@@ -251,7 +238,7 @@ These improve the robustness of the tool and prevent panics on edge cases or cor
 
 ---
 
-- [ ] **T3-3: Replace `.expect()` in reducer contig lookup**
+- [x] **T3-3: Replace `.expect()` in reducer contig lookup**
   - **Location:** `src/commands/fcoverage/fcoverage.rs:494-498`
   - **Severity:** HIGH
   - **Description:** `expect("missing contig length")` panics if a chromosome from temp files doesn't match the contig map. Could happen with corrupted intermediate files.
@@ -259,15 +246,15 @@ These improve the robustness of the tool and prevent panics on edge cases or cor
 
 ---
 
-- [ ] **T3-4: Replace `unwrap()` calls in reducer K-way merge**
+- [x] **T3-4: Replace `unwrap()` calls in reducer K-way merge**
   - **Location:** `src/commands/fcoverage/reducer.rs:263, 274, 281, 507, 517, 526`
   - **Severity:** HIGH
-  - **Description:** The core merge loop has 6 unwrap/expect calls that assume heap/stream invariants hold. If any tile produces unexpected output, these panic mid-reduction (after potentially hours of computation).
+  - **Description:** The core merge loop has 6 unwrap/expect calls that assume heap/stream invariants hold. If any tile produces unexpected output, these panic mid-reduction (after potentially hours of computation [ludvig: ahh, this takes a few minutes to call of most cfDNA data..]).
   - **Fix:** Propagate errors with context about which tile/stream caused the failure.
 
 ---
 
-- [ ] **T3-5: Replace `unwrap()` in ndarray slice operations**
+- [x] **T3-5: Replace `unwrap()` in ndarray slice operations**
   - **Location:** `src/commands/gc_bias/outliers.rs:245-246, 253`
   - **Severity:** MEDIUM-HIGH
   - **Description:** `.as_slice().unwrap()` and `.as_slice_mut().unwrap()` on ndarray arrays. These panic if the array is not contiguous in memory. While typically safe for freshly-allocated arrays, ndarray does not guarantee contiguity after slicing/transposing operations.
@@ -275,7 +262,7 @@ These improve the robustness of the tool and prevent panics on edge cases or cor
 
 ---
 
-- [ ] **T3-6: Replace mutex `.lock().unwrap()` with poison handling**
+- [x] **T3-6: Replace mutex `.lock().unwrap()` with poison handling**
   - **Location:** `src/commands/midpoints/counting_by_group.rs:399, 417, 426, 428`
   - **Severity:** MEDIUM-HIGH
   - **Description:** The parallel merge path for midpoint profile groups uses `.lock().unwrap()` and `Arc::try_unwrap().expect()`. If a worker thread panics (e.g., from an I/O error), the mutex gets poisoned and all subsequent `.lock().unwrap()` calls cascade into more panics, making the root cause hard to diagnose.
@@ -283,7 +270,7 @@ These improve the robustness of the tool and prevent panics on edge cases or cor
 
 ---
 
-- [ ] **T3-7: Replace `lengths.rs:401` unchecked index with bounds check**
+- [x] **T3-7: Replace `lengths.rs:401` unchecked index with bounds check**
   - **Location:** `src/commands/lengths/lengths.rs:401`
   - **Severity:** MEDIUM-HIGH
   - **Description:** `all_bins[0]` is accessed without checking if `all_bins` is empty. If no windows are processed (e.g., all chromosomes skipped by blacklist), this panics. The same pattern appears at line 415.
@@ -299,19 +286,7 @@ These improve the robustness of the tool and prevent panics on edge cases or cor
 
 ---
 
-- [ ] **T3-9: Fix duplicate nested condition in `lengths.rs`**
-  - **Location:** `src/commands/lengths/lengths.rs:470-471`
-  - **Severity:** LOW-MEDIUM
-  - **Description:** Copy-paste artifact:
-    ```rust
-    if opt.gc.gc_file.is_some() {
-        if opt.gc.gc_file.is_some() {  // DUPLICATE CHECK
-    ```
-    The inner check is redundant. While not a bug, it suggests the surrounding logic may not have been carefully reviewed.
-
----
-
-- [ ] **T3-10: Add division-by-zero guard in `striding.rs`**
+- [x] **T3-10: Add division-by-zero guard in `striding.rs`**
   - **Location:** `src/commands/coverage_weights/striding.rs:146`
   - **Severity:** MEDIUM
   - **Description:** `bins[i].avg_overlap_coverage = sum_cov / (sum_w as f32);` — if `sum_w` is 0, this produces infinity. While the triangular weight loop should always produce at least weight 1, a defensive check prevents silent data corruption.

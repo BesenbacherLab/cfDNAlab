@@ -423,14 +423,14 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
                 let final_path = opt.ioc.output_dir.join(match opt.per_window {
                     CoverageWindowAction::Average => final_avg_name.as_str(),
                     CoverageWindowAction::Total => final_total_name.as_str(),
-                    _ => unreachable!(),
+                    _ => bail!("unexpected per-window mode for aggregate fcoverage output"),
                 });
 
                 // Header value-column name
                 let value_col = match opt.per_window {
                     CoverageWindowAction::Average => "avg_coverage",
                     CoverageWindowAction::Total => "total_coverage",
-                    _ => unreachable!(),
+                    _ => bail!("unexpected per-window mode for aggregate fcoverage output"),
                 };
 
                 let header = format!(
@@ -476,7 +476,11 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
                                 match opt.per_window {
                                     CoverageWindowAction::Average => final_avg_name.as_str(),
                                     CoverageWindowAction::Total => final_total_name.as_str(),
-                                    _ => unreachable!(),
+                                    _ => {
+                                        bail!(
+                                            "unexpected per-window mode for aligned aggregate fcoverage output"
+                                        )
+                                    }
                                 },
                                 &header,
                             )?;
@@ -495,7 +499,12 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
                                     .contigs
                                     .get(chr)
                                     .map(|&(_, len)| len as u64)
-                                    .expect("missing contig length");
+                                    .ok_or_else(|| {
+                                        anyhow::anyhow!(
+                                            "Chromosome '{}' not found in contig map",
+                                            chr
+                                        )
+                                    })?;
                                 reduce_aggregates_by_size_with_cross_index_for_chr(
                                     chr,
                                     &temp_dir,
@@ -510,7 +519,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
                             w.flush()?;
                         }
                     }
-                    _ => unreachable!(),
+                    _ => bail!("unexpected window specification for aggregate fcoverage output"),
                 }
 
                 final_path

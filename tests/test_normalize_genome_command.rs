@@ -6,7 +6,7 @@ use anyhow::Result;
 use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs};
 use cfdnalab::commands::coverage_weights::config::CoverageWeightsConfig;
 use cfdnalab::commands::coverage_weights::coverage_weights::run;
-use fixtures::simple_inward_bam;
+use fixtures::{ReadSpec, bam_from_specs, simple_inward_bam};
 use tempfile::TempDir;
 
 fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
@@ -82,6 +82,27 @@ fn make_simple_coverage_weights_config(
         frag.max_fragment_length = 200;
     }
     cfg
+}
+
+fn single_read_fragment_bam(name: &str) -> Result<fixtures::BamFixture> {
+    bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        Vec::new(),
+        vec![ReadSpec {
+            tid: 0,
+            pos: 20,
+            cigar: vec![('M', 60)],
+            seq: vec![b'A'; 60],
+            qual: 40,
+            is_reverse: false,
+            mapq: 60,
+            flags: 0,
+            mate_tid: None,
+            mate_pos: None,
+            insert_size: 0,
+        }],
+        name,
+    )
 }
 
 #[test]
@@ -232,6 +253,82 @@ fn given_simple_fragment_when_coverage_weights_run_then_scaling_values_match_han
             expected_scaling[row_index],
             1e-6,
             &format!("scaling_factor at row {row_index}"),
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn given_unpaired_read_fragment_when_coverage_weights_run_then_scaling_matches_same_fragment_span()
+-> Result<()> {
+    // Arrange
+    //
+    // Hand derivation:
+    // - The unpaired fixture has one aligned read covering [20,80) on chr1
+    // - In `reads_are_fragments` mode, the command counts that read as exactly one fragment
+    // - That produces the same stride-bin coverage as the paired simple fixture:
+    //   [0, 1, 1, 1, 0, 0, 0, 0, 0, 0]
+    // - The triangular smoothing and scaling factors are therefore identical:
+    //   overlap  = [1/3, 3/4, 1, 3/4, 1/4, 0, 0, 0, 0, 0]
+    //   scaling  = [37/20, 37/45, 37/60, 37/45, 37/15, 0, 0, 0, 0, 0]
+    let bam = single_read_fragment_bam("coverage_weights_unpaired_single_read")?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = make_simple_coverage_weights_config(out_dir.path(), &bam.bam);
+    cfg.unpaired.reads_are_fragments = true;
+
+    // Act
+    run(&cfg)?;
+    let tsv_path = out_dir.path().join("coverage.scaling_factors.tsv");
+    let rows = parse_scaling_rows(&tsv_path)?;
+
+    // Assert
+    let expected_avg_pos_cov = [0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let expected_avg_overlap = [
+        1.0 / 3.0,
+        3.0 / 4.0,
+        1.0,
+        3.0 / 4.0,
+        1.0 / 4.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    ];
+    let expected_scaling = [
+        37.0 / 20.0,
+        37.0 / 45.0,
+        37.0 / 60.0,
+        37.0 / 45.0,
+        37.0 / 15.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    ];
+
+    assert_eq!(rows.len(), 10);
+    for row_index in 0..rows.len() {
+        let row = &rows[row_index];
+        assert_approx(
+            row.avg_pos_cov,
+            expected_avg_pos_cov[row_index],
+            1e-6,
+            &format!("unpaired avg_pos_cov at row {row_index}"),
+        );
+        assert_approx(
+            row.avg_overlapping_pos_cov,
+            expected_avg_overlap[row_index],
+            1e-6,
+            &format!("unpaired avg_overlapping_pos_cov at row {row_index}"),
+        );
+        assert_approx(
+            row.scaling_factor,
+            expected_scaling[row_index],
+            1e-6,
+            &format!("unpaired scaling_factor at row {row_index}"),
         );
     }
 

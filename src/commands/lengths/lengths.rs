@@ -398,40 +398,44 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
 
         use crate::shared::plotters::lineplot::write_line_plot_png;
 
-        let mut global_counts = vec![0f64; all_bins[0].counts.len()];
-        for length_counts in &all_bins {
-            for (total, count) in global_counts.iter_mut().zip(length_counts.counts.iter()) {
-                *total += *count;
+        if all_bins.is_empty() {
+            println!("Skipping overall length plot because no bins were produced");
+        } else {
+            let mut global_counts = vec![0f64; all_bins[0].counts.len()];
+            for length_counts in &all_bins {
+                for (total, count) in global_counts.iter_mut().zip(length_counts.counts.iter()) {
+                    *total += *count;
+                }
             }
-        }
 
-        let total_counts: f64 = global_counts.iter().sum();
-        if total_counts > 0.0 {
-            for value in &mut global_counts {
-                *value /= total_counts;
+            let total_counts: f64 = global_counts.iter().sum();
+            if total_counts > 0.0 {
+                for value in &mut global_counts {
+                    *value /= total_counts;
+                }
             }
+
+            let x_values: Vec<f64> = (all_bins[0].length_min..=all_bins[0].length_max)
+                .map(|len| len as f64)
+                .collect();
+
+            let plot_path = opt
+                .ioc
+                .output_dir
+                .join(format!("{prefix}.fragment_lengths_overall.png"));
+
+            write_line_plot_png(
+                &plot_path,
+                "Fragment length distribution (summed/global)",
+                "Fragment length (bp)",
+                "Density",
+                &x_values,
+                &global_counts,
+                1600,
+                1000,
+            )
+            .with_context(|| format!("writing fragment length plot to {}", plot_path.display()))?;
         }
-
-        let x_values: Vec<f64> = (all_bins[0].length_min..=all_bins[0].length_max)
-            .map(|len| len as f64)
-            .collect();
-
-        let plot_path = opt
-            .ioc
-            .output_dir
-            .join(format!("{prefix}.fragment_lengths_overall.png"));
-
-        write_line_plot_png(
-            &plot_path,
-            "Fragment length distribution (summed/global)",
-            "Fragment length (bp)",
-            "Density",
-            &x_values,
-            &global_counts,
-            1600,
-            1000,
-        )
-        .with_context(|| format!("writing fragment length plot to {}", plot_path.display()))?;
     }
 
     // Write window coordinates as BED file to output_dir
@@ -467,7 +471,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         "  Blacklist-excluded fragments: {}",
         global_counter.blacklisted_fragments
     );
-    if opt.gc.gc_file.is_some() && opt.gc.gc_file.is_some() {
+    if opt.gc.gc_file.is_some() {
         let gc_fail_action = if opt.gc.drop_invalid_gc {
             "fragment skipped"
         } else {
@@ -765,7 +769,7 @@ fn process_tile(
                 }
             }
             (None, false) => 1.0, // No correction
-            (Some(_), false) => unreachable!(),
+            (Some(_), false) => bail!("unexpected GC weight when GC correction is disabled"),
         };
 
         counter.base.counted_fragments += 1;

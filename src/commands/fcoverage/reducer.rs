@@ -258,9 +258,13 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
 
     // Merge loop: always take the smallest available orig_idx across streams
     while let Some(Reverse((_, stream_id))) = heap.pop() {
-        let row = current_row[stream_id]
-            .take()
-            .expect("Heap and current_row out of sync");
+        let row = current_row[stream_id].take().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Reducer heap and current_row fell out of sync for chromosome '{}' stream {}",
+                chr,
+                stream_id
+            )
+        })?;
 
         // Accumulate this contribution
         let entry = accum_by_idx.entry(row.orig_idx).or_default();
@@ -271,14 +275,20 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
 
         // If we have collected all expected contributions for this window, emit immediately
         if entry.seen_contributions == expected_for(row.orig_idx) {
-            let done = accum_by_idx.remove(&row.orig_idx).unwrap();
+            let done = accum_by_idx.remove(&row.orig_idx).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Reducer lost accumulated window state for chromosome '{}' orig_idx {}",
+                    chr,
+                    row.orig_idx
+                )
+            })?;
             emit_idx(row.orig_idx, done)?;
         }
 
         // Advance this stream and re-insert into the heap
         if let Some(next_row) = streams[stream_id].next_row()? {
+            let next_key = next_row.orig_idx;
             current_row[stream_id] = Some(next_row);
-            let next_key = current_row[stream_id].as_ref().unwrap().orig_idx;
             heap.push(Reverse((next_key, stream_id)));
         }
     }
@@ -502,9 +512,13 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
 
     // K-way merge loop
     while let Some(Reverse((_, sid))) = heap.pop() {
-        let row = current_row[sid]
-            .take()
-            .expect("heap and current_row out of sync");
+        let row = current_row[sid].take().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Reducer heap and current_row fell out of sync for chromosome '{}' stream {}",
+                chr,
+                sid
+            )
+        })?;
 
         let entry = accum_by_start.entry(row.start).or_default();
         entry.sum += row.sum;
@@ -514,7 +528,13 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
 
         // Emit when we have all expected contributions for this bin start
         if entry.seen_contributions == expected_for(row.start) {
-            let done = accum_by_start.remove(&row.start).unwrap();
+            let done = accum_by_start.remove(&row.start).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Reducer lost accumulated size-bin state for chromosome '{}' start {}",
+                    chr,
+                    row.start
+                )
+            })?;
             // Use the end from the last seen row (all rows for a bin share the same [start,end) by construction)
             // Ensure last row is clipped at the chromosome end
             emit_bin(row.start, done, row.end.min(chrom_len))?;
@@ -522,8 +542,8 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
 
         // Advance this stream and push next row if present
         if let Some(next_row) = streams[sid].next_row()? {
+            let next_key = next_row.start;
             current_row[sid] = Some(next_row);
-            let next_key = current_row[sid].as_ref().unwrap().start;
             heap.push(Reverse((next_key, sid)));
         }
     }

@@ -386,7 +386,7 @@ fn process_chrom(
                 Some(1.0)
             }
             (None, false) => None,
-            (Some(_), false) => unreachable!(),
+            (Some(_), false) => bail!("unexpected GC weight when GC correction is disabled"),
         };
 
         // Find all overlapping scaling-factor bins

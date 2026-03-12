@@ -27,7 +27,7 @@ impl FromStr for IndelMode {
         } else if s == "skip" {
             Ok(IndelMode::Skip)
         } else {
-            Err("Use 'ignore', 'adjus', or 'skip'".into())
+            Err("Use 'ignore', 'adjust', or 'skip'".into())
         }
     }
 }
