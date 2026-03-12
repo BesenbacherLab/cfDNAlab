@@ -694,7 +694,7 @@ This indicates fragment-kmers emitted starts past the nearest-read boundary.",
         }
         ReferenceFrame::Mid => {
             let center = (length as i64) / 2;
-            let mut indices = offsets
+            let mut indices: Vec<i32> = offsets
                 .get(&PositionGroup::Mid)
                 .map(|set| {
                     set.iter()
