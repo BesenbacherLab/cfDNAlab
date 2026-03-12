@@ -31,11 +31,11 @@ impl From<&Record> for IndelReadInfo {
         for op in r.cigar().iter() {
             match *op {
                 Cigar::Match(l) | Cigar::Equal(l) | Cigar::Diff(l) => {
-                    ref_pos = ref_pos.saturating_add(l as u32);
+                    ref_pos = ref_pos.saturating_add(l);
                 }
                 Cigar::Del(l) => {
                     let s = ref_pos;
-                    let e = ref_pos.saturating_add(l as u32);
+                    let e = ref_pos.saturating_add(l);
                     if e > s {
                         deletions.push((s, e));
                     }
@@ -44,7 +44,7 @@ impl From<&Record> for IndelReadInfo {
                 Cigar::RefSkip(l) => {
                     // Rare in cfDNA; treat as a deletion on the reference
                     let s = ref_pos;
-                    let e = ref_pos.saturating_add(l as u32);
+                    let e = ref_pos.saturating_add(l);
                     if e > s {
                         deletions.push((s, e));
                     }
@@ -53,7 +53,7 @@ impl From<&Record> for IndelReadInfo {
                 Cigar::Ins(l) => {
                     // Insertion anchored at current ref_pos
                     if l > 0 {
-                        insertions.push((ref_pos, l as u32));
+                        insertions.push((ref_pos, l));
                     }
                     // I does not consume reference
                 }
@@ -68,11 +68,11 @@ impl From<&Record> for IndelReadInfo {
             deletions.sort_unstable_by_key(|&(s, _)| s);
             let mut merged: Vec<(u32, u32)> = Vec::with_capacity(deletions.len());
             for (s, e) in deletions.drain(..) {
-                if let Some(last) = merged.last_mut() {
-                    if s <= last.1 {
-                        last.1 = last.1.max(e);
-                        continue;
-                    }
+                if let Some(last) = merged.last_mut()
+                    && s <= last.1
+                {
+                    last.1 = last.1.max(e);
+                    continue;
                 }
                 merged.push((s, e));
             }

@@ -14,7 +14,7 @@ pub struct OverlappedWindow {
 impl OverlappedWindow {
     /// Assign a new overlap fraction (in `[0.0, 1.0]`).
     pub fn set_overlap_fraction(&mut self, new_fraction: f32) -> anyhow::Result<()> {
-        if new_fraction < 0.0 || new_fraction > 1.0 {
+        if !(0.0..=1.0).contains(&new_fraction) {
             anyhow::bail!("new_fraction was out of bounds (0.0-1.0): {}", new_fraction);
         }
         self.overlap_fraction = new_fraction;
@@ -117,8 +117,8 @@ pub fn find_overlapping_windows(
     // Build window list according to mode
     let mut overlaps = OverlappingWindows {
         windows: Vec::new(),
-        interval_start: interval_start,
-        interval_end: interval_end,
+        interval_start,
+        interval_end,
     };
 
     // Size‑mode bins

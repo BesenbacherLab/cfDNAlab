@@ -83,11 +83,7 @@ pub fn compute_window_offsets(
                     .get(chr)
                     .with_context(|| format!("missing contig length for '{}'", chr))?;
                 let len = len_u32 as u64;
-                let bins = if len == 0 {
-                    0
-                } else {
-                    (len + *size - 1) / *size
-                };
+                let bins = if len == 0 { 0 } else { len.div_ceil(*size) };
                 running_window_idx_offset = running_window_idx_offset.saturating_add(bins);
             }
             Ok((running_window_idx_offset, offsets))

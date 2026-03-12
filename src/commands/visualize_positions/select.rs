@@ -332,21 +332,21 @@ fn build_nearest_overlays(
         nearest_overlay.selected_indices = fold_fragment_positions(length, &fragment_starts);
         overlays.push(nearest_overlay);
 
-        if let Some(base) = left_base {
-            if !left_starts.is_empty() {
-                let mut overlay = base.clone();
-                overlay.name = format!("{} k-mer starts (k={})", base.name, k);
-                overlay.selected_indices = left_starts;
-                overlays.push(overlay);
-            }
+        if let Some(base) = left_base
+            && !left_starts.is_empty()
+        {
+            let mut overlay = base.clone();
+            overlay.name = format!("{} k-mer starts (k={})", base.name, k);
+            overlay.selected_indices = left_starts;
+            overlays.push(overlay);
         }
-        if let Some(base) = right_base {
-            if !right_starts.is_empty() {
-                let mut overlay = base.clone();
-                overlay.name = format!("{} k-mer starts (k={})", base.name, k);
-                overlay.selected_indices = right_starts;
-                overlays.push(overlay);
-            }
+        if let Some(base) = right_base
+            && !right_starts.is_empty()
+        {
+            let mut overlay = base.clone();
+            overlay.name = format!("{} k-mer starts (k={})", base.name, k);
+            overlay.selected_indices = right_starts;
+            overlays.push(overlay);
         }
     }
     overlays
@@ -608,7 +608,7 @@ fn map_linear_position(length: u32, offset: u32, group: PositionGroup) -> Option
 
 fn mid_axis_bounds(length: u32) -> AxisBounds {
     let half = (length / 2) as i32;
-    if length % 2 == 0 {
+    if length.is_multiple_of(2) {
         AxisBounds::new(-half, half - 1)
     } else {
         AxisBounds::new(-half, half)
@@ -625,7 +625,7 @@ fn apply_read_clamp(
         return;
     }
 
-    let half = ((length + 1) / 2) as i32;
+    let half = length.div_ceil(2) as i32;
     let right_start = (length as i32 + 1) - half;
 
     for track in tracks {

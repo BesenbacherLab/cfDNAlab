@@ -144,7 +144,7 @@ impl ProfileGroupsCounts {
     #[inline]
     pub fn index_of(&self, position: usize, group_idx: usize, length: usize) -> Result<usize> {
         self.check_bounds(position, group_idx, length)?;
-        let len = length as usize;
+        let len = length;
 
         // Map absolute length to bin in O(1) via LUT.
         if len >= self.length_to_bin.len() {
@@ -184,10 +184,8 @@ impl ProfileGroupsCounts {
         length_bin_idx: usize,
     ) -> usize {
         let num_length_bins = self.n_lengths();
-        let idx = group_idx * self.window_size * num_length_bins
-            + position * num_length_bins
-            + length_bin_idx;
-        idx
+
+        group_idx * self.window_size * num_length_bins + position * num_length_bins + length_bin_idx
     }
 
     /// Increment the counter by `1.0` at (`position`, `group_idx`, `length`), if in bounds.
@@ -346,7 +344,7 @@ impl ProfileGroupsCounts {
         let g = self.num_groups;
         let l = self.n_lengths();
         let p = self.window_size;
-        let strides = ((p * l) as usize, 1usize, l as usize);
+        let strides = ((p * l), 1usize, l);
         ArrayView3::from_shape((g, l, p).strides(strides), &self.counts)
             .expect("Shape/stride mismatch for (group, length_bin, position)")
     }

@@ -162,7 +162,7 @@ where
         for window_counts in payload {
             let entry = aggregated_counts
                 .entry(window_counts.original_idx)
-                .or_insert_with(FxHashMap::default);
+                .or_default();
             for count in window_counts.entries {
                 let key = CountKey::from(&count);
                 debug_assert!(
@@ -218,7 +218,7 @@ where
         for window_counts in payload {
             let entry = aggregated_counts
                 .entry(window_counts.original_idx)
-                .or_insert_with(FxHashMap::default);
+                .or_default();
             for count in window_counts.entries {
                 let key = CountKey::from(&count);
                 *entry.entry(key).or_insert(0.0) += count.value;
@@ -243,9 +243,7 @@ where
                 };
                 let descriptor = PositionDescriptor { group, offset };
                 let kmer = key.as_kmer();
-                let entry = by_position
-                    .entry(descriptor)
-                    .or_insert_with(FxHashMap::default);
+                let entry = by_position.entry(descriptor).or_default();
                 *entry.entry(kmer).or_insert(0.0) += value;
             }
             all_bins.push(by_position);
@@ -277,9 +275,7 @@ pub fn reduce_chromosome_tile_results(
         let _ = fs::remove_file(&path);
 
         for window_counts in tile_payload {
-            let entry = aggregated
-                .entry(window_counts.original_idx)
-                .or_insert_with(FxHashMap::default);
+            let entry = aggregated.entry(window_counts.original_idx).or_default();
             for count in window_counts.entries {
                 let key = CountKey::from(&count);
                 *entry.entry(key).or_insert(0.0) += count.value;

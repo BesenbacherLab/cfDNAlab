@@ -173,7 +173,7 @@ pub fn apply_outliers_to_matrix(
     let apply_row = |row: &mut [f64], mask: Option<&[bool]>| -> OutlierStats {
         let mut vals: Vec<f32> = Vec::with_capacity(row.len());
         for (idx, v) in row.iter().enumerate() {
-            if !mask.map_or(true, |m| m[idx]) {
+            if !mask.is_none_or(|m| m[idx]) {
                 continue;
             }
             let f = *v as f32;
@@ -196,7 +196,7 @@ pub fn apply_outliers_to_matrix(
             if !v.is_finite() {
                 continue;
             }
-            let in_support = mask.map_or(true, |m| m[idx]);
+            let in_support = mask.is_none_or(|m| m[idx]);
             if in_support {
                 stats.total_examined += 1;
             } else {

@@ -23,7 +23,7 @@ pub struct FragmentWithSegments {
 impl FragmentWithSegments {
     /// Length of the fragment (end - start).
     pub fn len(&self) -> u32 {
-        (self.end - self.start) as u32
+        self.end - self.start
     }
 }
 
@@ -270,10 +270,8 @@ pub fn collect_fragment_with_segments(
     // (when they do not overlap). If reads overlap, there is no gap to add
     //
     // Note: When !trigger and include_inter_mate_gap == false we intentionally do not add the gap
-    if trigger && include_inter_mate_gap {
-        if forward.end < reverse.pos {
-            abs.push((forward.end, reverse.pos));
-        }
+    if trigger && include_inter_mate_gap && forward.end < reverse.pos {
+        abs.push((forward.end, reverse.pos));
     }
 
     if abs.is_empty() {
@@ -309,13 +307,13 @@ pub fn collect_fragment_with_segments(
         }
 
         // Merge overlapping segments by increasing the previous segment
-        if let Some(last) = merged.last_mut() {
-            if s <= last.1 {
-                if e > last.1 {
-                    last.1 = e;
-                }
-                continue;
+        if let Some(last) = merged.last_mut()
+            && s <= last.1
+        {
+            if e > last.1 {
+                last.1 = e;
             }
+            continue;
         }
         merged.push((s, e));
     }

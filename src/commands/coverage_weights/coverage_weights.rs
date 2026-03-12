@@ -58,7 +58,7 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
     let (chromosomes, _contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     opt.check_bin_sizes()?;
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
     pb.set_style(
@@ -82,7 +82,7 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
     )?;
 
     // Configure global thread‐pool size
-    init_global_pool(opt.ioc.n_threads as usize)?;
+    init_global_pool(opt.ioc.n_threads)?;
 
     // Prepare output containers
     let mut bins_by_chr =
@@ -97,7 +97,7 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
         .par_iter()
         .map(|chr| -> Result<(_, _, _)> {
             let out = process_chrom(
-                &chr,
+                chr,
                 opt,
                 blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
             )?;
@@ -129,12 +129,11 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
     println!("Start: Writing stride-bin coordinates and scaling factors to disk");
     let file_name = format!("{}.scaling_factors.tsv", opt.output_prefix);
     let mut bed_writer = BufWriter::new(
-        File::create(&opt.ioc.output_dir.join(file_name)).context("Creating tsv failed")?,
+        File::create(opt.ioc.output_dir.join(file_name)).context("Creating tsv failed")?,
     );
     writeln!(
         bed_writer,
-        "{}\t{}\t{}\t{}\t{}\t{}",
-        "chromosome", "start", "end", "avg_pos_cov", "avg_overlapping_pos_cov", "scaling_factor"
+        "chromosome\tstart\tend\tavg_pos_cov\tavg_overlapping_pos_cov\tscaling_factor"
     )
     .context("Write bed line fail")?;
     for chr in chromosomes {
@@ -142,7 +141,7 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
             .get(&chr)
             .with_context(|| format!("missing bins for chromosome: {}", chr))?;
 
-        for bin in bins.into_iter() {
+        for bin in bins.iter() {
             writeln!(
                 bed_writer,
                 "{}\t{}\t{}\t{}\t{}\t{}",

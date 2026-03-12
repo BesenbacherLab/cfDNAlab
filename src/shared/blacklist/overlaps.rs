@@ -9,17 +9,15 @@ pub fn is_blacklisted(
     ptr: &mut usize,
 ) -> bool {
     // Determine blacklist status
-    let in_blacklist = match blacklist_strategy {
-        BlacklistStrategy::All => is_all(&blacklist_intervals, start, end, look_back, ptr),
-        BlacklistStrategy::Any => is_any(&blacklist_intervals, start, end, look_back, ptr),
-        BlacklistStrategy::Midpoint => {
-            is_midpoint(&blacklist_intervals, start, end, look_back, ptr)
-        }
+
+    match blacklist_strategy {
+        BlacklistStrategy::All => is_all(blacklist_intervals, start, end, look_back, ptr),
+        BlacklistStrategy::Any => is_any(blacklist_intervals, start, end, look_back, ptr),
+        BlacklistStrategy::Midpoint => is_midpoint(blacklist_intervals, start, end, look_back, ptr),
         BlacklistStrategy::Proportion(th) => {
-            is_proportion(&blacklist_intervals, start, end, look_back, ptr, th)
+            is_proportion(blacklist_intervals, start, end, look_back, ptr, th)
         }
-    };
-    in_blacklist
+    }
 }
 
 /// Advance `ptr` to skip any intervals ending before `start`, then

@@ -67,11 +67,11 @@ pub fn render_ascii(results: &[LengthVisualization], config: &VizConfig) -> Stri
         }
 
         for track in &viz.tracks {
-            if let Some(reference_axis) = &reference_axis {
-                if track.axis.start != reference_axis.start || track.axis.end != reference_axis.end
-                {
-                    write_track_axis(&mut output, track, viz.fragment_length, config, label_width);
-                }
+            if let Some(reference_axis) = &reference_axis
+                && (track.axis.start != reference_axis.start
+                    || track.axis.end != reference_axis.end)
+            {
+                write_track_axis(&mut output, track, viz.fragment_length, config, label_width);
             }
             let bar = build_track_bar(track, config);
             write!(output, "{:>width$}: ", track.name, width = label_width).ok();
@@ -136,15 +136,15 @@ fn write_header(
         config.mismatch_bases_from.as_str()
     )
     .ok();
-    if let Some(kmer_sizes) = &config.kmer_sizes {
-        if !kmer_sizes.is_empty() {
-            let list = kmer_sizes
-                .iter()
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            write!(line, "  k-mer-sizes={}", list).ok();
-        }
+    if let Some(kmer_sizes) = &config.kmer_sizes
+        && !kmer_sizes.is_empty()
+    {
+        let list = kmer_sizes
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        write!(line, "  k-mer-sizes={}", list).ok();
     }
     if let Some(label) = &config.label {
         write!(line, "  label={}", label).ok();

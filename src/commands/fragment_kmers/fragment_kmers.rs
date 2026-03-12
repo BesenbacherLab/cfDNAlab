@@ -135,7 +135,7 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     }
     let (chromosomes, contigs) = resolve_chromosomes_and_contigs(
         &opt.shared_args.chromosomes,
-        &opt.shared_args.ioc.bam.as_path(),
+        opt.shared_args.ioc.bam.as_path(),
     )?;
     let window_opt = opt.shared_args.windows.resolve_windows();
     let position_specs = opt
@@ -185,7 +185,7 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
         // Parse each positions specification
         let position_specs = position_specs
             .iter()
-            .map(|ps| parse_positions(ps))
+            .map(parse_positions)
             .collect::<Result<Vec<_>, _>>()?;
 
         let kmer_sizes: Vec<u8> = kmer_specs.keys().cloned().collect();
@@ -221,7 +221,7 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
 
     // Window size when --by-size (otherwise None)
     let by_size_bp: Option<u64> = match &window_opt {
-        WindowSpec::Size(bp) => Some(*bp as u64),
+        WindowSpec::Size(bp) => Some(*bp),
         _ => None,
     };
 
@@ -269,7 +269,7 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     }
 
     // Configure global thread‐pool size
-    init_global_pool(opt.shared_args.ioc.n_threads as usize)?;
+    init_global_pool(opt.shared_args.ioc.n_threads)?;
 
     if !quiet {
         println!("Start: Counting per chromosome");
@@ -509,16 +509,12 @@ fn process_tile(
         (tile.core_start as usize)..(seq_end_abs),
     )?;
 
-    apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals, tile.core_start as u64);
+    apply_blacklist_mask_to_seq(&mut seq_bytes, blacklist_intervals, tile.core_start as u64);
 
     // Scaled weights to count up
     let positional_scaling_weights = if !scaling_chr.is_empty() {
         let mut scaling_weights = vec![1.0; seq_bytes.len()];
-        apply_scaling_to_coverage_in_place(
-            &mut scaling_weights,
-            tile.core_start as u32,
-            scaling_chr,
-        );
+        apply_scaling_to_coverage_in_place(&mut scaling_weights, tile.core_start, scaling_chr);
         // "Blacklist" positions with scaling factors of 0, so they don't get counted
         for (base, weight) in seq_bytes.iter_mut().zip(&scaling_weights) {
             if *weight == 0.0 {
@@ -614,7 +610,7 @@ fn process_tile(
         // Determine blacklist status
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
-            opt.shared_args.blacklist_strategy.clone(),
+            opt.shared_args.blacklist_strategy,
             fragment.start.into(),
             fragment.end.into(),
             opt.shared_args.fragment_lengths.max_fragment_length as u64,
@@ -701,9 +697,7 @@ fn process_tile(
 
         for overlapped_window in overlapping_windows.windows {
             let original_idx = window_ctx.original_idx(overlapped_window.idx);
-            let counts = counts_by_window
-                .entry(original_idx)
-                .or_insert_with(FxHashMap::default);
+            let counts = counts_by_window.entry(original_idx).or_default();
             count_kmers_at_positions(
                 &fragment,
                 cache,
@@ -771,7 +765,7 @@ pub fn count_kmers_at_positions(
 
     // We walk the requested k values independently. Each k has its own positional
     // encoding table, so processing them in isolation keeps the hot loop simple
-    for (&k, _) in kmer_specs {
+    for &k in kmer_specs.keys() {
         let codes = positional_codes_by_k
             .get(&k)
             .expect("missing positional codes for requested k");
@@ -808,7 +802,7 @@ pub fn count_kmers_at_positions(
         //     forward:  start + (k-1) <= left_boundary   -> start <= (L/2) - k
         //     reverse:  start >= right_boundary          -> anchor(offset) >= (L/2) + (k-1)
         let nearest_guard =
-            NearestFrameGuard::by_flag(apply_nearest_guard, fragment.len() as u32, k as u32);
+            NearestFrameGuard::by_flag(apply_nearest_guard, fragment.len(), k as u32);
 
         // Fragments may be gapped by indels, so we examine each contiguous segment
         // and clip it to the tile coordinates before accepting offsets

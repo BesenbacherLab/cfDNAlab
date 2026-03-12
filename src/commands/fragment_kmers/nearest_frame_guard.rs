@@ -10,14 +10,12 @@ pub struct NearestFrameGuard {
 
 impl NearestFrameGuard {
     pub fn by_flag(apply_nearest_guard: bool, fragment_length: u32, k_span: u32) -> Option<Self> {
-        if apply_nearest_guard {
-            if let Some(bounds) = nearest_guard_bounds(fragment_length, k_span) {
-                return Some(Self {
-                    forward_max_start: bounds.max_forward_start,
-                    reverse_min_anchor: bounds.min_reverse_anchor,
-                    reverse_min_start: bounds.min_reverse_start(k_span),
-                });
-            }
+        if apply_nearest_guard && let Some(bounds) = nearest_guard_bounds(fragment_length, k_span) {
+            return Some(Self {
+                forward_max_start: bounds.max_forward_start,
+                reverse_min_anchor: bounds.min_reverse_anchor,
+                reverse_min_start: bounds.min_reverse_start(k_span),
+            });
         }
         None
     }

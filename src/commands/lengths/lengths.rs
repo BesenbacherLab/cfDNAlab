@@ -73,7 +73,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
     let (chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
     let prefix = opt.output_prefix.trim();
 
@@ -168,7 +168,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     println!("Start: Counting per tile");
 
     // Configure global thread‐pool size
-    init_global_pool(opt.ioc.n_threads as usize)?;
+    init_global_pool(opt.ioc.n_threads)?;
 
     pb.set_position(0);
 
@@ -221,7 +221,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     // Collect counters
     let mut global_counter = LengthsCounters::default();
     for tile_out in &tile_results {
-        global_counter += tile_out.counters.clone();
+        global_counter += tile_out.counters;
     }
 
     println!("Start: Reducing temporary tile files");
@@ -255,7 +255,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                     .get(chr)
                     .map(|&(_, len)| len as u64)
                     .context("missing contig length")?;
-                let n_windows = ((chrom_len + window_bp - 1) / window_bp) as usize;
+                let n_windows = chrom_len.div_ceil(*window_bp) as usize;
                 let counts = reduce_partials_for_chr(
                     chr,
                     &temp_dir,
@@ -343,7 +343,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         println!("Start: Reordering counts by original window index in BED file");
 
         // Zip into a single Vec to allow sorting together
-        let mut paired: Vec<_> = bin_info.into_iter().zip(all_bins.into_iter()).collect(); // (BinInfo, DecodedCounts)
+        let mut paired: Vec<_> = bin_info.into_iter().zip(all_bins).collect(); // (BinInfo, DecodedCounts)
 
         // Sort primarily by original window index
         paired.sort_unstable_by_key(|(info, _)| info.3);
@@ -367,7 +367,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
 
     // Write final counts to output_dir
     write_npy(
-        &opt.ioc
+        opt.ioc
             .output_dir
             .join(format!("{prefix}.length_counts.npy")),
         &stack_length_counts(&all_bins),
@@ -447,7 +447,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         bed_writer.finish().context("Finalize bins.bed writer")?;
     }
 
-    println!("");
+    println!();
     println!("Statistics");
     println!("----------");
 
@@ -467,18 +467,16 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         "  Blacklist-excluded fragments: {}",
         global_counter.blacklisted_fragments
     );
-    if opt.gc.gc_file.is_some() {
-        if opt.gc.gc_file.is_some() {
-            let gc_fail_action = if opt.gc.drop_invalid_gc {
-                "fragment skipped"
-            } else {
-                "fragment counted with weight 1.0"
-            };
-            println!(
-                "  GC correction failures ({}): {}",
-                gc_fail_action, global_counter.gc_failed_fragments
-            );
-        }
+    if opt.gc.gc_file.is_some() && opt.gc.gc_file.is_some() {
+        let gc_fail_action = if opt.gc.drop_invalid_gc {
+            "fragment skipped"
+        } else {
+            "fragment counted with weight 1.0"
+        };
+        println!(
+            "  GC correction failures ({}): {}",
+            gc_fail_action, global_counter.gc_failed_fragments
+        );
     }
     println!(
         "  Fragments counted one or more times: {}",
@@ -506,7 +504,7 @@ fn process_tile(
 ) -> Result<TileOutputs> {
     // One BAM reader per tile
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
-    debug_assert_eq!(_tid_check as u32, tile.tid as u32);
+    debug_assert_eq!(_tid_check, tile.tid as u32);
 
     // Counters
     let mut counter = LengthsCounters::default();
@@ -540,7 +538,7 @@ fn process_tile(
     };
 
     reader
-        .fetch((tile.tid as i32, fetch_from as i64, fetch_to as i64))
+        .fetch((tile.tid, fetch_from, fetch_to))
         .context(format!("fetch {} {}-{}", &tile.chr, fetch_from, fetch_to))?;
 
     // Preallocate per-tile window counters
@@ -565,7 +563,7 @@ fn process_tile(
         // Fixed-size mode: allocate only the bins that a fragment from this tile can reach
         WindowSpec::Size(window_bp) => {
             // Total bins on the chromosome
-            let chrom_bin_count = ((chrom_len + *window_bp - 1) / *window_bp) as usize;
+            let chrom_bin_count = chrom_len.div_ceil(*window_bp) as usize;
             // Leftmost bin whose start is at or before the core start
             // (may begin before the core when cores are not aligned)
             let min_bin_idx = (tile.core_start as u64 / *window_bp) as usize;
@@ -703,7 +701,7 @@ fn process_tile(
         // Determine blacklist status
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
-            opt.blacklist_strategy.clone(),
+            opt.blacklist_strategy,
             fragment.start.into(),
             fragment.end.into(),
             opt.fragment_lengths.max_fragment_length as u64,

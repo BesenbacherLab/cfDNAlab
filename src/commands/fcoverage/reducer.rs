@@ -235,7 +235,7 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
     // Emit helper
     let mut emit_idx = |orig_idx: u64, acc: WindowAccum| -> Result<()> {
         let (start, end) = coords_by_idx[orig_idx as usize];
-        let unmasked_span_bp = (end - start) as u64;
+        let unmasked_span_bp = end - start;
         let value = finalize_value(
             acc.sum,
             acc.allowed_positions,
@@ -329,7 +329,7 @@ impl SizePartialsStream {
         Ok(Self {
             reader: BufReader::new(boxed),
             line_buf: String::new(),
-            tile_index: tile_index,
+            tile_index,
         })
     }
 
@@ -478,7 +478,7 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
 
     // Emit helper for one completed bin
     let mut emit_bin = |start: u64, acc: BinAccum, end: u64| -> Result<()> {
-        let unmasked_span_bp = (end - start) as u64;
+        let unmasked_span_bp = end - start;
         debug_assert!(unmasked_span_bp >= 1);
         let value = finalize_value(
             acc.sum,

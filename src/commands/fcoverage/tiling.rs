@@ -50,10 +50,11 @@ pub fn merge_positional_tiles(
             }
             let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
             // Expect "{per_tile_prefix}.{chr}.{index}.tsv"
-            if fname.starts_with(per_tile_prefix) && fname.contains(&format!(".{chr}.")) {
-                if let Some(idx) = parse_tile_index(fname) {
-                    chr_files.push((idx, path));
-                }
+            if fname.starts_with(per_tile_prefix)
+                && fname.contains(&format!(".{chr}."))
+                && let Some(idx) = parse_tile_index(fname)
+            {
+                chr_files.push((idx, path));
             }
         }
 
@@ -126,10 +127,11 @@ pub fn concat_aligned_size_tile_finals(
                 continue;
             }
             let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-            if fname.starts_with(per_tile_prefix) && fname.contains(&format!(".{chr}.")) {
-                if let Some(idx) = parse_tile_index(fname) {
-                    chr_files.push((idx, path));
-                }
+            if fname.starts_with(per_tile_prefix)
+                && fname.contains(&format!(".{chr}."))
+                && let Some(idx) = parse_tile_index(fname)
+            {
+                chr_files.push((idx, path));
             }
         }
         chr_files.sort_by_key(|(i, _)| *i);

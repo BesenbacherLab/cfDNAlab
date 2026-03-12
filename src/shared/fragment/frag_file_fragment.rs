@@ -28,7 +28,7 @@ impl From<&Record> for FragReadInfo {
             end: r.reference_end() as u32,
             is_reverse: r.is_reverse(),
             mapq: r.mapq(),
-            strand: strand,
+            strand,
             is_read_1: r.is_first_in_template(),
         }
     }

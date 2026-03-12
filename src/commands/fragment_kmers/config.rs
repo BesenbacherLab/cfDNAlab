@@ -183,7 +183,7 @@ impl FragmentKmersSharedArgs {
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
-            output_prefix: output_prefix,
+            output_prefix,
             tile_size: 20_000_000,
             position_selection: FragmentPositionSelectionArgs {
                 frame: vec![ReferenceFrame::Left],

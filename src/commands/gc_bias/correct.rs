@@ -46,12 +46,12 @@ impl GCCorrector {
             correction_matrix: package.correction_matrix.clone(),
             length_bin_frequencies: package.length_bin_frequencies.clone(),
             lengths_bins: length_bins,
-            gc_bins: gc_bins,
+            gc_bins,
             length_min: length_min as usize,
             length_max: length_max as usize,
             gc_min: gc_min as usize,
             gc_max: gc_max as usize,
-            end_offset: package.end_offset.clone(),
+            end_offset: package.end_offset,
         })
     }
 
@@ -182,11 +182,11 @@ impl LengthAgnosticGCCorrector {
         };
 
         Ok(Self {
-            correction_vector: correction_vector,
+            correction_vector,
             gc_bins: corrector.gc_bins.clone(),
-            gc_min: corrector.gc_min.clone(),
-            gc_max: corrector.gc_max.clone(),
-            end_offset: corrector.end_offset.clone(),
+            gc_min: corrector.gc_min,
+            gc_max: corrector.gc_max,
+            end_offset: corrector.end_offset,
         })
     }
 

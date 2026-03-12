@@ -163,18 +163,18 @@ impl VisualizePositionsConfig {
                 "no fragment lengths provided; use --lengths or --length-range"
             ));
         }
-        if let Some(&shortest) = fragment_lengths.iter().min() {
-            if shortest < MIN_FRAGMENT_LENGTH {
-                return Err(anyhow!(
-                    "fragment lengths shorter than {min} bp are not supported (got {shortest}); increase --lengths/--length-range",
-                    min = MIN_FRAGMENT_LENGTH
-                ));
-            }
+        if let Some(&shortest) = fragment_lengths.iter().min()
+            && shortest < MIN_FRAGMENT_LENGTH
+        {
+            return Err(anyhow!(
+                "fragment lengths shorter than {min} bp are not supported (got {shortest}); increase --lengths/--length-range",
+                min = MIN_FRAGMENT_LENGTH
+            ));
         }
 
         let position_specs = position_specs
             .iter()
-            .map(|ps| parse_positions(ps))
+            .map(parse_positions)
             .collect::<Result<Vec<_>, _>>()
             .with_context(|| {
                 format!(

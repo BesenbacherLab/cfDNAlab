@@ -66,7 +66,7 @@ pub fn parse_positions(
         frame: position_spec.frame,
         positions: positions_spec,
         positions_string: position_spec.positions.clone(),
-        step: step,
+        step,
     })
 }
 

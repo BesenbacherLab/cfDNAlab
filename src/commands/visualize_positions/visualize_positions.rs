@@ -98,17 +98,17 @@ fn compute_visualizations(
             &window_counts.coverage,
         );
 
-        if let Some(kmer_sizes) = viz_cfg.kmer_sizes.as_ref() {
-            if !kmer_sizes.is_empty() {
-                let overlays = build_overlays_from_counts(
-                    main_positional_spec.frame,
-                    window.length,
-                    &viz.tracks,
-                    kmer_sizes,
-                    &window_counts.offsets_by_k,
-                );
-                viz.tracks.extend(overlays);
-            }
+        if let Some(kmer_sizes) = viz_cfg.kmer_sizes.as_ref()
+            && !kmer_sizes.is_empty()
+        {
+            let overlays = build_overlays_from_counts(
+                main_positional_spec.frame,
+                window.length,
+                &viz.tracks,
+                kmer_sizes,
+                &window_counts.offsets_by_k,
+            );
+            viz.tracks.extend(overlays);
         }
 
         results.push(viz);
@@ -176,13 +176,13 @@ fn write_bam(temp_dir: &Path, reference: &[u8], fragments: &[FragmentSpec]) -> R
     let mut header = bam::Header::new();
     header.push_record(
         HeaderRecord::new(b"HD")
-            .push_tag(b"VN", &"1.6")
-            .push_tag(b"SO", &"coordinate"),
+            .push_tag(b"VN", "1.6")
+            .push_tag(b"SO", "coordinate"),
     );
     header.push_record(
         HeaderRecord::new(b"SQ")
-            .push_tag(b"SN", &CHROM_NAME)
-            .push_tag(b"LN", &(reference.len() as u32)),
+            .push_tag(b"SN", CHROM_NAME)
+            .push_tag(b"LN", reference.len() as u32),
     );
 
     let mut writer = Writer::from_path(&bam_path, &header, bam::Format::Bam)
@@ -532,7 +532,7 @@ fn collect_counts(
                         results[window_idx]
                             .offsets_by_k
                             .entry(k)
-                            .or_insert_with(HashMap::new)
+                            .or_default()
                             .entry(group)
                             .or_default()
                             .insert(*offset);
@@ -660,7 +660,7 @@ fn build_tracks_from_counts(
                 },
             ];
             if !left_positions.is_empty() {
-                let half = ((length + 1) / 2) as i32;
+                let half = length.div_ceil(2) as i32;
                 if let Some(&idx) = left_positions.iter().find(|&&idx| idx > half) {
                     panic!(
                         "Nearest left track received index {} beyond half {}. \
@@ -675,7 +675,7 @@ This indicates fragment-kmers emitted starts past the nearest-read boundary.",
                 });
             }
             if !right_positions.is_empty() {
-                let half = ((length + 1) / 2) as i32;
+                let half = length.div_ceil(2) as i32;
                 let right_start = (length as i32 + 1) - half;
                 if let Some(&idx) = right_positions.iter().find(|&&idx| idx < right_start) {
                     panic!(
@@ -705,7 +705,7 @@ This indicates fragment-kmers emitted starts past the nearest-read boundary.",
                         })
                         .collect()
                 })
-                .unwrap_or_else(Vec::new);
+                .unwrap_or_default();
             indices.sort_unstable();
             vec![Track {
                 name: "mid".to_string(),
@@ -804,32 +804,31 @@ fn build_overlays_from_counts(
                     continue;
                 };
 
-                if let Some(offsets) = group_map.get(&PositionGroup::Left) {
-                    if !offsets.is_empty() {
-                        let mut indices: Vec<i32> =
-                            offsets.iter().map(|offset| offset + 1).collect();
-                        indices.sort_unstable();
-                        let mut overlay = left_base.clone();
-                        overlay.name = format!("{} k-mer starts (k={})", left_base.name, k);
-                        overlay.selected_indices = indices;
-                        clamp_overlay_axis(&mut overlay, length, k);
-                        overlays.push(overlay);
-                    }
+                if let Some(offsets) = group_map.get(&PositionGroup::Left)
+                    && !offsets.is_empty()
+                {
+                    let mut indices: Vec<i32> = offsets.iter().map(|offset| offset + 1).collect();
+                    indices.sort_unstable();
+                    let mut overlay = left_base.clone();
+                    overlay.name = format!("{} k-mer starts (k={})", left_base.name, k);
+                    overlay.selected_indices = indices;
+                    clamp_overlay_axis(&mut overlay, length, k);
+                    overlays.push(overlay);
                 }
 
-                if let Some(offsets) = group_map.get(&PositionGroup::Right) {
-                    if !offsets.is_empty() {
-                        let mut indices: Vec<i32> = offsets
-                            .iter()
-                            .map(|offset| (length as i32) - *offset)
-                            .collect();
-                        indices.sort_unstable();
-                        let mut overlay = right_base.clone();
-                        overlay.name = format!("{} k-mer starts (k={})", right_base.name, k);
-                        overlay.selected_indices = indices;
-                        clamp_overlay_axis(&mut overlay, length, k);
-                        overlays.push(overlay);
-                    }
+                if let Some(offsets) = group_map.get(&PositionGroup::Right)
+                    && !offsets.is_empty()
+                {
+                    let mut indices: Vec<i32> = offsets
+                        .iter()
+                        .map(|offset| (length as i32) - *offset)
+                        .collect();
+                    indices.sort_unstable();
+                    let mut overlay = right_base.clone();
+                    overlay.name = format!("{} k-mer starts (k={})", right_base.name, k);
+                    overlay.selected_indices = indices;
+                    clamp_overlay_axis(&mut overlay, length, k);
+                    overlays.push(overlay);
                 }
             }
             overlays
@@ -879,21 +878,21 @@ fn build_overlays_from_counts(
                     fold_fragment_positions(length, &fragment_positions);
                 overlays.push(nearest_overlay);
 
-                if let Some(base) = left_base {
-                    if !left_positions.is_empty() {
-                        let mut overlay = base.clone();
-                        overlay.name = format!("{} k-mer starts (k={})", base.name, k);
-                        overlay.selected_indices = left_positions.clone();
-                        overlays.push(overlay);
-                    }
+                if let Some(base) = left_base
+                    && !left_positions.is_empty()
+                {
+                    let mut overlay = base.clone();
+                    overlay.name = format!("{} k-mer starts (k={})", base.name, k);
+                    overlay.selected_indices = left_positions.clone();
+                    overlays.push(overlay);
                 }
-                if let Some(base) = right_base {
-                    if !right_positions.is_empty() {
-                        let mut overlay = base.clone();
-                        overlay.name = format!("{} k-mer starts (k={})", base.name, k);
-                        overlay.selected_indices = right_positions.clone();
-                        overlays.push(overlay);
-                    }
+                if let Some(base) = right_base
+                    && !right_positions.is_empty()
+                {
+                    let mut overlay = base.clone();
+                    overlay.name = format!("{} k-mer starts (k={})", base.name, k);
+                    overlay.selected_indices = right_positions.clone();
+                    overlays.push(overlay);
                 }
             }
             overlays
@@ -1049,7 +1048,7 @@ fn apply_read_clamp_local(
         return;
     }
 
-    let half = ((length + 1) / 2) as i32;
+    let half = length.div_ceil(2) as i32;
     let right_start = (length as i32 + 1) - half;
 
     for track in tracks {
@@ -1179,7 +1178,7 @@ fn clamp_track_both_reads(track: &mut Track, frame: ReferenceFrame, half: i32, r
 
 fn mid_axis_bounds(length: u32) -> AxisBounds {
     let half = (length / 2) as i32;
-    if length % 2 == 0 {
+    if length.is_multiple_of(2) {
         AxisBounds::new(-half, half - 1)
     } else {
         AxisBounds::new(-half, half)

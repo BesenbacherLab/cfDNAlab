@@ -93,7 +93,7 @@ pub fn load_chrom_sizes_with_order<P: AsRef<std::path::Path>>(
             continue;
         }
         // Accept both FAI and two-column TSV
-        let parts: Vec<&str> = line.split(|c| c == '\t' || c == ' ').collect();
+        let parts: Vec<&str> = line.split(['\t', ' ']).collect();
         if parts.len() < 2 {
             continue;
         }

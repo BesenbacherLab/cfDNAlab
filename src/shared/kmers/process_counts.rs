@@ -38,7 +38,7 @@ pub fn prepare_decoded_counts(
     let mut motifs_by_k: FxHashMap<u8, Vec<String>> = FxHashMap::default();
 
     // Loop over every k we validated
-    for (&k, _) in kmer_specs {
+    for &k in kmer_specs.keys() {
         // Reference (match) bins for this k
         let (count_bins, motifs) =
             prepare_kmer_category(windows, kmer_specs, k as usize, canonical, k <= 6);

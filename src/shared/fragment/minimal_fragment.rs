@@ -18,7 +18,7 @@ pub struct Fragment {
 impl Fragment {
     /// Length of the fragment (end - start).
     pub fn len(&self) -> u32 {
-        (self.end - self.start) as u32
+        self.end - self.start
     }
 }
 

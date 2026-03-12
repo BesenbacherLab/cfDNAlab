@@ -148,7 +148,7 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
 
     let mut fk_cfg = FragmentKmersConfig {
         shared_args: fk_shared_args,
-        kmer_sizes: kmer_sizes,
+        kmer_sizes,
         canonical: false,
         positional_counts: true,
         save_sparse: false, // TODO: Might be necessary later?
@@ -219,7 +219,7 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
     // Remove temporary staging directory once final outputs are written
     fs::remove_dir_all(&temp_root).context("remove transitions temp directory")?;
 
-    println!("");
+    println!();
     println!("Statistics");
     println!("----------");
     println!(

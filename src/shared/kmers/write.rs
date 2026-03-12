@@ -45,9 +45,9 @@ pub fn write_decoded_counts_matrix(
         }
         let tag = format!("{}.k{}", prefix, k);
         if save_sparse {
-            write_category_sparse(&mut ref_bins, &motifs_by_k[&k], &tag, output_dir)?;
+            write_category_sparse(&ref_bins, &motifs_by_k[&k], &tag, output_dir)?;
         } else {
-            write_category(&mut ref_bins, &motifs_by_k[&k], &tag, output_dir)?;
+            write_category(&ref_bins, &motifs_by_k[&k], &tag, output_dir)?;
         }
     }
 
