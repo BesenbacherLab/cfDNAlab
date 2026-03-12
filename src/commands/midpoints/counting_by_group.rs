@@ -344,7 +344,10 @@ impl ProfileGroupsCounts {
         let g = self.num_groups;
         let l = self.n_lengths();
         let p = self.window_size;
-        let strides = ((p * l), 1usize, l);
+        let group_stride = p
+            .checked_mul(l)
+            .expect("group stride overflow for (group, length_bin, position)");
+        let strides = (group_stride, 1usize, l);
         ArrayView3::from_shape((g, l, p).strides(strides), &self.counts)
             .expect("Shape/stride mismatch for (group, length_bin, position)")
     }

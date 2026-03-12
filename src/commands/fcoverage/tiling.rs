@@ -192,18 +192,17 @@ pub fn adapt_fetch_to_extreme_windows(
             clamp_fetch_to_window_span(tile, chrom_len_u64, min_ws, max_we)
         }
         TileMode::AggregatesBySize { window_bp, .. } => {
-            // TODO: Rename variables to meaningful names
-            let cs = tile.core_start as u64;
-            let ce = tile.core_end as u64;
-            if cs >= chrom_len_u64 {
+            let core_start = tile.core_start as u64;
+            let core_end = tile.core_end as u64;
+            if core_start >= chrom_len_u64 {
                 return None;
             }
-            let owned_window_bp = *window_bp;
-            let k_lo = cs / owned_window_bp;
-            let k_hi = (ce.saturating_sub(1)) / owned_window_bp;
-            let min_ws = k_lo * owned_window_bp;
-            let max_we = ((k_hi + 1) * owned_window_bp).min(chrom_len_u64);
-            clamp_fetch_to_window_span(tile, chrom_len_u64, min_ws, max_we)
+            let window_size_bp = *window_bp;
+            let first_window_idx = core_start / window_size_bp;
+            let last_window_idx = (core_end.saturating_sub(1)) / window_size_bp;
+            let min_window_start = first_window_idx * window_size_bp;
+            let max_window_end = ((last_window_idx + 1) * window_size_bp).min(chrom_len_u64);
+            clamp_fetch_to_window_span(tile, chrom_len_u64, min_window_start, max_window_end)
         }
     }
 }

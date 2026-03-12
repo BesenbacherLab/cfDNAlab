@@ -137,7 +137,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     pb.set_style(
         ProgressStyle::default_bar()
             .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .unwrap(),
+            .expect("hardcoded progress template"),
     );
 
     let windows_lookup = windows_map.as_ref();

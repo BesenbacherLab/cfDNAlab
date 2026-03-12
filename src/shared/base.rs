@@ -29,7 +29,7 @@ static LUT: [u8; 256] = {
     t
 };
 
-// TODO: What is "anything else" possibly?
+// Non-ACGT bytes also map to N, including ambiguity codes, lowercase masked bases, and any other unexpected byte
 
 /// Get the complement of a single nucleotide base.
 ///

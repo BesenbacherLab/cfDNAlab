@@ -32,7 +32,7 @@ use crate::{
         },
     },
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray_npy::write_npy;
@@ -161,7 +161,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     pb.set_style(
         ProgressStyle::default_bar()
             .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .unwrap(),
+            .expect("hardcoded progress template"),
     );
 
     // Configure global thread‐pool size
@@ -577,18 +577,20 @@ fn process_tile(
 
             // Count up the weight per overlapping count-window
             for (overlapped_window_idx, scaling_weight, _) in overlap_weights {
-                let (window_start, _, group_idx) = core_overlapping_windows[overlapped_window_idx];
-                let window_position = midpoint - window_start as u32;
-                debug_assert!(
-                    (window_start as u32) <= midpoint
-                        && midpoint < (core_overlapping_windows[overlapped_window_idx].1 as u32),
+                let (window_start, window_end, group_idx) =
+                    core_overlapping_windows[overlapped_window_idx];
+                let midpoint_u64 = midpoint as u64;
+                ensure!(
+                    window_start <= midpoint_u64 && midpoint_u64 < window_end,
                     "midpoint not inside window: midpoint={} window=({},{})",
                     midpoint,
                     window_start,
-                    core_overlapping_windows[overlapped_window_idx].1
+                    window_end
                 );
+                let window_position = usize::try_from(midpoint_u64 - window_start)
+                    .context("window position does not fit in usize")?;
                 counts.incr_weighted(
-                    window_position as usize,
+                    window_position,
                     group_idx as usize,
                     fragment_length as usize,
                     scaling_weight * gc_weight,
@@ -598,18 +600,20 @@ fn process_tile(
             // When no scaling, increment counter by the overlap fraction for each window / bin
             for overlapped_window in overlapping_windows.windows {
                 let overlapped_window_idx = overlapped_window.idx;
-                let (window_start, _, group_idx) = core_overlapping_windows[overlapped_window_idx];
-                let window_position = midpoint - window_start as u32;
-                debug_assert!(
-                    (window_start as u32) <= midpoint
-                        && midpoint < (core_overlapping_windows[overlapped_window_idx].1 as u32),
+                let (window_start, window_end, group_idx) =
+                    core_overlapping_windows[overlapped_window_idx];
+                let midpoint_u64 = midpoint as u64;
+                ensure!(
+                    window_start <= midpoint_u64 && midpoint_u64 < window_end,
                     "midpoint not inside window: midpoint={} window=({},{})",
                     midpoint,
                     window_start,
-                    core_overlapping_windows[overlapped_window_idx].1
+                    window_end
                 );
+                let window_position = usize::try_from(midpoint_u64 - window_start)
+                    .context("window position does not fit in usize")?;
                 counts.incr_weighted(
-                    window_position as usize,
+                    window_position,
                     group_idx as usize,
                     fragment_length as usize,
                     gc_weight,

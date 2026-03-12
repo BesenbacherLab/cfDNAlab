@@ -9,15 +9,15 @@
 
 ## Executive Summary
 
-| Area | Status |
-|------|--------|
-| **Build** | Clean — compiles with 0 errors (debug and release) |
-| **Tests** | All 349 tests pass, 0 failures, 4 ignored doctests |
-| **Clippy** | **425 warnings** (214 auto-fixable) |
-| **TODOs in source** | **~65 TODO/FIXME** comments in released command paths |
-| **License** | **Missing** — no LICENSE file |
+| Area                    | Status                                                          |
+| ----------------------- | --------------------------------------------------------------- |
+| **Build**               | Clean — compiles with 0 errors (debug and release)              |
+| **Tests**               | All 349 tests pass, 0 failures, 4 ignored doctests              |
+| **Clippy**              | **425 warnings** (214 auto-fixable)                             |
+| **TODOs in source**     | **~65 TODO/FIXME** comments in released command paths           |
+| **License**             | **Missing** — no LICENSE file                                   |
 | **Cargo.toml metadata** | **Missing** license, description, repository, authors, keywords |
-| **Changelog** | Version mismatch (`0.0.1` vs Cargo.toml `0.1.0`) |
+| **Changelog**           | Version mismatch (`0.0.1` vs Cargo.toml `0.1.0`)                |
 
 ---
 
@@ -96,54 +96,21 @@ These are not strict blockers but represent significant quality issues. Shipping
   - **Location:** Entire codebase
   - **Severity:** HIGH
   - **Description:** `cargo clippy` reports 425 warnings. Breakdown:
-    | Warning type | Count | Auto-fixable |
-    |-------------|-------|-------------|
-    | Doc list item overindented | 131 | Yes |
-    | Unnecessary reference creation | 25 | Yes |
-    | Loop variable type hints | 15 | Yes |
-    | Borrowed expression implements required traits | 15 | Yes |
-    | Casting to the same type (u32→u32, usize→usize, etc.) | 37 | Yes |
-    | Module has same name as containing module | 13 | No (rename) |
-    | Very complex type (needs type alias) | 13 | No (refactor) |
-    | Redundant field names in struct init | 11 | Yes |
-    | Too many arguments (8/7) | 5 | No (refactor) |
-    | Manual reimplementation of std methods | 7 | Yes |
-    | Other | ~153 | Mixed |
+    | Warning type                                          | Count | Auto-fixable  |
+    | ----------------------------------------------------- | ----- | ------------- |
+    | Doc list item overindented                            | 131   | Yes           |
+    | Unnecessary reference creation                        | 25    | Yes           |
+    | Loop variable type hints                              | 15    | Yes           |
+    | Borrowed expression implements required traits        | 15    | Yes           |
+    | Casting to the same type (u32→u32, usize→usize, etc.) | 37    | Yes           |
+    | Module has same name as containing module             | 13    | No (rename)   |
+    | Very complex type (needs type alias)                  | 13    | No (refactor) |
+    | Redundant field names in struct init                  | 11    | Yes           |
+    | Too many arguments (8/7)                              | 5     | No (refactor) |
+    | Manual reimplementation of std methods                | 7     | Yes           |
+    | Other                                                 | ~153  | Mixed         |
   - **Action:** Run `cargo clippy --fix --lib -p cfdnalab` to auto-fix ~214 warnings, then manually address the remainder. For a public release, zero clippy warnings is the standard expectation.
   NOTE: I ran the autofix. Rest are still there, including some things I disagreed on.
-
----
-
-- [x] **T2-3: Replace `unreachable!()` with proper error handling in released commands**
-  - **Locations:**
-    - `src/commands/bam_to_bam/bam_to_bam.rs:352`
-    - `src/commands/lengths/lengths.rs:770`
-    - `src/commands/midpoints/midpoints.rs:525`
-    - `src/commands/fcoverage/fcoverage.rs:426, 433, 479, 513`
-    - `src/commands/bam_to_frag/bam_to_frag.rs:389`
-  - **Severity:** HIGH
-  - **Description:** These are all the same pattern — a match on `(gc_weight_option, correct_gc)` with `(Some(_), false) => unreachable!()`. While logically sound today (if `correct_gc` is false, `gc_weight_option` should be None), the `unreachable!()` macro causes an immediate panic with no useful message if the invariant is ever violated. In a released tool processing large datasets, a panic means lost computation.
-  - **Fix:** Replace with `anyhow::bail!("unexpected gc weight when gc correction is disabled")` or restructure to `if correct_gc { ... } else { ... }` which eliminates the unreachable arm entirely.
-
----
-
-- [x] **T2-4: Fix NaN panic risk in interpolation sort**
-  - **Location:** `src/commands/gc_bias/interpolation.rs:280-281`
-  - **Severity:** HIGH
-  - **Description:** The code sorts anchor points by distance using:
-    ```rust
-    left_real.sort_by(|lhs, rhs| lhs.2.partial_cmp(&rhs.2).unwrap());
-    right_real.sort_by(|lhs, rhs| lhs.2.partial_cmp(&rhs.2).unwrap());
-    ```
-    `partial_cmp` returns `None` for NaN values, and `.unwrap()` on `None` panics. If any distance calculation produces NaN (e.g., from degenerate coordinates), the GC bias correction pipeline crashes.
-  - **Fix:** Use `.unwrap_or(std::cmp::Ordering::Equal)` or `total_cmp()` (available on f64 in recent Rust editions).
-
----
-
-- [x] **T2-5: Add integration tests for `coverage-weights` command**
-  - **Location:** `tests/` (missing file)
-  - **Severity:** HIGH
-  - **Description:** The `coverage-weights` command has **no integration test file at all**. This is a released command that users depend on for genomic smoothing. The striding and triangular overlap logic is tested in isolation, but the full command pipeline (BAM → stride bins → smoothed weights → TSV output) is never tested end-to-end.
 
 ---
 
@@ -209,72 +176,10 @@ These are not strict blockers but represent significant quality issues. Shipping
   [NOTE: The idea of things being in git history is ridiculous. No one remembers what is in git history ever...]
 ---
 
-- [x] **T2-13: Remove stale TODO comment on `read.rs`**
-  - **Location:** `src/shared/read.rs:75`
-  - **Severity:** LOW
-  - **Description:** Comment says `// TODO: Requires testing!` for `parse_md_tag()`. However, `tests/test_parse_md_tags.rs` exists and does test this function. The TODO is stale and should be removed.
-
----
 
 ### TIER 3 — Should Fix (Error Handling & Robustness)
 
 These improve the robustness of the tool and prevent panics on edge cases or corrupted input.
-
----
-
-- [x] **T3-1: Replace `.expect()` chains in `gc_bias/correct.rs` with error propagation**
-  - **Location:** `src/commands/gc_bias/correct.rs:31, 35, 39, 43, 68`
-  - **Severity:** HIGH
-  - **Description:** `GCCorrector::from_package()` has 4 consecutive `.expect()` calls on edge vector first/last elements, plus one `.expect("fragment end precedes start")`. If a user provides a corrupted or truncated `.npz` GC correction file, these panic instead of returning a helpful error.
-  - **Fix:** Replace with `.ok_or_else(|| anyhow!("..."))?` to propagate errors.
-
----
-
-- [x] **T3-2: Replace `.expect()` calls in `frag_to_bam.rs` chromosome lookup**
-  - **Location:** `src/commands/frag_to_bam/frag_to_bam.rs:191, 226`
-  - **Severity:** HIGH
-  - **Description:** `expect("chromosome length available for first/next chromosome")` panics if a chromosome from the fragment file doesn't exist in the reference. This can happen if the user provides mismatched files.
-  - **Fix:** Return a user-friendly error with the chromosome name.
-
----
-
-- [x] **T3-3: Replace `.expect()` in reducer contig lookup**
-  - **Location:** `src/commands/fcoverage/fcoverage.rs:494-498`
-  - **Severity:** HIGH
-  - **Description:** `expect("missing contig length")` panics if a chromosome from temp files doesn't match the contig map. Could happen with corrupted intermediate files.
-  - **Fix:** Use `.ok_or_else(|| anyhow!("Chromosome '{}' not found in contig map", chr))?`.
-
----
-
-- [x] **T3-4: Replace `unwrap()` calls in reducer K-way merge**
-  - **Location:** `src/commands/fcoverage/reducer.rs:263, 274, 281, 507, 517, 526`
-  - **Severity:** HIGH
-  - **Description:** The core merge loop has 6 unwrap/expect calls that assume heap/stream invariants hold. If any tile produces unexpected output, these panic mid-reduction (after potentially hours of computation [ludvig: ahh, this takes a few minutes to call of most cfDNA data..]).
-  - **Fix:** Propagate errors with context about which tile/stream caused the failure.
-
----
-
-- [x] **T3-5: Replace `unwrap()` in ndarray slice operations**
-  - **Location:** `src/commands/gc_bias/outliers.rs:245-246, 253`
-  - **Severity:** MEDIUM-HIGH
-  - **Description:** `.as_slice().unwrap()` and `.as_slice_mut().unwrap()` on ndarray arrays. These panic if the array is not contiguous in memory. While typically safe for freshly-allocated arrays, ndarray does not guarantee contiguity after slicing/transposing operations.
-  - **Fix:** Check `.is_standard_layout()` first or use `.as_slice().ok_or_else(|| ...)?`.
-
----
-
-- [x] **T3-6: Replace mutex `.lock().unwrap()` with poison handling**
-  - **Location:** `src/commands/midpoints/counting_by_group.rs:399, 417, 426, 428`
-  - **Severity:** MEDIUM-HIGH
-  - **Description:** The parallel merge path for midpoint profile groups uses `.lock().unwrap()` and `Arc::try_unwrap().expect()`. If a worker thread panics (e.g., from an I/O error), the mutex gets poisoned and all subsequent `.lock().unwrap()` calls cascade into more panics, making the root cause hard to diagnose.
-  - **Fix:** Use `.lock().map_err(|e| anyhow!("worker thread panicked: {}", e))?`.
-
----
-
-- [x] **T3-7: Replace `lengths.rs:401` unchecked index with bounds check**
-  - **Location:** `src/commands/lengths/lengths.rs:401`
-  - **Severity:** MEDIUM-HIGH
-  - **Description:** `all_bins[0]` is accessed without checking if `all_bins` is empty. If no windows are processed (e.g., all chromosomes skipped by blacklist), this panics. The same pattern appears at line 415.
-  - **Fix:** Add `if all_bins.is_empty() { return Ok(()); }` before the access.
 
 ---
 
@@ -286,14 +191,6 @@ These improve the robustness of the tool and prevent panics on edge cases or cor
 
 ---
 
-- [x] **T3-10: Add division-by-zero guard in `striding.rs`**
-  - **Location:** `src/commands/coverage_weights/striding.rs:146`
-  - **Severity:** MEDIUM
-  - **Description:** `bins[i].avg_overlap_coverage = sum_cov / (sum_w as f32);` — if `sum_w` is 0, this produces infinity. While the triangular weight loop should always produce at least weight 1, a defensive check prevents silent data corruption.
-  - **Fix:** `if sum_w > 0 { sum_cov / (sum_w as f32) } else { 0.0 }`.
-
----
-
 - [ ] **T3-11: Validate `StrideBin` invariant (start <= end)**
   - **Location:** `src/commands/coverage_weights/striding.rs:24`
   - **Severity:** LOW-MEDIUM
@@ -301,7 +198,7 @@ These improve the robustness of the tool and prevent panics on edge cases or cor
 
 ---
 
-- [ ] **T3-12: Replace `ProgressStyle` template `.unwrap()` calls**
+- [x] **T3-12: Replace `ProgressStyle` template `.unwrap()` calls**
   - **Locations:**
     - `src/commands/lengths/lengths.rs:140`
     - `src/commands/midpoints/midpoints.rs:164`
@@ -329,17 +226,18 @@ These are not urgent but improve the codebase for long-term maintenance.
   - **Location:** `src/commands/mod.rs:9, 14, 27, 28`
   - **Severity:** LOW
   - **Description:** The `ends`, `fragment_kmers`, `transitions`, and `visualize_positions` modules are compiled unconditionally (no `#[cfg(feature = ...)]` gate), unlike the released commands. This adds to compilation time and binary size even when unused.
+  - `codex comments:` `fragment_kmers` and `visualize_positions` currently export types used unconditionally by `cli_common`, `shared/kmers/kmer_codec.rs`, `tests/fixtures/mod.rs`, and `transitions`. This needs a small type-extraction refactor before the feature gates are safe.
 
 ---
 
-- [ ] **T4-3: Use `checked_mul` for stride calculations in `counting_by_group.rs`**
+- [x] **T4-3: Use `checked_mul` for stride calculations in `counting_by_group.rs`**
   - **Location:** `src/commands/midpoints/counting_by_group.rs:349`
   - **Severity:** LOW
   - **Description:** `let strides = ((p * l) as usize, 1usize, l as usize);` — the multiplication `p * l` could theoretically overflow before the cast. Use `p.checked_mul(l).ok_or_else(|| ...)?` for defensive coding.
 
 ---
 
-- [ ] **T4-4: Convert `debug_assert` to `ensure!` in release-critical paths**
+- [x] **T4-4: Convert `debug_assert` to `ensure!` in release-critical paths**
   - **Location:** `src/commands/midpoints/midpoints.rs:582-589, 603-610`
   - **Severity:** LOW-MEDIUM
   - **Description:** Window position bounds are validated with `debug_assert!` only — these checks are stripped in release builds. If a window start exceeds `u32::MAX` (cast from u64), the index wraps silently. Consider using `anyhow::ensure!()` for production validation, or at minimum document why the invariant is guaranteed.
@@ -357,14 +255,14 @@ These are not urgent but improve the codebase for long-term maintenance.
 
 ---
 
-- [ ] **T4-6: Rename cryptic variables in `fcoverage/tiling.rs`**
+- [x] **T4-6: Rename cryptic variables in `fcoverage/tiling.rs`**
   - **Location:** `src/commands/fcoverage/tiling.rs:193`
   - **Severity:** LOW
   - **Description:** TODO comment says `"Rename variables to meaningful names"`. Variables like `cs`, `ce`, `k_lo`, `k_hi` make the bin/window calculation hard to follow. Rename to `core_start`, `core_end`, `first_window_idx`, `last_window_idx` or similar.
 
 ---
 
-- [ ] **T4-7: Clean up `base.rs` TODO comment**
+- [x] **T4-7: Clean up `base.rs` TODO comment**
   - **Location:** `src/shared/base.rs:32`
   - **Severity:** LOW
   - **Description:** Comment says `// TODO: What is "anything else" possibly?` about the nucleotide encoding. "Anything else" maps to code 4 (N) and includes IUPAC ambiguity codes (R, Y, S, W, etc.), soft-masked lowercase, and any non-ACGT byte. Resolve the TODO by documenting this.
@@ -392,14 +290,14 @@ These are not urgent but improve the codebase for long-term maintenance.
 
 ---
 
-- [ ] **T4-11: Improve error messages in reducer**
+- [x] **T4-11: Improve error messages in reducer**
   - **Location:** `src/commands/fcoverage/reducer.rs` (multiple locations)
   - **Severity:** LOW
   - **Description:** Error messages like `"Missing orig_idx in partials"` don't include context about which tile, chromosome, or line caused the failure. When debugging failed runs on large datasets, this makes root cause analysis difficult. Add tile index and chromosome name to error messages.
 
 ---
 
-- [ ] **T4-12: Resolve `gc_bias/config.rs:82` design TODO**
+- [x] **T4-12: Resolve `gc_bias/config.rs:82` design TODO**
   - **Location:** `src/commands/gc_bias/config.rs:82`
   - **Severity:** LOW
   - **Description:** TODO says: `"Try excluding the first N bases (both ends) from GC fraction calculation to avoid correcting 'biochemical cut bias'."` This is a scientific design decision that could affect correction quality. Decide whether to implement before release or document as a known limitation/future improvement.
@@ -408,61 +306,57 @@ These are not urgent but improve the codebase for long-term maintenance.
 
 ## Summary Statistics
 
-| Tier | Count | Description |
-|------|-------|-------------|
-| **T1 (Must Fix)** | 6 | License, metadata, generated code validation, README |
-| **T2 (Strongly Recommended)** | 13 | Error handling, dead code, test coverage, clippy |
-| **T3 (Should Fix)** | 12 | Unwrap/expect panics, bounds checks, edge cases |
-| **T4 (Nice to Have)** | 12 | Code quality, maintainability, documentation |
-| **Total** | **43** | |
+| Tier                          | Count  | Description                                          |
+| ----------------------------- | ------ | ---------------------------------------------------- |
+| **T1 (Must Fix)**             | 6      | License, metadata, generated code validation, README |
+| **T2 (Strongly Recommended)** | 13     | Error handling, dead code, test coverage, clippy     |
+| **T3 (Should Fix)**           | 12     | Unwrap/expect panics, bounds checks, edge cases      |
+| **T4 (Nice to Have)**         | 12     | Code quality, maintainability, documentation         |
+| **Total**                     | **43** |                                                      |
 
 ---
 
 ## Test Coverage Per Released Command
 
-| Command | Integration Tests | Unit/Component Tests | Coverage Assessment |
-|---------|------------------|---------------------|-------------------|
-| `fcoverage` | 7 tests | 31+ tests (coverage, tiling, windows) | **Good** |
-| `lengths` | Yes (multi-file) | 25+ tests (counting, tiling) | **Good** |
-| `gc-bias` | No integration test | 584 lines across 6 test files | **Moderate** |
-| `ref-gc-bias` | No integration test | 2 tests (75 lines) | **Weak** |
-| `coverage-weights` | **None** | Stride/smoothing unit tests only | **Weak** |
-| `midpoints` | **None** | Partial (1 heatmap test, some profile group tests) | **Weak** |
-| `bam-to-bam` | 7 tests | None | **Moderate** |
-| `bam-to-frag` | 1 smoke test | None | **Weak** |
-| `frag-to-bam` | Multi-test file | Unit tests | **Moderate** |
+| Command            | Integration Tests   | Unit/Component Tests                               | Coverage Assessment |
+| ------------------ | ------------------- | -------------------------------------------------- | ------------------- |
+| `fcoverage`        | 7 tests             | 31+ tests (coverage, tiling, windows)              | **Good**            |
+| `lengths`          | Yes (multi-file)    | 25+ tests (counting, tiling)                       | **Good**            |
+| `gc-bias`          | No integration test | 584 lines across 6 test files                      | **Moderate**        |
+| `ref-gc-bias`      | No integration test | 2 tests (75 lines)                                 | **Weak**            |
+| `coverage-weights` | **None**            | Stride/smoothing unit tests only                   | **Weak**            |
+| `midpoints`        | **None**            | Partial (1 heatmap test, some profile group tests) | **Weak**            |
+| `bam-to-bam`       | 7 tests             | None                                               | **Moderate**        |
+| `bam-to-frag`      | 1 smoke test        | None                                               | **Weak**            |
+| `frag-to-bam`      | Multi-test file     | Unit tests                                         | **Moderate**        |
 
 ---
 
 ## Appendix: Full TODO/FIXME Inventory in Released Command Paths
 
-| File | Line | Comment |
-|------|------|---------|
-| `shared/frag_file.rs` | 1 | `TODO: Fix this. Just generated...` |
-| `shared/fragment_iterator.rs` | 219 | `TODO: ...might end up counting fragments...in multiple tiles` |
-| `shared/blacklist/load.rs` | 18 | `TODO: plumb through a streaming reader` |
-| `shared/read.rs` | 75 | `TODO: Requires testing!` (stale — tests exist) |
-| `shared/bed.rs` | 1081 | `TODO: Generalize and test` |
-| `shared/base.rs` | 32 | `TODO: What is "anything else" possibly?` |
-| `shared/tiled_run.rs` | 111 | `TODO: Already initialized with None?` |
-| `shared/fragment/with_records_fragment.rs` | 98 | `TODO: Avoid cloning` |
-| `shared/kmers/kmer_codec.rs` | 130 | `TODO: Calculate actual limit possible!` |
-| `commands/gc_bias/interpolation.rs` | 1 | `TODO: Validate that it's correct` |
-| `commands/gc_bias/config.rs` | 82 | `TODO: Try excluding the first N bases...` |
-| `commands/gc_bias/gc_bias.rs` | 103 | `TODO: Rename to something meaningful` |
-| `commands/gc_bias/gc_bias.rs` | 355 | `keep_temp = false` (dead code) |
-| `commands/gc_bias/gc_bias.rs` | 451 | `TODO: not currently used downstream` |
-| `commands/gc_bias/gc_bias.rs` | 579 | `TODO: Update this pipeline list` |
-| `commands/ref_gc_bias/config.rs` | 4 | `TODO: Do we need to add end-offset here...` |
-| `commands/coverage_weights/config.rs` | 5 | `TODO: Improve docstring` |
-| `commands/coverage_weights/striding.rs` | 24 | `TODO: Should not happen?` |
-| `commands/fcoverage/tiling.rs` | 193 | `TODO: Rename variables to meaningful names` |
-| `commands/fcoverage/config.rs` | 195 | `TODO: Consider whether blacklist is "filtering"...` |
-| `commands/fcoverage/fcoverage.rs` | 523 | `keep_temp = false` (dead code) |
-| `commands/lengths/lengths.rs` | 355 | `keep_temp = false` (dead code) |
-| `commands/midpoints/counting_by_group.rs` | 335 | `TODO: Test!!` |
-| `commands/midpoints/midpoints.rs` | 267 | `keep_temp = false` (dead code) |
-| `commands/bam_to_frag/bam_to_frag.rs` | 259 | `TODO: Consider tiling...to decrease memory` |
-| `commands/cli_common.rs` | 274 | `TODO: ...add window-based overlap variants` |
-| `commands/cli_common.rs` | 358 | `TODO: Standardize whether lists should be comma-sep or space-sep` |
-| `commands/cli_common.rs` | 549 | `TODO: Is "nearest" clear enough...` |
+| File                                       | Line | Comment                                                            |
+| ------------------------------------------ | ---- | ------------------------------------------------------------------ |
+| `shared/frag_file.rs`                      | 1    | `TODO: Fix this. Just generated...`                                |
+| `shared/fragment_iterator.rs`              | 219  | `TODO: ...might end up counting fragments...in multiple tiles`     |
+| `shared/blacklist/load.rs`                 | 18   | `TODO: plumb through a streaming reader`                           |
+| `shared/bed.rs`                            | 1081 | `TODO: Generalize and test`                                        |
+| `shared/tiled_run.rs`                      | 111  | `TODO: Already initialized with None?`                             |
+| `shared/fragment/with_records_fragment.rs` | 98   | `TODO: Avoid cloning`                                              |
+| `shared/kmers/kmer_codec.rs`               | 130  | `TODO: Calculate actual limit possible!`                           |
+| `commands/gc_bias/interpolation.rs`        | 1    | `TODO: Validate that it's correct`                                 |
+| `commands/gc_bias/gc_bias.rs`              | 103  | `TODO: Rename to something meaningful`                             |
+| `commands/gc_bias/gc_bias.rs`              | 355  | `keep_temp = false` (dead code)                                    |
+| `commands/gc_bias/gc_bias.rs`              | 451  | `TODO: not currently used downstream`                              |
+| `commands/gc_bias/gc_bias.rs`              | 579  | `TODO: Update this pipeline list`                                  |
+| `commands/ref_gc_bias/config.rs`           | 4    | `TODO: Do we need to add end-offset here...`                       |
+| `commands/coverage_weights/config.rs`      | 5    | `TODO: Improve docstring`                                          |
+| `commands/coverage_weights/striding.rs`    | 24   | `TODO: Should not happen?`                                         |
+| `commands/fcoverage/config.rs`             | 195  | `TODO: Consider whether blacklist is "filtering"...`               |
+| `commands/fcoverage/fcoverage.rs`          | 523  | `keep_temp = false` (dead code)                                    |
+| `commands/lengths/lengths.rs`              | 355  | `keep_temp = false` (dead code)                                    |
+| `commands/midpoints/counting_by_group.rs`  | 335  | `TODO: Test!!`                                                     |
+| `commands/midpoints/midpoints.rs`          | 267  | `keep_temp = false` (dead code)                                    |
+| `commands/bam_to_frag/bam_to_frag.rs`      | 259  | `TODO: Consider tiling...to decrease memory`                       |
+| `commands/cli_common.rs`                   | 274  | `TODO: ...add window-based overlap variants`                       |
+| `commands/cli_common.rs`                   | 358  | `TODO: Standardize whether lists should be comma-sep or space-sep` |
+| `commands/cli_common.rs`                   | 549  | `TODO: Is "nearest" clear enough...`                               |
