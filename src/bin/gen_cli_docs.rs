@@ -180,7 +180,42 @@ fn command_help_text(root_command: &clap::Command, command_name: &str) -> Result
     command
         .write_long_help(&mut bytes)
         .with_context(|| format!("rendering long help for {}", command_name))?;
-    String::from_utf8(bytes).context("help text is not valid UTF-8")
+    let help_text = String::from_utf8(bytes).context("help text is not valid UTF-8")?;
+    Ok(normalize_help_text_for_docs(&help_text))
+}
+
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
+fn normalize_help_text_for_docs(help_text: &str) -> String {
+    // Clap expands `default_value_t` before rendering help text. For options like
+    // `--n-threads`, that makes generated docs depend on the machine that ran the
+    // generator, which breaks CI drift checks. Normalize those host-dependent
+    // defaults to a stable docs-only label.
+    let mut normalized_lines = Vec::with_capacity(help_text.lines().count());
+    let mut in_auto_threads_option = false;
+
+    for line in help_text.lines() {
+        if is_option_signature_line(line) {
+            in_auto_threads_option = line.contains("--n-threads");
+            normalized_lines.push(line.to_string());
+            continue;
+        }
+
+        let trimmed_line = line.trim_start();
+        if in_auto_threads_option && is_default_value_line(trimmed_line) {
+            let indentation = &line[..line.len() - trimmed_line.len()];
+            normalized_lines.push(format!("{indentation}[default: auto]"));
+            continue;
+        }
+
+        normalized_lines.push(line.to_string());
+    }
+
+    normalized_lines.join("\n")
+}
+
+#[cfg(all(feature = "cli", feature = "docs_gen"))]
+fn is_default_value_line(line: &str) -> bool {
+    line.starts_with("[default: ") && line.ends_with(']')
 }
 
 #[cfg(all(feature = "cli", feature = "docs_gen"))]
