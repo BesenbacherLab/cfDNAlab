@@ -669,7 +669,8 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn bins_applied_when_no_hit_sets_no_near_labels() -> Result<()> {
-        // Arrange: chromosome present in near index but window falls outside direction/edge filter, distance_max unset
+        // Arrange: chromosome present in near index but window falls outside direction/edge filter.
+        // Current behavior keeps the window unchanged when `distance_max` is unset.
         let intervals = vec![NearInterval {
             start: 0,
             end: 10,
@@ -694,12 +695,13 @@ mod tests_prepare_windows_near {
             CoordinateSet::Resized,
         );
 
-        // Assert: kept window with [NONE]/[NO-NEAR] because distance_max is None
+        // Assert: a direction mismatch is not the same as "no near intervals on this chromosome".
+        // The documented contract is to keep the window and leave near-derived labels empty.
         assert_eq!(result.len(), 1);
         let tuple = &result[0].label_tuples[0];
-        assert_eq!(tuple.near_side.as_deref(), Some("[NONE]"));
-        assert_eq!(tuple.near_name.as_deref(), Some("[NONE]"));
-        assert_eq!(tuple.bin.as_deref(), Some("[NO-NEAR]"));
+        assert_eq!(tuple.near_side, None);
+        assert_eq!(tuple.near_name, None);
+        assert_eq!(tuple.bin, None);
         Ok(())
     }
 
@@ -1335,7 +1337,9 @@ mod tests_prepare_windows_near {
 
     #[test]
     fn left_edge_vs_right_edge_asymmetry() {
-        // Arrange: window nearer right edge; left/right modes should differ
+        // Arrange: non-overlapping downstream window. Left/right modes should differ.
+        // Overlaps are defined to return distance 0 regardless of edge choice, so the
+        // window must sit fully outside the interval to exercise edge asymmetry.
         let intervals = vec![NearInterval {
             start: 0,
             end: 100,
@@ -1353,8 +1357,8 @@ mod tests_prepare_windows_near {
 
         // Act
         let left = nearest_edge_distance(
-            90,
-            95,
+            105,
+            110,
             &mut chrom_left,
             &NearEdge::Left,
             &NearDirection::Both,
@@ -1362,8 +1366,8 @@ mod tests_prepare_windows_near {
         )
         .expect("left hit");
         let right = nearest_edge_distance(
-            90,
-            95,
+            105,
+            110,
             &mut chrom_right,
             &NearEdge::Right,
             &NearDirection::Both,
@@ -1371,14 +1375,16 @@ mod tests_prepare_windows_near {
         )
         .expect("right hit");
 
-        // Assert: left edge distance is far, right edge is close
+        // Assert: left edge distance is far, right edge is close.
+        // Left edge at 0 -> nearest window edge is 105, so +105.
+        // Right edge at 100 -> nearest window edge is 105, so +5.
         if let NearestResult::Single(NearestDistance { distance, .. }) = left {
-            assert_eq!(distance, 90);
+            assert_eq!(distance, 105);
         } else {
             panic!("left edge expected single hit");
         }
         if let NearestResult::Single(NearestDistance { distance, .. }) = right {
-            assert_eq!(distance, -5);
+            assert_eq!(distance, 5);
         } else {
             panic!("right edge expected single hit");
         }

@@ -76,9 +76,9 @@ pub fn parse_distance_bins(specs: &[String]) -> Result<DistanceBins> {
             DistanceExpr::Ge(num.parse::<i32>().context("Parsing >=N")?)
         } else if let Some(num) = expr.strip_prefix('>') {
             DistanceExpr::Gt(num.parse::<i32>().context("Parsing >N")?)
-        } else if let Some((a, b)) = expr.split_once('-') {
-            let a = a.trim().parse::<i32>().context("Parsing range A-B (A)")?;
-            let b = b.trim().parse::<i32>().context("Parsing range A-B (B)")?;
+        } else if let Some((range_start, range_end)) = parse_distance_range_bounds(expr)? {
+            let a = range_start;
+            let b = range_end;
             if b < a {
                 bail!(
                     "Invalid distance range '{}': upper bound < lower bound",
@@ -96,6 +96,49 @@ pub fn parse_distance_bins(specs: &[String]) -> Result<DistanceBins> {
         });
     }
     Ok(DistanceBins { rules })
+}
+
+/// Parse a distance range expression `A-B` into two signed bounds.
+///
+/// Accepted shapes:
+/// - `x-y`
+/// - `-x-y`
+/// - `x--y`
+/// - `-x--y`
+///
+/// Anything else is rejected so the grammar stays obvious when reading the code.
+fn parse_distance_range_bounds(expr: &str) -> Result<Option<(i32, i32)>> {
+    let parts: Vec<&str> = expr.split('-').collect();
+
+    let (lower_text, upper_text, lower_negative, upper_negative) = match parts.as_slice() {
+        [lower, upper] => (*lower, *upper, false, false),
+        ["", lower, upper] => (*lower, *upper, true, false),
+        [lower, "", upper] => (*lower, *upper, false, true),
+        ["", lower, "", upper] => (*lower, *upper, true, true),
+        _ => return Ok(None),
+    };
+
+    let lower_magnitude = lower_text
+        .trim()
+        .parse::<i32>()
+        .context("Parsing range A-B (A)")?;
+    let upper_magnitude = upper_text
+        .trim()
+        .parse::<i32>()
+        .context("Parsing range A-B (B)")?;
+
+    let lower_bound = if lower_negative {
+        -lower_magnitude
+    } else {
+        lower_magnitude
+    };
+    let upper_bound = if upper_negative {
+        -upper_magnitude
+    } else {
+        upper_magnitude
+    };
+
+    Ok(Some((lower_bound, upper_bound)))
 }
 
 /* Parse score filters */
