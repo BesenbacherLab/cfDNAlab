@@ -17,6 +17,20 @@ fn creates_valid_half_open_interval_and_reports_bounds() -> anyhow::Result<()> {
 }
 
 #[test]
+fn converts_tuple_bounds_with_try_from() -> anyhow::Result<()> {
+    // Arrange
+    let bounds = (100_u32, 125_u32);
+
+    // Act
+    let interval = Interval::try_from(bounds)?;
+
+    // Assert
+    assert_eq!(interval.start(), bounds.0);
+    assert_eq!(interval.end(), bounds.1);
+    Ok(())
+}
+
+#[test]
 fn rejects_empty_interval_when_start_equals_end() {
     // Arrange
     let coordinate = 42_u32;

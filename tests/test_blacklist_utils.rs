@@ -1,51 +1,77 @@
 #[cfg(test)]
 mod tests_merge_intervals {
+    use cfdnalab::shared::interval::Interval;
     use cfdnalab::shared::blacklist::load::merge_intervals;
 
     #[test]
-    fn empty_input() {
-        let ivs: Vec<(u64, u64)> = vec![];
-        assert!(merge_intervals(ivs).is_empty());
+    fn empty_input() -> anyhow::Result<()> {
+        let ivs: Vec<Interval<u64>> = vec![];
+        assert!(merge_intervals(ivs)?.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn single_interval() {
-        let ivs = vec![(100, 200)];
-        assert_eq!(merge_intervals(ivs), vec![(100, 200)]);
+    fn single_interval() -> anyhow::Result<()> {
+        let ivs = vec![Interval::new(100, 200)?];
+        assert_eq!(merge_intervals(ivs)?, vec![Interval::new(100, 200)?]);
+        Ok(())
     }
 
     #[test]
-    fn already_disjoint() {
-        let ivs = vec![(10, 20), (30, 40), (50, 60)];
+    fn already_disjoint() -> anyhow::Result<()> {
+        let ivs = vec![
+            Interval::new(10, 20)?,
+            Interval::new(30, 40)?,
+            Interval::new(50, 60)?,
+        ];
         assert_eq!(
-            merge_intervals(ivs.clone()),
+            merge_intervals(ivs.clone())?,
             ivs, // should stay exactly the same
         );
+        Ok(())
     }
 
     #[test]
-    fn overlapping_intervals() {
+    fn overlapping_intervals() -> anyhow::Result<()> {
         // (10, 25) and (20, 40) overlap; (50, 55) is separate
-        let ivs = vec![(10, 25), (20, 40), (50, 55)];
-        assert_eq!(merge_intervals(ivs), vec![(10, 40), (50, 55)],);
+        let ivs = vec![
+            Interval::new(10, 25)?,
+            Interval::new(20, 40)?,
+            Interval::new(50, 55)?,
+        ];
+        assert_eq!(
+            merge_intervals(ivs)?,
+            vec![Interval::new(10, 40)?, Interval::new(50, 55)?],
+        );
+        Ok(())
     }
 
     #[test]
-    fn touching_intervals() {
+    fn touching_intervals() -> anyhow::Result<()> {
         // Adjacent intervals (end == start) must be coalesced
-        let ivs = vec![(0, 10), (10, 20), (20, 30)];
-        assert_eq!(merge_intervals(ivs), vec![(0, 30)],);
+        let ivs = vec![
+            Interval::new(0, 10)?,
+            Interval::new(10, 20)?,
+            Interval::new(20, 30)?,
+        ];
+        assert_eq!(merge_intervals(ivs)?, vec![Interval::new(0, 30)?]);
+        Ok(())
     }
 
     #[test]
-    fn chain_of_overlaps() {
+    fn chain_of_overlaps() -> anyhow::Result<()> {
         // A -> B -> C where each overlaps the next
-        let ivs = vec![(1, 5), (4, 8), (7, 12)];
-        assert_eq!(merge_intervals(ivs), vec![(1, 12)],);
+        let ivs = vec![
+            Interval::new(1, 5)?,
+            Interval::new(4, 8)?,
+            Interval::new(7, 12)?,
+        ];
+        assert_eq!(merge_intervals(ivs)?, vec![Interval::new(1, 12)?]);
+        Ok(())
     }
 
     #[test]
-    fn mixed_sizes_and_overlaps() {
+    fn mixed_sizes_and_overlaps() -> anyhow::Result<()> {
         // Mix of single-base and larger intervals, some overlapping/touching
         //
         // Layout (sorted by start):
@@ -56,18 +82,24 @@ mod tests_merge_intervals {
         //   (155,156)      – inside previous -> should merge into (150,160)
         //   (200,201)      – single-base, isolated
         let ivs = vec![
-            (5, 6),
-            (10, 100),
-            (100, 101),
-            (150, 160),
-            (155, 156),
-            (200, 201),
+            Interval::new(5, 6)?,
+            Interval::new(10, 100)?,
+            Interval::new(100, 101)?,
+            Interval::new(150, 160)?,
+            Interval::new(155, 156)?,
+            Interval::new(200, 201)?,
         ];
 
         assert_eq!(
-            merge_intervals(ivs),
-            vec![(5, 6), (10, 101), (150, 160), (200, 201)],
+            merge_intervals(ivs)?,
+            vec![
+                Interval::new(5, 6)?,
+                Interval::new(10, 101)?,
+                Interval::new(150, 160)?,
+                Interval::new(200, 201)?,
+            ],
         );
+        Ok(())
     }
 }
 

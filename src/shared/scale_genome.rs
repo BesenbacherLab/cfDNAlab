@@ -73,12 +73,8 @@ pub fn compute_window_scaling_over_overlap(
     scaling_bin_indices: &[usize],
     scaling_chr: &[(u64, u64, f32)],
 ) -> Result<Vec<(usize, f64, f64)>> {
-    let fragment_start_bp = count_overlaps.interval_start;
-    let fragment_end_bp = count_overlaps.interval_end;
-
-    if fragment_end_bp <= fragment_start_bp {
-        bail!("count_overlaps.interval_start >= interval_end (empty fragment span)");
-    }
+    let fragment_start_bp = count_overlaps.query_start();
+    let fragment_end_bp = count_overlaps.query_end();
     if scaling_bin_indices.is_empty() {
         bail!("scaling_bin_indices is empty but scaling was requested");
     }
@@ -86,8 +82,8 @@ pub fn compute_window_scaling_over_overlap(
     let mut per_window_scaling = Vec::with_capacity(count_overlaps.windows.len());
 
     for window in &count_overlaps.windows {
-        let window_start_bp = window.win_start;
-        let window_end_bp = window.win_end;
+        let window_start_bp = window.start();
+        let window_end_bp = window.end();
 
         let overlap_start_bp = fragment_start_bp.max(window_start_bp);
         let overlap_end_bp = fragment_end_bp.min(window_end_bp);
@@ -122,12 +118,8 @@ pub fn compute_window_scaling_over_fragment(
     scaling_bin_indices: &[usize],
     scaling_chr: &[(u64, u64, f32)],
 ) -> Result<Vec<(usize, f64, f64)>> {
-    let fragment_start_bp = count_overlaps.interval_start;
-    let fragment_end_bp = count_overlaps.interval_end;
-
-    if fragment_end_bp <= fragment_start_bp {
-        bail!("count_overlaps.interval_start >= interval_end (empty fragment span)");
-    }
+    let fragment_start_bp = count_overlaps.query_start();
+    let fragment_end_bp = count_overlaps.query_end();
     if scaling_bin_indices.is_empty() {
         bail!("scaling_bin_indices is empty but scaling was requested");
     }
@@ -143,7 +135,7 @@ pub fn compute_window_scaling_over_fragment(
     // Emit the same value for every window that actually overlaps the fragment.
     let mut per_window_scaling = Vec::with_capacity(count_overlaps.windows.len());
     for window in &count_overlaps.windows {
-        if window.win_end > fragment_start_bp && window.win_start < fragment_end_bp {
+        if window.end() > fragment_start_bp && window.start() < fragment_end_bp {
             per_window_scaling.push((window.idx, avg_over_fragment, 1.0));
         }
     }
