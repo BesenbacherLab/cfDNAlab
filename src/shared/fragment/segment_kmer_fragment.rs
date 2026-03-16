@@ -215,13 +215,13 @@ fn push_merged(segments: &mut Vec<(u32, u32)>, segment: (u32, u32)) {
         return;
     }
 
-    if let Some(last) = segments.last_mut() {
-        if last.1 > segment.0 {
-            if segment.1 > last.1 {
-                last.1 = segment.1;
-            }
-            return;
+    if let Some(last) = segments.last_mut()
+        && last.1 > segment.0
+    {
+        if segment.1 > last.1 {
+            last.1 = segment.1;
         }
+        return;
     }
 
     // Segments that just touch get appended as-is so we keep hard boundaries around insertions.
@@ -360,19 +360,21 @@ pub fn collect_fragment_with_kmer_segments(
     // gap becomes its own segment so callers can still opt-in to counting within it.
     if include_inter_mate_gap && forward.end < reverse.pos {
         let mut left_extended = false;
-        if let Some(last) = forward_segments.last_mut() {
-            if last.1 == forward.end && !forward.trailing_insertion {
-                last.1 = reverse.pos;
-                left_extended = true;
-            }
+        if let Some(last) = forward_segments.last_mut()
+            && last.1 == forward.end
+            && !forward.trailing_insertion
+        {
+            last.1 = reverse.pos;
+            left_extended = true;
         }
 
         let mut right_extended = false;
-        if let Some(first) = reverse_segments.first_mut() {
-            if first.0 == reverse.pos && !reverse.leading_insertion {
-                first.0 = forward.end;
-                right_extended = true;
-            }
+        if let Some(first) = reverse_segments.first_mut()
+            && first.0 == reverse.pos
+            && !reverse.leading_insertion
+        {
+            first.0 = forward.end;
+            right_extended = true;
         }
 
         if !left_extended && !right_extended {
@@ -404,7 +406,7 @@ pub fn collect_fragment_with_kmer_segments(
 
     let mut candidates: Vec<(u32, u32)> = forward_segments
         .into_iter()
-        .chain(reverse_segments.into_iter())
+        .chain(reverse_segments)
         .filter_map(|(s, e)| clip_interval(s, e, trim_start, trim_end))
         .collect();
 
@@ -426,7 +428,7 @@ pub fn collect_fragment_with_kmer_segments(
     }
 
     let mut segments: SmallVec<[(u32, u32); 12]> = SmallVec::with_capacity(merged.len());
-    segments.extend(merged.into_iter());
+    segments.extend(merged);
 
     if segments.is_empty() {
         return None;
@@ -501,7 +503,7 @@ pub fn collect_fragment_with_kmer_segments_from_single_read(
             return None;
         }
 
-        segments.extend(merged.into_iter());
+        segments.extend(merged);
     }
 
     if segments.is_empty() {

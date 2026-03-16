@@ -157,12 +157,12 @@ fn write_positional_dense_matrix(
                 group,
                 offset: *offset,
             };
-            if let Some(decoded) = window_counts.get(&descriptor) {
-                if let Some(k_counts) = decoded.counts.get(&k) {
-                    for (motif, value) in k_counts {
-                        if let Some(&col_idx) = motif_index.get(motif.as_str()) {
-                            array[[window_idx, pos_idx, col_idx]] = *value;
-                        }
+            if let Some(decoded) = window_counts.get(&descriptor)
+                && let Some(k_counts) = decoded.counts.get(&k)
+            {
+                for (motif, value) in k_counts {
+                    if let Some(&col_idx) = motif_index.get(motif.as_str()) {
+                        array[[window_idx, pos_idx, col_idx]] = *value;
                     }
                 }
             }

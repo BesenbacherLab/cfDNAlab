@@ -69,7 +69,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
         bail!("--ignore-gap cannot be used with --reads-are-fragments");
     }
     let (chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
     let prefix = opt.output_prefix.trim();
 
@@ -220,11 +220,11 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     pb.set_style(
         ProgressStyle::default_bar()
             .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .unwrap(),
+            .expect("hardcoded progress template"),
     );
 
     // Configure global thread‐pool size
-    init_global_pool(opt.ioc.n_threads as usize)?;
+    init_global_pool(opt.ioc.n_threads)?;
 
     let mut global_counter = FCoverageCounters::default();
 
@@ -423,14 +423,14 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
                 let final_path = opt.ioc.output_dir.join(match opt.per_window {
                     CoverageWindowAction::Average => final_avg_name.as_str(),
                     CoverageWindowAction::Total => final_total_name.as_str(),
-                    _ => unreachable!(),
+                    _ => bail!("unexpected per-window mode for aggregate fcoverage output"),
                 });
 
                 // Header value-column name
                 let value_col = match opt.per_window {
                     CoverageWindowAction::Average => "avg_coverage",
                     CoverageWindowAction::Total => "total_coverage",
-                    _ => unreachable!(),
+                    _ => bail!("unexpected per-window mode for aggregate fcoverage output"),
                 };
 
                 let header = format!(
@@ -476,7 +476,11 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
                                 match opt.per_window {
                                     CoverageWindowAction::Average => final_avg_name.as_str(),
                                     CoverageWindowAction::Total => final_total_name.as_str(),
-                                    _ => unreachable!(),
+                                    _ => {
+                                        bail!(
+                                            "unexpected per-window mode for aligned aggregate fcoverage output"
+                                        )
+                                    }
                                 },
                                 &header,
                             )?;
@@ -495,7 +499,12 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
                                     .contigs
                                     .get(chr)
                                     .map(|&(_, len)| len as u64)
-                                    .expect("missing contig length");
+                                    .ok_or_else(|| {
+                                        anyhow::anyhow!(
+                                            "Chromosome '{}' not found in contig map",
+                                            chr
+                                        )
+                                    })?;
                                 reduce_aggregates_by_size_with_cross_index_for_chr(
                                     chr,
                                     &temp_dir,
@@ -510,7 +519,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
                             w.flush()?;
                         }
                     }
-                    _ => unreachable!(),
+                    _ => bail!("unexpected window specification for aggregate fcoverage output"),
                 }
 
                 final_path
@@ -532,7 +541,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     } else {
         eprintln!("kept temp tiles in {}", temp_dir.display());
     }
-    println!("");
+    println!();
     println!("Statistics");
     println!("----------");
     println!(
@@ -562,14 +571,12 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
             gc_fail_action, global_counter.gc_failed_fragments
         );
     }
-    if opt.gc.gc_tag.is_some() {
-        if global_counter.gc_out_of_range_tags > 0 {
-            println!(
-                "  GC tag values outside [0, {:.0}] treated as invalid: {}",
-                crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
-                global_counter.gc_out_of_range_tags
-            );
-        }
+    if opt.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
+        println!(
+            "  GC tag values outside [0, {:.0}] treated as invalid: {}",
+            crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
+            global_counter.gc_out_of_range_tags
+        );
     }
     println!(
         "  Fragments counted one or more times: {}",
@@ -618,13 +625,13 @@ fn process_tile(
     // Adapt the fetch coordinates to the present windows (*in windowed mode!*)
     // When no windows are present, skip this tile
     let Some((fetch_from, fetch_to)) =
-        adapt_fetch_to_extreme_windows(&tile, tile_window_span, &mode, chrom_len as u32)
+        adapt_fetch_to_extreme_windows(tile, tile_window_span, &mode, chrom_len as u32)
     else {
         return Ok(counter);
     };
 
     reader
-        .fetch((tile.tid as i32, fetch_from as i64, fetch_to as i64))
+        .fetch((tile.tid, fetch_from, fetch_to))
         .context(format!("fetch {} {}-{}", &tile.chr, fetch_from, fetch_to))?;
 
     // Prepare CP for tile core length
@@ -736,7 +743,7 @@ fn process_tile(
             let was_counted = add_fragment_clipped_to_core(
                 &mut cp,
                 &fragment,
-                gc_weight as f32,
+                gc_weight,
                 tile.core_start,
                 tile.core_end,
             )?;
@@ -768,10 +775,10 @@ fn process_tile(
     cp.finalize_coverage(true);
 
     // Apply per-bin scaling (in-place)
-    if !scaling_chr.is_empty() {
-        if let Some(cov_mut) = cp.coverage_mut() {
-            apply_scaling_to_coverage_in_place(cov_mut, tile.core_start, scaling_chr);
-        }
+    if !scaling_chr.is_empty()
+        && let Some(cov_mut) = cp.coverage_mut()
+    {
+        apply_scaling_to_coverage_in_place(cov_mut, tile.core_start, scaling_chr);
     }
 
     // Get counters from iterator
@@ -785,7 +792,7 @@ fn process_tile(
         } => {
             // Add blacklist late and clipped to the tile core to minimize memory
             // Use binary search to jump to the first overlapping interval
-            add_clipped_blacklist_to_cp(&mut cp, &tile, !blacklist_chr.is_empty(), blacklist_chr)?;
+            add_clipped_blacklist_to_cp(&mut cp, tile, !blacklist_chr.is_empty(), blacklist_chr)?;
 
             // Prepare compressed writer (zstd) for this tile
             let mut w = open_zstd_auto_writer(&out_path, 3, None)?;
@@ -869,7 +876,7 @@ fn process_tile(
             cross_idx_out,
         } => {
             // Add blacklist (clipped) and build indexes once
-            add_clipped_blacklist_to_cp(&mut cp, &tile, masked, blacklist_chr)?;
+            add_clipped_blacklist_to_cp(&mut cp, tile, masked, blacklist_chr)?;
             cp.build_indexes(true)?;
 
             // Borrow indexes and mask once
@@ -936,7 +943,7 @@ fn process_tile(
         } => {
             // Add blacklist late and clipped to the tile core to minimize memory
             // Use binary search to jump to the first overlapping interval
-            add_clipped_blacklist_to_cp(&mut cp, &tile, masked, blacklist_chr)?;
+            add_clipped_blacklist_to_cp(&mut cp, tile, masked, blacklist_chr)?;
 
             // Build prefix-sum indexes for fast per-window queries
             cp.build_indexes(true)?;

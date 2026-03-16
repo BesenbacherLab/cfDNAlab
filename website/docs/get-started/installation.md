@@ -12,7 +12,7 @@ conda activate cfdnalab
 ## Build from GitHub
 
 ```bash
-cargo install --git https://github.com/ludvigolsen/cfDNAlab --release --features cli,plotters
+cargo install --git https://github.com/BesenbacherLab/cfDNAlab --release --features cli,plotters
 ```
 
 Verify installation:

@@ -73,15 +73,15 @@ pub fn render_svg(results: &[LengthVisualization], config: &VizConfig) -> String
             config.bases.as_str(),
             config.mismatch_bases_from.as_str()
         );
-        if let Some(kmer_sizes) = &config.kmer_sizes {
-            if !kmer_sizes.is_empty() {
-                let list = kmer_sizes
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",");
-                write!(header, " | k-mer-sizes={}", list).ok();
-            }
+        if let Some(kmer_sizes) = &config.kmer_sizes
+            && !kmer_sizes.is_empty()
+        {
+            let list = kmer_sizes
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            write!(header, " | k-mer-sizes={}", list).ok();
         }
         writeln!(
             svg,

@@ -440,7 +440,7 @@ impl Coverage {
             let pa = self.psum_allowed.as_ref().unwrap();
             let cnt = self.psum_allowed_count.as_ref().unwrap();
             let sum = pa[b] - pa[a];
-            let n_ok = (cnt[b] - cnt[a]) as u32;
+            let n_ok = cnt[b] - cnt[a];
             if n_ok == 0 {
                 return Ok(0.0);
             }
@@ -544,7 +544,7 @@ impl Coverage {
                 let a = a as usize;
                 let b = b as usize;
                 let sum = pa[b] - pa[a];
-                let n_ok = (cnt[b] - cnt[a]) as u32;
+                let n_ok = cnt[b] - cnt[a];
                 if n_ok == 0 {
                     0.0
                 } else {

@@ -237,10 +237,10 @@ where
                 Ok(InputItem::Fragment(f)) => {
                     // Fragment already assembled upstream
                     self.counters.inc_incoming_fragments();
-                    if let Some(accept_fragment) = &self.fragment_filter {
-                        if !accept_fragment(&f) {
-                            continue;
-                        }
+                    if let Some(accept_fragment) = &self.fragment_filter
+                        && !accept_fragment(&f)
+                    {
+                        continue;
                     }
                     self.counters.inc_yielded_fragments();
                     return Some(Ok(f));
@@ -249,10 +249,10 @@ where
                     // Count every incoming BAM record
                     self.counters.inc_incoming_reads();
                     // Apply include_read if configured
-                    if let Some(pred) = &self.bam_include_read {
-                        if !pred(&rec) {
-                            continue;
-                        }
+                    if let Some(pred) = &self.bam_include_read
+                        && !pred(&rec)
+                    {
+                        continue;
                     }
                     // Accepted read (by initial flags)
                     self.counters.inc_accepted_reads(rec.is_reverse());
@@ -271,10 +271,10 @@ where
                         let frag_opt = map_frag(&mapped);
                         if let Some(frag) = frag_opt {
                             self.counters.inc_produced_fragments();
-                            if let Some(accept_fragment) = &self.fragment_filter {
-                                if !accept_fragment(&frag) {
-                                    continue;
-                                }
+                            if let Some(accept_fragment) = &self.fragment_filter
+                                && !accept_fragment(&frag)
+                            {
+                                continue;
                             }
                             self.counters.inc_yielded_fragments();
                             return Some(Ok(frag));
@@ -291,10 +291,10 @@ where
                         };
                         if let Some(frag) = pairer.pair(&read, &mate) {
                             self.counters.inc_produced_fragments();
-                            if let Some(accept_fragment) = &self.fragment_filter {
-                                if !accept_fragment(&frag) {
-                                    continue;
-                                }
+                            if let Some(accept_fragment) = &self.fragment_filter
+                                && !accept_fragment(&frag)
+                            {
+                                continue;
                             }
                             self.counters.inc_yielded_fragments();
                             return Some(Ok(frag));
@@ -538,8 +538,7 @@ where
     .with_fragment_filter(fragment_filter);
 
     if unpaired {
-        adapter = adapter
-            .with_bam_single_fragment_from_read(|read| collect_fragment_from_single_read(read));
+        adapter = adapter.with_bam_single_fragment_from_read(collect_fragment_from_single_read);
     }
 
     adapter

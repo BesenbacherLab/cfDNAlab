@@ -16,7 +16,7 @@ pub fn default_include_read_paired_end(
         || rec.is_duplicate()
         || rec.is_quality_check_failed()
         || (require_proper_pair && !rec.is_proper_pair())
-        || rec.mapq() < min_mapq) as bool
+        || rec.mapq() < min_mapq)
 }
 
 /// Whether to include the read or continue (unpaired sequencing where each read is a fragment).
@@ -26,7 +26,7 @@ pub fn default_include_read_unpaired(rec: &Record, min_mapq: u8) -> bool {
         || rec.is_supplementary()
         || rec.is_duplicate()
         || rec.is_quality_check_failed()
-        || rec.mapq() < min_mapq) as bool
+        || rec.mapq() < min_mapq)
 }
 
 /// Extract 'NM' aux tag from read as u16
@@ -71,8 +71,6 @@ pub fn read_md_tag(rec: &Record) -> Option<String> {
         _ => None,
     }
 }
-
-// TODO: Requires testing!
 
 /// Parse an MD tag string into mismatch positions
 ///

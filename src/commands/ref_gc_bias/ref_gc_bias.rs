@@ -133,7 +133,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     pb.set_style(
         ProgressStyle::default_bar()
             .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .unwrap(),
+            .expect("hardcoded progress template"),
     );
 
     let windows_lookup = windows_map.as_ref();
@@ -149,7 +149,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     ));
 
     // Configure global thread‐pool size
-    init_global_pool(opt.n_threads as usize)?;
+    init_global_pool(opt.n_threads)?;
 
     let tile_window_spans_for_threads = tile_window_spans.clone();
 
@@ -293,7 +293,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         &global_grid,
         &unobservable_support_mask,
         &outlier_support_mask,
-        &*gc_percent_widths,
+        &gc_percent_widths,
         opt.fragment_lengths.min_fragment_length as usize,
         opt.fragment_lengths.max_fragment_length as usize,
         opt.end_offset,
@@ -367,7 +367,7 @@ fn process_tile(
 ) -> Result<(GCCounts, u64)> {
     let core_start = tile.core_start as u64;
     let core_end = tile.core_end as u64;
-    if core_start >= core_end || core_start as u64 >= chrom_len {
+    if core_start >= core_end || core_start >= chrom_len {
         let empty = GCCounts::new(
             opt.fragment_lengths.min_fragment_length as usize,
             opt.fragment_lengths.max_fragment_length as usize,
@@ -386,7 +386,7 @@ fn process_tile(
         &tile.chr,
         seq_start as usize..seq_end as usize,
     )?;
-    apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals, seq_start);
+    apply_blacklist_mask_to_seq(&mut seq_bytes, blacklist_intervals, seq_start);
     let gc_prefixes = build_gc_prefixes(&seq_bytes);
 
     // Delete seq_bytes from memory

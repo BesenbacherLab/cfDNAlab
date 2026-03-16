@@ -176,7 +176,7 @@ impl ReduceState {
         self.merge_scaled(&other.scaled_sum)?;
         self.scaled_weight += other.scaled_weight;
         self.merge_counters(other.counters);
-        self.crossing_files.extend(other.crossing_files.drain(..));
+        self.crossing_files.append(&mut other.crossing_files);
 
         Ok(self)
     }
@@ -188,7 +188,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
     let (chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
     let mut intermediate_saver =
         IntermediateFileSaver::new(opt.save_intermediates, opt.ioc.output_dir.clone());
@@ -270,15 +270,15 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     let tile_window_spans_for_threads = tile_window_spans.clone();
 
     // Configure global thread‐pool size
-    init_global_pool(opt.ioc.n_threads as usize)?;
+    init_global_pool(opt.ioc.n_threads)?;
 
     println!("Start: Counting per tile");
 
     pb.set_position(0);
 
     let zero_counts = GCCounts::new(
-        reference_metadata.min_fragment_length as usize,
-        reference_metadata.max_fragment_length as usize,
+        reference_metadata.min_fragment_length,
+        reference_metadata.max_fragment_length,
         reference_metadata.end_offset as usize,
         (0, 0),
     )?;
@@ -345,7 +345,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         let (cross_sum, cross_weight) = stream_crossing_files(
             reduce_state.crossing_files.clone(),
             &zero_counts,
-            &opt,
+            opt,
             avg_window_span,
         )?;
         reduce_state.scaled_sum.merge_from(&cross_sum)?;
@@ -653,7 +653,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         length_bin_frequencies.clone(),
         &reference_metadata,
     )?;
-    correction_pkg.write_npz(&opt.ioc.output_dir.join("gc_bias_correction.npz"))?;
+    correction_pkg.write_npz(opt.ioc.output_dir.join("gc_bias_correction.npz"))?;
 
     // Plot the avg. gc-bias across lengths for quick QC
     #[cfg(feature = "plotters")]
@@ -674,7 +674,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         )?;
     }
 
-    println!("");
+    println!();
     println!("Statistics");
     println!("----------");
 
@@ -775,7 +775,7 @@ fn process_tile(
         // Blacklist GC prefixes to avoid using blacklist-overlapping fragments in bias-estimation
         // NOTE: Downstream commands don't blacklist prefixes so it's possible to correct such fragments
         // using their full GC context
-        apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals, seq_start);
+        apply_blacklist_mask_to_seq(&mut seq_bytes, blacklist_intervals, seq_start);
         build_gc_prefixes(&seq_bytes)
     };
 
@@ -1319,7 +1319,7 @@ where
         return None;
     }
     out /= mean;
-    return Some(out);
+    Some(out)
 }
 
 /// Invert elements in an array (x) to `1 / x`, keeping 0s as 0.
@@ -1339,8 +1339,8 @@ pub struct IntermediateFileSaver {
 impl IntermediateFileSaver {
     pub fn new(save_intermediates: bool, out_dir: PathBuf) -> Self {
         IntermediateFileSaver {
-            save_intermediates: save_intermediates,
-            out_dir: out_dir,
+            save_intermediates,
+            out_dir,
             previously_saved: 0,
         }
     }
@@ -1357,7 +1357,7 @@ impl IntermediateFileSaver {
         if self.save_intermediates {
             println!("Intermediate file: Saving {}", msg_tag);
             write_npy(
-                &self.out_dir.join(format!(
+                self.out_dir.join(format!(
                     "gc_bias.{}.{}.npy",
                     file_tag, self.previously_saved
                 )),

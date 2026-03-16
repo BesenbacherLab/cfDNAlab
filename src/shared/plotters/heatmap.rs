@@ -546,29 +546,29 @@ where
     let x_limits = (*x_edges.first().unwrap(), *x_edges.last().unwrap());
     let y_limits = (*y_edges.first().unwrap(), *y_edges.last().unwrap());
 
-    if let Some(area) = top_area {
-        if let Some(hist) = x_hist {
-            draw_histogram_top(&area, hist, x_limits)?;
-        }
+    if let Some(area) = top_area
+        && let Some(hist) = x_hist
+    {
+        draw_histogram_top(&area, hist, x_limits)?;
     }
-    if let Some(area) = right_area {
-        if let Some(hist) = y_hist {
-            // Match right histogram height to the heatmap plot box (exclude legend and x-axis area) and tint for debugging
-            let heatmap_plot_h = heatmap_area.dim_in_pixel().1.saturating_sub(
-                LEGEND_HEIGHT + HEATMAP_MARGIN_TOP + HEATMAP_MARGIN_BOTTOM + HEATMAP_X_LABEL_AREA,
-            );
-            let (_, area_h) = area.dim_in_pixel();
-            let top_pad = HEATMAP_MARGIN_TOP;
-            let target_h = heatmap_plot_h.min(area_h.saturating_sub(top_pad));
-            // Carve off a top padding band (kept white) and draw the sidebar just below it without shortening height
-            let (pad_area, rest) = area.split_vertically(top_pad);
-            pad_area.fill(&WHITE)?;
-            let (aligned_area, _) = rest.split_vertically(target_h);
-            if DEBUG_HIST_BACKGROUNDS {
-                aligned_area.fill(&RED)?;
-            }
-            draw_histogram_right(&aligned_area, hist, y_limits)?;
+    if let Some(area) = right_area
+        && let Some(hist) = y_hist
+    {
+        // Match right histogram height to the heatmap plot box (exclude legend and x-axis area) and tint for debugging
+        let heatmap_plot_h = heatmap_area.dim_in_pixel().1.saturating_sub(
+            LEGEND_HEIGHT + HEATMAP_MARGIN_TOP + HEATMAP_MARGIN_BOTTOM + HEATMAP_X_LABEL_AREA,
+        );
+        let (_, area_h) = area.dim_in_pixel();
+        let top_pad = HEATMAP_MARGIN_TOP;
+        let target_h = heatmap_plot_h.min(area_h.saturating_sub(top_pad));
+        // Carve off a top padding band (kept white) and draw the sidebar just below it without shortening height
+        let (pad_area, rest) = area.split_vertically(top_pad);
+        pad_area.fill(&WHITE)?;
+        let (aligned_area, _) = rest.split_vertically(target_h);
+        if DEBUG_HIST_BACKGROUNDS {
+            aligned_area.fill(&RED)?;
         }
+        draw_histogram_right(&aligned_area, hist, y_limits)?;
     }
 
     root_area.present()?;
@@ -674,7 +674,7 @@ where
         .disable_y_mesh()
         .x_labels(0)
         .y_labels(0)
-        .axis_style(&WHITE)
+        .axis_style(WHITE)
         .draw()?;
 
     let bar_style = ShapeStyle {
@@ -726,7 +726,7 @@ where
         .disable_y_mesh()
         .x_labels(0)
         .y_labels(0)
-        .axis_style(&WHITE)
+        .axis_style(WHITE)
         .draw()?;
 
     let bar_style = ShapeStyle {

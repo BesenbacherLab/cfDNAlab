@@ -21,11 +21,13 @@ struct PartialsRow {
 struct PartialsStream {
     reader: BufReader<Box<dyn std::io::Read + Send>>,
     line_buf: String,
+    chr: String,
+    line_number: u64,
     tile_index: u32, // For diagnostics
 }
 
 impl PartialsStream {
-    fn open(path: &std::path::Path, tile_index: u32) -> Result<Self> {
+    fn open(path: &std::path::Path, chr: &str, tile_index: u32) -> Result<Self> {
         let file = std::fs::File::open(path)
             .with_context(|| format!("Opening partials file {}", path.display()))?;
         // Detect zstd by extension; allow plain TSV for tests
@@ -42,6 +44,8 @@ impl PartialsStream {
         Ok(Self {
             reader: BufReader::new(boxed),
             line_buf: String::new(),
+            chr: chr.to_string(),
+            line_number: 0,
             tile_index,
         })
     }
@@ -49,9 +53,17 @@ impl PartialsStream {
     /// Read next row, or Ok(None) on EOF
     fn next_row(&mut self) -> Result<Option<PartialsRow>> {
         self.line_buf.clear();
-        if self.reader.read_line(&mut self.line_buf)? == 0 {
+        let next_line_number = self.line_number + 1;
+        let bytes_read = self.reader.read_line(&mut self.line_buf).with_context(|| {
+            format!(
+                "Reading partials for chromosome '{}' tile {} line {}",
+                self.chr, self.tile_index, next_line_number
+            )
+        })?;
+        if bytes_read == 0 {
             return Ok(None);
         }
+        self.line_number = next_line_number;
         let raw = self.line_buf.trim_end_matches('\n');
         if raw.is_empty() {
             return self.next_row(); // Skip blank lines
@@ -62,24 +74,72 @@ impl PartialsStream {
         //   orig_idx   sum   allowed   blacklisted
         let orig_idx: u64 = cols
             .next()
-            .ok_or_else(|| anyhow::anyhow!("Missing orig_idx in partials"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing orig_idx in partials for chromosome '{}' tile {} line {}",
+                    self.chr,
+                    self.tile_index,
+                    self.line_number
+                )
+            })?
             .parse()
-            .with_context(|| format!("Invalid orig_idx in tile {}", self.tile_index))?;
+            .with_context(|| {
+                format!(
+                    "Invalid orig_idx in chromosome '{}' tile {} line {}",
+                    self.chr, self.tile_index, self.line_number
+                )
+            })?;
         let sum: f64 = cols
             .next()
-            .ok_or_else(|| anyhow::anyhow!("Missing sum in partials"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing sum in partials for chromosome '{}' tile {} line {}",
+                    self.chr,
+                    self.tile_index,
+                    self.line_number
+                )
+            })?
             .parse()
-            .with_context(|| format!("Invalid sum in tile {}", self.tile_index))?;
+            .with_context(|| {
+                format!(
+                    "Invalid sum in chromosome '{}' tile {} line {}",
+                    self.chr, self.tile_index, self.line_number
+                )
+            })?;
         let allowed_positions: u64 = cols
             .next()
-            .ok_or_else(|| anyhow::anyhow!("Missing allowed in partials"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing allowed in partials for chromosome '{}' tile {} line {}",
+                    self.chr,
+                    self.tile_index,
+                    self.line_number
+                )
+            })?
             .parse()
-            .with_context(|| format!("Invalid allowed in tile {}", self.tile_index))?;
+            .with_context(|| {
+                format!(
+                    "Invalid allowed in chromosome '{}' tile {} line {}",
+                    self.chr, self.tile_index, self.line_number
+                )
+            })?;
         let blacklisted_positions: u64 = cols
             .next()
-            .ok_or_else(|| anyhow::anyhow!("Missing blacklisted in partials"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing blacklisted in partials for chromosome '{}' tile {} line {}",
+                    self.chr,
+                    self.tile_index,
+                    self.line_number
+                )
+            })?
             .parse()
-            .with_context(|| format!("Invalid blacklisted in tile {}", self.tile_index))?;
+            .with_context(|| {
+                format!(
+                    "Invalid blacklisted in chromosome '{}' tile {} line {}",
+                    self.chr, self.tile_index, self.line_number
+                )
+            })?;
 
         Ok(Some(PartialsRow {
             orig_idx,
@@ -218,7 +278,7 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
         let Some(partials_path) = &tfs.partials_path else {
             continue;
         };
-        let mut ps = PartialsStream::open(partials_path, *tile_idx)?;
+        let mut ps = PartialsStream::open(partials_path, chr, *tile_idx)?;
         if let Some(row) = ps.next_row()? {
             let stream_id = streams.len();
             streams.push(ps);
@@ -235,7 +295,7 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
     // Emit helper
     let mut emit_idx = |orig_idx: u64, acc: WindowAccum| -> Result<()> {
         let (start, end) = coords_by_idx[orig_idx as usize];
-        let unmasked_span_bp = (end - start) as u64;
+        let unmasked_span_bp = end - start;
         let value = finalize_value(
             acc.sum,
             acc.allowed_positions,
@@ -258,9 +318,13 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
 
     // Merge loop: always take the smallest available orig_idx across streams
     while let Some(Reverse((_, stream_id))) = heap.pop() {
-        let row = current_row[stream_id]
-            .take()
-            .expect("Heap and current_row out of sync");
+        let row = current_row[stream_id].take().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Reducer heap and current_row fell out of sync for chromosome '{}' stream {}",
+                chr,
+                stream_id
+            )
+        })?;
 
         // Accumulate this contribution
         let entry = accum_by_idx.entry(row.orig_idx).or_default();
@@ -271,14 +335,20 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
 
         // If we have collected all expected contributions for this window, emit immediately
         if entry.seen_contributions == expected_for(row.orig_idx) {
-            let done = accum_by_idx.remove(&row.orig_idx).unwrap();
+            let done = accum_by_idx.remove(&row.orig_idx).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Reducer lost accumulated window state for chromosome '{}' orig_idx {}",
+                    chr,
+                    row.orig_idx
+                )
+            })?;
             emit_idx(row.orig_idx, done)?;
         }
 
         // Advance this stream and re-insert into the heap
         if let Some(next_row) = streams[stream_id].next_row()? {
+            let next_key = next_row.orig_idx;
             current_row[stream_id] = Some(next_row);
-            let next_key = current_row[stream_id].as_ref().unwrap().orig_idx;
             heap.push(Reverse((next_key, stream_id)));
         }
     }
@@ -309,11 +379,13 @@ struct SizePartialsRow {
 struct SizePartialsStream {
     reader: BufReader<Box<dyn std::io::Read + Send>>,
     line_buf: String,
+    chr: String,
+    line_number: u64,
     tile_index: u32,
 }
 
 impl SizePartialsStream {
-    fn open(path: &std::path::Path, tile_index: u32) -> Result<Self> {
+    fn open(path: &std::path::Path, chr: &str, tile_index: u32) -> Result<Self> {
         let f = std::fs::File::open(path)
             .with_context(|| format!("Opening partials file {}", path.display()))?;
         let boxed: Box<dyn std::io::Read + Send> = if path
@@ -329,15 +401,25 @@ impl SizePartialsStream {
         Ok(Self {
             reader: BufReader::new(boxed),
             line_buf: String::new(),
-            tile_index: tile_index,
+            chr: chr.to_string(),
+            line_number: 0,
+            tile_index,
         })
     }
 
     fn next_row(&mut self) -> Result<Option<SizePartialsRow>> {
         self.line_buf.clear();
-        if self.reader.read_line(&mut self.line_buf)? == 0 {
+        let next_line_number = self.line_number + 1;
+        let bytes_read = self.reader.read_line(&mut self.line_buf).with_context(|| {
+            format!(
+                "Reading size partials for chromosome '{}' tile {} line {}",
+                self.chr, self.tile_index, next_line_number
+            )
+        })?;
+        if bytes_read == 0 {
             return Ok(None);
         }
+        self.line_number = next_line_number;
         let raw = self.line_buf.trim_end_matches('\n');
         if raw.is_empty() {
             return self.next_row();
@@ -345,29 +427,89 @@ impl SizePartialsStream {
         let mut it = raw.split('\t');
         let start: u64 = it
             .next()
-            .ok_or_else(|| anyhow::anyhow!("Missing start"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing start in size partials for chromosome '{}' tile {} line {}",
+                    self.chr,
+                    self.tile_index,
+                    self.line_number
+                )
+            })?
             .parse()
-            .with_context(|| format!("Invalid start in tile {}", self.tile_index))?;
+            .with_context(|| {
+                format!(
+                    "Invalid start in chromosome '{}' tile {} line {}",
+                    self.chr, self.tile_index, self.line_number
+                )
+            })?;
         let end: u64 = it
             .next()
-            .ok_or_else(|| anyhow::anyhow!("Missing end"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing end in size partials for chromosome '{}' tile {} line {}",
+                    self.chr,
+                    self.tile_index,
+                    self.line_number
+                )
+            })?
             .parse()
-            .with_context(|| format!("Invalid end in tile {}", self.tile_index))?;
+            .with_context(|| {
+                format!(
+                    "Invalid end in chromosome '{}' tile {} line {}",
+                    self.chr, self.tile_index, self.line_number
+                )
+            })?;
         let sum: f64 = it
             .next()
-            .ok_or_else(|| anyhow::anyhow!("Missing sum"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing sum in size partials for chromosome '{}' tile {} line {}",
+                    self.chr,
+                    self.tile_index,
+                    self.line_number
+                )
+            })?
             .parse()
-            .with_context(|| format!("Invalid sum in tile {}", self.tile_index))?;
+            .with_context(|| {
+                format!(
+                    "Invalid sum in chromosome '{}' tile {} line {}",
+                    self.chr, self.tile_index, self.line_number
+                )
+            })?;
         let allowed_positions: u64 = it
             .next()
-            .ok_or_else(|| anyhow::anyhow!("Missing allowed"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing allowed in size partials for chromosome '{}' tile {} line {}",
+                    self.chr,
+                    self.tile_index,
+                    self.line_number
+                )
+            })?
             .parse()
-            .with_context(|| format!("Invalid allowed in tile {}", self.tile_index))?;
+            .with_context(|| {
+                format!(
+                    "Invalid allowed in chromosome '{}' tile {} line {}",
+                    self.chr, self.tile_index, self.line_number
+                )
+            })?;
         let blacklisted_positions: u64 = it
             .next()
-            .ok_or_else(|| anyhow::anyhow!("Missing blacklisted"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing blacklisted in size partials for chromosome '{}' tile {} line {}",
+                    self.chr,
+                    self.tile_index,
+                    self.line_number
+                )
+            })?
             .parse()
-            .with_context(|| format!("Invalid blacklisted in tile {}", self.tile_index))?;
+            .with_context(|| {
+                format!(
+                    "Invalid blacklisted in chromosome '{}' tile {} line {}",
+                    self.chr, self.tile_index, self.line_number
+                )
+            })?;
         Ok(Some(SizePartialsRow {
             start,
             end,
@@ -462,7 +604,7 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
         let Some(partials_path) = &tfs.partials_path else {
             continue;
         };
-        let mut ps = SizePartialsStream::open(partials_path, *tile_idx)?;
+        let mut ps = SizePartialsStream::open(partials_path, chr, *tile_idx)?;
         if let Some(row) = ps.next_row()? {
             let sid = streams.len();
             streams.push(ps);
@@ -478,7 +620,7 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
 
     // Emit helper for one completed bin
     let mut emit_bin = |start: u64, acc: BinAccum, end: u64| -> Result<()> {
-        let unmasked_span_bp = (end - start) as u64;
+        let unmasked_span_bp = end - start;
         debug_assert!(unmasked_span_bp >= 1);
         let value = finalize_value(
             acc.sum,
@@ -502,9 +644,13 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
 
     // K-way merge loop
     while let Some(Reverse((_, sid))) = heap.pop() {
-        let row = current_row[sid]
-            .take()
-            .expect("heap and current_row out of sync");
+        let row = current_row[sid].take().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Reducer heap and current_row fell out of sync for chromosome '{}' stream {}",
+                chr,
+                sid
+            )
+        })?;
 
         let entry = accum_by_start.entry(row.start).or_default();
         entry.sum += row.sum;
@@ -514,7 +660,13 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
 
         // Emit when we have all expected contributions for this bin start
         if entry.seen_contributions == expected_for(row.start) {
-            let done = accum_by_start.remove(&row.start).unwrap();
+            let done = accum_by_start.remove(&row.start).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Reducer lost accumulated size-bin state for chromosome '{}' start {}",
+                    chr,
+                    row.start
+                )
+            })?;
             // Use the end from the last seen row (all rows for a bin share the same [start,end) by construction)
             // Ensure last row is clipped at the chromosome end
             emit_bin(row.start, done, row.end.min(chrom_len))?;
@@ -522,8 +674,8 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
 
         // Advance this stream and push next row if present
         if let Some(next_row) = streams[sid].next_row()? {
+            let next_key = next_row.start;
             current_row[sid] = Some(next_row);
-            let next_key = current_row[sid].as_ref().unwrap().start;
             heap.push(Reverse((next_key, sid)));
         }
     }

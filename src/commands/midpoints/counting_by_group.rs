@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use ndarray::{Array1, ArrayView1, ArrayView3, ShapeBuilder};
 
 /// Count array for fragment coverage across fragment lengths.
@@ -144,7 +144,7 @@ impl ProfileGroupsCounts {
     #[inline]
     pub fn index_of(&self, position: usize, group_idx: usize, length: usize) -> Result<usize> {
         self.check_bounds(position, group_idx, length)?;
-        let len = length as usize;
+        let len = length;
 
         // Map absolute length to bin in O(1) via LUT.
         if len >= self.length_to_bin.len() {
@@ -184,10 +184,8 @@ impl ProfileGroupsCounts {
         length_bin_idx: usize,
     ) -> usize {
         let num_length_bins = self.n_lengths();
-        let idx = group_idx * self.window_size * num_length_bins
-            + position * num_length_bins
-            + length_bin_idx;
-        idx
+
+        group_idx * self.window_size * num_length_bins + position * num_length_bins + length_bin_idx
     }
 
     /// Increment the counter by `1.0` at (`position`, `group_idx`, `length`), if in bounds.
@@ -346,7 +344,10 @@ impl ProfileGroupsCounts {
         let g = self.num_groups;
         let l = self.n_lengths();
         let p = self.window_size;
-        let strides = ((p * l) as usize, 1usize, l as usize);
+        let group_stride = p
+            .checked_mul(l)
+            .expect("group stride overflow for (group, length_bin, position)");
+        let strides = (group_stride, 1usize, l);
         ArrayView3::from_shape((g, l, p).strides(strides), &self.counts)
             .expect("Shape/stride mismatch for (group, length_bin, position)")
     }
@@ -396,7 +397,10 @@ impl ProfileGroupsCounts {
     {
         // Move destination counts behind a Mutex for shared accumulation.
         let acc = Arc::new(Mutex::new(std::mem::take(&mut self.counts)));
-        let dest_len = acc.lock().unwrap().len();
+        let dest_len = acc
+            .lock()
+            .map_err(|poisoned| anyhow!("profile-group accumulator mutex poisoned: {}", poisoned))?
+            .len();
 
         paths.par_iter().try_for_each(|p| -> Result<()> {
             // Read as 1D ndarray
@@ -414,7 +418,13 @@ impl ProfileGroupsCounts {
                 );
             }
             // Accumulate while holding the lock
-            let mut guard = acc.lock().unwrap();
+            let mut guard = acc.lock().map_err(|poisoned| {
+                anyhow!(
+                    "profile-group accumulator mutex poisoned while merging {:?}: {}",
+                    p.as_ref(),
+                    poisoned
+                )
+            })?;
             for (dst, s) in guard.iter_mut().zip(src.iter()) {
                 *dst += *s;
             }
@@ -423,9 +433,11 @@ impl ProfileGroupsCounts {
 
         // Restore the accumulated vector
         self.counts = Arc::try_unwrap(acc)
-            .expect("Accumulator still has multiple references")
+            .map_err(|_| anyhow!("profile-group accumulator still has multiple references"))?
             .into_inner()
-            .expect("Mutex poisoned");
+            .map_err(|poisoned| {
+                anyhow!("profile-group accumulator mutex poisoned: {}", poisoned)
+            })?;
 
         Ok(())
     }

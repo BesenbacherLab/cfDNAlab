@@ -130,8 +130,7 @@ fn sanitize_cli_text(text: &str) -> String {
         let normalized_line = line
             .replace('→', "->")
             .replace('’', "'")
-            .replace('“', "\"")
-            .replace('”', "\"");
+            .replace(['“', '”'], "\"");
 
         if in_block {
             output.push_str("  ");

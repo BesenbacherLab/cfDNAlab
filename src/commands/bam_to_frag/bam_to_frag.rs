@@ -100,7 +100,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
     let (chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let prefix = opt.output_prefix.trim();
     let window_opt = opt.resolve_windows();
 
@@ -168,7 +168,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     }
 
     // Configure global thread‐pool size
-    init_global_pool(opt.ioc.n_threads as usize)?;
+    init_global_pool(opt.ioc.n_threads)?;
 
     if !quiet {
         println!("Start: Converting per chromosome");
@@ -180,7 +180,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
         .par_iter()
         .map(|chr| -> Result<(_, _)> {
             let out = process_chrom(
-                &chr,
+                chr,
                 opt,
                 &temp_dir,
                 windows_map
@@ -262,7 +262,7 @@ fn process_chrom(
             Some(r) => r,
             None => bail!("When GC correction is specified, --ref-2bit must also be specified"),
         };
-        let seq_bytes = read_seq(&ref_2bit, chr)?;
+        let seq_bytes = read_seq(ref_2bit, chr)?;
         Some(build_gc_prefixes(&seq_bytes))
     } else {
         None
@@ -351,7 +351,7 @@ fn process_chrom(
         // Determine blacklist status
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
-            opt.blacklist_strategy.clone(),
+            opt.blacklist_strategy,
             fragment.start.into(),
             fragment.end.into(),
             opt.fragment_lengths.max_fragment_length as u64,
@@ -386,7 +386,7 @@ fn process_chrom(
                 Some(1.0)
             }
             (None, false) => None,
-            (Some(_), false) => unreachable!(),
+            (Some(_), false) => bail!("unexpected GC weight when GC correction is disabled"),
         };
 
         // Find all overlapping scaling-factor bins

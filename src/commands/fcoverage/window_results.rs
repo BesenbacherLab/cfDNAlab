@@ -98,7 +98,7 @@ pub fn compute_window_outputs(
     }
 
     // No windows (None or empty) -> positional coverage for entire sequence
-    if windows.map_or(true, |w| w.is_empty()) {
+    if windows.is_none_or(|w| w.is_empty()) {
         let cov = cp.coverage_in_window(0, cp.length(), nan_blacklisted)?;
         return Ok(CoverageOutput::WholePositional {
             start: 0,

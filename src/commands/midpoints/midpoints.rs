@@ -32,7 +32,7 @@ use crate::{
         },
     },
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray_npy::write_npy;
@@ -67,7 +67,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
     let (chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.ioc.bam.as_path())?;
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let prefix = opt.output_prefix.trim();
 
     // Create output directory
@@ -161,11 +161,11 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     pb.set_style(
         ProgressStyle::default_bar()
             .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .unwrap(),
+            .expect("hardcoded progress template"),
     );
 
     // Configure global thread‐pool size
-    init_global_pool(opt.ioc.n_threads as usize)?;
+    init_global_pool(opt.ioc.n_threads)?;
 
     // Prepare per-bin counts and metadata
     let mut global_counter = ProfileGroupsCounters::default();
@@ -277,7 +277,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         eprintln!("kept temp tiles in {}", temp_dir.display());
     }
 
-    println!("");
+    println!();
     println!("Statistics");
     println!("----------");
     println!(
@@ -354,7 +354,7 @@ fn process_tile(
             None => bail!("When GC correction is specified, --ref-2bit must also be specified"),
         };
         let seq_bytes = read_seq_in_range(
-            &ref_2bit,
+            ref_2bit,
             &tile.chr,
             // NOTE: Need for full fetch span to get GC of overlapping fragments!
             (tile.fetch_start as usize)..(tile.fetch_end as usize),
@@ -374,7 +374,7 @@ fn process_tile(
         get_overlapping_sites_and_adapt_fetch_to_extremes(
             windows,
             tile_window_span,
-            &tile,
+            tile,
             chrom_len as u32,
         )
     else {
@@ -382,7 +382,7 @@ fn process_tile(
     };
 
     reader
-        .fetch((tile.tid as i32, fetch_from as i64, fetch_to as i64))
+        .fetch((tile.tid, fetch_from, fetch_to))
         .context(format!("fetch {} {}-{}", &tile.chr, fetch_from, fetch_to))?;
 
     // Extract min/max fragment lengths
@@ -464,7 +464,7 @@ fn process_tile(
         // Determine blacklist status
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
-            opt.blacklist_strategy.clone(),
+            opt.blacklist_strategy,
             fragment.start.into(),
             fragment.end.into(),
             max_fragment_length as u64,
@@ -522,7 +522,7 @@ fn process_tile(
                     }
                 }
                 (None, false) => 1.0, // No correction
-                (Some(_), false) => unreachable!(),
+                (Some(_), false) => bail!("unexpected GC weight when GC correction is disabled"),
             }
         };
 
@@ -577,18 +577,20 @@ fn process_tile(
 
             // Count up the weight per overlapping count-window
             for (overlapped_window_idx, scaling_weight, _) in overlap_weights {
-                let (window_start, _, group_idx) = core_overlapping_windows[overlapped_window_idx];
-                let window_position = midpoint - window_start as u32;
-                debug_assert!(
-                    (window_start as u32) <= midpoint
-                        && midpoint < (core_overlapping_windows[overlapped_window_idx].1 as u32),
+                let (window_start, window_end, group_idx) =
+                    core_overlapping_windows[overlapped_window_idx];
+                let midpoint_u64 = midpoint as u64;
+                ensure!(
+                    window_start <= midpoint_u64 && midpoint_u64 < window_end,
                     "midpoint not inside window: midpoint={} window=({},{})",
                     midpoint,
                     window_start,
-                    core_overlapping_windows[overlapped_window_idx].1
+                    window_end
                 );
+                let window_position = usize::try_from(midpoint_u64 - window_start)
+                    .context("window position does not fit in usize")?;
                 counts.incr_weighted(
-                    window_position as usize,
+                    window_position,
                     group_idx as usize,
                     fragment_length as usize,
                     scaling_weight * gc_weight,
@@ -598,18 +600,20 @@ fn process_tile(
             // When no scaling, increment counter by the overlap fraction for each window / bin
             for overlapped_window in overlapping_windows.windows {
                 let overlapped_window_idx = overlapped_window.idx;
-                let (window_start, _, group_idx) = core_overlapping_windows[overlapped_window_idx];
-                let window_position = midpoint - window_start as u32;
-                debug_assert!(
-                    (window_start as u32) <= midpoint
-                        && midpoint < (core_overlapping_windows[overlapped_window_idx].1 as u32),
+                let (window_start, window_end, group_idx) =
+                    core_overlapping_windows[overlapped_window_idx];
+                let midpoint_u64 = midpoint as u64;
+                ensure!(
+                    window_start <= midpoint_u64 && midpoint_u64 < window_end,
                     "midpoint not inside window: midpoint={} window=({},{})",
                     midpoint,
                     window_start,
-                    core_overlapping_windows[overlapped_window_idx].1
+                    window_end
                 );
+                let window_position = usize::try_from(midpoint_u64 - window_start)
+                    .context("window position does not fit in usize")?;
                 counts.incr_weighted(
-                    window_position as usize,
+                    window_position,
                     group_idx as usize,
                     fragment_length as usize,
                     gc_weight,
@@ -629,8 +633,8 @@ fn process_tile(
 }
 
 // Windows: start, end, **`group_idx`** (not original_idx as in other commands).
-pub fn get_overlapping_sites_and_adapt_fetch_to_extremes<'a>(
-    windows: &'a [(u64, u64, u64)],
+pub fn get_overlapping_sites_and_adapt_fetch_to_extremes(
+    windows: &[(u64, u64, u64)],
     tile_span: Option<&TileWindowSpan>,
     tile: &Tile,
     chrom_len: u32,

@@ -117,7 +117,7 @@ pub fn create_support_mask_threshold_per_mb(
     let global_counts = sum_arrays(counts)?;
 
     // Need at least a count of `threshold_per_mb` per 1Mb valid positions
-    let threshold = num_acgt_positions as f64 / 1000000 as f64 * threshold_per_mb;
+    let threshold = num_acgt_positions as f64 / 1000000_f64 * threshold_per_mb;
 
     // Create mask of usable elements
     let mut mask = Array2::from_elem(global_counts.dim(), true);

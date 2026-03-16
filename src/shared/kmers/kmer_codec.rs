@@ -273,7 +273,7 @@ fn build_left_aligned_codes(seq: &[u8], k: usize, sentinel_none: u64, sentinel_n
 
     // Pad the tail where no full window fits
     // (exactly k-1 positions)
-    out.extend(std::iter::repeat(sentinel_none).take(k - 1));
+    out.extend(std::iter::repeat_n(sentinel_none, k - 1));
 
     debug_assert_eq!(out.len(), chrom_len);
     out

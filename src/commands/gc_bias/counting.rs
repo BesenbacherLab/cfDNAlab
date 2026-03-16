@@ -157,7 +157,7 @@ impl GCCounts {
     #[inline]
     fn in_bounds(&self, length: usize, gc: usize) -> bool {
         self.effective_length(length)
-            .map_or(false, |effective_length| gc <= effective_length)
+            .is_some_and(|effective_length| gc <= effective_length)
     }
 
     #[inline]
@@ -683,7 +683,7 @@ pub fn count_reference_gc_and_length_by_window(
             // Valid fragment lengths satisfy: min_len <= frag_len <= (window_end - start_pos)
             let remaining = window_end_usize - start_pos;
             if remaining >= min_len {
-                let frag_max_excl = max_len.min(remaining as usize + 1);
+                let frag_max_excl = max_len.min(remaining + 1);
 
                 for frag_len in min_len..frag_max_excl {
                     // Apply end offsets to GC window
@@ -720,7 +720,7 @@ pub fn count_reference_gc_and_length_by_window(
 ///  - gc=2, acgt=3 -> exact 66.66…% -> (200 + 1)/3 = 67
 ///  - gc=3, acgt=3 -> exact 100%     -> (300 + 1)/3 = 100 (then clamped to ≤100 below)
 pub fn calculate_gc_bin(gc_count: u64, acgt_count: u64) -> usize {
-    ((gc_count as u64 * 100 + (acgt_count as u64 / 2)) / acgt_count as u64).min(100) as usize
+    ((gc_count * 100 + (acgt_count / 2)) / acgt_count).min(100) as usize
 }
 
 /// Precompute how many raw GC counts map to each integer GC% bin for every length.

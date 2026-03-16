@@ -8,7 +8,7 @@ use crate::{
         tiled_run::make_temp_dir,
     },
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use fxhash::{FxHashMap, FxHashSet};
 use rust_htslib::bam::{
     self, Format, Header,
@@ -182,31 +182,33 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
             counters.rejected_chromosome += 1;
             continue;
         }
-        match current_chr.as_ref().map(|s| s.as_str()) {
+        match current_chr.as_deref() {
             None => {
                 // First chromosome encountered
                 current_chr = Some(frag.chrom.clone());
-                current_chrom_len = *chrom_sizes
-                    .get(&frag.chrom)
-                    .expect("chromosome length available for first chromosome")
-                    as u64;
+                current_chrom_len = *chrom_sizes.get(&frag.chrom).ok_or_else(|| {
+                    anyhow!(
+                        "Chromosome '{}' from the fragment file was not found in --chrom-sizes",
+                        frag.chrom
+                    )
+                })? as u64;
                 last_start = Some(frag.start);
                 bl_ptr = 0;
                 chroms_observed.push(frag.chrom.clone());
             }
             Some(chr_name) if chr_name == frag.chrom.as_str() => {
                 // Enforce coordinate monotonicity within the chromosome
-                if let Some(prev_start) = last_start {
-                    if frag.start < prev_start {
-                        bail!(
-                            "Order error: Fragment out of order on {} at line {} (saw {}-{}, previous start {})",
-                            frag.chrom,
-                            line_number,
-                            frag.start,
-                            frag.end,
-                            prev_start
-                        );
-                    }
+                if let Some(prev_start) = last_start
+                    && frag.start < prev_start
+                {
+                    bail!(
+                        "Order error: Fragment out of order on {} at line {} (saw {}-{}, previous start {})",
+                        frag.chrom,
+                        line_number,
+                        frag.start,
+                        frag.end,
+                        prev_start
+                    );
                 }
                 last_start = Some(frag.start);
             }
@@ -221,10 +223,12 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
                     );
                 }
                 current_chr = Some(frag.chrom.clone());
-                current_chrom_len = *chrom_sizes
-                    .get(&frag.chrom)
-                    .expect("chromosome length available for next chromosome")
-                    as u64;
+                current_chrom_len = *chrom_sizes.get(&frag.chrom).ok_or_else(|| {
+                    anyhow!(
+                        "Chromosome '{}' from the fragment file was not found in --chrom-sizes",
+                        frag.chrom
+                    )
+                })? as u64;
                 last_start = Some(frag.start);
                 bl_ptr = 0;
                 chroms_observed.push(frag.chrom.clone());
@@ -264,7 +268,7 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
         let is_in_blacklist = !chrom_blacklist.is_empty()
             && is_blacklisted(
                 chrom_blacklist,
-                opt.blacklist_strategy.clone(),
+                opt.blacklist_strategy,
                 frag.start,
                 frag.end,
                 opt.fragment_lengths.max_fragment_length as u64,
@@ -364,9 +368,9 @@ fn build_header(
     header.push_record(
         HeaderRecord::new(b"HD")
             // SAM format version per hts-specs (currently 1.6)
-            .push_tag(b"VN", &"1.6")
+            .push_tag(b"VN", "1.6")
             // Chromosome order in the input frag file defines the reference order we emit
-            .push_tag(b"SO", &"coordinate"),
+            .push_tag(b"SO", "coordinate"),
     );
 
     let mut tid_lookup: FxHashMap<String, i32> =
@@ -378,7 +382,7 @@ fn build_header(
         header.push_record(
             HeaderRecord::new(b"SQ")
                 .push_tag(b"SN", chr.as_str())
-                .push_tag(b"LN", &len),
+                .push_tag(b"LN", len),
         );
         tid_lookup.insert(chr.clone(), idx as i32);
     }
@@ -406,7 +410,7 @@ fn parse_frag_line(
         .with_context(|| format!("Invalid mapq on line {}", line_number))?;
     let strand = get_required_column(&columns, indices.strand, "strand", line_number)?
         .as_bytes()
-        .get(0)
+        .first()
         .copied()
         .map(|base| base as char)
         .ok_or_else(|| anyhow::anyhow!("Missing strand on line {}", line_number))?;
@@ -605,7 +609,7 @@ fn resolve_frag_column_layout(opt: &FragToBamConfig) -> Result<FragColumnLayout>
     let first_non_empty_line = read_first_non_empty_line(&opt.frag)?;
     let inline_header_columns = first_non_empty_line
         .as_deref()
-        .and_then(|line| detect_inline_header_columns(line));
+        .and_then(detect_inline_header_columns);
 
     let explicit_header = if let Some(path) = &opt.frag_header {
         Some((path.clone(), read_header_columns(path)?))

@@ -97,7 +97,7 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
     let (mut chromosomes, contigs) =
-        resolve_chromosomes_and_contigs(&opt.chromosomes, &opt.in_bam.as_path())?;
+        resolve_chromosomes_and_contigs(&opt.chromosomes, opt.in_bam.as_path())?;
     if !opt.skip_chromosome_sort {
         chromosomes.sort();
     }
@@ -110,7 +110,7 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
         .out_bam
         .parent()
         .expect("`--out-bam` did not contain a parent directory.");
-    ensure_output_dir(&output_dir)?;
+    ensure_output_dir(output_dir)?;
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() && !quiet {
@@ -182,7 +182,7 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
         .iter()
         .map(|chr| -> Result<_> {
             let out = process_chrom(
-                &chr,
+                chr,
                 opt,
                 windows_map
                     .as_ref()
@@ -229,7 +229,7 @@ fn process_chrom(
             Some(r) => r,
             None => bail!("When GC correction is specified, --ref-2bit must also be specified"),
         };
-        let seq_bytes = read_seq(&ref_2bit, chr)?;
+        let seq_bytes = read_seq(ref_2bit, chr)?;
         Some(build_gc_prefixes(&seq_bytes))
     } else {
         None
@@ -314,7 +314,7 @@ fn process_chrom(
         // Determine blacklist status
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
-            opt.blacklist_strategy.clone(),
+            opt.blacklist_strategy,
             fragment.start.into(),
             fragment.end.into(),
             opt.fragment_lengths.max_fragment_length as u64,
@@ -349,7 +349,7 @@ fn process_chrom(
                 Some(1.0)
             }
             (None, false) => None,
-            (Some(_), false) => unreachable!(),
+            (Some(_), false) => bail!("unexpected GC weight when GC correction is disabled"),
         };
 
         // Find all overlapping scaling-factor bins

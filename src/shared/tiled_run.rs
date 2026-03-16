@@ -306,7 +306,7 @@ pub fn clamp_fetch_to_window_span(
     let start_u64 = narrowed_start.max(tile.fetch_start as u64);
     let end_u64 = narrowed_end.min(tile.fetch_end as u64).min(chrom_len);
 
-    (start_u64 < end_u64).then(|| (start_u64 as i64, end_u64 as i64))
+    (start_u64 < end_u64).then_some((start_u64 as i64, end_u64 as i64))
 }
 
 /// Builds non-overlapping core tiles and their fetch halos for the requested contigs.
@@ -337,16 +337,16 @@ pub fn build_tiles(
     // Decide the effective core size in bases (possibly aligned)
     let (effective_tile_bp, guaranteed_aligned) = match align_bp {
         Some(bin_size) if bin_size > 0 && bin_size <= tile_bp as u64 => {
-            if (tile_bp as u64) % bin_size == 0 {
+            if (tile_bp as u64).is_multiple_of(bin_size) {
                 (tile_bp, true)
             } else if (tile_bp as u64) / bin_size >= 10 {
                 let k = (tile_bp as u64) / bin_size;
                 ((k * bin_size) as u32, true) // Never drop below one bin
             } else {
-                (tile_bp as u32, false)
+                (tile_bp, false)
             }
         }
-        _ => (tile_bp as u32, false),
+        _ => (tile_bp, false),
     };
 
     for chr in chromosomes {
@@ -354,7 +354,7 @@ pub fn build_tiles(
             .contigs
             .get(chr)
             .ok_or_else(|| anyhow::anyhow!("missing contig for '{}'", chr))?;
-        let chrom_len = chrom_len_u32 as u32;
+        let chrom_len = chrom_len_u32;
 
         let mut start = 0u32;
         let mut idx = 0u32;
@@ -367,7 +367,7 @@ pub fn build_tiles(
 
             tiles.push(Tile {
                 chr: chr.clone(),
-                tid: tid as i32,
+                tid,
                 index: idx,
                 core_start: start,
                 core_end,
@@ -383,12 +383,12 @@ pub fn build_tiles(
     // Just in case we decide to move start of cores in the future
     // We'll have an extensive debug test
     #[cfg(debug_assertions)]
-    if let Some(bs) = align_bp {
-        if guaranteed_aligned {
-            for t in &tiles {
-                // Starts/ends of *cores* (not final chromosome end) line up on the grid
-                debug_assert_eq!((t.core_start as u64) % bs, 0);
-            }
+    if let Some(bs) = align_bp
+        && guaranteed_aligned
+    {
+        for t in &tiles {
+            // Starts/ends of *cores* (not final chromosome end) line up on the grid
+            debug_assert_eq!((t.core_start as u64) % bs, 0);
         }
     }
 
@@ -433,11 +433,11 @@ pub enum TileMode<'w> {
 /// # Returns
 /// An iterator yielding references to the overlapping windows.
 #[inline]
-pub fn windows_overlapping_core<'a>(
-    windows_chr: &'a [(u64, u64, u64)],
+pub fn windows_overlapping_core(
+    windows_chr: &[(u64, u64, u64)],
     core_start: u32,
     core_end: u32,
-) -> impl Iterator<Item = &'a (u64, u64, u64)> {
+) -> impl Iterator<Item = &(u64, u64, u64)> {
     let cs = core_start as u64;
     let ce = core_end as u64;
     windows_chr

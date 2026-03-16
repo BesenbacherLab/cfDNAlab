@@ -168,10 +168,10 @@ pub fn load_windows_from_bed(
         let current_orig_win_idx = orig_win_idx;
         orig_win_idx += 1;
 
-        if let Some(filterer) = filter_fn {
-            if !filterer(chr, start, end) {
-                continue;
-            }
+        if let Some(filterer) = filter_fn
+            && !filterer(chr, start, end)
+        {
+            continue;
         }
 
         vec_mapping
@@ -580,10 +580,10 @@ pub fn load_grouped_windows_from_bed(
         orig_win_idx += 1;
 
         // Apply passed filtering function
-        if let Some(filterer) = filter_fn {
-            if !filterer(chr, start, end) {
-                continue;
-            }
+        if let Some(filterer) = filter_fn
+            && !filterer(chr, start, end)
+        {
+            continue;
         }
 
         vec_mapping
@@ -920,10 +920,10 @@ pub fn load_scored_windows_from_bed(
         orig_win_idx += 1;
 
         // Apply passed filtering function
-        if let Some(filterer) = filter_fn {
-            if !filterer(chr, start, end, score) {
-                continue;
-            }
+        if let Some(filterer) = filter_fn
+            && !filterer(chr, start, end, score)
+        {
+            continue;
         }
 
         vec_mapping.entry(chr.to_string()).or_default().push((

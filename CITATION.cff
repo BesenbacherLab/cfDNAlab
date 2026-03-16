@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use cfDNAlab, please cite the software using the metadata below."
+title: "cfDNAlab"
+type: software
+authors:
+  - family-names: "Olsen"
+    given-names: "Ludvig Renbo"
+  - family-names: "Besenbacher"
+    given-names: "Søren"
+repository-code: "https://github.com/BesenbacherLab/cfDNAlab"
+url: "https://github.com/BesenbacherLab/cfDNAlab"
+license: "MIT"
+version: "0.1.0"

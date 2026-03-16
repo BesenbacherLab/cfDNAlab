@@ -223,8 +223,8 @@ impl CoverageWeightsConfig {
     }
 
     pub fn check_bin_sizes(&self) -> anyhow::Result<()> {
-        let stride = self.stride.clone();
-        let bin_size = self.bin_size.clone();
+        let stride = self.stride;
+        let bin_size = self.bin_size;
 
         if stride > bin_size {
             bail!(
@@ -233,7 +233,7 @@ impl CoverageWeightsConfig {
                 bin_size,
             );
         }
-        if bin_size % stride != 0 {
+        if !bin_size.is_multiple_of(stride) {
             bail!(
                 "bin_size ({}) must be divisible by stride ({})",
                 bin_size,

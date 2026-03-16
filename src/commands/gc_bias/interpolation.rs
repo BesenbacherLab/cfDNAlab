@@ -277,8 +277,8 @@ fn fit_run_polynomial(
         .collect();
 
     // Prefer the closest true neighbours first to keep interpolation local
-    left_real.sort_by(|lhs, rhs| lhs.2.partial_cmp(&rhs.2).unwrap());
-    right_real.sort_by(|lhs, rhs| lhs.2.partial_cmp(&rhs.2).unwrap());
+    left_real.sort_by(|lhs, rhs| lhs.2.total_cmp(&rhs.2));
+    right_real.sort_by(|lhs, rhs| lhs.2.total_cmp(&rhs.2));
     let left_real_available = !left_real.is_empty();
     let right_real_available = !right_real.is_empty();
 

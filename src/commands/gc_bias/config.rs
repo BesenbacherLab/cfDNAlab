@@ -51,36 +51,23 @@ impl FromStr for WindowWeightingSchemes {
 }
 
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutlierMethodArg {
     None,
     Quantile,
+    #[default]
     Iqr,
     Stddev,
     Mad,
 }
 
-impl Default for OutlierMethodArg {
-    fn default() -> Self {
-        OutlierMethodArg::Iqr
-    }
-}
-
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutlierScopeArg {
     PerLength,
+    #[default]
     Global,
 }
-
-impl Default for OutlierScopeArg {
-    fn default() -> Self {
-        OutlierScopeArg::Global
-    }
-}
-
-// TODO: Try excluding the first N bases (both ends) from GC fraction calculation to avoid correcting "biochemical cut bias" - the bias we care about is "regional bias"
-// Perhaps do an "end-proximal base composition (p≈1–10) bias" experiment to show how many bases to cut off in ends
 
 /// Calculate a multiplicative GC correction matrix based on the GC fraction and length of fragments in a BAM-file.
 ///

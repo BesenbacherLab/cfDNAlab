@@ -709,8 +709,8 @@ impl FragmentPositionSelectionArgs {
 
         Ok(frame
             .into_iter()
-            .zip(positions.into_iter())
-            .zip(resolved_step.into_iter())
+            .zip(positions)
+            .zip(resolved_step)
             .map(
                 |((frame, positions), step)| UnparsedPositionalSelectionSpec {
                     frame,
@@ -792,7 +792,7 @@ pub fn resolve_chromosomes_and_contigs(
     let chromosomes = chrom_args
         .resolve_chromosomes(Some(bam_path))
         .context("resolve chromosomes")?;
-    let contigs = bam_contigs_info(&bam_path, &chromosomes).context("fetch contig metadata")?;
+    let contigs = bam_contigs_info(bam_path, &chromosomes).context("fetch contig metadata")?;
     Ok((chromosomes, contigs))
 }
 

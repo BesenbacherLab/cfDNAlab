@@ -649,7 +649,7 @@ fn collect_linear_indices(length: u32, range: &LinearRange) -> Vec<i32> {
 }
 
 fn build_nearest_tracks(length: u32, range: &NearestRange, step: NonZeroUsize) -> Vec<Track> {
-    let half = (length / 2) as u32;
+    let half = length / 2;
     let axis_end = if half == 0 { 1 } else { half as i32 };
     let folded = collect_nearest_indices(half, range);
     let folded = apply_stride(folded, step);
@@ -717,7 +717,7 @@ fn build_mid_track(length: u32, range: &MidRange, step: NonZeroUsize) -> Track {
 
 fn mid_axis_bounds(length: u32) -> AxisBounds {
     let half = (length / 2) as i32;
-    if length % 2 == 0 {
+    if length.is_multiple_of(2) {
         AxisBounds::new(-half, half - 1)
     } else {
         AxisBounds::new(-half, half)

@@ -143,7 +143,11 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
             sum_cov += bin_slice[j].avg_coverage * (w as f32) * len_ratio;
             sum_w += w;
         }
-        bins[i].avg_overlap_coverage = sum_cov / (sum_w as f32);
+        bins[i].avg_overlap_coverage = if sum_w > 0 {
+            sum_cov / (sum_w as f32)
+        } else {
+            0.0
+        };
     }
 }
 

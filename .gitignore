@@ -29,3 +29,5 @@ src/commands/gc_bias/window_streaming_logic.md
 src/commands/prepare_windows/test_to_make.md
 
 .DS_Store
+
+website/docs/generated/
