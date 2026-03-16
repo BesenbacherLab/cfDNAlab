@@ -265,12 +265,12 @@ pub fn fetch_span_for_tile(
 ) -> Option<(i64, i64)> {
     match window_opt {
         WindowSpec::Global => Some((
-            tile.fetch_start as i64,
-            (tile.fetch_end.min(chrom_len as u32)) as i64,
+            tile.fetch_start() as i64,
+            (tile.fetch_end().min(chrom_len as u32)) as i64,
         )),
         WindowSpec::Size(window_bp) => {
-            let core_start = tile.core_start as u64;
-            let core_end = (tile.core_end as u64).min(chrom_len);
+            let core_start = tile.core_start() as u64;
+            let core_end = (tile.core_end() as u64).min(chrom_len);
             if core_start >= chrom_len || core_end == 0 {
                 return None;
             }

@@ -253,7 +253,11 @@ impl Windows {
             (0, 0)
         } else {
             let min_start = indexed_windows[0].start() as i64;
-            let max_end = indexed_windows.iter().map(|window| window.end()).max().unwrap() as i64;
+            let max_end = indexed_windows
+                .iter()
+                .map(|window| window.end())
+                .max()
+                .unwrap() as i64;
             (min_start, max_end)
         };
         Self {
@@ -366,7 +370,7 @@ impl Windows {
                     current_end,
                     start_idx + write_index as u64,
                 )
-                    .expect("merged windows must remain valid non-empty intervals");
+                .expect("merged windows must remain valid non-empty intervals");
                 write_index += 1;
                 current_start = next_start;
                 current_end = next_end;
@@ -421,12 +425,14 @@ impl Windows {
 }
 
 fn is_sorted_by_start_indexed(ws: &[IndexedInterval<u64>]) -> bool {
-    ws.windows(2).all(|window_pair| window_pair[0].start() <= window_pair[1].start())
+    ws.windows(2)
+        .all(|window_pair| window_pair[0].start() <= window_pair[1].start())
 }
 
 #[inline]
 fn is_sorted_by_start(ws: &[(u64, u64, u64)]) -> bool {
-    ws.windows(2).all(|window_pair| window_pair[0].0 <= window_pair[1].0)
+    ws.windows(2)
+        .all(|window_pair| window_pair[0].0 <= window_pair[1].0)
 }
 
 #[inline]
@@ -753,7 +759,7 @@ pub fn write_group_idx_to_name_tsv<P: AsRef<Path>>(
 ) -> Result<()> {
     let path = output_path.as_ref();
     let file = File::create(path).with_context(|| format!("Creating TSV file {:?}", path))?;
-        let mut writer = BufWriter::new(file);
+    let mut writer = BufWriter::new(file);
 
     // Header
     writeln!(writer, "group_idx\tgroup_name")

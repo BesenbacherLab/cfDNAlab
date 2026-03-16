@@ -33,12 +33,7 @@ mod tests_lengths_command {
         }
     }
 
-    fn fragment_on_tid(
-        tid: usize,
-        start: i64,
-        fragment_len: i64,
-        read_len: i64,
-    ) -> FragmentSpec {
+    fn fragment_on_tid(tid: usize, start: i64, fragment_len: i64, read_len: i64) -> FragmentSpec {
         let mut fragment = fixtures::paired_fragment(start, fragment_len, read_len);
         fragment.forward.tid = tid;
         fragment.reverse.tid = tid;
@@ -217,10 +212,13 @@ mod tests_lengths_command {
         let npy_path = out_dir.path().join(format!("{prefix}.length_counts.npy"));
         let arr: Array2<f64> = read_npy(&npy_path)?;
 
-        assert_eq!(arr.shape(), &[3, 111]);
+        // Global mode collapses the selected chromosomes into one combined length distribution.
+        // This fixture contributes one fragment of lengths 60, 80, and 100 across the three
+        // chromosomes, so the single output row should contain all three counts.
+        assert_eq!(arr.shape(), &[1, 111]);
         assert!((arr[(0, 60 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr[(1, 80 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr[(2, 100 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr[(0, 80 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr[(0, 100 - 10)] - 1.0).abs() < 1e-6);
         assert!((arr.sum() - 3.0).abs() < 1e-6);
 
         Ok(())
@@ -1168,15 +1166,8 @@ mod tests_lengths_tiling_helpers {
     #[test]
     fn fetch_span_size_mode_clamps_to_halo_and_chrom() {
         // Tile: core 50-150, fetch 30-200 (halo 20 left, 50 right), chrom len 180
-        let tile = Tile {
-            chr: "chr1".to_string(),
-            tid: 0,
-            index: 0,
-            core_start: 50,
-            core_end: 150,
-            fetch_start: 30,
-            fetch_end: 200,
-        };
+        let tile = Tile::new("chr1".to_string(), 0, 0, 50, 150, 30, 200)
+            .expect("test tile should be valid");
         let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(100), 180)
             .expect("span expected");
         // Window span touching core: 0..200, after halo clamp -> 30..180
@@ -1193,13 +1184,13 @@ mod tests_lengths_tiling_helpers {
         assert!(aligned);
         // Cores should start on multiples of 10
         for t in &tiles {
-            assert_eq!((t.core_start as u64) % 10, 0);
+            assert_eq!((t.core_start() as u64) % 10, 0);
         }
         // Expect four tiles: 0-30,30-60,60-90,90-100
         assert_eq!(tiles.len(), 4);
-        assert_eq!(tiles[0].core_end, 30);
-        assert_eq!(tiles[3].core_start, 90);
-        assert_eq!(tiles[3].core_end, 100);
+        assert_eq!(tiles[0].core_end(), 30);
+        assert_eq!(tiles[3].core_start(), 90);
+        assert_eq!(tiles[3].core_end(), 100);
     }
 
     #[test]
@@ -1217,30 +1208,16 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_for_tile_global_clamps_to_chrom() {
-        let tile = Tile {
-            chr: "chr1".to_string(),
-            tid: 0,
-            index: 0,
-            core_start: 0,
-            core_end: 50,
-            fetch_start: 0,
-            fetch_end: 200,
-        };
+        let tile =
+            Tile::new("chr1".to_string(), 0, 0, 0, 50, 0, 200).expect("test tile should be valid");
         let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Global, 120).expect("span");
         assert_eq!(span, (0, 120));
     }
 
     #[test]
     fn fetch_span_for_tile_bed_with_overlap() {
-        let tile = Tile {
-            chr: "chr1".to_string(),
-            tid: 0,
-            index: 0,
-            core_start: 100,
-            core_end: 160,
-            fetch_start: 80,
-            fetch_end: 200,
-        };
+        let tile = Tile::new("chr1".to_string(), 0, 0, 100, 160, 80, 200)
+            .expect("test tile should be valid");
         let windows = indexed_windows(&[(90, 110, 0), (150, 170, 1), (250, 300, 2)]);
         let span = TileWindowSpan {
             first_idx: 0,
@@ -1260,15 +1237,8 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_bed_none_when_no_overlap() {
-        let tile = Tile {
-            chr: "chr1".to_string(),
-            tid: 0,
-            index: 0,
-            core_start: 100,
-            core_end: 150,
-            fetch_start: 80,
-            fetch_end: 170,
-        };
+        let tile = Tile::new("chr1".to_string(), 0, 0, 100, 150, 80, 170)
+            .expect("test tile should be valid");
         // No windows overlap tile
         let windows: [IndexedInterval<u64>; 0] = [];
         let span = TileWindowSpan {
@@ -1287,31 +1257,15 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_size_mode_none_when_tile_right_of_chromosome() {
-        let tile = Tile {
-            chr: "chr1".to_string(),
-            tid: 0,
-            index: 0,
-            core_start: 250,
-            core_end: 260,
-            fetch_start: 230,
-            fetch_end: 270,
-        };
+        let tile = Tile::new("chr1".to_string(), 0, 0, 250, 260, 230, 270)
+            .expect("test tile should be valid");
         let res = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(50), 200);
         assert!(res.is_none());
     }
 
     #[test]
-    fn fetch_span_size_mode_none_for_empty_core() {
-        let tile = Tile {
-            chr: "chr1".to_string(),
-            tid: 0,
-            index: 0,
-            core_start: 100,
-            core_end: 100,
-            fetch_start: 80,
-            fetch_end: 120,
-        };
-        let res = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(50), 150);
-        assert!(res.is_none());
+    fn tile_constructor_rejects_empty_core() {
+        let err = Tile::new("chr1".to_string(), 0, 0, 100, 100, 80, 120).unwrap_err();
+        assert!(format!("{err}").contains("interval end (100) must be greater than start (100)"));
     }
 }

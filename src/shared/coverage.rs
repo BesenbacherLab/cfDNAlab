@@ -21,6 +21,7 @@ enum Stage {
 /// use cfdnalab::shared::coverage::Coverage;
 /// use cfdnalab::shared::fragment::minimal_fragment::Fragment;
 /// use cfdnalab::shared::gc_tag::GcTagValue;
+/// use cfdnalab::shared::interval::Interval;
 ///
 /// # use anyhow::Result;
 /// # fn demo() -> Result<()> {
@@ -47,7 +48,8 @@ enum Stage {
 /// )?;
 ///
 /// // Optional blacklist
-/// cp.set_blacklist_mask(&vec![(120, 140), (150, 153)])?;
+/// let blacklist_intervals = Interval::from_tuples(&[(120, 140), (150, 153)])?;
+/// cp.set_blacklist_mask(&blacklist_intervals)?;
 ///
 /// // Build per-base coverage and query indexes
 /// cp.finalize_coverage(true);  // free delta after building coverage

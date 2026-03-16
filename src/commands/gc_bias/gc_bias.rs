@@ -763,8 +763,8 @@ fn process_tile(
     let mut windows = prepared_windows.windows;
     let streaming_buffers = prepared_windows.streaming_buffers;
 
-    let seq_start = tile.fetch_start as u64;
-    let seq_end = tile.fetch_end.min(chrom_len as u32) as u64;
+    let seq_start = tile.fetch_start() as u64;
+    let seq_end = tile.fetch_end().min(chrom_len as u32) as u64;
 
     let gc_prefixes = {
         // Load only the tile span (core plus halo)
@@ -792,7 +792,9 @@ fn process_tile(
             windows
                 .iter()
                 .enumerate()
-                .map(|(local_idx, window)| IndexedInterval::new(window.start, window.end, local_idx as u64))
+                .map(|(local_idx, window)| {
+                    IndexedInterval::new(window.start, window.end, local_idx as u64)
+                })
                 .collect::<crate::Result<Vec<_>>>()?,
         );
     }
@@ -810,7 +812,7 @@ fn process_tile(
     };
 
     reader
-        .fetch((tid, tile.fetch_start as i64, tile.fetch_end as i64))
+        .fetch((tid, tile.fetch_start() as i64, tile.fetch_end() as i64))
         .context(format!("fetch {}", &tile.chr))?;
 
     // Function for filtering fragments after pairing
@@ -858,7 +860,7 @@ fn process_tile(
             let fragment_length = fragment.len();
 
             // Only count fragments whose start lies inside the tile core to avoid double counting
-            if fragment.start < tile.core_start || fragment.start >= tile.core_end {
+            if fragment.start < tile.core_start() || fragment.start >= tile.core_end() {
                 continue;
             }
 
@@ -869,8 +871,8 @@ fn process_tile(
                     &gc_prefixes,
                     seq_start,
                     seq_end,
-                    tile.core_start as u64,
-                    tile.core_end as u64,
+                    tile.core_start() as u64,
+                    tile.core_end() as u64,
                     windows_aligned_to_tiles,
                     apply_window_scaling,
                     opt,
@@ -886,7 +888,7 @@ fn process_tile(
                 let (next_start, next_end) =
                     fixed_size_window_bounds(next_idx, window_bp, chrom_len);
                 let next_contained =
-                    next_start >= tile.core_start as u64 && next_end <= tile.core_end as u64;
+                    next_start >= tile.core_start() as u64 && next_end <= tile.core_end() as u64;
                 recycled.reset(next_idx, next_start, next_end, next_contained, template)?;
                 next = recycled;
             }
@@ -981,8 +983,8 @@ fn process_tile(
             &gc_prefixes,
             seq_start,
             seq_end,
-            tile.core_start as u64,
-            tile.core_end as u64,
+            tile.core_start() as u64,
+            tile.core_end() as u64,
             windows_aligned_to_tiles,
             apply_window_scaling,
             opt,
@@ -995,8 +997,8 @@ fn process_tile(
             &gc_prefixes,
             seq_start,
             seq_end,
-            tile.core_start as u64,
-            tile.core_end as u64,
+            tile.core_start() as u64,
+            tile.core_end() as u64,
             windows_aligned_to_tiles,
             apply_window_scaling,
             opt,
@@ -1017,7 +1019,7 @@ fn process_tile(
                 let fragment_length = fragment.len();
 
                 // Only count fragments whose start lies inside the tile core to avoid double counting
-                if fragment.start < tile.core_start || fragment.start >= tile.core_end {
+                if fragment.start < tile.core_start() || fragment.start >= tile.core_end() {
                     continue;
                 }
 
@@ -1092,8 +1094,8 @@ fn process_tile(
                 &gc_prefixes,
                 seq_start,
                 seq_end,
-                tile.core_start as u64,
-                tile.core_end as u64,
+                tile.core_start() as u64,
+                tile.core_end() as u64,
                 windows_aligned_to_tiles,
                 apply_window_scaling,
                 opt,

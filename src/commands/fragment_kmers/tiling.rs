@@ -136,18 +136,12 @@ pub fn determine_fetch_span(
     let chrom_len_u32 = chrom_len.min(u32::MAX as u64) as u32;
     match window_ctx.spec {
         WindowSpec::Global | WindowSpec::Size(_) => {
-            Some((tile.fetch_start as i64, tile.fetch_end as i64))
+            Some((tile.fetch_start() as i64, tile.fetch_end() as i64))
         }
         WindowSpec::Bed(_) => {
             let windows = window_ctx.windows_slice()?;
             let (min_ws, max_we) = tile_window_min_max(windows, tile, tile_window_span)?;
-            clamp_fetch_to_window_span(
-                tile,
-                chrom_len.min(chrom_len_u32 as u64),
-                min_ws,
-                max_we,
-                0,
-            )
+            clamp_fetch_to_window_span(tile, chrom_len.min(chrom_len_u32 as u64), min_ws, max_we, 0)
         }
     }
 }

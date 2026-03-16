@@ -4,7 +4,7 @@ use cfdnalab::{
     commands::gc_bias::counting::{
         GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window,
     },
-    shared::blacklist::apply_blacklist_mask_to_seq,
+    shared::{blacklist::apply_blacklist_mask_to_seq, interval::Interval},
 };
 
 #[test]
@@ -50,7 +50,8 @@ fn counts_gc_for_each_window_with_end_offset() -> Result<()> {
 fn skips_counts_after_blacklist_removes_acgt_support() -> Result<()> {
     // Arrange: Blacklist the middle of the fragment so only half the bases remain ACGT
     let mut seq = b"ACGT".to_vec();
-    apply_blacklist_mask_to_seq(&mut seq, &[(1, 3)], 0);
+    let blacklist_intervals = Interval::from_tuples(&[(1, 3)])?;
+    apply_blacklist_mask_to_seq(&mut seq, &blacklist_intervals, 0);
     let prefixes = build_gc_prefixes(&seq);
     let windows = vec![(0, 4, 0)];
     let starts = vec![0usize];

@@ -245,8 +245,8 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
                     let windows = build_fixed_size_windows_for_tile(
                         bin_size,
                         chrom_len,
-                        tile.core_start as u64,
-                        tile.core_end as u64,
+                        tile.core_start() as u64,
+                        tile.core_end() as u64,
                     );
                     Some(compute_window_stats_contributions(
                         windows.as_slice(),
@@ -703,16 +703,16 @@ impl WindowOutputWriter {
                 self.accumulator.add_windows_for_tile(
                     windows_chr,
                     &mut self.next_idx,
-                    tile.core_start as u64,
-                    tile.core_end as u64,
+                    tile.core_start() as u64,
+                    tile.core_end() as u64,
                 );
             }
             WindowSource::FixedSizeBuffered(fixed) => {
                 fixed.add_windows_for_tile(
                     &tile.chr,
                     &mut self.accumulator,
-                    tile.core_start as u64,
-                    tile.core_end as u64,
+                    tile.core_start() as u64,
+                    tile.core_end() as u64,
                 )?;
             }
             WindowSource::FixedSizeAligned(_) => unreachable!("aligned windows handled earlier"),
@@ -740,7 +740,7 @@ impl WindowOutputWriter {
         }
 
         self.accumulator
-            .flush_completed_windows(tile.core_end as u64, &mut self.writer)?;
+            .flush_completed_windows(tile.core_end() as u64, &mut self.writer)?;
         Ok(())
     }
 
@@ -767,8 +767,8 @@ impl WindowOutputWriter {
                 let windows = build_fixed_size_windows_for_tile(
                     fixed.size,
                     chrom_len,
-                    tile.core_start as u64,
-                    tile.core_end as u64,
+                    tile.core_start() as u64,
+                    tile.core_end() as u64,
                 );
                 self.write_aligned_stats(
                     tile.chr.as_str(),
@@ -946,7 +946,7 @@ pub fn peaks_for_tile(
 
     let half_window = opt.shared_args.window_size / 2;
     let left_span = half_window.saturating_add(extra_halo);
-    let dilated_start = tile.core_start.saturating_sub(left_span) as u64;
+    let dilated_start = tile.core_start().saturating_sub(left_span) as u64;
     let initial_segment_marker = last_mask_end_before(blacklist_chr, dilated_start);
 
     let processing_opts = PeakSignalProcessingOptions {
@@ -966,10 +966,11 @@ pub fn peaks_for_tile(
     );
 
     for mut peak in peaks_all {
-        if peak.peak_position >= tile.core_start as u64 && peak.peak_position < tile.core_end as u64
+        if peak.peak_position >= tile.core_start() as u64
+            && peak.peak_position < tile.core_end() as u64
         {
-            peak.start = peak.start.max(tile.core_start as u64);
-            peak.end = peak.end.min(tile.core_end as u64);
+            peak.start = peak.start.max(tile.core_start() as u64);
+            peak.end = peak.end.min(tile.core_end() as u64);
             peaks.push(peak);
         }
     }

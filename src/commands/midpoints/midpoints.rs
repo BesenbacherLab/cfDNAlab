@@ -104,7 +104,8 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
     // Ensure all windows have the same length
     let window_size = ensure_uniform_window_len(&windows_map)?;
-    let mut indexed_windows_map: FxHashMap<String, Vec<IndexedInterval<u64>>> = FxHashMap::default();
+    let mut indexed_windows_map: FxHashMap<String, Vec<IndexedInterval<u64>>> =
+        FxHashMap::default();
     for (chromosome, grouped_windows) in &windows_map {
         let indexed_windows = grouped_windows
             .as_slice()
@@ -367,7 +368,7 @@ fn process_tile(
             ref_2bit,
             &tile.chr,
             // NOTE: Need for full fetch span to get GC of overlapping fragments!
-            (tile.fetch_start as usize)..(tile.fetch_end as usize),
+            (tile.fetch_start() as usize)..(tile.fetch_end() as usize),
         )?;
         Some(build_gc_prefixes(&seq_bytes))
     } else {
@@ -466,7 +467,7 @@ fn process_tile(
     };
 
     let correct_gc_from_file = opt.gc.gc_file.is_some();
-    let fetch_start = tile.fetch_start;
+    let fetch_start = tile.fetch_start();
 
     // Iterate fragments and add coverage
     for fragment_res in iter.by_ref() {
@@ -492,7 +493,7 @@ fn process_tile(
         let midpoint = midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
 
         // Only keep fragments with midpoints within the tile
-        if midpoint < tile.core_start || midpoint >= tile.core_end {
+        if midpoint < tile.core_start() || midpoint >= tile.core_end() {
             continue;
         }
 
@@ -664,8 +665,16 @@ pub fn get_overlapping_sites_and_adapt_fetch_to_extremes(
         return None;
     }
 
-    let min_ws = overlapping_sites.iter().map(|window| window.start()).min().unwrap();
-    let max_we = overlapping_sites.iter().map(|window| window.end()).max().unwrap();
+    let min_ws = overlapping_sites
+        .iter()
+        .map(|window| window.start())
+        .min()
+        .unwrap();
+    let max_we = overlapping_sites
+        .iter()
+        .map(|window| window.end())
+        .max()
+        .unwrap();
 
     let (fetch_from, fetch_to) =
         clamp_fetch_to_window_span(tile, chrom_len as u64, min_ws, max_we, 0)?;

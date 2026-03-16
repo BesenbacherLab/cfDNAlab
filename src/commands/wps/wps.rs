@@ -650,7 +650,7 @@ pub fn wps_for_tile(
             &ref_2bit,
             &tile.chr,
             // NOTE: Need for full fetch span to get GC of overlapping fragments!
-            (tile.fetch_start as usize)..(tile.fetch_end as usize),
+            (tile.fetch_start() as usize)..(tile.fetch_end() as usize),
         )?;
         Some(build_gc_prefixes(&seq_bytes))
     } else {
@@ -659,15 +659,13 @@ pub fn wps_for_tile(
 
     // Adapt the fetch coordinates to the present windows (*in genomic-windowed mode!*)
     // When no windows are present, skip this tile
-    let Some((fetch_from, fetch_to)) =
-        adapt_fetch_to_extreme_windows(
-            tile,
-            tile_window_span,
-            &mode,
-            chrom_len as u32,
-            opt.fragment_lengths.max_fragment_length as u64,
-        )
-    else {
+    let Some((fetch_from, fetch_to)) = adapt_fetch_to_extreme_windows(
+        tile,
+        tile_window_span,
+        &mode,
+        chrom_len as u32,
+        opt.fragment_lengths.max_fragment_length as u64,
+    ) else {
         return Ok((counter, None, None));
     };
 
@@ -687,8 +685,8 @@ pub fn wps_for_tile(
     // Outputs are trimmed back to the core
     // The difference buffers live on a dilated span that guarantees each core position
     // sees a complete window. We later trim the outputs back to the original core
-    let dilated_start_abs = tile.core_start.saturating_sub(context_left);
-    let dilated_end_abs = ((tile.core_end as u64) + context_right as u64).min(chrom_len) as u32;
+    let dilated_start_abs = tile.core_start().saturating_sub(context_left);
+    let dilated_end_abs = ((tile.core_end() as u64) + context_right as u64).min(chrom_len) as u32;
     if dilated_start_abs >= dilated_end_abs {
         return Ok((counter, None, None));
     }
@@ -701,13 +699,13 @@ pub fn wps_for_tile(
     // Offsets of the original core within the dilated span. These values are measured relative
     // to `dilated_start_abs`, so they represent indices into the dilated buffers rather than
     // absolute genomic coordinates.
-    let core_start_offset = (tile.core_start - dilated_start_abs) as usize;
-    let core_end_offset_exclusive = (tile.core_end - dilated_start_abs) as usize;
+    let core_start_offset = (tile.core_start() - dilated_start_abs) as usize;
+    let core_end_offset_exclusive = (tile.core_end() - dilated_start_abs) as usize;
     let dilated_start_i64 = dilated_start_abs as i64;
     let dilated_end_i64 = dilated_end_abs as i64;
     let dilated_start_abs_u64 = dilated_start_abs as u64; // Absolute coordinate of dilated buffer origin
-    let core_start_abs = tile.core_start as u64;
-    let core_end_abs = tile.core_end as u64;
+    let core_start_abs = tile.core_start() as u64;
+    let core_end_abs = tile.core_end() as u64;
 
     // Difference buffers sized to the dilated span plus sentinel
     // We keep them as f32 because weights are f32 and accumulation is stable over these spans
@@ -765,8 +763,8 @@ pub fn wps_for_tile(
     };
 
     let correct_gc = opt.gc.gc_file.is_some();
-    let fetch_start = tile.fetch_start;
-    let fetch_end = tile.fetch_end;
+    let fetch_start = tile.fetch_start();
+    let fetch_end = tile.fetch_end();
 
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
@@ -909,14 +907,17 @@ pub fn wps_for_tile(
                     )?;
                 }
                 Some(windows_for_chr) => {
-                    for &(window_start_abs, window_end_abs, original_idx) in
+                    for window in
                         overlapping_windows_for_tile(windows_for_chr, tile, tile_window_span)
                     {
+                        let window_start_abs = window.start();
+                        let window_end_abs = window.end();
+                        let original_idx = window.idx();
                         let (local_start_idx, local_end_idx, _, _) = match clip_window_to_core(
                             window_start_abs,
                             window_end_abs,
-                            tile.core_start,
-                            tile.core_end,
+                            tile.core_start(),
+                            tile.core_end(),
                             dilated_start_abs,
                         ) {
                             Some(v) => v,
@@ -989,14 +990,15 @@ pub fn wps_for_tile(
             let mut partials_writer = open_zstd_auto_writer(&partials_out, 3, None)?;
             let mut cross_index_writer = open_zstd_auto_writer(&cross_idx_out, 3, None)?;
 
-            for &(window_start_abs, window_end_abs, original_idx) in
-                overlapping_windows_for_tile(windows, tile, tile_window_span)
-            {
+            for window in overlapping_windows_for_tile(windows, tile, tile_window_span) {
+                let window_start_abs = window.start();
+                let window_end_abs = window.end();
+                let original_idx = window.idx();
                 let clipped = clip_window_to_core(
                     window_start_abs,
                     window_end_abs,
-                    tile.core_start,
-                    tile.core_end,
+                    tile.core_start(),
+                    tile.core_end(),
                     dilated_start_abs,
                 );
                 let Some((local_start_idx, local_end_idx, _, _)) = clipped else {
@@ -1078,8 +1080,8 @@ pub fn wps_for_tile(
                         match clip_window_to_core(
                             bin_start,
                             bin_end,
-                            tile.core_start,
-                            tile.core_end,
+                            tile.core_start(),
+                            tile.core_end(),
                             dilated_start_abs,
                         ) {
                             Some(v) => v,
@@ -1125,8 +1127,8 @@ pub fn wps_for_tile(
                         match clip_window_to_core(
                             bin_start,
                             bin_end,
-                            tile.core_start,
-                            tile.core_end,
+                            tile.core_start(),
+                            tile.core_end(),
                             dilated_start_abs,
                         ) {
                             Some(v) => v,

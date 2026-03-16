@@ -183,15 +183,7 @@ mod tests_prepare_tile_windows {
     }
 
     fn make_tile() -> Tile {
-        Tile {
-            chr: "chr1".to_string(),
-            tid: 0,
-            index: 0,
-            core_start: 100,
-            core_end: 190,
-            fetch_start: 80,
-            fetch_end: 210,
-        }
+        Tile::new("chr1".to_string(), 0, 0, 100, 190, 80, 210).expect("test tile should be valid")
     }
 
     fn indexed_windows(entries: &[(u64, u64, u64)]) -> Vec<IndexedInterval<u64>> {
@@ -259,11 +251,8 @@ mod tests_prepare_tile_windows {
     #[test]
     fn prepares_streaming_buffers_for_fixed_windows() -> Result<()> {
         let template = make_template();
-        let tile = Tile {
-            core_start: 250,
-            core_end: 450,
-            ..make_tile()
-        };
+        let tile = Tile::new("chr1".to_string(), 0, 0, 250, 450, 230, 470)
+            .expect("test tile should be valid");
 
         // Fixed-size windows use rolling buffers (current and next) instead of per-window allocation
         let prepared =
@@ -303,8 +292,8 @@ mod tests_prepare_tile_windows {
         assert_eq!(prepared.windows.len(), 1);
         let window = &prepared.windows[0];
         assert_eq!(window.idx, 0);
-        assert_eq!(window.start, tile.core_start as u64);
-        assert_eq!(window.end, tile.core_end as u64);
+        assert_eq!(window.start, tile.core_start() as u64);
+        assert_eq!(window.end, tile.core_end() as u64);
         assert!(window.contained);
         Ok(())
     }

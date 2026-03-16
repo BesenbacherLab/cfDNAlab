@@ -185,8 +185,8 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
             let mut tile_rng = StdRng::seed_from_u64(tile_seeds[tile_idx]);
             let starts = sample_starts_in_core(
                 &mut tile_rng,
-                tile.core_start as u64,
-                tile.core_end as u64,
+                tile.core_start() as u64,
+                tile.core_end() as u64,
                 chr_len as u64,
                 opt.fragment_lengths.max_fragment_length as u64,
                 start_position_sampling_density,
@@ -366,8 +366,8 @@ fn process_tile(
     blacklist_intervals: &[Interval<u64>],
     opt: &RefGCBiasConfig,
 ) -> Result<(GCCounts, u64)> {
-    let core_start = tile.core_start as u64;
-    let core_end = tile.core_end as u64;
+    let core_start = tile.core_start() as u64;
+    let core_end = tile.core_end() as u64;
     if core_start >= core_end || core_start >= chrom_len {
         let empty = GCCounts::new(
             opt.fragment_lengths.min_fragment_length as usize,
@@ -378,8 +378,8 @@ fn process_tile(
         return Ok((empty, 0));
     }
 
-    let seq_start = tile.fetch_start.min(tile.core_start) as u64;
-    let seq_end = tile.fetch_end.min(chrom_len as u32) as u64;
+    let seq_start = tile.fetch_start().min(tile.core_start()) as u64;
+    let seq_end = tile.fetch_end().min(chrom_len as u32) as u64;
 
     // Load only the tile span (core plus padding) so starts in the core have full context
     let mut seq_bytes = read_seq_in_range(

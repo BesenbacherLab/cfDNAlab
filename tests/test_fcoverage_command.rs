@@ -919,7 +919,10 @@ fn per_position_handles_three_chromosomes_in_global_mode() -> Result<()> {
     let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
-    assert_eq!(lines, vec!["chr1\t20\t80\t1", "chr2\t10\t50\t1", "chr3\t40\t90\t1"]);
+    assert_eq!(
+        lines,
+        vec!["chr1\t20\t80\t1", "chr2\t10\t50\t1", "chr3\t40\t90\t1"]
+    );
 
     Ok(())
 }

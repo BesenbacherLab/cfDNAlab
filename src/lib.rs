@@ -1,7 +1,7 @@
-pub mod error;
 #[cfg(feature = "cli")]
 pub mod cli_app;
 pub mod commands;
+pub mod error;
 pub mod shared;
 
 pub use error::{Error, Result};

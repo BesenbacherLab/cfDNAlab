@@ -126,13 +126,7 @@ mod tests_bam_to_frag {
 
         write_three_chrom_window_bam(&bam_path)?;
 
-        index::build(
-            bam_path.to_str().unwrap(),
-            None,
-            index::Type::Bai,
-            1,
-        )
-        .context("build BAI")?;
+        index::build(bam_path.to_str().unwrap(), None, index::Type::Bai, 1).context("build BAI")?;
 
         let ioc = IOCArgs {
             bam: bam_path.clone(),
@@ -175,19 +169,10 @@ mod tests_bam_to_frag {
 
         write_three_chrom_window_bam(&bam_path)?;
 
-        index::build(
-            bam_path.to_str().unwrap(),
-            None,
-            index::Type::Bai,
-            1,
-        )
-        .context("build BAI")?;
+        index::build(bam_path.to_str().unwrap(), None, index::Type::Bai, 1).context("build BAI")?;
 
         let bed_path = work.path().join("three_chr_windows.bed");
-        fs::write(
-            &bed_path,
-            "chr1\t0\t60\nchr2\t0\t80\nchr3\t40\t100\n",
-        )?;
+        fs::write(&bed_path, "chr1\t0\t60\nchr2\t0\t80\nchr3\t40\t100\n")?;
 
         let ioc = IOCArgs {
             bam: bam_path.clone(),

@@ -216,7 +216,9 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
         FxHashMap::with_capacity_and_hasher(windows_chr.len(), FxBuildHasher::default());
     for window in windows_chr {
         anyhow::ensure!(
-            coords_by_idx.insert(window.idx(), window.interval).is_none(),
+            coords_by_idx
+                .insert(window.idx(), window.interval)
+                .is_none(),
             "duplicate orig_idx {} for {}",
             window.idx(),
             chr

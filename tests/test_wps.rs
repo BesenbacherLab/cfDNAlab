@@ -7,7 +7,10 @@ use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
 use cfdnalab::commands::wps::config::WPSConfig;
 use cfdnalab::commands::wps::wps::run as run_fn;
-use fixtures::{BamFixture, FragmentSpec, ReadSpec, bam_from_specs, long_fragment_bam, read_zst_to_string, write_bed};
+use fixtures::{
+    BamFixture, FragmentSpec, ReadSpec, bam_from_specs, long_fragment_bam, read_zst_to_string,
+    write_bed,
+};
 use std::cmp::max;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -471,10 +474,8 @@ fn long_fragment_fixture_produces_expected_wps_runs() -> Result<()> {
 
 #[test]
 fn global_mode_handles_three_chromosomes() -> Result<()> {
-    let fixture = make_three_chrom_fixture(
-        "wps_three_chr_global",
-        &[(10, 22), (10, 22), (10, 22)],
-    )?;
+    let fixture =
+        make_three_chrom_fixture("wps_three_chr_global", &[(10, 22), (10, 22), (10, 22)])?;
     let out_dir = TempDir::new()?;
     let mut cfg = make_config(4, false, &fixture.bam, out_dir.path(), "three_chr_global");
     cfg.shared_args.chromosomes.chromosomes = Some(vec![
@@ -506,10 +507,8 @@ fn global_mode_handles_three_chromosomes() -> Result<()> {
 
 #[test]
 fn by_size_total_handles_three_chromosomes() -> Result<()> {
-    let fixture = make_three_chrom_fixture(
-        "wps_three_chr_by_size",
-        &[(10, 22), (10, 22), (10, 22)],
-    )?;
+    let fixture =
+        make_three_chrom_fixture("wps_three_chr_by_size", &[(10, 22), (10, 22), (10, 22)])?;
     let out_dir = TempDir::new()?;
     let mut cfg = make_config(4, false, &fixture.bam, out_dir.path(), "three_chr_by_size");
     cfg.shared_args.chromosomes.chromosomes = Some(vec![
@@ -548,10 +547,8 @@ fn by_size_total_handles_three_chromosomes() -> Result<()> {
 
 #[test]
 fn by_bed_total_handles_three_chromosomes() -> Result<()> {
-    let fixture = make_three_chrom_fixture(
-        "wps_three_chr_by_bed",
-        &[(10, 22), (10, 22), (10, 22)],
-    )?;
+    let fixture =
+        make_three_chrom_fixture("wps_three_chr_by_bed", &[(10, 22), (10, 22), (10, 22)])?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("three_chr_windows.bed");
     write_bed(

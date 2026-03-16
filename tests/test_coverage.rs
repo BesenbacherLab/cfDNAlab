@@ -11,6 +11,7 @@ mod tests_coverage_prefix {
             minimal_fragment::Fragment,
             segment_fragment::{SegmentedReadInfo, collect_fragment_with_segments},
         },
+        interval::Interval,
     };
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -20,6 +21,10 @@ mod tests_coverage_prefix {
     }
     fn deq(a: f64, b: f64, eps: f64) -> bool {
         (a - b).abs() <= eps
+    }
+
+    fn intervals(entries: &[(u64, u64)]) -> Vec<Interval<u64>> {
+        Interval::from_tuples(entries).expect("test intervals should be valid")
     }
 
     // SegmentedReadInfo creator
@@ -71,7 +76,7 @@ mod tests_coverage_prefix {
         )?;
 
         // Optional blacklist
-        cp.set_blacklist_mask(&vec![(120, 140)])?;
+        cp.set_blacklist_mask(&intervals(&[(120, 140)]))?;
 
         // Build per-base coverage and indexes
         cp.finalize_coverage(true);
@@ -235,7 +240,7 @@ mod tests_coverage_prefix {
         })?;
         cp.finalize_coverage(true);
 
-        cp.set_blacklist_mask(&vec![(12, 15)])?;
+        cp.set_blacklist_mask(&intervals(&[(12, 15)]))?;
 
         let vals = cp.coverage_at_positions(&[9, 10, 12, 14, 15, 19, 20])?;
         assert_eq!(vals, vec![0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0]);
@@ -281,7 +286,7 @@ mod tests_coverage_prefix {
         assert!(format!("{err}").contains("start 10 >= end 10"));
 
         // Out-of-bounds blacklist
-        let err = cp.set_blacklist_mask(&vec![(45, 60)]).unwrap_err();
+        let err = cp.set_blacklist_mask(&intervals(&[(45, 60)])).unwrap_err();
         assert!(format!("{err}").contains("out of bounds"));
 
         // Bounds check in queries
@@ -433,7 +438,7 @@ mod tests_coverage_prefix {
         )?;
         cp.finalize_coverage(true);
         // Blacklist [20,25) and [80,100)
-        cp.set_blacklist_mask(&vec![(20, 25), (80, 100)])?;
+        cp.set_blacklist_mask(&intervals(&[(20, 25), (80, 100)]))?;
         cp.build_indexes(true)?;
 
         // Sum including mask
@@ -491,7 +496,7 @@ mod tests_coverage_prefix {
             0.5,
         )?;
         cp.finalize_coverage(true);
-        cp.set_blacklist_mask(&vec![(400, 450), (700, 900)])?;
+        cp.set_blacklist_mask(&intervals(&[(400, 450), (700, 900)]))?;
 
         cp.build_indexes(true)?;
 
@@ -602,7 +607,7 @@ mod tests_coverage_prefix {
         }
 
         // With blacklist, NaNs appear inside masked region
-        cp.set_blacklist_mask(&vec![(12, 15)])?;
+        cp.set_blacklist_mask(&intervals(&[(12, 15)]))?;
 
         let v = cp.coverage_at_positions_nan(&[11, 12, 13, 14, 15])?;
         assert!(!v[0].is_nan());
@@ -757,7 +762,7 @@ mod tests_window_results {
         commands::fcoverage::window_results::{
             CoverageOutput, CoverageWindowAction, WindowValue, compute_window_outputs,
         },
-        shared::{coverage::Coverage, fragment::minimal_fragment::Fragment},
+        shared::{coverage::Coverage, fragment::minimal_fragment::Fragment, interval::Interval},
     };
 
     fn deq_f32(a: f32, b: f32, tol: f32) -> bool {
@@ -765,6 +770,10 @@ mod tests_window_results {
     }
     fn deq_f64(a: f64, b: f64, tol: f64) -> bool {
         (a - b).abs() <= tol
+    }
+
+    fn intervals(entries: &[(u64, u64)]) -> Vec<Interval<u64>> {
+        Interval::from_tuples(entries).expect("test intervals should be valid")
     }
 
     fn make_cp_with_simple_fragments(len: u32) -> Result<Coverage> {
@@ -862,7 +871,7 @@ mod tests_window_results {
         cp.finalize_coverage(true);
 
         // Blacklist [9, 12) so indices 9,10,11 are masked
-        cp.set_blacklist_mask(&vec![(9, 12)])?;
+        cp.set_blacklist_mask(&intervals(&[(9, 12)]))?;
 
         // Window [8, 13) -> positions 8,9,10,11,12
         let windows = vec![(8_u64, 13_u64, 0_u64)];

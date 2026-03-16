@@ -464,6 +464,26 @@ mod tests_wps_peaks_helpers {
         decimals: usize,
     }
 
+    fn make_tile(
+        chr: &str,
+        index: u32,
+        core_start: u32,
+        core_end: u32,
+        fetch_start: u32,
+        fetch_end: u32,
+    ) -> Tile {
+        Tile::new(
+            chr.to_string(),
+            0,
+            index,
+            core_start,
+            core_end,
+            fetch_start,
+            fetch_end,
+        )
+        .expect("test tile should be valid")
+    }
+
     struct MultiTileTestData {
         tiles: Vec<Tile>,
         peaks_by_tile: Vec<Vec<PeakCall>>,
@@ -476,15 +496,7 @@ mod tests_wps_peaks_helpers {
     fn fixed_size_test_data() -> FixedSizeTestData {
         let bin_size = 50;
         let chrom_len = 500;
-        let tile = Tile {
-            chr: "chrSim".to_string(),
-            tid: 0,
-            index: 0,
-            core_start: 0,
-            core_end: 200,
-            fetch_start: 0,
-            fetch_end: 260,
-        };
+        let tile = make_tile("chrSim", 0, 0, 200, 0, 260);
         let peaks = vec![
             make_peak("chrSim", 10, 2.5),
             make_peak("chrSim", 35, 4.0),
@@ -495,8 +507,8 @@ mod tests_wps_peaks_helpers {
         let windows = build_fixed_windows(
             bin_size,
             chrom_len,
-            tile.core_start as u64,
-            tile.core_end as u64,
+            tile.core_start() as u64,
+            tile.core_end() as u64,
         );
 
         FixedSizeTestData {
@@ -511,24 +523,8 @@ mod tests_wps_peaks_helpers {
         let bin_size = 60;
         let chrom_len = 360;
         let tiles = vec![
-            Tile {
-                chr: "chrSim".to_string(),
-                tid: 0,
-                index: 0,
-                core_start: 0,
-                core_end: 180,
-                fetch_start: 0,
-                fetch_end: 210,
-            },
-            Tile {
-                chr: "chrSim".to_string(),
-                tid: 0,
-                index: 1,
-                core_start: 180,
-                core_end: 360,
-                fetch_start: 150,
-                fetch_end: 390,
-            },
+            make_tile("chrSim", 0, 0, 180, 0, 210),
+            make_tile("chrSim", 1, 180, 360, 150, 390),
         ];
 
         let peaks_by_tile = vec![
@@ -571,8 +567,8 @@ mod tests_wps_peaks_helpers {
         accumulator.add_windows_for_tile(
             windows,
             &mut next_idx,
-            tile.core_start as u64,
-            tile.core_end as u64,
+            tile.core_start() as u64,
+            tile.core_end() as u64,
         );
         stream_tile_peaks(peak_path, |peak| {
             accumulator.push_peak(&peak);
@@ -622,8 +618,8 @@ mod tests_wps_peaks_helpers {
             accumulator.add_windows_for_tile(
                 windows,
                 &mut next_idx,
-                tile.core_start as u64,
-                tile.core_end as u64,
+                tile.core_start() as u64,
+                tile.core_end() as u64,
             );
             stream_tile_peaks(path, |peak| {
                 accumulator.push_peak(&peak);
@@ -631,7 +627,7 @@ mod tests_wps_peaks_helpers {
             })
             .expect("stream peaks for buffered multi unique");
             accumulator
-                .flush_completed_windows(tile.core_end as u64, &mut out)
+                .flush_completed_windows(tile.core_end() as u64, &mut out)
                 .expect("flush completed multi unique windows");
         }
         accumulator
@@ -675,8 +671,8 @@ mod tests_wps_peaks_helpers {
         accumulator.add_windows_for_tile(
             windows,
             &mut next_idx,
-            tile.core_start as u64,
-            tile.core_end as u64,
+            tile.core_start() as u64,
+            tile.core_end() as u64,
         );
         stream_tile_peaks(peak_path, |peak| {
             accumulator.push_peak(&peak);
@@ -685,7 +681,7 @@ mod tests_wps_peaks_helpers {
         .expect("stream peaks for stats");
         let mut out = Vec::new();
         accumulator
-            .flush_completed_windows(tile.core_end as u64, &mut out)
+            .flush_completed_windows(tile.core_end() as u64, &mut out)
             .expect("flush completed stat windows");
         accumulator
             .flush_all(&mut out)
@@ -754,8 +750,8 @@ mod tests_wps_peaks_helpers {
             accumulator.add_windows_for_tile(
                 windows,
                 &mut next_idx,
-                tile.core_start as u64,
-                tile.core_end as u64,
+                tile.core_start() as u64,
+                tile.core_end() as u64,
             );
             stream_tile_peaks(path, |peak| {
                 accumulator.push_peak(&peak);
@@ -763,7 +759,7 @@ mod tests_wps_peaks_helpers {
             })
             .expect("stream peaks for buffered multi stats");
             accumulator
-                .flush_completed_windows(tile.core_end as u64, &mut out)
+                .flush_completed_windows(tile.core_end() as u64, &mut out)
                 .expect("flush completed multi stats windows");
         }
         accumulator
@@ -785,8 +781,8 @@ mod tests_wps_peaks_helpers {
             let windows = build_fixed_windows(
                 bin_size,
                 chrom_len,
-                tile.core_start as u64,
-                tile.core_end as u64,
+                tile.core_start() as u64,
+                tile.core_end() as u64,
             );
             let contributions = compute_window_stats_contributions(windows.as_slice(), peaks);
             out.push_str(&aligned_stats_rows(
@@ -1221,7 +1217,8 @@ mod tests_wps_peaks_command {
             chromosomes_file: None,
         };
         let mut cfg = WPSPeaksConfig::new(ioc, chromosomes, None);
-        cfg.shared_args.set_output_prefix("three_chr_global".to_string());
+        cfg.shared_args
+            .set_output_prefix("three_chr_global".to_string());
         cfg.shared_args.set_window_size(WINDOW_SIZE_BP);
         cfg.shared_args.set_decimals(2);
         cfg.shared_args.set_tile_size(TILE_SIZE_BP);
@@ -1263,7 +1260,8 @@ mod tests_wps_peaks_command {
             chromosomes_file: None,
         };
         let mut cfg = WPSPeaksConfig::new(ioc, chromosomes, Some(PeaksWindowAction::Stats));
-        cfg.shared_args.set_output_prefix("three_chr_by_size".to_string());
+        cfg.shared_args
+            .set_output_prefix("three_chr_by_size".to_string());
         cfg.shared_args.set_window_size(WINDOW_SIZE_BP);
         cfg.shared_args.set_decimals(2);
         cfg.shared_args.set_tile_size(TILE_SIZE_BP);
@@ -1281,7 +1279,9 @@ mod tests_wps_peaks_command {
 
         run(&cfg)?;
 
-        let stats_path = out_dir.path().join("three_chr_by_size.wps.peaks.stats.tsv.zst");
+        let stats_path = out_dir
+            .path()
+            .join("three_chr_by_size.wps.peaks.stats.tsv.zst");
         let text = read_zst_to_string(&stats_path)?;
         let lines: Vec<_> = text.lines().collect();
         assert_eq!(
@@ -1325,7 +1325,8 @@ mod tests_wps_peaks_command {
             chromosomes_file: None,
         };
         let mut cfg = WPSPeaksConfig::new(ioc, chromosomes, Some(PeaksWindowAction::Stats));
-        cfg.shared_args.set_output_prefix("three_chr_by_bed".to_string());
+        cfg.shared_args
+            .set_output_prefix("three_chr_by_bed".to_string());
         cfg.shared_args.set_window_size(WINDOW_SIZE_BP);
         cfg.shared_args.set_decimals(2);
         cfg.shared_args.set_tile_size(TILE_SIZE_BP);
@@ -1343,7 +1344,9 @@ mod tests_wps_peaks_command {
 
         run(&cfg)?;
 
-        let stats_path = out_dir.path().join("three_chr_by_bed.wps.peaks.stats.tsv.zst");
+        let stats_path = out_dir
+            .path()
+            .join("three_chr_by_bed.wps.peaks.stats.tsv.zst");
         let text = read_zst_to_string(&stats_path)?;
         let lines: Vec<_> = text.lines().collect();
         assert_eq!(

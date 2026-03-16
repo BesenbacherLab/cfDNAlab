@@ -482,7 +482,7 @@ fn process_tile(
             &opt.shared_args.ref_genome.ref_2bit,
             &tile.chr,
             // NOTE: Need for full fetch span to get GC of overlapping fragments!
-            (tile.fetch_start as usize)..(tile.fetch_end as usize),
+            (tile.fetch_start() as usize)..(tile.fetch_end() as usize),
         )?;
         Some(build_gc_prefixes(&seq_bytes))
     } else {
@@ -500,22 +500,26 @@ fn process_tile(
 
     // Extend the reference slice to include k-mers at the right tile edge
     let max_k: u32 = kmer_specs.keys().copied().max().unwrap_or(1) as u32;
-    let seq_end_abs = (tile.core_end as u64)
+    let seq_end_abs = (tile.core_end() as u64)
         .saturating_add((max_k as u64).saturating_sub(1))
         .min(chrom_len) as usize;
 
     let mut seq_bytes = read_seq_in_range(
         &opt.shared_args.ref_genome.ref_2bit,
         &tile.chr,
-        (tile.core_start as usize)..(seq_end_abs),
+        (tile.core_start() as usize)..(seq_end_abs),
     )?;
 
-    apply_blacklist_mask_to_seq(&mut seq_bytes, blacklist_intervals, tile.core_start as u64);
+    apply_blacklist_mask_to_seq(
+        &mut seq_bytes,
+        blacklist_intervals,
+        tile.core_start() as u64,
+    );
 
     // Scaled weights to count up
     let positional_scaling_weights = if !scaling_chr.is_empty() {
         let mut scaling_weights = vec![1.0; seq_bytes.len()];
-        apply_scaling_to_coverage_in_place(&mut scaling_weights, tile.core_start, scaling_chr);
+        apply_scaling_to_coverage_in_place(&mut scaling_weights, tile.core_start(), scaling_chr);
         // "Blacklist" positions with scaling factors of 0, so they don't get counted
         for (base, weight) in seq_bytes.iter_mut().zip(&scaling_weights) {
             if *weight == 0.0 {
@@ -597,7 +601,7 @@ fn process_tile(
     };
 
     let correct_gc = opt.shared_args.gc.gc_file.is_some();
-    let fetch_start = tile.fetch_start;
+    let fetch_start = tile.fetch_start();
 
     let store_positions = opt.positional_counts;
     let has_nearest_frame = position_cache
@@ -708,8 +712,8 @@ fn process_tile(
                 counts,
                 positional_scaling_weights.as_deref(),
                 gc_weight,
-                tile.core_start,
-                tile.core_end,
+                tile.core_start(),
+                tile.core_end(),
                 has_nearest_frame,
             );
         }

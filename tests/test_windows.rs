@@ -34,7 +34,10 @@ mod tests_flattening {
             );
         }
         if let Some(last) = ws.last() {
-            assert!(last.start() < last.end(), "invalid interval with zero/negative length");
+            assert!(
+                last.start() < last.end(),
+                "invalid interval with zero/negative length"
+            );
         }
     }
 

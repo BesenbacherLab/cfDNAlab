@@ -244,7 +244,7 @@ pub fn find_overlapping_windows(
     chrom_len: u64,
     wd_ptr: &mut usize,
     windows: Option<&[IndexedInterval<u64>]>,
-    by_size: Option<u64>,                // bin size for size‑mode
+    by_size: Option<u64>, // bin size for size‑mode
     interval_start: u64,
     interval_end: u64,
     min_overlap_fraction: f64,

@@ -12,6 +12,8 @@ pub enum Error {
     InvalidBinSize { bin_size: u64 },
     /// An overlap fraction fell outside the inclusive range `[0.0, 1.0]`.
     OverlapFractionOutOfBounds { overlap_fraction: f32 },
+    /// A tile fetch range did not fully cover the tile core.
+    TileFetchDoesNotCoverCore,
 }
 
 impl Display for Error {
@@ -30,6 +32,12 @@ impl Display for Error {
                 write!(
                     formatter,
                     "overlap_fraction was out of bounds (0.0-1.0): {overlap_fraction}"
+                )
+            }
+            Error::TileFetchDoesNotCoverCore => {
+                write!(
+                    formatter,
+                    "tile fetch interval must fully cover the tile core"
                 )
             }
         }

@@ -278,8 +278,8 @@ pub fn prepare_tile_windows(
     let mut streaming_buffers: Option<(u64, WindowState, WindowState)> = None;
     let mut skip_tile = false;
 
-    let core_start = tile.core_start as u64;
-    let core_end = tile.core_end as u64;
+    let core_start = tile.core_start() as u64;
+    let core_end = tile.core_end() as u64;
 
     match window_opt {
         WindowSpec::Bed(_) => {

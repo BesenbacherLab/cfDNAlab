@@ -181,7 +181,7 @@ pub fn adapt_fetch_to_extreme_windows(
     // then intersect it with the tile’s existing fetch band.
     match mode {
         TileMode::Positional { windows: None, .. } => {
-            Some((tile.fetch_start as i64, tile.fetch_end as i64))
+            Some((tile.fetch_start() as i64, tile.fetch_end() as i64))
         }
         TileMode::Positional {
             windows: Some(wchr),
@@ -195,8 +195,8 @@ pub fn adapt_fetch_to_extreme_windows(
             clamp_fetch_to_window_span(tile, chrom_len_u64, min_ws, max_we, halo_bp)
         }
         TileMode::AggregatesBySize { window_bp, .. } => {
-            let core_start = tile.core_start as u64;
-            let core_end = tile.core_end as u64;
+            let core_start = tile.core_start() as u64;
+            let core_end = tile.core_end() as u64;
             if core_start >= chrom_len_u64 {
                 return None;
             }

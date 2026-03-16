@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests_merge_intervals {
-    use cfdnalab::shared::interval::Interval;
     use cfdnalab::shared::blacklist::load::merge_intervals;
+    use cfdnalab::shared::interval::Interval;
 
     #[test]
     fn empty_input() -> anyhow::Result<()> {
@@ -105,12 +105,19 @@ mod tests_merge_intervals {
 
 #[cfg(test)]
 mod tests_seq_blacklisting {
-    use cfdnalab::shared::blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE};
+    use cfdnalab::shared::{
+        blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE},
+        interval::Interval,
+    };
+
+    fn intervals(entries: &[(u64, u64)]) -> Vec<Interval<u64>> {
+        Interval::from_tuples(entries).expect("test intervals should be valid")
+    }
 
     #[test]
     fn mask_simple() {
         let mut seq = b"ACGTACGT".to_vec();
-        let ivs = vec![(2, 4), (6, 8)]; // mask "GT" and last "GT"
+        let ivs = intervals(&[(2, 4), (6, 8)]); // mask "GT" and last "GT"
         apply_blacklist_mask_to_seq(&mut seq, &ivs, 0);
         assert_eq!(seq, b"ACXXACXX");
     }
@@ -118,7 +125,7 @@ mod tests_seq_blacklisting {
     #[test]
     fn mask_past_end_is_safe() {
         let mut seq = b"AAAA".to_vec();
-        let ivs = vec![(2, 10)]; // interval overhangs chromosome
+        let ivs = intervals(&[(2, 10)]); // interval overhangs chromosome
         apply_blacklist_mask_to_seq(&mut seq, &ivs, 0);
         assert_eq!(seq, b"AAXX");
     }
@@ -134,14 +141,15 @@ mod tests_seq_blacklisting {
     #[test]
     fn uses_correct_byte() {
         let mut seq = b"GGGG".to_vec();
-        apply_blacklist_mask_to_seq(&mut seq, &[(0, 4)], 0);
+        let intervals = intervals(&[(0, 4)]);
+        apply_blacklist_mask_to_seq(&mut seq, &intervals, 0);
         assert!(seq.iter().all(|&b| b == BLACKLIST_BYTE));
     }
 
     #[test]
     fn masks_with_offset_slice() {
         let mut seq = b"ACGTACGT".to_vec();
-        let ivs = vec![(4, 6)];
+        let ivs = intervals(&[(4, 6)]);
         apply_blacklist_mask_to_seq(&mut seq, &ivs, 2);
         assert_eq!(seq, b"ACXXACGT");
     }
@@ -150,7 +158,7 @@ mod tests_seq_blacklisting {
 #[cfg(test)]
 mod tests_load_blacklists {
     use anyhow::Result;
-    use cfdnalab::shared::blacklist::load::load_blacklists;
+    use cfdnalab::shared::{blacklist::load::load_blacklists, interval::Interval};
     use tempfile::NamedTempFile;
 
     fn write_bed(lines: &[&str]) -> Result<NamedTempFile> {
@@ -172,7 +180,10 @@ mod tests_load_blacklists {
         let map = load_blacklists(&[bed.path()], 5, 0, Some(whitelist.as_slice()))?;
 
         // Assert
-        assert_eq!(map.get("chr1").unwrap().as_slice(), &[(10, 20)]);
+        assert_eq!(
+            map.get("chr1").unwrap().as_slice(),
+            Interval::from_tuples(&[(10, 20)])?.as_slice()
+        );
         assert!(map.get("chr2").is_none());
         Ok(())
     }
@@ -186,7 +197,10 @@ mod tests_load_blacklists {
         let map = load_blacklists(&[bed.path()], 1, 2, None)?;
 
         // Assert
-        assert_eq!(map.get("chrX").unwrap().as_slice(), &[(98, 122)]);
+        assert_eq!(
+            map.get("chrX").unwrap().as_slice(),
+            Interval::from_tuples(&[(98, 122)])?.as_slice()
+        );
         Ok(())
     }
 }

@@ -1,7 +1,9 @@
 use crate::{
     commands::cli_common::WindowSpec,
     shared::{
-        bam::Contigs, bed::Windows, blacklist::compute_blacklist_overlap,
+        bam::Contigs,
+        bed::Windows,
+        blacklist::compute_blacklist_overlap,
         interval::{IndexedInterval, Interval},
     },
 };

@@ -23,8 +23,8 @@ use crate::{
         blacklist::{compute_blacklist_overlap, is_blacklisted},
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
         fragment_iterator::fragments_with_indel_counts_from_bam,
-        io::create_text_writer,
         interval::{IndexedInterval, Interval},
+        io::create_text_writer,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         read::{default_include_read_paired_end, default_include_read_unpaired},
@@ -529,7 +529,7 @@ fn process_tile(
             ref_2bit,
             &tile.chr,
             // NOTE: Need for full fetch span to get GC of overlapping fragments!
-            (tile.fetch_start as usize)..(tile.fetch_end as usize),
+            (tile.fetch_start() as usize)..(tile.fetch_end() as usize),
         )?;
         Some(build_gc_prefixes(&seq_bytes))
     } else {
@@ -576,9 +576,9 @@ fn process_tile(
             let chrom_bin_count = chrom_len.div_ceil(*window_bp) as usize;
             // Leftmost bin whose start is at or before the core start
             // (may begin before the core when cores are not aligned)
-            let min_bin_idx = (tile.core_start as u64 / *window_bp) as usize;
+            let min_bin_idx = (tile.core_start() as u64 / *window_bp) as usize;
             // Furthest coordinate a fragment starting in this tile can reach
-            let max_reachable_end = (tile.core_end as u64)
+            let max_reachable_end = (tile.core_end() as u64)
                 .saturating_add(opt.fragment_lengths.max_fragment_length as u64)
                 .min(chrom_len);
             // One past the last bin that could overlap that reach
@@ -595,7 +595,7 @@ fn process_tile(
                 let start = idx as u64 * *window_bp;
                 let end = (start + *window_bp).min(chrom_len);
                 // Contained means the bin sits fully inside the tile core
-                let contained = start >= tile.core_start as u64 && end <= tile.core_end as u64;
+                let contained = start >= tile.core_start() as u64 && end <= tile.core_end() as u64;
                 counts.push(Some(TileCounts {
                     counts: template.zeroed_like(),
                     contained,
@@ -618,13 +618,13 @@ fn process_tile(
                 // Windows fully to the left of the core cannot be hit because every counted fragment
                 // starts inside the core. We store None to preserve the global index while skipping
                 // both counting work and output rows for those windows
-                if win_end <= tile.core_start as u64 {
+                if win_end <= tile.core_start() as u64 {
                     counts.push(None);
                     continue;
                 }
                 // Contained flags windows fully inside the core
                 let contained =
-                    win_start >= tile.core_start as u64 && win_end <= tile.core_end as u64;
+                    win_start >= tile.core_start() as u64 && win_end <= tile.core_end() as u64;
                 counts.push(Some(TileCounts {
                     counts: template.zeroed_like(),
                     contained,
@@ -681,7 +681,7 @@ fn process_tile(
     let get_gc_weight = {
         let gc_corrector = gc_corrector_opt.as_ref();
         let gc_prefixes = gc_prefixes_opt.as_ref();
-        let fetch_start = tile.fetch_start;
+        let fetch_start = tile.fetch_start();
         move |fragment: &FragmentWithIndelCounts| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
@@ -708,7 +708,7 @@ fn process_tile(
         let fragment = fragment_res.context("reading fragment")?;
 
         // Only count fragments whose start is inside the core to prevent double counting across tiles
-        if fragment.start < tile.core_start || fragment.start >= tile.core_end {
+        if fragment.start < tile.core_start() || fragment.start >= tile.core_end() {
             continue;
         }
 

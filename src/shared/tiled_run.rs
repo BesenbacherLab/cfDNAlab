@@ -1,5 +1,5 @@
 use crate::shared::bam::Contigs;
-use crate::shared::interval::IndexedInterval;
+use crate::shared::interval::{IndexedInterval, Interval};
 use rand::{Rng, distr::Alphanumeric};
 
 /// A processing tile for one chromosome
@@ -7,11 +7,58 @@ use rand::{Rng, distr::Alphanumeric};
 pub struct Tile {
     pub chr: String,
     pub tid: i32,
-    pub index: u32,       // 0-based index within chromosome
-    pub core_start: u32,  // Inclusive
-    pub core_end: u32,    // Exclusive
-    pub fetch_start: u32, // Inclusive (core expanded by halo)
-    pub fetch_end: u32,   // Exclusive
+    pub index: u32, // 0-based index within chromosome
+    pub core: Interval<u32>,
+    pub fetch: Interval<u32>,
+}
+
+impl Tile {
+    /// Create a tile from raw half-open core and fetch bounds.
+    ///
+    /// The tile core and fetch range are both stored as checked non-empty
+    /// intervals. The fetch range must cover the tile core.
+    pub fn new(
+        chr: String,
+        tid: i32,
+        index: u32,
+        core_start: u32,
+        core_end: u32,
+        fetch_start: u32,
+        fetch_end: u32,
+    ) -> crate::Result<Self> {
+        let core = Interval::new(core_start, core_end)?;
+        let fetch = Interval::new(fetch_start, fetch_end)?;
+        if fetch.start() > core.start() || fetch.end() < core.end() {
+            return Err(crate::Error::TileFetchDoesNotCoverCore);
+        }
+        Ok(Self {
+            chr,
+            tid,
+            index,
+            core,
+            fetch,
+        })
+    }
+
+    #[inline]
+    pub fn core_start(&self) -> u32 {
+        self.core.start()
+    }
+
+    #[inline]
+    pub fn core_end(&self) -> u32 {
+        self.core.end()
+    }
+
+    #[inline]
+    pub fn fetch_start(&self) -> u32 {
+        self.fetch.start()
+    }
+
+    #[inline]
+    pub fn fetch_end(&self) -> u32 {
+        self.fetch.end()
+    }
 }
 
 /// Half-open window indices covering a tile core.
@@ -88,8 +135,8 @@ where
 
         for idx in chr_tile_start..chr_tile_end {
             let tile = &tiles[idx];
-            let core_start = tile.core_start as u64;
-            let core_end = tile.core_end as u64;
+            let core_start = tile.core_start() as u64;
+            let core_end = tile.core_end() as u64;
             let left_bound = core_start.saturating_sub(left_halo);
             let right_bound = core_end.saturating_add(right_halo);
 
@@ -222,8 +269,8 @@ pub fn overlapping_windows_for_tile<'a>(
     tile: &Tile,
     span: Option<&TileWindowSpan>,
 ) -> TileWindowsIter<'a> {
-    let core_start = tile.core_start as u64;
-    let core_end = tile.core_end as u64;
+    let core_start = tile.core_start() as u64;
+    let core_end = tile.core_end() as u64;
 
     let (start_idx, end_idx) = match span {
         Some(span) if !span.is_empty() => (span.first_idx, span.last_idx_exclusive),
@@ -301,16 +348,16 @@ pub fn clamp_fetch_to_window_span(
         return None;
     }
 
-    let tile_left_halo = (tile.core_start as u64).saturating_sub(tile.fetch_start as u64);
-    let tile_right_halo = (tile.fetch_end as u64).saturating_sub(tile.core_end as u64);
+    let tile_left_halo = (tile.core_start() as u64).saturating_sub(tile.fetch_start() as u64);
+    let tile_right_halo = (tile.fetch_end() as u64).saturating_sub(tile.core_end() as u64);
     let effective_left_halo = tile_left_halo.max(halo_bp);
     let effective_right_halo = tile_right_halo.max(halo_bp);
 
     let narrowed_start = min_ws.saturating_sub(effective_left_halo);
     let narrowed_end = max_we.saturating_add(effective_right_halo);
 
-    let start_u64 = narrowed_start.max(tile.fetch_start as u64);
-    let end_u64 = narrowed_end.min(tile.fetch_end as u64).min(chrom_len);
+    let start_u64 = narrowed_start.max(tile.fetch_start() as u64);
+    let end_u64 = narrowed_end.min(tile.fetch_end() as u64).min(chrom_len);
 
     (start_u64 < end_u64).then_some((start_u64 as i64, end_u64 as i64))
 }
@@ -371,15 +418,15 @@ pub fn build_tiles(
             let fetch_start = start.saturating_sub(halo_bp);
             let fetch_end = (core_end.saturating_add(halo_bp)).min(chrom_len);
 
-            tiles.push(Tile {
-                chr: chr.clone(),
+            tiles.push(Tile::new(
+                chr.clone(),
                 tid,
-                index: idx,
-                core_start: start,
+                idx,
+                start,
                 core_end,
                 fetch_start,
                 fetch_end,
-            });
+            )?);
 
             idx += 1;
             start = core_end;
@@ -394,7 +441,7 @@ pub fn build_tiles(
     {
         for t in &tiles {
             // Starts/ends of *cores* (not final chromosome end) line up on the grid
-            debug_assert_eq!((t.core_start as u64) % alignment_bp, 0);
+            debug_assert_eq!((t.core_start() as u64) % alignment_bp, 0);
         }
     }
 
@@ -407,12 +454,12 @@ pub enum TileMode<'w> {
     /// or windowed positional coverage without index (unique positions)
     Positional {
         windows: Option<&'w [IndexedInterval<u64>]>, // Per-chr windows if provided
-        out_path: std::path::PathBuf,           // Per-tile file path
-        indexed: bool,                          // Whether to save index
+        out_path: std::path::PathBuf,                // Per-tile file path
+        indexed: bool,                               // Whether to save index
     },
     AggregatesByBed {
         windows: &'w [IndexedInterval<u64>], // Per-chr windows
-        masked: bool,                      // Use masked counts/sums
+        masked: bool,                        // Use masked counts/sums
         partials_out: std::path::PathBuf, // Cross-boundary windows (idx, sum, allowed, blacklisted)
         cross_idx_out: std::path::PathBuf, // Sidecar listing crossers
     },
@@ -448,9 +495,7 @@ pub fn windows_overlapping_core(
     let core_end_abs = core_end as u64;
     windows_chr
         .iter()
-        .filter(move |window| {
-            window.end() > core_start_abs && window.start() < core_end_abs
-        })
+        .filter(move |window| window.end() > core_start_abs && window.start() < core_end_abs)
 }
 
 /// Extracts the tile index suffix from a coverage file name.
