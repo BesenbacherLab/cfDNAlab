@@ -51,6 +51,40 @@ where
     pub fn into_inner(self) -> (T, T) {
         (self.start, self.end)
     }
+
+    /// Convert a slice of `(start, end)` tuples into checked intervals.
+    ///
+    /// Use this when helpers or fixtures already store genomic spans as tuples and
+    /// you want one checked conversion step before passing them into APIs that use
+    /// `Interval`.
+    ///
+    /// Parameters
+    /// ----------
+    /// - `entries`:
+    ///   Slice of `(start, end)` tuples to validate and convert.
+    ///
+    /// Returns
+    /// -------
+    /// - `out`:
+    ///   Vector of checked intervals in the same order as the input slice.
+    ///
+    /// Example
+    /// -------
+    /// ```rust
+    /// use cfdnalab::shared::interval::Interval;
+    ///
+    /// let intervals = Interval::from_tuples(&[(5_u64, 10_u64), (10, 20)])?;
+    ///
+    /// assert_eq!(intervals.len(), 2);
+    /// assert_eq!(intervals[1].start(), 10);
+    /// # Ok::<(), cfdnalab::Error>(())
+    /// ```
+    pub fn from_tuples(entries: &[(T, T)]) -> Result<Vec<Self>> {
+        entries
+            .iter()
+            .map(|&(start, end)| Self::new(start, end))
+            .collect()
+    }
 }
 
 impl<T> Interval<T>
@@ -124,6 +158,40 @@ where
     ///   Indexed interval with the provided metadata.
     pub fn from_interval(interval: Interval<T>, idx: I) -> Self {
         Self { interval, idx }
+    }
+
+    /// Convert a slice of `(start, end, idx)` tuples into checked indexed intervals.
+    ///
+    /// Use this when helpers or fixtures already store genomic windows as tuples and
+    /// you want one checked conversion step before passing them into APIs that use
+    /// `IndexedInterval`.
+    ///
+    /// Parameters
+    /// ----------
+    /// - `entries`:
+    ///   Slice of `(start, end, idx)` tuples to validate and convert.
+    ///
+    /// Returns
+    /// -------
+    /// - `out`:
+    ///   Vector of checked indexed intervals in the same order as the input slice.
+    ///
+    /// Example
+    /// -------
+    /// ```rust
+    /// use cfdnalab::shared::interval::IndexedInterval;
+    ///
+    /// let windows = IndexedInterval::from_tuples(&[(5_u64, 10_u64, 0_u64), (10, 20, 1)])?;
+    ///
+    /// assert_eq!(windows.len(), 2);
+    /// assert_eq!(windows[1].idx(), 1);
+    /// # Ok::<(), cfdnalab::Error>(())
+    /// ```
+    pub fn from_tuples(entries: &[(T, T, I)]) -> Result<Vec<Self>> {
+        entries
+            .iter()
+            .map(|&(start, end, idx)| Self::new(start, end, idx))
+            .collect()
     }
 
     /// Return the inclusive start coordinate.

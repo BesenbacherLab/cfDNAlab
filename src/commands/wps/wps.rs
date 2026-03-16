@@ -659,7 +659,13 @@ pub fn wps_for_tile(
     // Adapt the fetch coordinates to the present windows (*in genomic-windowed mode!*)
     // When no windows are present, skip this tile
     let Some((fetch_from, fetch_to)) =
-        adapt_fetch_to_extreme_windows(tile, tile_window_span, &mode, chrom_len as u32)
+        adapt_fetch_to_extreme_windows(
+            tile,
+            tile_window_span,
+            &mode,
+            chrom_len as u32,
+            opt.fragment_lengths.max_fragment_length as u64,
+        )
     else {
         return Ok((counter, None, None));
     };

@@ -278,12 +278,12 @@ pub fn fetch_span_for_tile(
             let window_idx_end = (core_end.saturating_sub(1)) / window_bp;
             let window_start = window_idx_start * window_bp;
             let window_end = ((window_idx_end + 1) * window_bp).min(chrom_len);
-            clamp_fetch_to_window_span(tile, chrom_len, window_start, window_end)
+            clamp_fetch_to_window_span(tile, chrom_len, window_start, window_end, 0)
         }
         WindowSpec::Bed(_) => {
             let wchr = windows_chr?;
             let (min_ws, max_we) = tile_window_min_max(wchr, tile, tile_window_span)?;
-            clamp_fetch_to_window_span(tile, chrom_len, min_ws, max_we)
+            clamp_fetch_to_window_span(tile, chrom_len, min_ws, max_we, 0)
         }
     }
 }

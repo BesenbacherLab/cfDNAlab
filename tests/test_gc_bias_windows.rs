@@ -171,7 +171,10 @@ mod tests_prepare_tile_windows {
             cli_common::WindowSpec,
             gc_bias::{counting::GCCounts, windows::prepare_tile_windows},
         },
-        shared::tiled_run::{Tile, TileWindowSpan},
+        shared::{
+            interval::IndexedInterval,
+            tiled_run::{Tile, TileWindowSpan},
+        },
     };
     use std::path::PathBuf;
 
@@ -191,12 +194,22 @@ mod tests_prepare_tile_windows {
         }
     }
 
+    fn indexed_windows(entries: &[(u64, u64, u64)]) -> Vec<IndexedInterval<u64>> {
+        entries
+            .iter()
+            .map(|&(start, end, original_index)| {
+                IndexedInterval::new(start, end, original_index)
+                    .expect("test windows should be valid non-empty intervals")
+            })
+            .collect()
+    }
+
     #[test]
     fn builds_bed_windows_for_tile_core() -> Result<()> {
         let template = make_template();
         let tile = make_tile();
         // Span covers three windows, and the last ends after the core and must be filtered out
-        let windows: Vec<(u64, u64, u64)> = vec![(90, 140, 0), (120, 180, 1), (200, 240, 2)];
+        let windows = indexed_windows(&[(90, 140, 0), (120, 180, 1), (200, 240, 2)]);
         let span = TileWindowSpan {
             first_idx: 0,
             last_idx_exclusive: windows.len(),
@@ -226,7 +239,7 @@ mod tests_prepare_tile_windows {
         let template = make_template();
         let tile = make_tile();
         // Empty BED slice should return skip=true so caller can bail out early
-        let windows: Vec<(u64, u64, u64)> = Vec::new();
+        let windows: Vec<IndexedInterval<u64>> = Vec::new();
 
         let prepared = prepare_tile_windows(
             &WindowSpec::Bed(PathBuf::from("empty.bed")),

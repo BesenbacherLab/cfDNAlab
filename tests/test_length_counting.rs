@@ -5,6 +5,7 @@ mod tests {
     use anyhow::{Context, Result};
     use cfdnalab::shared::{
         fragment::indel_counting_fragment::{IndelReadInfo, collect_fragment_with_indel_counts},
+        interval::IndexedInterval,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
@@ -20,9 +21,16 @@ mod tests {
         );
     }
 
-    fn bed_windows(wins: &[(u64, u64)]) -> Vec<(u64, u64, u64)> {
-        // Ignore original_idx; find_overlapping_windows will use scan index.
-        wins.iter().map(|&(s, e)| (s, e, 0u64)).collect()
+    fn bed_windows(windows: &[(u64, u64)]) -> Vec<IndexedInterval<u64>> {
+        // Ignore original_idx here. These tests only need valid half-open windows.
+        windows
+            .iter()
+            .enumerate()
+            .map(|(window_idx, &(start, end))| {
+                IndexedInterval::new(start, end, window_idx as u64)
+                    .expect("test windows should be valid non-empty intervals")
+            })
+            .collect()
     }
 
     fn scaling_indices_for_fragment(
@@ -34,8 +42,14 @@ mod tests {
         let mut sf_ptr = 0usize;
 
         // Build a BED-like view of scaling bins (we only need starts/ends for overlap finding).
-        let scaling_bed: Vec<(u64, u64, u64)> =
-            scaling_chr.iter().map(|&(s, e, _)| (s, e, 0u64)).collect();
+        let scaling_bed: Vec<IndexedInterval<u64>> = scaling_chr
+            .iter()
+            .enumerate()
+            .map(|(window_idx, &(start, end, _))| {
+                IndexedInterval::new(start, end, window_idx as u64)
+                    .expect("scaling bins in tests should be valid non-empty intervals")
+            })
+            .collect();
 
         let overlaps = find_overlapping_windows(
             chrom_len,

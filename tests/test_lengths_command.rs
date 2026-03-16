@@ -986,9 +986,20 @@ mod tests_lengths_tiling_helpers {
     use cfdnalab::commands::cli_common::WindowSpec;
     use cfdnalab::commands::lengths::tiling::fetch_span_for_tile;
     use cfdnalab::shared::bam::Contigs;
+    use cfdnalab::shared::interval::IndexedInterval;
     use cfdnalab::shared::tiled_run::{Tile, TileWindowSpan, build_tiles};
     use fxhash::FxHashMap;
     use std::path::PathBuf;
+
+    fn indexed_windows(entries: &[(u64, u64, u64)]) -> Vec<IndexedInterval<u64>> {
+        entries
+            .iter()
+            .map(|&(start, end, original_index)| {
+                IndexedInterval::new(start, end, original_index)
+                    .expect("test windows should be valid non-empty intervals")
+            })
+            .collect()
+    }
 
     #[test]
     fn fetch_span_size_mode_clamps_to_halo_and_chrom() {
@@ -1066,7 +1077,7 @@ mod tests_lengths_tiling_helpers {
             fetch_start: 80,
             fetch_end: 200,
         };
-        let windows: Vec<(u64, u64, u64)> = vec![(90, 110, 0), (150, 170, 1), (250, 300, 2)];
+        let windows = indexed_windows(&[(90, 110, 0), (150, 170, 1), (250, 300, 2)]);
         let span = TileWindowSpan {
             first_idx: 0,
             last_idx_exclusive: 2,
@@ -1095,7 +1106,7 @@ mod tests_lengths_tiling_helpers {
             fetch_end: 170,
         };
         // No windows overlap tile
-        let windows: [(u64, u64, u64); 0] = [];
+        let windows: [IndexedInterval<u64>; 0] = [];
         let span = TileWindowSpan {
             first_idx: 0,
             last_idx_exclusive: 0,

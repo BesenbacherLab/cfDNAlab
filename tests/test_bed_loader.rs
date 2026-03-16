@@ -1,5 +1,6 @@
 use anyhow::Result;
 use cfdnalab::shared::bed::load_windows_from_bed;
+use cfdnalab::shared::interval::IndexedInterval;
 use flate2::{Compression, write::GzEncoder};
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -13,6 +14,16 @@ fn write_bed(lines: &[&str]) -> Result<NamedTempFile> {
     Ok(file)
 }
 
+fn indexed_windows(entries: &[(u64, u64, u64)]) -> Vec<IndexedInterval<u64>> {
+    entries
+        .iter()
+        .map(|&(start, end, original_index)| {
+            IndexedInterval::new(start, end, original_index)
+                .expect("test windows should be valid non-empty intervals")
+        })
+        .collect()
+}
+
 #[test]
 fn should_keep_only_whitelisted_chromosomes_when_loading_bed() -> Result<()> {
     // Arrange
@@ -24,7 +35,7 @@ fn should_keep_only_whitelisted_chromosomes_when_loading_bed() -> Result<()> {
 
     // Assert
     let chr1 = map.get("chr1").expect("chr1 missing");
-    assert_eq!(chr1.as_slice(), &[(0, 10, 0), (20, 30, 2)]);
+    assert_eq!(chr1.as_slice(), indexed_windows(&[(0, 10, 0), (20, 30, 2)]));
 
     let empty = load_windows_from_bed(
         bed.path(),
@@ -53,7 +64,7 @@ fn should_filter_windows_by_predicate_when_loading_bed() -> Result<()> {
 
     // Assert
     let chr1 = map.get("chr1").expect("chr1 missing");
-    assert_eq!(chr1.as_slice(), &[(10, 25, 1)]);
+    assert_eq!(chr1.as_slice(), indexed_windows(&[(10, 25, 1)]));
     Ok(())
 }
 
@@ -71,7 +82,7 @@ fn should_load_gzipped_bed() -> Result<()> {
 
     let map = load_windows_from_bed(gz.path(), None, None, None)?;
     let chr1 = map.get("chr1").expect("chr1 missing");
-    assert_eq!(chr1.as_slice(), &[(0, 5, 0), (10, 15, 1)]);
+    assert_eq!(chr1.as_slice(), indexed_windows(&[(0, 5, 0), (10, 15, 1)]));
     Ok(())
 }
 
@@ -86,7 +97,7 @@ fn should_validate_expected_window_count_with_whitelist() -> Result<()> {
 
     // Assert: only the allowed chromosome is returned, but **original indices include skipped windows**
     let chr2 = map.get("chr2").expect("chr2 entry missing");
-    assert_eq!(chr2.as_slice(), &[(4, 8, 1), (8, 12, 2)]);
+    assert_eq!(chr2.as_slice(), indexed_windows(&[(4, 8, 1), (8, 12, 2)]));
 
     // And mismatched expectations yield an error
     let err = load_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, Some(2))

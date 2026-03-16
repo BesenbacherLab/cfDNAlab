@@ -1,10 +1,23 @@
 mod tests {
+    use cfdnalab::commands::fcoverage::tiling::adapt_fetch_to_extreme_windows;
     use cfdnalab::shared::bam::Contigs;
+    use cfdnalab::shared::interval::IndexedInterval;
     use cfdnalab::shared::tiled_run::{
-        Tile, TileWindowSpan, build_tiles, clamp_fetch_to_window_span,
+        Tile, TileMode, TileWindowSpan, build_tiles, clamp_fetch_to_window_span,
         precompute_tile_window_spans, tile_window_min_max,
     };
     use fxhash::FxHashMap;
+    use std::path::PathBuf;
+
+    fn indexed_windows(entries: &[(u64, u64, u64)]) -> Vec<IndexedInterval<u64>> {
+        entries
+            .iter()
+            .map(|&(start, end, original_index)| {
+                IndexedInterval::new(start, end, original_index)
+                    .expect("test windows should be valid non-empty intervals")
+            })
+            .collect()
+    }
 
     #[test]
     fn parse_tile_index_basic() {
@@ -33,7 +46,7 @@ mod tests {
             fetch_end: 170,
         };
         // Windows span 90..160; halos are 20 left, 20 right; chrom len 155
-        let res = clamp_fetch_to_window_span(&tile, 155, 90, 160).unwrap();
+        let res = clamp_fetch_to_window_span(&tile, 155, 90, 160, 0).unwrap();
         // Left: 90 - 20 = 70, clamped to fetch_start 80 => 80
         // Right: 160 + 20 = 180, clamped to fetch_end 170 and chrom_len 155 => 155
         assert_eq!(res, (80, 155));
@@ -51,7 +64,7 @@ mod tests {
             fetch_end: 170,
         };
         // min_ws >= max_we should return None
-        assert!(clamp_fetch_to_window_span(&tile, 200, 120, 120).is_none());
+        assert!(clamp_fetch_to_window_span(&tile, 200, 120, 120, 0).is_none());
     }
 
     #[test]
@@ -67,7 +80,7 @@ mod tests {
         };
         // Windows far left. Even after adding halos the span ends before fetch_start,
         // so there is nothing to fetch and the range is discarded
-        let res = clamp_fetch_to_window_span(&tile, 300, 10, 20);
+        let res = clamp_fetch_to_window_span(&tile, 300, 10, 20, 0);
         assert!(res.is_none());
     }
 
@@ -83,7 +96,7 @@ mod tests {
             fetch_end: 120,
         };
         // Windows extend beyond chrom_len=100
-        let res = clamp_fetch_to_window_span(&tile, 100, 80, 150).unwrap();
+        let res = clamp_fetch_to_window_span(&tile, 100, 80, 150, 0).unwrap();
         // Left bound follows the nearest window minus halo (80-10) = 70, not the original fetch_start,
         // because there is no window support between 40 and 70; right clamp hits chrom_len=100
         assert_eq!(res, (70, 100));
@@ -102,7 +115,7 @@ mod tests {
         };
         // Windows sit to the right of the tile; even after halo expansion the span begins at 210-10=200,
         // matching fetch_end, so start >= end and the fetch range is discarded
-        let res = clamp_fetch_to_window_span(&tile, 230, 210, 220);
+        let res = clamp_fetch_to_window_span(&tile, 230, 210, 220, 0);
         assert!(res.is_none());
     }
 
@@ -117,8 +130,7 @@ mod tests {
             fetch_start: 40,
             fetch_end: 160,
         };
-        let windows: Vec<(u64, u64, u64)> =
-            vec![(0, 40, 0), (40, 60, 1), (120, 200, 2), (300, 400, 3)];
+        let windows = indexed_windows(&[(0, 40, 0), (40, 60, 1), (120, 200, 2), (300, 400, 3)]);
         let span = TileWindowSpan {
             first_idx: 1,
             last_idx_exclusive: 3,
@@ -149,8 +161,7 @@ mod tests {
                 fetch_end: 220,
             },
         ];
-        let windows: Vec<(u64, u64, u64)> =
-            vec![(50, 80, 0), (80, 120, 1), (140, 160, 2), (200, 240, 3)];
+        let windows = indexed_windows(&[(50, 80, 0), (80, 120, 1), (140, 160, 2), (200, 240, 3)]);
         let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 0, 0);
         let span0 = spans[0].unwrap();
         let span1 = spans[1].unwrap();
@@ -236,13 +247,13 @@ mod tests {
         ];
         // Window 1 starts inside the core, window 2 starts inside the right halo of tile 0,
         // window 3 starts inside the right halo of tile 1
-        let windows: Vec<(u64, u64, u64)> = vec![
+        let windows = indexed_windows(&[
             (60, 82, 0),
             (110, 120, 1),
             (160, 170, 2),
             (210, 220, 3),
             (240, 250, 4),
-        ];
+        ]);
         // Left halo: 10, Right halo: 15
         let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 10, 15);
         let span0 = spans[0].unwrap();
@@ -266,7 +277,7 @@ mod tests {
             fetch_start: 0,
             fetch_end: 30,
         };
-        let windows: Vec<(u64, u64, u64)> = Vec::new();
+        let windows: Vec<IndexedInterval<u64>> = Vec::new();
         let span = TileWindowSpan {
             first_idx: 0,
             last_idx_exclusive: 0,
@@ -286,7 +297,55 @@ mod tests {
             fetch_end: 100,
         };
         // Window span sits right of the chromosome, clamping pulls end left of start
-        let res = clamp_fetch_to_window_span(&tile, 120, 150, 160);
+        let res = clamp_fetch_to_window_span(&tile, 120, 150, 160, 0);
         assert!(res.is_none());
+    }
+
+    #[test]
+    fn clamp_fetch_uses_explicit_halo_when_tile_has_no_inferred_halo() {
+        let tile = Tile {
+            chr: "chr1".to_string(),
+            tid: 0,
+            index: 0,
+            core_start: 0,
+            core_end: 200,
+            fetch_start: 0,
+            fetch_end: 200,
+        };
+
+        // This tile has no inferred right halo because the core already reaches the chromosome end.
+        // The old logic therefore narrowed a window span of [0, 40) to exactly [0, 40), which is
+        // too short to reconstruct fragments extending beyond the window. The explicit halo must
+        // widen the fetch to [0, 60) while still staying inside the original tile fetch band.
+        let narrowed_fetch = clamp_fetch_to_window_span(&tile, 200, 0, 40, 20).unwrap();
+
+        assert_eq!(narrowed_fetch, (0, 60));
+    }
+
+    #[test]
+    fn adapt_fetch_keeps_fragment_context_for_bed_aggregate_tiles() {
+        let tile = Tile {
+            chr: "chr1".to_string(),
+            tid: 0,
+            index: 0,
+            core_start: 0,
+            core_end: 200,
+            fetch_start: 0,
+            fetch_end: 200,
+        };
+        let windows = indexed_windows(&[(0, 40, 0)]);
+        let mode = TileMode::AggregatesByBed {
+            windows: windows.as_slice(),
+            masked: false,
+            partials_out: PathBuf::from("partials.tsv.zst"),
+            cross_idx_out: PathBuf::from("cross.tsv.zst"),
+        };
+
+        // The overlapping BED window itself ends at 40, but fragment reconstruction for this mode
+        // still needs an extra halo. With halo_bp=20, the narrowed fetch must keep [0, 60).
+        let narrowed_fetch =
+            adapt_fetch_to_extreme_windows(&tile, None, &mode, 200, 20).unwrap();
+
+        assert_eq!(narrowed_fetch, (0, 60));
     }
 }

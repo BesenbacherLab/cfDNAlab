@@ -284,6 +284,8 @@ pub fn tile_window_min_max(
 /// - `chrom_len`: Total length of the chromosome in bases.
 /// - `min_ws`: Minimum window start observed among overlaps.
 /// - `max_we`: Maximum window end observed among overlaps.
+/// - `halo_bp`: Extra bases to keep on both sides of the observed window span before clamping
+///   back onto the tile fetch interval.
 ///
 /// # Returns
 /// `Some((start, end))` as absolute fetch limits when a non-empty span remains; otherwise `None`.
@@ -293,16 +295,19 @@ pub fn clamp_fetch_to_window_span(
     chrom_len: u64,
     min_ws: u64,
     max_we: u64,
+    halo_bp: u64,
 ) -> Option<(i64, i64)> {
     if min_ws >= max_we {
         return None;
     }
 
-    let left_halo = (tile.core_start as u64).saturating_sub(tile.fetch_start as u64);
-    let right_halo = (tile.fetch_end as u64).saturating_sub(tile.core_end as u64);
+    let tile_left_halo = (tile.core_start as u64).saturating_sub(tile.fetch_start as u64);
+    let tile_right_halo = (tile.fetch_end as u64).saturating_sub(tile.core_end as u64);
+    let effective_left_halo = tile_left_halo.max(halo_bp);
+    let effective_right_halo = tile_right_halo.max(halo_bp);
 
-    let narrowed_start = min_ws.saturating_sub(left_halo);
-    let narrowed_end = max_we.saturating_add(right_halo);
+    let narrowed_start = min_ws.saturating_sub(effective_left_halo);
+    let narrowed_end = max_we.saturating_add(effective_right_halo);
 
     let start_u64 = narrowed_start.max(tile.fetch_start as u64);
     let end_u64 = narrowed_end.min(tile.fetch_end as u64).min(chrom_len);

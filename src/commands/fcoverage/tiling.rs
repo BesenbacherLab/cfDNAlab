@@ -161,6 +161,8 @@ pub fn concat_aligned_size_tile_finals(
 /// - `tile_span`: Optional cached window span for the tile.
 /// - `mode`: Output mode describing whether windows are used.
 /// - `chrom_len`: Length of the chromosome in bases.
+/// - `halo_bp`: Extra bases to keep on both sides of the overlapping window span so
+///   fragments that extend outside the window itself can still be reconstructed.
 ///
 /// # Returns
 /// `Some((start, end))` giving the adjusted fetch coordinates, or `None` when no fetch is needed.
@@ -169,13 +171,14 @@ pub fn adapt_fetch_to_extreme_windows(
     tile_span: Option<&TileWindowSpan>,
     mode: &TileMode<'_>,
     chrom_len: u32,
+    halo_bp: u64,
 ) -> Option<(i64, i64)> {
     let chrom_len_u64 = chrom_len as u64;
 
     // Decide the fetch interval based on mode/windows.
     // For whole-genome positional: use the full tile fetch band.
-    // For windowed runs: restrict to [min_overlapping_window, max_overlapping_window] ± halo,
-    // intersected with the tile’s existing fetch band.
+    // For windowed runs: restrict to the overlapping window span widened by a fragment-sized halo,
+    // then intersect it with the tile’s existing fetch band.
     match mode {
         TileMode::Positional { windows: None, .. } => {
             Some((tile.fetch_start as i64, tile.fetch_end as i64))
@@ -185,11 +188,11 @@ pub fn adapt_fetch_to_extreme_windows(
             ..
         } => {
             let (min_ws, max_we) = tile_window_min_max(wchr, tile, tile_span)?;
-            clamp_fetch_to_window_span(tile, chrom_len_u64, min_ws, max_we)
+            clamp_fetch_to_window_span(tile, chrom_len_u64, min_ws, max_we, halo_bp)
         }
         TileMode::AggregatesByBed { windows: wchr, .. } => {
             let (min_ws, max_we) = tile_window_min_max(wchr, tile, tile_span)?;
-            clamp_fetch_to_window_span(tile, chrom_len_u64, min_ws, max_we)
+            clamp_fetch_to_window_span(tile, chrom_len_u64, min_ws, max_we, halo_bp)
         }
         TileMode::AggregatesBySize { window_bp, .. } => {
             let core_start = tile.core_start as u64;
@@ -202,7 +205,13 @@ pub fn adapt_fetch_to_extreme_windows(
             let last_window_idx = (core_end.saturating_sub(1)) / window_size_bp;
             let min_window_start = first_window_idx * window_size_bp;
             let max_window_end = ((last_window_idx + 1) * window_size_bp).min(chrom_len_u64);
-            clamp_fetch_to_window_span(tile, chrom_len_u64, min_window_start, max_window_end)
+            clamp_fetch_to_window_span(
+                tile,
+                chrom_len_u64,
+                min_window_start,
+                max_window_end,
+                halo_bp,
+            )
         }
     }
 }

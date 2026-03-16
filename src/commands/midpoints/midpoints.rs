@@ -668,7 +668,7 @@ pub fn get_overlapping_sites_and_adapt_fetch_to_extremes(
     let max_we = overlapping_sites.iter().map(|window| window.end()).max().unwrap();
 
     let (fetch_from, fetch_to) =
-        clamp_fetch_to_window_span(tile, chrom_len as u64, min_ws, max_we)?;
+        clamp_fetch_to_window_span(tile, chrom_len as u64, min_ws, max_we, 0)?;
 
     Some((overlapping_sites, fetch_from, fetch_to))
 }
