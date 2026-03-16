@@ -1027,8 +1027,8 @@ mod tests_peak_signal_processing {
 
 mod tests_wps_peaks_command {
     use crate::fixtures::{
-        BamFixture, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, long_fragment_bam,
-        read_zst_to_string,
+        BamFixture, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, bam_from_specs, long_fragment_bam,
+        read_zst_to_string, write_bed,
     };
     use anyhow::Result;
     use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
@@ -1051,6 +1051,19 @@ mod tests_wps_peaks_command {
     const OVERLAP_HEIGHT: f32 = 2.0;
     const SHOULDER_OFFSET_BP: u64 = BASE_LEFT_BP + 199;
     const SHOULDER_HEIGHT: f32 = 1.0;
+
+    fn empty_three_chrom_bam(name: &str) -> Result<BamFixture> {
+        bam_from_specs(
+            vec![
+                ("chr1".to_string(), 1_000),
+                ("chr2".to_string(), 1_000),
+                ("chr3".to_string(), 1_000),
+            ],
+            Vec::new(),
+            Vec::new(),
+            name,
+        )
+    }
 
     #[test]
     fn run_emits_expected_peaks_and_stats_for_fixed_size_windows() -> Result<()> {
@@ -1186,6 +1199,162 @@ mod tests_wps_peaks_command {
             });
         }
         assert_eq!(stats_rows, expected_stats);
+
+        Ok(())
+    }
+
+    #[test]
+    fn global_mode_handles_three_chromosomes() -> Result<()> {
+        let bam = empty_three_chrom_bam("wps_peaks_three_chr_global")?;
+        let out_dir = tempdir()?;
+        let ioc = IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 1,
+        };
+        let chromosomes = ChromosomeArgs {
+            chromosomes: Some(vec![
+                "chr1".to_string(),
+                "chr2".to_string(),
+                "chr3".to_string(),
+            ]),
+            chromosomes_file: None,
+        };
+        let mut cfg = WPSPeaksConfig::new(ioc, chromosomes, None);
+        cfg.shared_args.set_output_prefix("three_chr_global".to_string());
+        cfg.shared_args.set_window_size(WINDOW_SIZE_BP);
+        cfg.shared_args.set_decimals(2);
+        cfg.shared_args.set_tile_size(TILE_SIZE_BP);
+        cfg.shared_args.set_min_fragment_length(WINDOW_SIZE_BP);
+        cfg.shared_args.set_max_fragment_length(2_000);
+        cfg.shared_args.set_min_mapq(0);
+        cfg.no_smoothing = true;
+        cfg.normalize_bp = NORMALIZE_BP_FOR_TEST;
+        cfg.min_unmasked = 10;
+        cfg.min_peak_height = 0.75;
+
+        run(&cfg)?;
+
+        let peaks_path = out_dir.path().join("three_chr_global.wps.peaks.tsv.zst");
+        let text = read_zst_to_string(&peaks_path)?;
+        assert!(
+            text.trim().is_empty(),
+            "Empty three-chromosome input should not produce any global peaks"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn by_size_stats_handles_three_chromosomes() -> Result<()> {
+        let bam = empty_three_chrom_bam("wps_peaks_three_chr_by_size")?;
+        let out_dir = tempdir()?;
+        let ioc = IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 1,
+        };
+        let chromosomes = ChromosomeArgs {
+            chromosomes: Some(vec![
+                "chr1".to_string(),
+                "chr2".to_string(),
+                "chr3".to_string(),
+            ]),
+            chromosomes_file: None,
+        };
+        let mut cfg = WPSPeaksConfig::new(ioc, chromosomes, Some(PeaksWindowAction::Stats));
+        cfg.shared_args.set_output_prefix("three_chr_by_size".to_string());
+        cfg.shared_args.set_window_size(WINDOW_SIZE_BP);
+        cfg.shared_args.set_decimals(2);
+        cfg.shared_args.set_tile_size(TILE_SIZE_BP);
+        cfg.shared_args.set_min_fragment_length(WINDOW_SIZE_BP);
+        cfg.shared_args.set_max_fragment_length(2_000);
+        cfg.shared_args.set_min_mapq(0);
+        cfg.shared_args.set_windows(WindowsArgs {
+            by_size: Some(1_000),
+            by_bed: None,
+        });
+        cfg.no_smoothing = true;
+        cfg.normalize_bp = NORMALIZE_BP_FOR_TEST;
+        cfg.min_unmasked = 10;
+        cfg.min_peak_height = 0.75;
+
+        run(&cfg)?;
+
+        let stats_path = out_dir.path().join("three_chr_by_size.wps.peaks.stats.tsv.zst");
+        let text = read_zst_to_string(&stats_path)?;
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                "chromosome\tstart\tend\twindow_index\tcount\tavg_distance\tmedian_distance",
+                "chr1\t0\t1000\t0\t0\tNaN\tNaN",
+                "chr2\t0\t1000\t1\t0\tNaN\tNaN",
+                "chr3\t0\t1000\t2\t0\tNaN\tNaN",
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn by_bed_stats_handles_three_chromosomes() -> Result<()> {
+        let bam = empty_three_chrom_bam("wps_peaks_three_chr_by_bed")?;
+        let out_dir = tempdir()?;
+        let bed_path = out_dir.path().join("three_chr_windows.bed");
+        write_bed(
+            &bed_path,
+            &[
+                ("chr1", 0, 1000, "chr1_window"),
+                ("chr2", 0, 1000, "chr2_window"),
+                ("chr3", 0, 1000, "chr3_window"),
+            ],
+        )?;
+
+        let ioc = IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 1,
+        };
+        let chromosomes = ChromosomeArgs {
+            chromosomes: Some(vec![
+                "chr1".to_string(),
+                "chr2".to_string(),
+                "chr3".to_string(),
+            ]),
+            chromosomes_file: None,
+        };
+        let mut cfg = WPSPeaksConfig::new(ioc, chromosomes, Some(PeaksWindowAction::Stats));
+        cfg.shared_args.set_output_prefix("three_chr_by_bed".to_string());
+        cfg.shared_args.set_window_size(WINDOW_SIZE_BP);
+        cfg.shared_args.set_decimals(2);
+        cfg.shared_args.set_tile_size(TILE_SIZE_BP);
+        cfg.shared_args.set_min_fragment_length(WINDOW_SIZE_BP);
+        cfg.shared_args.set_max_fragment_length(2_000);
+        cfg.shared_args.set_min_mapq(0);
+        cfg.shared_args.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+        });
+        cfg.no_smoothing = true;
+        cfg.normalize_bp = NORMALIZE_BP_FOR_TEST;
+        cfg.min_unmasked = 10;
+        cfg.min_peak_height = 0.75;
+
+        run(&cfg)?;
+
+        let stats_path = out_dir.path().join("three_chr_by_bed.wps.peaks.stats.tsv.zst");
+        let text = read_zst_to_string(&stats_path)?;
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                "chromosome\tstart\tend\twindow_index\tcount\tavg_distance\tmedian_distance",
+                "chr1\t0\t1000\t0\t0\tNaN\tNaN",
+                "chr2\t0\t1000\t1\t0\tNaN\tNaN",
+                "chr3\t0\t1000\t2\t0\tNaN\tNaN",
+            ]
+        );
 
         Ok(())
     }

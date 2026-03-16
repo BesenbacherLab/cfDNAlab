@@ -892,6 +892,84 @@ fn by_bed_average_handles_three_chromosomes_with_global_window_indices() -> Resu
 }
 
 #[test]
+fn per_position_handles_three_chromosomes_in_global_mode() -> Result<()> {
+    let bam = bam_from_specs(
+        vec![
+            ("chr1".to_string(), 200),
+            ("chr2".to_string(), 200),
+            ("chr3".to_string(), 200),
+        ],
+        vec![
+            paired_fragment_on_tid(0, 20, 60, 20),
+            paired_fragment_on_tid(1, 10, 40, 20),
+            paired_fragment_on_tid(2, 40, 50, 20),
+        ],
+        Vec::new(),
+        "fcoverage_three_chr_global",
+    )?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.chromosomes = base_chromosomes(&["chr1", "chr2", "chr3"]);
+    cfg.set_decimals(0);
+    cfg.set_keep_zero_runs(false);
+
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(lines, vec!["chr1\t20\t80\t1", "chr2\t10\t50\t1", "chr3\t40\t90\t1"]);
+
+    Ok(())
+}
+
+#[test]
+fn by_size_total_handles_three_chromosomes() -> Result<()> {
+    let bam = bam_from_specs(
+        vec![
+            ("chr1".to_string(), 200),
+            ("chr2".to_string(), 200),
+            ("chr3".to_string(), 200),
+        ],
+        vec![
+            paired_fragment_on_tid(0, 20, 60, 20),
+            paired_fragment_on_tid(1, 10, 40, 20),
+            paired_fragment_on_tid(2, 40, 50, 20),
+        ],
+        Vec::new(),
+        "fcoverage_three_chr_size",
+    )?;
+    let out_dir = TempDir::new()?;
+
+    let mut windows = WindowsArgs::default();
+    windows.by_size = Some(200);
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.chromosomes = base_chromosomes(&["chr1", "chr2", "chr3"]);
+    cfg.set_decimals(0);
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_windows(windows);
+
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join("testcov.total.tsv.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chr1\t0\t200\t60\t0",
+            "chr2\t0\t200\t40\t0",
+            "chr3\t0\t200\t50\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
 fn by_bed_total_matches_manual_window_sums() -> Result<()> {
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;

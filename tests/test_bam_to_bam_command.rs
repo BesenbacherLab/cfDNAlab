@@ -238,6 +238,105 @@ fn windows_count_overlap_spanning_gap_between_mates() -> Result<()> {
 }
 
 #[test]
+fn global_mode_keeps_expected_fragments_across_three_chromosomes() -> Result<()> {
+    let bam = bam_from_specs(
+        vec![
+            ("chr1".to_string(), 1_000),
+            ("chr2".to_string(), 1_000),
+            ("chr3".to_string(), 1_000),
+        ],
+        vec![
+            paired_fragment(10, 120, 40),
+            fragment_on_tid(paired_fragment(30, 120, 40), 1),
+            fragment_on_tid(paired_fragment(50, 120, 40), 2),
+        ],
+        Vec::new(),
+        "bam_to_bam_three_chr_global",
+    )?;
+
+    let work = tempdir()?;
+    let out_bam = work.path().join("three_chr_global.bam");
+    let chrom_args = ChromosomeArgs {
+        chromosomes: Some(vec![
+            "chr1".to_string(),
+            "chr2".to_string(),
+            "chr3".to_string(),
+        ]),
+        chromosomes_file: None,
+    };
+    let mut cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
+    cfg.skip_chromosome_sort = true;
+
+    run_inner(&cfg)?;
+
+    let counts = read_qname_counts(&out_bam)?;
+    assert_eq!(
+        counts,
+        HashMap::from([
+            ("frag0_10".to_string(), 2usize),
+            ("frag1_30".to_string(), 2usize),
+            ("frag2_50".to_string(), 2usize),
+        ]),
+        "Global mode should keep one complete fragment per chromosome"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn bed_mode_filters_expected_fragments_across_three_chromosomes() -> Result<()> {
+    let bam = bam_from_specs(
+        vec![
+            ("chr1".to_string(), 1_000),
+            ("chr2".to_string(), 1_000),
+            ("chr3".to_string(), 1_000),
+        ],
+        vec![
+            paired_fragment(10, 120, 40),
+            fragment_on_tid(paired_fragment(30, 120, 40), 1),
+            fragment_on_tid(paired_fragment(50, 120, 40), 2),
+            paired_fragment(400, 120, 40),
+            fragment_on_tid(paired_fragment(420, 120, 40), 1),
+            fragment_on_tid(paired_fragment(440, 120, 40), 2),
+        ],
+        Vec::new(),
+        "bam_to_bam_three_chr_bed",
+    )?;
+
+    let work = tempdir()?;
+    let out_bam = work.path().join("three_chr_bed.bam");
+    let bed = work.path().join("three_chr_windows.bed");
+    fs::write(&bed, "chr1\t0\t60\nchr2\t0\t80\nchr3\t40\t100\n")?;
+
+    let chrom_args = ChromosomeArgs {
+        chromosomes: Some(vec![
+            "chr1".to_string(),
+            "chr2".to_string(),
+            "chr3".to_string(),
+        ]),
+        chromosomes_file: None,
+    };
+    let mut cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
+    cfg.skip_chromosome_sort = true;
+    cfg.by_bed = Some(bed);
+
+    run_inner(&cfg)?;
+
+    let counts = read_qname_counts(&out_bam)?;
+    assert_eq!(
+        counts,
+        HashMap::from([
+            ("frag0_10".to_string(), 2usize),
+            ("frag1_30".to_string(), 2usize),
+            ("frag2_50".to_string(), 2usize),
+        ]),
+        "BED mode should keep only the fragments overlapping the per-chromosome windows"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn writes_coverage_weight_when_scaling_factors_provided() -> Result<()> {
     let fragment = paired_fragment(0, 100, 40);
     let bam = bam_from_specs(

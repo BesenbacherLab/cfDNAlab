@@ -33,6 +33,37 @@ mod tests_lengths_command {
         }
     }
 
+    fn fragment_on_tid(
+        tid: usize,
+        start: i64,
+        fragment_len: i64,
+        read_len: i64,
+    ) -> FragmentSpec {
+        let mut fragment = fixtures::paired_fragment(start, fragment_len, read_len);
+        fragment.forward.tid = tid;
+        fragment.reverse.tid = tid;
+        fragment.forward.mate_tid = Some(tid);
+        fragment.reverse.mate_tid = Some(tid);
+        fragment
+    }
+
+    fn three_chrom_length_fixture(name: &str) -> Result<BamFixture> {
+        bam_from_specs(
+            vec![
+                ("chr1".to_string(), 200),
+                ("chr2".to_string(), 200),
+                ("chr3".to_string(), 200),
+            ],
+            vec![
+                fragment_on_tid(0, 20, 60, 20),
+                fragment_on_tid(1, 30, 80, 20),
+                fragment_on_tid(2, 40, 100, 20),
+            ],
+            Vec::new(),
+            name,
+        )
+    }
+
     #[test]
     fn counts_reference_lengths_global_window() -> Result<()> {
         let bam = simple_inward_bam()?;
@@ -153,6 +184,139 @@ mod tests_lengths_command {
         let len60_idx = 60 - 10;
         assert!((arr[(0, len60_idx)] - 1.0).abs() < 1e-6);
         assert!((arr.sum() - 1.0).abs() < 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn counts_reference_lengths_global_window_across_three_chromosomes() -> Result<()> {
+        let bam = three_chrom_length_fixture("lengths_three_chr_global")?;
+        let out_dir = TempDir::new()?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 2,
+            },
+            base_chromosomes(&["chr1", "chr2", "chr3"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 120;
+        }
+
+        run(&cfg)?;
+
+        let prefix = cfg.output_prefix.trim();
+        let npy_path = out_dir.path().join(format!("{prefix}.length_counts.npy"));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+
+        assert_eq!(arr.shape(), &[3, 111]);
+        assert!((arr[(0, 60 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr[(1, 80 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr[(2, 100 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr.sum() - 3.0).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
+    fn counts_reference_lengths_size_single_window_across_three_chromosomes() -> Result<()> {
+        let bam = three_chrom_length_fixture("lengths_three_chr_size")?;
+        let out_dir = TempDir::new()?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 2,
+            },
+            base_chromosomes(&["chr1", "chr2", "chr3"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs {
+            by_size: Some(200),
+            by_bed: None,
+        });
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_tile_size(30);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 120;
+        }
+
+        run(&cfg)?;
+
+        let prefix = cfg.output_prefix.trim();
+        let npy_path = out_dir.path().join(format!("{prefix}.length_counts.npy"));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+
+        assert_eq!(arr.shape(), &[3, 111]);
+        assert!((arr[(0, 60 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr[(1, 80 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr[(2, 100 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr.sum() - 3.0).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
+    fn counts_reference_lengths_bed_single_window_across_three_chromosomes() -> Result<()> {
+        let bam = three_chrom_length_fixture("lengths_three_chr_bed")?;
+        let out_dir = TempDir::new()?;
+        let bed_path = out_dir.path().join("windows_three_chr.bed");
+        fixtures::write_bed(
+            &bed_path,
+            &[
+                ("chr1", 0, 200, "chr1_window"),
+                ("chr2", 0, 200, "chr2_window"),
+                ("chr3", 0, 200, "chr3_window"),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 2,
+            },
+            base_chromosomes(&["chr1", "chr2", "chr3"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 120;
+        }
+
+        run(&cfg)?;
+
+        let prefix = cfg.output_prefix.trim();
+        let npy_path = out_dir.path().join(format!("{prefix}.length_counts.npy"));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+
+        assert_eq!(arr.shape(), &[3, 111]);
+        assert!((arr[(0, 60 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr[(1, 80 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr[(2, 100 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr.sum() - 3.0).abs() < 1e-6);
+
         Ok(())
     }
 

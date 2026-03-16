@@ -3,11 +3,11 @@
 mod fixtures;
 
 use anyhow::{Context, Result, ensure};
-use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs};
+use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
 use cfdnalab::commands::wps::config::WPSConfig;
 use cfdnalab::commands::wps::wps::run as run_fn;
-use fixtures::{BamFixture, FragmentSpec, ReadSpec, bam_from_specs, long_fragment_bam};
+use fixtures::{BamFixture, FragmentSpec, ReadSpec, bam_from_specs, long_fragment_bam, read_zst_to_string, write_bed};
 use std::cmp::max;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -77,6 +77,15 @@ fn fragment_spec(start: u32, end: u32) -> FragmentSpec {
     FragmentSpec { forward, reverse }
 }
 
+fn fragment_spec_on_tid(tid: usize, start: u32, end: u32) -> FragmentSpec {
+    let mut fragment = fragment_spec(start, end);
+    fragment.forward.tid = tid;
+    fragment.reverse.tid = tid;
+    fragment.forward.mate_tid = Some(tid);
+    fragment.reverse.mate_tid = Some(tid);
+    fragment
+}
+
 fn make_fixture(name: &str, fragments: &[(u32, u32)]) -> Result<BamFixture> {
     let chrom_len = fragments
         .iter()
@@ -89,6 +98,25 @@ fn make_fixture(name: &str, fragments: &[(u32, u32)]) -> Result<BamFixture> {
         .collect();
     bam_from_specs(
         vec![("chr1".to_string(), chrom_len)],
+        specs,
+        Vec::new(),
+        name,
+    )
+}
+
+fn make_three_chrom_fixture(name: &str, fragments: &[(u32, u32)]) -> Result<BamFixture> {
+    let chrom_len = 100u32;
+    let specs: Vec<FragmentSpec> = fragments
+        .iter()
+        .enumerate()
+        .map(|(tid, (start, end))| fragment_spec_on_tid(tid, *start, *end))
+        .collect();
+    bam_from_specs(
+        vec![
+            ("chr1".to_string(), chrom_len),
+            ("chr2".to_string(), chrom_len),
+            ("chr3".to_string(), chrom_len),
+        ],
         specs,
         Vec::new(),
         name,
@@ -440,6 +468,131 @@ fn long_fragment_fixture_produces_expected_wps_runs() -> Result<()> {
     assert_runs_equal(&prefix, &expected);
     Ok(())
 }
+
+#[test]
+fn global_mode_handles_three_chromosomes() -> Result<()> {
+    let fixture = make_three_chrom_fixture(
+        "wps_three_chr_global",
+        &[(10, 22), (10, 22), (10, 22)],
+    )?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = make_config(4, false, &fixture.bam, out_dir.path(), "three_chr_global");
+    cfg.shared_args.chromosomes.chromosomes = Some(vec![
+        "chr1".to_string(),
+        "chr2".to_string(),
+        "chr3".to_string(),
+    ]);
+
+    // Manual expectations per chromosome for one fragment [10, 22) and window size 4:
+    // - [9, 12) at -1 from the left endpoint
+    // - [12, 21) at +1 where the window fits fully inside the fragment
+    // - [21, 23) at -1 from the right endpoint
+    let expected = vec![
+        wps_run("chr1", 9, 12, -1.0),
+        wps_run("chr1", 12, 21, 1.0),
+        wps_run("chr1", 21, 23, -1.0),
+        wps_run("chr2", 9, 12, -1.0),
+        wps_run("chr2", 12, 21, 1.0),
+        wps_run("chr2", 21, 23, -1.0),
+        wps_run("chr3", 9, 12, -1.0),
+        wps_run("chr3", 12, 21, 1.0),
+        wps_run("chr3", 21, 23, -1.0),
+    ];
+
+    let actual = run_wps_with_chrom(&cfg)?;
+    assert_runs_equal(&actual, &expected);
+    Ok(())
+}
+
+#[test]
+fn by_size_total_handles_three_chromosomes() -> Result<()> {
+    let fixture = make_three_chrom_fixture(
+        "wps_three_chr_by_size",
+        &[(10, 22), (10, 22), (10, 22)],
+    )?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = make_config(4, false, &fixture.bam, out_dir.path(), "three_chr_by_size");
+    cfg.shared_args.chromosomes.chromosomes = Some(vec![
+        "chr1".to_string(),
+        "chr2".to_string(),
+        "chr3".to_string(),
+    ]);
+    cfg.shared_args.windows = WindowsArgs {
+        by_size: Some(100),
+        by_bed: None,
+    };
+    cfg.per_window = Some(CoverageWindowAction::Total);
+
+    // The per-chromosome WPS runs from the global test sum to:
+    // - [9, 12)  -> -3
+    // - [12, 21) -> +9
+    // - [21, 23) -> -2
+    // Total WPS over the chromosome window [0, 100) is therefore 4.
+    run_fn(&cfg)?;
+
+    let output_path = out_dir.path().join("three_chr_by_size.wps.total.tsv.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chr1\t0\t100\t4\t0",
+            "chr2\t0\t100\t4\t0",
+            "chr3\t0\t100\t4\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn by_bed_total_handles_three_chromosomes() -> Result<()> {
+    let fixture = make_three_chrom_fixture(
+        "wps_three_chr_by_bed",
+        &[(10, 22), (10, 22), (10, 22)],
+    )?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("three_chr_windows.bed");
+    write_bed(
+        &bed_path,
+        &[
+            ("chr1", 0, 100, "chr1_window"),
+            ("chr2", 0, 100, "chr2_window"),
+            ("chr3", 0, 100, "chr3_window"),
+        ],
+    )?;
+
+    let mut cfg = make_config(4, false, &fixture.bam, out_dir.path(), "three_chr_by_bed");
+    cfg.shared_args.chromosomes.chromosomes = Some(vec![
+        "chr1".to_string(),
+        "chr2".to_string(),
+        "chr3".to_string(),
+    ]);
+    cfg.shared_args.windows = WindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+    };
+    cfg.per_window = Some(CoverageWindowAction::Total);
+
+    run_fn(&cfg)?;
+
+    let output_path = out_dir.path().join("three_chr_by_bed.wps.total.tsv.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chr1\t0\t100\t4\t0",
+            "chr2\t0\t100\t4\t0",
+            "chr3\t0\t100\t4\t0",
+        ]
+    );
+
+    Ok(())
+}
+
 fn assert_runs_equal(actual: &[WpsRun], expected: &[WpsRun]) {
     assert_eq!(
         actual.len(),
