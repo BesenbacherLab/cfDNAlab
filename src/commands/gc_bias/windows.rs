@@ -3,6 +3,7 @@ use crate::commands::gc_bias::counting::{GCCounts, GCPrefixes};
 use crate::shared::{
     bam::Contigs,
     bed::Windows,
+    interval::IndexedInterval,
     tiled_run::{Tile, TileWindowSpan, overlapping_windows_for_tile},
 };
 use anyhow::{Result, anyhow, bail, ensure};
@@ -33,8 +34,9 @@ pub fn compute_window_stats(
             let mut count: u64 = 0;
             for chr in chromosomes {
                 if let Some(ws) = map.get(chr) {
-                    for (s, e, _) in ws.as_slice() {
-                        total_len = total_len.saturating_add(e.saturating_sub(*s));
+                    for window in ws.as_slice() {
+                        total_len =
+                            total_len.saturating_add(window.end().saturating_sub(window.start()));
                         count += 1;
                     }
                 }
@@ -266,7 +268,7 @@ pub struct PreparedTileWindows {
 ///     chromosomes.
 pub fn prepare_tile_windows(
     window_opt: &WindowSpec,
-    windows_opt: Option<&[(u64, u64, u64)]>,
+    windows_opt: Option<&[IndexedInterval<u64>]>,
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
     chrom_len: u64,
@@ -294,9 +296,10 @@ pub fn prepare_tile_windows(
                     .map(|span| span.last_idx_exclusive.saturating_sub(span.first_idx))
                     .unwrap_or(win_slice.len());
                 windows.reserve(capacity);
-                for &(window_start, window_end, window_idx) in
-                    overlapping_windows_for_tile(win_slice, tile, tile_window_span)
-                {
+                for window in overlapping_windows_for_tile(win_slice, tile, tile_window_span) {
+                    let window_start = window.start();
+                    let window_end = window.end();
+                    let window_idx = window.idx();
                     let contained = window_start >= core_start && window_end <= core_end;
                     windows.push(WindowState::new(
                         window_idx,

@@ -1,4 +1,5 @@
 use crate::shared::bam::Contigs;
+use crate::shared::interval::IndexedInterval;
 use rand::{Rng, distr::Alphanumeric};
 
 /// A processing tile for one chromosome
@@ -60,7 +61,7 @@ pub fn precompute_tile_window_spans<'a, F>(
     right_halo: u64,
 ) -> Vec<Option<TileWindowSpan>>
 where
-    F: FnMut(&str) -> &'a [(u64, u64, u64)],
+    F: FnMut(&str) -> &'a [IndexedInterval<u64>],
 {
     let mut spans: Vec<Option<TileWindowSpan>> = vec![None; tiles.len()];
     let mut tile_idx = 0usize;
@@ -93,7 +94,7 @@ where
             let right_bound = core_end.saturating_add(right_halo);
 
             // Discard windows that end before the left bound (core minus halo)
-            while w_left < windows_len && windows[w_left].1 <= left_bound {
+            while w_left < windows_len && windows[w_left].end() <= left_bound {
                 w_left += 1;
             }
 
@@ -102,7 +103,7 @@ where
             }
 
             // Extend to cover every window whose start lies inside the right bound (core plus halo)
-            while w_right < windows_len && windows[w_right].0 < right_bound {
+            while w_right < windows_len && windows[w_right].start() < right_bound {
                 w_right += 1;
             }
 
@@ -120,7 +121,7 @@ where
             let first_candidate = &windows[w_left];
 
             // Check if the earliest remaining window begins at/after the right bound, so later ones do too
-            if first_candidate.0 >= right_bound {
+            if first_candidate.start() >= right_bound {
                 spans[idx] = None;
                 continue;
             }
@@ -142,7 +143,7 @@ where
 /// The underlying slice is filtered on-the-fly to skip windows whose span does not intersect the
 /// tile, so callers do not need to duplicate the overlap predicates.
 pub struct TileWindowsIter<'a> {
-    windows: &'a [(u64, u64, u64)],
+    windows: &'a [IndexedInterval<u64>],
     next_idx: usize,
     end_idx: usize,
     core_start: u64,
@@ -150,7 +151,7 @@ pub struct TileWindowsIter<'a> {
 }
 
 impl<'a> Iterator for TileWindowsIter<'a> {
-    type Item = &'a (u64, u64, u64);
+    type Item = &'a IndexedInterval<u64>;
 
     /// Produces the next window that intersects the stored tile core.
     ///
@@ -166,7 +167,7 @@ impl<'a> Iterator for TileWindowsIter<'a> {
             self.next_idx += 1;
             // Only return windows that truly intersect the tile core, even if the cached span
             // contains neighbouring candidates with the same chromosome ordering
-            if window.1 > self.core_start && window.0 < self.core_end {
+            if window.end() > self.core_start && window.start() < self.core_end {
                 return Some(window);
             }
         }
@@ -187,17 +188,17 @@ impl<'a> Iterator for TileWindowsIter<'a> {
 /// # Returns
 /// A pair `(left, right)` giving the half-open window index range whose members may overlap.
 fn span_bounds_without_cache(
-    windows: &[(u64, u64, u64)],
+    windows: &[IndexedInterval<u64>],
     core_start: u64,
     core_end: u64,
 ) -> (usize, usize) {
     let mut left = 0usize;
-    while left < windows.len() && windows[left].1 <= core_start {
+    while left < windows.len() && windows[left].end() <= core_start {
         left += 1;
     }
 
     let mut right = left;
-    while right < windows.len() && windows[right].0 < core_end {
+    while right < windows.len() && windows[right].start() < core_end {
         right += 1;
     }
 
@@ -217,7 +218,7 @@ fn span_bounds_without_cache(
 /// # Returns
 /// A `TileWindowsIter` positioned to stream the overlapping windows.
 pub fn overlapping_windows_for_tile<'a>(
-    windows: &'a [(u64, u64, u64)],
+    windows: &'a [IndexedInterval<u64>],
     tile: &Tile,
     span: Option<&TileWindowSpan>,
 ) -> TileWindowsIter<'a> {
@@ -251,21 +252,21 @@ pub fn overlapping_windows_for_tile<'a>(
 /// # Returns
 /// `Some((min_start, max_end))` when at least one window overlaps; otherwise `None`.
 pub fn tile_window_min_max(
-    windows: &[(u64, u64, u64)],
+    windows: &[IndexedInterval<u64>],
     tile: &Tile,
     span: Option<&TileWindowSpan>,
 ) -> Option<(u64, u64)> {
     let mut iter = overlapping_windows_for_tile(windows, tile, span);
     let first = iter.next()?;
-    let mut min_start = first.0;
-    let mut max_end = first.1;
+    let mut min_start = first.start();
+    let mut max_end = first.end();
 
-    for &(start, end, _) in iter {
-        if start < min_start {
-            min_start = start;
+    for window in iter {
+        if window.start() < min_start {
+            min_start = window.start();
         }
-        if end > max_end {
-            max_end = end;
+        if window.end() > max_end {
+            max_end = window.end();
         }
     }
 
@@ -400,12 +401,12 @@ pub enum TileMode<'w> {
     /// Whole positional coverage for the core,
     /// or windowed positional coverage without index (unique positions)
     Positional {
-        windows: Option<&'w [(u64, u64, u64)]>, // Per-chr windows if provided
+        windows: Option<&'w [IndexedInterval<u64>]>, // Per-chr windows if provided
         out_path: std::path::PathBuf,           // Per-tile file path
         indexed: bool,                          // Whether to save index
     },
     AggregatesByBed {
-        windows: &'w [(u64, u64, u64)],    // Per-chr windows
+        windows: &'w [IndexedInterval<u64>], // Per-chr windows
         masked: bool,                      // Use masked counts/sums
         partials_out: std::path::PathBuf, // Cross-boundary windows (idx, sum, allowed, blacklisted)
         cross_idx_out: std::path::PathBuf, // Sidecar listing crossers
@@ -434,15 +435,15 @@ pub enum TileMode<'w> {
 /// An iterator yielding references to the overlapping windows.
 #[inline]
 pub fn windows_overlapping_core(
-    windows_chr: &[(u64, u64, u64)],
+    windows_chr: &[IndexedInterval<u64>],
     core_start: u32,
     core_end: u32,
-) -> impl Iterator<Item = &(u64, u64, u64)> {
+) -> impl Iterator<Item = &IndexedInterval<u64>> {
     let cs = core_start as u64;
     let ce = core_end as u64;
     windows_chr
         .iter()
-        .filter(move |&&(ws, we, _idx)| we > cs && ws < ce)
+        .filter(move |window| window.end() > cs && window.start() < ce)
 }
 
 /// Extracts the tile index suffix from a coverage file name.

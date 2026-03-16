@@ -1,3 +1,4 @@
+use crate::shared::interval::IndexedInterval;
 use crate::shared::interval::Interval;
 use crate::{Error, Result};
 
@@ -242,7 +243,7 @@ pub fn half_open_intervals_overlap(interval_a: Interval<u64>, interval_b: Interv
 pub fn find_overlapping_windows(
     chrom_len: u64,
     wd_ptr: &mut usize,
-    windows: Option<&[(u64, u64, u64)]>, // (start, end, original_idx)
+    windows: Option<&[IndexedInterval<u64>]>,
     by_size: Option<u64>,                // bin size for size‑mode
     interval_start: u64,
     interval_end: u64,
@@ -279,14 +280,15 @@ pub fn find_overlapping_windows(
         // Skip any intervals that end entirely before the interval start (minus `look_back`)
         // Note that `interval_start` may not be the most left interval position in the outer stash
         while *wd_ptr < window_list.len()
-            && window_list[*wd_ptr].1 <= interval_start.saturating_sub(look_back)
+            && window_list[*wd_ptr].end() <= interval_start.saturating_sub(look_back)
         {
             *wd_ptr += 1;
         }
         let mut bin_idx = *wd_ptr;
-        while bin_idx < window_list.len() && window_list[bin_idx].0 < interval_end {
-            let (win_start, mut win_end, _) = window_list[bin_idx];
-            win_end = win_end.min(chrom_len);
+        while bin_idx < window_list.len() && window_list[bin_idx].start() < interval_end {
+            let window = window_list[bin_idx];
+            let win_start = window.start();
+            let win_end = window.end().min(chrom_len);
             if win_end <= win_start {
                 bin_idx += 1;
                 continue;

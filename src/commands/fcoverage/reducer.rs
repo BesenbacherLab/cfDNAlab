@@ -8,6 +8,7 @@ use crate::commands::fcoverage::tiling::finalize_value;
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::write_final_row;
 use crate::shared::formatters::round_to;
+use crate::shared::interval::{IndexedInterval, Interval};
 
 /// Row parsed from a per-tile partials file
 struct PartialsRow {
@@ -194,7 +195,7 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
     chr: &str,
     temp_dir: &std::path::Path,
     partials_prefix: &str,
-    windows_chr: &[(u64, u64, u64)], // (start, end, orig_idx) reindexed to 0..n-1
+    windows_chr: &[IndexedInterval<u64>], // reindexed to 0..n-1
     masked: bool,
     mode: CoverageWindowAction, // Average | Total
     decimals: i32,
@@ -208,19 +209,18 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
         "Reducer supports only 'average' or 'total'"
     );
 
-    // Map orig_idx -> (start, end) so we can compute averages without storing starts/ends in partials
-    // Assumes orig_idx is the local rank 0..n-1; we still assert bounds for safety
-    let n_windows = windows_chr.len();
-    let mut coords_by_idx: Vec<(u64, u64)> = vec![(0, 0); n_windows];
-    for &(start, end, orig_idx) in windows_chr {
-        let i = orig_idx as usize;
+    // Map original BED/window index -> interval so we can compute averages
+    // without storing coordinates in partial rows. BED original indices are not
+    // guaranteed to equal the start-sorted rank, so this must stay an explicit map.
+    let mut coords_by_idx: FxHashMap<u64, Interval<u64>> =
+        FxHashMap::with_capacity_and_hasher(windows_chr.len(), FxBuildHasher::default());
+    for window in windows_chr {
         anyhow::ensure!(
-            i < n_windows,
-            "orig_idx {} out of bounds for {}",
-            orig_idx,
+            coords_by_idx.insert(window.idx(), window.interval).is_none(),
+            "duplicate orig_idx {} for {}",
+            window.idx(),
             chr
         );
-        coords_by_idx[i] = (start, end);
     }
 
     // Extract files from temp dir
@@ -294,7 +294,15 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
 
     // Emit helper
     let mut emit_idx = |orig_idx: u64, acc: WindowAccum| -> Result<()> {
-        let (start, end) = coords_by_idx[orig_idx as usize];
+        let interval = *coords_by_idx.get(&orig_idx).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Reducer is missing interval coordinates for chromosome '{}' orig_idx {}",
+                chr,
+                orig_idx
+            )
+        })?;
+        let start = interval.start();
+        let end = interval.end();
         let unmasked_span_bp = end - start;
         let value = finalize_value(
             acc.sum,

@@ -21,6 +21,7 @@ use crate::{
         blacklist::is_blacklisted,
         fragment::frag_file_fragment::FragFileFragment,
         fragment_iterator::fragments_with_frag_file_info_from_bam,
+        interval::IndexedInterval,
         overlaps::find_overlapping_windows,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq,
@@ -245,7 +246,7 @@ fn process_chrom(
     chr: &str,
     opt: &BamToFragConfig,
     temp_dir: &PathBuf,
-    windows: Option<&[(u64, u64, u64)]>,
+    windows: Option<&[IndexedInterval<u64>]>,
     blacklist_intervals: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
@@ -269,14 +270,16 @@ fn process_chrom(
     };
 
     // Replace scaling factor with unused index
-    let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
-        scaling_chr.iter().map(|(s, e, _)| (*s, *e, 0u64)).collect();
+    let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
+        .iter()
+        .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
+        .collect::<crate::Result<_>>()?;
 
     // Get coordinates to fetch reads from and to
     let (fetch_from, fetch_to) = if windows.is_some() {
         let wn = windows.unwrap();
-        let fetch_start = wn[0].0 as i64;
-        let fetch_end = wn.iter().map(|w| w.1).max().unwrap() as i64;
+        let fetch_start = wn[0].start() as i64;
+        let fetch_end = wn.iter().map(|window| window.end()).max().unwrap() as i64;
         (
             (fetch_start - opt.fragment_lengths.max_fragment_length as i64).max(0i64),
             (fetch_end + opt.fragment_lengths.max_fragment_length as i64).min(chrom_len as i64),

@@ -17,6 +17,7 @@ use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment::segment_fragment::FragmentWithSegments;
 use crate::shared::fragment_iterator::fragments_with_segments_from_bam;
+use crate::shared::interval::IndexedInterval;
 use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
@@ -240,7 +241,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<FCoverageCounters> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
-            let windows_chr: Option<&[(u64, u64, u64)]> = windows_map
+            let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
                 .as_ref()
                 .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
             let blacklist_chr: &[(u64, u64)] = blacklist_map
@@ -818,9 +819,12 @@ fn process_tile(
                     )?;
                 }
                 Some(win_chr) => {
-                    for &(window_start, window_end, original_idx) in
-                        overlapping_windows_for_tile(win_chr, tile, tile_window_span)
-                    {
+                    for window in overlapping_windows_for_tile(win_chr, tile, tile_window_span) {
+                        let window_start = window.start();
+                        let window_end = window.end();
+                        // Keep the original window index from the BED input so the
+                        // indexed positional output and downstream reducers stay aligned
+                        let original_idx = window.idx();
                         let (local_start_idx, local_end_idx) =
                             if let Some((local_start_idx, local_end_idx, _, _)) =
                                 intersect_abs_with_core_to_local(
@@ -895,7 +899,11 @@ fn process_tile(
             let ce = tile.core_end as u64;
 
             // Walk only windows overlapping the core (already start-sorted)
-            for &(ws, we, idx) in overlapping_windows_for_tile(windows, tile, tile_window_span) {
+            for window in overlapping_windows_for_tile(windows, tile, tile_window_span) {
+                let ws = window.start();
+                let we = window.end();
+                // This is the original window index, not just the current loop position
+                let idx = window.idx();
                 let (local_start_idx, local_end_idx) =
                     if let Some((local_start_idx, local_end_idx, _, _)) =
                         intersect_abs_with_core_to_local(ws, we, tile.core_start, tile.core_end)

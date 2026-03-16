@@ -30,6 +30,7 @@ use crate::{
         blacklist::apply_blacklist_mask_to_seq,
         fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
+        interval::IndexedInterval,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         read::{default_include_read_paired_end, default_include_read_unpaired},
@@ -293,7 +294,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         .map(|(tile_idx, tile)| -> Result<ReduceState> {
             let chr = tile.chr.as_str();
             let tile_span = tile_window_spans_for_threads[tile_idx];
-            let windows_chr: Option<&[(u64, u64, u64)]> = windows_map
+            let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
                 .as_ref()
                 .and_then(|m| m.get(chr).map(|v| v.as_slice()));
             let blacklist_chr: &[(u64, u64)] =
@@ -726,7 +727,7 @@ fn process_tile(
     windows_aligned_to_tiles: bool,
     opt: &GCConfig,
     reference_metadata: &ReferenceGCMetadata,
-    windows_opt: Option<&[(u64, u64, u64)]>,
+    windows_opt: Option<&[IndexedInterval<u64>]>,
     window_opt: &WindowSpec,
     avg_window_span: f64,
     template: &GCCounts,
@@ -782,7 +783,7 @@ fn process_tile(
     // Decide whether we run streaming (fixed-size windows) or per-window Vec (BED/global)
     let using_streaming = streaming_buffers.is_some();
 
-    let mut tile_window_intervals: Option<Vec<(u64, u64, u64)>> = None;
+    let mut tile_window_intervals: Option<Vec<IndexedInterval<u64>>> = None;
     if !using_streaming {
         if windows.is_empty() {
             return Ok((out, counter));
@@ -791,8 +792,8 @@ fn process_tile(
             windows
                 .iter()
                 .enumerate()
-                .map(|(local_idx, w)| (w.start, w.end, local_idx as u64))
-                .collect(),
+                .map(|(local_idx, window)| IndexedInterval::new(window.start, window.end, local_idx as u64))
+                .collect::<crate::Result<Vec<_>>>()?,
         );
     }
 

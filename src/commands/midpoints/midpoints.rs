@@ -20,6 +20,7 @@ use crate::{
         blacklist::is_blacklisted,
         fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
+        interval::IndexedInterval,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         read::{default_include_read_paired_end, default_include_read_unpaired},
@@ -103,6 +104,15 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
     // Ensure all windows have the same length
     let window_size = ensure_uniform_window_len(&windows_map)?;
+    let mut indexed_windows_map: FxHashMap<String, Vec<IndexedInterval<u64>>> = FxHashMap::default();
+    for (chromosome, grouped_windows) in &windows_map {
+        let indexed_windows = grouped_windows
+            .as_slice()
+            .iter()
+            .map(|&(start, end, group_idx)| IndexedInterval::new(start, end, group_idx))
+            .collect::<crate::Result<Vec<_>>>()?;
+        indexed_windows_map.insert(chromosome.clone(), indexed_windows);
+    }
 
     // Parse and validate fragment-length bins once so all tiles use the same edges
     let length_bins = opt.resolve_length_bins()?;
@@ -135,7 +145,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let (tiles, _) = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, None)?;
     let total_tiles = tiles.len();
 
-    let windows_lookup = &windows_map;
+    let windows_lookup = &indexed_windows_map;
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
         &tiles,
         |chr| windows_lookup.get(chr).map(|w| w.as_slice()).unwrap_or(&[]),
@@ -183,7 +193,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         .map(|(tile_idx, tile)| -> Result<(_, _)> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
             // Per-chrom projections
-            let windows_chr: &[(u64, u64, u64)] = windows_map
+            let windows_chr: &[IndexedInterval<u64>] = indexed_windows_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
@@ -334,7 +344,7 @@ fn process_tile(
     window_size: usize,
     num_groups: usize,
     length_bins: &[u32],
-    windows: &[(u64, u64, u64)],
+    windows: &[IndexedInterval<u64>],
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_intervals: &[(u64, u64)],
     scaling_chr: &[(u64, u64, f32)],
@@ -365,8 +375,10 @@ fn process_tile(
     };
 
     // Replace scaling factor with unused index for overlap finder
-    let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
-        scaling_chr.iter().map(|(s, e, _)| (*s, *e, 0u64)).collect();
+    let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
+        .iter()
+        .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
+        .collect::<crate::Result<_>>()?;
 
     // Adapt the fetch coordinates to the present windows
     // When no windows are present, skip this tile
@@ -577,8 +589,10 @@ fn process_tile(
 
             // Count up the weight per overlapping count-window
             for (overlapped_window_idx, scaling_weight, _) in overlap_weights {
-                let (window_start, window_end, group_idx) =
-                    core_overlapping_windows[overlapped_window_idx];
+                let window = core_overlapping_windows[overlapped_window_idx];
+                let window_start = window.start();
+                let window_end = window.end();
+                let group_idx = window.idx();
                 let midpoint_u64 = midpoint as u64;
                 ensure!(
                     window_start <= midpoint_u64 && midpoint_u64 < window_end,
@@ -600,8 +614,10 @@ fn process_tile(
             // When no scaling, increment counter by the overlap fraction for each window / bin
             for overlapped_window in overlapping_windows.windows {
                 let overlapped_window_idx = overlapped_window.idx;
-                let (window_start, window_end, group_idx) =
-                    core_overlapping_windows[overlapped_window_idx];
+                let window = core_overlapping_windows[overlapped_window_idx];
+                let window_start = window.start();
+                let window_end = window.end();
+                let group_idx = window.idx();
                 let midpoint_u64 = midpoint as u64;
                 ensure!(
                     window_start <= midpoint_u64 && midpoint_u64 < window_end,
@@ -634,22 +650,22 @@ fn process_tile(
 
 // Windows: start, end, **`group_idx`** (not original_idx as in other commands).
 pub fn get_overlapping_sites_and_adapt_fetch_to_extremes(
-    windows: &[(u64, u64, u64)],
+    windows: &[IndexedInterval<u64>],
     tile_span: Option<&TileWindowSpan>,
     tile: &Tile,
     chrom_len: u32,
-) -> Option<(Vec<(u64, u64, u64)>, i64, i64)> {
-    let overlapping_sites: Vec<(u64, u64, u64)> =
+) -> Option<(Vec<IndexedInterval<u64>>, i64, i64)> {
+    let overlapping_sites: Vec<IndexedInterval<u64>> =
         overlapping_windows_for_tile(windows, tile, tile_span)
-            .map(|&(s, e, idx)| (s, e, idx))
+            .copied()
             .collect();
 
     if overlapping_sites.is_empty() {
         return None;
     }
 
-    let min_ws = overlapping_sites.iter().map(|(s, _, _)| *s).min().unwrap();
-    let max_we = overlapping_sites.iter().map(|(_, e, _)| *e).max().unwrap();
+    let min_ws = overlapping_sites.iter().map(|window| window.start()).min().unwrap();
+    let max_we = overlapping_sites.iter().map(|window| window.end()).max().unwrap();
 
     let (fetch_from, fetch_to) =
         clamp_fetch_to_window_span(tile, chrom_len as u64, min_ws, max_we)?;

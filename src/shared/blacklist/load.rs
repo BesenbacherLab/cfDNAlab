@@ -86,7 +86,9 @@ fn accumulate_blacklist_windows(
 ) {
     for (chr, ivs) in windows_map {
         let mut out: Vec<(u64, u64)> = Vec::new();
-        for (start, end, _) in ivs.into_inner() {
+        for window in ivs.into_inner() {
+            let start = window.start();
+            let end = window.end();
             if end <= start {
                 continue;
             }

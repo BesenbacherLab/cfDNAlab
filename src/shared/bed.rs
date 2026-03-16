@@ -1,3 +1,4 @@
+use crate::shared::interval::IndexedInterval;
 use crate::shared::io::open_text_reader;
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
@@ -216,7 +217,7 @@ fn start_end_are_valid_coordinates(start_str: &str, end_str: &str) -> Option<()>
 /// - Coordinates are half-open: `[start, end)`.
 #[derive(Debug, Clone)]
 pub struct Windows {
-    pub windows: Vec<(u64, u64, u64)>, // (start, end, original_idx)
+    pub windows: Vec<IndexedInterval<u64>>,
     /// Span start (inclusive) across all windows, as `i64`.
     /// This is the most-left coordinate covered by any of the windows.
     span_start: i64,
@@ -237,16 +238,26 @@ impl Windows {
     /// Construct from a list you guarantee is already sorted by start (non-decreasing).
     /// Computes span as `min(start)` .. `max(end)` (robust to irregular ends).
     pub fn from_sorted(windows: Vec<(u64, u64, u64)>) -> Self {
-        debug_assert!(is_sorted_by_start(&windows), "windows must be start-sorted");
-        let (span_start, span_end) = if windows.is_empty() {
+        let indexed_windows: Vec<IndexedInterval<u64>> = windows
+            .into_iter()
+            .map(|window| {
+                IndexedInterval::try_from(window)
+                    .expect("Windows::from_sorted requires non-empty half-open windows")
+            })
+            .collect();
+        debug_assert!(
+            is_sorted_by_start_indexed(&indexed_windows),
+            "windows must be start-sorted"
+        );
+        let (span_start, span_end) = if indexed_windows.is_empty() {
             (0, 0)
         } else {
-            let min_start = windows[0].0 as i64;
-            let max_end = windows.iter().map(|w| w.1).max().unwrap() as i64;
+            let min_start = indexed_windows[0].start() as i64;
+            let max_end = indexed_windows.iter().map(|window| window.end()).max().unwrap() as i64;
             (min_start, max_end)
         };
         Self {
-            windows,
+            windows: indexed_windows,
             span_start,
             span_end,
         }
@@ -266,13 +277,13 @@ impl Windows {
 
     /// Borrow the underlying windows.
     #[inline]
-    pub fn as_slice(&self) -> &[(u64, u64, u64)] {
+    pub fn as_slice(&self) -> &[IndexedInterval<u64>] {
         &self.windows
     }
 
     /// Consume and return the inner vector.
     #[inline]
-    pub fn into_inner(self) -> Vec<(u64, u64, u64)> {
+    pub fn into_inner(self) -> Vec<IndexedInterval<u64>> {
         self.windows
     }
 
@@ -331,37 +342,40 @@ impl Windows {
             );
         }
 
-        debug_assert!(is_sorted_by_start(&v), "windows must be start-sorted");
+        debug_assert!(is_sorted_by_start_indexed(&v), "windows must be start-sorted");
 
         // In-place compaction with two indices: read cursor (i) and write cursor (w)
         let mut w: usize = 0;
-        let mut cur_s = v[0].0;
-        let mut cur_e = v[0].1;
+        let mut cur_s = v[0].start();
+        let mut cur_e = v[0].end();
 
         for i in 1..v.len() {
-            let (s, e, _) = v[i];
+            let s = v[i].start();
+            let e = v[i].end();
             if s <= cur_e {
                 if e > cur_e {
                     cur_e = e;
                 }
             } else {
                 // Write merged block at position w with new index
-                v[w] = (cur_s, cur_e, start_idx + w as u64);
+                v[w] = IndexedInterval::new(cur_s, cur_e, start_idx + w as u64)
+                    .expect("merged windows must remain valid non-empty intervals");
                 w += 1;
                 cur_s = s;
                 cur_e = e;
             }
         }
         // Write the final block
-        v[w] = (cur_s, cur_e, start_idx + w as u64);
+        v[w] = IndexedInterval::new(cur_s, cur_e, start_idx + w as u64)
+            .expect("merged windows must remain valid non-empty intervals");
         w += 1;
 
         // Shrink to the number of merged intervals
         v.truncate(w);
 
         // Since v is start-sorted and merged, first/last bound the span
-        let span_start = v.first().map(|t| t.0 as i64).unwrap_or(0);
-        let span_end = v.last().map(|t| t.1 as i64).unwrap_or(0);
+        let span_start = v.first().map(|window| window.start() as i64).unwrap_or(0);
+        let span_end = v.last().map(|window| window.end() as i64).unwrap_or(0);
 
         let next_idx = start_idx + w as u64;
 
@@ -392,9 +406,13 @@ impl Windows {
     }
 }
 
+fn is_sorted_by_start_indexed(ws: &[IndexedInterval<u64>]) -> bool {
+    ws.windows(2).all(|window_pair| window_pair[0].start() <= window_pair[1].start())
+}
+
 #[inline]
 fn is_sorted_by_start(ws: &[(u64, u64, u64)]) -> bool {
-    ws.windows(2).all(|w| w[0].0 <= w[1].0)
+    ws.windows(2).all(|window_pair| window_pair[0].0 <= window_pair[1].0)
 }
 
 #[inline]

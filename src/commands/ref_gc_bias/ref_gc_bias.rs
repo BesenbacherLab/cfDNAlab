@@ -17,6 +17,7 @@ use crate::{
         bam::Contigs,
         bed::{Windows, load_windows_from_bed},
         blacklist::apply_blacklist_mask_to_seq,
+        interval::IndexedInterval,
         reference::{read_seq_in_range, twobit_contig_lengths},
         sampling::{sample_starts_in_core, sampling_density},
         thread_pool::init_global_pool,
@@ -171,7 +172,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         .map(|(tile_idx, tile)| {
             let chr = tile.chr.as_str();
             let tile_span = tile_window_spans_for_threads[tile_idx];
-            let windows_chr: Option<&[(u64, u64, u64)]> = windows_map
+            let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
                 .as_ref()
                 .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
             let blacklist_chr: &[(u64, u64)] = blacklist_map
@@ -360,7 +361,7 @@ fn process_tile(
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
     chrom_len: u64,
-    windows: Option<&[(u64, u64, u64)]>,
+    windows: Option<&[IndexedInterval<u64>]>,
     start_positions: &[usize],
     blacklist_intervals: &[(u64, u64)],
     opt: &RefGCBiasConfig,
@@ -402,13 +403,19 @@ fn process_tile(
     let mut tile_windows: Vec<(u64, u64, u64)> = Vec::new();
     if let Some(win_chr) = windows {
         let iter = overlapping_windows_for_tile(win_chr, tile, tile_window_span);
-        for (ws, we, idx) in iter {
-            let start_abs = (*ws).max(core_start).max(seq_start);
-            let end_abs = (*we).min(seq_end);
+        for window in iter {
+            let start_abs = window.start().max(core_start).max(seq_start);
+            let end_abs = window.end().min(seq_end);
             if end_abs <= start_abs {
                 continue;
             }
-            tile_windows.push((start_abs - seq_start, end_abs - seq_start, *idx));
+            tile_windows.push((
+                start_abs - seq_start,
+                end_abs - seq_start,
+                // Preserve the original window index so downstream counts map back
+                // to the same BED window identity
+                window.idx(),
+            ));
         }
     } else {
         // Global mode: one window spanning the tile core

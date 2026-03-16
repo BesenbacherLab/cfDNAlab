@@ -4,6 +4,7 @@ use anyhow::{Context, Result, ensure};
 use ndarray::{Array1, Array2, ArrayView1};
 use ndarray_npy::{NpzReader, NpzWriter, ReadNpyExt};
 
+use crate::shared::interval::IndexedInterval;
 use crate::{
     commands::{cli_common::WindowSpec, lengths::counting::LengthCounts},
     shared::tiled_run::{
@@ -258,7 +259,7 @@ pub fn reduce_partials_for_chr(
 pub fn fetch_span_for_tile(
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
-    windows_chr: Option<&[(u64, u64, u64)]>,
+    windows_chr: Option<&[IndexedInterval<u64>]>,
     window_opt: &WindowSpec,
     chrom_len: u64,
 ) -> Option<(i64, i64)> {
