@@ -1,5 +1,6 @@
 use crate::{Error, Result};
 use std::fmt::Display;
+use std::ops::Sub;
 
 /// A checked half-open interval `[start, end)`.
 ///
@@ -49,6 +50,20 @@ where
     #[inline]
     pub fn into_inner(self) -> (T, T) {
         (self.start, self.end)
+    }
+}
+
+impl<T> Interval<T>
+where
+    T: Copy + Sub<Output = T>,
+{
+    /// Return the interval length as `end - start`.
+    ///
+    /// Because this type only allows non-empty half-open intervals, the result
+    /// is always greater than zero for numeric coordinate types.
+    #[inline]
+    pub fn len(&self) -> T {
+        self.end - self.start
     }
 }
 
@@ -133,6 +148,21 @@ where
     #[inline]
     pub fn into_tuple(self) -> (T, T, I) {
         (self.interval.start(), self.interval.end(), self.idx)
+    }
+}
+
+impl<T, I> IndexedInterval<T, I>
+where
+    T: Copy + Sub<Output = T>,
+    I: Copy,
+{
+    /// Return the interval length as `end - start`.
+    ///
+    /// This forwards to the checked inner interval, so the same non-empty
+    /// half-open invariant applies here.
+    #[inline]
+    pub fn len(&self) -> T {
+        self.interval.len()
     }
 }
 
