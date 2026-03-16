@@ -1,6 +1,6 @@
 /// Window index and bounds for a single overlap.
 #[derive(Debug)]
-pub struct OverlappedWindow {
+pub struct OverlappingWindow {
     /// Window index.
     pub idx: usize,
     /// Window start (inclusive).
@@ -11,7 +11,7 @@ pub struct OverlappedWindow {
     pub overlap_fraction: f32,
 }
 
-impl OverlappedWindow {
+impl OverlappingWindow {
     /// Assign a new overlap fraction (in `[0.0, 1.0]`).
     pub fn set_overlap_fraction(&mut self, new_fraction: f32) -> anyhow::Result<()> {
         if !(0.0..=1.0).contains(&new_fraction) {
@@ -26,7 +26,7 @@ impl OverlappedWindow {
 #[derive(Debug)]
 pub struct OverlappingWindows {
     /// Each window touched by the interval.
-    pub windows: Vec<OverlappedWindow>,
+    pub windows: Vec<OverlappingWindow>,
     /// Interval start (inclusive).
     pub interval_start: u64,
     /// Interval end (exclusive).
@@ -93,7 +93,7 @@ pub fn half_open_intervals_overlap(a_start: u64, a_end: u64, b_start: u64, b_end
 /// - `chrom_len`: Chromosome length. Window ends are clamped to this coordinate.
 /// - `wd_ptr`:    Moving pointer into `windows` (BED-mode) for streaming scans.
 /// - `windows`:   Optional BED-like windows as `(start, end, original_idx)`.
-///                Returned `OverlappedWindow.idx` is the **scan index (`bin_idx`)**, not `original_idx`.
+///                Returned `OverlappingWindow.idx` is the **scan index (`bin_idx`)**, not `original_idx`.
 ///                Technically, the `original_idx` is ignored and can be any u64.
 /// - `by_size`:   If `Some(bin_size)`, use fixed-size bins; otherwise use `windows` if provided.
 /// - `interval_start`, `interval_end`: Interval coordinates (start inclusive, end exclusive).
@@ -124,7 +124,7 @@ pub fn find_overlapping_windows(
     // Size‑mode bins
     if let Some(bin_size) = by_size {
         for bin_idx in create_overlapping_bins_by_size(interval_start, interval_end, bin_size) {
-            let mut ow = OverlappedWindow {
+            let mut ow = OverlappingWindow {
                 idx: bin_idx as usize,
                 win_start: bin_idx * bin_size,
                 win_end: (bin_idx * bin_size + bin_size).min(chrom_len),
@@ -156,7 +156,7 @@ pub fn find_overlapping_windows(
                 let overlap_proportion =
                     fraction_overlap_of_a(interval_start, interval_end, win_start, win_end);
                 if (overlap_proportion as f64) >= min_overlap_fraction {
-                    let mut ow = OverlappedWindow {
+                    let mut ow = OverlappingWindow {
                         idx: bin_idx,
                         win_start,
                         win_end,
@@ -171,7 +171,7 @@ pub fn find_overlapping_windows(
 
     // Global chromosome‑wide window
     } else {
-        overlaps.windows.push(OverlappedWindow {
+        overlaps.windows.push(OverlappingWindow {
             idx: 0,
             win_start: 0,
             win_end: chrom_len,

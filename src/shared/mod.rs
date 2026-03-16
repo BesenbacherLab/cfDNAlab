@@ -9,6 +9,7 @@ pub mod fragment;
 pub mod fragment_iterator;
 pub mod gc_tag;
 pub mod indel_mode;
+pub mod interval;
 pub mod io;
 pub mod iterator_counter;
 pub mod kmers;
