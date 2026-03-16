@@ -13,7 +13,7 @@ use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorre
 use cfdnalab::shared::fragment::minimal_fragment::collect_fragment_from_records;
 use cfdnalab::shared::read::default_include_read_paired_end;
 use fixtures::{
-    BamFixture, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, ReadSpec, bam_from_specs,
+    BamFixture, FragmentSpec, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, ReadSpec, bam_from_specs,
     long_fragment_bam, paired_fragment, read_zst_to_string, simple_inward_bam,
     simple_reference_twobit, write_bed, write_scaling_factors,
 };
@@ -134,6 +134,49 @@ fn build_gc_package(path: &Path, end_offset: u64) -> Result<()> {
     };
     package.write_npz(path)?;
     Ok(())
+}
+
+fn paired_fragment_on_tid(
+    tid: usize,
+    start: i64,
+    fragment_len: i64,
+    read_len: i64,
+) -> FragmentSpec {
+    const FLAG_FIRST_MATE: u16 = 0x40;
+    const FLAG_SECOND_MATE: u16 = 0x80;
+    const FLAG_PROPER_PAIR: u16 = 0x2;
+    const FLAG_MATE_REVERSE: u16 = 0x20;
+
+    let reverse_start = start + fragment_len - read_len;
+    let insert_size = fragment_len;
+    FragmentSpec {
+        forward: ReadSpec {
+            tid,
+            pos: start,
+            cigar: vec![('M', read_len as u32)],
+            seq: vec![b'A'; read_len as usize],
+            qual: 40,
+            is_reverse: false,
+            mapq: 60,
+            flags: FLAG_FIRST_MATE | FLAG_MATE_REVERSE | FLAG_PROPER_PAIR,
+            mate_tid: Some(tid),
+            mate_pos: Some(reverse_start),
+            insert_size,
+        },
+        reverse: ReadSpec {
+            tid,
+            pos: reverse_start,
+            cigar: vec![('M', read_len as u32)],
+            seq: vec![b'T'; read_len as usize],
+            qual: 40,
+            is_reverse: true,
+            mapq: 60,
+            flags: FLAG_SECOND_MATE | FLAG_PROPER_PAIR,
+            mate_tid: Some(tid),
+            mate_pos: Some(start),
+            insert_size: -insert_size,
+        },
+    }
 }
 
 #[test]
@@ -780,6 +823,68 @@ fn by_bed_average_matches_manual_window_means() -> Result<()> {
             "chr1\t0\t40\t0.5\t0",
             "chr1\t20\t80\t1\t0",
             "chr1\t70\t90\t0.5\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn by_bed_average_handles_three_chromosomes_with_global_window_indices() -> Result<()> {
+    let bam = bam_from_specs(
+        vec![
+            ("chr1".to_string(), 200),
+            ("chr2".to_string(), 200),
+            ("chr3".to_string(), 200),
+        ],
+        vec![
+            paired_fragment_on_tid(0, 20, 60, 20),
+            paired_fragment_on_tid(1, 10, 40, 20),
+            paired_fragment_on_tid(2, 40, 50, 20),
+        ],
+        Vec::new(),
+        "fcoverage_three_chr_bed_avg",
+    )?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("aggregate_windows_three_chr.bed");
+    write_bed(
+        &bed_path,
+        &[
+            ("chr1", 0, 40, "chr1_window"),
+            ("chr2", 0, 40, "chr2_window"),
+            ("chr3", 50, 100, "chr3_window"),
+        ],
+    )?;
+
+    let mut windows = WindowsArgs::default();
+    windows.by_bed = Some(bed_path);
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.chromosomes = base_chromosomes(&["chr1", "chr2", "chr3"]);
+    cfg.set_decimals(2);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_windows(windows);
+
+    // Manual expectations:
+    // - BED loading assigns one original window index across the whole file:
+    //   chr1 -> 0, chr2 -> 1, chr3 -> 2.
+    // - This test checks that aggregate BED reduction still works for later
+    //   chromosomes instead of assuming chromosome-local dense indices.
+    // - chr1 fragment spans [20, 80), so window [0, 40) has 20 covered bases -> 20 / 40 = 0.5.
+    // - chr2 fragment spans [10, 50), so window [0, 40) has 30 covered bases -> 30 / 40 = 0.75.
+    // - chr3 fragment spans [40, 90), so window [50, 100) has 40 covered bases -> 40 / 50 = 0.8.
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join("testcov.avg.tsv.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chr1\t0\t40\t0.5\t0",
+            "chr2\t0\t40\t0.75\t0",
+            "chr3\t50\t100\t0.8\t0",
         ]
     );
 
