@@ -5,7 +5,7 @@
 - **Write for humans.** Prefer clear, direct language over buzzwords or slang. Comments should help a typical programmer understand intent and edge cases.
 - **Comment generously.** Explain *why* as well as *what*. If you remove outdated comments, **add** updated ones so net documentation never decreases.
 - **Keep code simple.** Choose the simplest readable approach unless a more complex solution brings substantial gains (speed/memory). If complexity seems warranted, briefly note the trade-off or ask before proceeding.
-- **No inline tests.** Unit and regression tests live under `tests/`—not in production modules or scripts.
+- **Keep tests out of production logic.** Public API and CLI integration tests live under `tests/`. Private and `pub(crate)` tests may live in sibling `*_tests.rs` files that are included from the owning module with a small `#[cfg(test)]` test hook.
 - **Descriptive variable names.** Variables should have descriptive names so the code is readable. Never use single-letter variables. E.g. a "window start" position can be called "window_start", "win_start", but never "ws" or "s".
 
 ## CLI help
@@ -91,7 +91,7 @@ Run `cargo check --features cli,plotters` after changes to ensure your changes a
 
 **Be thorough.** If an output is meaningful, test its content/values—not just that it exists or runs.
 
-Place tests in `tests/` with clear, isolated fixtures. Prefer deterministic tests. Do not add tests inline, they go in modules in test*.rs scripts in the tests directory.
+Place public integration tests in `tests/` with clear, isolated fixtures. Prefer deterministic tests. For private or `pub(crate)` behavior, keep tests in sibling `*_tests.rs` files included from the owning module. Do not widen visibility just to make external tests compile.
 
 Derive expectations by hand, do not adjust them to match current output! Do not use python or another language to implement the same logic and use that. If it's not possible to calculate "mentally", say so. Do not cheat.
 
@@ -111,7 +111,7 @@ IMPORTANT!: If you cannot make tests succeed, it indicates errors in the code or
 
 ### Philosophy
 
-Test public behavior, not private implementation.
+Prefer testing public behavior. Test private helpers directly when the logic is important, the behavior is stable, and exposing it would weaken the API boundary.
 
 Keep tests deterministic, minimal, and fast (milliseconds). Push slow/fragile checks out of unit tests.
 
