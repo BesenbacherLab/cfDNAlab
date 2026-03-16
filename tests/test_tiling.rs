@@ -1,7 +1,8 @@
 mod tests {
+    use cfdnalab::Error;
     use cfdnalab::commands::fcoverage::tiling::adapt_fetch_to_extreme_windows;
     use cfdnalab::shared::bam::Contigs;
-    use cfdnalab::shared::interval::IndexedInterval;
+    use cfdnalab::shared::interval::{IndexedInterval, Interval};
     use cfdnalab::shared::tiled_run::{
         Tile, TileMode, TileWindowSpan, build_tiles, clamp_fetch_to_window_span,
         precompute_tile_window_spans, tile_window_min_max,
@@ -26,7 +27,7 @@ mod tests {
         fetch_end: u32,
         index: u32,
     ) -> Tile {
-        Tile::new(
+        Tile::from_coords(
             "chr1".to_string(),
             0,
             index,
@@ -51,6 +52,70 @@ mod tests {
             Some(7)
         );
         assert_eq!(parse_tile_index("weird.noindex.zst"), None);
+    }
+
+    #[test]
+    fn tile_new_accepts_checked_intervals_and_preserves_bounds() {
+        let core = Interval::new(100_u32, 150_u32).expect("test core interval should be valid");
+        let fetch = Interval::new(80_u32, 170_u32).expect("test fetch interval should be valid");
+
+        let tile = Tile::new("chr1".to_string(), 0, 7, core, fetch)
+            .expect("tile should accept checked covering intervals");
+
+        assert_eq!(tile.chr, "chr1");
+        assert_eq!(tile.tid, 0);
+        assert_eq!(tile.index, 7);
+        assert_eq!(tile.core, core);
+        assert_eq!(tile.fetch, fetch);
+        assert_eq!(tile.core_start(), 100);
+        assert_eq!(tile.core_end(), 150);
+        assert_eq!(tile.fetch_start(), 80);
+        assert_eq!(tile.fetch_end(), 170);
+    }
+
+    #[test]
+    fn tile_from_coords_matches_typed_constructor() {
+        let from_coords = Tile::from_coords("chr1".to_string(), 0, 3, 100, 150, 80, 170)
+            .expect("coordinate constructor should build a valid tile");
+        let from_intervals = Tile::new(
+            "chr1".to_string(),
+            0,
+            3,
+            Interval::new(100_u32, 150_u32).expect("test core interval should be valid"),
+            Interval::new(80_u32, 170_u32).expect("test fetch interval should be valid"),
+        )
+        .expect("typed constructor should build the same tile");
+
+        assert_eq!(from_coords.chr, from_intervals.chr);
+        assert_eq!(from_coords.tid, from_intervals.tid);
+        assert_eq!(from_coords.index, from_intervals.index);
+        assert_eq!(from_coords.core, from_intervals.core);
+        assert_eq!(from_coords.fetch, from_intervals.fetch);
+    }
+
+    #[test]
+    fn tile_new_rejects_fetch_interval_that_does_not_cover_core() {
+        let core = Interval::new(100_u32, 150_u32).expect("test core interval should be valid");
+        let fetch = Interval::new(110_u32, 170_u32).expect("test fetch interval should be valid");
+
+        let err = Tile::new("chr1".to_string(), 0, 0, core, fetch)
+            .expect_err("tile should reject fetch intervals that miss the core start");
+
+        assert!(matches!(err, Error::TileFetchDoesNotCoverCore));
+    }
+
+    #[test]
+    fn tile_from_coords_rejects_invalid_core_bounds_before_tile_validation() {
+        let err = Tile::from_coords("chr1".to_string(), 0, 0, 100, 100, 80, 120)
+            .expect_err("coordinate constructor should reject empty core intervals");
+
+        match err {
+            Error::InvalidIntervalBounds { start, end } => {
+                assert_eq!(start, "100");
+                assert_eq!(end, "100");
+            }
+            other => panic!("expected InvalidIntervalBounds, got {other:?}"),
+        }
     }
 
     #[test]

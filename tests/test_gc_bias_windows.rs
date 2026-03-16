@@ -183,7 +183,8 @@ mod tests_prepare_tile_windows {
     }
 
     fn make_tile() -> Tile {
-        Tile::new("chr1".to_string(), 0, 0, 100, 190, 80, 210).expect("test tile should be valid")
+        Tile::from_coords("chr1".to_string(), 0, 0, 100, 190, 80, 210)
+            .expect("test tile should be valid")
     }
 
     fn indexed_windows(entries: &[(u64, u64, u64)]) -> Vec<IndexedInterval<u64>> {
@@ -251,7 +252,7 @@ mod tests_prepare_tile_windows {
     #[test]
     fn prepares_streaming_buffers_for_fixed_windows() -> Result<()> {
         let template = make_template();
-        let tile = Tile::new("chr1".to_string(), 0, 0, 250, 450, 230, 470)
+        let tile = Tile::from_coords("chr1".to_string(), 0, 0, 250, 450, 230, 470)
             .expect("test tile should be valid");
 
         // Fixed-size windows use rolling buffers (current and next) instead of per-window allocation

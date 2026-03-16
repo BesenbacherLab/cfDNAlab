@@ -472,7 +472,7 @@ mod tests_wps_peaks_helpers {
         fetch_start: u32,
         fetch_end: u32,
     ) -> Tile {
-        Tile::new(
+        Tile::from_coords(
             chr.to_string(),
             0,
             index,

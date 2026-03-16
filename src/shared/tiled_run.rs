@@ -13,21 +13,16 @@ pub struct Tile {
 }
 
 impl Tile {
-    /// Create a tile from raw half-open core and fetch bounds.
+    /// Create a tile from checked half-open core and fetch intervals.
     ///
-    /// The tile core and fetch range are both stored as checked non-empty
-    /// intervals. The fetch range must cover the tile core.
+    /// The fetch interval must fully cover the tile core.
     pub fn new(
         chr: String,
         tid: i32,
         index: u32,
-        core_start: u32,
-        core_end: u32,
-        fetch_start: u32,
-        fetch_end: u32,
+        core: Interval<u32>,
+        fetch: Interval<u32>,
     ) -> crate::Result<Self> {
-        let core = Interval::new(core_start, core_end)?;
-        let fetch = Interval::new(fetch_start, fetch_end)?;
         if fetch.start() > core.start() || fetch.end() < core.end() {
             return Err(crate::Error::TileFetchDoesNotCoverCore);
         }
@@ -38,6 +33,25 @@ impl Tile {
             core,
             fetch,
         })
+    }
+
+    /// Create a tile from raw half-open core and fetch bounds.
+    ///
+    /// This is a convenience constructor for call sites that still work with
+    /// coordinates. It validates the bounds as intervals and then delegates to
+    /// the typed constructor.
+    pub fn from_coords(
+        chr: String,
+        tid: i32,
+        index: u32,
+        core_start: u32,
+        core_end: u32,
+        fetch_start: u32,
+        fetch_end: u32,
+    ) -> crate::Result<Self> {
+        let core = Interval::new(core_start, core_end)?;
+        let fetch = Interval::new(fetch_start, fetch_end)?;
+        Self::new(chr, tid, index, core, fetch)
     }
 
     #[inline]
@@ -418,7 +432,7 @@ pub fn build_tiles(
             let fetch_start = start.saturating_sub(halo_bp);
             let fetch_end = (core_end.saturating_add(halo_bp)).min(chrom_len);
 
-            tiles.push(Tile::new(
+            tiles.push(Tile::from_coords(
                 chr.clone(),
                 tid,
                 idx,

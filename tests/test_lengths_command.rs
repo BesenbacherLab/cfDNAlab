@@ -1166,7 +1166,7 @@ mod tests_lengths_tiling_helpers {
     #[test]
     fn fetch_span_size_mode_clamps_to_halo_and_chrom() {
         // Tile: core 50-150, fetch 30-200 (halo 20 left, 50 right), chrom len 180
-        let tile = Tile::new("chr1".to_string(), 0, 0, 50, 150, 30, 200)
+        let tile = Tile::from_coords("chr1".to_string(), 0, 0, 50, 150, 30, 200)
             .expect("test tile should be valid");
         let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(100), 180)
             .expect("span expected");
@@ -1208,15 +1208,15 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_for_tile_global_clamps_to_chrom() {
-        let tile =
-            Tile::new("chr1".to_string(), 0, 0, 0, 50, 0, 200).expect("test tile should be valid");
+        let tile = Tile::from_coords("chr1".to_string(), 0, 0, 0, 50, 0, 200)
+            .expect("test tile should be valid");
         let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Global, 120).expect("span");
         assert_eq!(span, (0, 120));
     }
 
     #[test]
     fn fetch_span_for_tile_bed_with_overlap() {
-        let tile = Tile::new("chr1".to_string(), 0, 0, 100, 160, 80, 200)
+        let tile = Tile::from_coords("chr1".to_string(), 0, 0, 100, 160, 80, 200)
             .expect("test tile should be valid");
         let windows = indexed_windows(&[(90, 110, 0), (150, 170, 1), (250, 300, 2)]);
         let span = TileWindowSpan {
@@ -1237,7 +1237,7 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_bed_none_when_no_overlap() {
-        let tile = Tile::new("chr1".to_string(), 0, 0, 100, 150, 80, 170)
+        let tile = Tile::from_coords("chr1".to_string(), 0, 0, 100, 150, 80, 170)
             .expect("test tile should be valid");
         // No windows overlap tile
         let windows: [IndexedInterval<u64>; 0] = [];
@@ -1257,7 +1257,7 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_size_mode_none_when_tile_right_of_chromosome() {
-        let tile = Tile::new("chr1".to_string(), 0, 0, 250, 260, 230, 270)
+        let tile = Tile::from_coords("chr1".to_string(), 0, 0, 250, 260, 230, 270)
             .expect("test tile should be valid");
         let res = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(50), 200);
         assert!(res.is_none());
@@ -1265,7 +1265,7 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn tile_constructor_rejects_empty_core() {
-        let err = Tile::new("chr1".to_string(), 0, 0, 100, 100, 80, 120).unwrap_err();
+        let err = Tile::from_coords("chr1".to_string(), 0, 0, 100, 100, 80, 120).unwrap_err();
         assert!(format!("{err}").contains("interval end (100) must be greater than start (100)"));
     }
 }
