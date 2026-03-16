@@ -54,8 +54,8 @@ pub fn load_windows_from_bed(
 
     loop {
         buf.clear();
-        let n = reader.read_line(&mut buf)?;
-        if n == 0 {
+        let bytes_read = reader.read_line(&mut buf)?;
+        if bytes_read == 0 {
             break;
         }
         lineno += 1;
@@ -71,8 +71,8 @@ pub fn load_windows_from_bed(
         }
 
         // Skip UCSC header directives in BED files
-        let ls = line.trim_start();
-        if ls.starts_with("track") || ls.starts_with("browser") {
+        let trimmed_line_start = line.trim_start();
+        if trimmed_line_start.starts_with("track") || trimmed_line_start.starts_with("browser") {
             continue;
         }
 
@@ -192,7 +192,7 @@ pub fn load_windows_from_bed(
 
     let windows_mapping: FxHashMap<String, Windows> = vec_mapping
         .into_iter()
-        .map(|(chr, v)| (chr, Windows::new(v)))
+        .map(|(chr, windows)| (chr, Windows::new(windows)))
         .collect();
 
     Ok(windows_mapping)
@@ -231,7 +231,7 @@ impl Windows {
     /// Ensures start- and end-sorted order (does not retain initial order)
     /// and computes span as `min(start)` .. `max(end)`.
     pub fn new(mut windows: Vec<(u64, u64, u64)>) -> Self {
-        windows.sort_unstable_by_key(|w| (w.0, w.1));
+        windows.sort_unstable_by_key(|window| (window.0, window.1));
         Windows::from_sorted(windows)
     }
 
@@ -330,11 +330,11 @@ impl Windows {
     ///     - `merged`: New `Windows` with merged, start-sorted `(start, end, new_idx)` tuples.
     ///     - `next_start_idx`: `start_idx + merged.len()`; pass this to the next chromosome.
     pub fn into_flattened_reindexed(self, start_idx: u64) -> (Windows, u64) {
-        let mut v = self.windows; // Take ownership; reuse allocation
-        if v.is_empty() {
+        let mut merged_windows = self.windows; // Take ownership; reuse allocation
+        if merged_windows.is_empty() {
             return (
                 Windows {
-                    windows: v,
+                    windows: merged_windows,
                     span_start: 0,
                     span_end: 0,
                 },
@@ -342,46 +342,60 @@ impl Windows {
             );
         }
 
-        debug_assert!(is_sorted_by_start_indexed(&v), "windows must be start-sorted");
+        debug_assert!(
+            is_sorted_by_start_indexed(&merged_windows),
+            "windows must be start-sorted"
+        );
 
-        // In-place compaction with two indices: read cursor (i) and write cursor (w)
-        let mut w: usize = 0;
-        let mut cur_s = v[0].start();
-        let mut cur_e = v[0].end();
+        // In-place compaction with two indices: read cursor and write cursor
+        let mut write_index: usize = 0;
+        let mut current_start = merged_windows[0].start();
+        let mut current_end = merged_windows[0].end();
 
-        for i in 1..v.len() {
-            let s = v[i].start();
-            let e = v[i].end();
-            if s <= cur_e {
-                if e > cur_e {
-                    cur_e = e;
+        for read_index in 1..merged_windows.len() {
+            let next_start = merged_windows[read_index].start();
+            let next_end = merged_windows[read_index].end();
+            if next_start <= current_end {
+                if next_end > current_end {
+                    current_end = next_end;
                 }
             } else {
-                // Write merged block at position w with new index
-                v[w] = IndexedInterval::new(cur_s, cur_e, start_idx + w as u64)
+                // Write merged block at the current write position with a new index
+                merged_windows[write_index] = IndexedInterval::new(
+                    current_start,
+                    current_end,
+                    start_idx + write_index as u64,
+                )
                     .expect("merged windows must remain valid non-empty intervals");
-                w += 1;
-                cur_s = s;
-                cur_e = e;
+                write_index += 1;
+                current_start = next_start;
+                current_end = next_end;
             }
         }
         // Write the final block
-        v[w] = IndexedInterval::new(cur_s, cur_e, start_idx + w as u64)
-            .expect("merged windows must remain valid non-empty intervals");
-        w += 1;
+        merged_windows[write_index] =
+            IndexedInterval::new(current_start, current_end, start_idx + write_index as u64)
+                .expect("merged windows must remain valid non-empty intervals");
+        write_index += 1;
 
         // Shrink to the number of merged intervals
-        v.truncate(w);
+        merged_windows.truncate(write_index);
 
-        // Since v is start-sorted and merged, first/last bound the span
-        let span_start = v.first().map(|window| window.start() as i64).unwrap_or(0);
-        let span_end = v.last().map(|window| window.end() as i64).unwrap_or(0);
+        // Since the windows are start-sorted and merged, first and last bound the span
+        let span_start = merged_windows
+            .first()
+            .map(|window| window.start() as i64)
+            .unwrap_or(0);
+        let span_end = merged_windows
+            .last()
+            .map(|window| window.end() as i64)
+            .unwrap_or(0);
 
-        let next_idx = start_idx + w as u64;
+        let next_idx = start_idx + write_index as u64;
 
         (
             Windows {
-                windows: v,
+                windows: merged_windows,
                 span_start,
                 span_end,
             },
@@ -417,7 +431,8 @@ fn is_sorted_by_start(ws: &[(u64, u64, u64)]) -> bool {
 
 #[inline]
 fn is_sorted_by_start_with_scores(ws: &[(u64, u64, u64, f64)]) -> bool {
-    ws.windows(2).all(|w| w[0].0 <= w[1].0)
+    ws.windows(2)
+        .all(|window_pair| window_pair[0].0 <= window_pair[1].0)
 }
 
 /* GROUPED bed files */
@@ -471,8 +486,8 @@ pub fn load_grouped_windows_from_bed(
 
     loop {
         buf.clear();
-        let n = reader.read_line(&mut buf)?;
-        if n == 0 {
+        let bytes_read = reader.read_line(&mut buf)?;
+        if bytes_read == 0 {
             break;
         }
         lineno += 1;
@@ -488,8 +503,8 @@ pub fn load_grouped_windows_from_bed(
         }
 
         // Skip UCSC header directives in BED files
-        let ls = line.trim_start();
-        if ls.starts_with("track") || ls.starts_with("browser") {
+        let trimmed_line_start = line.trim_start();
+        if trimmed_line_start.starts_with("track") || trimmed_line_start.starts_with("browser") {
             continue;
         }
 
@@ -563,8 +578,8 @@ pub fn load_grouped_windows_from_bed(
 
         // Get group idx (enumerate and insert if first occurence)
         // We use this if/else approach only allocate a String once per unique group name
-        let group_idx = if let Some(&i) = group_name_to_idx.get(group) {
-            i
+        let group_idx = if let Some(&existing_group_idx) = group_name_to_idx.get(group) {
+            existing_group_idx
         } else {
             let id = next_group_idx;
             next_group_idx += 1;
@@ -622,7 +637,7 @@ pub fn load_grouped_windows_from_bed(
     // Convert to Windows collections (Windows::new sorts internally)
     let windows_mapping: FxHashMap<String, GroupedWindows> = vec_mapping
         .into_iter()
-        .map(|(chr, v)| (chr.to_string(), GroupedWindows::new(v)))
+        .map(|(chr, windows)| (chr.to_string(), GroupedWindows::new(windows)))
         .collect();
 
     // Invert the group mapping to allow getting the group name from the group index
@@ -656,7 +671,7 @@ impl GroupedWindows {
     /// Ensures start- and end-sorted order (does not retain initial order)
     /// and computes span as `min(start)` .. `max(end)`.
     pub fn new(mut windows: Vec<(u64, u64, u64)>) -> Self {
-        windows.sort_unstable_by_key(|w| (w.0, w.1));
+        windows.sort_unstable_by_key(|window| (window.0, window.1));
         GroupedWindows::from_sorted(windows)
     }
 
@@ -668,7 +683,7 @@ impl GroupedWindows {
             (0, 0)
         } else {
             let min_start = windows[0].0 as i64;
-            let max_end = windows.iter().map(|w| w.1).max().unwrap() as i64;
+            let max_end = windows.iter().map(|window| window.1).max().unwrap() as i64;
             (min_start, max_end)
         };
         Self {
@@ -738,10 +753,10 @@ pub fn write_group_idx_to_name_tsv<P: AsRef<Path>>(
 ) -> Result<()> {
     let path = output_path.as_ref();
     let file = File::create(path).with_context(|| format!("Creating TSV file {:?}", path))?;
-    let mut w = BufWriter::new(file);
+        let mut writer = BufWriter::new(file);
 
     // Header
-    writeln!(w, "group_idx\tgroup_name")
+    writeln!(writer, "group_idx\tgroup_name")
         .with_context(|| format!("Writing header to {:?}", path))?;
 
     // Collect and sort by index for stable output
@@ -755,7 +770,7 @@ pub fn write_group_idx_to_name_tsv<P: AsRef<Path>>(
     for (idx, name) in entries {
         // Sanitize tabs/newlines to keep TSV well-formed (should not be needed but may reduce errors)
         let name = name.replace('\t', "    ").replace('\n', " ");
-        writeln!(w, "{idx}\t{name}")
+        writeln!(writer, "{idx}\t{name}")
             .with_context(|| format!("Writing row for group_idx {idx} to {:?}", path))?;
     }
 
@@ -810,8 +825,8 @@ pub fn load_scored_windows_from_bed(
 
     loop {
         buf.clear();
-        let n = reader.read_line(&mut buf)?;
-        if n == 0 {
+        let bytes_read = reader.read_line(&mut buf)?;
+        if bytes_read == 0 {
             break;
         }
         lineno += 1;
@@ -827,8 +842,8 @@ pub fn load_scored_windows_from_bed(
         }
 
         // Skip UCSC header directives in BED files
-        let ls = line.trim_start();
-        if ls.starts_with("track") || ls.starts_with("browser") {
+        let trimmed_line_start = line.trim_start();
+        if trimmed_line_start.starts_with("track") || trimmed_line_start.starts_with("browser") {
             continue;
         }
 
@@ -964,7 +979,7 @@ pub fn load_scored_windows_from_bed(
     // Convert to Windows collections (Windows::new sorts internally)
     let windows_mapping: FxHashMap<String, ScoredWindows> = vec_mapping
         .into_iter()
-        .map(|(chr, v)| (chr.to_string(), ScoredWindows::new(v)))
+        .map(|(chr, windows)| (chr.to_string(), ScoredWindows::new(windows)))
         .collect();
 
     Ok(windows_mapping)
@@ -992,7 +1007,7 @@ impl ScoredWindows {
     /// Ensures start- and end-sorted order (does not retain initial order)
     /// and computes span as `min(start)` .. `max(end)`.
     pub fn new(mut windows: Vec<(u64, u64, u64, f64)>) -> Self {
-        windows.sort_unstable_by_key(|w| (w.0, w.1));
+        windows.sort_unstable_by_key(|window| (window.0, window.1));
         ScoredWindows::from_sorted(windows)
     }
 
@@ -1017,7 +1032,7 @@ impl ScoredWindows {
             (0, 0)
         } else {
             let min_start = windows[0].0 as i64;
-            let max_end = windows.iter().map(|w| w.1).max().unwrap() as i64;
+            let max_end = windows.iter().map(|window| window.1).max().unwrap() as i64;
             (min_start, max_end)
         };
         Self {
@@ -1115,8 +1130,8 @@ pub fn detect_header(path: &Path, separator: char) -> Result<bool> {
     let mut line = String::new();
     loop {
         line.clear();
-        let n = reader.read_line(&mut line)?;
-        if n == 0 {
+        let bytes_read = reader.read_line(&mut line)?;
+        if bytes_read == 0 {
             return Ok(false);
         }
         if line.starts_with('#') || line.trim().is_empty() {
