@@ -1,7 +1,8 @@
 use crate::{
     commands::cli_common::WindowSpec,
     shared::{
-        bam::Contigs, bed::Windows, blacklist::compute_blacklist_overlap, interval::IndexedInterval,
+        bam::Contigs, bed::Windows, blacklist::compute_blacklist_overlap,
+        interval::{IndexedInterval, Interval},
     },
 };
 use anyhow::{Context, Result};
@@ -118,7 +119,7 @@ pub fn build_bin_info(
     chromosomes: &[String],
     contigs: &Contigs,
     windows_map: Option<&FxHashMap<String, Windows>>,
-    blacklist_map: &FxHashMap<String, Vec<(u64, u64)>>,
+    blacklist_map: &FxHashMap<String, Vec<Interval<u64>>>,
     chr_offsets: &FxHashMap<String, u64>,
 ) -> Result<Vec<(String, u64, u64, u64, f64)>> {
     let mut out = Vec::new();

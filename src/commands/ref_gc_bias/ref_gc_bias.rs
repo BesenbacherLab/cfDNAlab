@@ -17,7 +17,7 @@ use crate::{
         bam::Contigs,
         bed::{Windows, load_windows_from_bed},
         blacklist::apply_blacklist_mask_to_seq,
-        interval::IndexedInterval,
+        interval::{IndexedInterval, Interval},
         reference::{read_seq_in_range, twobit_contig_lengths},
         sampling::{sample_starts_in_core, sampling_density},
         thread_pool::init_global_pool,
@@ -175,7 +175,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
             let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
                 .as_ref()
                 .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
-            let blacklist_chr: &[(u64, u64)] = blacklist_map
+            let blacklist_chr: &[Interval<u64>] = blacklist_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
@@ -363,7 +363,7 @@ fn process_tile(
     chrom_len: u64,
     windows: Option<&[IndexedInterval<u64>]>,
     start_positions: &[usize],
-    blacklist_intervals: &[(u64, u64)],
+    blacklist_intervals: &[Interval<u64>],
     opt: &RefGCBiasConfig,
 ) -> Result<(GCCounts, u64)> {
     let core_start = tile.core_start as u64;

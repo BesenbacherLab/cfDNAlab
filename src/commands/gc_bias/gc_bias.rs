@@ -30,7 +30,7 @@ use crate::{
         blacklist::apply_blacklist_mask_to_seq,
         fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
-        interval::IndexedInterval,
+        interval::{IndexedInterval, Interval},
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         read::{default_include_read_paired_end, default_include_read_unpaired},
@@ -297,7 +297,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
                 .as_ref()
                 .and_then(|m| m.get(chr).map(|v| v.as_slice()));
-            let blacklist_chr: &[(u64, u64)] =
+            let blacklist_chr: &[Interval<u64>] =
                 blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]);
 
             let (tile_counts, counter) = process_tile(
@@ -732,7 +732,7 @@ fn process_tile(
     avg_window_span: f64,
     template: &GCCounts,
     temp_dir: &PathBuf,
-    blacklist_intervals: &[(u64, u64)],
+    blacklist_intervals: &[Interval<u64>],
 ) -> anyhow::Result<(WindowState, GCCounters)> {
     let apply_window_scaling = !matches!(window_opt, WindowSpec::Global);
 

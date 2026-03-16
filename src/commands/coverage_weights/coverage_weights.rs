@@ -12,6 +12,7 @@ use crate::{
         coverage::Coverage,
         fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
+        interval::Interval,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         thread_pool::init_global_pool,
     },
@@ -182,7 +183,7 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
 fn process_chrom(
     chr: &str,
     opt: &CoverageWeightsConfig,
-    blacklist_intervals: &[(u64, u64)],
+    blacklist_intervals: &[Interval<u64>],
 ) -> anyhow::Result<(String, Vec<StrideBin>, CoverageWeightsCounters)> {
     // Open a fresh BAM reader for this thread
     let (mut reader, tid, chrom_len) = create_chromosome_reader(&opt.ioc.bam, chr)?;

@@ -17,7 +17,7 @@ use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment::segment_fragment::FragmentWithSegments;
 use crate::shared::fragment_iterator::fragments_with_segments_from_bam;
-use crate::shared::interval::IndexedInterval;
+use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
@@ -244,7 +244,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
             let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
                 .as_ref()
                 .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
-            let blacklist_chr: &[(u64, u64)] = blacklist_map
+            let blacklist_chr: &[Interval<u64>] = blacklist_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
@@ -593,7 +593,7 @@ fn process_tile(
     opt: &FCoverageConfig,
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
-    blacklist_chr: &[(u64, u64)],
+    blacklist_chr: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
     gc_tag: Option<&str>,
@@ -1092,7 +1092,7 @@ fn add_clipped_blacklist_to_cp(
     cp: &mut Coverage,
     tile: &Tile,
     masked: bool,
-    blacklist_chr: &[(u64, u64)],
+    blacklist_chr: &[Interval<u64>],
 ) -> Result<()> {
     // Add blacklist late and clipped to the tile core to minimize memory
     // Use binary search to jump to the first overlapping interval
@@ -1101,14 +1101,15 @@ fn add_clipped_blacklist_to_cp(
         let ce = tile.core_end as u64;
 
         // Find first interval with end > core_start
-        let mut i = blacklist_chr.partition_point(|&(_bs, be)| be <= cs);
+        let mut i = blacklist_chr.partition_point(|interval| interval.end() <= cs);
 
         if i < blacklist_chr.len() {
-            let mut clipped: Vec<(u64, u64)> = Vec::new();
+            let mut clipped: Vec<Interval<u64>> = Vec::new();
 
             // Walk only the intervals that can overlap [cs, ce)
             while i < blacklist_chr.len() {
-                let (bs, be) = blacklist_chr[i];
+                let bs = blacklist_chr[i].start();
+                let be = blacklist_chr[i].end();
                 if bs >= ce {
                     break; // Remaining intervals start after the core band
                 }
@@ -1119,7 +1120,10 @@ fn add_clipped_blacklist_to_cp(
                     // Convert to tile‐local coordinates
                     let s = (s_abs as u32) - tile.core_start;
                     let e = (e_abs as u32) - tile.core_start;
-                    clipped.push((s as u64, e as u64));
+                    clipped.push(
+                        Interval::new(s as u64, e as u64)
+                            .expect("clipped blacklist interval must stay non-empty"),
+                    );
                 }
                 i += 1;
             }

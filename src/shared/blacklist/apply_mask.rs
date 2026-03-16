@@ -1,3 +1,5 @@
+use crate::shared::interval::Interval;
+
 // -- Ref sequence position blacklisting --
 
 /// Byte used for blacklisted bases in the reference sequence
@@ -6,11 +8,11 @@ pub const BLACKLIST_BYTE: u8 = b'X';
 /// Mask every base that falls inside a blacklist interval with `BLACKLIST_BYTE`.
 ///
 /// * `seq`: mutable byte slice of the reference chromosome.
-/// * `intervals`: merged, **sorted**, non-overlapping `[start, end)` pairs.
+/// * `intervals`: merged, **sorted**, non-overlapping checked intervals.
 /// * `start_from`: The 0th element of `seq` represents this position in the chromosome.
 ///
 /// Runs in **O(total interval length)** – no per-base scanning.
-pub fn apply_blacklist_mask_to_seq(seq: &mut [u8], intervals: &[(u64, u64)], start_from: u64) {
+pub fn apply_blacklist_mask_to_seq(seq: &mut [u8], intervals: &[Interval<u64>], start_from: u64) {
     if seq.is_empty() || intervals.is_empty() {
         return;
     }
@@ -20,11 +22,13 @@ pub fn apply_blacklist_mask_to_seq(seq: &mut [u8], intervals: &[(u64, u64)], sta
 
     // Skip intervals that end before this slice starts
     let mut idx = 0;
-    while idx < intervals.len() && intervals[idx].1 <= start_from {
+    while idx < intervals.len() && intervals[idx].end() <= start_from {
         idx += 1;
     }
 
-    for &(start, end) in &intervals[idx..] {
+    for interval in &intervals[idx..] {
+        let start = interval.start();
+        let end = interval.end();
         if start >= seq_end {
             break;
         }

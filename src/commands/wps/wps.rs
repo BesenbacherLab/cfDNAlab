@@ -15,6 +15,7 @@ use crate::commands::wps::config::{WPSConfig, WPSSharedConfig};
 use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment_iterator::fragments_from_bam;
+use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
@@ -277,10 +278,10 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         .map(|(tile_idx, tile)| -> Result<FCoverageCounters> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
             // Per-chrom projections
-            let windows_chr: Option<&[(u64, u64, u64)]> = windows_map
+            let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
                 .as_ref()
                 .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
-            let blacklist_chr: &[(u64, u64)] = blacklist_map
+            let blacklist_chr: &[Interval<u64>] = blacklist_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
@@ -626,7 +627,7 @@ pub fn wps_for_tile(
     keep_zero_runs: bool,
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
-    blacklist_chr: &[(u64, u64)],
+    blacklist_chr: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
     mode: TileMode,
@@ -1202,7 +1203,7 @@ fn finalize_diff(diff: &mut [f32]) -> Vec<f32> {
 fn build_mask_for_core(
     dilated_start: u32,
     dilated_end: u32,
-    blacklist_intervals: &[(u64, u64)],
+    blacklist_intervals: &[Interval<u64>],
     chromosome_length: u64,
     left_span: u32,
     right_span: u32,
@@ -1217,7 +1218,9 @@ fn build_mask_for_core(
     let mut mask = vec![0u8; dilated_span_len];
     let mut has_masked_positions = false;
 
-    for &(interval_start, interval_end) in blacklist_intervals {
+    for interval in blacklist_intervals {
+        let interval_start = interval.start();
+        let interval_end = interval.end();
         if interval_end <= dilated_start_abs || interval_start >= dilated_end_abs {
             continue;
         }

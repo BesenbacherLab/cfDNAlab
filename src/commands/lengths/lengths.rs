@@ -24,7 +24,7 @@ use crate::{
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
         fragment_iterator::fragments_with_indel_counts_from_bam,
         io::create_text_writer,
-        interval::IndexedInterval,
+        interval::{IndexedInterval, Interval},
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         read::{default_include_read_paired_end, default_include_read_unpaired},
@@ -181,7 +181,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
             let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
                 .as_ref()
                 .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
-            let blacklist_chr: &[(u64, u64)] = blacklist_map
+            let blacklist_chr: &[Interval<u64>] = blacklist_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
@@ -504,7 +504,7 @@ fn process_tile(
     windows_aligned_to_tiles: bool,
     windows_chr: Option<&[IndexedInterval<u64>]>,
     window_opt: &WindowSpec,
-    blacklist_intervals: &[(u64, u64)],
+    blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<LengthAgnosticGCCorrector>,
     template: &LengthCounts,

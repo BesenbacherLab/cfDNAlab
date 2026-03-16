@@ -15,6 +15,7 @@ use crate::commands::wps_peaks::normalize_wps::{normalize_wps, smoothe_wps};
 use crate::commands::wps_peaks::window_peak_results::PeaksWindowAction;
 use crate::shared::bam::Contigs;
 use crate::shared::bed::load_windows_from_bed;
+use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::thread_pool::init_global_pool;
 use crate::shared::tiled_run::{
     Tile, TileMode, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
@@ -210,7 +211,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<TileResult> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
-            let windows_chr: Option<&[(u64, u64, u64)]> = windows_map
+            let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
                 .as_ref()
                 .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
             let blacklist_chr = blacklist_map
@@ -904,8 +905,8 @@ pub fn peaks_for_tile(
     opt: &WPSPeaksConfig,
     tile: &Tile,
     tile_span: Option<&TileWindowSpan>,
-    windows: Option<&[(u64, u64, u64)]>,
-    blacklist_chr: &[(u64, u64)],
+    windows: Option<&[IndexedInterval<u64>]>,
+    blacklist_chr: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
     extra_halo: u32,
@@ -977,7 +978,7 @@ pub fn peaks_for_tile(
 }
 
 pub fn compute_window_stats_contributions(
-    windows: &[(u64, u64, u64)],
+    windows: &[IndexedInterval<u64>],
     peaks: &[PeakCall],
 ) -> Vec<WindowStatsContribution> {
     if windows.is_empty() || peaks.is_empty() {
@@ -989,7 +990,10 @@ pub fn compute_window_stats_contributions(
     let mut end_idx;
 
     // Windows arrive sorted by start (they may overlap), so `start_idx` can increase monotonically
-    for &(start, end, idx) in windows {
+    for window in windows {
+        let start = window.start();
+        let end = window.end();
+        let idx = window.idx();
         while start_idx < peaks.len() && peaks[start_idx].peak_position < start {
             start_idx += 1;
         }
@@ -1038,7 +1042,7 @@ fn build_fixed_size_windows_for_tile(
     chrom_len: u64,
     tile_start: u64,
     tile_end: u64,
-) -> Vec<(u64, u64, u64)> {
+) -> Vec<IndexedInterval<u64>> {
     if bin_size == 0 || tile_start >= chrom_len {
         return Vec::new();
     }
@@ -1052,17 +1056,21 @@ fn build_fixed_size_windows_for_tile(
         let window_start = start;
         let end = (start + bin_size).min(chrom_len);
         let idx = window_start / bin_size;
-        windows.push((window_start, end, idx));
+        windows.push(
+            IndexedInterval::new(window_start, end, idx)
+                .expect("fixed-size tile windows must be valid non-empty intervals"),
+        );
         start = start.saturating_add(bin_size);
     }
     windows
 }
 
-fn last_mask_end_before(intervals: &[(u64, u64)], position: u64) -> u64 {
+fn last_mask_end_before(intervals: &[Interval<u64>], position: u64) -> u64 {
     intervals
         .iter()
         .rev()
-        .find_map(|&(_, end)| {
+        .find_map(|interval| {
+            let end = interval.end();
             if end <= position {
                 Some(end.saturating_sub(1))
             } else {

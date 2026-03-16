@@ -1,4 +1,5 @@
 use crate::shared::fragment::{minimal_fragment::Fragment, segment_fragment::FragmentWithSegments};
+use crate::shared::interval::Interval;
 use anyhow::{Result, bail};
 use rayon::prelude::*;
 
@@ -278,7 +279,7 @@ impl Coverage {
     ///
     /// Errors
     /// - Returns an error if any interval violates the contract (out of bounds or empty).
-    pub fn set_blacklist_mask(&mut self, intervals: &[(u64, u64)]) -> Result<()> {
+    pub fn set_blacklist_mask(&mut self, intervals: &[Interval<u64>]) -> Result<()> {
         if intervals.is_empty() {
             // No blacklist -> drop mask to avoid allocating an all-zero vector.
             self.bl_mask = None;
@@ -289,7 +290,9 @@ impl Coverage {
         let n = self.length as usize;
         let mut mask = vec![0u8; n];
 
-        for &(s64, e64) in intervals {
+        for interval in intervals {
+            let s64 = interval.start();
+            let e64 = interval.end();
             if s64 >= e64 {
                 bail!("blacklist interval start {} >= end {}", s64, e64);
             }

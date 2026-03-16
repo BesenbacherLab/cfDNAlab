@@ -23,12 +23,12 @@ pub fn load_blacklists<P: AsRef<Path>>(
     min_size: u64,
     halo_bp: u64,
     chromosomes: Option<&[String]>,
-) -> AnyResult<FxHashMap<String, Vec<(u64, u64)>>> {
+) -> AnyResult<FxHashMap<String, Vec<Interval<u64>>>> {
     if beds.is_empty() {
         return Ok(FxHashMap::default());
     }
 
-    let mut merged: FxHashMap<String, Vec<(u64, u64)>> = FxHashMap::default();
+    let mut merged: FxHashMap<String, Vec<Interval<u64>>> = FxHashMap::default();
 
     for bed in beds {
         let single = load_windows_from_bed(bed, chromosomes, None, None)?;
@@ -36,15 +36,8 @@ pub fn load_blacklists<P: AsRef<Path>>(
     }
 
     for ivs in merged.values_mut() {
-        ivs.sort_unstable();
-        let intervals = std::mem::take(ivs)
-            .into_iter()
-            .map(|(start, end)| Interval::new(start, end))
-            .collect::<crate::Result<Vec<_>>>()?;
-        *ivs = merge_intervals(intervals)?
-            .into_iter()
-            .map(Interval::into_inner)
-            .collect();
+        let intervals = std::mem::take(ivs);
+        *ivs = merge_intervals(intervals)?;
     }
 
     Ok(merged)
@@ -79,13 +72,13 @@ pub fn merge_intervals(intervals: Vec<Interval<u64>>) -> crate::Result<Vec<Inter
 }
 
 fn accumulate_blacklist_windows(
-    merged: &mut FxHashMap<String, Vec<(u64, u64)>>,
+    merged: &mut FxHashMap<String, Vec<Interval<u64>>>,
     windows_map: FxHashMap<String, Windows>,
     min_size: u64,
     halo_bp: u64,
 ) {
     for (chr, ivs) in windows_map {
-        let mut out: Vec<(u64, u64)> = Vec::new();
+        let mut out: Vec<Interval<u64>> = Vec::new();
         for window in ivs.into_inner() {
             let start = window.start();
             let end = window.end();
@@ -97,7 +90,10 @@ fn accumulate_blacklist_windows(
             }
             let halo_start = start.saturating_sub(halo_bp);
             let halo_end = end.saturating_add(halo_bp);
-            out.push((halo_start, halo_end));
+            out.push(
+                Interval::new(halo_start, halo_end)
+                    .expect("blacklist halo expansion must preserve non-empty intervals"),
+            );
         }
         if !out.is_empty() {
             merged.entry(chr).or_default().extend(out);

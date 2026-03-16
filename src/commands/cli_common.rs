@@ -2,6 +2,7 @@ use crate::commands::fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, R
 use crate::shared::bam::bam_header_contigs;
 use crate::shared::bam::{Contigs, bam_contigs_info};
 use crate::shared::blacklist::load_blacklists;
+use crate::shared::interval::Interval;
 use crate::shared::scale_genome::load_scaling_factors_tsv;
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
@@ -839,7 +840,7 @@ pub fn load_blacklist_map(
     min_size: u64,
     halo_bp: u64,
     chromosomes: &Vec<String>,
-) -> Result<FxHashMap<String, Vec<(u64, u64)>>> {
+) -> Result<FxHashMap<String, Vec<Interval<u64>>>> {
     if let Some(paths) = beds {
         load_blacklists(paths, min_size, halo_bp, Some(chromosomes.as_slice()))
     } else {

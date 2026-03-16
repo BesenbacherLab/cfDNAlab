@@ -20,7 +20,7 @@ use crate::{
         blacklist::is_blacklisted,
         fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
-        interval::IndexedInterval,
+        interval::{IndexedInterval, Interval},
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         read::{default_include_read_paired_end, default_include_read_unpaired},
@@ -197,7 +197,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
-            let blacklist_chr: &[(u64, u64)] = blacklist_map
+            let blacklist_chr: &[Interval<u64>] = blacklist_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
@@ -346,7 +346,7 @@ fn process_tile(
     length_bins: &[u32],
     windows: &[IndexedInterval<u64>],
     tile_window_span: Option<&TileWindowSpan>,
-    blacklist_intervals: &[(u64, u64)],
+    blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
     gc_tag: Option<&str>,

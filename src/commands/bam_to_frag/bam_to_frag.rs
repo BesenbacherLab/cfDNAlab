@@ -21,7 +21,7 @@ use crate::{
         blacklist::is_blacklisted,
         fragment::frag_file_fragment::FragFileFragment,
         fragment_iterator::fragments_with_frag_file_info_from_bam,
-        interval::IndexedInterval,
+        interval::{IndexedInterval, Interval},
         overlaps::find_overlapping_windows,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq,
@@ -247,7 +247,7 @@ fn process_chrom(
     opt: &BamToFragConfig,
     temp_dir: &PathBuf,
     windows: Option<&[IndexedInterval<u64>]>,
-    blacklist_intervals: &[(u64, u64)],
+    blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
 ) -> anyhow::Result<(PathBuf, BamToFragCounters)> {

@@ -31,6 +31,7 @@ use crate::{
         blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE, is_blacklisted},
         fragment::segment_kmer_fragment::FragmentWithKmerSegments,
         fragment_iterator::fragments_with_kmer_segments_from_bam,
+        interval::Interval,
         io::create_text_writer,
         kmers::{
             kmer_codec::{KmerCodes, KmerSpec, build_kmer_specs, build_left_aligned_codes_per_k},
@@ -461,7 +462,7 @@ fn process_tile(
     position_cache: Arc<PositionSelectionCache>,
     window_ctx: &WindowContext,
     tile_window_span: Option<&TileWindowSpan>,
-    blacklist_intervals: &[(u64, u64)],
+    blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
     counts_path: &Path,
