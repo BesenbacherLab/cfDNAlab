@@ -389,12 +389,12 @@ pub fn build_tiles(
     // Just in case we decide to move start of cores in the future
     // We'll have an extensive debug test
     #[cfg(debug_assertions)]
-    if let Some(bs) = align_bp
+    if let Some(alignment_bp) = align_bp
         && guaranteed_aligned
     {
         for t in &tiles {
             // Starts/ends of *cores* (not final chromosome end) line up on the grid
-            debug_assert_eq!((t.core_start as u64) % bs, 0);
+            debug_assert_eq!((t.core_start as u64) % alignment_bp, 0);
         }
     }
 
@@ -444,11 +444,13 @@ pub fn windows_overlapping_core(
     core_start: u32,
     core_end: u32,
 ) -> impl Iterator<Item = &IndexedInterval<u64>> {
-    let cs = core_start as u64;
-    let ce = core_end as u64;
+    let core_start_abs = core_start as u64;
+    let core_end_abs = core_end as u64;
     windows_chr
         .iter()
-        .filter(move |window| window.end() > cs && window.start() < ce)
+        .filter(move |window| {
+            window.end() > core_start_abs && window.start() < core_end_abs
+        })
 }
 
 /// Extracts the tile index suffix from a coverage file name.

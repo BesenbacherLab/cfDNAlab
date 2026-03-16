@@ -901,18 +901,23 @@ fn process_tile(
             let mut w_part = open_zstd_auto_writer(&partials_out, 3, None)?;
             let mut w_cross = open_zstd_auto_writer(&cross_idx_out, 3, None)?;
 
-            let cs = tile.core_start as u64;
-            let ce = tile.core_end as u64;
+            let core_start_abs = tile.core_start as u64;
+            let core_end_abs = tile.core_end as u64;
 
             // Walk only windows overlapping the core (already start-sorted)
             for window in overlapping_windows_for_tile(windows, tile, tile_window_span) {
-                let ws = window.start();
-                let we = window.end();
+                let window_start_abs = window.start();
+                let window_end_abs = window.end();
                 // This is the original window index, not just the current loop position
                 let idx = window.idx();
                 let (local_start_idx, local_end_idx) =
                     if let Some((local_start_idx, local_end_idx, _, _)) =
-                        intersect_abs_with_core_to_local(ws, we, tile.core_start, tile.core_end)
+                        intersect_abs_with_core_to_local(
+                            window_start_abs,
+                            window_end_abs,
+                            tile.core_start,
+                            tile.core_end,
+                        )
                     {
                         (local_start_idx, local_end_idx)
                     } else {
@@ -920,7 +925,8 @@ fn process_tile(
                     };
 
                 // Classify as internal (fully inside core) vs boundary (crosses tile core boundary)
-                let crosses_boundary = !(ws >= cs && we <= ce);
+                let crosses_boundary =
+                    !(window_start_abs >= core_start_abs && window_end_abs <= core_end_abs);
 
                 // Sum coverage, respecting masked mode
                 let (sum, allowed, blacklisted) = coverage_sum_and_counts(
@@ -971,10 +977,10 @@ fn process_tile(
             let mask: Option<&[u8]> = cp.blacklist_mask();
 
             // Determine the fixed-size windows that overlap the tile core
-            let cs = tile.core_start as u64;
-            let ce = tile.core_end as u64;
-            let k_lo = cs / window_bp;
-            let k_hi = (ce.saturating_sub(1)) / window_bp;
+            let core_start_abs = tile.core_start as u64;
+            let core_end_abs = tile.core_end as u64;
+            let first_bin_idx = core_start_abs / window_bp;
+            let last_bin_idx = (core_end_abs.saturating_sub(1)) / window_bp;
 
             if guaranteed_aligned {
                 // FAST PATH: Every bin that touches the core is fully contained in this core
@@ -982,13 +988,22 @@ fn process_tile(
 
                 let mut w_fin = open_zstd_auto_writer(&finals_out, 3, None)?;
 
-                for k in k_lo..=k_hi {
-                    let bin_start = k * window_bp;
-                    let bin_end = (k + 1) * window_bp;
+                for bin_idx in first_bin_idx..=last_bin_idx {
+                    let bin_start = bin_idx * window_bp;
+                    let bin_end = (bin_idx + 1) * window_bp;
 
                     // Intersect with core (alignment ensures this equals the bin for non-terminal tiles).
-                    let (local_start_idx, local_end_idx, s_abs, e_abs) =
-                        if let Some((local_start_idx, local_end_idx, s_abs, e_abs)) =
+                    let (
+                        local_start_idx,
+                        local_end_idx,
+                        clipped_start_abs,
+                        clipped_end_abs,
+                    ) = if let Some((
+                        local_start_idx,
+                        local_end_idx,
+                        clipped_start_abs,
+                        clipped_end_abs,
+                    )) =
                             intersect_abs_with_core_to_local(
                                 bin_start,
                                 bin_end,
@@ -996,7 +1011,12 @@ fn process_tile(
                                 tile.core_end,
                             )
                         {
-                            (local_start_idx, local_end_idx, s_abs, e_abs)
+                            (
+                                local_start_idx,
+                                local_end_idx,
+                                clipped_start_abs,
+                                clipped_end_abs,
+                            )
                         } else {
                             continue;
                         };
@@ -1013,7 +1033,7 @@ fn process_tile(
                     );
 
                     // Compute final value now
-                    let unmasked_span_bp = (e_abs - s_abs) as u64;
+                    let unmasked_span_bp = (clipped_end_abs - clipped_start_abs) as u64;
                     let value =
                         finalize_value(sum, allowed, unmasked_span_bp, masked, &opt.per_window);
                     let value = round_to(value, decimals);
@@ -1023,7 +1043,7 @@ fn process_tile(
                         &mut w_fin,
                         &tile.chr,
                         bin_start,
-                        bin_end.min(ce),
+                        bin_end.min(core_end_abs),
                         value,
                         blacklisted,
                         decimals,
@@ -1035,9 +1055,9 @@ fn process_tile(
                 let mut w_part = open_zstd_auto_writer(&partials_out, 3, None)?;
                 let mut w_cross = open_zstd_auto_writer(&cross_idx_out, 3, None)?;
 
-                for k in k_lo..=k_hi {
-                    let bin_start = k * window_bp;
-                    let bin_end = (k + 1) * window_bp;
+                for bin_idx in first_bin_idx..=last_bin_idx {
+                    let bin_start = bin_idx * window_bp;
+                    let bin_end = (bin_idx + 1) * window_bp;
 
                     // Intersect with core (alignment ensures this equals the bin for non-terminal tiles).
                     let (local_start_idx, local_end_idx) =
@@ -1073,7 +1093,8 @@ fn process_tile(
                     )?;
 
                     // Mark cross-boundary bins (not fully inside the core) so reducer expects >1 contributions
-                    let fully_inside = (bin_start >= cs) && (bin_end <= ce);
+                    let fully_inside =
+                        (bin_start >= core_start_abs) && (bin_end <= core_end_abs);
                     if !fully_inside {
                         writeln!(w_cross, "{}", bin_start)?;
                     }
@@ -1097,31 +1118,32 @@ fn add_clipped_blacklist_to_cp(
     // Add blacklist late and clipped to the tile core to minimize memory
     // Use binary search to jump to the first overlapping interval
     if masked && !blacklist_chr.is_empty() {
-        let cs = tile.core_start as u64;
-        let ce = tile.core_end as u64;
+        let core_start_abs = tile.core_start as u64;
+        let core_end_abs = tile.core_end as u64;
 
         // Find first interval with end > core_start
-        let mut i = blacklist_chr.partition_point(|interval| interval.end() <= cs);
+        let mut i =
+            blacklist_chr.partition_point(|interval| interval.end() <= core_start_abs);
 
         if i < blacklist_chr.len() {
             let mut clipped: Vec<Interval<u64>> = Vec::new();
 
-            // Walk only the intervals that can overlap [cs, ce)
+            // Walk only the intervals that can overlap the tile core
             while i < blacklist_chr.len() {
-                let bs = blacklist_chr[i].start();
-                let be = blacklist_chr[i].end();
-                if bs >= ce {
+                let blacklist_start = blacklist_chr[i].start();
+                let blacklist_end = blacklist_chr[i].end();
+                if blacklist_start >= core_end_abs {
                     break; // Remaining intervals start after the core band
                 }
 
-                let s_abs = bs.max(cs);
-                let e_abs = be.min(ce);
-                if s_abs < e_abs {
+                let overlap_start_abs = blacklist_start.max(core_start_abs);
+                let overlap_end_abs = blacklist_end.min(core_end_abs);
+                if overlap_start_abs < overlap_end_abs {
                     // Convert to tile‐local coordinates
-                    let s = (s_abs as u32) - tile.core_start;
-                    let e = (e_abs as u32) - tile.core_start;
+                    let local_start = (overlap_start_abs as u32) - tile.core_start;
+                    let local_end = (overlap_end_abs as u32) - tile.core_start;
                     clipped.push(
-                        Interval::new(s as u64, e as u64)
+                        Interval::new(local_start as u64, local_end as u64)
                             .expect("clipped blacklist interval must stay non-empty"),
                     );
                 }
@@ -1166,15 +1188,15 @@ pub fn add_fragment_clipped_to_core(
     let mut counted = false;
     if let Some(segments) = &fragment.segments {
         for &(seg_start_abs, seg_end_abs) in segments {
-            let s = seg_start_abs.max(core_start);
-            let e = seg_end_abs.min(core_end);
-            if s < e {
+            let clipped_start = seg_start_abs.max(core_start);
+            let clipped_end = seg_end_abs.min(core_end);
+            if clipped_start < clipped_end {
                 // Skips fragments completely outside tile
                 // Shift to tile-local coordinates
                 let local = Fragment {
                     tid: fragment.tid,
-                    start: s - core_start,
-                    end: e - core_start,
+                    start: clipped_start - core_start,
+                    end: clipped_end - core_start,
                     gc_tag: Default::default(),
                 };
                 cp.add_fragment_weighted(local, weight)?;
@@ -1183,15 +1205,15 @@ pub fn add_fragment_clipped_to_core(
         }
     } else {
         // No explicit segments -> treat as one span (this already encodes your include_inter_mate_gap policy)
-        let s = fragment.start.max(core_start);
-        let e = fragment.end.min(core_end);
-        if s < e {
+        let clipped_start = fragment.start.max(core_start);
+        let clipped_end = fragment.end.min(core_end);
+        if clipped_start < clipped_end {
             // Skips fragments completely outside tile
             // Shift to tile-local coordinates
             let local = Fragment {
                 tid: fragment.tid,
-                start: s - core_start,
-                end: e - core_start,
+                start: clipped_start - core_start,
+                end: clipped_end - core_start,
                 gc_tag: Default::default(),
             };
 

@@ -386,8 +386,8 @@ pub fn collect_fragment_with_kmer_segments(
         return None;
     }
 
-    forward_segments.sort_unstable_by_key(|&(s, _)| s);
-    reverse_segments.sort_unstable_by_key(|&(s, _)| s);
+    forward_segments.sort_unstable_by_key(|&(segment_start, _)| segment_start);
+    reverse_segments.sort_unstable_by_key(|&(segment_start, _)| segment_start);
 
     // Trim fixed offsets from both ends so k-mer contexts avoid edge artifacts.
     // `end_offset` is expected to be small (defaults to 0), so most spans dwarf it.
@@ -407,14 +407,16 @@ pub fn collect_fragment_with_kmer_segments(
     let mut candidates: Vec<(u32, u32)> = forward_segments
         .into_iter()
         .chain(reverse_segments)
-        .filter_map(|(s, e)| clip_interval(s, e, trim_start, trim_end))
+        .filter_map(|(segment_start, segment_end)| {
+            clip_interval(segment_start, segment_end, trim_start, trim_end)
+        })
         .collect();
 
     if candidates.is_empty() {
         return None;
     }
 
-    candidates.sort_unstable_by_key(|&(s, _)| s);
+    candidates.sort_unstable_by_key(|&(segment_start, _)| segment_start);
 
     let mut merged: Vec<(u32, u32)> = Vec::new();
     for seg in candidates.into_iter() {
@@ -485,14 +487,16 @@ pub fn collect_fragment_with_kmer_segments_from_single_read(
         let mut candidates: Vec<(u32, u32)> = read
             .absolute_segments()
             .into_iter()
-            .filter_map(|(s, e)| clip_interval(s, e, trim_start, trim_end))
+            .filter_map(|(segment_start, segment_end)| {
+                clip_interval(segment_start, segment_end, trim_start, trim_end)
+            })
             .collect();
 
         if candidates.is_empty() {
             return None;
         }
 
-        candidates.sort_unstable_by_key(|&(s, _)| s);
+        candidates.sort_unstable_by_key(|&(segment_start, _)| segment_start);
 
         let mut merged: Vec<(u32, u32)> = Vec::new();
         for seg in candidates.into_iter() {

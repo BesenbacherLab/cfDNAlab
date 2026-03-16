@@ -343,12 +343,17 @@ pub fn intersect_abs_with_core_to_local(
     core_start: u32,
     core_end: u32,
 ) -> Option<(usize, usize, u32, u32)> {
-    let s_abs = (abs_start as u32).max(core_start);
-    let e_abs = (abs_end as u32).min(core_end);
-    if e_abs <= s_abs {
+    let clipped_start_abs = (abs_start as u32).max(core_start);
+    let clipped_end_abs = (abs_end as u32).min(core_end);
+    if clipped_end_abs <= clipped_start_abs {
         return None;
     }
-    let local_start_idx = (s_abs - core_start) as usize;
-    let local_end_idx = (e_abs - core_start) as usize;
-    Some((local_start_idx, local_end_idx, s_abs, e_abs))
+    let local_start_idx = (clipped_start_abs - core_start) as usize;
+    let local_end_idx = (clipped_end_abs - core_start) as usize;
+    Some((
+        local_start_idx,
+        local_end_idx,
+        clipped_start_abs,
+        clipped_end_abs,
+    ))
 }

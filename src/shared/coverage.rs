@@ -212,22 +212,22 @@ impl Coverage {
                 // Apply +w/-w per segment
                 let n = self.delta.len();
                 let len = self.length as usize;
-                for (s, e) in segs {
-                    if s >= e {
+                for (segment_start, segment_end) in segs {
+                    if segment_start >= segment_end {
                         continue;
                     }
-                    let a = s as usize;
-                    let b = e as usize;
-                    if b > len || a >= n {
+                    let start_idx = segment_start as usize;
+                    let end_idx = segment_end as usize;
+                    if end_idx > len || start_idx >= n {
                         anyhow::bail!(
                             "segment [{}..{}) out of bounds for sequence length {}",
-                            s,
-                            e,
+                            segment_start,
+                            segment_end,
                             self.length
                         );
                     }
-                    self.delta[a] += weight;
-                    self.delta[b] -= weight;
+                    self.delta[start_idx] += weight;
+                    self.delta[end_idx] -= weight;
                 }
                 self.invalidate_indexes();
                 Ok(())

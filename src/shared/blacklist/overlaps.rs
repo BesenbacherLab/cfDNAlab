@@ -42,9 +42,11 @@ pub fn compute_blacklist_overlap(
     let mut i = *ptr;
     while i < intervals.len() && intervals[i].start() < end {
         let interval = intervals[i];
-        let s = interval.start();
-        let e = interval.end();
-        covered += e.min(end).saturating_sub(s.max(start));
+        let interval_start = interval.start();
+        let interval_end = interval.end();
+        covered += interval_end
+            .min(end)
+            .saturating_sub(interval_start.max(start));
         i += 1;
     }
     covered as f64 / (end - start) as f64
@@ -64,9 +66,9 @@ pub fn is_all(
     }
     // If there's an interval here, check full overlap of [start,end)
     if let Some(interval) = intervals.get(*ptr) {
-        let s = interval.start();
-        let e = interval.end();
-        s <= start && e >= end
+        let interval_start = interval.start();
+        let interval_end = interval.end();
+        interval_start <= start && interval_end >= end
     } else {
         false
     }
@@ -90,9 +92,9 @@ pub fn is_midpoint(
     let mut i = *ptr;
     while i < intervals.len() && intervals[i].start() <= mid {
         let interval = intervals[i];
-        let s = interval.start();
-        let e = interval.end();
-        if s <= mid && mid < e {
+        let interval_start = interval.start();
+        let interval_end = interval.end();
+        if interval_start <= mid && mid < interval_end {
             return true;
         }
         i += 1;
@@ -121,9 +123,12 @@ pub fn is_proportion(
     // Sum overlaps only through intervals whose .0 < end
     while i < intervals.len() && intervals[i].start() < end {
         let interval = intervals[i];
-        let s = interval.start();
-        let e = interval.end();
-        covered += (e.min(end).saturating_sub(s.max(start)) as f64) / ((end - start) as f64);
+        let interval_start = interval.start();
+        let interval_end = interval.end();
+        covered += (interval_end
+            .min(end)
+            .saturating_sub(interval_start.max(start)) as f64)
+            / ((end - start) as f64);
         if covered >= thr {
             // Early stopping if we reached the threshold
             break;
@@ -154,9 +159,11 @@ pub fn is_any(
     // Sum overlaps only through intervals whose .0 < end
     while i < intervals.len() && intervals[i].start() < end {
         let interval = intervals[i];
-        let s = interval.start();
-        let e = interval.end();
-        covered_bases += e.min(end).saturating_sub(s.max(start)) as u16;
+        let interval_start = interval.start();
+        let interval_end = interval.end();
+        covered_bases += interval_end
+            .min(end)
+            .saturating_sub(interval_start.max(start)) as u16;
         if covered_bases > 0 {
             // Early stopping if we reached the threshold
             break;

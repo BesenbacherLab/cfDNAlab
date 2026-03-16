@@ -890,8 +890,8 @@ where
     idxs.sort_unstable_by_key(|&i| sets[i].len());
     let mut intersection: FxHashSet<T> = sets[idxs[0]].clone();
     for &i in &idxs[1..] {
-        let s = &sets[i];
-        intersection.retain(|x| s.contains(x));
+        let current_set = &sets[i];
+        intersection.retain(|x| current_set.contains(x));
         if intersection.is_empty() {
             break;
         }

@@ -1937,4 +1937,32 @@
 //         let even_length = if length % 2 == 1 { length - 1 } else { length };
 //         even_length.saturating_sub(2 * (k - 1)) as u64
 //     }
+
+//     #[test]
+//     fn global_windowing_handles_three_chromosomes() -> Result<()> {
+//         // Planned regression:
+//         // - Build one simple fragment per chromosome.
+//         // - Run the global window path.
+//         // - Assert that the output keeps chromosome order and counts all three chromosomes.
+//         // This should mirror the three-chromosome smoke tests added to the active suites.
+//         todo!("fragment_kmers suite is intentionally commented out until the command works again");
+//     }
+
+//     #[test]
+//     fn by_size_windowing_handles_three_chromosomes() -> Result<()> {
+//         // Planned regression:
+//         // - Use one fixed-size window per chromosome.
+//         // - Assert that all three chromosomes produce output rows and that window indexing
+//         //   does not silently assume chromosome-local dense indices.
+//         todo!("fragment_kmers suite is intentionally commented out until the command works again");
+//     }
+
+//     #[test]
+//     fn by_bed_windowing_handles_three_chromosomes() -> Result<()> {
+//         // Planned regression:
+//         // - Load one BED window per chromosome.
+//         // - Assert that later chromosomes survive the reducer path instead of being dropped
+//         //   by a hidden original-index assumption.
+//         todo!("fragment_kmers suite is intentionally commented out until the command works again");
+//     }
 // }

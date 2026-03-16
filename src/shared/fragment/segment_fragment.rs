@@ -243,9 +243,9 @@ pub fn collect_fragment_with_segments(
     // If the list is empty (no gaps worth storing), fall back to the read's aligned span [pos, end)
     if !forward.ref_mapped_segments.is_empty() {
         for (off, len) in &forward.ref_mapped_segments {
-            let s = forward.pos.saturating_add(*off);
-            let e = s.saturating_add(*len);
-            abs.push((s, e));
+            let segment_start = forward.pos.saturating_add(*off);
+            let segment_end = segment_start.saturating_add(*len);
+            abs.push((segment_start, segment_end));
         }
     } else {
         abs.push((forward.pos, forward.end));
@@ -254,9 +254,9 @@ pub fn collect_fragment_with_segments(
     // Same expansion for the reverse read
     if !reverse.ref_mapped_segments.is_empty() {
         for (off, len) in &reverse.ref_mapped_segments {
-            let s = reverse.pos.saturating_add(*off);
-            let e = s.saturating_add(*len);
-            abs.push((s, e));
+            let segment_start = reverse.pos.saturating_add(*off);
+            let segment_end = segment_start.saturating_add(*len);
+            abs.push((segment_start, segment_end));
         }
     } else {
         abs.push((reverse.pos, reverse.end));
@@ -285,37 +285,37 @@ pub fn collect_fragment_with_segments(
         });
     }
 
-    abs.sort_unstable_by_key(|&(s, _)| s);
+    abs.sort_unstable_by_key(|&(segment_start, _)| segment_start);
 
     // Merge and clip to fragment span
     let mut merged: Vec<(u32, u32)> = Vec::with_capacity(abs.len());
-    for (mut s, mut e) in abs {
+    for (mut segment_start, mut segment_end) in abs {
         // Check validity of segment
-        if s >= e {
+        if segment_start >= segment_end {
             continue;
         }
-        if e <= span_start || s >= span_end {
+        if segment_end <= span_start || segment_start >= span_end {
             continue;
         }
 
         // Clip to span
-        if s < span_start {
-            s = span_start;
+        if segment_start < span_start {
+            segment_start = span_start;
         }
-        if e > span_end {
-            e = span_end;
+        if segment_end > span_end {
+            segment_end = span_end;
         }
 
         // Merge overlapping segments by increasing the previous segment
         if let Some(last) = merged.last_mut()
-            && s <= last.1
+            && segment_start <= last.1
         {
-            if e > last.1 {
-                last.1 = e;
+            if segment_end > last.1 {
+                last.1 = segment_end;
             }
             continue;
         }
-        merged.push((s, e));
+        merged.push((segment_start, segment_end));
     }
 
     let segments = if merged.is_empty() {
@@ -366,9 +366,9 @@ pub fn collect_fragment_with_segments_from_single_read(
     let mut abs: Vec<(u32, u32)> = Vec::with_capacity(read.ref_mapped_segments.len());
     if !read.ref_mapped_segments.is_empty() {
         for (off, len) in &read.ref_mapped_segments {
-            let s = read.pos.saturating_add(*off);
-            let e = s.saturating_add(*len);
-            abs.push((s, e));
+            let segment_start = read.pos.saturating_add(*off);
+            let segment_end = segment_start.saturating_add(*len);
+            abs.push((segment_start, segment_end));
         }
     }
 

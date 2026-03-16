@@ -34,21 +34,21 @@ impl From<&Record> for IndelReadInfo {
                     ref_pos = ref_pos.saturating_add(l);
                 }
                 Cigar::Del(l) => {
-                    let s = ref_pos;
-                    let e = ref_pos.saturating_add(l);
-                    if e > s {
-                        deletions.push((s, e));
+                    let deletion_start = ref_pos;
+                    let deletion_end = ref_pos.saturating_add(l);
+                    if deletion_end > deletion_start {
+                        deletions.push((deletion_start, deletion_end));
                     }
-                    ref_pos = e; // D consumes reference
+                    ref_pos = deletion_end; // D consumes reference
                 }
                 Cigar::RefSkip(l) => {
                     // Rare in cfDNA; treat as a deletion on the reference
-                    let s = ref_pos;
-                    let e = ref_pos.saturating_add(l);
-                    if e > s {
-                        deletions.push((s, e));
+                    let skipped_start = ref_pos;
+                    let skipped_end = ref_pos.saturating_add(l);
+                    if skipped_end > skipped_start {
+                        deletions.push((skipped_start, skipped_end));
                     }
-                    ref_pos = e; // N consumes reference
+                    ref_pos = skipped_end; // N consumes reference
                 }
                 Cigar::Ins(l) => {
                     // Insertion anchored at current ref_pos
@@ -65,16 +65,16 @@ impl From<&Record> for IndelReadInfo {
 
         // Merge adjacent/overlapping deletion intervals to normalize
         if deletions.len() > 1 {
-            deletions.sort_unstable_by_key(|&(s, _)| s);
+            deletions.sort_unstable_by_key(|&(start, _)| start);
             let mut merged: Vec<(u32, u32)> = Vec::with_capacity(deletions.len());
-            for (s, e) in deletions.drain(..) {
+            for (deletion_start, deletion_end) in deletions.drain(..) {
                 if let Some(last) = merged.last_mut()
-                    && s <= last.1
+                    && deletion_start <= last.1
                 {
-                    last.1 = last.1.max(e);
+                    last.1 = last.1.max(deletion_end);
                     continue;
                 }
-                merged.push((s, e));
+                merged.push((deletion_start, deletion_end));
             }
             deletions = merged;
         }
@@ -464,10 +464,15 @@ fn calculate_deletion_in_overlap(
     supported_overlap_deletions_bp
 }
 
-// Clip [s,e) to the fragment span; return None if outside
+// Clip an interval to the fragment span, return None if outside
 #[inline]
-fn clip_to_fragment(s: u32, e: u32, frag_s: u32, frag_e: u32) -> Option<(u32, u32)> {
-    let cs = s.max(frag_s);
-    let ce = e.min(frag_e);
-    (ce > cs).then_some((cs, ce))
+fn clip_to_fragment(
+    interval_start: u32,
+    interval_end: u32,
+    fragment_start: u32,
+    fragment_end: u32,
+) -> Option<(u32, u32)> {
+    let clipped_start = interval_start.max(fragment_start);
+    let clipped_end = interval_end.min(fragment_end);
+    (clipped_end > clipped_start).then_some((clipped_start, clipped_end))
 }

@@ -138,9 +138,13 @@ pub fn apply_size_transform(
     let size = chrom_size_bp.expect("chromosome sizes required for trim/drop policies");
     match cfg.oob {
         OobPolicy::Trim => {
-            let s = intended_start_i as u32;
-            let e = intended_end_i.min(size as i64) as u32;
-            if e <= s { Ok(None) } else { Ok(Some((s, e))) }
+            let trimmed_start = intended_start_i as u32;
+            let trimmed_end = intended_end_i.min(size as i64) as u32;
+            if trimmed_end <= trimmed_start {
+                Ok(None)
+            } else {
+                Ok(Some((trimmed_start, trimmed_end)))
+            }
         }
         OobPolicy::Drop => Ok(None),
         _ => unreachable!("OobPolicy::Allow already handled"),
