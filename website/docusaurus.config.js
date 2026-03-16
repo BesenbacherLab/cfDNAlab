@@ -6,10 +6,10 @@ const config = {
   tagline: 'Fast and transparent cfDNA command-line analysis',
   favicon: 'img/cfdnalab_logo_little_guy_200x181_144dpi.png',
 
-  url: 'https://ludvigolsen.github.io',
+  url: 'https://BesenbacherLab.github.io',
   baseUrl: '/cfdnalab/',
 
-  organizationName: 'ludvigolsen',
+  organizationName: 'BesenbacherLab',
   projectName: 'cfdnalab',
 
   onBrokenLinks: 'throw',
@@ -69,7 +69,7 @@ const config = {
             label: 'Docs'
           },
           {
-            href: 'https://github.com/ludvigolsen/cfdnalab',
+            href: 'https://github.com/BesenbacherLab/cfdnalab',
             label: 'GitHub',
             position: 'right'
           }

@@ -198,17 +198,6 @@ These improve the robustness of the tool and prevent panics on edge cases or cor
 
 ---
 
-- [x] **T3-12: Replace `ProgressStyle` template `.unwrap()` calls**
-  - **Locations:**
-    - `src/commands/lengths/lengths.rs:140`
-    - `src/commands/midpoints/midpoints.rs:164`
-    - `src/commands/fcoverage/fcoverage.rs:223`
-    - `src/commands/ref_gc_bias/ref_gc_bias.rs:136`
-  - **Severity:** LOW
-  - **Description:** All progress bar templates use `.template("...").unwrap()`. While the hardcoded template strings are valid, any future change could introduce a panic. Consider using `.template("...").expect("hardcoded template")` at minimum for clarity.
-
----
-
 ### TIER 4 — Nice to Have (Code Quality & Maintainability)
 
 These are not urgent but improve the codebase for long-term maintenance.
@@ -230,20 +219,6 @@ These are not urgent but improve the codebase for long-term maintenance.
 
 ---
 
-- [x] **T4-3: Use `checked_mul` for stride calculations in `counting_by_group.rs`**
-  - **Location:** `src/commands/midpoints/counting_by_group.rs:349`
-  - **Severity:** LOW
-  - **Description:** `let strides = ((p * l) as usize, 1usize, l as usize);` — the multiplication `p * l` could theoretically overflow before the cast. Use `p.checked_mul(l).ok_or_else(|| ...)?` for defensive coding.
-
----
-
-- [x] **T4-4: Convert `debug_assert` to `ensure!` in release-critical paths**
-  - **Location:** `src/commands/midpoints/midpoints.rs:582-589, 603-610`
-  - **Severity:** LOW-MEDIUM
-  - **Description:** Window position bounds are validated with `debug_assert!` only — these checks are stripped in release builds. If a window start exceeds `u32::MAX` (cast from u64), the index wraps silently. Consider using `anyhow::ensure!()` for production validation, or at minimum document why the invariant is guaranteed.
-
----
-
 - [ ] **T4-5: Consider `TryFrom`/`TryInto` for integer casts in hot paths**
   - **Location:** Multiple files (120+ `as usize`/`as u32`/`as u64` casts)
   - **Severity:** LOW
@@ -252,20 +227,6 @@ These are not urgent but improve the codebase for long-term maintenance.
     - `fcoverage/tiling.rs:336-342` — `abs_start as u32` (u64 → u32)
     - `fcoverage/fcoverage.rs:1099-1100` — blacklist coordinates u64 → u32
   - **Action:** Consider adding a note in the README about supported coordinate ranges, or use `.try_into()` for user-facing inputs.
-
----
-
-- [x] **T4-6: Rename cryptic variables in `fcoverage/tiling.rs`**
-  - **Location:** `src/commands/fcoverage/tiling.rs:193`
-  - **Severity:** LOW
-  - **Description:** TODO comment says `"Rename variables to meaningful names"`. Variables like `cs`, `ce`, `k_lo`, `k_hi` make the bin/window calculation hard to follow. Rename to `core_start`, `core_end`, `first_window_idx`, `last_window_idx` or similar.
-
----
-
-- [x] **T4-7: Clean up `base.rs` TODO comment**
-  - **Location:** `src/shared/base.rs:32`
-  - **Severity:** LOW
-  - **Description:** Comment says `// TODO: What is "anything else" possibly?` about the nucleotide encoding. "Anything else" maps to code 4 (N) and includes IUPAC ambiguity codes (R, Y, S, W, etc.), soft-masked lowercase, and any non-ACGT byte. Resolve the TODO by documenting this.
 
 ---
 
@@ -287,20 +248,6 @@ These are not urgent but improve the codebase for long-term maintenance.
   - **Location:** `src/shared/fragment_iterator.rs:219-223`
   - **Severity:** LOW
   - **Description:** Known issue documented in a TODO: fragment counters can double-count fragments that fall in the halo regions of multiple tiles. The actual analysis output is correct (fragments are correctly assigned to tiles), but the reported statistics (total reads/fragments processed) may be slightly inflated. Either fix or document as a known limitation.
-
----
-
-- [x] **T4-11: Improve error messages in reducer**
-  - **Location:** `src/commands/fcoverage/reducer.rs` (multiple locations)
-  - **Severity:** LOW
-  - **Description:** Error messages like `"Missing orig_idx in partials"` don't include context about which tile, chromosome, or line caused the failure. When debugging failed runs on large datasets, this makes root cause analysis difficult. Add tile index and chromosome name to error messages.
-
----
-
-- [x] **T4-12: Resolve `gc_bias/config.rs:82` design TODO**
-  - **Location:** `src/commands/gc_bias/config.rs:82`
-  - **Severity:** LOW
-  - **Description:** TODO says: `"Try excluding the first N bases (both ends) from GC fraction calculation to avoid correcting 'biochemical cut bias'."` This is a scientific design decision that could affect correction quality. Decide whether to implement before release or document as a known limitation/future improvement.
 
 ---
 

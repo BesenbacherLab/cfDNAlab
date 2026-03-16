@@ -1,4 +1,4 @@
-<img src='https://raw.githubusercontent.com/ludvigolsen/cfdnalab/main/cfdnalab_logo_400x255_144dpi.png' align="center" height="255" />
+<img src='https://raw.githubusercontent.com/BesenbacherLab/cfdnalab/main/cfdnalab_logo_400x255_144dpi.png' align="center" height="255" />
 
 Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. Apply sample-specific GC correction and large-scale genomic smoothing.
 
@@ -7,7 +7,7 @@ Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaire
 The commands are **highly flexible** with many options and good default settings. See [recipes](#recipes) in the end of this README for usage examples.
 
 The package is in alpha-stage (being developed). Multiple additional commands are currently being built.
-Suggest a tool or feature [here](https://github.com/LudvigOlsen/cfDNAlab/issues/new/choose)!
+Suggest a tool or feature [here](https://github.com/BesenbacherLab/cfDNAlab/issues/new/choose)!
 
 ---
 
@@ -25,10 +25,10 @@ conda activate cfdnalab
 Compile and install:
 
 ```bash
-cargo install --git https://github.com/ludvigolsen/cfDNAlab --release --features cli,plotters
+cargo install --git https://github.com/BesenbacherLab/cfDNAlab --release --features cli,plotters
 cfdna --help
 # or clone + build
-git clone https://github.com/ludvigolsen/cfDNAlab
+git clone https://github.com/BesenbacherLab/cfDNAlab
 cd cfdnalab && cargo build --release --features cli,plotters
 target/release/cfdna --help
 ```
