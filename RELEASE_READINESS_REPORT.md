@@ -15,7 +15,6 @@
 | **Tests**               | All 349 tests pass, 0 failures, 4 ignored doctests              |
 | **Clippy**              | **425 warnings** (214 auto-fixable)                             |
 | **TODOs in source**     | **~65 TODO/FIXME** comments in released command paths           |
-| **License**             | **Missing** — no LICENSE file                                   |
 | **Cargo.toml metadata** | **Missing** license, description, repository, authors, keywords |
 | **Changelog**           | Version mismatch (`0.0.1` vs Cargo.toml `0.1.0`)                |
 
@@ -26,32 +25,6 @@
 ### TIER 1 — Must Fix Before Release
 
 These are blockers. The tool should not be publicly released until these are resolved.
-
----
-
-- [ ] **T1-1: Add a LICENSE file**
-  - **Location:** Repository root (missing)
-  - **Severity:** BLOCKER
-  - **Description:** There is no `LICENSE` or `LICENCE` file anywhere in the repository. Without a license, users have no legal clarity on usage rights. Most package registries and institutions require a license for adoption. Choose an appropriate open-source license (e.g., MIT, Apache-2.0, GPL) and add the file to the repo root.
-
----
-
-- [ ] **T1-2: Add required Cargo.toml metadata**
-  - **Location:** `Cargo.toml` (lines 1–4)
-  - **Severity:** BLOCKER
-  - **Description:** The `[package]` section is missing all standard metadata fields expected for a published crate:
-    - `license` (or `license-file`)
-    - `description`
-    - `repository`
-    - `authors`
-    - `readme`
-    - `keywords`
-    - `categories`
-    - `homepage` (optional)
-    - `documentation` (optional)
-  - These are required for crates.io publishing and expected by users evaluating the tool.
-
----
 
 - [ ] **T1-3: Validate or rewrite `gc_bias/interpolation.rs` (auto-generated code)**
   - **Location:** `src/commands/gc_bias/interpolation.rs:1`
