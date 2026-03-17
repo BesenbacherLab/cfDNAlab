@@ -22,6 +22,7 @@ use crate::{
         fragment::frag_file_fragment::FragFileFragment,
         fragment_iterator::fragments_with_frag_file_info_from_bam,
         interval::{IndexedInterval, Interval},
+        io::dot_join,
         overlaps::find_overlapping_windows,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq,
@@ -154,8 +155,11 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
 
     // Build temporary directory
     let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
-    let output_file: PathBuf = opt.ioc.output_dir.join(format!("{prefix}.frag.tsv.gz"));
-    let output_header_file: PathBuf = opt.ioc.output_dir.join(format!("{prefix}.frag.header.tsv"));
+    let output_file: PathBuf = opt.ioc.output_dir.join(dot_join(&[prefix, "frag.tsv.gz"]));
+    let output_header_file: PathBuf = opt
+        .ioc
+        .output_dir
+        .join(dot_join(&[prefix, "frag.header.tsv"]));
 
     // Create progress bar
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
@@ -325,9 +329,10 @@ fn process_chrom(
         let gc_prefixes = gc_prefixes_opt.as_ref();
         move |fragment: &FragFileFragment| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
-                (Some(corrector), Some(prefixes)) => {
-                    corrector.correct_fragment(fragment.start as u64, fragment.end as u64, prefixes)
-                }
+                (Some(corrector), Some(prefixes)) => corrector.correct_fragment(
+                    Interval::new(fragment.start as u64, fragment.end as u64)?,
+                    prefixes,
+                ),
                 _ => Ok(None),
             }
         }
@@ -355,8 +360,7 @@ fn process_chrom(
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.blacklist_strategy,
-            fragment.start.into(),
-            fragment.end.into(),
+            Interval::new(fragment.start as u64, fragment.end as u64)?,
             opt.fragment_lengths.max_fragment_length as u64,
             &mut bl_ptr,
         );
@@ -465,8 +469,7 @@ fn process_chrom(
         // That flushes the previous (sorted) entries on the fly
         sorter.push(
             WindowEntry {
-                start: fragment.start,
-                end: fragment.end,
+                interval: Interval::new(fragment.start, fragment.end)?,
                 line,
             },
             &mut writer,

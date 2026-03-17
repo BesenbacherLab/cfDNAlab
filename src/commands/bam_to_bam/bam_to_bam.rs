@@ -292,9 +292,10 @@ fn process_chrom(
         let gc_prefixes = gc_prefixes_opt.as_ref();
         move |fragment: &WithRecordsFragment| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
-                (Some(corrector), Some(prefixes)) => {
-                    corrector.correct_fragment(fragment.start as u64, fragment.end as u64, prefixes)
-                }
+                (Some(corrector), Some(prefixes)) => corrector.correct_fragment(
+                    Interval::new(fragment.start as u64, fragment.end as u64)?,
+                    prefixes,
+                ),
                 _ => Ok(None),
             }
         }
@@ -318,8 +319,7 @@ fn process_chrom(
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.blacklist_strategy,
-            fragment.start.into(),
-            fragment.end.into(),
+            Interval::new(fragment.start as u64, fragment.end as u64)?,
             opt.fragment_lengths.max_fragment_length as u64,
             &mut bl_ptr,
         );
@@ -417,8 +417,10 @@ fn process_chrom(
                 .expect("Single record must exist in unpaired (--reads-are-fragments) mode");
             sorter.push(
                 RecordEntry {
-                    start: single_record.pos() as u32,
-                    end: single_record.reference_end() as u32,
+                    interval: Interval::new(
+                        single_record.pos() as u32,
+                        single_record.reference_end() as u32,
+                    )?,
                     record: single_record,
                     tags: tags.clone(),
                 },
@@ -432,8 +434,10 @@ fn process_chrom(
 
             sorter.push(
                 RecordEntry {
-                    start: forward_record.pos() as u32,
-                    end: forward_record.reference_end() as u32,
+                    interval: Interval::new(
+                        forward_record.pos() as u32,
+                        forward_record.reference_end() as u32,
+                    )?,
                     record: forward_record,
                     tags: tags.clone(),
                 },
@@ -443,8 +447,10 @@ fn process_chrom(
             // Push reverse read
             sorter.push(
                 RecordEntry {
-                    start: reverse_record.pos() as u32,
-                    end: reverse_record.reference_end() as u32,
+                    interval: Interval::new(
+                        reverse_record.pos() as u32,
+                        reverse_record.reference_end() as u32,
+                    )?,
                     record: reverse_record,
                     tags,
                 },
