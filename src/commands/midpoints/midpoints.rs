@@ -21,6 +21,7 @@ use crate::{
         fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
         interval::{IndexedInterval, Interval},
+        io::dot_join,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         read::{default_include_read_paired_end, default_include_read_unpaired},
@@ -107,12 +108,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let mut indexed_windows_map: FxHashMap<String, Vec<IndexedInterval<u64>>> =
         FxHashMap::default();
     for (chromosome, grouped_windows) in &windows_map {
-        let indexed_windows = grouped_windows
-            .as_slice()
-            .iter()
-            .map(|&(start, end, group_idx)| IndexedInterval::new(start, end, group_idx))
-            .collect::<crate::Result<Vec<_>>>()?;
-        indexed_windows_map.insert(chromosome.clone(), indexed_windows);
+        indexed_windows_map.insert(chromosome.clone(), grouped_windows.as_slice().to_vec());
     }
 
     // Parse and validate fragment-length bins once so all tiles use the same edges
@@ -155,18 +151,18 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     ));
 
     // Where per-tile files go
-    let tmp_prefix = format!("{prefix}.midpoint_profiles.tile");
+    let tmp_prefix = dot_join(&[prefix, "midpoint_profiles.tile"]);
     let tmp_prefix = tmp_prefix.as_str();
 
     // Create filenames for final output
     let final_counts_path = opt
         .ioc
         .output_dir
-        .join(format!("{prefix}.midpoint_profiles.npy"));
+        .join(dot_join(&[prefix, "midpoint_profiles.npy"]));
     let map_path = opt
         .ioc
         .output_dir
-        .join(format!("{}.group_index.tsv", prefix));
+        .join(dot_join(&[prefix, "group_index.tsv"]));
 
     let pb = Arc::new(ProgressBar::new(total_tiles as u64));
     pb.set_style(
@@ -459,7 +455,7 @@ fn process_tile(
                 (Some(corrector), Some(prefixes)) => {
                     let rel_start = (fragment.start - fetch_start) as u64;
                     let rel_end = (fragment.end - fetch_start) as u64;
-                    corrector.correct_fragment(rel_start, rel_end, prefixes)
+                    corrector.correct_fragment(Interval::new(rel_start, rel_end)?, prefixes)
                 }
                 _ => Ok(None),
             }
@@ -478,8 +474,7 @@ fn process_tile(
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.blacklist_strategy,
-            fragment.start.into(),
-            fragment.end.into(),
+            Interval::new(fragment.start as u64, fragment.end as u64)?,
             max_fragment_length as u64,
             &mut bl_ptr,
         );

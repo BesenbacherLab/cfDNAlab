@@ -19,7 +19,7 @@ use crate::{
                 build_extreme_bins_support_mask, set_masked_entries_to_value, stats_by_support_mask,
             },
             windows::{
-                WindowState, compute_window_acgt, compute_window_stats, fixed_size_window_bounds,
+                WindowState, compute_window_acgt, compute_window_stats, fixed_size_window_interval,
                 overlap_length, prepare_tile_windows,
             },
         },
@@ -119,7 +119,7 @@ pub fn finalize_window_buffer(
         return Ok(());
     }
 
-    let crosses_tile = buf.start < tile_core_start || buf.end > tile_core_end;
+    let crosses_tile = buf.start() < tile_core_start || buf.end() > tile_core_end;
     if !windows_aligned_to_tiles && crosses_tile {
         crossing_parts.push(CrossingPart {
             idx: buf.idx as usize,
@@ -793,7 +793,7 @@ fn process_tile(
                 .iter()
                 .enumerate()
                 .map(|(local_idx, window)| {
-                    IndexedInterval::new(window.start, window.end, local_idx as u64)
+                    IndexedInterval::new(window.start(), window.end(), local_idx as u64)
                 })
                 .collect::<crate::Result<Vec<_>>>()?,
         );
@@ -865,7 +865,7 @@ fn process_tile(
             }
 
             // If the fragment is past the current window, finalize and advance the buffers
-            while fragment.start as u64 >= current.end {
+            while fragment.start as u64 >= current.end() {
                 finalize_window_buffer(
                     &mut current,
                     &gc_prefixes,
@@ -885,8 +885,9 @@ fn process_tile(
 
                 // Prepare the next buffer using the recycled allocation
                 let next_idx = current.idx + 1;
-                let (next_start, next_end) =
-                    fixed_size_window_bounds(next_idx, window_bp, chrom_len);
+                let next_interval = fixed_size_window_interval(next_idx, window_bp, chrom_len)?;
+                let next_start = next_interval.start();
+                let next_end = next_interval.end();
                 let next_contained =
                     next_start >= tile.core_start() as u64 && next_end <= tile.core_end() as u64;
                 recycled.reset(next_idx, next_start, next_end, next_contained, template)?;
@@ -924,8 +925,8 @@ fn process_tile(
             let overlap_current = overlap_length(
                 interval_start as u64,
                 interval_end as u64,
-                current.start,
-                current.end,
+                current.start(),
+                current.end(),
             );
             if overlap_current > 0 {
                 let fraction = overlap_current as f64 / fragment_span_length;
@@ -943,8 +944,8 @@ fn process_tile(
             let overlap_next = overlap_length(
                 interval_start as u64,
                 interval_end as u64,
-                next.start,
-                next.end,
+                next.start(),
+                next.end(),
             );
             if overlap_next > 0 {
                 let fraction = overlap_next as f64 / fragment_span_length;

@@ -3,7 +3,7 @@ use crate::commands::gc_bias::counting::{GCCounts, GCPrefixes};
 use crate::shared::{
     bam::Contigs,
     bed::Windows,
-    interval::IndexedInterval,
+    interval::{IndexedInterval, Interval},
     tiled_run::{Tile, TileWindowSpan, overlapping_windows_for_tile},
 };
 use anyhow::{Result, anyhow, bail, ensure};
@@ -93,8 +93,7 @@ pub fn compute_window_stats(
 #[derive(Clone, Debug)]
 pub struct WindowState {
     pub idx: u64,
-    pub start: u64,
-    pub end: u64,
+    pub interval: Interval<u64>,
     pub contained: bool,
     pub counts: GCCounts,
     pub has_counts: bool,
@@ -112,8 +111,7 @@ impl WindowState {
     ) -> anyhow::Result<Self> {
         Ok(Self {
             idx,
-            start,
-            end,
+            interval: Interval::new(start, end)?,
             contained,
             counts: template.zeroed_like()?,
             has_counts: false,
@@ -131,8 +129,7 @@ impl WindowState {
         template: &GCCounts,
     ) -> anyhow::Result<()> {
         self.idx = idx;
-        self.start = start;
-        self.end = end;
+        self.interval = Interval::new(start, end)?;
         self.contained = contained;
         if self.counts.buffer_len() != template.buffer_len() {
             self.counts = template.zeroed_like()?;
@@ -144,12 +141,26 @@ impl WindowState {
         self.crossing_file = None;
         Ok(())
     }
+
+    #[inline]
+    pub fn start(&self) -> u64 {
+        self.interval.start()
+    }
+
+    #[inline]
+    pub fn end(&self) -> u64 {
+        self.interval.end()
+    }
 }
 
-pub fn fixed_size_window_bounds(idx: u64, window_bp: u64, chrom_len: u64) -> (u64, u64) {
+pub fn fixed_size_window_interval(
+    idx: u64,
+    window_bp: u64,
+    chrom_len: u64,
+) -> crate::Result<Interval<u64>> {
     let start = idx.saturating_mul(window_bp);
     let end = start.saturating_add(window_bp).min(chrom_len);
-    (start, end)
+    Interval::new(start, end)
 }
 
 #[inline]
@@ -161,7 +172,9 @@ pub fn window_state_from_idx(
     core_end: u64,
     template: &GCCounts,
 ) -> Result<WindowState> {
-    let (start, end) = fixed_size_window_bounds(idx, window_bp, chrom_len);
+    let interval = fixed_size_window_interval(idx, window_bp, chrom_len)?;
+    let start = interval.start();
+    let end = interval.end();
     let contained = start >= core_start && end <= core_end;
     WindowState::new(idx, start, end, contained, template)
 }
@@ -200,13 +213,13 @@ pub fn compute_window_acgt(
     seq_start: u64,
     seq_end: u64,
 ) -> Result<()> {
-    let observed_start = buf.start.max(seq_start).min(seq_end);
-    let observed_end = buf.end.min(seq_end);
+    let observed_start = buf.start().max(seq_start).min(seq_end);
+    let observed_end = buf.end().min(seq_end);
     ensure!(
         observed_end > observed_start,
         "Window [{}, {}) does not overlap sequence [{}, {})",
-        buf.start,
-        buf.end,
+        buf.start(),
+        buf.end(),
         seq_start,
         seq_end
     );

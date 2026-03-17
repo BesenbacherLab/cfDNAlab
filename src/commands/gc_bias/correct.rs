@@ -3,6 +3,7 @@ use crate::commands::gc_bias::{
     counting::{GCPrefixes, get_gc_integer_percentage_for_window},
     package::GCCorrectionPackage,
 };
+use crate::shared::interval::Interval;
 use anyhow::{Context, Result, anyhow, ensure};
 use ndarray::{Array1, Array2, Axis};
 use std::str::FromStr;
@@ -61,17 +62,12 @@ impl GCCorrector {
     #[inline]
     pub fn correct_fragment(
         &self,
-        start: u64,
-        end: u64,
+        fragment_interval: Interval<u64>,
         gc_prefixes: &GCPrefixes,
     ) -> Result<Option<f64>> {
-        let fragment_length = end.checked_sub(start).ok_or_else(|| {
-            anyhow!(
-                "GC correction: fragment end {} precedes start {}",
-                end,
-                start
-            )
-        })? as usize;
+        let start = fragment_interval.start();
+        let end = fragment_interval.end();
+        let fragment_length = fragment_interval.len() as usize;
         let offset_start = start.saturating_add(self.end_offset) as usize;
         let offset_end = end.saturating_sub(self.end_offset) as usize;
         ensure!(
@@ -202,10 +198,11 @@ impl LengthAgnosticGCCorrector {
     #[inline]
     pub fn correct_fragment(
         &self,
-        start: u64,
-        end: u64,
+        fragment_interval: Interval<u64>,
         gc_prefixes: &GCPrefixes,
     ) -> Result<Option<f64>> {
+        let start = fragment_interval.start();
+        let end = fragment_interval.end();
         let offset_start = start.saturating_add(self.end_offset) as usize;
         let offset_end = end.saturating_sub(self.end_offset) as usize;
         ensure!(

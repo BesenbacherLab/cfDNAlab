@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader, Write};
 
 use crate::commands::fcoverage::tiling::finalize_value;
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
-use crate::commands::fcoverage::writers::write_final_row;
+use crate::commands::fcoverage::writers::write_final_interval_row;
 use crate::shared::formatters::round_to;
 use crate::shared::interval::{IndexedInterval, Interval};
 
@@ -303,9 +303,7 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
                 orig_idx
             )
         })?;
-        let start = interval.start();
-        let end = interval.end();
-        let unmasked_span_bp = end - start;
+        let unmasked_span_bp = interval.len();
         let value = finalize_value(
             acc.sum,
             acc.allowed_positions,
@@ -314,11 +312,10 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
             &mode,
         );
         let value = round_to(value, decimals);
-        write_final_row(
+        write_final_interval_row(
             final_writer,
             chr,
-            start,
-            end,
+            interval,
             value,
             acc.blacklisted_positions,
             decimals,
@@ -378,8 +375,7 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
 
 /// One row from a size-based partials file.
 struct SizePartialsRow {
-    start: u64,
-    end: u64,
+    interval: Interval<u64>,
     sum: f64,
     allowed_positions: u64,
     blacklisted_positions: u64,
@@ -521,8 +517,7 @@ impl SizePartialsStream {
                 )
             })?;
         Ok(Some(SizePartialsRow {
-            start,
-            end,
+            interval: Interval::new(start, end)?,
             sum,
             allowed_positions,
             blacklisted_positions,
@@ -545,9 +540,14 @@ struct BinAccum {
 /// A priority queue (`BinaryHeap`) is used as a min-heap via `Reverse((start, stream_id))`:
 /// the smallest start is popped first. This keeps peak memory low while preserving order.
 ///
-/// The cross-index counts how many tiles contribute to each bin start:
+/// The cross-index counts how many tiles contribute to each logical bin start:
 /// - If a bin is not listed in any cross-index file, we expect exactly 1 contribution.
 /// - If it appears N times, we wait for N contributions before writing that bin.
+///
+/// Important
+/// - The partial rows must carry the logical `bin_start` and `bin_end`, not the clipped
+///   tile-local overlap for that bin. The reducer keys on `start`, so changing the
+///   partial row bounds to clipped pieces will silently break cross-tile merging.
 ///
 /// The final bin is truncated to the chromosome end; it may be shorter than window_bp.
 pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
@@ -571,7 +571,7 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
     // Extract files from temp dir
     let files_by_tile = discover_tile_files_for_chr(temp_dir, chr, partials_prefix)?;
 
-    // Build expected contribution counts per bin start from cross-index files
+    // Build expected contribution counts per logical bin start from cross-index files
     let mut expected_contribs: FxHashMap<u64, u32> =
         FxHashMap::with_hasher(FxBuildHasher::default());
     for (_idx, tfs) in files_by_tile.iter() {
@@ -619,18 +619,18 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
             let sid = streams.len();
             streams.push(ps);
             current_row.push(Some(row));
-            let start_key = current_row[sid].as_ref().unwrap().start;
+            let start_key = current_row[sid].as_ref().unwrap().interval.start();
             heap.push(Reverse((start_key, sid)));
         }
     }
 
-    // Accumulate contributions per start bin until the expected count is reached
+    // Accumulate contributions per logical bin until the expected count is reached
     let mut accum_by_start: FxHashMap<u64, BinAccum> =
         FxHashMap::with_hasher(FxBuildHasher::default());
 
     // Emit helper for one completed bin
-    let mut emit_bin = |start: u64, acc: BinAccum, end: u64| -> Result<()> {
-        let unmasked_span_bp = end - start;
+    let mut emit_bin = |interval: Interval<u64>, acc: BinAccum| -> Result<()> {
+        let unmasked_span_bp = interval.len();
         debug_assert!(unmasked_span_bp >= 1);
         let value = finalize_value(
             acc.sum,
@@ -640,11 +640,10 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
             &mode,
         );
         let value = round_to(value, decimals);
-        write_final_row(
+        write_final_interval_row(
             out,
             chr,
-            start,
-            end,
+            interval,
             value,
             acc.blacklisted_positions,
             decimals,
@@ -662,29 +661,32 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
             )
         })?;
 
-        let entry = accum_by_start.entry(row.start).or_default();
+        let entry = accum_by_start.entry(row.interval.start()).or_default();
         entry.sum += row.sum;
         entry.allowed_positions += row.allowed_positions;
         entry.blacklisted_positions += row.blacklisted_positions;
         entry.seen_contributions += 1;
 
-        // Emit when we have all expected contributions for this bin start
-        if entry.seen_contributions == expected_for(row.start) {
-            let done = accum_by_start.remove(&row.start).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Reducer lost accumulated size-bin state for chromosome '{}' start {}",
-                    chr,
-                    row.start
-                )
-            })?;
-            // Use the end from the last seen row (all rows for a bin share the same [start,end) by construction)
-            // Ensure last row is clipped at the chromosome end
-            emit_bin(row.start, done, row.end.min(chrom_len))?;
+        // Emit when we have all expected contributions for this logical bin start
+        if entry.seen_contributions == expected_for(row.interval.start()) {
+            let done = accum_by_start
+                .remove(&row.interval.start())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Reducer lost accumulated size-bin state for chromosome '{}' start {}",
+                        chr,
+                        row.interval.start()
+                    )
+                })?;
+            // Use the interval from the last seen row, clipping the final bin at the chromosome end
+            let clipped_interval =
+                Interval::new(row.interval.start(), row.interval.end().min(chrom_len))?;
+            emit_bin(clipped_interval, done)?;
         }
 
         // Advance this stream and push next row if present
         if let Some(next_row) = streams[sid].next_row()? {
-            let next_key = next_row.start;
+            let next_key = next_row.interval.start();
             current_row[sid] = Some(next_row);
             heap.push(Reverse((next_key, sid)));
         }

@@ -25,7 +25,9 @@ pub struct FragmentKmersSharedArgs {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
 
-    /// Prefix for output files (e.g., a sample name) `[string]`
+    /// Optional prefix for output files (e.g., a sample name) `[string]`
+    ///
+    /// Leave empty to write file names without a leading prefix.
     ///
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
@@ -37,7 +39,8 @@ pub struct FragmentKmersSharedArgs {
         clap(
             long,
             short = 'x',
-            default_value = "fragment_kmers",
+            default_value_t = String::new(),
+            hide_default_value = true,
             help_heading = "Core"
         )
     )]

@@ -24,7 +24,7 @@ use crate::{
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
         fragment_iterator::fragments_with_indel_counts_from_bam,
         interval::{IndexedInterval, Interval},
-        io::create_text_writer,
+        io::{create_text_writer, dot_join},
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         read::{default_include_read_paired_end, default_include_read_unpaired},
@@ -163,8 +163,8 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     );
 
     let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
-    let partials_prefix = &format!("{prefix}.part");
-    let cross_prefix = &format!("{prefix}.cross");
+    let partials_prefix = &dot_join(&[prefix, "part"]);
+    let cross_prefix = &dot_join(&[prefix, "cross"]);
 
     println!("Start: Counting per tile");
 
@@ -280,8 +280,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                     let end = (start + *window_bp).min(chrom_len);
                     let overlap_perc = compute_blacklist_overlap(
                         blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
-                        start,
-                        end,
+                        Interval::new(start, end)?,
                         0u64,
                         &mut bl_ptr,
                     );
@@ -323,8 +322,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 for (window, lc) in wchr_slice.iter().zip(counts.into_iter()) {
                     let overlap_perc = compute_blacklist_overlap(
                         blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
-                        window.start(),
-                        window.end(),
+                        window.interval,
                         0u64,
                         &mut bl_ptr,
                     );
@@ -375,7 +373,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     write_npy(
         opt.ioc
             .output_dir
-            .join(format!("{prefix}.length_counts.npy")),
+            .join(dot_join(&[prefix, "length_counts.npy"])),
         &stack_length_counts(&all_bins),
     )
     .context("Write final fail")?;
@@ -384,7 +382,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     let settings_path = opt
         .ioc
         .output_dir
-        .join(format!("{prefix}.fragment_length_settings.json"));
+        .join(dot_join(&[prefix, "fragment_length_settings.json"]));
     let mut settings_writer =
         create_text_writer(&settings_path).context("Create fragment length settings file")?;
     writeln!(
@@ -428,7 +426,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
             let plot_path = opt
                 .ioc
                 .output_dir
-                .join(format!("{prefix}.fragment_lengths_overall.png"));
+                .join(dot_join(&[prefix, "fragment_lengths_overall.png"]));
 
             write_line_plot_png(
                 &plot_path,
@@ -448,7 +446,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     // Write bins BED file
     if !matches!(window_opt, WindowSpec::Global) {
         println!("Start: Writing window coordinates to disk");
-        let bins_path = opt.ioc.output_dir.join(format!("{prefix}.bins.bed"));
+        let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.bed"]));
         let mut bed_writer = create_text_writer(&bins_path).context("Create bed fail")?;
         for (chr, start, end, _, overlap_perc) in &bin_info {
             writeln!(bed_writer, "{}\t{}\t{}\t{}", chr, start, end, overlap_perc)
@@ -687,7 +685,7 @@ fn process_tile(
                 (Some(corrector), Some(prefixes)) => {
                     let rel_start = (fragment.start - fetch_start) as u64;
                     let rel_end = (fragment.end - fetch_start) as u64;
-                    corrector.correct_fragment(rel_start, rel_end, prefixes)
+                    corrector.correct_fragment(Interval::new(rel_start, rel_end)?, prefixes)
                 }
                 _ => Ok(None),
             }
@@ -716,8 +714,7 @@ fn process_tile(
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.blacklist_strategy,
-            fragment.start.into(),
-            fragment.end.into(),
+            Interval::new(fragment.start as u64, fragment.end as u64)?,
             opt.fragment_lengths.max_fragment_length as u64,
             &mut bl_ptr,
         );

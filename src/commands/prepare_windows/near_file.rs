@@ -2,6 +2,7 @@ use crate::commands::prepare_windows::{
     config::NearEdge,
     labels::{MISSING_GROUP_LABEL, validate_label_token},
 };
+use crate::shared::interval::Interval;
 use crate::{commands::prepare_windows::config::NearDirection, shared::io::open_text_reader};
 use anyhow::{Context, Result, bail};
 use fxhash::{FxHashMap, FxHashSet};
@@ -12,10 +13,29 @@ use std::{cmp::Ordering, io::BufRead, path::Path};
 /// The `group` is optional; it is used when composing output groups with distance bins.
 #[derive(Debug, Clone, Copy)]
 pub struct NearInterval {
-    pub start: u32,
-    pub end: u32,
+    pub interval: Interval<u32>,
     pub group_id: Option<u32>,
     pub strand: Strand,
+}
+
+impl NearInterval {
+    pub fn new(start: u32, end: u32, group_id: Option<u32>, strand: Strand) -> Result<Self> {
+        Ok(Self {
+            interval: Interval::new(start, end)?,
+            group_id,
+            strand,
+        })
+    }
+
+    #[inline]
+    pub fn start(&self) -> u32 {
+        self.interval.start()
+    }
+
+    #[inline]
+    pub fn end(&self) -> u32 {
+        self.interval.end()
+    }
 }
 
 /// Per-chromosome near intervals, sorted and validated.
@@ -271,12 +291,7 @@ pub fn load_near_index(
                 None
             };
 
-            validated.push(NearInterval {
-                start,
-                end,
-                group_id,
-                strand,
-            });
+            validated.push(NearInterval::new(start, end, group_id, strand)?);
         }
 
         index.per_chrom.insert(
@@ -339,7 +354,7 @@ pub fn nearest_edge_distance(
 
     // Move cursor to the last interval whose end <= window_start
     while near_chrom.cursor + 1 < n
-        && near_chrom.intervals[near_chrom.cursor + 1].end <= window_start
+        && near_chrom.intervals[near_chrom.cursor + 1].end() <= window_start
     {
         near_chrom.cursor += 1;
     }
@@ -349,7 +364,7 @@ pub fn nearest_edge_distance(
     // `left_interval_idx` is index of interval left of window
     // (window is downstream for `+`-stranded interval)
     let left_interval_idx: Option<usize> =
-        if near_chrom.intervals[near_chrom.cursor].end <= window_start {
+        if near_chrom.intervals[near_chrom.cursor].end() <= window_start {
             Some(near_chrom.cursor)
         } else {
             None
@@ -380,7 +395,7 @@ pub fn nearest_edge_distance(
     // By definition, the left_interval_idx cannot overlap at this point
     if let Some(ri) = right_interval_idx {
         let iv = near_chrom.intervals[ri];
-        if window_start < iv.end && window_end > iv.start {
+        if window_start < iv.end() && window_end > iv.start() {
             return Some(NearestResult::Single(NearestDistance {
                 distance: 0,
                 group_id: iv.group_id,
@@ -432,30 +447,30 @@ pub fn nearest_edge_distance(
         };
 
         match which_edge {
-            NearEdge::Left => consider_edge(interval.start as i32),
-            NearEdge::Right => consider_edge(interval.end as i32),
+            NearEdge::Left => consider_edge(interval.start() as i32),
+            NearEdge::Right => consider_edge(interval.end() as i32),
             NearEdge::Nearest => {
-                consider_edge(interval.start as i32);
-                consider_edge(interval.end as i32);
+                consider_edge(interval.start() as i32);
+                consider_edge(interval.end() as i32);
             }
             // Use the interval edge towards upstream windows given the near interval's annotated strand orientation
             NearEdge::Upstream => match interval.strand {
-                Strand::Plus => consider_edge(interval.start as i32),
-                Strand::Minus => consider_edge(interval.end as i32),
+                Strand::Plus => consider_edge(interval.start() as i32),
+                Strand::Minus => consider_edge(interval.end() as i32),
                 Strand::Unknown => {
                     // Fall back to genomic-nearest when strand is unknown
-                    consider_edge(interval.start as i32);
-                    consider_edge(interval.end as i32);
+                    consider_edge(interval.start() as i32);
+                    consider_edge(interval.end() as i32);
                 }
             },
             // Use the interval edge towards downstream windows given the near interval's annotated strand orientation
             NearEdge::Downstream => match interval.strand {
-                Strand::Plus => consider_edge(interval.end as i32),
-                Strand::Minus => consider_edge(interval.start as i32),
+                Strand::Plus => consider_edge(interval.end() as i32),
+                Strand::Minus => consider_edge(interval.start() as i32),
                 Strand::Unknown => {
                     // Fall back to genomic-nearest when strand is unknown
-                    consider_edge(interval.start as i32);
-                    consider_edge(interval.end as i32);
+                    consider_edge(interval.start() as i32);
+                    consider_edge(interval.end() as i32);
                 }
             },
         }

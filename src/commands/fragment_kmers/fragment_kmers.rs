@@ -593,7 +593,7 @@ fn process_tile(
                 (Some(corrector), Some(prefixes)) => {
                     let rel_start = (fragment.start - fetch_start) as u64;
                     let rel_end = (fragment.end - fetch_start) as u64;
-                    corrector.correct_fragment(rel_start, rel_end, prefixes)
+                    corrector.correct_fragment(Interval::new(rel_start, rel_end)?, prefixes)
                 }
                 _ => Ok(None),
             }
@@ -616,8 +616,7 @@ fn process_tile(
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.shared_args.blacklist_strategy,
-            fragment.start.into(),
-            fragment.end.into(),
+            Interval::new(fragment.start as u64, fragment.end as u64)?,
             opt.shared_args.fragment_lengths.max_fragment_length as u64,
             &mut bl_ptr,
         );

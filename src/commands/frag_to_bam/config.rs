@@ -56,7 +56,9 @@ pub struct FragToBamConfig {
     )]
     pub output_dir: PathBuf,
 
-    /// Prefix for output file (e.g., a sample name) `[string]`
+    /// Optional prefix for output file (e.g., a sample name) `[string]`
+    ///
+    /// Leave empty to write file names without a leading prefix.
     ///
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
@@ -64,7 +66,7 @@ pub struct FragToBamConfig {
     ///   `<prefix>.bam`,
     #[cfg_attr(
         feature = "cli",
-        clap(long, short = 'x', default_value = "fragments", help_heading = "Core")
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
     )]
     pub output_prefix: String,
 
@@ -169,7 +171,7 @@ impl FragToBamConfig {
         Self {
             frag,
             output_dir,
-            output_prefix: "fragments".into(),
+            output_prefix: String::new(),
             chromosomes,
             chrom_sizes,
             frag_header: None,

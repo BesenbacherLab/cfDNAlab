@@ -1,8 +1,30 @@
 use crate::shared::formatters::{CompactNumber, round_to_with_precomputed_factor};
+use crate::shared::interval::Interval;
 use anyhow::Result;
 use std::io::Write;
 
 /// Write a final aggregate row: `chromosome  start  end  value  blacklisted_positions`
+#[inline]
+pub fn write_final_interval_row<W: Write>(
+    w: &mut W,
+    chr: &str,
+    interval: Interval<u64>,
+    value: f64,
+    blacklisted_positions: u64,
+    decimals: i32,
+) -> anyhow::Result<()> {
+    writeln!(
+        w,
+        "{}\t{}\t{}\t{}\t{}",
+        chr,
+        interval.start(),
+        interval.end(),
+        CompactNumber { v: value, decimals },
+        blacklisted_positions
+    )?;
+    Ok(())
+}
+
 #[inline]
 pub fn write_final_row<W: Write>(
     w: &mut W,
@@ -13,16 +35,14 @@ pub fn write_final_row<W: Write>(
     blacklisted_positions: u64,
     decimals: i32,
 ) -> anyhow::Result<()> {
-    writeln!(
+    write_final_interval_row(
         w,
-        "{}\t{}\t{}\t{}\t{}",
         chr,
-        start,
-        end,
-        CompactNumber { v: value, decimals },
-        blacklisted_positions
-    )?;
-    Ok(())
+        Interval::new(start, end)?,
+        value,
+        blacklisted_positions,
+        decimals,
+    )
 }
 
 /// Writes BedGraph segments for a window of coverage values.

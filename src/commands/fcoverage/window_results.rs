@@ -2,7 +2,10 @@ use std::str::FromStr;
 
 use anyhow::Result;
 
-use crate::shared::coverage::Coverage;
+use crate::shared::{
+    coverage::Coverage,
+    interval::{IndexedInterval, Interval},
+};
 
 /// What to do per window
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -46,11 +49,26 @@ pub enum WindowValue {
 /// One window's result (keeps original ordering info)
 #[derive(Debug, Clone)]
 pub struct WindowResult {
-    pub start: u64,
-    pub end: u64,
-    pub original_idx: u64,
+    pub window: IndexedInterval<u64>,
     pub value: WindowValue,
     pub num_blacklisted_pos: Option<u32>,
+}
+
+impl WindowResult {
+    #[inline]
+    pub fn start(&self) -> u64 {
+        self.window.start()
+    }
+
+    #[inline]
+    pub fn end(&self) -> u64 {
+        self.window.end()
+    }
+
+    #[inline]
+    pub fn original_idx(&self) -> u64 {
+        self.window.idx()
+    }
 }
 
 /// Top-level result for a run with or without windows
@@ -63,10 +81,8 @@ pub enum CoverageOutput {
     },
     /// No windows given -> return positional coverage for the whole sequence
     WholePositional {
-        /// Start offset, typically 0
-        start: u64,
-        /// End offset, typically `length`
-        end: u64,
+        /// Covered span, typically `[0, length)`
+        interval: Interval<u64>,
         /// Per-base coverage, left->right
         values: Vec<f32>,
     },
@@ -77,7 +93,7 @@ pub enum CoverageOutput {
 /// Parameters
 /// ----------
 /// - cp: Coverage with coverage finalized and indexes buildable
-/// - windows: Optional triplets of `(start, end, original_idx)`
+/// - windows: Optional checked windows with stable original indices
 /// - action: What to return per window
 /// - nan_blacklisted: Set blacklisted positions to `f32::NAN` and exclude when computing sums/averages
 ///
@@ -86,7 +102,7 @@ pub enum CoverageOutput {
 /// - out: `CoverageOutput` with either per-window results or whole positional coverage
 pub fn compute_window_outputs(
     cp: &mut Coverage,
-    windows: Option<&[(u64, u64, u64)]>,
+    windows: Option<&[IndexedInterval<u64>]>,
     action: CoverageWindowAction,
     nan_blacklisted: bool,
 ) -> Result<CoverageOutput> {
@@ -101,8 +117,7 @@ pub fn compute_window_outputs(
     if windows.is_none_or(|w| w.is_empty()) {
         let cov = cp.coverage_in_window(0, cp.length(), nan_blacklisted)?;
         return Ok(CoverageOutput::WholePositional {
-            start: 0,
-            end: cp.length() as u64,
+            interval: Interval::new(0, cp.length() as u64)?,
             values: cov.to_vec(),
         });
     }
@@ -112,9 +127,13 @@ pub fn compute_window_outputs(
 
     // Bounds check once up front
     let len_u64 = cp.length() as u64;
-    for &(s, e, _) in windows {
-        if s > e || e > len_u64 {
-            anyhow::bail!("window [{s}..{e}) out of bounds for length {len_u64}");
+    for window in windows {
+        if window.end() > len_u64 {
+            anyhow::bail!(
+                "window [{start}..{end}) out of bounds for length {len_u64}",
+                start = window.start(),
+                end = window.end()
+            );
         }
     }
 
@@ -123,23 +142,21 @@ pub fn compute_window_outputs(
             // Build (or reuse) indexes explicitly for clarity
             cp.build_indexes(true)?;
 
-            let spans: Vec<(u32, u32)> = windows
+            let spans: Vec<Interval<u32>> = windows
                 .iter()
-                .map(|&(s, e, _)| (s as u32, e as u32))
-                .collect();
-            let avgs = cp.bulk_avg_coverage(&spans, nan_blacklisted, false)?;
+                .map(|window| Interval::new(window.start() as u32, window.end() as u32))
+                .collect::<std::result::Result<_, _>>()?;
+            let avgs = cp.bulk_avg_coverage_in_intervals(&spans, nan_blacklisted, false)?;
 
             let mut results = Vec::with_capacity(windows.len());
-            for (&(s, e, idx), &avg) in windows.iter().zip(avgs.iter()) {
+            for (window, &avg) in windows.iter().zip(avgs.iter()) {
                 let bl = cp.blacklist_mask().map(|mask| {
-                    let a = s as usize;
-                    let b = e as usize;
+                    let a = window.start() as usize;
+                    let b = window.end() as usize;
                     mask[a..b].iter().map(|&m| (m == 1) as u32).sum()
                 });
                 results.push(WindowResult {
-                    start: s,
-                    end: e,
-                    original_idx: idx,
+                    window: *window,
                     value: WindowValue::Average(avg),
                     num_blacklisted_pos: bl,
                 });
@@ -149,23 +166,21 @@ pub fn compute_window_outputs(
         }
         CoverageWindowAction::Total => {
             cp.build_indexes(true)?;
-            let spans: Vec<(u32, u32)> = windows
+            let spans: Vec<Interval<u32>> = windows
                 .iter()
-                .map(|&(s, e, _)| (s as u32, e as u32))
-                .collect();
-            let sums = cp.bulk_sum_coverage(&spans, nan_blacklisted, false)?;
+                .map(|window| Interval::new(window.start() as u32, window.end() as u32))
+                .collect::<std::result::Result<_, _>>()?;
+            let sums = cp.bulk_sum_coverage_in_intervals(&spans, nan_blacklisted, false)?;
 
             let mut results = Vec::with_capacity(windows.len());
-            for (&(s, e, idx), &sum) in windows.iter().zip(sums.iter()) {
+            for (window, &sum) in windows.iter().zip(sums.iter()) {
                 let bl = cp.blacklist_mask().map(|mask| {
-                    let a = s as usize;
-                    let b = e as usize;
+                    let a = window.start() as usize;
+                    let b = window.end() as usize;
                     mask[a..b].iter().map(|&m| (m == 1) as u32).sum()
                 });
                 results.push(WindowResult {
-                    start: s,
-                    end: e,
-                    original_idx: idx,
+                    window: *window,
                     value: WindowValue::Total(sum),
                     num_blacklisted_pos: bl,
                 });
@@ -179,18 +194,16 @@ pub fn compute_window_outputs(
             let cov = cp.coverage_in_window(0, cp.length(), nan_blacklisted)?;
 
             let mut results = Vec::with_capacity(windows.len());
-            for &(s, e, idx) in windows {
-                let a = s as usize;
-                let b = e as usize;
+            for window in windows {
+                let a = window.start() as usize;
+                let b = window.end() as usize;
 
                 // If you need to exclude blacklisted positions here, map through `bl_mask`
                 // For now we return all positions in-window
                 let vals = cov[a..b].to_vec();
 
                 results.push(WindowResult {
-                    start: s,
-                    end: e,
-                    original_idx: idx,
+                    window: *window,
                     value: WindowValue::Positions(vals),
                     num_blacklisted_pos: None,
                 });

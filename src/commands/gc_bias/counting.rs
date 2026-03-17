@@ -2,6 +2,7 @@ use anyhow::{Result, ensure};
 use ndarray::{Array2, Array3, ArrayBase, Axis, Data, DataMut, Ix2, s};
 
 use crate::commands::gc_bias::smoothing::smooth_length_row_in_place;
+use crate::shared::interval::IndexedInterval;
 
 /// Prefix sums (cumsum) to compute GC and AT fractions while excluding Ns.
 /// `gc[i]`   = # of G/C in seq[0..i)
@@ -625,7 +626,7 @@ pub fn count_reference_gc_and_length_by_window(
     counts_by_bin: &mut Vec<GCCounts>,
     gc_prefixes: &GCPrefixes,
     length_range: (u64, u64), // [min_len, max_len) in bp
-    windows: &[(u64, u64, u64)],
+    windows: &[IndexedInterval<u64>],
     start_positions: &[usize], // Sorted unique genomic starts for this chromosome
     chrom_len: u64,
     min_acgt_fraction: f32, // E.g., 0.8
@@ -657,8 +658,9 @@ pub fn count_reference_gc_and_length_by_window(
     // Pointer into `start_positions`, advanced monotonically as windows progress
     let mut start_ptr = 0usize;
 
-    for (win_idx, &(window_start, mut window_end, _)) in windows.iter().enumerate() {
-        window_end = window_end.min(chrom_len);
+    for (win_idx, window) in windows.iter().enumerate() {
+        let window_start = window.start();
+        let window_end = window.end().min(chrom_len);
         let window_end_usize = window_end as usize;
         let window_start_usize = window_start as usize;
         let window_len = window_end_usize - window_start_usize;

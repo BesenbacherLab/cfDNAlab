@@ -42,7 +42,9 @@ pub struct MidpointsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
 
-    /// Prefix for output files (e.g., a sample name) `[string]`
+    /// Optional prefix for output files (e.g., a sample name) `[string]`
+    ///
+    /// Leave empty to write file names without a leading prefix.
     ///
     /// E.g., specify to enable writing to the same output directory from multiple calls of the command.
     ///
@@ -50,7 +52,7 @@ pub struct MidpointsConfig {
     ///   `<prefix>.midpoint_profiles.npy`.
     #[cfg_attr(
         feature = "cli",
-        clap(long, short = 'x', default_value = "sites", help_heading = "Core")
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
     )]
     pub output_prefix: String,
 
@@ -209,7 +211,7 @@ impl MidpointsConfig {
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
-            output_prefix: "sites".into(),
+            output_prefix: String::new(),
             intervals,
             length_bins: vec!["30".to_string(), "1001".to_string()],
             tile_size: 63_000_000,

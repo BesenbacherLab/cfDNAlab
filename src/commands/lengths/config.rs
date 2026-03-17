@@ -10,6 +10,8 @@ use crate::{
 };
 use std::path::PathBuf;
 
+// TODO: Add length bins to enable e.g. short/long in much smaller windows without exploding RAM
+
 /// Count fragment lengths in a BAM-file.
 ///
 /// Writes an `.npy` file with shape (# windows, # lengths).
@@ -79,7 +81,9 @@ pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
 
-    /// Prefix for output files (e.g., a sample name) `[string]`
+    /// Optional prefix for output files (e.g., a sample name) `[string]`
+    ///
+    /// Leave empty to write file names without a leading prefix.
     ///
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
@@ -87,7 +91,7 @@ pub struct LengthsConfig {
     ///   `<prefix>.length_counts.npy`
     #[cfg_attr(
         feature = "cli",
-        clap(long, short = 'x', default_value = "lengths", help_heading = "Core")
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
     )]
     pub output_prefix: String,
 
@@ -263,7 +267,7 @@ impl LengthsConfig {
     pub fn new(ioc: IOCArgs, chromosomes: ChromosomeArgs) -> Self {
         Self {
             ioc,
-            output_prefix: "lengths".to_string(),
+            output_prefix: String::new(),
             indel_mode: IndelMode::Ignore,
             windows: WindowsArgs::default(),
             window_assignment: AssignToWindowArgs::default(),

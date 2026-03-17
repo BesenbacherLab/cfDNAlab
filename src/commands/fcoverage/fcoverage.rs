@@ -18,6 +18,7 @@ use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment::segment_fragment::FragmentWithSegments;
 use crate::shared::fragment_iterator::fragments_with_segments_from_bam;
 use crate::shared::interval::{IndexedInterval, Interval};
+use crate::shared::io::dot_join;
 use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
@@ -178,9 +179,9 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     ));
 
     // Where per-tile files go
-    let positional_prefix = format!("{prefix}.pos");
-    let partials_prefix = format!("{prefix}.part");
-    let finals_prefix = format!("{prefix}.fin");
+    let positional_prefix = dot_join(&[prefix, "pos"]);
+    let partials_prefix = dot_join(&[prefix, "part"]);
+    let finals_prefix = dot_join(&[prefix, "fin"]);
 
     // Faster to convert to &str once
     let positional_prefix = positional_prefix.as_str();
@@ -188,10 +189,10 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     let finals_prefix = finals_prefix.as_str();
 
     // Create filenames of final outputs
-    let final_bedgraph_pos_name = format!("{prefix}.per_position.bedgraph.zst");
-    let final_tsv_pos_name = format!("{prefix}.per_position_per_window.tsv.zst");
-    let final_avg_name = format!("{prefix}.avg.tsv.zst");
-    let final_total_name = format!("{prefix}.total.tsv.zst");
+    let final_bedgraph_pos_name = dot_join(&[prefix, "fcoverage.per_position.bedgraph.zst"]);
+    let final_tsv_pos_name = dot_join(&[prefix, "fcoverage.per_position_per_window.tsv.zst"]);
+    let final_avg_name = dot_join(&[prefix, "fcoverage.avg.tsv.zst"]);
+    let final_total_name = dot_join(&[prefix, "fcoverage.total.tsv.zst"]);
 
     // Get decimals to use
     let decimals_to_use: i32 = if windowed {
@@ -695,7 +696,9 @@ fn process_tile(
             let rel_start = (fragment.start - fetch_start) as u64;
             let rel_end = (fragment.end - fetch_start) as u64;
 
-            let weight = match gc_corrector.correct_fragment(rel_start, rel_end, &gc_prefixes)? {
+            let weight = match gc_corrector
+                .correct_fragment(Interval::new(rel_start, rel_end)?, &gc_prefixes)?
+            {
                 Some(weight) => weight,
                 None => {
                     counter.gc_failed_fragments += 1;
@@ -829,27 +832,25 @@ fn process_tile(
                         // Keep the original window index from the BED input so the
                         // indexed positional output and downstream reducers stay aligned
                         let original_idx = window.idx();
-                        let (local_start_idx, local_end_idx) =
-                            if let Some((local_start_idx, local_end_idx, _, _)) =
-                                intersect_abs_with_core_to_local(
-                                    window_start,
-                                    window_end,
-                                    tile.core_start(),
-                                    tile.core_end(),
-                                )
-                            {
-                                (local_start_idx, local_end_idx)
-                            } else {
-                                continue;
-                            };
+                        let local_overlap = if let Some(local_overlap) =
+                            intersect_abs_with_core_to_local(
+                                window_start,
+                                window_end,
+                                tile.core_start(),
+                                tile.core_end(),
+                            ) {
+                            local_overlap
+                        } else {
+                            continue;
+                        };
 
                         if indexed {
                             emit_windowed_runs(
                                 &tile.chr,
                                 cov,
                                 mask,
-                                local_start_idx,
-                                local_end_idx,
+                                local_overlap.local_start_idx,
+                                local_overlap.local_end_idx,
                                 tile.core_start() as u64,
                                 Some(original_idx),
                                 decimals,
@@ -861,8 +862,8 @@ fn process_tile(
                                 &tile.chr,
                                 cov,
                                 mask,
-                                local_start_idx,
-                                local_end_idx,
+                                local_overlap.local_start_idx,
+                                local_overlap.local_end_idx,
                                 tile.core_start() as u64,
                                 None,
                                 decimals,
@@ -908,19 +909,16 @@ fn process_tile(
                 let window_end_abs = window.end();
                 // This is the original window index, not just the current loop position
                 let idx = window.idx();
-                let (local_start_idx, local_end_idx) =
-                    if let Some((local_start_idx, local_end_idx, _, _)) =
-                        intersect_abs_with_core_to_local(
-                            window_start_abs,
-                            window_end_abs,
-                            tile.core_start(),
-                            tile.core_end(),
-                        )
-                    {
-                        (local_start_idx, local_end_idx)
-                    } else {
-                        continue;
-                    };
+                let local_overlap = if let Some(local_overlap) = intersect_abs_with_core_to_local(
+                    window_start_abs,
+                    window_end_abs,
+                    tile.core_start(),
+                    tile.core_end(),
+                ) {
+                    local_overlap
+                } else {
+                    continue;
+                };
 
                 // Classify as internal (fully inside core) vs boundary (crosses tile core boundary)
                 let crosses_boundary =
@@ -928,8 +926,8 @@ fn process_tile(
 
                 // Sum coverage, respecting masked mode
                 let (sum, allowed, blacklisted) = coverage_sum_and_counts(
-                    local_start_idx,
-                    local_end_idx,
+                    local_overlap.local_start_idx,
+                    local_overlap.local_end_idx,
                     masked,
                     psum_all,
                     psum_allowed,
@@ -991,32 +989,22 @@ fn process_tile(
                     let bin_end = (bin_idx + 1) * window_bp;
 
                     // Intersect with core (alignment ensures this equals the bin for non-terminal tiles).
-                    let (local_start_idx, local_end_idx, clipped_start_abs, clipped_end_abs) =
-                        if let Some((
-                            local_start_idx,
-                            local_end_idx,
-                            clipped_start_abs,
-                            clipped_end_abs,
-                        )) = intersect_abs_with_core_to_local(
+                    let local_overlap = if let Some(local_overlap) =
+                        intersect_abs_with_core_to_local(
                             bin_start,
                             bin_end,
                             tile.core_start(),
                             tile.core_end(),
                         ) {
-                            (
-                                local_start_idx,
-                                local_end_idx,
-                                clipped_start_abs,
-                                clipped_end_abs,
-                            )
-                        } else {
-                            continue;
-                        };
+                        local_overlap
+                    } else {
+                        continue;
+                    };
 
                     // Sum coverage, respecting masked mode
                     let (sum, allowed, blacklisted) = coverage_sum_and_counts(
-                        local_start_idx,
-                        local_end_idx,
+                        local_overlap.local_start_idx,
+                        local_overlap.local_end_idx,
                         masked,
                         psum_all,
                         psum_allowed,
@@ -1025,12 +1013,14 @@ fn process_tile(
                     );
 
                     // Compute final value now
-                    let unmasked_span_bp = (clipped_end_abs - clipped_start_abs) as u64;
+                    let unmasked_span_bp = local_overlap.clipped_abs_interval.len();
                     let value =
                         finalize_value(sum, allowed, unmasked_span_bp, masked, &opt.per_window);
                     let value = round_to(value, decimals);
 
-                    // Emit FINAL row: chromosome  start  end  value  blacklisted_positions
+                    // Emit the logical bin, not the clipped tile-local piece
+                    // Aligned tiles guarantee one final row per bin, but the final bin on a
+                    // chromosome may still need clipping at the chromosome end
                     write_final_row(
                         &mut w_fin,
                         &tile.chr,
@@ -1052,24 +1042,22 @@ fn process_tile(
                     let bin_end = (bin_idx + 1) * window_bp;
 
                     // Intersect with core (alignment ensures this equals the bin for non-terminal tiles).
-                    let (local_start_idx, local_end_idx) =
-                        if let Some((local_start_idx, local_end_idx, _, _)) =
-                            intersect_abs_with_core_to_local(
-                                bin_start,
-                                bin_end,
-                                tile.core_start(),
-                                tile.core_end(),
-                            )
-                        {
-                            (local_start_idx, local_end_idx)
-                        } else {
-                            continue;
-                        };
+                    let local_overlap = if let Some(local_overlap) =
+                        intersect_abs_with_core_to_local(
+                            bin_start,
+                            bin_end,
+                            tile.core_start(),
+                            tile.core_end(),
+                        ) {
+                        local_overlap
+                    } else {
+                        continue;
+                    };
 
                     // Sum coverage, respecting masked mode
                     let (sum, allowed, blacklisted) = coverage_sum_and_counts(
-                        local_start_idx,
-                        local_end_idx,
+                        local_overlap.local_start_idx,
+                        local_overlap.local_end_idx,
                         masked,
                         psum_all,
                         psum_allowed,
@@ -1078,6 +1066,9 @@ fn process_tile(
                     );
 
                     // PARTIAL row: start  end  sum  allowed  blacklisted
+                    // Use the logical bin bounds plus this tile's contribution
+                    // The reducer groups by bin_start from the cross-index sidecar, so we must
+                    // keep the logical bin identity here instead of writing the clipped piece
                     writeln!(
                         w_part,
                         "{}\t{}\t{}\t{}\t{}",
