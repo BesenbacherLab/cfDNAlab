@@ -1,8 +1,8 @@
-# Testing And API Guidelines
+# API Boundaries
 
-This repo is released as a CLI crate first. The public Rust API should stay small and intentional, even if some internal pieces may become reusable later.
+This file covers test placement, visibility, and public API boundaries.
 
-The goal of this guide is simple: do not let test layout force a bad public API.
+The goal is simple: do not let test layout force a bad public API.
 
 ## Test placement
 
