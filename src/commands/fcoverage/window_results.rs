@@ -46,11 +46,17 @@ pub enum WindowValue {
     Positions(Vec<f32>),
 }
 
-/// One window's result (keeps original ordering info)
+/// Result for one requested window.
+///
+/// The struct keeps the original indexed interval so downstream writers and reducers can preserve
+/// the caller's window identity and ordering while attaching the computed payload.
 #[derive(Debug, Clone)]
 pub struct WindowResult {
+    /// Original requested window together with its stable external index.
     pub window: IndexedInterval<u64>,
+    /// Computed payload for the window.
     pub value: WindowValue,
+    /// Number of blacklisted positions inside the window when that information is available.
     pub num_blacklisted_pos: Option<u32>,
 }
 
@@ -71,7 +77,7 @@ impl WindowResult {
     }
 }
 
-/// Top-level result for a run with or without windows
+/// Top-level output from windowed or whole-positional coverage computation.
 #[derive(Debug, Clone)]
 pub enum CoverageOutput {
     /// Results for each input window

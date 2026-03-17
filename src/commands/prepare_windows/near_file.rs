@@ -19,12 +19,21 @@ pub struct NearInterval {
 }
 
 impl NearInterval {
-    pub fn new(start: u32, end: u32, group_id: Option<u32>, strand: Strand) -> Result<Self> {
-        Ok(Self {
-            interval: Interval::new(start, end)?,
+    pub fn new(interval: Interval<u32>, group_id: Option<u32>, strand: Strand) -> Self {
+        Self {
+            interval,
             group_id,
             strand,
-        })
+        }
+    }
+
+    pub fn from_coords(
+        start: u32,
+        end: u32,
+        group_id: Option<u32>,
+        strand: Strand,
+    ) -> Result<Self> {
+        Ok(Self::new(Interval::new(start, end)?, group_id, strand))
     }
 
     #[inline]
@@ -291,7 +300,7 @@ pub fn load_near_index(
                 None
             };
 
-            validated.push(NearInterval::new(start, end, group_id, strand)?);
+            validated.push(NearInterval::from_coords(start, end, group_id, strand)?);
         }
 
         index.per_chrom.insert(

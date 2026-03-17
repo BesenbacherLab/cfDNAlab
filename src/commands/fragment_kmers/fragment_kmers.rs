@@ -489,14 +489,15 @@ fn process_tile(
         None
     };
 
-    let fetch_span = determine_fetch_span(tile, window_ctx, tile_window_span, chrom_len);
-    let Some((fetch_from, fetch_to)) = fetch_span else {
+    let Some(fetch_span) = determine_fetch_span(tile, window_ctx, tile_window_span, chrom_len)?
+    else {
         return Ok(TileResult {
             chr: tile.chr.clone(),
             counts_path: None,
             counter: FragmentKmersCounters::default(),
         });
     };
+    let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
 
     // Extend the reference slice to include k-mers at the right tile edge
     let max_k: u32 = kmer_specs.keys().copied().max().unwrap_or(1) as u32;

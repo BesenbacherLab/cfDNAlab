@@ -400,7 +400,7 @@ fn process_tile(
     // Build windows that start in the core but may extend into the right halo
     // We keep starts inside the core (so starts are unique per tile) while letting fragment ends
     // reach into the fetched halo, which carries the needed sequence context
-    let mut tile_windows: Vec<(u64, u64, u64)> = Vec::new();
+    let mut tile_windows: Vec<IndexedInterval<u64>> = Vec::new();
     if let Some(win_chr) = windows {
         let iter = overlapping_windows_for_tile(win_chr, tile, tile_window_span);
         for window in iter {
@@ -409,21 +409,21 @@ fn process_tile(
             if end_abs <= start_abs {
                 continue;
             }
-            tile_windows.push((
+            tile_windows.push(IndexedInterval::new(
                 start_abs - seq_start,
                 end_abs - seq_start,
                 // Preserve the original window index so downstream counts map back
                 // to the same BED window identity
                 window.idx(),
-            ));
+            )?);
         }
     } else {
         // Global mode: one window spanning the tile core
-        tile_windows.push((
+        tile_windows.push(IndexedInterval::new(
             core_start.saturating_sub(seq_start),
             seq_end.saturating_sub(seq_start),
             0,
-        ));
+        )?);
     }
     if tile_windows.is_empty() {
         let empty = GCCounts::new(
@@ -461,7 +461,7 @@ fn process_tile(
             opt.fragment_lengths.min_fragment_length as u64,
             opt.fragment_lengths.max_fragment_length as u64 + 1,
         ),
-        &tile_windows,
+        tile_windows.as_slice(),
         tile_starts.as_slice(),
         seq_end - seq_start,
         1.0,
@@ -476,9 +476,9 @@ fn process_tile(
     let mut total_acgt_in_core = 0u64;
     let core_start_local = core_start - seq_start;
     let core_end_local = core_end - seq_start;
-    for (wstart, wend, _) in &tile_windows {
-        let clipped_start = (*wstart).max(core_start_local);
-        let clipped_end = (*wend).min(core_end_local);
+    for window in &tile_windows {
+        let clipped_start = window.start().max(core_start_local);
+        let clipped_end = window.end().min(core_end_local);
         if clipped_end <= clipped_start {
             continue;
         }

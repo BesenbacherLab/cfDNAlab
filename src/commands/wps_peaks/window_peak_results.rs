@@ -1,5 +1,7 @@
 use std::str::FromStr;
 
+use crate::shared::interval::{IndexedInterval, Interval};
+
 /// What to do per window
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PeaksWindowAction {
@@ -45,11 +47,26 @@ pub enum WindowPeaksValue {
 /// One window's result (keeps original ordering info)
 #[derive(Debug, Clone)]
 pub struct WindowPeaksResult {
-    pub start: u64,
-    pub end: u64,
-    pub original_idx: u64,
+    pub window: IndexedInterval<u64>,
     pub value: WindowPeaksValue,
     pub num_blacklisted_pos: Option<u32>,
+}
+
+impl WindowPeaksResult {
+    #[inline]
+    pub fn start(&self) -> u64 {
+        self.window.start()
+    }
+
+    #[inline]
+    pub fn end(&self) -> u64 {
+        self.window.end()
+    }
+
+    #[inline]
+    pub fn original_idx(&self) -> u64 {
+        self.window.idx()
+    }
 }
 
 /// Top-level result for a run with or without windows
@@ -62,10 +79,8 @@ pub enum PeaksOutput {
     },
     /// No windows given -> return positional peaks for the whole sequence
     WholePositional {
-        /// Start offset, typically 0
-        start: u64,
-        /// End offset, typically `length`
-        end: u64,
+        /// Covered span, typically `[0, length)`
+        interval: Interval<u64>,
         /// Per-base coverage, left->right
         values: Vec<f32>,
     },

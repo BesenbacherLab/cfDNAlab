@@ -41,7 +41,7 @@ use crate::{
         },
     },
 };
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use fxhash::FxHashMap;
 use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array1, Array2, ArrayBase, Axis, Data, DataMut, Ix2, Zip};
@@ -101,7 +101,10 @@ pub fn finalize_window_buffer(
     apply_window_scaling: bool,
     opt: &GCConfig,
     avg_window_span: f64,
-    out: &mut WindowState, // TODO: Rename to something meaningful
+    // Tile-level aggregate accumulator. This is not the current window being finalized. It
+    // collects the accepted per-window contributions for the whole tile and later carries the
+    // optional crossing-file path back to the reducer
+    tile_output: &mut WindowState,
     crossing_parts: &mut Vec<CrossingPart>,
 ) -> Result<()> {
     if !buf.has_counts {
@@ -109,11 +112,11 @@ pub fn finalize_window_buffer(
         return Ok(());
     }
 
-    compute_window_acgt(buf, gc_prefixes, seq_start, seq_end)?;
+    compute_window_acgt(buf, gc_prefixes, Interval::new(seq_start, seq_end)?)?;
 
     if !apply_window_scaling {
-        out.counts.merge_from(&buf.counts)?;
-        out.weight += 1;
+        tile_output.counts.merge_from(&buf.counts)?;
+        tile_output.weight += 1;
         buf.counts.clear();
         buf.has_counts = false;
         return Ok(());
@@ -125,9 +128,9 @@ pub fn finalize_window_buffer(
             idx: buf.idx as usize,
             counts: buf.counts.clone(),
         });
-    } else if process_window_in_place(&mut buf.counts, opt, Some(avg_window_span))? {
-        out.counts.merge_from(&buf.counts)?;
-        out.weight += 1;
+    } else if process_window_in_place(&mut buf.counts, opt, avg_window_span)? {
+        tile_output.counts.merge_from(&buf.counts)?;
+        tile_output.weight += 1;
     }
 
     buf.counts.clear();
@@ -143,11 +146,9 @@ struct ReduceState {
 }
 
 impl ReduceState {
-    fn new(template: &GCCounts) -> Self {
+    fn from_scaled_sum(scaled_sum: GCCounts) -> Self {
         Self {
-            scaled_sum: template
-                .zeroed_like()
-                .expect("failed to create zeroed reduce state"),
+            scaled_sum,
             scaled_weight: 0,
             crossing_files: Vec::new(),
             counters: GCCounters::default(),
@@ -254,7 +255,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     pb.set_style(
         ProgressStyle::default_bar()
             .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .unwrap(),
+            .expect("hardcoded progress template"),
     );
 
     let windows_lookup = windows_map.as_ref();
@@ -283,6 +284,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         reference_metadata.end_offset as usize,
         (0, 0),
     )?;
+    let zero_reduce_sum = zero_counts.zeroed_like()?;
 
     // Build temporary directory for cross-tile window partials
     let temp_dir =
@@ -314,7 +316,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
                 blacklist_chr,
             )?;
 
-            let mut state = ReduceState::new(&zero_counts);
+            let mut state = ReduceState::from_scaled_sum(zero_reduce_sum.clone());
             state.merge_scaled(&tile_counts.counts)?;
             state.add_weight(tile_counts.weight);
             state.merge_counters(counter);
@@ -324,13 +326,16 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             Ok(state)
         })
         .try_fold(
-            || ReduceState::new(&zero_counts),
+            || ReduceState::from_scaled_sum(zero_reduce_sum.clone()),
             |mut acc, state| -> Result<ReduceState> {
                 acc = acc.merge(state?)?;
                 Ok(acc)
             },
         )
-        .try_reduce(|| ReduceState::new(&zero_counts), |a, b| a.merge(b))?;
+        .try_reduce(
+            || ReduceState::from_scaled_sum(zero_reduce_sum.clone()),
+            |a, b| a.merge(b),
+        )?;
 
     pb.finish_with_message("| Finished counting");
 
@@ -426,7 +431,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     // Ignores unsupported elements when calculating the mean
     let mut norm_gc_counts =
         mean_scale_array(&avg_gc_pct_counts, Some(&reference_outliers_support_mask))
-            .expect("failed to perform masked mean scaling");
+            .ok_or_else(|| anyhow!("masked mean scaling had no supported elements"))?;
 
     intermediate_saver.save_file(
         &norm_gc_counts,
@@ -441,11 +446,11 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             // Rows are contiguous so we can safely borrow a mutable slice for interpolation
             let row_slice = length_row
                 .as_slice_mut()
-                .expect("GC histogram rows should be contiguous");
+                .context("GC histogram rows should be contiguous")?;
             let mut mask_row = reference_outliers_support_mask.row_mut(row_idx);
             let mask_slice = mask_row
                 .as_slice_mut()
-                .expect("Support mask rows should be contiguous");
+                .context("support mask rows should be contiguous")?;
             fill_unsupported_bins_with_polynomial(
                 row_slice, mask_slice, 2, 3, 3,
                 // Update mask when cells become supported
@@ -742,7 +747,11 @@ fn process_tile(
     // Initialize counters (default -> 0s)
     let mut counter = GCCounters::default();
 
-    let mut out = WindowState::new(0, 0, 0, true, template)?;
+    // Reuse `WindowState` as the per-tile return payload. On this return path, only `counts`,
+    // `weight`, and `crossing_file` are read later. The interval-like fields are not used, so
+    // keep a trivial checked placeholder here
+    let dummy_interval = Interval::new(0, 1)?;
+    let mut tile_output = WindowState::new(0, dummy_interval, true, template)?;
     let mut crossing_parts: Vec<CrossingPart> = Vec::new();
 
     // Prep tile windows:
@@ -758,7 +767,7 @@ fn process_tile(
         template,
     )?;
     if prepared_windows.skip_tile {
-        return Ok((out, counter));
+        return Ok((tile_output, counter));
     }
     let mut windows = prepared_windows.windows;
     let streaming_buffers = prepared_windows.streaming_buffers;
@@ -786,7 +795,7 @@ fn process_tile(
     let mut tile_window_intervals: Option<Vec<IndexedInterval<u64>>> = None;
     if !using_streaming {
         if windows.is_empty() {
-            return Ok((out, counter));
+            return Ok((tile_output, counter));
         }
         tile_window_intervals = Some(
             windows
@@ -877,7 +886,7 @@ fn process_tile(
                     apply_window_scaling,
                     opt,
                     avg_window_span,
-                    &mut out,
+                    &mut tile_output,
                     &mut crossing_parts,
                 )?;
                 let mut recycled = current;
@@ -886,11 +895,10 @@ fn process_tile(
                 // Prepare the next buffer using the recycled allocation
                 let next_idx = current.idx + 1;
                 let next_interval = fixed_size_window_interval(next_idx, window_bp, chrom_len)?;
-                let next_start = next_interval.start();
-                let next_end = next_interval.end();
+                let (next_start, next_end) = next_interval.as_tuple();
                 let next_contained =
                     next_start >= tile.core_start() as u64 && next_end <= tile.core_end() as u64;
-                recycled.reset(next_idx, next_start, next_end, next_contained, template)?;
+                recycled.reset(next_idx, next_interval, next_contained, template)?;
                 next = recycled;
             }
 
@@ -990,7 +998,7 @@ fn process_tile(
             apply_window_scaling,
             opt,
             avg_window_span,
-            &mut out,
+            &mut tile_output,
             &mut crossing_parts,
         )?;
         finalize_window_buffer(
@@ -1004,15 +1012,15 @@ fn process_tile(
             apply_window_scaling,
             opt,
             avg_window_span,
-            &mut out,
+            &mut tile_output,
             &mut crossing_parts,
         )?;
     } else {
         let mut window_ptr = 0usize; // Genomic window pointer reused by overlap finder
         {
-            let tile_window_intervals = tile_window_intervals
-                .as_ref()
-                .expect("tile window intervals missing for non-streaming windows");
+            let tile_window_intervals = tile_window_intervals.as_ref().context(
+                "non-streaming GC-bias counting requires prepared tile window intervals",
+            )?;
 
             // Iterate fragments and count GC
             for fragment_res in iter.by_ref() {
@@ -1101,7 +1109,7 @@ fn process_tile(
                 apply_window_scaling,
                 opt,
                 avg_window_span,
-                &mut out,
+                &mut tile_output,
                 &mut crossing_parts,
             )?;
         }
@@ -1114,7 +1122,7 @@ fn process_tile(
 
     // Write crossing parts when windows are not aligned
     // Streaming and non-streaming share the same writer
-    out.crossing_file = if using_streaming {
+    tile_output.crossing_file = if using_streaming {
         if !windows_aligned_to_tiles {
             write_crossing_parts(temp_dir, tile.index, template, &crossing_parts)?
         } else {
@@ -1126,13 +1134,13 @@ fn process_tile(
         None
     };
 
-    Ok((out, counter))
+    Ok((tile_output, counter))
 }
 
 pub fn process_window_in_place(
     gc_counts: &mut GCCounts,
     opt: &GCConfig,
-    avg_window_size: Option<f64>,
+    avg_window_span: f64,
 ) -> Result<bool> {
     // Check window has enough valid positions
     if gc_counts.pct_acgt() < opt.min_window_acgt_pct as f64 {
@@ -1155,8 +1163,6 @@ pub fn process_window_in_place(
     // Use avg window size to "scale the scaling"
     // So the counts don't explode in size
     // While keeping the relative scale between windows consistent
-    let avg_window_span = avg_window_size.expect("valid-positions needs window spans");
-
     // Mean scale, then multiply by the usable window-size (scaled to lower values)
     gc_counts.scale_counts((1. / mean_count) * (num_acgt as f64 / avg_window_span))?;
 
@@ -1166,9 +1172,9 @@ pub fn process_window_in_place(
 pub fn process_window(
     mut gc_counts: GCCounts,
     opt: &GCConfig,
-    avg_window_size: Option<f64>,
+    avg_window_span: f64,
 ) -> Result<Option<GCCounts>> {
-    if process_window_in_place(&mut gc_counts, opt, avg_window_size)? {
+    if process_window_in_place(&mut gc_counts, opt, avg_window_span)? {
         return Ok(Some(gc_counts));
     }
     Ok(None)
@@ -1251,11 +1257,11 @@ pub fn interpolate_masked_corrections(
         let mut row = matrix.row_mut(row_idx);
         let row_slice = row
             .as_slice_mut()
-            .expect("GC histogram rows should be contiguous");
+            .context("GC histogram rows should be contiguous")?;
         let mut mask_row = mask.row_mut(row_idx);
         let mask_slice = mask_row
             .as_slice_mut()
-            .expect("Support mask rows should be contiguous");
+            .context("support mask rows should be contiguous")?;
         fill_unsupported_bins_with_polynomial(row_slice, mask_slice, 2, 3, 3, true)?;
     }
 

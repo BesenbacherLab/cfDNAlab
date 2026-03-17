@@ -48,6 +48,12 @@ where
 
     /// Return the interval bounds as `(start, end)`.
     #[inline]
+    pub fn as_tuple(&self) -> (T, T) {
+        (self.start, self.end)
+    }
+
+    /// Return the interval bounds as `(start, end)`.
+    #[inline]
     pub fn into_inner(self) -> (T, T) {
         (self.start, self.end)
     }
@@ -98,6 +104,115 @@ where
     #[inline]
     pub fn len(&self) -> T {
         self.end - self.start
+    }
+}
+
+impl<T> Interval<T>
+where
+    T: Copy + Ord,
+{
+    /// Return whether `point` lies inside this half-open interval.
+    #[inline]
+    pub fn contains_point(&self, point: T) -> bool {
+        point >= self.start && point < self.end
+    }
+
+    /// Return whether `other` lies fully inside this interval.
+    #[inline]
+    pub fn contains_interval(&self, other: Self) -> bool {
+        other.start >= self.start && other.end <= self.end
+    }
+
+    /// Return whether two half-open intervals intersect.
+    #[inline]
+    pub fn intersects(&self, other: Self) -> bool {
+        other.end > self.start && other.start < self.end
+    }
+
+    /// Return a new interval holding the shared part of two half-open intervals, if any.
+    #[inline]
+    pub fn intersection(&self, other: Self) -> Option<Self> {
+        let start = self.start.max(other.start);
+        let end = self.end.min(other.end);
+        (end > start).then_some(Self { start, end })
+    }
+
+    /// Return a new interval clipped to `bounds`, if any span remains.
+    ///
+    /// Use this when the receiver is the primary interval and `bounds` provides
+    /// the allowed coordinate range. This is equivalent to the interval
+    /// intersection, but reads more naturally at call sites that are clipping a
+    /// value to enclosing bounds. This does not mutate the receiver.
+    #[inline]
+    pub fn clip_to(&self, bounds: Self) -> Option<Self> {
+        self.intersection(bounds)
+    }
+
+    /// Return a new interval clipped so it starts no earlier than `lower_bound`.
+    ///
+    /// This does not mutate the receiver. Returns `None` when the clipped
+    /// interval would be empty.
+    #[inline]
+    pub fn clip_lower(&self, lower_bound: T) -> Option<Self> {
+        let start = self.start.max(lower_bound);
+        (self.end > start).then_some(Self {
+            start,
+            end: self.end,
+        })
+    }
+
+    /// Return a new interval clipped so it ends no later than `upper_bound`.
+    ///
+    /// This does not mutate the receiver. Returns `None` when the clipped
+    /// interval would be empty.
+    #[inline]
+    pub fn clip_upper(&self, upper_bound: T) -> Option<Self> {
+        let end = self.end.min(upper_bound);
+        (end > self.start).then_some(Self {
+            start: self.start,
+            end,
+        })
+    }
+
+    /// Return a new interval spanning both inputs.
+    ///
+    /// This does not mutate either operand. Because both operands are already
+    /// checked non-empty intervals, the spanning interval is also guaranteed to
+    /// be a valid non-empty half-open interval.
+    #[inline]
+    pub fn expand_to_include(&self, other: Self) -> Self {
+        Self {
+            start: self.start.min(other.start),
+            end: self.end.max(other.end),
+        }
+    }
+}
+
+impl Interval<u64> {
+    /// Convert a checked unsigned interval into a checked signed interval.
+    ///
+    /// Use this when an external API requires `i64` coordinates even though the interval is
+    /// represented internally with non-negative genomic coordinates.
+    pub fn try_to_i64(self) -> Result<Interval<i64>> {
+        let start = match i64::try_from(self.start) {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(Error::InvalidIntervalBounds {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                });
+            }
+        };
+        let end = match i64::try_from(self.end) {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(Error::InvalidIntervalBounds {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                });
+            }
+        };
+        Interval::new(start, end)
     }
 }
 
@@ -311,5 +426,75 @@ where
     /// ```
     fn try_from(bounds: (T, T, I)) -> Result<Self> {
         Self::new(bounds.0, bounds.1, bounds.2)
+    }
+}
+
+/// A checked indexed interval together with a score or weight.
+///
+/// Use this when a genomic interval needs both stable caller metadata and one
+/// extra numeric value, such as a score parsed from a BED-like file.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScoredInterval<T, I = u64, S = f64> {
+    /// Checked interval with an external index.
+    pub window: IndexedInterval<T, I>,
+    /// Caller-provided score associated with the interval.
+    pub score: S,
+}
+
+impl<T, I, S> ScoredInterval<T, I, S>
+where
+    T: Copy + PartialOrd + Display,
+    I: Copy,
+    S: Copy,
+{
+    /// Create a checked scored interval from raw bounds, an index, and a score.
+    pub fn new(start: T, end: T, idx: I, score: S) -> Result<Self> {
+        Ok(Self {
+            window: IndexedInterval::new(start, end, idx)?,
+            score,
+        })
+    }
+
+    /// Create a scored interval from an already checked indexed interval.
+    pub fn from_indexed_interval(window: IndexedInterval<T, I>, score: S) -> Self {
+        Self { window, score }
+    }
+
+    /// Convert a slice of `(start, end, idx, score)` tuples into checked scored intervals.
+    pub fn from_tuples(entries: &[(T, T, I, S)]) -> Result<Vec<Self>> {
+        entries
+            .iter()
+            .map(|&(start, end, idx, score)| Self::new(start, end, idx, score))
+            .collect()
+    }
+
+    /// Return the inclusive start coordinate.
+    #[inline]
+    pub fn start(&self) -> T {
+        self.window.start()
+    }
+
+    /// Return the exclusive end coordinate.
+    #[inline]
+    pub fn end(&self) -> T {
+        self.window.end()
+    }
+
+    /// Return the carried index.
+    #[inline]
+    pub fn idx(&self) -> I {
+        self.window.idx()
+    }
+
+    /// Return the carried score.
+    #[inline]
+    pub fn score(&self) -> S {
+        self.score
+    }
+
+    /// Return the interval, index, and score as `(start, end, idx, score)`.
+    #[inline]
+    pub fn into_tuple(self) -> (T, T, I, S) {
+        (self.start(), self.end(), self.idx(), self.score)
     }
 }

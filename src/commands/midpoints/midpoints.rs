@@ -377,26 +377,29 @@ fn process_tile(
         .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
         .collect::<crate::Result<_>>()?;
 
+    // Extract min/max fragment lengths once so fetch shrinking and fragment filtering share the
+    // same bounds.
+    let min_fragment_length = length_bins[0];
+    let max_fragment_length = length_bins[length_bins.len() - 1] - 1;
+
     // Adapt the fetch coordinates to the present windows
     // When no windows are present, skip this tile
-    let Some((core_overlapping_windows, fetch_from, fetch_to)) =
+    let Some((core_overlapping_windows, fetch_span)) =
         get_overlapping_sites_and_adapt_fetch_to_extremes(
             windows,
             tile_window_span,
             tile,
             chrom_len as u32,
-        )
+            max_fragment_length as u64,
+        )?
     else {
         return Ok((counter, None));
     };
+    let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
 
     reader
         .fetch((tile.tid, fetch_from, fetch_to))
         .context(format!("fetch {} {}-{}", &tile.chr, fetch_from, fetch_to))?;
-
-    // Extract min/max fragment lengths
-    let min_fragment_length = length_bins[0];
-    let max_fragment_length = length_bins[length_bins.len() - 1] - 1;
 
     // Function for filtering fragments after pairing
     // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
@@ -644,35 +647,66 @@ fn process_tile(
     Ok((counter, Some(tile_counts_out)))
 }
 
-// Windows: start, end, **`group_idx`** (not original_idx as in other commands).
+/// Collect midpoint sites that overlap a tile core and narrow the fetch span to their extremes.
+///
+/// Midpoints groups windows by `group_idx`, so the returned `IndexedInterval` values carry group
+/// identifiers rather than the original BED row order used in some other commands. The helper
+/// keeps only the sites overlapping the tile, computes the minimum start and maximum end across
+/// those sites, and clamps the resulting fetch interval back onto the tile fetch band. When no
+/// site overlaps the tile, the caller can skip the tile entirely.
+///
+/// Parameters
+/// ----------
+/// - `windows`:
+///     Start-sorted midpoint windows for the current chromosome. Their `idx` field stores the
+///     midpoint group index.
+/// - `tile_span`:
+///     Optional cached index range for windows that can overlap the tile.
+/// - `tile`:
+///     Tile whose core determines which sites are kept and whose fetch band bounds the result.
+/// - `chrom_len`:
+///     Chromosome length used to clamp the final fetch interval.
+/// - `halo_bp`:
+///     Extra bases to keep on both sides of the extreme overlapping sites before clamping back to
+///     the tile fetch band. Callers pass the maximum fragment length here so fragment-overlapping
+///     reads can still be reconstructed near tile and chromosome edges.
+///
+/// Returns
+/// -------
+/// - `out`:
+///     `Some((sites, fetch_span))` when at least one midpoint site overlaps the tile and a
+///     non-empty fetch interval remains after clamping. `None` when the tile has no overlapping
+///     sites or the clamped fetch interval is empty.
 pub fn get_overlapping_sites_and_adapt_fetch_to_extremes(
     windows: &[IndexedInterval<u64>],
     tile_span: Option<&TileWindowSpan>,
     tile: &Tile,
     chrom_len: u32,
-) -> Option<(Vec<IndexedInterval<u64>>, i64, i64)> {
-    let overlapping_sites: Vec<IndexedInterval<u64>> =
-        overlapping_windows_for_tile(windows, tile, tile_span)
-            .copied()
-            .collect();
-
+    halo_bp: u64,
+) -> Result<Option<(Vec<IndexedInterval<u64>>, Interval<u64>)>> {
+    let reserve_hint = tile_span
+        .map(|span| span.last_idx_exclusive.saturating_sub(span.first_idx))
+        .unwrap_or(0)
+        .min(windows.len());
+    let mut overlapping_sites = Vec::with_capacity(reserve_hint);
+    let mut min_site_start = u64::MAX;
+    let mut max_site_end = 0u64;
+    for site in overlapping_windows_for_tile(windows, tile, tile_span) {
+        min_site_start = min_site_start.min(site.start());
+        max_site_end = max_site_end.max(site.end());
+        overlapping_sites.push(*site);
+    }
     if overlapping_sites.is_empty() {
-        return None;
+        return Ok(None);
     }
 
-    let min_ws = overlapping_sites
-        .iter()
-        .map(|window| window.start())
-        .min()
-        .unwrap();
-    let max_we = overlapping_sites
-        .iter()
-        .map(|window| window.end())
-        .max()
-        .unwrap();
+    let window_span = Interval::new(min_site_start, max_site_end)?;
 
-    let (fetch_from, fetch_to) =
-        clamp_fetch_to_window_span(tile, chrom_len as u64, min_ws, max_we, 0)?;
+    let Some(fetch_span) =
+        clamp_fetch_to_window_span(tile, chrom_len as u64, window_span, halo_bp)?
+    else {
+        return Ok(None);
+    };
 
-    Some((overlapping_sites, fetch_from, fetch_to))
+    Ok(Some((overlapping_sites, fetch_span)))
 }

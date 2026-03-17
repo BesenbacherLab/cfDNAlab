@@ -11,6 +11,21 @@ use zstd::Encoder as ZstdEncoder;
 const BUF_CAP: usize = 1 << 20;
 const DEFAULT_ZSTD_LEVEL: i32 = 3;
 
+/// Join dot-separated name segments while skipping empty parts.
+///
+/// This keeps output naming consistent across commands when the optional output
+/// prefix is omitted. For example, `["sample", "length_counts.npy"]` becomes
+/// `sample.length_counts.npy`, while `["", "length_counts.npy"]` becomes
+/// `length_counts.npy`.
+pub fn dot_join(parts: &[&str]) -> String {
+    parts
+        .iter()
+        .map(|part| part.trim())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
 /// Open a text reader that transparently handles `.gz`, `.bgz`, `.zst`, or plain files.
 ///
 /// The caller is responsible for handling "-" or stdin separately.

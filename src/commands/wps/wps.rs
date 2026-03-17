@@ -16,6 +16,7 @@ use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment_iterator::fragments_from_bam;
 use crate::shared::interval::{IndexedInterval, Interval};
+use crate::shared::io::dot_join;
 use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
@@ -214,9 +215,9 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     ));
 
     // Where per-tile files go
-    let positional_prefix = format!("{prefix}.pos");
-    let partials_prefix = format!("{prefix}.part");
-    let finals_prefix = format!("{prefix}.fin");
+    let positional_prefix = dot_join(&[prefix, "pos"]);
+    let partials_prefix = dot_join(&[prefix, "part"]);
+    let finals_prefix = dot_join(&[prefix, "fin"]);
 
     // Faster to convert to &str once
     let positional_prefix = positional_prefix.as_str();
@@ -224,14 +225,20 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     let finals_prefix = finals_prefix.as_str();
 
     // Create filenames of final outputs
-    let final_bedgraph_pos_name = format!("{prefix}.wps.per_position.bedgraph.zst");
-    let final_tsv_pos_name = format!("{prefix}.wps.per_position_per_window.tsv.zst");
-    let final_avg_name = format!("{prefix}.wps.avg.tsv.zst");
-    let final_total_name = format!("{prefix}.wps.total.tsv.zst");
+    let final_bedgraph_pos_name = dot_join(&[prefix, "wps.per_position.bedgraph.zst"]);
+    let final_tsv_pos_name = dot_join(&[prefix, "wps.per_position_per_window.tsv.zst"]);
+    let final_avg_name = dot_join(&[prefix, "wps.avg.tsv.zst"]);
+    let final_total_name = dot_join(&[prefix, "wps.total.tsv.zst"]);
+
+    let per_window_action = if windowed {
+        Some(per_window_wps_action.context("windowed WPS runs require a per-window action")?)
+    } else {
+        None
+    };
 
     // Get decimals to use
-    let decimals_to_use: i32 = if windowed {
-        match per_window_wps_action.expect("per-window action required when windowed") {
+    let decimals_to_use: i32 = match per_window_action {
+        Some(action) => match action {
             CoverageWindowAction::Average | CoverageWindowAction::Total => {
                 opt.shared_args.decimals as i32
             }
@@ -243,12 +250,13 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     0
                 }
             }
-        }
-    } else {
-        if has_scaling_or_correction {
-            opt.shared_args.decimals as i32
-        } else {
-            0
+        },
+        None => {
+            if has_scaling_or_correction {
+                opt.shared_args.decimals as i32
+            } else {
+                0
+            }
         }
     };
 
@@ -259,7 +267,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     pb.set_style(
         ProgressStyle::default_bar()
             .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .unwrap(),
+            .expect("hardcoded progress template"),
     );
 
     // Configure global thread‐pool size
@@ -290,125 +298,133 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
 
-            // Decide tile mode and file name
-            let (action_prefix, extensions) = if windowed {
-                let action =
-                    per_window_wps_action.expect("per-window action required when windowed");
-                match action {
-                    // We need
-                    CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
-                        (positional_prefix, "tsv.zst")
-                    }
-                    CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
-                        (positional_prefix, "bedgraph.zst")
-                    }
-                    CoverageWindowAction::Average | CoverageWindowAction::Total => {
-                        (partials_prefix, "tsv.zst")
-                    }
-                }
+            let counter = if matches!(window_opt, WindowSpec::Bed(_))
+                && windows_chr.map_or(true, |windows| windows.is_empty())
+            {
+                FCoverageCounters::default()
             } else {
-                // Whole positional coverage
-                (positional_prefix, "bedgraph.zst")
-            };
+                // Decide tile mode and file name
+                let (action_prefix, extensions) = if windowed {
+                    let action = per_window_action
+                        .context("windowed WPS runs require a per-window action")?;
+                    match action {
+                        // We need
+                        CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
+                            (positional_prefix, "tsv.zst")
+                        }
+                        CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
+                            (positional_prefix, "bedgraph.zst")
+                        }
+                        CoverageWindowAction::Average | CoverageWindowAction::Total => {
+                            (partials_prefix, "tsv.zst")
+                        }
+                    }
+                } else {
+                    // Whole positional coverage
+                    (positional_prefix, "bedgraph.zst")
+                };
 
-            let out_path = temp_dir.join(format!(
-                "{prefix}.{chr}.{idx}.{extensions}",
-                prefix = action_prefix,
-                chr = tile.chr,
-                idx = tile.index
-            ));
+                let out_path = temp_dir.join(format!(
+                    "{prefix}.{chr}.{idx}.{extensions}",
+                    prefix = action_prefix,
+                    chr = tile.chr,
+                    idx = tile.index
+                ));
 
-            // Windowed tmp outputs for faster reducer later on
-            let partials_out = temp_dir.join(format!(
-                "{prefix}.{chr}.{idx}.{extensions}",
-                prefix = partials_prefix,
-                chr = tile.chr,
-                idx = tile.index
-            ));
-            let cross_idx_out = temp_dir.join(format!(
-                "{prefix}.cross.{chr}.{idx}.cross.zst", // Needs this extension!
-                prefix = partials_prefix,
-                chr = tile.chr,
-                idx = tile.index
-            ));
-            let finals_out = temp_dir.join(format!(
-                "{prefix}.{chr}.{idx}.{extensions}",
-                prefix = finals_prefix,
-                chr = tile.chr,
-                idx = tile.index
-            ));
+                // Windowed tmp outputs for faster reducer later on
+                let partials_out = temp_dir.join(format!(
+                    "{prefix}.{chr}.{idx}.{extensions}",
+                    prefix = partials_prefix,
+                    chr = tile.chr,
+                    idx = tile.index
+                ));
+                let cross_idx_out = temp_dir.join(format!(
+                    "{prefix}.cross.{chr}.{idx}.cross.zst", // Needs this extension!
+                    prefix = partials_prefix,
+                    chr = tile.chr,
+                    idx = tile.index
+                ));
+                let finals_out = temp_dir.join(format!(
+                    "{prefix}.{chr}.{idx}.{extensions}",
+                    prefix = finals_prefix,
+                    chr = tile.chr,
+                    idx = tile.index
+                ));
 
-            let mode = if !windowed {
-                TileMode::Positional {
-                    windows: None,
-                    out_path,
-                    indexed: false,
-                }
-            } else {
-                match (
-                    &window_opt,
-                    per_window_wps_action.expect("per-window action required when windowed"),
-                ) {
-                    (WindowSpec::Bed(_), CoverageWindowAction::OnlyIncludeThesePositionsUnique) => {
-                        TileMode::Positional {
+                let mode = if !windowed {
+                    TileMode::Positional {
+                        windows: None,
+                        out_path,
+                        indexed: false,
+                    }
+                } else {
+                    match (
+                        &window_opt,
+                        per_window_action
+                            .context("windowed WPS runs require a per-window action")?,
+                    ) {
+                        (
+                            WindowSpec::Bed(_),
+                            CoverageWindowAction::OnlyIncludeThesePositionsUnique,
+                        ) => TileMode::Positional {
                             windows: windows_chr,
                             out_path,
                             indexed: false,
-                        }
-                    }
-                    (
-                        WindowSpec::Bed(_),
-                        CoverageWindowAction::OnlyIncludeThesePositionsIndexed,
-                    ) => TileMode::Positional {
-                        windows: windows_chr,
-                        out_path,
-                        indexed: true,
-                    },
-                    (
-                        WindowSpec::Bed(_),
-                        CoverageWindowAction::Average | CoverageWindowAction::Total,
-                    ) => {
-                        let wchr = windows_chr.expect("windows required for aggregates");
-                        TileMode::AggregatesByBed {
-                            windows: wchr,
+                        },
+                        (
+                            WindowSpec::Bed(_),
+                            CoverageWindowAction::OnlyIncludeThesePositionsIndexed,
+                        ) => TileMode::Positional {
+                            windows: windows_chr,
+                            out_path,
+                            indexed: true,
+                        },
+                        (
+                            WindowSpec::Bed(_),
+                            CoverageWindowAction::Average | CoverageWindowAction::Total,
+                        ) => TileMode::AggregatesByBed {
+                            windows: windows_chr.context(
+                                "BED aggregate tile reached processing without any windows",
+                            )?,
                             masked: true,
                             partials_out,
                             cross_idx_out,
+                        },
+                        (
+                            WindowSpec::Size(size),
+                            CoverageWindowAction::Average | CoverageWindowAction::Total,
+                        ) => TileMode::AggregatesBySize {
+                            window_bp: *size,
+                            masked: true,
+                            finals_out,
+                            partials_out,
+                            cross_idx_out,
+                            guaranteed_aligned: tile_and_window_boundaries_align,
+                        },
+                        _ => {
+                            anyhow::bail!(
+                                "Got illegal combination of --by-size/--by-bed and --per-window."
+                            )
                         }
                     }
-                    (
-                        WindowSpec::Size(size),
-                        CoverageWindowAction::Average | CoverageWindowAction::Total,
-                    ) => TileMode::AggregatesBySize {
-                        window_bp: *size,
-                        masked: true,
-                        finals_out,
-                        partials_out,
-                        cross_idx_out,
-                        guaranteed_aligned: tile_and_window_boundaries_align,
-                    },
-                    _ => {
-                        anyhow::bail!(
-                            "Got illegal combination of --by-size/--by-bed and --per-window."
-                        )
-                    }
-                }
-            };
+                };
 
-            let (counter, _, _) = wps_for_tile(
-                &opt.shared_args,
-                &opt.per_window,
-                opt.keep_zero_runs,
-                tile,
-                tile_span.as_ref(),
-                blacklist_chr,
-                scaling_chr,
-                gc_corrector.clone(),
-                mode,
-                decimals_to_use,
-                0,
-                false,
-            )?;
+                let (counter, _, _) = wps_for_tile(
+                    &opt.shared_args,
+                    &opt.per_window,
+                    opt.keep_zero_runs,
+                    tile,
+                    tile_span.as_ref(),
+                    blacklist_chr,
+                    scaling_chr,
+                    gc_corrector.clone(),
+                    mode,
+                    decimals_to_use,
+                    0,
+                    false,
+                )?;
+                counter
+            };
             pb.inc(1);
             Ok(counter)
         })
@@ -426,17 +442,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     // Merge temporary output files and
     // reduce windows present in multiple tiles
 
-    let final_out_path = if !windowed {
-        // Whole-genome positional coverage
-        merge_positional_tiles(
-            &temp_dir,
-            &opt.shared_args.ioc.output_dir,
-            &chromosomes,
-            positional_prefix,
-            final_bedgraph_pos_name.as_str(),
-        )?
-    } else {
-        let action = per_window_wps_action.expect("per-window action required when windowed");
+    let final_out_path = if let Some(action) = per_window_action {
         match action {
             CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
                 // Windowed positional (unique and non-indexed)
@@ -492,7 +498,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
 
                         let win_map = windows_map
                             .as_ref()
-                            .expect("windows_map present for --by-bed");
+                            .context("BED WPS reduction requires loaded windows")?;
                         for chr in &chromosomes {
                             if let Some(wchr) = win_map.get(chr) {
                                 reduce_bed_with_cross_index_for_chr(
@@ -538,7 +544,12 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                                     .contigs
                                     .get(chr)
                                     .map(|&(_, len)| len as u64)
-                                    .expect("missing contig length");
+                                    .ok_or_else(|| {
+                                        anyhow::anyhow!(
+                                            "Chromosome '{}' not found in contig map",
+                                            chr
+                                        )
+                                    })?;
                                 reduce_aggregates_by_size_with_cross_index_for_chr(
                                     chr,
                                     &temp_dir,
@@ -559,6 +570,15 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                 final_path
             }
         }
+    } else {
+        // Whole-genome positional coverage
+        merge_positional_tiles(
+            &temp_dir,
+            &opt.shared_args.ioc.output_dir,
+            &chromosomes,
+            positional_prefix,
+            final_bedgraph_pos_name.as_str(),
+        )?
     };
     println!("Saved output to: {:?}", final_out_path);
 
@@ -659,18 +679,20 @@ pub fn wps_for_tile(
 
     // Adapt the fetch coordinates to the present windows (*in genomic-windowed mode!*)
     // When no windows are present, skip this tile
-    let Some((fetch_from, fetch_to)) = adapt_fetch_to_extreme_windows(
+    let Some(fetch_span) = adapt_fetch_to_extreme_windows(
         tile,
         tile_window_span,
         &mode,
         chrom_len as u32,
         opt.fragment_lengths.max_fragment_length as u64,
-    ) else {
+    )?
+    else {
         return Ok((counter, None, None));
     };
+    let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
 
     reader
-        .fetch((tile.tid as i32, fetch_from as i64, fetch_to as i64))
+        .fetch((tile.tid as i32, fetch_from, fetch_to))
         .context(format!("fetch {} {}-{}", &tile.chr, fetch_from, fetch_to))?;
 
     let window_size = opt.window_size;
@@ -913,13 +935,13 @@ pub fn wps_for_tile(
                         let window_start_abs = window.start();
                         let window_end_abs = window.end();
                         let original_idx = window.idx();
-                        let (local_start_idx, local_end_idx, _, _) = match clip_window_to_core(
+                        let local_overlap = match clip_window_to_core_and_localize(
                             window_start_abs,
                             window_end_abs,
                             tile.core_start(),
                             tile.core_end(),
                             dilated_start_abs,
-                        ) {
+                        )? {
                             Some(v) => v,
                             None => continue,
                         };
@@ -929,8 +951,8 @@ pub fn wps_for_tile(
                                 &tile.chr,
                                 &wps_values,
                                 mask_slice,
-                                local_start_idx,
-                                local_end_idx,
+                                local_overlap.local_start_idx,
+                                local_overlap.local_end_idx,
                                 dilated_start_abs_u64,
                                 Some(original_idx),
                                 decimals,
@@ -942,8 +964,8 @@ pub fn wps_for_tile(
                                 &tile.chr,
                                 &wps_values,
                                 mask_slice,
-                                local_start_idx,
-                                local_end_idx,
+                                local_overlap.local_start_idx,
+                                local_overlap.local_end_idx,
                                 dilated_start_abs_u64,
                                 None,
                                 decimals,
@@ -969,10 +991,14 @@ pub fn wps_for_tile(
                 if prefix_all_cache.is_none() {
                     prefix_all_cache = Some(build_prefix(&wps_values));
                 }
-                prefix_all_cache.as_ref().unwrap().as_slice()
+                prefix_all_cache
+                    .as_ref()
+                    .context("WPS prefix cache missing after initialization")?
+                    .as_slice()
             };
             let (ps_allowed_slice, ps_allowed_cnt_slice) = if masked_mode {
-                let mask_slice_ref = mask_slice.expect("mask slice present");
+                let mask_slice_ref = mask_slice
+                    .context("masked WPS aggregate reduction requires a blacklist mask slice")?;
                 if prefix_allowed_cache.is_none() {
                     let (allowed_prefix, allowed_count_prefix) =
                         build_allowed_prefix(&wps_values, mask_slice_ref);
@@ -994,14 +1020,14 @@ pub fn wps_for_tile(
                 let window_start_abs = window.start();
                 let window_end_abs = window.end();
                 let original_idx = window.idx();
-                let clipped = clip_window_to_core(
+                let local_overlap = clip_window_to_core_and_localize(
                     window_start_abs,
                     window_end_abs,
                     tile.core_start(),
                     tile.core_end(),
                     dilated_start_abs,
-                );
-                let Some((local_start_idx, local_end_idx, _, _)) = clipped else {
+                )?;
+                let Some(local_overlap) = local_overlap else {
                     continue;
                 };
 
@@ -1009,8 +1035,8 @@ pub fn wps_for_tile(
                     !(window_start_abs >= core_start_abs && window_end_abs <= core_end_abs);
 
                 let (sum, allowed, blacklisted) = wps_sum_and_counts(
-                    local_start_idx,
-                    local_end_idx,
+                    local_overlap.local_start_idx,
+                    local_overlap.local_end_idx,
                     masked_mode,
                     ps_all_slice,
                     ps_allowed_slice,
@@ -1040,17 +1066,21 @@ pub fn wps_for_tile(
             cross_idx_out,
             guaranteed_aligned,
         } => {
-            let action =
-                per_window_wps_action.expect("per-window action required when using aggregates");
+            let action = per_window_wps_action
+                .context("aggregate WPS tile mode requires a per-window action")?;
             let masked_mode = mask_slice.is_some();
             let ps_all_slice = {
                 if prefix_all_cache.is_none() {
                     prefix_all_cache = Some(build_prefix(&wps_values));
                 }
-                prefix_all_cache.as_ref().unwrap().as_slice()
+                prefix_all_cache
+                    .as_ref()
+                    .context("WPS prefix cache missing after initialization")?
+                    .as_slice()
             };
             let (ps_allowed_slice, ps_allowed_cnt_slice) = if masked_mode {
-                let mask_slice_ref = mask_slice.expect("mask slice present");
+                let mask_slice_ref = mask_slice
+                    .context("masked WPS aggregate reduction requires a blacklist mask slice")?;
                 if prefix_allowed_cache.is_none() {
                     let (pa, cnt) = build_allowed_prefix(&wps_values, mask_slice_ref);
                     prefix_allowed_cache = Some(pa);
@@ -1076,21 +1106,20 @@ pub fn wps_for_tile(
                     let bin_start = bin_index * window_bp;
                     let bin_end = (bin_index + 1) * window_bp;
 
-                    let (local_start_idx, local_end_idx, clipped_start, clipped_end) =
-                        match clip_window_to_core(
-                            bin_start,
-                            bin_end,
-                            tile.core_start(),
-                            tile.core_end(),
-                            dilated_start_abs,
-                        ) {
-                            Some(v) => v,
-                            None => continue,
-                        };
+                    let local_overlap = match clip_window_to_core_and_localize(
+                        bin_start,
+                        bin_end,
+                        tile.core_start(),
+                        tile.core_end(),
+                        dilated_start_abs,
+                    )? {
+                        Some(v) => v,
+                        None => continue,
+                    };
 
                     let (sum, allowed, blacklisted) = wps_sum_and_counts(
-                        local_start_idx,
-                        local_end_idx,
+                        local_overlap.local_start_idx,
+                        local_overlap.local_end_idx,
                         masked_mode,
                         ps_all_slice,
                         ps_allowed_slice,
@@ -1098,7 +1127,7 @@ pub fn wps_for_tile(
                         mask_slice,
                     );
 
-                    let unmasked_span_bp = (clipped_end - clipped_start) as u64;
+                    let unmasked_span_bp = local_overlap.clipped_abs_interval.len();
                     let value =
                         finalize_value(sum, allowed, unmasked_span_bp, masked_mode, &action);
                     let value = round_to(value, decimals);
@@ -1106,8 +1135,8 @@ pub fn wps_for_tile(
                     write_final_row(
                         &mut finals_writer,
                         &tile.chr,
-                        clipped_start,
-                        clipped_end,
+                        local_overlap.clipped_abs_interval.start(),
+                        local_overlap.clipped_abs_interval.end(),
                         value,
                         blacklisted,
                         decimals,
@@ -1123,21 +1152,20 @@ pub fn wps_for_tile(
                     let bin_start = bin_index * window_bp;
                     let bin_end = (bin_index + 1) * window_bp;
 
-                    let (local_start_idx, local_end_idx, _clipped_start, _clipped_end) =
-                        match clip_window_to_core(
-                            bin_start,
-                            bin_end,
-                            tile.core_start(),
-                            tile.core_end(),
-                            dilated_start_abs,
-                        ) {
-                            Some(v) => v,
-                            None => continue,
-                        };
+                    let local_overlap = match clip_window_to_core_and_localize(
+                        bin_start,
+                        bin_end,
+                        tile.core_start(),
+                        tile.core_end(),
+                        dilated_start_abs,
+                    )? {
+                        Some(v) => v,
+                        None => continue,
+                    };
 
                     let (sum, allowed, blacklisted) = wps_sum_and_counts(
-                        local_start_idx,
-                        local_end_idx,
+                        local_overlap.local_start_idx,
+                        local_overlap.local_end_idx,
                         masked_mode,
                         ps_all_slice,
                         ps_allowed_slice,
@@ -1330,22 +1358,36 @@ fn wps_sum_and_counts(
     (allowed_sum, allowed_count, blacklisted_positions)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CoreClip {
+    // Inclusive start index in dilated tile-local coordinates
+    local_start_idx: usize,
+    // Exclusive end index in dilated tile-local coordinates
+    local_end_idx: usize,
+    // Absolute interval after clipping the requested window to the tile core
+    clipped_abs_interval: Interval<u64>,
+}
+
 #[inline]
-fn clip_window_to_core(
+fn clip_window_to_core_and_localize(
     abs_start: u64,
     abs_end: u64,
     core_start: u32,
     core_end: u32,
     dilated_start: u32,
-) -> Option<(usize, usize, u64, u64)> {
+) -> Result<Option<CoreClip>> {
     let core_start_u64 = core_start as u64;
     let core_end_u64 = core_end as u64;
     let start = abs_start.max(core_start_u64);
     let end = abs_end.min(core_end_u64);
     if start >= end {
-        return None;
+        return Ok(None);
     }
     let local_start = (start as u32 - dilated_start) as usize;
     let local_end = (end as u32 - dilated_start) as usize;
-    Some((local_start, local_end, start, end))
+    Ok(Some(CoreClip {
+        local_start_idx: local_start,
+        local_end_idx: local_end,
+        clipped_abs_interval: Interval::new(start, end)?,
+    }))
 }

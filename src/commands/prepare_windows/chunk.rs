@@ -257,7 +257,7 @@ pub fn process_and_write_chunk(
                 &mut current_order,
                 &mut current_coord_set,
             );
-            apply_cluster_labels(&mut windows, min_overlaps, cluster_coord_set);
+            apply_cluster_labels(&mut windows, min_overlaps, cluster_coord_set)?;
         }
     }
 
@@ -296,7 +296,7 @@ pub fn process_and_write_chunk(
                 &mut current_order,
                 &mut current_coord_set,
             );
-            apply_cluster_labels(&mut windows, min_overlaps, cluster_coord_set);
+            apply_cluster_labels(&mut windows, min_overlaps, cluster_coord_set)?;
         }
     }
 

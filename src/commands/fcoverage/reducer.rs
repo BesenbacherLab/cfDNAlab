@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader, Write};
 
 use crate::commands::fcoverage::tiling::finalize_value;
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
-use crate::commands::fcoverage::writers::write_final_interval_row;
+use crate::commands::fcoverage::writers::write_final_row;
 use crate::shared::formatters::round_to;
 use crate::shared::interval::{IndexedInterval, Interval};
 
@@ -312,7 +312,7 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
             &mode,
         );
         let value = round_to(value, decimals);
-        write_final_interval_row(
+        write_final_row(
             final_writer,
             chr,
             interval,
@@ -640,7 +640,7 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
             &mode,
         );
         let value = round_to(value, decimals);
-        write_final_interval_row(
+        write_final_row(
             out,
             chr,
             interval,

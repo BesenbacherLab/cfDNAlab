@@ -1,3 +1,4 @@
+use crate::shared::io::dot_join;
 use crate::shared::kmers::kmer_codec::KmerSpec;
 use crate::shared::kmers::process_counts::DecodedCounts;
 use anyhow::{Context, Result};
@@ -43,7 +44,7 @@ pub fn write_decoded_counts_matrix(
                 ref_bins[idx] = bin.clone();
             }
         }
-        let tag = format!("{}.k{}", prefix, k);
+        let tag = dot_join(&[prefix, &format!("k{k}")]);
         if save_sparse {
             write_category_sparse(&ref_bins, &motifs_by_k[&k], &tag, output_dir)?;
         } else {

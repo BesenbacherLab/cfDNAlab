@@ -198,7 +198,7 @@ pub fn create_overlapping_bins_by_size(
 ///   `true` when the intervals intersect.
 #[inline]
 pub fn half_open_intervals_overlap(interval_a: Interval<u64>, interval_b: Interval<u64>) -> bool {
-    interval_b.end() > interval_a.start() && interval_b.start() < interval_a.end()
+    interval_a.intersects(interval_b)
 }
 
 /// Find the windows hit by one queried interval.
@@ -343,7 +343,7 @@ pub fn find_overlapping_windows(
 #[inline]
 pub fn fraction_overlap_of_a(interval_a: Interval<u64>, interval_b: Interval<u64>) -> f32 {
     let overlap_bp = overlap_len(interval_a, interval_b) as f64;
-    let interval_a_len = (interval_a.end() - interval_a.start()) as f64;
+    let interval_a_len = interval_a.len() as f64;
     (overlap_bp / interval_a_len) as f32
 }
 
@@ -365,7 +365,8 @@ pub fn fraction_overlap_of_a(interval_a: Interval<u64>, interval_b: Interval<u64
 ///   Number of shared bases.
 #[inline]
 pub fn overlap_len(interval_a: Interval<u64>, interval_b: Interval<u64>) -> u64 {
-    let start = interval_a.start().max(interval_b.start());
-    let end = interval_a.end().min(interval_b.end());
-    end.saturating_sub(start)
+    interval_a
+        .intersection(interval_b)
+        .map(|interval| interval.len())
+        .unwrap_or(0)
 }

@@ -167,7 +167,7 @@ pub fn stream_crossing_files(
             for idx in finished_idxs {
                 if let Some(counts) = window_parts.remove(&idx) {
                     // Scale and accumulate completed window before dropping it
-                    if let Some(scaled) = process_window(counts, opt, Some(avg_window_span))? {
+                    if let Some(scaled) = process_window(counts, opt, avg_window_span)? {
                         total_sum.merge_from(&scaled)?;
                         total_weight += 1;
                     }
@@ -180,7 +180,7 @@ pub fn stream_crossing_files(
 
     for counts in window_parts.into_values() {
         // Flush any windows that persisted through every tile
-        if let Some(scaled) = process_window(counts, opt, Some(avg_window_span))? {
+        if let Some(scaled) = process_window(counts, opt, avg_window_span)? {
             total_sum.merge_from(&scaled)?;
             total_weight += 1;
         }

@@ -535,8 +535,8 @@ fn process_tile(
     };
 
     // Adapt the fetch coordinates to the present windows (*in windowed mode!*)
-    let Some((fetch_from, fetch_to)) =
-        fetch_span_for_tile(tile, tile_window_span, windows_chr, window_opt, chrom_len)
+    let Some(fetch_span) =
+        fetch_span_for_tile(tile, tile_window_span, windows_chr, window_opt, chrom_len)?
     else {
         // Skip tiles with no relevant windows
         return Ok(TileOutputs {
@@ -544,6 +544,7 @@ fn process_tile(
             global_counts: None,
         });
     };
+    let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
 
     reader
         .fetch((tile.tid, fetch_from, fetch_to))
@@ -604,9 +605,10 @@ fn process_tile(
 
         // BED mode: reuse the precomputed span but "drop" windows ending before the core start
         WindowSpec::Bed(_) => {
-            let span = tile_window_span
-                .expect("tile_window_span missing for BED windows despite fetch span");
-            let wchr = windows_chr.expect("windows missing for BED mode");
+            let span = tile_window_span.context(
+                "BED length counting requires a cached tile window span after fetch-span selection",
+            )?;
+            let wchr = windows_chr.context("BED length counting requires loaded windows")?;
             let span_len = span.last_idx_exclusive.saturating_sub(span.first_idx);
             let mut counts = Vec::with_capacity(span_len);
             for idx in span.first_idx..span.last_idx_exclusive {

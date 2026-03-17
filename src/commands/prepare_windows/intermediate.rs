@@ -17,12 +17,21 @@ pub struct IntermediateWindow {
 }
 
 impl IntermediateWindow {
-    pub fn new(chrom: String, start: u32, end: u32, label_tuples: Vec<LabelTuple>) -> Result<Self> {
-        Ok(Self {
+    pub fn new(chrom: String, interval: Interval<u32>, label_tuples: Vec<LabelTuple>) -> Self {
+        Self {
             chrom,
-            interval: Interval::new(start, end)?,
+            interval,
             label_tuples,
-        })
+        }
+    }
+
+    pub fn from_coords(
+        chrom: String,
+        start: u32,
+        end: u32,
+        label_tuples: Vec<LabelTuple>,
+    ) -> Result<Self> {
+        Ok(Self::new(chrom, Interval::new(start, end)?, label_tuples))
     }
 
     #[inline]
@@ -116,7 +125,7 @@ pub fn parse_intermediate_line(line: &str, separator: char) -> Result<Intermedia
     let tuples_raw = fields.next().context("Missing label tuples field")?.trim();
     let label_tuples = parse_label_tuples(tuples_raw)?;
 
-    IntermediateWindow::new(chrom, start, end, label_tuples)
+    IntermediateWindow::from_coords(chrom, start, end, label_tuples)
 }
 
 #[inline]

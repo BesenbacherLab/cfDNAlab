@@ -3,8 +3,9 @@ use crate::commands::fcoverage::reducer::{
     reduce_aggregates_by_size_with_cross_index_for_chr, reduce_bed_with_cross_index_for_chr,
 };
 use crate::commands::fcoverage::tiling::{
-    adapt_fetch_to_extreme_windows, concat_aligned_size_tile_finals, coverage_sum_and_counts,
-    finalize_value, intersect_abs_with_core_to_local, merge_positional_tiles,
+    adapt_fetch_to_extreme_windows, clip_interval_to_core_and_localize,
+    concat_aligned_size_tile_finals, coverage_sum_and_counts, finalize_value,
+    merge_positional_tiles,
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::{
@@ -254,116 +255,122 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
 
-            // Decide tile mode and file name
-            let (action_prefix, extensions) = if windowed {
-                match opt.per_window {
-                    CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
-                        (positional_prefix, "tsv.zst")
-                    }
-                    CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
-                        (positional_prefix, "bedgraph.zst")
-                    }
-                    CoverageWindowAction::Average | CoverageWindowAction::Total => {
-                        (partials_prefix, "tsv.zst")
-                    }
-                }
+            let counter = if matches!(window_opt, WindowSpec::Bed(_))
+                && windows_chr.map_or(true, |windows| windows.is_empty())
+            {
+                FCoverageCounters::default()
             } else {
-                // Whole positional coverage
-                (positional_prefix, "bedgraph.zst")
-            };
+                // Decide tile mode and file name
+                let (action_prefix, extensions) = if windowed {
+                    match opt.per_window {
+                        CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
+                            (positional_prefix, "tsv.zst")
+                        }
+                        CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
+                            (positional_prefix, "bedgraph.zst")
+                        }
+                        CoverageWindowAction::Average | CoverageWindowAction::Total => {
+                            (partials_prefix, "tsv.zst")
+                        }
+                    }
+                } else {
+                    // Whole positional coverage
+                    (positional_prefix, "bedgraph.zst")
+                };
 
-            let out_path = temp_dir.join(format!(
-                "{prefix}.{chr}.{idx}.{extensions}",
-                prefix = action_prefix,
-                chr = tile.chr,
-                idx = tile.index
-            ));
+                let out_path = temp_dir.join(format!(
+                    "{prefix}.{chr}.{idx}.{extensions}",
+                    prefix = action_prefix,
+                    chr = tile.chr,
+                    idx = tile.index
+                ));
 
-            // Windowed tmp outputs for faster reducer later on
-            let partials_out = temp_dir.join(format!(
-                "{prefix}.{chr}.{idx}.{extensions}",
-                prefix = partials_prefix,
-                chr = tile.chr,
-                idx = tile.index
-            ));
-            let cross_idx_out = temp_dir.join(format!(
-                "{prefix}.cross.{chr}.{idx}.cross.zst", // Needs this extension!
-                prefix = partials_prefix,
-                chr = tile.chr,
-                idx = tile.index
-            ));
-            let finals_out = temp_dir.join(format!(
-                "{prefix}.{chr}.{idx}.{extensions}",
-                prefix = finals_prefix,
-                chr = tile.chr,
-                idx = tile.index
-            ));
+                // Windowed tmp outputs for faster reducer later on
+                let partials_out = temp_dir.join(format!(
+                    "{prefix}.{chr}.{idx}.{extensions}",
+                    prefix = partials_prefix,
+                    chr = tile.chr,
+                    idx = tile.index
+                ));
+                let cross_idx_out = temp_dir.join(format!(
+                    "{prefix}.cross.{chr}.{idx}.cross.zst", // Needs this extension!
+                    prefix = partials_prefix,
+                    chr = tile.chr,
+                    idx = tile.index
+                ));
+                let finals_out = temp_dir.join(format!(
+                    "{prefix}.{chr}.{idx}.{extensions}",
+                    prefix = finals_prefix,
+                    chr = tile.chr,
+                    idx = tile.index
+                ));
 
-            let mode = if !windowed {
-                TileMode::Positional {
-                    windows: None,
-                    out_path,
-                    indexed: false,
-                }
-            } else {
-                match (&window_opt, opt.per_window) {
-                    (WindowSpec::Bed(_), CoverageWindowAction::OnlyIncludeThesePositionsUnique) => {
-                        TileMode::Positional {
+                let mode = if !windowed {
+                    TileMode::Positional {
+                        windows: None,
+                        out_path,
+                        indexed: false,
+                    }
+                } else {
+                    match (&window_opt, opt.per_window) {
+                        (
+                            WindowSpec::Bed(_),
+                            CoverageWindowAction::OnlyIncludeThesePositionsUnique,
+                        ) => TileMode::Positional {
                             windows: windows_chr,
                             out_path,
                             indexed: false,
-                        }
-                    }
-                    (
-                        WindowSpec::Bed(_),
-                        CoverageWindowAction::OnlyIncludeThesePositionsIndexed,
-                    ) => TileMode::Positional {
-                        windows: windows_chr,
-                        out_path,
-                        indexed: true,
-                    },
-                    (
-                        WindowSpec::Bed(_),
-                        CoverageWindowAction::Average | CoverageWindowAction::Total,
-                    ) => {
-                        let wchr = windows_chr.expect("windows required for aggregates");
-                        TileMode::AggregatesByBed {
-                            windows: wchr,
+                        },
+                        (
+                            WindowSpec::Bed(_),
+                            CoverageWindowAction::OnlyIncludeThesePositionsIndexed,
+                        ) => TileMode::Positional {
+                            windows: windows_chr,
+                            out_path,
+                            indexed: true,
+                        },
+                        (
+                            WindowSpec::Bed(_),
+                            CoverageWindowAction::Average | CoverageWindowAction::Total,
+                        ) => TileMode::AggregatesByBed {
+                            windows: windows_chr.context(
+                                "BED aggregate tile reached processing without any windows",
+                            )?,
                             masked,
                             partials_out,
                             cross_idx_out,
+                        },
+                        (
+                            WindowSpec::Size(size),
+                            CoverageWindowAction::Average | CoverageWindowAction::Total,
+                        ) => TileMode::AggregatesBySize {
+                            window_bp: *size,
+                            masked,
+                            finals_out,
+                            partials_out,
+                            cross_idx_out,
+                            guaranteed_aligned: tile_and_window_boundaries_align,
+                        },
+                        _ => {
+                            anyhow::bail!(
+                                "Got illegal combination of --by-size/--by-bed and --per-window."
+                            )
                         }
                     }
-                    (
-                        WindowSpec::Size(size),
-                        CoverageWindowAction::Average | CoverageWindowAction::Total,
-                    ) => TileMode::AggregatesBySize {
-                        window_bp: *size,
-                        masked,
-                        finals_out,
-                        partials_out,
-                        cross_idx_out,
-                        guaranteed_aligned: tile_and_window_boundaries_align,
-                    },
-                    _ => {
-                        anyhow::bail!(
-                            "Got illegal combination of --by-size/--by-bed and --per-window."
-                        )
-                    }
-                }
-            };
+                };
 
-            let counter = process_tile(
-                opt,
-                tile,
-                tile_span.as_ref(),
-                blacklist_chr,
-                scaling_chr,
-                gc_corrector.clone(), // Quite small memory footprint
-                gc_tag,
-                mode,
-                decimals_to_use,
-            )?;
+                process_tile(
+                    opt,
+                    tile,
+                    tile_span.as_ref(),
+                    blacklist_chr,
+                    scaling_chr,
+                    gc_corrector.clone(), // Quite small memory footprint
+                    gc_tag,
+                    mode,
+                    decimals_to_use,
+                )?
+            };
             pb.inc(1);
             Ok(counter)
         })
@@ -451,7 +458,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
 
                         let win_map = windows_map
                             .as_ref()
-                            .expect("windows_map present for --by-bed");
+                            .context("BED aggregate reduction requires loaded windows")?;
                         for chr in &chromosomes {
                             if let Some(wchr) = win_map.get(chr) {
                                 reduce_bed_with_cross_index_for_chr(
@@ -626,15 +633,17 @@ fn process_tile(
 
     // Adapt the fetch coordinates to the present windows (*in windowed mode!*)
     // When no windows are present, skip this tile
-    let Some((fetch_from, fetch_to)) = adapt_fetch_to_extreme_windows(
+    let Some(fetch_span) = adapt_fetch_to_extreme_windows(
         tile,
         tile_window_span,
         &mode,
         chrom_len as u32,
         opt.fragment_lengths.max_fragment_length as u64,
-    ) else {
+    )?
+    else {
         return Ok(counter);
     };
+    let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
 
     reader
         .fetch((tile.tid, fetch_from, fetch_to))
@@ -680,8 +689,9 @@ fn process_tile(
     // Iterate fragments and add coverage
     // Separate branches for with/without GC correction
     if let Some(gc_corrector) = gc_corrector_opt {
-        let gc_prefixes =
-            gc_prefixes_opt.expect("When GC correction is enabled, the gc_prefixes should be set");
+        let gc_prefixes = gc_prefixes_opt
+            .as_ref()
+            .context("GC prefix sums missing despite GC correction being enabled")?;
         let fetch_start = tile.fetch_start();
         let fetch_end = tile.fetch_end();
         for fragment_res in iter.by_ref() {
@@ -805,7 +815,9 @@ fn process_tile(
             // Prepare compressed writer (zstd) for this tile
             let mut w = open_zstd_auto_writer(&out_path, 3, None)?;
 
-            let cov = cp.coverage().expect("coverage present");
+            let cov = cp
+                .coverage()
+                .context("tile coverage missing after finalization")?;
             let mask = cp.blacklist_mask();
 
             // Write tile data to disk
@@ -832,13 +844,13 @@ fn process_tile(
                         // Keep the original window index from the BED input so the
                         // indexed positional output and downstream reducers stay aligned
                         let original_idx = window.idx();
+                        let core_interval =
+                            Interval::new(tile.core_start() as u64, tile.core_end() as u64)?;
                         let local_overlap = if let Some(local_overlap) =
-                            intersect_abs_with_core_to_local(
-                                window_start,
-                                window_end,
-                                tile.core_start(),
-                                tile.core_end(),
-                            ) {
+                            clip_interval_to_core_and_localize(
+                                Interval::new(window_start, window_end)?,
+                                core_interval,
+                            )? {
                             local_overlap
                         } else {
                             continue;
@@ -909,12 +921,12 @@ fn process_tile(
                 let window_end_abs = window.end();
                 // This is the original window index, not just the current loop position
                 let idx = window.idx();
-                let local_overlap = if let Some(local_overlap) = intersect_abs_with_core_to_local(
-                    window_start_abs,
-                    window_end_abs,
-                    tile.core_start(),
-                    tile.core_end(),
-                ) {
+                let core_interval =
+                    Interval::new(tile.core_start() as u64, tile.core_end() as u64)?;
+                let local_overlap = if let Some(local_overlap) = clip_interval_to_core_and_localize(
+                    Interval::new(window_start_abs, window_end_abs)?,
+                    core_interval,
+                )? {
                     local_overlap
                 } else {
                     continue;
@@ -989,13 +1001,13 @@ fn process_tile(
                     let bin_end = (bin_idx + 1) * window_bp;
 
                     // Intersect with core (alignment ensures this equals the bin for non-terminal tiles).
+                    let core_interval =
+                        Interval::new(tile.core_start() as u64, tile.core_end() as u64)?;
                     let local_overlap = if let Some(local_overlap) =
-                        intersect_abs_with_core_to_local(
-                            bin_start,
-                            bin_end,
-                            tile.core_start(),
-                            tile.core_end(),
-                        ) {
+                        clip_interval_to_core_and_localize(
+                            Interval::new(bin_start, bin_end)?,
+                            core_interval,
+                        )? {
                         local_overlap
                     } else {
                         continue;
@@ -1024,8 +1036,7 @@ fn process_tile(
                     write_final_row(
                         &mut w_fin,
                         &tile.chr,
-                        bin_start,
-                        bin_end.min(core_end_abs),
+                        Interval::new(bin_start, bin_end.min(core_end_abs))?,
                         value,
                         blacklisted,
                         decimals,
@@ -1042,13 +1053,13 @@ fn process_tile(
                     let bin_end = (bin_idx + 1) * window_bp;
 
                     // Intersect with core (alignment ensures this equals the bin for non-terminal tiles).
+                    let core_interval =
+                        Interval::new(tile.core_start() as u64, tile.core_end() as u64)?;
                     let local_overlap = if let Some(local_overlap) =
-                        intersect_abs_with_core_to_local(
-                            bin_start,
-                            bin_end,
-                            tile.core_start(),
-                            tile.core_end(),
-                        ) {
+                        clip_interval_to_core_and_localize(
+                            Interval::new(bin_start, bin_end)?,
+                            core_interval,
+                        )? {
                         local_overlap
                     } else {
                         continue;
@@ -1123,10 +1134,7 @@ fn add_clipped_blacklist_to_cp(
                     // Convert to tile‐local coordinates
                     let local_start = (overlap_start_abs as u32) - tile.core_start();
                     let local_end = (overlap_end_abs as u32) - tile.core_start();
-                    clipped.push(
-                        Interval::new(local_start as u64, local_end as u64)
-                            .expect("clipped blacklist interval must stay non-empty"),
-                    );
+                    clipped.push(Interval::new(local_start as u64, local_end as u64)?);
                 }
                 i += 1;
             }

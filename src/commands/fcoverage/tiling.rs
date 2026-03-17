@@ -166,14 +166,14 @@ pub fn concat_aligned_size_tile_finals(
 ///   fragments that extend outside the window itself can still be reconstructed.
 ///
 /// # Returns
-/// `Some((start, end))` giving the adjusted fetch coordinates, or `None` when no fetch is needed.
+/// Checked absolute fetch interval, or `None` when no fetch is needed.
 pub fn adapt_fetch_to_extreme_windows(
     tile: &Tile,
     tile_span: Option<&TileWindowSpan>,
     mode: &TileMode<'_>,
     chrom_len: u32,
     halo_bp: u64,
-) -> Option<(i64, i64)> {
+) -> Result<Option<Interval<u64>>> {
     let chrom_len_u64 = chrom_len as u64;
 
     // Decide the fetch interval based on mode/windows.
@@ -181,37 +181,53 @@ pub fn adapt_fetch_to_extreme_windows(
     // For windowed runs: restrict to the overlapping window span widened by a fragment-sized halo,
     // then intersect it with the tile’s existing fetch band.
     match mode {
-        TileMode::Positional { windows: None, .. } => {
-            Some((tile.fetch_start() as i64, tile.fetch_end() as i64))
-        }
+        TileMode::Positional { windows: None, .. } => Ok(Some(Interval::new(
+            tile.fetch_start() as u64,
+            tile.fetch_end() as u64,
+        )?)),
         TileMode::Positional {
             windows: Some(wchr),
             ..
         } => {
-            let window_span = tile_window_min_max(wchr, tile, tile_span)?;
-            let fetch_span = clamp_fetch_to_window_span(tile, chrom_len_u64, window_span, halo_bp)?;
-            Some((fetch_span.start() as i64, fetch_span.end() as i64))
+            let Some(window_span) = tile_window_min_max(wchr, tile, tile_span)? else {
+                return Ok(None);
+            };
+            Ok(clamp_fetch_to_window_span(
+                tile,
+                chrom_len_u64,
+                window_span,
+                halo_bp,
+            )?)
         }
         TileMode::AggregatesByBed { windows: wchr, .. } => {
-            let window_span = tile_window_min_max(wchr, tile, tile_span)?;
-            let fetch_span = clamp_fetch_to_window_span(tile, chrom_len_u64, window_span, halo_bp)?;
-            Some((fetch_span.start() as i64, fetch_span.end() as i64))
+            let Some(window_span) = tile_window_min_max(wchr, tile, tile_span)? else {
+                return Ok(None);
+            };
+            Ok(clamp_fetch_to_window_span(
+                tile,
+                chrom_len_u64,
+                window_span,
+                halo_bp,
+            )?)
         }
         TileMode::AggregatesBySize { window_bp, .. } => {
             let core_start = tile.core_start() as u64;
             let core_end = tile.core_end() as u64;
             if core_start >= chrom_len_u64 {
-                return None;
+                return Ok(None);
             }
             let window_size_bp = *window_bp;
             let first_window_idx = core_start / window_size_bp;
             let last_window_idx = (core_end.saturating_sub(1)) / window_size_bp;
             let min_window_start = first_window_idx * window_size_bp;
             let max_window_end = ((last_window_idx + 1) * window_size_bp).min(chrom_len_u64);
-            let window_span = Interval::new(min_window_start, max_window_end)
-                .expect("size-based window span should be non-empty");
-            let fetch_span = clamp_fetch_to_window_span(tile, chrom_len_u64, window_span, halo_bp)?;
-            Some((fetch_span.start() as i64, fetch_span.end() as i64))
+            let window_span = Interval::new(min_window_start, max_window_end)?;
+            Ok(clamp_fetch_to_window_span(
+                tile,
+                chrom_len_u64,
+                window_span,
+                halo_bp,
+            )?)
         }
     }
 }
@@ -333,37 +349,30 @@ pub struct CoreClip {
     pub clipped_abs_interval: Interval<u64>,
 }
 
-/// Clips an absolute interval to the tile core and converts it to local indices.
+/// Clips an absolute interval to the tile core and converts the overlap to core-local indices.
 ///
 /// The helper returns both tile-core local indices and the clipped absolute interval so callers
 /// can reuse whichever representation is needed.
 ///
 /// # Parameters
-/// - `abs_start`: Inclusive absolute start of the interval.
-/// - `abs_end`: Exclusive absolute end of the interval.
-/// - `core_start`: Inclusive absolute start of the tile core.
-/// - `core_end`: Exclusive absolute end of the tile core.
+/// - `absolute_interval`: Absolute interval to clip against the tile core.
+/// - `core_interval`: Absolute tile-core interval used as the clipping target.
 ///
 /// # Returns
-/// `Some(CoreClip)` when the intervals intersect, otherwise `None`.
+/// Checked clipped overlap when the intervals intersect, otherwise `None`.
 #[inline]
-pub fn intersect_abs_with_core_to_local(
-    abs_start: u64,
-    abs_end: u64,
-    core_start: u32,
-    core_end: u32,
-) -> Option<CoreClip> {
-    let clipped_start_abs = (abs_start as u32).max(core_start);
-    let clipped_end_abs = (abs_end as u32).min(core_end);
-    if clipped_end_abs <= clipped_start_abs {
-        return None;
-    }
-    let local_start_idx = (clipped_start_abs - core_start) as usize;
-    let local_end_idx = (clipped_end_abs - core_start) as usize;
-    Some(CoreClip {
+pub fn clip_interval_to_core_and_localize(
+    absolute_interval: Interval<u64>,
+    core_interval: Interval<u64>,
+) -> Result<Option<CoreClip>> {
+    let Some(clipped_abs_interval) = absolute_interval.intersection(core_interval) else {
+        return Ok(None);
+    };
+    let local_start_idx = (clipped_abs_interval.start() - core_interval.start()) as usize;
+    let local_end_idx = (clipped_abs_interval.end() - core_interval.start()) as usize;
+    Ok(Some(CoreClip {
         local_start_idx,
         local_end_idx,
-        clipped_abs_interval: Interval::new(clipped_start_abs as u64, clipped_end_abs as u64)
-            .expect("core-clipped interval should remain non-empty"),
-    })
+        clipped_abs_interval,
+    }))
 }

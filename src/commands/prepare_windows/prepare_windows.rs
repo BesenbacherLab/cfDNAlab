@@ -29,6 +29,7 @@ use crate::commands::prepare_windows::resizers::apply_size_transform;
 use crate::commands::prepare_windows::writers::{ChromTempWriter, finalize_temp_writers};
 use crate::shared::bed::{detect_header, line_looks_like_header};
 use crate::shared::blacklist::{is_blacklisted, load_blacklists};
+use crate::shared::interval::Interval;
 use crate::shared::io::open_text_reader;
 use crate::shared::reference::load_chrom_sizes;
 use crate::shared::thread_pool::init_global_pool;
@@ -53,10 +54,8 @@ use std::{env, fs, mem};
 #[derive(Debug, Clone)]
 pub struct Window {
     pub chrom: Arc<str>,
-    pub original_start: u32,
-    pub original_end: u32,
-    pub resized_start: u32,
-    pub resized_end: u32,
+    pub original_interval: Interval<u32>,
+    pub resized_interval: Interval<u32>,
     pub merged: bool,
     pub label_tuples: Vec<LabelTuple>, // Atomic label tuples for this window
     pub group_key: String,             // Grouping key for merge and minimum-distance filtering
@@ -64,19 +63,60 @@ pub struct Window {
 }
 
 impl Window {
+    pub fn from_bounds(
+        chrom: Arc<str>,
+        original_start: u32,
+        original_end: u32,
+        resized_start: u32,
+        resized_end: u32,
+        label_tuples: Vec<LabelTuple>,
+        group_key: String,
+        score: Option<f32>,
+    ) -> crate::Result<Self> {
+        Ok(Self {
+            chrom,
+            original_interval: Interval::new(original_start, original_end)?,
+            resized_interval: Interval::new(resized_start, resized_end)?,
+            merged: false,
+            label_tuples,
+            group_key,
+            score,
+        })
+    }
+
+    #[inline]
+    pub fn original_start(&self) -> u32 {
+        self.original_interval.start()
+    }
+
+    #[inline]
+    pub fn original_end(&self) -> u32 {
+        self.original_interval.end()
+    }
+
+    #[inline]
+    pub fn resized_start(&self) -> u32 {
+        self.resized_interval.start()
+    }
+
+    #[inline]
+    pub fn resized_end(&self) -> u32 {
+        self.resized_interval.end()
+    }
+
     #[inline]
     pub fn start_for(&self, coord_set: CoordinateSet) -> u32 {
         match coord_set {
-            CoordinateSet::Original => self.original_start,
-            CoordinateSet::Resized => self.resized_start,
+            CoordinateSet::Original => self.original_start(),
+            CoordinateSet::Resized => self.resized_start(),
         }
     }
 
     #[inline]
     pub fn end_for(&self, coord_set: CoordinateSet) -> u32 {
         match coord_set {
-            CoordinateSet::Original => self.original_end,
-            CoordinateSet::Resized => self.resized_end,
+            CoordinateSet::Original => self.original_end(),
+            CoordinateSet::Resized => self.resized_end(),
         }
     }
 
@@ -84,12 +124,33 @@ impl Window {
     pub fn length_for(&self, coord_set: CoordinateSet) -> u32 {
         self.end_for(coord_set) - self.start_for(coord_set)
     }
+
+    #[inline]
+    pub fn set_resized_interval(&mut self, interval: Interval<u32>) {
+        self.resized_interval = interval;
+    }
+
+    #[inline]
+    pub fn set_resized_bounds(&mut self, start: u32, end: u32) -> crate::Result<()> {
+        self.set_resized_interval(Interval::new(start, end)?);
+        Ok(())
+    }
+
+    #[inline]
+    pub fn expand_intervals_to_include(&mut self, other: &Window) {
+        self.original_interval = self
+            .original_interval
+            .expand_to_include(other.original_interval);
+        self.resized_interval = self
+            .resized_interval
+            .expand_to_include(other.resized_interval);
+    }
 }
 
 /// Streaming cursor for blacklist interval sweeps.
 #[derive(Debug, Default)]
 pub struct BlacklistCursor {
-    pub intervals: Vec<(u64, u64)>,
+    pub intervals: Vec<Interval<u64>>,
     pub pre_cursor: usize,  // Early filtering
     pub post_cursor: usize, // Post-merge filtering
 }
@@ -553,8 +614,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         // Resized coordinates are computed per record even when merging uses originals
         // Transform to resized coordinates
         let chrom_size = current_chrom_size;
-        let Some((resized_start, resized_end)) = apply_size_transform(start, end, chrom_size, cfg)?
-        else {
+        let Some(resized_interval) = apply_size_transform(start, end, chrom_size, cfg)? else {
             continue;
         };
 
@@ -590,17 +650,16 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
         };
 
         // Accumulate into batch
-        current_batch.push(Window {
-            chrom: chrom_arc,
-            original_start: start,
-            original_end: end,
-            resized_start,
-            resized_end,
-            merged: false,
+        current_batch.push(Window::from_bounds(
+            chrom_arc,
+            start,
+            end,
+            resized_interval.start(),
+            resized_interval.end(),
             label_tuples,
-            group_key: input_group,
+            input_group,
             score,
-        });
+        )?);
 
         // If batch exceeds chunk size, process and write the processed region
         if current_batch.len() >= chunk_size {

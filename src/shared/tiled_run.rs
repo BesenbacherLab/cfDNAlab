@@ -1,5 +1,6 @@
 use crate::shared::bam::Contigs;
 use crate::shared::interval::{IndexedInterval, Interval};
+use crate::shared::io::dot_join;
 use rand::{Rng, distr::Alphanumeric};
 
 /// A processing tile for one chromosome
@@ -23,7 +24,7 @@ impl Tile {
         core: Interval<u32>,
         fetch: Interval<u32>,
     ) -> crate::Result<Self> {
-        if fetch.start() > core.start() || fetch.end() < core.end() {
+        if !fetch.contains_interval(core) {
             return Err(crate::Error::TileFetchDoesNotCoverCore);
         }
         Ok(Self {
@@ -311,14 +312,17 @@ pub fn overlapping_windows_for_tile<'a>(
 /// - `span`: Optional cached span for fast window access.
 ///
 /// # Returns
-/// `Some((min_start, max_end))` when at least one window overlaps; otherwise `None`.
+/// `Some(interval)` spanning the leftmost and rightmost overlapping window when at
+/// least one window overlaps, otherwise `None`.
 pub fn tile_window_min_max(
     windows: &[IndexedInterval<u64>],
     tile: &Tile,
     span: Option<&TileWindowSpan>,
-) -> Option<(u64, u64)> {
+) -> crate::Result<Option<Interval<u64>>> {
     let mut iter = overlapping_windows_for_tile(windows, tile, span);
-    let first = iter.next()?;
+    let Some(first) = iter.next() else {
+        return Ok(None);
+    };
     let mut min_start = first.start();
     let mut max_end = first.end();
 
@@ -331,7 +335,7 @@ pub fn tile_window_min_max(
         }
     }
 
-    Some((min_start, max_end))
+    Ok(Some(Interval::new(min_start, max_end)?))
 }
 
 /// Tightens a tile's fetch bounds to the observed window span while respecting halos.
@@ -343,24 +347,21 @@ pub fn tile_window_min_max(
 /// # Parameters
 /// - `tile`: Tile providing the original fetch and core coordinates.
 /// - `chrom_len`: Total length of the chromosome in bases.
-/// - `min_ws`: Minimum window start observed among overlaps.
-/// - `max_we`: Maximum window end observed among overlaps.
+/// - `window_span`: Minimum-to-maximum interval covering the overlapping windows.
 /// - `halo_bp`: Extra bases to keep on both sides of the observed window span before clamping
 ///   back onto the tile fetch interval.
 ///
 /// # Returns
-/// `Some((start, end))` as absolute fetch limits when a non-empty span remains; otherwise `None`.
+/// `Some(interval)` as absolute fetch limits when a non-empty span remains, otherwise `None`.
 #[inline]
 pub fn clamp_fetch_to_window_span(
     tile: &Tile,
     chrom_len: u64,
-    min_ws: u64,
-    max_we: u64,
+    window_span: Interval<u64>,
     halo_bp: u64,
-) -> Option<(i64, i64)> {
-    if min_ws >= max_we {
-        return None;
-    }
+) -> crate::Result<Option<Interval<u64>>> {
+    let min_ws = window_span.start();
+    let max_we = window_span.end();
 
     let tile_left_halo = (tile.core_start() as u64).saturating_sub(tile.fetch_start() as u64);
     let tile_right_halo = (tile.fetch_end() as u64).saturating_sub(tile.core_end() as u64);
@@ -373,7 +374,11 @@ pub fn clamp_fetch_to_window_span(
     let start_u64 = narrowed_start.max(tile.fetch_start() as u64);
     let end_u64 = narrowed_end.min(tile.fetch_end() as u64).min(chrom_len);
 
-    (start_u64 < end_u64).then_some((start_u64 as i64, end_u64 as i64))
+    if start_u64 >= end_u64 {
+        return Ok(None);
+    }
+
+    Ok(Some(Interval::new(start_u64, end_u64)?))
 }
 
 /// Builds non-overlapping core tiles and their fetch halos for the requested contigs.
@@ -566,7 +571,7 @@ pub fn make_temp_dir(
     // Try a few times just in case
     for _ in 0..8 {
         let suffix = random_suffix(10);
-        let p = base_out.join(format!("tmp.{prefix}.{suffix}"));
+        let p = base_out.join(dot_join(&["tmp", prefix, &suffix]));
         if !p.exists() {
             std::fs::create_dir_all(&p)?;
             return Ok(p);
@@ -574,7 +579,7 @@ pub fn make_temp_dir(
     }
     // Fallback: timestamped
     let ts = chrono::Utc::now().timestamp_millis();
-    let p = base_out.join(format!("tmp.{prefix}.{ts}"));
+    let p = base_out.join(dot_join(&["tmp", prefix, &ts.to_string()]));
     std::fs::create_dir_all(&p)?;
     Ok(p)
 }

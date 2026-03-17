@@ -5,6 +5,7 @@ use crate::{
         fragment_kmers::{positions::PositionGroup, windows::WindowContext},
     },
     shared::{
+        interval::Interval,
         kmers::{
             kmer_codec::{Kmer, KmerOrientation, KmerSpec},
             process_counts::{DecodedCounts, split_and_decode_counts},
@@ -127,27 +128,34 @@ pub struct TileResult {
 }
 
 /// Determine the genomic span to request from the BAM reader for a tile.
+///
+/// Returns a checked absolute fetch interval, or `None` when the tile does not overlap any
+/// relevant BED windows.
 pub fn determine_fetch_span(
     tile: &Tile,
     window_ctx: &WindowContext,
     tile_window_span: Option<&TileWindowSpan>,
     chrom_len: u64,
-) -> Option<(i64, i64)> {
+) -> Result<Option<Interval<u64>>> {
     let chrom_len_u32 = chrom_len.min(u32::MAX as u64) as u32;
     match window_ctx.spec {
-        WindowSpec::Global | WindowSpec::Size(_) => {
-            Some((tile.fetch_start() as i64, tile.fetch_end() as i64))
-        }
+        WindowSpec::Global | WindowSpec::Size(_) => Ok(Some(Interval::new(
+            tile.fetch_start() as u64,
+            tile.fetch_end() as u64,
+        )?)),
         WindowSpec::Bed(_) => {
-            let windows = window_ctx.windows_slice()?;
-            let window_span = tile_window_min_max(windows, tile, tile_window_span)?;
-            let fetch_span = clamp_fetch_to_window_span(
+            let Some(windows) = window_ctx.windows_slice() else {
+                return Ok(None);
+            };
+            let Some(window_span) = tile_window_min_max(windows, tile, tile_window_span)? else {
+                return Ok(None);
+            };
+            Ok(clamp_fetch_to_window_span(
                 tile,
                 chrom_len.min(chrom_len_u32 as u64),
                 window_span,
                 0,
-            )?;
-            Some((fetch_span.start() as i64, fetch_span.end() as i64))
+            )?)
         }
     }
 }

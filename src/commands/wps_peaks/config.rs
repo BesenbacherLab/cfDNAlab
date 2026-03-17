@@ -64,6 +64,7 @@ Peaks: Positions and stats? Just always give everything? Well, unique-positions,
 /// ## Temporary files
 ///
 /// We write temporary files to a `<output-dir>/tmp.<output-prefix>.<random>` directory to reduce memory.
+/// When no output prefix is given, the directory becomes `<output-dir>/tmp.<random>`.
 /// This directory is deleted at the end of the run. If the software is disrupted, the directory
 /// may be left behind.
 ///

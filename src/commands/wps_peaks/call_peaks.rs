@@ -1,5 +1,8 @@
 use std::cmp::Ordering;
 
+use anyhow::{Context, Result, anyhow};
+use crate::shared::interval::Interval;
+
 const MIN_LENGTH: usize = 50;
 const MAX_LENGTH: usize = 150;
 const MAX_RUN_LENGTH: usize = MAX_LENGTH * 3;
@@ -9,11 +12,69 @@ const MAX_GAP: u64 = 5;
 #[derive(Clone, Debug)]
 pub struct PeakCall {
     pub chromosome: String,
-    pub start: u64,
-    pub end: u64,
+    pub interval: Interval<u64>,
     pub peak_position: u64,
     pub height: f32,
     pub segment_id: u64,
+}
+
+impl PeakCall {
+    pub fn new(
+        chromosome: String,
+        start: u64,
+        end: u64,
+        peak_position: u64,
+        height: f32,
+        segment_id: u64,
+    ) -> Result<Self> {
+        let interval = Interval::new(start, end)?;
+        if !interval.contains_point(peak_position) {
+            return Err(anyhow!(
+                "Peak position {} must lie inside interval [{}, {})",
+                peak_position,
+                interval.start(),
+                interval.end()
+            ));
+        }
+        Ok(Self {
+            chromosome,
+            interval,
+            peak_position,
+            height,
+            segment_id,
+        })
+    }
+
+    #[inline]
+    pub fn start(&self) -> u64 {
+        self.interval.start()
+    }
+
+    #[inline]
+    pub fn end(&self) -> u64 {
+        self.interval.end()
+    }
+
+    pub fn clamp_to_bounds(&mut self, bounds: Interval<u64>) -> Result<()> {
+        self.interval = self.interval.clip_to(bounds).ok_or_else(|| {
+            anyhow!(
+                "Peak interval [{}, {}) did not overlap clamp bounds [{}, {})",
+                self.start(),
+                self.end(),
+                bounds.start(),
+                bounds.end()
+            )
+        })?;
+        if !self.interval.contains_point(self.peak_position) {
+            return Err(anyhow!(
+                "Peak position {} fell outside clamped interval [{}, {})",
+                self.peak_position,
+                self.start(),
+                self.end()
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Call peaks on a normalized Snyder residual trace.
@@ -31,7 +92,7 @@ pub fn call_peaks(
     mask: &[u8],
     min_peak_height: f32,
     initial_segment_marker: u64,
-) -> Vec<PeakCall> {
+) -> Result<Vec<PeakCall>> {
     let mut peaks: Vec<PeakCall> = Vec::new();
     let mut positions: Vec<u64> = Vec::new();
     let mut values: Vec<f32> = Vec::new();
@@ -51,7 +112,7 @@ pub fn call_peaks(
                 &mut values,
                 min_peak_height,
                 run_segment_id,
-            );
+            )?;
             run_segment_id = None;
             barrier_marker = absolute_pos;
             last_positive = None;
@@ -69,7 +130,7 @@ pub fn call_peaks(
                         &mut values,
                         min_peak_height,
                         run_segment_id,
-                    );
+                    )?;
                     run_segment_id = None;
                 } else {
                     for step in 1..=gap {
@@ -85,7 +146,7 @@ pub fn call_peaks(
                     &mut values,
                     min_peak_height,
                     run_segment_id,
-                );
+                )?;
                 run_segment_id = None;
             }
 
@@ -105,8 +166,8 @@ pub fn call_peaks(
         &mut values,
         min_peak_height,
         run_segment_id,
-    );
-    peaks
+    )?;
+    Ok(peaks)
 }
 
 /// Finalize the current positive run and push a peak if one is found.
@@ -117,15 +178,15 @@ fn finalize_run(
     values: &mut Vec<f32>,
     min_peak_height: f32,
     segment_id: Option<u64>,
-) {
+) -> Result<()> {
     if positions.is_empty() {
-        return;
+        return Ok(());
     }
     let len = positions.len();
     if len < MIN_LENGTH {
         positions.clear();
         values.clear();
-        return;
+        return Ok(());
     }
     let peaks_from_run = evaluate_run(
         chr,
@@ -133,10 +194,11 @@ fn finalize_run(
         values.as_slice(),
         min_peak_height,
         segment_id.unwrap_or(0),
-    );
+    )?;
     peaks.extend(peaks_from_run);
     positions.clear();
     values.clear();
+    Ok(())
 }
 
 /// Evaluate one positive run and return the corresponding peaks.
@@ -146,14 +208,14 @@ fn evaluate_run(
     values: &[f32],
     min_peak_height: f32,
     segment_id: u64,
-) -> Vec<PeakCall> {
+) -> Result<Vec<PeakCall>> {
     let len = positions.len();
     if len < MIN_LENGTH {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     if len > MAX_RUN_LENGTH {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let med = median(values);
@@ -165,7 +227,7 @@ fn evaluate_run(
         .collect();
 
     if filtered.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let windows = continuous_windows(&filtered);
@@ -174,33 +236,51 @@ fn evaluate_run(
     if len <= MAX_LENGTH {
         if let Some(best) = windows.into_iter().max_by(|a, b| compare_sum(a.sum, b.sum)) {
             if best.max_value > min_peak_height && best.length() >= MIN_LENGTH {
-                peaks.push(PeakCall {
-                    chromosome: chr.to_string(),
-                    start: best.start,
-                    end: best.end + 1,
-                    peak_position: best.peak_position,
-                    height: best.max_value,
-                    segment_id,
-                });
+                peaks.push(
+                    PeakCall::new(
+                        chr.to_string(),
+                        best.start,
+                        best.end + 1,
+                        best.peak_position,
+                        best.max_value,
+                        segment_id,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "build best peak for run on {chr} with interval [{}, {})",
+                            best.start,
+                            best.end + 1
+                        )
+                    })?,
+                );
             }
         }
     } else {
         for window in windows {
             let length = window.length();
             if length >= MIN_LENGTH && length <= MAX_LENGTH && window.max_value > min_peak_height {
-                peaks.push(PeakCall {
-                    chromosome: chr.to_string(),
-                    start: window.start,
-                    end: window.end + 1,
-                    peak_position: window.peak_position,
-                    height: window.max_value,
-                    segment_id,
-                });
+                peaks.push(
+                    PeakCall::new(
+                        chr.to_string(),
+                        window.start,
+                        window.end + 1,
+                        window.peak_position,
+                        window.max_value,
+                        segment_id,
+                    )
+                    .with_context(|| {
+                        format!(
+                            "build peak for run window on {chr} with interval [{}, {})",
+                            window.start,
+                            window.end + 1
+                        )
+                    })?,
+                );
             }
         }
     }
 
-    peaks
+    Ok(peaks)
 }
 
 /// Compute the median of a slice (copying into a scratch buffer).
