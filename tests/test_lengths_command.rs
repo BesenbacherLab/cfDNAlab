@@ -17,6 +17,7 @@ mod tests_lengths_command {
     use cfdnalab::commands::lengths::config::LengthsConfig;
     use cfdnalab::commands::lengths::lengths::run;
     use cfdnalab::shared::indel_mode::IndelMode;
+    use cfdnalab::shared::io::dot_join;
     use fixtures::{
         BamFixture, FragmentSpec, ReadSpec, bam_from_specs, simple_inward_bam,
         simple_reference_twobit, write_scaling_factors,
@@ -31,6 +32,32 @@ mod tests_lengths_command {
             chromosomes: Some(chrs.iter().map(|c| c.to_string()).collect()),
             chromosomes_file: None,
         }
+    }
+
+    fn fragment_on_tid(tid: usize, start: i64, fragment_len: i64, read_len: i64) -> FragmentSpec {
+        let mut fragment = fixtures::paired_fragment(start, fragment_len, read_len);
+        fragment.forward.tid = tid;
+        fragment.reverse.tid = tid;
+        fragment.forward.mate_tid = Some(tid);
+        fragment.reverse.mate_tid = Some(tid);
+        fragment
+    }
+
+    fn three_chrom_length_fixture(name: &str) -> Result<BamFixture> {
+        bam_from_specs(
+            vec![
+                ("chr1".to_string(), 200),
+                ("chr2".to_string(), 200),
+                ("chr3".to_string(), 200),
+            ],
+            vec![
+                fragment_on_tid(0, 20, 60, 20),
+                fragment_on_tid(1, 30, 80, 20),
+                fragment_on_tid(2, 40, 100, 20),
+            ],
+            Vec::new(),
+            name,
+        )
     }
 
     #[test]
@@ -60,7 +87,9 @@ mod tests_lengths_command {
         run(&cfg)?;
 
         let prefix = cfg.output_prefix.trim();
-        let npy_path = out_dir.path().join(format!("{prefix}.length_counts.npy"));
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[prefix, "length_counts.npy"]));
         assert!(npy_path.exists());
         let arr: Array2<f64> = read_npy(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 191]);
@@ -102,7 +131,9 @@ mod tests_lengths_command {
         run(&cfg)?;
 
         let prefix = cfg.output_prefix.trim();
-        let npy_path = out_dir.path().join(format!("{prefix}.length_counts.npy"));
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[prefix, "length_counts.npy"]));
         assert!(npy_path.exists());
         let arr: Array2<f64> = read_npy(&npy_path)?;
         // Chromosome length 200, window size 500 -> one window
@@ -146,13 +177,157 @@ mod tests_lengths_command {
         run(&cfg)?;
 
         let prefix = cfg.output_prefix.trim();
-        let npy_path = out_dir.path().join(format!("{prefix}.length_counts.npy"));
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[prefix, "length_counts.npy"]));
         assert!(npy_path.exists());
         let arr: Array2<f64> = read_npy(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 191]);
         let len60_idx = 60 - 10;
         assert!((arr[(0, len60_idx)] - 1.0).abs() < 1e-6);
         assert!((arr.sum() - 1.0).abs() < 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn counts_reference_lengths_global_window_across_three_chromosomes() -> Result<()> {
+        let bam = three_chrom_length_fixture("lengths_three_chr_global")?;
+        let out_dir = TempDir::new()?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 2,
+            },
+            base_chromosomes(&["chr1", "chr2", "chr3"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 120;
+        }
+
+        run(&cfg)?;
+
+        let prefix = cfg.output_prefix.trim();
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[prefix, "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+
+        // Global mode collapses the selected chromosomes into one combined length distribution.
+        // This fixture contributes one fragment of lengths 60, 80, and 100 across the three
+        // chromosomes, so the single output row should contain all three counts.
+        assert_eq!(arr.shape(), &[1, 111]);
+        assert!((arr[(0, 60 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr[(0, 80 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr[(0, 100 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr.sum() - 3.0).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
+    fn counts_reference_lengths_size_single_window_across_three_chromosomes() -> Result<()> {
+        let bam = three_chrom_length_fixture("lengths_three_chr_size")?;
+        let out_dir = TempDir::new()?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 2,
+            },
+            base_chromosomes(&["chr1", "chr2", "chr3"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs {
+            by_size: Some(200),
+            by_bed: None,
+        });
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_tile_size(30);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 120;
+        }
+
+        run(&cfg)?;
+
+        let prefix = cfg.output_prefix.trim();
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[prefix, "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+
+        assert_eq!(arr.shape(), &[3, 111]);
+        assert!((arr[(0, 60 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr[(1, 80 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr[(2, 100 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr.sum() - 3.0).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
+    fn counts_reference_lengths_bed_single_window_across_three_chromosomes() -> Result<()> {
+        let bam = three_chrom_length_fixture("lengths_three_chr_bed")?;
+        let out_dir = TempDir::new()?;
+        let bed_path = out_dir.path().join("windows_three_chr.bed");
+        fixtures::write_bed(
+            &bed_path,
+            &[
+                ("chr1", 0, 200, "chr1_window"),
+                ("chr2", 0, 200, "chr2_window"),
+                ("chr3", 0, 200, "chr3_window"),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 2,
+            },
+            base_chromosomes(&["chr1", "chr2", "chr3"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 120;
+        }
+
+        run(&cfg)?;
+
+        let prefix = cfg.output_prefix.trim();
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[prefix, "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+
+        assert_eq!(arr.shape(), &[3, 111]);
+        assert!((arr[(0, 60 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr[(1, 80 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr[(2, 100 - 10)] - 1.0).abs() < 1e-6);
+        assert!((arr.sum() - 3.0).abs() < 1e-6);
+
         Ok(())
     }
 
@@ -187,7 +362,9 @@ mod tests_lengths_command {
         run(&cfg)?;
 
         let prefix = cfg.output_prefix.trim();
-        let npy_path = out_dir.path().join(format!("{prefix}.length_counts.npy"));
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[prefix, "length_counts.npy"]));
         assert!(npy_path.exists());
         let arr: Array2<f64> = read_npy(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 191]);
@@ -228,7 +405,9 @@ mod tests_lengths_command {
         run(&cfg)?;
 
         let prefix = cfg.output_prefix.trim();
-        let npy_path = out_dir.path().join(format!("{prefix}.length_counts.npy"));
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[prefix, "length_counts.npy"]));
         assert!(npy_path.exists());
         let arr: Array2<f64> = read_npy(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 191]);
@@ -297,7 +476,9 @@ mod tests_lengths_command {
             run(&cfg)?;
 
             let prefix = cfg.output_prefix.trim();
-            let npy_path = out_dir.path().join(format!("{prefix}.length_counts.npy"));
+            let npy_path = out_dir
+                .path()
+                .join(dot_join(&[prefix, "length_counts.npy"]));
             let arr: Array2<f64> = read_npy(&npy_path)?;
             let len60_idx = 60 - 10;
             Ok(arr[(0, len60_idx)])
@@ -436,10 +617,10 @@ mod tests_lengths_command {
         let mut adjust_cfg = base_cfg.clone();
         adjust_cfg.set_indel_mode(IndelMode::Adjust);
         run(&adjust_cfg)?;
-        let npy_path = out_dir.path().join(format!(
-            "{}.length_counts.npy",
-            adjust_cfg.output_prefix.trim()
-        ));
+        let npy_path = out_dir.path().join(dot_join(&[
+            adjust_cfg.output_prefix.trim(),
+            "length_counts.npy",
+        ]));
         let arr: Array2<f64> = read_npy(&npy_path)?;
         // Expected adjusted lengths from fixture:
         //   frag0 (no indel): len 24
@@ -457,10 +638,10 @@ mod tests_lengths_command {
         let mut skip_cfg = base_cfg.clone();
         skip_cfg.set_indel_mode(IndelMode::Skip);
         run(&skip_cfg)?;
-        let skip_path = out_dir.path().join(format!(
-            "{}.length_counts.npy",
-            skip_cfg.output_prefix.trim()
-        ));
+        let skip_path = out_dir.path().join(dot_join(&[
+            skip_cfg.output_prefix.trim(),
+            "length_counts.npy",
+        ]));
         let skip_arr: Array2<f64> = read_npy(&skip_path)?;
         // Only the indel-free fragment remains
         let l24 = 24 - 10;
@@ -538,7 +719,7 @@ mod tests_lengths_command {
 
         let npy_path = out_dir
             .path()
-            .join(format!("{}.length_counts.npy", cfg.output_prefix.trim()));
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
         assert!(npy_path.exists(), "expected {}", npy_path.display());
         let arr: Array2<f64> = read_npy(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 191]);
@@ -647,7 +828,7 @@ mod tests_lengths_command {
 
         let npy_path = out_dir
             .path()
-            .join(format!("{}.length_counts.npy", cfg.output_prefix.trim()));
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
         let arr: Array2<f64> = read_npy(&npy_path)?;
         // Two chromosomes -> two windows (one per chr because by_size is large)
         assert_eq!(arr.shape(), &[2, 91]);
@@ -692,7 +873,9 @@ mod tests_lengths_command {
             run(&cfg)?;
 
             let prefix = cfg.output_prefix.trim();
-            let npy_path = out_dir.path().join(format!("{prefix}.length_counts.npy"));
+            let npy_path = out_dir
+                .path()
+                .join(dot_join(&[prefix, "length_counts.npy"]));
             let arr: Array2<f64> = read_npy(&npy_path)?;
             Ok(arr)
         };
@@ -986,26 +1169,32 @@ mod tests_lengths_tiling_helpers {
     use cfdnalab::commands::cli_common::WindowSpec;
     use cfdnalab::commands::lengths::tiling::fetch_span_for_tile;
     use cfdnalab::shared::bam::Contigs;
+    use cfdnalab::shared::interval::IndexedInterval;
     use cfdnalab::shared::tiled_run::{Tile, TileWindowSpan, build_tiles};
     use fxhash::FxHashMap;
     use std::path::PathBuf;
 
+    fn indexed_windows(entries: &[(u64, u64, u64)]) -> Vec<IndexedInterval<u64>> {
+        entries
+            .iter()
+            .map(|&(start, end, original_index)| {
+                IndexedInterval::new(start, end, original_index)
+                    .expect("test windows should be valid non-empty intervals")
+            })
+            .collect()
+    }
+
     #[test]
     fn fetch_span_size_mode_clamps_to_halo_and_chrom() {
         // Tile: core 50-150, fetch 30-200 (halo 20 left, 50 right), chrom len 180
-        let tile = Tile {
-            chr: "chr1".to_string(),
-            tid: 0,
-            index: 0,
-            core_start: 50,
-            core_end: 150,
-            fetch_start: 30,
-            fetch_end: 200,
-        };
+        let tile = Tile::from_coords("chr1".to_string(), 0, 0, 50, 150, 30, 200)
+            .expect("test tile should be valid");
         let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(100), 180)
-            .expect("span expected");
+            .expect("span expected")
+            .expect("fetch span expected");
         // Window span touching core: 0..200, after halo clamp -> 30..180
-        assert_eq!(span, (30, 180));
+        assert_eq!(span.start(), 30);
+        assert_eq!(span.end(), 180);
     }
 
     #[test]
@@ -1018,13 +1207,13 @@ mod tests_lengths_tiling_helpers {
         assert!(aligned);
         // Cores should start on multiples of 10
         for t in &tiles {
-            assert_eq!((t.core_start as u64) % 10, 0);
+            assert_eq!((t.core_start() as u64) % 10, 0);
         }
         // Expect four tiles: 0-30,30-60,60-90,90-100
         assert_eq!(tiles.len(), 4);
-        assert_eq!(tiles[0].core_end, 30);
-        assert_eq!(tiles[3].core_start, 90);
-        assert_eq!(tiles[3].core_end, 100);
+        assert_eq!(tiles[0].core_end(), 30);
+        assert_eq!(tiles[3].core_start(), 90);
+        assert_eq!(tiles[3].core_end(), 100);
     }
 
     #[test]
@@ -1042,31 +1231,20 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_for_tile_global_clamps_to_chrom() {
-        let tile = Tile {
-            chr: "chr1".to_string(),
-            tid: 0,
-            index: 0,
-            core_start: 0,
-            core_end: 50,
-            fetch_start: 0,
-            fetch_end: 200,
-        };
-        let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Global, 120).expect("span");
-        assert_eq!(span, (0, 120));
+        let tile = Tile::from_coords("chr1".to_string(), 0, 0, 0, 50, 0, 200)
+            .expect("test tile should be valid");
+        let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Global, 120)
+            .expect("span")
+            .expect("fetch span expected");
+        assert_eq!(span.start(), 0);
+        assert_eq!(span.end(), 120);
     }
 
     #[test]
     fn fetch_span_for_tile_bed_with_overlap() {
-        let tile = Tile {
-            chr: "chr1".to_string(),
-            tid: 0,
-            index: 0,
-            core_start: 100,
-            core_end: 160,
-            fetch_start: 80,
-            fetch_end: 200,
-        };
-        let windows: Vec<(u64, u64, u64)> = vec![(90, 110, 0), (150, 170, 1), (250, 300, 2)];
+        let tile = Tile::from_coords("chr1".to_string(), 0, 0, 100, 160, 80, 200)
+            .expect("test tile should be valid");
+        let windows = indexed_windows(&[(90, 110, 0), (150, 170, 1), (250, 300, 2)]);
         let span = TileWindowSpan {
             first_idx: 0,
             last_idx_exclusive: 2,
@@ -1078,24 +1256,19 @@ mod tests_lengths_tiling_helpers {
             &WindowSpec::Bed(PathBuf::from("dummy")),
             500,
         )
-        .expect("span");
+        .expect("span")
+        .expect("fetch span expected");
         // min_ws=90, max_we=170, halos: left 20, right 40 -> widened to 70..210, clamped to fetch
-        assert_eq!(res, (80, 200));
+        assert_eq!(res.start(), 80);
+        assert_eq!(res.end(), 200);
     }
 
     #[test]
     fn fetch_span_bed_none_when_no_overlap() {
-        let tile = Tile {
-            chr: "chr1".to_string(),
-            tid: 0,
-            index: 0,
-            core_start: 100,
-            core_end: 150,
-            fetch_start: 80,
-            fetch_end: 170,
-        };
+        let tile = Tile::from_coords("chr1".to_string(), 0, 0, 100, 150, 80, 170)
+            .expect("test tile should be valid");
         // No windows overlap tile
-        let windows: [(u64, u64, u64); 0] = [];
+        let windows: [IndexedInterval<u64>; 0] = [];
         let span = TileWindowSpan {
             first_idx: 0,
             last_idx_exclusive: 0,
@@ -1106,37 +1279,23 @@ mod tests_lengths_tiling_helpers {
             Some(&windows),
             &WindowSpec::Bed(PathBuf::from("dummy")),
             200,
-        );
+        )
+        .expect("fetch span computation should succeed");
         assert!(res.is_none());
     }
 
     #[test]
     fn fetch_span_size_mode_none_when_tile_right_of_chromosome() {
-        let tile = Tile {
-            chr: "chr1".to_string(),
-            tid: 0,
-            index: 0,
-            core_start: 250,
-            core_end: 260,
-            fetch_start: 230,
-            fetch_end: 270,
-        };
-        let res = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(50), 200);
+        let tile = Tile::from_coords("chr1".to_string(), 0, 0, 250, 260, 230, 270)
+            .expect("test tile should be valid");
+        let res = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(50), 200)
+            .expect("fetch span computation should succeed");
         assert!(res.is_none());
     }
 
     #[test]
-    fn fetch_span_size_mode_none_for_empty_core() {
-        let tile = Tile {
-            chr: "chr1".to_string(),
-            tid: 0,
-            index: 0,
-            core_start: 100,
-            core_end: 100,
-            fetch_start: 80,
-            fetch_end: 120,
-        };
-        let res = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(50), 150);
-        assert!(res.is_none());
+    fn tile_constructor_rejects_empty_core() {
+        let err = Tile::from_coords("chr1".to_string(), 0, 0, 100, 100, 80, 120).unwrap_err();
+        assert!(format!("{err}").contains("interval end (100) must be greater than start (100)"));
     }
 }

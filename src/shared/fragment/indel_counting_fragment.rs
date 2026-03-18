@@ -2,28 +2,38 @@ use fxhash::FxHashMap;
 use rust_htslib::bam::ext::BamRecordExtensions; // reference_end()
 use rust_htslib::bam::record::{Cigar, Record};
 
+use crate::Result;
 use crate::shared::fragment::minimal_fragment::{
     PairOrientable, is_inwards_oriented, oriented_pair_from_read_info,
 };
+use crate::shared::interval::{Interval, TouchingMergePolicy, merge_sorted_intervals};
+
+/// Insertion anchored at one reference position with a positive inserted length.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct InsertionAnchor {
+    pub reference_position: u32,
+    pub inserted_length: u32,
+}
 
 /// Compact per-read info with extracted indel events.
 #[derive(Debug, Clone)]
 pub struct IndelReadInfo {
     pub tid: i32,
-    pub pos: u32, // Leftmost aligned reference pos
-    pub end: u32, // Exclusive rightmost aligned reference end
+    pub interval: Interval<u32>, // Aligned reference span [start: pos(), end: reference_end())
     pub is_reverse: bool,
     /// Deletions (and ref-skips if present) as reference intervals [start, end)
-    pub deletions: Vec<(u32, u32)>,
-    /// Insertions as (reference position, inserted length)
-    pub insertions: Vec<(u32, u32)>,
+    pub deletions: Vec<Interval<u32>>,
+    /// Insertions anchored at one reference position with their inserted length.
+    pub insertions: Vec<InsertionAnchor>,
 }
 
-impl From<&Record> for IndelReadInfo {
+impl TryFrom<&Record> for IndelReadInfo {
+    type Error = crate::Error;
+
     #[inline]
-    fn from(r: &Record) -> Self {
-        let mut deletions: Vec<(u32, u32)> = Vec::new();
-        let mut insertions: Vec<(u32, u32)> = Vec::new();
+    fn try_from(r: &Record) -> Result<Self> {
+        let mut deletions: Vec<Interval<u32>> = Vec::new();
+        let mut insertions: Vec<InsertionAnchor> = Vec::new();
 
         // Walk the CIGAR in reference coordinates
         let mut ref_pos: u32 = r.pos() as u32;
@@ -34,26 +44,29 @@ impl From<&Record> for IndelReadInfo {
                     ref_pos = ref_pos.saturating_add(l);
                 }
                 Cigar::Del(l) => {
-                    let s = ref_pos;
-                    let e = ref_pos.saturating_add(l);
-                    if e > s {
-                        deletions.push((s, e));
+                    let deletion_start = ref_pos;
+                    let deletion_end = ref_pos.saturating_add(l);
+                    if let Ok(deletion) = Interval::new(deletion_start, deletion_end) {
+                        deletions.push(deletion);
                     }
-                    ref_pos = e; // D consumes reference
+                    ref_pos = deletion_end; // D consumes reference
                 }
                 Cigar::RefSkip(l) => {
                     // Rare in cfDNA; treat as a deletion on the reference
-                    let s = ref_pos;
-                    let e = ref_pos.saturating_add(l);
-                    if e > s {
-                        deletions.push((s, e));
+                    let skipped_start = ref_pos;
+                    let skipped_end = ref_pos.saturating_add(l);
+                    if let Ok(skipped_interval) = Interval::new(skipped_start, skipped_end) {
+                        deletions.push(skipped_interval);
                     }
-                    ref_pos = e; // N consumes reference
+                    ref_pos = skipped_end; // N consumes reference
                 }
                 Cigar::Ins(l) => {
                     // Insertion anchored at current ref_pos
                     if l > 0 {
-                        insertions.push((ref_pos, l));
+                        insertions.push(InsertionAnchor {
+                            reference_position: ref_pos,
+                            inserted_length: l,
+                        });
                     }
                     // I does not consume reference
                 }
@@ -65,28 +78,37 @@ impl From<&Record> for IndelReadInfo {
 
         // Merge adjacent/overlapping deletion intervals to normalize
         if deletions.len() > 1 {
-            deletions.sort_unstable_by_key(|&(s, _)| s);
-            let mut merged: Vec<(u32, u32)> = Vec::with_capacity(deletions.len());
-            for (s, e) in deletions.drain(..) {
-                if let Some(last) = merged.last_mut()
-                    && s <= last.1
-                {
-                    last.1 = last.1.max(e);
-                    continue;
-                }
-                merged.push((s, e));
-            }
-            deletions = merged;
+            deletions.sort_unstable_by_key(|deletion| deletion.start());
+            deletions = merge_sorted_intervals(deletions, TouchingMergePolicy::MergeTouching);
         }
 
-        IndelReadInfo {
+        Ok(IndelReadInfo {
             tid: r.tid(),
-            pos: r.pos() as u32,
-            end: r.reference_end() as u32,
+            interval: Interval::new(r.pos() as u32, r.reference_end() as u32)?,
             is_reverse: r.is_reverse(),
             deletions,
             insertions,
-        }
+        })
+    }
+}
+
+impl IndelReadInfo {
+    /// Return the read's inclusive start on the reference.
+    #[inline]
+    pub fn start(&self) -> u32 {
+        self.interval.start()
+    }
+
+    /// Return the read's exclusive end on the reference.
+    #[inline]
+    pub fn end(&self) -> u32 {
+        self.interval.end()
+    }
+
+    /// Return the read's aligned reference span `[start, end)`.
+    #[inline]
+    pub fn aligned_interval(&self) -> Interval<u32> {
+        self.interval
     }
 }
 
@@ -101,7 +123,7 @@ impl PairOrientable for IndelReadInfo {
     }
     #[inline]
     fn pos(&self) -> u32 {
-        self.pos
+        self.start()
     }
 }
 
@@ -114,8 +136,7 @@ impl PairOrientable for IndelReadInfo {
 #[derive(Debug, Clone)]
 pub struct FragmentWithIndelCounts {
     pub tid: i32,
-    pub start: u32, // forward.pos
-    pub end: u32,   // reverse.end (end-exclusive)
+    pub interval: Interval<u32>, // forward.pos .. reverse.end
 
     // Totals accumulated under the "pair-supported in overlap" policy:
     pub deletions_nonoverlap: u32,
@@ -125,10 +146,22 @@ pub struct FragmentWithIndelCounts {
 }
 
 impl FragmentWithIndelCounts {
+    /// Inclusive fragment start on the reference.
+    #[inline]
+    pub fn start(&self) -> u32 {
+        self.interval.start()
+    }
+
+    /// Exclusive fragment end on the reference.
+    #[inline]
+    pub fn end(&self) -> u32 {
+        self.interval.end()
+    }
+
     /// Reference-span fragment length (end - start).
     #[inline]
     pub fn len_ref(&self) -> u32 {
-        self.end - self.start
+        self.interval.len()
     }
 
     /// Indel-aware length: len_ref + inserts_total - deletions_total (saturating at 0).
@@ -141,6 +174,71 @@ impl FragmentWithIndelCounts {
     }
 }
 
+/// Partition one deletion interval into fragment-supported non-overlap bases and
+/// the clipped piece that falls inside the aligned mate overlap.
+fn partition_deletion_by_aligned_overlap(
+    deletion_interval: Interval<u32>,
+    fragment_interval: Interval<u32>,
+    aligned_overlap_interval: Option<Interval<u32>>,
+    nonoverlap_bases_bp: &mut u32,
+    overlap_deletion_intervals: &mut Vec<Interval<u32>>,
+) {
+    if let Some(deletion_interval) = deletion_interval.clip_to(fragment_interval) {
+        if let Some(aligned_overlap_interval) = aligned_overlap_interval {
+            if let Some(left_nonoverlap_interval) =
+                deletion_interval.clip_upper(aligned_overlap_interval.start())
+            {
+                *nonoverlap_bases_bp =
+                    nonoverlap_bases_bp.saturating_add(left_nonoverlap_interval.len());
+            }
+
+            if let Some(overlap_deletion_interval) = deletion_interval.clip_to(aligned_overlap_interval)
+            {
+                overlap_deletion_intervals.push(overlap_deletion_interval);
+            }
+
+            if let Some(right_nonoverlap_interval) =
+                deletion_interval.clip_lower(aligned_overlap_interval.end())
+            {
+                *nonoverlap_bases_bp =
+                    nonoverlap_bases_bp.saturating_add(right_nonoverlap_interval.len());
+            }
+        } else {
+            // No mate overlap at all: whole deletion is non-overlap.
+            *nonoverlap_bases_bp = nonoverlap_bases_bp.saturating_add(deletion_interval.len());
+        }
+    }
+}
+
+/// Partition one insertion anchor into fragment-supported non-overlap bases or
+/// overlap anchors keyed by reference position.
+fn partition_insertion_by_aligned_overlap(
+    insertion_anchor: InsertionAnchor,
+    fragment_interval: Interval<u32>,
+    aligned_overlap_interval: Option<Interval<u32>>,
+    nonoverlap_bases_bp: &mut u32,
+    overlap_insertions_by_anchor: &mut FxHashMap<u32, u32>,
+) {
+    let insertion_anchor_bp = insertion_anchor.reference_position;
+    let inserted_length_bp = insertion_anchor.inserted_length;
+    // Ignore insertions whose reference anchor lies outside the fragment span
+    if !fragment_interval.contains_point(insertion_anchor_bp) {
+        return;
+    }
+    if aligned_overlap_interval
+        .is_none_or(|overlap_interval| !overlap_interval.contains_point(insertion_anchor_bp))
+    {
+        *nonoverlap_bases_bp = nonoverlap_bases_bp.saturating_add(inserted_length_bp);
+    } else {
+        // At the same ref position, keep the maximum length per read
+        overlap_insertions_by_anchor
+            .entry(insertion_anchor_bp)
+            // Safeguards against weird cigar strings
+            .and_modify(|length_bp| *length_bp = (*length_bp).max(inserted_length_bp))
+            .or_insert(inserted_length_bp);
+    }
+}
+
 /// Build a `FragmentWithIndelCounts` from two `Record`s.
 #[inline]
 pub fn collect_fragment_with_indel_counts_from_records(
@@ -149,8 +247,8 @@ pub fn collect_fragment_with_indel_counts_from_records(
     skip_indels: bool,
     count_indels: bool,
 ) -> Option<FragmentWithIndelCounts> {
-    let ai = IndelReadInfo::from(a);
-    let bi = IndelReadInfo::from(b);
+    let ai = IndelReadInfo::try_from(a).ok()?;
+    let bi = IndelReadInfo::try_from(b).ok()?;
     collect_fragment_with_indel_counts(&ai, &bi, skip_indels, count_indels)
 }
 
@@ -165,19 +263,17 @@ pub fn collect_fragment_with_indel_counts_from_single_read(
     skip_indels: bool,
     count_indels: bool,
 ) -> Option<FragmentWithIndelCounts> {
-    let fragment_start_bp = read.pos;
-    let fragment_end_bp = read.end;
-
     let fragment_has_indels = !read.deletions.is_empty() || !read.insertions.is_empty();
     if skip_indels && fragment_has_indels {
         return None;
     }
 
+    let fragment_interval = read.aligned_interval();
+
     if !fragment_has_indels || !count_indels {
         return Some(FragmentWithIndelCounts {
             tid: read.tid,
-            start: fragment_start_bp,
-            end: fragment_end_bp,
+            interval: fragment_interval,
             deletions_nonoverlap: 0,
             insertions_nonoverlap: 0,
             deletions_overlap_supported: 0,
@@ -185,17 +281,12 @@ pub fn collect_fragment_with_indel_counts_from_single_read(
         });
     }
 
-    let deletions_bp: u32 = read
-        .deletions
-        .iter()
-        .map(|(s, e)| e.saturating_sub(*s))
-        .sum();
-    let insertions_bp: u32 = read.insertions.iter().map(|(_, l)| *l).sum();
+    let deletions_bp: u32 = read.deletions.iter().map(|deletion| deletion.len()).sum();
+    let insertions_bp: u32 = read.insertions.iter().map(|ins| ins.inserted_length).sum();
 
     Some(FragmentWithIndelCounts {
         tid: read.tid,
-        start: fragment_start_bp,
-        end: fragment_end_bp,
+        interval: fragment_interval,
         deletions_nonoverlap: deletions_bp,
         insertions_nonoverlap: insertions_bp,
         deletions_overlap_supported: 0,
@@ -258,16 +349,14 @@ pub fn collect_fragment_with_indel_counts(
         return None;
     }
 
-    let fragment_start_bp = forward.pos;
-    let fragment_end_bp = reverse.end;
+    let fragment_interval = Interval::new(forward.start(), reverse.end()).ok()?;
 
     // Fast path: if neither mate has any indels or we don't want to count indels,
     // return plain fragment with zero adjustments
     if !fragment_has_indels || !count_indels {
         return Some(FragmentWithIndelCounts {
             tid: forward.tid,
-            start: fragment_start_bp,
-            end: fragment_end_bp,
+            interval: fragment_interval,
             deletions_nonoverlap: 0,
             insertions_nonoverlap: 0,
             deletions_overlap_supported: 0,
@@ -276,53 +365,24 @@ pub fn collect_fragment_with_indel_counts(
     }
 
     // Reference overlap of the **aligned segments** (not the template):
-    // overlap = [max(forward.pos, reverse.pos), min(forward.end, reverse.end))
-    let aligned_overlap_start_bp = forward.pos.max(reverse.pos);
-    let aligned_overlap_end_bp = forward.end.min(reverse.end);
-    let has_aligned_overlap = aligned_overlap_end_bp > aligned_overlap_start_bp;
+    // overlap = [max(forward.start(), reverse.start()), min(forward.end(), reverse.end()))
+    let aligned_overlap_start_bp = forward.start().max(reverse.start());
+    let aligned_overlap_end_bp = forward.end().min(reverse.end());
+    let aligned_overlap_interval =
+        Interval::new(aligned_overlap_start_bp, aligned_overlap_end_bp).ok();
 
     // Deletions (and ref-skips)
     // Split each deletion interval into non-overlap and (possible) overlap part
     let mut deletions_nonoverlap_bp: u32 = 0;
-    let mut deletion_intervals_in_overlap_forward: Vec<(u32, u32)> = Vec::new();
-    let mut deletion_intervals_in_overlap_reverse: Vec<(u32, u32)> = Vec::new();
-
-    let split_deletion_interval =
-        |del_iv: (u32, u32), nonov_acc: &mut u32, ov_sink: &mut Vec<(u32, u32)>| {
-            if let Some((del_start, del_end)) =
-                clip_to_fragment(del_iv.0, del_iv.1, fragment_start_bp, fragment_end_bp)
-            {
-                if !has_aligned_overlap {
-                    // No mate overlap at all: whole deletion is non-overlap.
-                    *nonov_acc = nonov_acc.saturating_add(del_end.saturating_sub(del_start));
-                    return;
-                }
-
-                // Left non-overlap: [del_start, min(del_end, overlap_start))
-                let left_end = del_end.min(aligned_overlap_start_bp);
-                if left_end > del_start {
-                    *nonov_acc = nonov_acc.saturating_add(left_end - del_start);
-                }
-
-                // Overlap part: [max(del_start, overlap_start), min(del_end, overlap_end))
-                let ov_s = del_start.max(aligned_overlap_start_bp);
-                let ov_e = del_end.min(aligned_overlap_end_bp);
-                if ov_e > ov_s {
-                    ov_sink.push((ov_s, ov_e));
-                }
-
-                // Right non-overlap: [max(del_start, overlap_end), del_end)
-                let right_start = del_start.max(aligned_overlap_end_bp);
-                if del_end > right_start {
-                    *nonov_acc = nonov_acc.saturating_add(del_end - right_start);
-                }
-            }
-        };
+    let mut deletion_intervals_in_overlap_forward: Vec<Interval<u32>> = Vec::new();
+    let mut deletion_intervals_in_overlap_reverse: Vec<Interval<u32>> = Vec::new();
 
     // Extract deletions for forward read
     for &del_iv in &forward.deletions {
-        split_deletion_interval(
+        partition_deletion_by_aligned_overlap(
             del_iv,
+            fragment_interval,
+            aligned_overlap_interval,
             &mut deletions_nonoverlap_bp,
             &mut deletion_intervals_in_overlap_forward,
         );
@@ -330,8 +390,10 @@ pub fn collect_fragment_with_indel_counts(
 
     // Extract deletions for reverse read
     for &del_iv in &reverse.deletions {
-        split_deletion_interval(
+        partition_deletion_by_aligned_overlap(
             del_iv,
+            fragment_interval,
+            aligned_overlap_interval,
             &mut deletions_nonoverlap_bp,
             &mut deletion_intervals_in_overlap_reverse,
         );
@@ -349,32 +411,12 @@ pub fn collect_fragment_with_indel_counts(
     let mut insertions_in_overlap_forward: FxHashMap<u32, u32> = FxHashMap::default();
     let mut insertions_in_overlap_reverse: FxHashMap<u32, u32> = FxHashMap::default();
 
-    let split_insertion = |(ins_ref_pos, ins_len): (u32, u32),
-                           nonov_acc: &mut u32,
-                           ov_map: &mut FxHashMap<u32, u32>| {
-        // Ignore insertions whose reference anchor lies outside the fragment span
-        if ins_ref_pos < fragment_start_bp || ins_ref_pos >= fragment_end_bp {
-            return;
-        }
-        if !has_aligned_overlap
-            || ins_ref_pos < aligned_overlap_start_bp
-            || ins_ref_pos >= aligned_overlap_end_bp
-        {
-            *nonov_acc = nonov_acc.saturating_add(ins_len);
-        } else {
-            // At the same ref position, keep the maximum length per read
-            ov_map
-                .entry(ins_ref_pos)
-                // Safeguards against weird cigar strings
-                .and_modify(|x| *x = (*x).max(ins_len))
-                .or_insert(ins_len);
-        }
-    };
-
     // Extract insertions for forward read
     for &ins in &forward.insertions {
-        split_insertion(
+        partition_insertion_by_aligned_overlap(
             ins,
+            fragment_interval,
+            aligned_overlap_interval,
             &mut insertions_nonoverlap_bp,
             &mut insertions_in_overlap_forward,
         );
@@ -382,8 +424,10 @@ pub fn collect_fragment_with_indel_counts(
 
     // Extract insertions for reverse read
     for &ins in &reverse.insertions {
-        split_insertion(
+        partition_insertion_by_aligned_overlap(
             ins,
+            fragment_interval,
+            aligned_overlap_interval,
             &mut insertions_nonoverlap_bp,
             &mut insertions_in_overlap_reverse,
         );
@@ -403,8 +447,7 @@ pub fn collect_fragment_with_indel_counts(
 
     Some(FragmentWithIndelCounts {
         tid: forward.tid,
-        start: fragment_start_bp,
-        end: fragment_end_bp,
+        interval: fragment_interval,
         deletions_nonoverlap: deletions_nonoverlap_bp,
         insertions_nonoverlap: insertions_nonoverlap_bp,
         deletions_overlap_supported: deletions_overlap_supported_bp,
@@ -414,8 +457,8 @@ pub fn collect_fragment_with_indel_counts(
 
 /// Assumes intervals are start-sorted.
 fn calculate_deletion_in_overlap(
-    deletion_intervals_in_overlap_forward: Vec<(u32, u32)>,
-    deletion_intervals_in_overlap_reverse: Vec<(u32, u32)>,
+    deletion_intervals_in_overlap_forward: Vec<Interval<u32>>,
+    deletion_intervals_in_overlap_reverse: Vec<Interval<u32>>,
 ) -> u32 {
     // Supported overlap deletions.
     // Fast path for tiny lists, otherwise linear two-pointer sweep over already-sorted lists.
@@ -427,13 +470,13 @@ fn calculate_deletion_in_overlap(
     if !a.is_empty() && !b.is_empty() {
         // Tiny lists: nested loop is cheapest
         if a.len() <= 2 && b.len() <= 2 {
-            for &(f_start, f_end) in a {
-                for &(r_start, r_end) in b {
-                    let start = f_start.max(r_start);
-                    let end = f_end.min(r_end);
-                    if end > start {
-                        supported_overlap_deletions_bp =
-                            supported_overlap_deletions_bp.saturating_add(end - start);
+            for forward_deletion in a {
+                for reverse_deletion in b {
+                    if let Some(shared_deletion_interval) =
+                        forward_deletion.intersection(*reverse_deletion)
+                    {
+                        supported_overlap_deletions_bp = supported_overlap_deletions_bp
+                            .saturating_add(shared_deletion_interval.len());
                     }
                 }
             }
@@ -441,18 +484,18 @@ fn calculate_deletion_in_overlap(
             // Larger lists: linear sweep assuming both are already start-sorted
             let (mut i, mut j) = (0usize, 0usize);
             while i < a.len() && j < b.len() {
-                let (f_start, f_end) = a[i];
-                let (r_start, r_end) = b[j];
+                let forward_deletion = a[i];
+                let reverse_deletion = b[j];
 
-                let start = f_start.max(r_start);
-                let end = f_end.min(r_end);
-                if end > start {
-                    supported_overlap_deletions_bp =
-                        supported_overlap_deletions_bp.saturating_add(end - start);
+                if let Some(shared_deletion_interval) =
+                    forward_deletion.intersection(reverse_deletion)
+                {
+                    supported_overlap_deletions_bp = supported_overlap_deletions_bp
+                        .saturating_add(shared_deletion_interval.len());
                 }
 
                 // Advance the interval that ends first
-                if f_end <= r_end {
+                if forward_deletion.end() <= reverse_deletion.end() {
                     i += 1;
                 } else {
                     j += 1;
@@ -464,10 +507,7 @@ fn calculate_deletion_in_overlap(
     supported_overlap_deletions_bp
 }
 
-// Clip [s,e) to the fragment span; return None if outside
-#[inline]
-fn clip_to_fragment(s: u32, e: u32, frag_s: u32, frag_e: u32) -> Option<(u32, u32)> {
-    let cs = s.max(frag_s);
-    let ce = e.min(frag_e);
-    (ce > cs).then_some((cs, ce))
+#[cfg(test)]
+mod tests {
+    include!("indel_counting_fragment_tests.rs");
 }

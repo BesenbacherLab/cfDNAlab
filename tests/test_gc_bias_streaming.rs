@@ -8,9 +8,10 @@ mod tests_stream_helpers_and_finalizer {
             config::GCConfig,
             counting::{GCCounts, build_gc_prefixes},
             gc_bias::finalize_window_buffer,
-            windows::{WindowState, fixed_size_window_bounds, overlap_length},
+            windows::{WindowState, fixed_size_window_interval, overlap_length},
         },
     };
+    use cfdnalab::shared::interval::Interval;
 
     fn make_config(tmp: &tempfile::TempDir) -> GCConfig {
         let ioc = IOCArgs {
@@ -30,9 +31,9 @@ mod tests_stream_helpers_and_finalizer {
 
     #[test]
     fn window_bounds_caps_at_chrom_len() {
-        let (s, e) = fixed_size_window_bounds(8, 100, 850);
-        assert_eq!(s, 800);
-        assert_eq!(e, 850);
+        let interval = fixed_size_window_interval(8, 100, 850).expect("interval should be valid");
+        assert_eq!(interval.start(), 800);
+        assert_eq!(interval.end(), 850);
     }
 
     #[test]
@@ -47,13 +48,13 @@ mod tests_stream_helpers_and_finalizer {
         let cfg = make_config(&tmp);
 
         let template = GCCounts::new(1, 1, 0, (0, 0))?;
-        let mut out = WindowState::new(0, 0, 0, true, &template)?;
+        let mut out = WindowState::new(0, Interval::new(0, 1)?, true, &template)?;
         let mut crossing_parts = Vec::new();
 
         let seq = vec![b'A', b'A'];
         let prefixes = build_gc_prefixes(&seq);
 
-        let mut buf = WindowState::new(0, 0, 2, true, &template)?;
+        let mut buf = WindowState::new(0, Interval::new(0, 2)?, true, &template)?;
         buf.counts.set(1, 0, 2.0);
         buf.has_counts = true;
 

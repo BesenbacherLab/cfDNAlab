@@ -1,4 +1,5 @@
 use crate::shared::formatters::{CompactNumber, round_to_with_precomputed_factor};
+use crate::shared::interval::Interval;
 use anyhow::Result;
 use std::io::Write;
 
@@ -7,8 +8,7 @@ use std::io::Write;
 pub fn write_final_row<W: Write>(
     w: &mut W,
     chr: &str,
-    start: u64,
-    end: u64,
+    interval: Interval<u64>,
     value: f64,
     blacklisted_positions: u64,
     decimals: i32,
@@ -17,8 +17,8 @@ pub fn write_final_row<W: Write>(
         w,
         "{}\t{}\t{}\t{}\t{}",
         chr,
-        start,
-        end,
+        interval.start(),
+        interval.end(),
         CompactNumber { v: value, decimals },
         blacklisted_positions
     )?;
@@ -66,15 +66,15 @@ pub fn emit_bedgraph_runs<W: Write>(
         decimals,
         keep_zero_runs,
         |run_lo, run_hi, value| {
-            let s_abs = tile_abs_start + run_lo as u64;
-            let e_abs = tile_abs_start + run_hi as u64;
+            let run_start_abs = tile_abs_start + run_lo as u64;
+            let run_end_abs = tile_abs_start + run_hi as u64;
             // Ignore write errors here; bubbled up by caller on flush
             let _ = writeln!(
                 out,
                 "{}\t{}\t{}\t{}",
                 chr,
-                s_abs,
-                e_abs,
+                run_start_abs,
+                run_end_abs,
                 CompactNumber { v: value, decimals },
             );
         },
@@ -125,15 +125,15 @@ pub fn emit_windowed_runs<W: Write>(
         decimals,
         keep_zero_runs,
         |run_lo, run_hi, value| {
-            let s_abs = tile_abs_start + run_lo as u64;
-            let e_abs = tile_abs_start + run_hi as u64;
+            let run_start_abs = tile_abs_start + run_lo as u64;
+            let run_end_abs = tile_abs_start + run_hi as u64;
             let _ = if let Some(idx) = orig_idx {
                 writeln!(
                     out,
                     "{}\t{}\t{}\t{}\t{}",
                     chr,
-                    s_abs,
-                    e_abs,
+                    run_start_abs,
+                    run_end_abs,
                     CompactNumber { v: value, decimals },
                     idx
                 )
@@ -142,8 +142,8 @@ pub fn emit_windowed_runs<W: Write>(
                     out,
                     "{}\t{}\t{}\t{}",
                     chr,
-                    s_abs,
-                    e_abs,
+                    run_start_abs,
+                    run_end_abs,
                     CompactNumber { v: value, decimals },
                 )
             };

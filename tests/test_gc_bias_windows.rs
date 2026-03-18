@@ -5,6 +5,7 @@ use cfdnalab::commands::gc_bias::windows::{
 };
 use cfdnalab::shared::bam::Contigs;
 use cfdnalab::shared::bed::Windows;
+use cfdnalab::shared::interval::{IndexedInterval, Interval};
 use fxhash::FxHashMap;
 
 fn build_contigs(entries: &[(&str, u32)]) -> Contigs {
@@ -16,12 +17,24 @@ fn build_contigs(entries: &[(&str, u32)]) -> Contigs {
 }
 
 fn build_windows(entries: Vec<(u64, u64, u64)>) -> Windows {
-    Windows::from_sorted(entries)
+    let windows = entries
+        .into_iter()
+        .map(|(start, end, idx)| {
+            IndexedInterval::new(start, end, idx).expect("test windows should be valid")
+        })
+        .collect();
+    Windows::from_sorted(windows)
 }
 
 fn make_window_state(start: u64, end: u64) -> WindowState {
     let template = GCCounts::new(1, 1, 0, (0, 0)).expect("failed to create template");
-    WindowState::new(0, start, end, true, &template).expect("failed to build window state")
+    WindowState::new(
+        0,
+        Interval::new(start, end).expect("test interval should be valid"),
+        true,
+        &template,
+    )
+    .expect("failed to build window state")
 }
 
 mod test_compute_window_stats {
@@ -104,7 +117,12 @@ mod tests_compute_window_acgt {
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(1, 5); // covers "ACGT"
 
-        compute_window_acgt(&mut window, &prefixes, 0, seq.len() as u64).unwrap();
+        compute_window_acgt(
+            &mut window,
+            &prefixes,
+            Interval::new(0, seq.len() as u64).expect("test sequence interval should be valid"),
+        )
+        .unwrap();
 
         assert_eq!(
             window.counts.num_acgt_out_of,
@@ -120,7 +138,12 @@ mod tests_compute_window_acgt {
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(1, 5); // covers "ANGT"
 
-        compute_window_acgt(&mut window, &prefixes, 0, seq.len() as u64).unwrap();
+        compute_window_acgt(
+            &mut window,
+            &prefixes,
+            Interval::new(0, seq.len() as u64).expect("test sequence interval should be valid"),
+        )
+        .unwrap();
 
         assert_eq!(
             window.counts.num_acgt_out_of,
@@ -136,8 +159,12 @@ mod tests_compute_window_acgt {
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(10, 12);
 
-        let err = compute_window_acgt(&mut window, &prefixes, 0, seq.len() as u64)
-            .expect_err("expected an overlap error");
+        let err = compute_window_acgt(
+            &mut window,
+            &prefixes,
+            Interval::new(0, seq.len() as u64).expect("test sequence interval should be valid"),
+        )
+        .expect_err("expected an overlap error");
 
         let msg = format!("{err}");
         assert!(
@@ -153,8 +180,12 @@ mod tests_compute_window_acgt {
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(0, 6);
 
-        let err = compute_window_acgt(&mut window, &prefixes, 0, 6)
-            .expect_err("expected a prefix bounds error");
+        let err = compute_window_acgt(
+            &mut window,
+            &prefixes,
+            Interval::new(0, 6).expect("test sequence interval should be valid"),
+        )
+        .expect_err("expected a prefix bounds error");
 
         let msg = format!("{err}");
         assert!(
@@ -171,7 +202,10 @@ mod tests_prepare_tile_windows {
             cli_common::WindowSpec,
             gc_bias::{counting::GCCounts, windows::prepare_tile_windows},
         },
-        shared::tiled_run::{Tile, TileWindowSpan},
+        shared::{
+            interval::IndexedInterval,
+            tiled_run::{Tile, TileWindowSpan},
+        },
     };
     use std::path::PathBuf;
 
@@ -180,15 +214,18 @@ mod tests_prepare_tile_windows {
     }
 
     fn make_tile() -> Tile {
-        Tile {
-            chr: "chr1".to_string(),
-            tid: 0,
-            index: 0,
-            core_start: 100,
-            core_end: 190,
-            fetch_start: 80,
-            fetch_end: 210,
-        }
+        Tile::from_coords("chr1".to_string(), 0, 0, 100, 190, 80, 210)
+            .expect("test tile should be valid")
+    }
+
+    fn indexed_windows(entries: &[(u64, u64, u64)]) -> Vec<IndexedInterval<u64>> {
+        entries
+            .iter()
+            .map(|&(start, end, original_index)| {
+                IndexedInterval::new(start, end, original_index)
+                    .expect("test windows should be valid non-empty intervals")
+            })
+            .collect()
     }
 
     #[test]
@@ -196,7 +233,7 @@ mod tests_prepare_tile_windows {
         let template = make_template();
         let tile = make_tile();
         // Span covers three windows, and the last ends after the core and must be filtered out
-        let windows: Vec<(u64, u64, u64)> = vec![(90, 140, 0), (120, 180, 1), (200, 240, 2)];
+        let windows = indexed_windows(&[(90, 140, 0), (120, 180, 1), (200, 240, 2)]);
         let span = TileWindowSpan {
             first_idx: 0,
             last_idx_exclusive: windows.len(),
@@ -226,7 +263,7 @@ mod tests_prepare_tile_windows {
         let template = make_template();
         let tile = make_tile();
         // Empty BED slice should return skip=true so caller can bail out early
-        let windows: Vec<(u64, u64, u64)> = Vec::new();
+        let windows: Vec<IndexedInterval<u64>> = Vec::new();
 
         let prepared = prepare_tile_windows(
             &WindowSpec::Bed(PathBuf::from("empty.bed")),
@@ -246,11 +283,8 @@ mod tests_prepare_tile_windows {
     #[test]
     fn prepares_streaming_buffers_for_fixed_windows() -> Result<()> {
         let template = make_template();
-        let tile = Tile {
-            core_start: 250,
-            core_end: 450,
-            ..make_tile()
-        };
+        let tile = Tile::from_coords("chr1".to_string(), 0, 0, 250, 450, 230, 470)
+            .expect("test tile should be valid");
 
         // Fixed-size windows use rolling buffers (current and next) instead of per-window allocation
         let prepared =
@@ -266,13 +300,13 @@ mod tests_prepare_tile_windows {
         assert_eq!(window_bp, 200);
 
         assert_eq!(current.idx, 1);
-        assert_eq!(current.start, 200);
-        assert_eq!(current.end, 400);
+        assert_eq!(current.start(), 200);
+        assert_eq!(current.end(), 400);
         assert!(!current.contained);
 
         assert_eq!(next.idx, 2);
-        assert_eq!(next.start, 400);
-        assert_eq!(next.end, 600);
+        assert_eq!(next.start(), 400);
+        assert_eq!(next.end(), 600);
         assert!(!next.contained);
         Ok(())
     }
@@ -290,8 +324,8 @@ mod tests_prepare_tile_windows {
         assert_eq!(prepared.windows.len(), 1);
         let window = &prepared.windows[0];
         assert_eq!(window.idx, 0);
-        assert_eq!(window.start, tile.core_start as u64);
-        assert_eq!(window.end, tile.core_end as u64);
+        assert_eq!(window.start(), tile.core_start() as u64);
+        assert_eq!(window.end(), tile.core_end() as u64);
         assert!(window.contained);
         Ok(())
     }
@@ -338,7 +372,7 @@ mod tests_gc_bias_window_logic {
         counts.set(10, 0, 2.0);
         counts.set(10, 1, 4.0);
 
-        let scaled = process_window(counts, &cfg, Some(100.0))?.expect("window should be retained");
+        let scaled = process_window(counts, &cfg, 100.0)?.expect("window should be retained");
 
         // Assert
         let c0 = scaled.get(10, 0).unwrap();
@@ -359,7 +393,7 @@ mod tests_gc_bias_window_logic {
         counts.set(10, 0, 5.0);
 
         // Act
-        let result = process_window(counts, &cfg, Some(100.0))?;
+        let result = process_window(counts, &cfg, 100.0)?;
 
         // Assert
         assert!(

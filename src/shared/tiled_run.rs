@@ -1,4 +1,6 @@
 use crate::shared::bam::Contigs;
+use crate::shared::interval::{IndexedInterval, Interval};
+use crate::shared::io::dot_join;
 use rand::{Rng, distr::Alphanumeric};
 
 /// A processing tile for one chromosome
@@ -6,11 +8,72 @@ use rand::{Rng, distr::Alphanumeric};
 pub struct Tile {
     pub chr: String,
     pub tid: i32,
-    pub index: u32,       // 0-based index within chromosome
-    pub core_start: u32,  // Inclusive
-    pub core_end: u32,    // Exclusive
-    pub fetch_start: u32, // Inclusive (core expanded by halo)
-    pub fetch_end: u32,   // Exclusive
+    pub index: u32, // 0-based index within chromosome
+    pub core: Interval<u32>,
+    pub fetch: Interval<u32>,
+}
+
+impl Tile {
+    /// Create a tile from checked half-open core and fetch intervals.
+    ///
+    /// The fetch interval must fully cover the tile core.
+    pub fn new(
+        chr: String,
+        tid: i32,
+        index: u32,
+        core: Interval<u32>,
+        fetch: Interval<u32>,
+    ) -> crate::Result<Self> {
+        if !fetch.contains_interval(core) {
+            return Err(crate::Error::TileFetchDoesNotCoverCore);
+        }
+        Ok(Self {
+            chr,
+            tid,
+            index,
+            core,
+            fetch,
+        })
+    }
+
+    /// Create a tile from raw half-open core and fetch bounds.
+    ///
+    /// This is a convenience constructor for call sites that still work with
+    /// coordinates. It validates the bounds as intervals and then delegates to
+    /// the typed constructor.
+    pub fn from_coords(
+        chr: String,
+        tid: i32,
+        index: u32,
+        core_start: u32,
+        core_end: u32,
+        fetch_start: u32,
+        fetch_end: u32,
+    ) -> crate::Result<Self> {
+        let core = Interval::new(core_start, core_end)?;
+        let fetch = Interval::new(fetch_start, fetch_end)?;
+        Self::new(chr, tid, index, core, fetch)
+    }
+
+    #[inline]
+    pub fn core_start(&self) -> u32 {
+        self.core.start()
+    }
+
+    #[inline]
+    pub fn core_end(&self) -> u32 {
+        self.core.end()
+    }
+
+    #[inline]
+    pub fn fetch_start(&self) -> u32 {
+        self.fetch.start()
+    }
+
+    #[inline]
+    pub fn fetch_end(&self) -> u32 {
+        self.fetch.end()
+    }
 }
 
 /// Half-open window indices covering a tile core.
@@ -60,7 +123,7 @@ pub fn precompute_tile_window_spans<'a, F>(
     right_halo: u64,
 ) -> Vec<Option<TileWindowSpan>>
 where
-    F: FnMut(&str) -> &'a [(u64, u64, u64)],
+    F: FnMut(&str) -> &'a [IndexedInterval<u64>],
 {
     let mut spans: Vec<Option<TileWindowSpan>> = vec![None; tiles.len()];
     let mut tile_idx = 0usize;
@@ -87,13 +150,13 @@ where
 
         for idx in chr_tile_start..chr_tile_end {
             let tile = &tiles[idx];
-            let core_start = tile.core_start as u64;
-            let core_end = tile.core_end as u64;
+            let core_start = tile.core_start() as u64;
+            let core_end = tile.core_end() as u64;
             let left_bound = core_start.saturating_sub(left_halo);
             let right_bound = core_end.saturating_add(right_halo);
 
             // Discard windows that end before the left bound (core minus halo)
-            while w_left < windows_len && windows[w_left].1 <= left_bound {
+            while w_left < windows_len && windows[w_left].end() <= left_bound {
                 w_left += 1;
             }
 
@@ -102,7 +165,7 @@ where
             }
 
             // Extend to cover every window whose start lies inside the right bound (core plus halo)
-            while w_right < windows_len && windows[w_right].0 < right_bound {
+            while w_right < windows_len && windows[w_right].start() < right_bound {
                 w_right += 1;
             }
 
@@ -120,7 +183,7 @@ where
             let first_candidate = &windows[w_left];
 
             // Check if the earliest remaining window begins at/after the right bound, so later ones do too
-            if first_candidate.0 >= right_bound {
+            if first_candidate.start() >= right_bound {
                 spans[idx] = None;
                 continue;
             }
@@ -142,7 +205,7 @@ where
 /// The underlying slice is filtered on-the-fly to skip windows whose span does not intersect the
 /// tile, so callers do not need to duplicate the overlap predicates.
 pub struct TileWindowsIter<'a> {
-    windows: &'a [(u64, u64, u64)],
+    windows: &'a [IndexedInterval<u64>],
     next_idx: usize,
     end_idx: usize,
     core_start: u64,
@@ -150,7 +213,7 @@ pub struct TileWindowsIter<'a> {
 }
 
 impl<'a> Iterator for TileWindowsIter<'a> {
-    type Item = &'a (u64, u64, u64);
+    type Item = &'a IndexedInterval<u64>;
 
     /// Produces the next window that intersects the stored tile core.
     ///
@@ -166,7 +229,7 @@ impl<'a> Iterator for TileWindowsIter<'a> {
             self.next_idx += 1;
             // Only return windows that truly intersect the tile core, even if the cached span
             // contains neighbouring candidates with the same chromosome ordering
-            if window.1 > self.core_start && window.0 < self.core_end {
+            if window.end() > self.core_start && window.start() < self.core_end {
                 return Some(window);
             }
         }
@@ -187,17 +250,17 @@ impl<'a> Iterator for TileWindowsIter<'a> {
 /// # Returns
 /// A pair `(left, right)` giving the half-open window index range whose members may overlap.
 fn span_bounds_without_cache(
-    windows: &[(u64, u64, u64)],
+    windows: &[IndexedInterval<u64>],
     core_start: u64,
     core_end: u64,
 ) -> (usize, usize) {
     let mut left = 0usize;
-    while left < windows.len() && windows[left].1 <= core_start {
+    while left < windows.len() && windows[left].end() <= core_start {
         left += 1;
     }
 
     let mut right = left;
-    while right < windows.len() && windows[right].0 < core_end {
+    while right < windows.len() && windows[right].start() < core_end {
         right += 1;
     }
 
@@ -217,12 +280,12 @@ fn span_bounds_without_cache(
 /// # Returns
 /// A `TileWindowsIter` positioned to stream the overlapping windows.
 pub fn overlapping_windows_for_tile<'a>(
-    windows: &'a [(u64, u64, u64)],
+    windows: &'a [IndexedInterval<u64>],
     tile: &Tile,
     span: Option<&TileWindowSpan>,
 ) -> TileWindowsIter<'a> {
-    let core_start = tile.core_start as u64;
-    let core_end = tile.core_end as u64;
+    let core_start = tile.core_start() as u64;
+    let core_end = tile.core_end() as u64;
 
     let (start_idx, end_idx) = match span {
         Some(span) if !span.is_empty() => (span.first_idx, span.last_idx_exclusive),
@@ -249,27 +312,30 @@ pub fn overlapping_windows_for_tile<'a>(
 /// - `span`: Optional cached span for fast window access.
 ///
 /// # Returns
-/// `Some((min_start, max_end))` when at least one window overlaps; otherwise `None`.
+/// `Some(interval)` spanning the leftmost and rightmost overlapping window when at
+/// least one window overlaps, otherwise `None`.
 pub fn tile_window_min_max(
-    windows: &[(u64, u64, u64)],
+    windows: &[IndexedInterval<u64>],
     tile: &Tile,
     span: Option<&TileWindowSpan>,
-) -> Option<(u64, u64)> {
+) -> crate::Result<Option<Interval<u64>>> {
     let mut iter = overlapping_windows_for_tile(windows, tile, span);
-    let first = iter.next()?;
-    let mut min_start = first.0;
-    let mut max_end = first.1;
+    let Some(first) = iter.next() else {
+        return Ok(None);
+    };
+    let mut min_start = first.start();
+    let mut max_end = first.end();
 
-    for &(start, end, _) in iter {
-        if start < min_start {
-            min_start = start;
+    for window in iter {
+        if window.start() < min_start {
+            min_start = window.start();
         }
-        if end > max_end {
-            max_end = end;
+        if window.end() > max_end {
+            max_end = window.end();
         }
     }
 
-    Some((min_start, max_end))
+    Ok(Some(Interval::new(min_start, max_end)?))
 }
 
 /// Tightens a tile's fetch bounds to the observed window span while respecting halos.
@@ -281,32 +347,38 @@ pub fn tile_window_min_max(
 /// # Parameters
 /// - `tile`: Tile providing the original fetch and core coordinates.
 /// - `chrom_len`: Total length of the chromosome in bases.
-/// - `min_ws`: Minimum window start observed among overlaps.
-/// - `max_we`: Maximum window end observed among overlaps.
+/// - `window_span`: Minimum-to-maximum interval covering the overlapping windows.
+/// - `halo_bp`: Extra bases to keep on both sides of the observed window span before clamping
+///   back onto the tile fetch interval.
 ///
 /// # Returns
-/// `Some((start, end))` as absolute fetch limits when a non-empty span remains; otherwise `None`.
+/// `Some(interval)` as absolute fetch limits when a non-empty span remains, otherwise `None`.
 #[inline]
 pub fn clamp_fetch_to_window_span(
     tile: &Tile,
     chrom_len: u64,
-    min_ws: u64,
-    max_we: u64,
-) -> Option<(i64, i64)> {
-    if min_ws >= max_we {
-        return None;
+    window_span: Interval<u64>,
+    halo_bp: u64,
+) -> crate::Result<Option<Interval<u64>>> {
+    let min_ws = window_span.start();
+    let max_we = window_span.end();
+
+    let tile_left_halo = (tile.core_start() as u64).saturating_sub(tile.fetch_start() as u64);
+    let tile_right_halo = (tile.fetch_end() as u64).saturating_sub(tile.core_end() as u64);
+    let effective_left_halo = tile_left_halo.max(halo_bp);
+    let effective_right_halo = tile_right_halo.max(halo_bp);
+
+    let narrowed_start = min_ws.saturating_sub(effective_left_halo);
+    let narrowed_end = max_we.saturating_add(effective_right_halo);
+
+    let start_u64 = narrowed_start.max(tile.fetch_start() as u64);
+    let end_u64 = narrowed_end.min(tile.fetch_end() as u64).min(chrom_len);
+
+    if start_u64 >= end_u64 {
+        return Ok(None);
     }
 
-    let left_halo = (tile.core_start as u64).saturating_sub(tile.fetch_start as u64);
-    let right_halo = (tile.fetch_end as u64).saturating_sub(tile.core_end as u64);
-
-    let narrowed_start = min_ws.saturating_sub(left_halo);
-    let narrowed_end = max_we.saturating_add(right_halo);
-
-    let start_u64 = narrowed_start.max(tile.fetch_start as u64);
-    let end_u64 = narrowed_end.min(tile.fetch_end as u64).min(chrom_len);
-
-    (start_u64 < end_u64).then_some((start_u64 as i64, end_u64 as i64))
+    Ok(Some(Interval::new(start_u64, end_u64)?))
 }
 
 /// Builds non-overlapping core tiles and their fetch halos for the requested contigs.
@@ -365,15 +437,15 @@ pub fn build_tiles(
             let fetch_start = start.saturating_sub(halo_bp);
             let fetch_end = (core_end.saturating_add(halo_bp)).min(chrom_len);
 
-            tiles.push(Tile {
-                chr: chr.clone(),
+            tiles.push(Tile::from_coords(
+                chr.clone(),
                 tid,
-                index: idx,
-                core_start: start,
+                idx,
+                start,
                 core_end,
                 fetch_start,
                 fetch_end,
-            });
+            )?);
 
             idx += 1;
             start = core_end;
@@ -383,12 +455,12 @@ pub fn build_tiles(
     // Just in case we decide to move start of cores in the future
     // We'll have an extensive debug test
     #[cfg(debug_assertions)]
-    if let Some(bs) = align_bp
+    if let Some(alignment_bp) = align_bp
         && guaranteed_aligned
     {
         for t in &tiles {
             // Starts/ends of *cores* (not final chromosome end) line up on the grid
-            debug_assert_eq!((t.core_start as u64) % bs, 0);
+            debug_assert_eq!((t.core_start() as u64) % alignment_bp, 0);
         }
     }
 
@@ -400,13 +472,13 @@ pub enum TileMode<'w> {
     /// Whole positional coverage for the core,
     /// or windowed positional coverage without index (unique positions)
     Positional {
-        windows: Option<&'w [(u64, u64, u64)]>, // Per-chr windows if provided
-        out_path: std::path::PathBuf,           // Per-tile file path
-        indexed: bool,                          // Whether to save index
+        windows: Option<&'w [IndexedInterval<u64>]>, // Per-chr windows if provided
+        out_path: std::path::PathBuf,                // Per-tile file path
+        indexed: bool,                               // Whether to save index
     },
     AggregatesByBed {
-        windows: &'w [(u64, u64, u64)],    // Per-chr windows
-        masked: bool,                      // Use masked counts/sums
+        windows: &'w [IndexedInterval<u64>], // Per-chr windows
+        masked: bool,                        // Use masked counts/sums
         partials_out: std::path::PathBuf, // Cross-boundary windows (idx, sum, allowed, blacklisted)
         cross_idx_out: std::path::PathBuf, // Sidecar listing crossers
     },
@@ -434,15 +506,15 @@ pub enum TileMode<'w> {
 /// An iterator yielding references to the overlapping windows.
 #[inline]
 pub fn windows_overlapping_core(
-    windows_chr: &[(u64, u64, u64)],
+    windows_chr: &[IndexedInterval<u64>],
     core_start: u32,
     core_end: u32,
-) -> impl Iterator<Item = &(u64, u64, u64)> {
-    let cs = core_start as u64;
-    let ce = core_end as u64;
+) -> impl Iterator<Item = &IndexedInterval<u64>> {
+    let core_start_abs = core_start as u64;
+    let core_end_abs = core_end as u64;
     windows_chr
         .iter()
-        .filter(move |&&(ws, we, _idx)| we > cs && ws < ce)
+        .filter(move |window| window.end() > core_start_abs && window.start() < core_end_abs)
 }
 
 /// Extracts the tile index suffix from a coverage file name.
@@ -499,7 +571,7 @@ pub fn make_temp_dir(
     // Try a few times just in case
     for _ in 0..8 {
         let suffix = random_suffix(10);
-        let p = base_out.join(format!("tmp.{prefix}.{suffix}"));
+        let p = base_out.join(dot_join(&["tmp", prefix, &suffix]));
         if !p.exists() {
             std::fs::create_dir_all(&p)?;
             return Ok(p);
@@ -507,7 +579,7 @@ pub fn make_temp_dir(
     }
     // Fallback: timestamped
     let ts = chrono::Utc::now().timestamp_millis();
-    let p = base_out.join(format!("tmp.{prefix}.{ts}"));
+    let p = base_out.join(dot_join(&["tmp", prefix, &ts.to_string()]));
     std::fs::create_dir_all(&p)?;
     Ok(p)
 }

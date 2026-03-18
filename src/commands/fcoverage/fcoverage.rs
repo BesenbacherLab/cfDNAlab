@@ -3,8 +3,9 @@ use crate::commands::fcoverage::reducer::{
     reduce_aggregates_by_size_with_cross_index_for_chr, reduce_bed_with_cross_index_for_chr,
 };
 use crate::commands::fcoverage::tiling::{
-    adapt_fetch_to_extreme_windows, concat_aligned_size_tile_finals, coverage_sum_and_counts,
-    finalize_value, intersect_abs_with_core_to_local, merge_positional_tiles,
+    adapt_fetch_to_extreme_windows, clip_interval_to_core_and_localize,
+    concat_aligned_size_tile_finals, coverage_sum_and_counts, finalize_value,
+    merge_positional_tiles,
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::{
@@ -17,6 +18,8 @@ use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment::segment_fragment::FragmentWithSegments;
 use crate::shared::fragment_iterator::fragments_with_segments_from_bam;
+use crate::shared::interval::{IndexedInterval, Interval};
+use crate::shared::io::dot_join;
 use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
@@ -177,9 +180,9 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     ));
 
     // Where per-tile files go
-    let positional_prefix = format!("{prefix}.pos");
-    let partials_prefix = format!("{prefix}.part");
-    let finals_prefix = format!("{prefix}.fin");
+    let positional_prefix = dot_join(&[prefix, "pos"]);
+    let partials_prefix = dot_join(&[prefix, "part"]);
+    let finals_prefix = dot_join(&[prefix, "fin"]);
 
     // Faster to convert to &str once
     let positional_prefix = positional_prefix.as_str();
@@ -187,10 +190,10 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     let finals_prefix = finals_prefix.as_str();
 
     // Create filenames of final outputs
-    let final_bedgraph_pos_name = format!("{prefix}.per_position.bedgraph.zst");
-    let final_tsv_pos_name = format!("{prefix}.per_position_per_window.tsv.zst");
-    let final_avg_name = format!("{prefix}.avg.tsv.zst");
-    let final_total_name = format!("{prefix}.total.tsv.zst");
+    let final_bedgraph_pos_name = dot_join(&[prefix, "fcoverage.per_position.bedgraph.zst"]);
+    let final_tsv_pos_name = dot_join(&[prefix, "fcoverage.per_position_per_window.tsv.zst"]);
+    let final_avg_name = dot_join(&[prefix, "fcoverage.avg.tsv.zst"]);
+    let final_total_name = dot_join(&[prefix, "fcoverage.total.tsv.zst"]);
 
     // Get decimals to use
     let decimals_to_use: i32 = if windowed {
@@ -240,10 +243,10 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<FCoverageCounters> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
-            let windows_chr: Option<&[(u64, u64, u64)]> = windows_map
+            let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
                 .as_ref()
                 .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
-            let blacklist_chr: &[(u64, u64)] = blacklist_map
+            let blacklist_chr: &[Interval<u64>] = blacklist_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
@@ -252,116 +255,122 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
 
-            // Decide tile mode and file name
-            let (action_prefix, extensions) = if windowed {
-                match opt.per_window {
-                    CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
-                        (positional_prefix, "tsv.zst")
-                    }
-                    CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
-                        (positional_prefix, "bedgraph.zst")
-                    }
-                    CoverageWindowAction::Average | CoverageWindowAction::Total => {
-                        (partials_prefix, "tsv.zst")
-                    }
-                }
+            let counter = if matches!(window_opt, WindowSpec::Bed(_))
+                && windows_chr.map_or(true, |windows| windows.is_empty())
+            {
+                FCoverageCounters::default()
             } else {
-                // Whole positional coverage
-                (positional_prefix, "bedgraph.zst")
-            };
+                // Decide tile mode and file name
+                let (action_prefix, extensions) = if windowed {
+                    match opt.per_window {
+                        CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
+                            (positional_prefix, "tsv.zst")
+                        }
+                        CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
+                            (positional_prefix, "bedgraph.zst")
+                        }
+                        CoverageWindowAction::Average | CoverageWindowAction::Total => {
+                            (partials_prefix, "tsv.zst")
+                        }
+                    }
+                } else {
+                    // Whole positional coverage
+                    (positional_prefix, "bedgraph.zst")
+                };
 
-            let out_path = temp_dir.join(format!(
-                "{prefix}.{chr}.{idx}.{extensions}",
-                prefix = action_prefix,
-                chr = tile.chr,
-                idx = tile.index
-            ));
+                let out_path = temp_dir.join(format!(
+                    "{prefix}.{chr}.{idx}.{extensions}",
+                    prefix = action_prefix,
+                    chr = tile.chr,
+                    idx = tile.index
+                ));
 
-            // Windowed tmp outputs for faster reducer later on
-            let partials_out = temp_dir.join(format!(
-                "{prefix}.{chr}.{idx}.{extensions}",
-                prefix = partials_prefix,
-                chr = tile.chr,
-                idx = tile.index
-            ));
-            let cross_idx_out = temp_dir.join(format!(
-                "{prefix}.cross.{chr}.{idx}.cross.zst", // Needs this extension!
-                prefix = partials_prefix,
-                chr = tile.chr,
-                idx = tile.index
-            ));
-            let finals_out = temp_dir.join(format!(
-                "{prefix}.{chr}.{idx}.{extensions}",
-                prefix = finals_prefix,
-                chr = tile.chr,
-                idx = tile.index
-            ));
+                // Windowed tmp outputs for faster reducer later on
+                let partials_out = temp_dir.join(format!(
+                    "{prefix}.{chr}.{idx}.{extensions}",
+                    prefix = partials_prefix,
+                    chr = tile.chr,
+                    idx = tile.index
+                ));
+                let cross_idx_out = temp_dir.join(format!(
+                    "{prefix}.cross.{chr}.{idx}.cross.zst", // Needs this extension!
+                    prefix = partials_prefix,
+                    chr = tile.chr,
+                    idx = tile.index
+                ));
+                let finals_out = temp_dir.join(format!(
+                    "{prefix}.{chr}.{idx}.{extensions}",
+                    prefix = finals_prefix,
+                    chr = tile.chr,
+                    idx = tile.index
+                ));
 
-            let mode = if !windowed {
-                TileMode::Positional {
-                    windows: None,
-                    out_path,
-                    indexed: false,
-                }
-            } else {
-                match (&window_opt, opt.per_window) {
-                    (WindowSpec::Bed(_), CoverageWindowAction::OnlyIncludeThesePositionsUnique) => {
-                        TileMode::Positional {
+                let mode = if !windowed {
+                    TileMode::Positional {
+                        windows: None,
+                        out_path,
+                        indexed: false,
+                    }
+                } else {
+                    match (&window_opt, opt.per_window) {
+                        (
+                            WindowSpec::Bed(_),
+                            CoverageWindowAction::OnlyIncludeThesePositionsUnique,
+                        ) => TileMode::Positional {
                             windows: windows_chr,
                             out_path,
                             indexed: false,
-                        }
-                    }
-                    (
-                        WindowSpec::Bed(_),
-                        CoverageWindowAction::OnlyIncludeThesePositionsIndexed,
-                    ) => TileMode::Positional {
-                        windows: windows_chr,
-                        out_path,
-                        indexed: true,
-                    },
-                    (
-                        WindowSpec::Bed(_),
-                        CoverageWindowAction::Average | CoverageWindowAction::Total,
-                    ) => {
-                        let wchr = windows_chr.expect("windows required for aggregates");
-                        TileMode::AggregatesByBed {
-                            windows: wchr,
+                        },
+                        (
+                            WindowSpec::Bed(_),
+                            CoverageWindowAction::OnlyIncludeThesePositionsIndexed,
+                        ) => TileMode::Positional {
+                            windows: windows_chr,
+                            out_path,
+                            indexed: true,
+                        },
+                        (
+                            WindowSpec::Bed(_),
+                            CoverageWindowAction::Average | CoverageWindowAction::Total,
+                        ) => TileMode::AggregatesByBed {
+                            windows: windows_chr.context(
+                                "BED aggregate tile reached processing without any windows",
+                            )?,
                             masked,
                             partials_out,
                             cross_idx_out,
+                        },
+                        (
+                            WindowSpec::Size(size),
+                            CoverageWindowAction::Average | CoverageWindowAction::Total,
+                        ) => TileMode::AggregatesBySize {
+                            window_bp: *size,
+                            masked,
+                            finals_out,
+                            partials_out,
+                            cross_idx_out,
+                            guaranteed_aligned: tile_and_window_boundaries_align,
+                        },
+                        _ => {
+                            anyhow::bail!(
+                                "Got illegal combination of --by-size/--by-bed and --per-window."
+                            )
                         }
                     }
-                    (
-                        WindowSpec::Size(size),
-                        CoverageWindowAction::Average | CoverageWindowAction::Total,
-                    ) => TileMode::AggregatesBySize {
-                        window_bp: *size,
-                        masked,
-                        finals_out,
-                        partials_out,
-                        cross_idx_out,
-                        guaranteed_aligned: tile_and_window_boundaries_align,
-                    },
-                    _ => {
-                        anyhow::bail!(
-                            "Got illegal combination of --by-size/--by-bed and --per-window."
-                        )
-                    }
-                }
-            };
+                };
 
-            let counter = process_tile(
-                opt,
-                tile,
-                tile_span.as_ref(),
-                blacklist_chr,
-                scaling_chr,
-                gc_corrector.clone(), // Quite small memory footprint
-                gc_tag,
-                mode,
-                decimals_to_use,
-            )?;
+                process_tile(
+                    opt,
+                    tile,
+                    tile_span.as_ref(),
+                    blacklist_chr,
+                    scaling_chr,
+                    gc_corrector.clone(), // Quite small memory footprint
+                    gc_tag,
+                    mode,
+                    decimals_to_use,
+                )?
+            };
             pb.inc(1);
             Ok(counter)
         })
@@ -449,7 +458,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
 
                         let win_map = windows_map
                             .as_ref()
-                            .expect("windows_map present for --by-bed");
+                            .context("BED aggregate reduction requires loaded windows")?;
                         for chr in &chromosomes {
                             if let Some(wchr) = win_map.get(chr) {
                                 reduce_bed_with_cross_index_for_chr(
@@ -592,7 +601,7 @@ fn process_tile(
     opt: &FCoverageConfig,
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
-    blacklist_chr: &[(u64, u64)],
+    blacklist_chr: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
     gc_tag: Option<&str>,
@@ -615,7 +624,7 @@ fn process_tile(
             ref_2bit,
             &tile.chr,
             // NOTE: Need for full fetch span to get GC of overlapping fragments!
-            (tile.fetch_start as usize)..(tile.fetch_end as usize),
+            (tile.fetch_start() as usize)..(tile.fetch_end() as usize),
         )?;
         Some(build_gc_prefixes(&seq_bytes))
     } else {
@@ -624,18 +633,24 @@ fn process_tile(
 
     // Adapt the fetch coordinates to the present windows (*in windowed mode!*)
     // When no windows are present, skip this tile
-    let Some((fetch_from, fetch_to)) =
-        adapt_fetch_to_extreme_windows(tile, tile_window_span, &mode, chrom_len as u32)
+    let Some(fetch_span) = adapt_fetch_to_extreme_windows(
+        tile,
+        tile_window_span,
+        &mode,
+        chrom_len as u32,
+        opt.fragment_lengths.max_fragment_length as u64,
+    )?
     else {
         return Ok(counter);
     };
+    let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
 
     reader
         .fetch((tile.tid, fetch_from, fetch_to))
         .context(format!("fetch {} {}-{}", &tile.chr, fetch_from, fetch_to))?;
 
     // Prepare CP for tile core length
-    let core_len = tile.core_end - tile.core_start;
+    let core_len = tile.core_end() - tile.core_start();
     let mut cp = Coverage::new(core_len);
 
     // Function for filtering fragments after pairing
@@ -674,42 +689,41 @@ fn process_tile(
     // Iterate fragments and add coverage
     // Separate branches for with/without GC correction
     if let Some(gc_corrector) = gc_corrector_opt {
-        let gc_prefixes =
-            gc_prefixes_opt.expect("When GC correction is enabled, the gc_prefixes should be set");
-        let fetch_start = tile.fetch_start;
-        let fetch_end = tile.fetch_end;
+        let gc_prefixes = gc_prefixes_opt
+            .as_ref()
+            .context("GC prefix sums missing despite GC correction being enabled")?;
+        let fetch_start = tile.fetch_start();
+        let fetch_end = tile.fetch_end();
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
 
-            if fragment.start < fetch_start || fragment.end > fetch_end {
+            if fragment.start() < fetch_start || fragment.end() > fetch_end {
                 // Fragment won't overlap the tile core (assuming correct max_fragment_length halo!)
                 // Note that more fragments (smaller than max_fragment_length) could be outside the tiles
                 continue;
             }
 
-            let rel_start = (fragment.start - fetch_start) as u64;
-            let rel_end = (fragment.end - fetch_start) as u64;
+            let fetch_relative_fragment = fragment
+                .interval
+                .try_to_u64()?
+                .shift_left(fetch_start as u64)?;
 
-            let weight = match gc_corrector.correct_fragment(rel_start, rel_end, &gc_prefixes)? {
-                Some(weight) => weight,
-                None => {
-                    counter.gc_failed_fragments += 1;
-                    if opt.gc.drop_invalid_gc {
-                        continue;
-                    } else {
-                        1.0
+            let weight =
+                match gc_corrector.correct_fragment(fetch_relative_fragment, &gc_prefixes)? {
+                    Some(weight) => weight,
+                    None => {
+                        counter.gc_failed_fragments += 1;
+                        if opt.gc.drop_invalid_gc {
+                            continue;
+                        } else {
+                            1.0
+                        }
                     }
-                }
-            };
+                };
 
             // Clip and add to tile core coverage (segments respected)
-            let was_counted = add_fragment_clipped_to_core(
-                &mut cp,
-                &fragment,
-                weight as f32,
-                tile.core_start,
-                tile.core_end,
-            )?;
+            let was_counted =
+                add_fragment_clipped_to_core(&mut cp, &fragment, weight as f32, tile.core)?;
 
             if was_counted {
                 counter.base.counted_fragments += 1;
@@ -740,13 +754,8 @@ fn process_tile(
                 }
             };
 
-            let was_counted = add_fragment_clipped_to_core(
-                &mut cp,
-                &fragment,
-                gc_weight,
-                tile.core_start,
-                tile.core_end,
-            )?;
+            let was_counted =
+                add_fragment_clipped_to_core(&mut cp, &fragment, gc_weight, tile.core)?;
 
             if was_counted {
                 counter.base.counted_fragments += 1;
@@ -757,13 +766,7 @@ fn process_tile(
             let fragment = fragment_res.context("reading fragment")?;
 
             // Clip and add to tile core coverage (segments respected)
-            let was_counted = add_fragment_clipped_to_core(
-                &mut cp,
-                &fragment,
-                1.0,
-                tile.core_start,
-                tile.core_end,
-            )?;
+            let was_counted = add_fragment_clipped_to_core(&mut cp, &fragment, 1.0, tile.core)?;
 
             if was_counted {
                 counter.base.counted_fragments += 1;
@@ -778,7 +781,7 @@ fn process_tile(
     if !scaling_chr.is_empty()
         && let Some(cov_mut) = cp.coverage_mut()
     {
-        apply_scaling_to_coverage_in_place(cov_mut, tile.core_start, scaling_chr);
+        apply_scaling_to_coverage_in_place(cov_mut, tile.core_start(), scaling_chr);
     }
 
     // Get counters from iterator
@@ -797,7 +800,9 @@ fn process_tile(
             // Prepare compressed writer (zstd) for this tile
             let mut w = open_zstd_auto_writer(&out_path, 3, None)?;
 
-            let cov = cp.coverage().expect("coverage present");
+            let cov = cp
+                .coverage()
+                .context("tile coverage missing after finalization")?;
             let mask = cp.blacklist_mask();
 
             // Write tile data to disk
@@ -811,38 +816,39 @@ fn process_tile(
                         mask,
                         0,
                         cov.len(),
-                        tile.core_start as u64,
+                        tile.core_start() as u64,
                         decimals,
                         opt.keep_zero_runs,
                         &mut w,
                     )?;
                 }
                 Some(win_chr) => {
-                    for &(window_start, window_end, original_idx) in
-                        overlapping_windows_for_tile(win_chr, tile, tile_window_span)
-                    {
-                        let (local_start_idx, local_end_idx) =
-                            if let Some((local_start_idx, local_end_idx, _, _)) =
-                                intersect_abs_with_core_to_local(
-                                    window_start,
-                                    window_end,
-                                    tile.core_start,
-                                    tile.core_end,
-                                )
-                            {
-                                (local_start_idx, local_end_idx)
-                            } else {
-                                continue;
-                            };
+                    for window in overlapping_windows_for_tile(win_chr, tile, tile_window_span) {
+                        let window_start = window.start();
+                        let window_end = window.end();
+                        // Keep the original window index from the BED input so the
+                        // indexed positional output and downstream reducers stay aligned
+                        let original_idx = window.idx();
+                        let core_interval =
+                            Interval::new(tile.core_start() as u64, tile.core_end() as u64)?;
+                        let local_overlap = if let Some(local_overlap) =
+                            clip_interval_to_core_and_localize(
+                                Interval::new(window_start, window_end)?,
+                                core_interval,
+                            )? {
+                            local_overlap
+                        } else {
+                            continue;
+                        };
 
                         if indexed {
                             emit_windowed_runs(
                                 &tile.chr,
                                 cov,
                                 mask,
-                                local_start_idx,
-                                local_end_idx,
-                                tile.core_start as u64,
+                                local_overlap.local_start_idx,
+                                local_overlap.local_end_idx,
+                                tile.core_start() as u64,
                                 Some(original_idx),
                                 decimals,
                                 opt.keep_zero_runs,
@@ -853,9 +859,9 @@ fn process_tile(
                                 &tile.chr,
                                 cov,
                                 mask,
-                                local_start_idx,
-                                local_end_idx,
-                                tile.core_start as u64,
+                                local_overlap.local_start_idx,
+                                local_overlap.local_end_idx,
+                                tile.core_start() as u64,
                                 None,
                                 decimals,
                                 opt.keep_zero_runs,
@@ -883,39 +889,46 @@ fn process_tile(
             let psum_all = cp
                 .psum_all_ref()
                 .ok_or_else(|| anyhow::anyhow!("psum_all missing"))?;
-            let psum_allowed = cp.psum_allowed_ref();
-            let psum_cnt_allowed = cp.psum_allowed_count_ref();
+            let psum_unmasked = cp.psum_unmasked_ref();
+            let psum_cnt_unmasked = cp.psum_unmasked_count_ref();
             let mask: Option<&[u8]> = cp.blacklist_mask();
 
             // Writers: compressed partials and cross sidecar
             let mut w_part = open_zstd_auto_writer(&partials_out, 3, None)?;
             let mut w_cross = open_zstd_auto_writer(&cross_idx_out, 3, None)?;
 
-            let cs = tile.core_start as u64;
-            let ce = tile.core_end as u64;
+            let core_start_abs = tile.core_start() as u64;
+            let core_end_abs = tile.core_end() as u64;
 
             // Walk only windows overlapping the core (already start-sorted)
-            for &(ws, we, idx) in overlapping_windows_for_tile(windows, tile, tile_window_span) {
-                let (local_start_idx, local_end_idx) =
-                    if let Some((local_start_idx, local_end_idx, _, _)) =
-                        intersect_abs_with_core_to_local(ws, we, tile.core_start, tile.core_end)
-                    {
-                        (local_start_idx, local_end_idx)
-                    } else {
-                        continue;
-                    };
+            for window in overlapping_windows_for_tile(windows, tile, tile_window_span) {
+                let window_start_abs = window.start();
+                let window_end_abs = window.end();
+                // This is the original window index, not just the current loop position
+                let idx = window.idx();
+                let core_interval =
+                    Interval::new(tile.core_start() as u64, tile.core_end() as u64)?;
+                let local_overlap = if let Some(local_overlap) = clip_interval_to_core_and_localize(
+                    Interval::new(window_start_abs, window_end_abs)?,
+                    core_interval,
+                )? {
+                    local_overlap
+                } else {
+                    continue;
+                };
 
                 // Classify as internal (fully inside core) vs boundary (crosses tile core boundary)
-                let crosses_boundary = !(ws >= cs && we <= ce);
+                let crosses_boundary =
+                    !(window_start_abs >= core_start_abs && window_end_abs <= core_end_abs);
 
                 // Sum coverage, respecting masked mode
                 let (sum, allowed, blacklisted) = coverage_sum_and_counts(
-                    local_start_idx,
-                    local_end_idx,
+                    local_overlap.local_start_idx,
+                    local_overlap.local_end_idx,
                     masked,
                     psum_all,
-                    psum_allowed,
-                    psum_cnt_allowed,
+                    psum_unmasked,
+                    psum_cnt_unmasked,
                     mask,
                 );
 
@@ -952,15 +965,15 @@ fn process_tile(
             let psum_all = cp
                 .psum_all_ref()
                 .ok_or_else(|| anyhow::anyhow!("psum_all missing"))?;
-            let psum_allowed = cp.psum_allowed_ref();
-            let psum_cnt_allowed = cp.psum_allowed_count_ref();
+            let psum_unmasked = cp.psum_unmasked_ref();
+            let psum_cnt_unmasked = cp.psum_unmasked_count_ref();
             let mask: Option<&[u8]> = cp.blacklist_mask();
 
             // Determine the fixed-size windows that overlap the tile core
-            let cs = tile.core_start as u64;
-            let ce = tile.core_end as u64;
-            let k_lo = cs / window_bp;
-            let k_hi = (ce.saturating_sub(1)) / window_bp;
+            let core_start_abs = tile.core_start() as u64;
+            let core_end_abs = tile.core_end() as u64;
+            let first_bin_idx = core_start_abs / window_bp;
+            let last_bin_idx = (core_end_abs.saturating_sub(1)) / window_bp;
 
             if guaranteed_aligned {
                 // FAST PATH: Every bin that touches the core is fully contained in this core
@@ -968,48 +981,47 @@ fn process_tile(
 
                 let mut w_fin = open_zstd_auto_writer(&finals_out, 3, None)?;
 
-                for k in k_lo..=k_hi {
-                    let bin_start = k * window_bp;
-                    let bin_end = (k + 1) * window_bp;
+                for bin_idx in first_bin_idx..=last_bin_idx {
+                    let bin_start = bin_idx * window_bp;
+                    let bin_end = (bin_idx + 1) * window_bp;
 
                     // Intersect with core (alignment ensures this equals the bin for non-terminal tiles).
-                    let (local_start_idx, local_end_idx, s_abs, e_abs) =
-                        if let Some((local_start_idx, local_end_idx, s_abs, e_abs)) =
-                            intersect_abs_with_core_to_local(
-                                bin_start,
-                                bin_end,
-                                tile.core_start,
-                                tile.core_end,
-                            )
-                        {
-                            (local_start_idx, local_end_idx, s_abs, e_abs)
-                        } else {
-                            continue;
-                        };
+                    let core_interval =
+                        Interval::new(tile.core_start() as u64, tile.core_end() as u64)?;
+                    let local_overlap = if let Some(local_overlap) =
+                        clip_interval_to_core_and_localize(
+                            Interval::new(bin_start, bin_end)?,
+                            core_interval,
+                        )? {
+                        local_overlap
+                    } else {
+                        continue;
+                    };
 
                     // Sum coverage, respecting masked mode
                     let (sum, allowed, blacklisted) = coverage_sum_and_counts(
-                        local_start_idx,
-                        local_end_idx,
+                        local_overlap.local_start_idx,
+                        local_overlap.local_end_idx,
                         masked,
                         psum_all,
-                        psum_allowed,
-                        psum_cnt_allowed,
+                        psum_unmasked,
+                        psum_cnt_unmasked,
                         mask,
                     );
 
                     // Compute final value now
-                    let unmasked_span_bp = (e_abs - s_abs) as u64;
+                    let unmasked_span_bp = local_overlap.clipped_abs_interval.len();
                     let value =
                         finalize_value(sum, allowed, unmasked_span_bp, masked, &opt.per_window);
                     let value = round_to(value, decimals);
 
-                    // Emit FINAL row: chromosome  start  end  value  blacklisted_positions
+                    // Emit the logical bin, not the clipped tile-local piece
+                    // Aligned tiles guarantee one final row per bin, but the final bin on a
+                    // chromosome may still need clipping at the chromosome end
                     write_final_row(
                         &mut w_fin,
                         &tile.chr,
-                        bin_start,
-                        bin_end.min(ce),
+                        Interval::new(bin_start, bin_end.min(core_end_abs))?,
                         value,
                         blacklisted,
                         decimals,
@@ -1021,37 +1033,38 @@ fn process_tile(
                 let mut w_part = open_zstd_auto_writer(&partials_out, 3, None)?;
                 let mut w_cross = open_zstd_auto_writer(&cross_idx_out, 3, None)?;
 
-                for k in k_lo..=k_hi {
-                    let bin_start = k * window_bp;
-                    let bin_end = (k + 1) * window_bp;
+                for bin_idx in first_bin_idx..=last_bin_idx {
+                    let bin_start = bin_idx * window_bp;
+                    let bin_end = (bin_idx + 1) * window_bp;
 
                     // Intersect with core (alignment ensures this equals the bin for non-terminal tiles).
-                    let (local_start_idx, local_end_idx) =
-                        if let Some((local_start_idx, local_end_idx, _, _)) =
-                            intersect_abs_with_core_to_local(
-                                bin_start,
-                                bin_end,
-                                tile.core_start,
-                                tile.core_end,
-                            )
-                        {
-                            (local_start_idx, local_end_idx)
-                        } else {
-                            continue;
-                        };
+                    let core_interval =
+                        Interval::new(tile.core_start() as u64, tile.core_end() as u64)?;
+                    let local_overlap = if let Some(local_overlap) =
+                        clip_interval_to_core_and_localize(
+                            Interval::new(bin_start, bin_end)?,
+                            core_interval,
+                        )? {
+                        local_overlap
+                    } else {
+                        continue;
+                    };
 
                     // Sum coverage, respecting masked mode
                     let (sum, allowed, blacklisted) = coverage_sum_and_counts(
-                        local_start_idx,
-                        local_end_idx,
+                        local_overlap.local_start_idx,
+                        local_overlap.local_end_idx,
                         masked,
                         psum_all,
-                        psum_allowed,
-                        psum_cnt_allowed,
+                        psum_unmasked,
+                        psum_cnt_unmasked,
                         mask,
                     );
 
                     // PARTIAL row: start  end  sum  allowed  blacklisted
+                    // Use the logical bin bounds plus this tile's contribution
+                    // The reducer groups by bin_start from the cross-index sidecar, so we must
+                    // keep the logical bin identity here instead of writing the clipped piece
                     writeln!(
                         w_part,
                         "{}\t{}\t{}\t{}\t{}",
@@ -1059,7 +1072,7 @@ fn process_tile(
                     )?;
 
                     // Mark cross-boundary bins (not fully inside the core) so reducer expects >1 contributions
-                    let fully_inside = (bin_start >= cs) && (bin_end <= ce);
+                    let fully_inside = (bin_start >= core_start_abs) && (bin_end <= core_end_abs);
                     if !fully_inside {
                         writeln!(w_cross, "{}", bin_start)?;
                     }
@@ -1078,34 +1091,35 @@ fn add_clipped_blacklist_to_cp(
     cp: &mut Coverage,
     tile: &Tile,
     masked: bool,
-    blacklist_chr: &[(u64, u64)],
+    blacklist_chr: &[Interval<u64>],
 ) -> Result<()> {
     // Add blacklist late and clipped to the tile core to minimize memory
     // Use binary search to jump to the first overlapping interval
     if masked && !blacklist_chr.is_empty() {
-        let cs = tile.core_start as u64;
-        let ce = tile.core_end as u64;
+        let core_start_abs = tile.core_start() as u64;
+        let core_end_abs = tile.core_end() as u64;
 
         // Find first interval with end > core_start
-        let mut i = blacklist_chr.partition_point(|&(_bs, be)| be <= cs);
+        let mut i = blacklist_chr.partition_point(|interval| interval.end() <= core_start_abs);
 
         if i < blacklist_chr.len() {
-            let mut clipped: Vec<(u64, u64)> = Vec::new();
+            let mut clipped: Vec<Interval<u64>> = Vec::new();
 
-            // Walk only the intervals that can overlap [cs, ce)
+            // Walk only the intervals that can overlap the tile core
             while i < blacklist_chr.len() {
-                let (bs, be) = blacklist_chr[i];
-                if bs >= ce {
+                let blacklist_start = blacklist_chr[i].start();
+                let blacklist_end = blacklist_chr[i].end();
+                if blacklist_start >= core_end_abs {
                     break; // Remaining intervals start after the core band
                 }
 
-                let s_abs = bs.max(cs);
-                let e_abs = be.min(ce);
-                if s_abs < e_abs {
+                let overlap_start_abs = blacklist_start.max(core_start_abs);
+                let overlap_end_abs = blacklist_end.min(core_end_abs);
+                if overlap_start_abs < overlap_end_abs {
                     // Convert to tile‐local coordinates
-                    let s = (s_abs as u32) - tile.core_start;
-                    let e = (e_abs as u32) - tile.core_start;
-                    clipped.push((s as u64, e as u64));
+                    let local_start = (overlap_start_abs as u32) - tile.core_start();
+                    let local_end = (overlap_end_abs as u32) - tile.core_start();
+                    clipped.push(Interval::new(local_start as u64, local_end as u64)?);
                 }
                 i += 1;
             }
@@ -1141,39 +1155,39 @@ pub fn add_fragment_clipped_to_core(
     cp: &mut Coverage,
     fragment: &FragmentWithSegments,
     weight: f32,
-    core_start: u32,
-    core_end: u32,
+    core_interval: Interval<u32>,
 ) -> Result<bool> {
     // Use explicit segments if present
     let mut counted = false;
+    let core_start = core_interval.start();
+    let to_core_local = |interval: Interval<u32>| -> Result<Interval<u32>> {
+        interval.shift_left(core_start).map_err(anyhow::Error::from)
+    };
     if let Some(segments) = &fragment.segments {
-        for &(seg_start_abs, seg_end_abs) in segments {
-            let s = seg_start_abs.max(core_start);
-            let e = seg_end_abs.min(core_end);
-            if s < e {
+        for segment in segments {
+            let Some(clipped_interval) = segment.clip_to(core_interval) else {
                 // Skips fragments completely outside tile
-                // Shift to tile-local coordinates
-                let local = Fragment {
-                    tid: fragment.tid,
-                    start: s - core_start,
-                    end: e - core_start,
-                    gc_tag: Default::default(),
-                };
-                cp.add_fragment_weighted(local, weight)?;
-                counted = true;
-            }
+                continue;
+            };
+            // Shift to tile-local coordinates
+            let local_interval = to_core_local(clipped_interval)?;
+            let local = Fragment {
+                tid: fragment.tid,
+                interval: local_interval,
+                gc_tag: Default::default(),
+            };
+            cp.add_fragment_weighted(local, weight)?;
+            counted = true;
         }
     } else {
         // No explicit segments -> treat as one span (this already encodes your include_inter_mate_gap policy)
-        let s = fragment.start.max(core_start);
-        let e = fragment.end.min(core_end);
-        if s < e {
-            // Skips fragments completely outside tile
+        // Skips fragments completely outside tile
+        if let Some(clipped_interval) = fragment.interval.clip_to(core_interval) {
             // Shift to tile-local coordinates
+            let local_interval = to_core_local(clipped_interval)?;
             let local = Fragment {
                 tid: fragment.tid,
-                start: s - core_start,
-                end: e - core_start,
+                interval: local_interval,
                 gc_tag: Default::default(),
             };
 

@@ -45,6 +45,7 @@ use std::path::PathBuf;
 /// ## Temporary files
 ///
 /// We write temporary files to a `<output-dir>/tmp.<output-prefix>.<random>` directory to reduce memory.
+/// When no output prefix is given, the directory becomes `<output-dir>/tmp.<random>`.
 /// This directory is deleted at the end of the run. If the software is disrupted, the directory
 /// may be left behind.
 ///
@@ -128,7 +129,9 @@ pub struct WPSSharedConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
 
-    /// Prefix for output files (e.g., a sample name) `[string]`
+    /// Optional prefix for output files (e.g., a sample name) `[string]`
+    ///
+    /// Leave empty to write file names without a leading prefix.
     ///
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
@@ -139,7 +142,7 @@ pub struct WPSSharedConfig {
     ///   `<prefix>.wps.total.tsv.zst`.
     #[cfg_attr(
         feature = "cli",
-        clap(long, short = 'x', default_value = "coverage", help_heading = "Core")
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
     )]
     pub output_prefix: String,
 
@@ -313,7 +316,7 @@ impl WPSConfig {
         per_window: Option<CoverageWindowAction>,
     ) -> Self {
         Self {
-            shared_args: WPSSharedConfig::new(ioc, chromosomes, "wps"),
+            shared_args: WPSSharedConfig::new(ioc, chromosomes, ""),
             keep_zero_runs: false,
             per_window: per_window,
         }

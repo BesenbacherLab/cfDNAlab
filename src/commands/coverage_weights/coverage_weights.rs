@@ -12,6 +12,8 @@ use crate::{
         coverage::Coverage,
         fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
+        interval::Interval,
+        io::dot_join,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         thread_pool::init_global_pool,
     },
@@ -127,7 +129,7 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
     // Write bins BED file
 
     println!("Start: Writing stride-bin coordinates and scaling factors to disk");
-    let file_name = format!("{}.scaling_factors.tsv", opt.output_prefix);
+    let file_name = dot_join(&[opt.output_prefix.as_str(), "scaling_factors.tsv"]);
     let mut bed_writer = BufWriter::new(
         File::create(opt.ioc.output_dir.join(file_name)).context("Creating tsv failed")?,
     );
@@ -146,8 +148,8 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
                 bed_writer,
                 "{}\t{}\t{}\t{}\t{}\t{}",
                 chr,
-                bin.start,
-                bin.end,
+                bin.start(),
+                bin.end(),
                 bin.avg_coverage,
                 bin.avg_overlap_coverage,
                 bin.scaling_factor
@@ -182,7 +184,7 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
 fn process_chrom(
     chr: &str,
     opt: &CoverageWeightsConfig,
-    blacklist_intervals: &[(u64, u64)],
+    blacklist_intervals: &[Interval<u64>],
 ) -> anyhow::Result<(String, Vec<StrideBin>, CoverageWeightsCounters)> {
     // Open a fresh BAM reader for this thread
     let (mut reader, tid, chrom_len) = create_chromosome_reader(&opt.ioc.bam, chr)?;
@@ -195,8 +197,7 @@ fn process_chrom(
         let mut pos = 0u32;
         while pos < chrom_len as u32 {
             v.push(StrideBin {
-                start: pos,
-                end: pos.saturating_add(opt.stride).min(chrom_len as u32),
+                interval: Interval::new(pos, pos.saturating_add(opt.stride).min(chrom_len as u32))?,
                 avg_coverage: 0.0,
                 avg_overlap_coverage: 0.0,
                 scaling_factor: 0.0,
@@ -274,7 +275,7 @@ fn process_chrom(
 
     for bin in bins.iter_mut() {
         // Calculate total coverage in bin
-        bin.avg_coverage = cp.avg_coverage(bin.start, bin.end, exclude_blacklisted)?;
+        bin.avg_coverage = cp.avg_coverage(bin.interval, exclude_blacklisted)?;
     }
 
     // Update the avg_overlap_coverage per bin

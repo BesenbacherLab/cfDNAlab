@@ -117,6 +117,93 @@ mod tests_bam_to_frag {
         Ok(())
     }
 
+    #[test]
+    fn bam_to_frag_global_handles_three_chromosomes() -> Result<()> {
+        let work = tempdir().context("tempdir")?;
+        let bam_path = work.path().join("three_chr_global.bam");
+        let out_dir = work.path().join("out_global");
+        fs::create_dir_all(&out_dir)?;
+
+        write_three_chrom_window_bam(&bam_path)?;
+
+        index::build(bam_path.to_str().unwrap(), None, index::Type::Bai, 1).context("build BAI")?;
+
+        let ioc = IOCArgs {
+            bam: bam_path.clone(),
+            output_dir: out_dir.clone(),
+            n_threads: 1,
+        };
+        let mut cfg = BamToFragConfig::new(ioc, three_chromosome_args());
+        cfg.set_output_prefix("three_chr_global");
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+
+        run_inner(&cfg)?;
+
+        let frag_path = out_dir.join("three_chr_global.frag.tsv.gz");
+        let mut parsed = parse_frag_rows(&read_frag_gz(&frag_path)?);
+        parsed.sort();
+
+        assert_eq!(
+            parsed,
+            vec![
+                ("chr1".to_string(), 10, 130, 60, '+'),
+                ("chr1".to_string(), 400, 520, 60, '+'),
+                ("chr2".to_string(), 30, 150, 60, '+'),
+                ("chr2".to_string(), 430, 550, 60, '+'),
+                ("chr3".to_string(), 50, 170, 60, '+'),
+                ("chr3".to_string(), 460, 580, 60, '+'),
+            ],
+            "Global mode should keep all three chromosomes and both fragments per chromosome"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn bam_to_frag_bed_handles_three_chromosomes() -> Result<()> {
+        let work = tempdir().context("tempdir")?;
+        let bam_path = work.path().join("three_chr_bed.bam");
+        let out_dir = work.path().join("out_bed");
+        fs::create_dir_all(&out_dir)?;
+
+        write_three_chrom_window_bam(&bam_path)?;
+
+        index::build(bam_path.to_str().unwrap(), None, index::Type::Bai, 1).context("build BAI")?;
+
+        let bed_path = work.path().join("three_chr_windows.bed");
+        fs::write(&bed_path, "chr1\t0\t60\nchr2\t0\t80\nchr3\t40\t100\n")?;
+
+        let ioc = IOCArgs {
+            bam: bam_path.clone(),
+            output_dir: out_dir.clone(),
+            n_threads: 1,
+        };
+        let mut cfg = BamToFragConfig::new(ioc, three_chromosome_args());
+        cfg.set_output_prefix("three_chr_bed");
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_by_bed(Some(bed_path));
+
+        run_inner(&cfg)?;
+
+        let frag_path = out_dir.join("three_chr_bed.frag.tsv.gz");
+        let mut parsed = parse_frag_rows(&read_frag_gz(&frag_path)?);
+        parsed.sort();
+
+        assert_eq!(
+            parsed,
+            vec![
+                ("chr1".to_string(), 10, 130, 60, '+'),
+                ("chr2".to_string(), 30, 150, 60, '+'),
+                ("chr3".to_string(), 50, 170, 60, '+'),
+            ],
+            "BED mode should keep only the fragments overlapping the per-chromosome windows"
+        );
+
+        Ok(())
+    }
+
     fn read_frag_gz(path: &Path) -> Result<Vec<String>> {
         let f = File::open(path).with_context(|| format!("open {}", path.display()))?;
         let mut gz = GzDecoder::new(f);
@@ -129,6 +216,17 @@ mod tests_bam_to_frag {
     fn fixed_chromosome_args() -> ChromosomeArgs {
         ChromosomeArgs {
             chromosomes: Some(vec!["chr1".to_string(), "chr2".to_string()]),
+            chromosomes_file: None,
+        }
+    }
+
+    fn three_chromosome_args() -> ChromosomeArgs {
+        ChromosomeArgs {
+            chromosomes: Some(vec![
+                "chr1".to_string(),
+                "chr2".to_string(),
+                "chr3".to_string(),
+            ]),
             chromosomes_file: None,
         }
     }
@@ -205,6 +303,234 @@ mod tests_bam_to_frag {
         writer.write(&r1_c)?;
 
         Ok(())
+    }
+
+    fn write_three_chrom_window_bam(path: &Path) -> Result<()> {
+        let mut hdr = Header::new();
+        hdr.push_record(
+            bam::header::HeaderRecord::new(b"HD")
+                .push_tag(b"VN", &"1.6")
+                .push_tag(b"SO", &"coordinate"),
+        );
+        hdr.push_record(
+            bam::header::HeaderRecord::new(b"SQ")
+                .push_tag(b"SN", &"chr1")
+                .push_tag(b"LN", &100_000),
+        );
+        hdr.push_record(
+            bam::header::HeaderRecord::new(b"SQ")
+                .push_tag(b"SN", &"chr2")
+                .push_tag(b"LN", &100_000),
+        );
+        hdr.push_record(
+            bam::header::HeaderRecord::new(b"SQ")
+                .push_tag(b"SN", &"chr3")
+                .push_tag(b"LN", &100_000),
+        );
+
+        let mut writer = Writer::from_path(path, &hdr, Format::Bam).context("create BAM writer")?;
+        let header_view = HeaderView::from_header(&hdr);
+
+        let tid_chr1 = header_view.tid(b"chr1").expect("chr1 present") as i32;
+        let tid_chr2 = header_view.tid(b"chr2").expect("chr2 present") as i32;
+        let tid_chr3 = header_view.tid(b"chr3").expect("chr3 present") as i32;
+
+        let cigar = vec![Cigar::Match(40)];
+        let seq = b"ACGTN".repeat(8);
+        let qual = vec![30u8; 40];
+
+        let records = vec![
+            make_rec(
+                b"chr1_keep",
+                tid_chr1,
+                10,
+                false,
+                60,
+                &cigar,
+                &seq,
+                &qual,
+                true,
+                tid_chr1,
+                90,
+                true,
+            ),
+            make_rec(
+                b"chr1_keep",
+                tid_chr1,
+                90,
+                true,
+                60,
+                &cigar,
+                &seq,
+                &qual,
+                false,
+                tid_chr1,
+                10,
+                false,
+            ),
+            make_rec(
+                b"chr1_drop",
+                tid_chr1,
+                400,
+                false,
+                60,
+                &cigar,
+                &seq,
+                &qual,
+                true,
+                tid_chr1,
+                480,
+                true,
+            ),
+            make_rec(
+                b"chr1_drop",
+                tid_chr1,
+                480,
+                true,
+                60,
+                &cigar,
+                &seq,
+                &qual,
+                false,
+                tid_chr1,
+                400,
+                false,
+            ),
+            make_rec(
+                b"chr2_keep",
+                tid_chr2,
+                30,
+                false,
+                60,
+                &cigar,
+                &seq,
+                &qual,
+                true,
+                tid_chr2,
+                110,
+                true,
+            ),
+            make_rec(
+                b"chr2_keep",
+                tid_chr2,
+                110,
+                true,
+                60,
+                &cigar,
+                &seq,
+                &qual,
+                false,
+                tid_chr2,
+                30,
+                false,
+            ),
+            make_rec(
+                b"chr2_drop",
+                tid_chr2,
+                430,
+                false,
+                60,
+                &cigar,
+                &seq,
+                &qual,
+                true,
+                tid_chr2,
+                510,
+                true,
+            ),
+            make_rec(
+                b"chr2_drop",
+                tid_chr2,
+                510,
+                true,
+                60,
+                &cigar,
+                &seq,
+                &qual,
+                false,
+                tid_chr2,
+                430,
+                false,
+            ),
+            make_rec(
+                b"chr3_keep",
+                tid_chr3,
+                50,
+                false,
+                60,
+                &cigar,
+                &seq,
+                &qual,
+                true,
+                tid_chr3,
+                130,
+                true,
+            ),
+            make_rec(
+                b"chr3_keep",
+                tid_chr3,
+                130,
+                true,
+                60,
+                &cigar,
+                &seq,
+                &qual,
+                false,
+                tid_chr3,
+                50,
+                false,
+            ),
+            make_rec(
+                b"chr3_drop",
+                tid_chr3,
+                460,
+                false,
+                60,
+                &cigar,
+                &seq,
+                &qual,
+                true,
+                tid_chr3,
+                540,
+                true,
+            ),
+            make_rec(
+                b"chr3_drop",
+                tid_chr3,
+                540,
+                true,
+                60,
+                &cigar,
+                &seq,
+                &qual,
+                false,
+                tid_chr3,
+                460,
+                false,
+            ),
+        ];
+
+        for record in records {
+            writer.write(&record)?;
+        }
+
+        Ok(())
+    }
+
+    fn parse_frag_rows(rows: &[String]) -> Vec<(String, u64, u64, u8, char)> {
+        rows.iter()
+            .map(|line| {
+                let columns: Vec<&str> = line.split('\t').collect();
+                assert_eq!(columns.len(), 5, "Bad line: {line}");
+                (
+                    columns[0].to_string(),
+                    columns[1].parse().unwrap(),
+                    columns[2].parse().unwrap(),
+                    columns[3].parse().unwrap(),
+                    columns[4].chars().next().unwrap(),
+                )
+            })
+            .collect()
     }
 
     /// Construct a paired-end record.

@@ -314,9 +314,9 @@ fn fcoverage_cli_minimal_invocation_writes_expected_positional_run() -> Result<(
     assert_success_with_logs(&output, "cfdna fcoverage minimal invocation");
 
     // Assert
-    let coverage_path = out_dir
-        .path()
-        .join(format!("{output_prefix}.per_position.bedgraph.zst"));
+    let coverage_path = out_dir.path().join(format!(
+        "{output_prefix}.fcoverage.per_position.bedgraph.zst"
+    ));
     assert!(
         coverage_path.exists(),
         "Expected {}",

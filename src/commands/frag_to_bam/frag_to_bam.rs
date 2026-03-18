@@ -4,7 +4,10 @@ use crate::{
         frag_to_bam::config::FragToBamConfig,
     },
     shared::{
-        blacklist::is_blacklisted, io::open_text_reader, reference::load_chrom_sizes_with_order,
+        blacklist::is_blacklisted,
+        interval::Interval,
+        io::{dot_join, open_text_reader},
+        reference::load_chrom_sizes_with_order,
         tiled_run::make_temp_dir,
     },
 };
@@ -269,8 +272,7 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
             && is_blacklisted(
                 chrom_blacklist,
                 opt.blacklist_strategy,
-                frag.start,
-                frag.end,
+                Interval::new(frag.start, frag.end)?,
                 opt.fragment_lengths.max_fragment_length as u64,
                 &mut bl_ptr,
             );
@@ -323,7 +325,7 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
     let (header, tid_lookup) = build_header(&header_chroms, &chrom_sizes)?;
     let output_path = opt
         .output_dir
-        .join(format!("{}.bam", opt.output_prefix.trim()));
+        .join(dot_join(&[opt.output_prefix.trim(), "fragments.bam"]));
     let mut writer = bam::Writer::from_path(&output_path, &header, Format::Bam)
         .context("Creating BAM writer")?;
 
@@ -840,7 +842,7 @@ fn infer_companion_header_path(frag_path: &Path) -> Option<PathBuf> {
     ];
     for suffix in KNOWN_SUFFIXES {
         if let Some(prefix) = file_name.strip_suffix(suffix) {
-            let header_name = format!("{prefix}.frag.header.tsv");
+            let header_name = dot_join(&[prefix, "frag.header.tsv"]);
             return Some(frag_path.with_file_name(header_name));
         }
     }

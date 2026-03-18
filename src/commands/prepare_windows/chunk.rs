@@ -232,14 +232,13 @@ pub fn process_and_write_chunk(
             let mut resized_after_merge: Vec<Window> = Vec::with_capacity(windows.len());
             for mut window in windows {
                 // NOTE: Falls back to original coordinates when no resizing is specified
-                if let Some((resized_start, resized_end)) = apply_size_transform(
-                    window.original_start,
-                    window.original_end,
+                if let Some(resized_interval) = apply_size_transform(
+                    window.original_start(),
+                    window.original_end(),
                     chrom_size,
                     cfg,
                 )? {
-                    window.resized_start = resized_start;
-                    window.resized_end = resized_end;
+                    window.set_resized_interval(resized_interval);
                     resized_after_merge.push(window);
                 }
             }
@@ -258,7 +257,7 @@ pub fn process_and_write_chunk(
                 &mut current_order,
                 &mut current_coord_set,
             );
-            apply_cluster_labels(&mut windows, min_overlaps, cluster_coord_set);
+            apply_cluster_labels(&mut windows, min_overlaps, cluster_coord_set)?;
         }
     }
 
@@ -297,7 +296,7 @@ pub fn process_and_write_chunk(
                 &mut current_order,
                 &mut current_coord_set,
             );
-            apply_cluster_labels(&mut windows, min_overlaps, cluster_coord_set);
+            apply_cluster_labels(&mut windows, min_overlaps, cluster_coord_set)?;
         }
     }
 
@@ -325,14 +324,13 @@ pub fn process_and_write_chunk(
             let mut resized_after_merge: Vec<Window> = Vec::with_capacity(windows.len());
             for mut window in windows {
                 // NOTE: Falls back to original coordinates when no resizing is specified
-                if let Some((resized_start, resized_end)) = apply_size_transform(
-                    window.original_start,
-                    window.original_end,
+                if let Some(resized_interval) = apply_size_transform(
+                    window.original_start(),
+                    window.original_end(),
                     chrom_size,
                     cfg,
                 )? {
-                    window.resized_start = resized_start;
-                    window.resized_end = resized_end;
+                    window.set_resized_interval(resized_interval);
                     resized_after_merge.push(window);
                 }
             }
@@ -637,7 +635,7 @@ pub fn apply_near_annotations(
                 let len = chrom.intervals.len();
                 let mut cursor = chrom.cursor.min(len.saturating_sub(1));
                 if cursor != 0 {
-                    while cursor > 0 && chrom.intervals[cursor].end > min_start {
+                    while cursor > 0 && chrom.intervals[cursor].end() > min_start {
                         cursor -= 1;
                     }
                 }

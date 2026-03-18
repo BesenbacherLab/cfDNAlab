@@ -21,6 +21,8 @@ use crate::{
         blacklist::is_blacklisted,
         fragment::frag_file_fragment::FragFileFragment,
         fragment_iterator::fragments_with_frag_file_info_from_bam,
+        interval::{IndexedInterval, Interval},
+        io::dot_join,
         overlaps::find_overlapping_windows,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq,
@@ -153,8 +155,11 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
 
     // Build temporary directory
     let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
-    let output_file: PathBuf = opt.ioc.output_dir.join(format!("{prefix}.frag.tsv.gz"));
-    let output_header_file: PathBuf = opt.ioc.output_dir.join(format!("{prefix}.frag.header.tsv"));
+    let output_file: PathBuf = opt.ioc.output_dir.join(dot_join(&[prefix, "frag.tsv.gz"]));
+    let output_header_file: PathBuf = opt
+        .ioc
+        .output_dir
+        .join(dot_join(&[prefix, "frag.header.tsv"]));
 
     // Create progress bar
     let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
@@ -245,8 +250,8 @@ fn process_chrom(
     chr: &str,
     opt: &BamToFragConfig,
     temp_dir: &PathBuf,
-    windows: Option<&[(u64, u64, u64)]>,
-    blacklist_intervals: &[(u64, u64)],
+    windows: Option<&[IndexedInterval<u64>]>,
+    blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
 ) -> anyhow::Result<(PathBuf, BamToFragCounters)> {
@@ -269,14 +274,16 @@ fn process_chrom(
     };
 
     // Replace scaling factor with unused index
-    let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
-        scaling_chr.iter().map(|(s, e, _)| (*s, *e, 0u64)).collect();
+    let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
+        .iter()
+        .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
+        .collect::<crate::Result<_>>()?;
 
     // Get coordinates to fetch reads from and to
     let (fetch_from, fetch_to) = if windows.is_some() {
         let wn = windows.unwrap();
-        let fetch_start = wn[0].0 as i64;
-        let fetch_end = wn.iter().map(|w| w.1).max().unwrap() as i64;
+        let fetch_start = wn[0].start() as i64;
+        let fetch_end = wn.iter().map(|window| window.end()).max().unwrap() as i64;
         (
             (fetch_start - opt.fragment_lengths.max_fragment_length as i64).max(0i64),
             (fetch_end + opt.fragment_lengths.max_fragment_length as i64).min(chrom_len as i64),
@@ -323,7 +330,7 @@ fn process_chrom(
         move |fragment: &FragFileFragment| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
-                    corrector.correct_fragment(fragment.start as u64, fragment.end as u64, prefixes)
+                    corrector.correct_fragment(fragment.interval.try_to_u64()?, prefixes)
                 }
                 _ => Ok(None),
             }
@@ -352,8 +359,7 @@ fn process_chrom(
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.blacklist_strategy,
-            fragment.start.into(),
-            fragment.end.into(),
+            fragment.interval.try_to_u64()?,
             opt.fragment_lengths.max_fragment_length as u64,
             &mut bl_ptr,
         );
@@ -368,8 +374,7 @@ fn process_chrom(
             &mut wd_ptr,
             windows,
             None,
-            fragment.start.into(),
-            fragment.end.into(),
+            fragment.interval.try_to_u64()?,
             1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
             opt.fragment_lengths.max_fragment_length.into(),
         )?;
@@ -398,8 +403,7 @@ fn process_chrom(
                 &mut sf_ptr,
                 Some(&scaling_with_bin_idx),
                 None,
-                fragment.start.into(), // Full fragment
-                fragment.end.into(),
+                fragment.interval.try_to_u64()?, // Full fragment
                 1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
                 opt.fragment_lengths.max_fragment_length.into(),
             )
@@ -437,8 +441,8 @@ fn process_chrom(
             (Some(gc_w), Some(sf_w)) => format!(
                 "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
                 chr,
-                fragment.start,
-                fragment.end,
+                fragment.start(),
+                fragment.end(),
                 fragment.min_mapq,
                 fragment.read1_strand,
                 gc_w,
@@ -446,15 +450,29 @@ fn process_chrom(
             ),
             (Some(gc_w), None) => format!(
                 "{}\t{}\t{}\t{}\t{}\t{}\n",
-                chr, fragment.start, fragment.end, fragment.min_mapq, fragment.read1_strand, gc_w,
+                chr,
+                fragment.start(),
+                fragment.end(),
+                fragment.min_mapq,
+                fragment.read1_strand,
+                gc_w,
             ),
             (None, Some(sf_w)) => format!(
                 "{}\t{}\t{}\t{}\t{}\t{}\n",
-                chr, fragment.start, fragment.end, fragment.min_mapq, fragment.read1_strand, sf_w
+                chr,
+                fragment.start(),
+                fragment.end(),
+                fragment.min_mapq,
+                fragment.read1_strand,
+                sf_w
             ),
             (None, None) => format!(
                 "{}\t{}\t{}\t{}\t{}\n",
-                chr, fragment.start, fragment.end, fragment.min_mapq, fragment.read1_strand,
+                chr,
+                fragment.start(),
+                fragment.end(),
+                fragment.min_mapq,
+                fragment.read1_strand,
             ),
         };
 
@@ -462,8 +480,7 @@ fn process_chrom(
         // That flushes the previous (sorted) entries on the fly
         sorter.push(
             WindowEntry {
-                start: fragment.start,
-                end: fragment.end,
+                interval: fragment.interval,
                 line,
             },
             &mut writer,

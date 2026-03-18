@@ -4,7 +4,7 @@ use crate::{
         fragment_kmers::{config::*, fragment_kmers},
         transitions::config::TransitionsConfig,
     },
-    shared::tiled_run::make_temp_dir,
+    shared::{io::dot_join, tiled_run::make_temp_dir},
 };
 use anyhow::{Context, Result, ensure};
 use fxhash::FxHashMap;
@@ -144,7 +144,6 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
 
     let mut fk_shared_args = opt.shared_args.clone();
     fk_shared_args.ioc = tmp_ioc;
-    fk_shared_args.output_prefix = "fragment_kmers".to_string();
 
     let mut fk_cfg = FragmentKmersConfig {
         shared_args: fk_shared_args,
@@ -167,7 +166,8 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
         let k = order + 1;
         let mut wrote_group = false;
         for group in groups {
-            let counts_path = counts_dir.join(format!("{prefix}.k{k}_{group}_counts.npy"));
+            let counts_path =
+                counts_dir.join(dot_join(&[prefix, &format!("k{k}_{group}_counts.npy")]));
             if !counts_path.exists() {
                 continue;
             }
@@ -176,7 +176,8 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
             let counts: Array3<f64> = read_npy(&counts_path)
                 .with_context(|| format!("loading {}", counts_path.display()))?;
 
-            let motifs_path = counts_dir.join(format!("{prefix}.k{k}_{group}_motifs.txt"));
+            let motifs_path =
+                counts_dir.join(dot_join(&[prefix, &format!("k{k}_{group}_motifs.txt")]));
             let motifs_raw = fs::read_to_string(&motifs_path)
                 .with_context(|| format!("reading {}", motifs_path.display()))?;
             let motifs: Vec<String> = motifs_raw.lines().map(|line| line.to_owned()).collect();
@@ -185,21 +186,25 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
             let freqs = compute_transition_frequencies(&counts, order, &motifs)?;
 
             // Persist frequency cube to final output directory
-            let output_path = final_dir.join(format!("{prefix}.k{k}_{group}_freqs.npy"));
+            let output_path =
+                final_dir.join(dot_join(&[prefix, &format!("k{k}_{group}_freqs.npy")]));
             write_npy(&output_path, &freqs)
                 .with_context(|| format!("writing {}", output_path.display()))?;
 
             // Copy motif metadata so downstream tools share identical ordering
-            let motif_dest = final_dir.join(format!("{prefix}.k{k}_{group}_motifs.txt"));
+            let motif_dest =
+                final_dir.join(dot_join(&[prefix, &format!("k{k}_{group}_motifs.txt")]));
             if motif_dest != motifs_path {
                 fs::copy(&motifs_path, &motif_dest)
                     .with_context(|| format!("copying to {}", motif_dest.display()))?;
             }
 
             // Copy positional offsets for this orientation when available
-            let positions_src = counts_dir.join(format!("{prefix}.{group}_positions.txt"));
+            let positions_src =
+                counts_dir.join(dot_join(&[prefix, &format!("{group}_positions.txt")]));
             if positions_src.exists() {
-                let positions_dest = final_dir.join(format!("{prefix}.{group}_positions.txt"));
+                let positions_dest =
+                    final_dir.join(dot_join(&[prefix, &format!("{group}_positions.txt")]));
                 if positions_dest != positions_src {
                     fs::copy(&positions_src, &positions_dest)
                         .with_context(|| format!("copying to {}", positions_dest.display()))?;

@@ -63,6 +63,7 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 /// ## Temporary files
 ///
 /// We write temporary files to a `<output-dir>/tmp.<output-prefix>.<random>` directory to reduce memory.
+/// When no output prefix is given, the directory becomes `<output-dir>/tmp.<random>`.
 /// This directory is deleted at the end of the run. If the software is disrupted, the directory
 /// may be left behind.
 ///
@@ -86,18 +87,20 @@ pub struct FCoverageConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
 
-    /// Prefix for output files (e.g., a sample name) `[string]`
+    /// Optional prefix for output files (e.g., a sample name) `[string]`
+    ///
+    /// Leave empty to write file names without a leading prefix.
     ///
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
     /// Examples produce files like:
-    ///   `<prefix>.per_position.bedgraph.zst`,
-    ///   `<prefix>.per_position_per_window.tsv.zst`,
-    ///   `<prefix>.avg.tsv.zst`, or
-    ///   `<prefix>.total.tsv.zst`.
+    ///   `<prefix>.fcoverage.per_position.bedgraph.zst`,
+    ///   `<prefix>.fcoverage.per_position_per_window.tsv.zst`,
+    ///   `<prefix>.fcoverage.avg.tsv.zst`, or
+    ///   `<prefix>.fcoverage.total.tsv.zst`.
     #[cfg_attr(
         feature = "cli",
-        clap(long, short = 'x', default_value = "coverage", help_heading = "Core")
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
     )]
     pub output_prefix: String,
 
@@ -226,7 +229,7 @@ impl FCoverageConfig {
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
-            output_prefix: "coverage".into(),
+            output_prefix: String::new(),
             decimals: 2,
             keep_zero_runs: false,
             tile_size: 20_000_000,

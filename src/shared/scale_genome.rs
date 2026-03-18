@@ -38,20 +38,20 @@ pub fn apply_scaling_to_coverage_in_place(
 
     // Linear sweep over bins until we pass end_abs
     while i < bins.len() {
-        let (bs, be, sf) = bins[i];
-        if bs >= end_abs {
+        let (bin_start, bin_end, scaling_factor) = bins[i];
+        if bin_start >= end_abs {
             break;
         }
-        let s = bs.max(start_abs); // Overlap start
-        let e = be.min(end_abs); // Overlap end
-        if e > s {
-            let a = (s - start_abs) as usize; // Slice start in cov
-            let b = (e - start_abs) as usize; // Slice end in cov
-            for v in &mut cov[a..b] {
-                *v *= sf; // Multiply by scaling factor
+        let overlap_start = bin_start.max(start_abs); // Overlap start
+        let overlap_end = bin_end.min(end_abs); // Overlap end
+        if overlap_end > overlap_start {
+            let slice_start = (overlap_start - start_abs) as usize; // Slice start in cov
+            let slice_end = (overlap_end - start_abs) as usize; // Slice end in cov
+            for v in &mut cov[slice_start..slice_end] {
+                *v *= scaling_factor; // Multiply by scaling factor
             }
         }
-        if be >= end_abs {
+        if bin_end >= end_abs {
             break; // Finished the tile
         }
         i += 1;
@@ -73,12 +73,8 @@ pub fn compute_window_scaling_over_overlap(
     scaling_bin_indices: &[usize],
     scaling_chr: &[(u64, u64, f32)],
 ) -> Result<Vec<(usize, f64, f64)>> {
-    let fragment_start_bp = count_overlaps.interval_start;
-    let fragment_end_bp = count_overlaps.interval_end;
-
-    if fragment_end_bp <= fragment_start_bp {
-        bail!("count_overlaps.interval_start >= interval_end (empty fragment span)");
-    }
+    let fragment_start_bp = count_overlaps.query_start();
+    let fragment_end_bp = count_overlaps.query_end();
     if scaling_bin_indices.is_empty() {
         bail!("scaling_bin_indices is empty but scaling was requested");
     }
@@ -86,8 +82,8 @@ pub fn compute_window_scaling_over_overlap(
     let mut per_window_scaling = Vec::with_capacity(count_overlaps.windows.len());
 
     for window in &count_overlaps.windows {
-        let window_start_bp = window.win_start;
-        let window_end_bp = window.win_end;
+        let window_start_bp = window.start();
+        let window_end_bp = window.end();
 
         let overlap_start_bp = fragment_start_bp.max(window_start_bp);
         let overlap_end_bp = fragment_end_bp.min(window_end_bp);
@@ -122,12 +118,8 @@ pub fn compute_window_scaling_over_fragment(
     scaling_bin_indices: &[usize],
     scaling_chr: &[(u64, u64, f32)],
 ) -> Result<Vec<(usize, f64, f64)>> {
-    let fragment_start_bp = count_overlaps.interval_start;
-    let fragment_end_bp = count_overlaps.interval_end;
-
-    if fragment_end_bp <= fragment_start_bp {
-        bail!("count_overlaps.interval_start >= interval_end (empty fragment span)");
-    }
+    let fragment_start_bp = count_overlaps.query_start();
+    let fragment_end_bp = count_overlaps.query_end();
     if scaling_bin_indices.is_empty() {
         bail!("scaling_bin_indices is empty but scaling was requested");
     }
@@ -143,7 +135,7 @@ pub fn compute_window_scaling_over_fragment(
     // Emit the same value for every window that actually overlaps the fragment.
     let mut per_window_scaling = Vec::with_capacity(count_overlaps.windows.len());
     for window in &count_overlaps.windows {
-        if window.win_end > fragment_start_bp && window.win_start < fragment_end_bp {
+        if window.end() > fragment_start_bp && window.start() < fragment_end_bp {
             per_window_scaling.push((window.idx, avg_over_fragment, 1.0));
         }
     }
@@ -293,7 +285,7 @@ pub fn load_scaling_factors_tsv(
         }
 
         // Parse coordinates and scaling factor with precise error context
-        let s: u64 = fields[s_i].parse().with_context(|| {
+        let start: u64 = fields[s_i].parse().with_context(|| {
             format!(
                 "{}:{}: invalid start '{}'",
                 path.display(),
@@ -301,7 +293,7 @@ pub fn load_scaling_factors_tsv(
                 fields[s_i]
             )
         })?;
-        let e: u64 = fields[e_i].parse().with_context(|| {
+        let end: u64 = fields[e_i].parse().with_context(|| {
             format!(
                 "{}:{}: invalid end '{}'",
                 path.display(),
@@ -309,13 +301,13 @@ pub fn load_scaling_factors_tsv(
                 fields[e_i]
             )
         })?;
-        if s >= e {
+        if start >= end {
             anyhow::bail!(
                 "{}:{}: invalid interval [{}..{})",
                 path.display(),
                 lineno,
-                s,
-                e
+                start,
+                end
             );
         }
 
@@ -337,7 +329,9 @@ pub fn load_scaling_factors_tsv(
         }
 
         // Stash; we’ll sort and validate contiguity/full coverage per chromosome below
-        map.entry(chr.to_string()).or_default().push((s, e, sf));
+        map.entry(chr.to_string())
+            .or_default()
+            .push((start, end, sf));
     }
 
     // For each requested chromosome:

@@ -51,7 +51,9 @@ pub struct BamToFragConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
 
-    /// Prefix for output file (e.g., a sample name) `[string]`
+    /// Optional prefix for output file (e.g., a sample name) `[string]`
+    ///
+    /// Leave empty to write file names without a leading prefix.
     ///
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
@@ -59,7 +61,7 @@ pub struct BamToFragConfig {
     ///   `<prefix>.frag.tsv.gz`,
     #[cfg_attr(
         feature = "cli",
-        clap(long, short = 'x', default_value = "fragments", help_heading = "Core")
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
     )]
     pub output_prefix: String,
 
@@ -160,7 +162,7 @@ impl BamToFragConfig {
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
-            output_prefix: "fragments".into(),
+            output_prefix: String::new(),
             by_bed: None,
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),

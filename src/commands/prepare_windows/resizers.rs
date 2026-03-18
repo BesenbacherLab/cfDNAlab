@@ -1,6 +1,7 @@
 use anyhow::{Result, bail};
 
 use crate::commands::prepare_windows::config::{OobPolicy, PrepareConfig};
+use crate::shared::interval::Interval;
 
 /// Apply resize or flank transform to a window.
 ///
@@ -38,16 +39,14 @@ use crate::commands::prepare_windows::config::{OobPolicy, PrepareConfig};
 ///
 /// Returns
 /// -------
-/// - out_start:
-///     Transformed start.
-/// - out_end:
-///     Transformed end (exclusive).
+/// - out:
+///     Transformed checked interval, or `None` when the chosen policy drops it.
 pub fn apply_size_transform(
     start: u32,
     end: u32,
     chrom_size_bp: Option<u32>,
     cfg: &PrepareConfig,
-) -> Result<Option<(u32, u32)>> {
+) -> Result<Option<Interval<u32>>> {
     let mut transformed = false;
     let mut intended_start_i: i64 = start as i64;
     let mut intended_end_i: i64 = end as i64;
@@ -115,7 +114,10 @@ pub fn apply_size_transform(
 
     if matches!(cfg.oob, OobPolicy::Allow) {
         // No check is requested
-        return Ok(Some((intended_start_i as u32, intended_end_i as u32)));
+        return Ok(Some(Interval::new(
+            intended_start_i as u32,
+            intended_end_i as u32,
+        )?));
     }
 
     // Resizing/flanking without chromosome sizes is not allowed: we cannot
@@ -132,15 +134,22 @@ pub fn apply_size_transform(
 
     // When bounds are unknown, don't check overflow
     if chrom_size_bp.is_none() || !overflow {
-        return Ok(Some((intended_start_i as u32, intended_end_i as u32)));
+        return Ok(Some(Interval::new(
+            intended_start_i as u32,
+            intended_end_i as u32,
+        )?));
     }
 
     let size = chrom_size_bp.expect("chromosome sizes required for trim/drop policies");
     match cfg.oob {
         OobPolicy::Trim => {
-            let s = intended_start_i as u32;
-            let e = intended_end_i.min(size as i64) as u32;
-            if e <= s { Ok(None) } else { Ok(Some((s, e))) }
+            let trimmed_start = intended_start_i as u32;
+            let trimmed_end = intended_end_i.min(size as i64) as u32;
+            if trimmed_end <= trimmed_start {
+                Ok(None)
+            } else {
+                Ok(Some(Interval::new(trimmed_start, trimmed_end)?))
+            }
         }
         OobPolicy::Drop => Ok(None),
         _ => unreachable!("OobPolicy::Allow already handled"),

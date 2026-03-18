@@ -2,18 +2,31 @@ use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 use std::io::{self, Write};
 
+use crate::shared::interval::Interval;
+
 /// A buffered fragment line with its sort keys.
 #[derive(Eq, PartialEq)]
 pub struct Entry {
-    pub start: u32,
-    pub end: u32,
+    pub interval: Interval<u32>,
     pub line: String,
+}
+
+impl Entry {
+    #[inline]
+    pub fn start(&self) -> u32 {
+        self.interval.start()
+    }
+
+    #[inline]
+    pub fn end(&self) -> u32 {
+        self.interval.end()
+    }
 }
 
 impl Ord for Entry {
     fn cmp(&self, other: &Self) -> Ordering {
         // Ascending by (start, end, line). We use Reverse<Entry> to make a min-heap.
-        (self.start, self.end, &self.line).cmp(&(other.start, other.end, &other.line))
+        (self.start(), self.end(), &self.line).cmp(&(other.start(), other.end(), &other.line))
     }
 }
 impl PartialOrd for Entry {
@@ -86,8 +99,7 @@ impl PartialOrd for Entry {
 /// let mut writer = Cursor::new(Vec::new());
 /// sorter.push(
 ///     Entry {
-///         start: 10,
-///         end: 60,
+///         interval: cfdnalab::shared::interval::Interval::new(10, 60)?,
 ///         line: "chr1\t10\t60\n".to_string(),
 ///     },
 ///     &mut writer,
@@ -115,14 +127,14 @@ impl WindowSorter {
 
     /// Push a new entry and flush anything safely behind the window to `w`.
     pub fn push<W: Write>(&mut self, entry: Entry, w: &mut W) -> io::Result<()> {
-        if entry.start > self.max_seen_start {
-            self.max_seen_start = entry.start;
+        if entry.start() > self.max_seen_start {
+            self.max_seen_start = entry.start();
         }
         self.heap.push(Reverse(entry));
 
         let threshold = self.max_seen_start.saturating_sub(self.max_window_bp);
         while let Some(Reverse(top)) = self.heap.peek() {
-            if top.start <= threshold {
+            if top.start() <= threshold {
                 let Reverse(e) = self.heap.pop().unwrap();
                 w.write_all(e.line.as_bytes())?;
             } else {

@@ -1,5 +1,6 @@
 use crate::shared::bed::{Windows, load_windows_from_bed};
-use anyhow::Result;
+use crate::shared::interval::Interval;
+use anyhow::Result as AnyResult;
 use fxhash::FxHashMap;
 use std::path::Path;
 
@@ -22,12 +23,12 @@ pub fn load_blacklists<P: AsRef<Path>>(
     min_size: u64,
     halo_bp: u64,
     chromosomes: Option<&[String]>,
-) -> Result<FxHashMap<String, Vec<(u64, u64)>>> {
+) -> AnyResult<FxHashMap<String, Vec<Interval<u64>>>> {
     if beds.is_empty() {
         return Ok(FxHashMap::default());
     }
 
-    let mut merged: FxHashMap<String, Vec<(u64, u64)>> = FxHashMap::default();
+    let mut merged: FxHashMap<String, Vec<Interval<u64>>> = FxHashMap::default();
 
     for bed in beds {
         let single = load_windows_from_bed(bed, chromosomes, None, None)?;
@@ -35,40 +36,52 @@ pub fn load_blacklists<P: AsRef<Path>>(
     }
 
     for ivs in merged.values_mut() {
-        ivs.sort_unstable();
-        *ivs = merge_intervals(std::mem::take(ivs));
+        let intervals = std::mem::take(ivs);
+        *ivs = merge_intervals(intervals)?;
     }
 
     Ok(merged)
 }
 
-pub fn merge_intervals(ivs: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
-    if ivs.is_empty() {
-        return ivs;
+/// Merge touching or overlapping half-open intervals.
+///
+/// The input may be unsorted. The returned intervals are sorted by start and
+/// coalesced so that adjacent intervals with `end == next.start` become one
+/// interval.
+pub fn merge_intervals(intervals: Vec<Interval<u64>>) -> crate::Result<Vec<Interval<u64>>> {
+    if intervals.is_empty() {
+        return Ok(intervals);
     }
-    let mut merged = Vec::with_capacity(ivs.len());
-    let mut cur = ivs[0];
-    for (s, e) in ivs.into_iter().skip(1) {
-        if s <= cur.1 {
-            cur.1 = cur.1.max(e);
+
+    let mut intervals = intervals;
+    intervals.sort_unstable_by_key(|interval| (interval.start(), interval.end()));
+
+    let mut merged = Vec::with_capacity(intervals.len());
+    let mut current = intervals[0];
+
+    for interval in intervals.into_iter().skip(1) {
+        if interval.start() <= current.end() {
+            current = Interval::new(current.start(), current.end().max(interval.end()))?;
         } else {
-            merged.push(cur);
-            cur = (s, e);
+            merged.push(current);
+            current = interval;
         }
     }
-    merged.push(cur);
-    merged
+    merged.push(current);
+    Ok(merged)
 }
 
 fn accumulate_blacklist_windows(
-    merged: &mut FxHashMap<String, Vec<(u64, u64)>>,
+    merged: &mut FxHashMap<String, Vec<Interval<u64>>>,
     windows_map: FxHashMap<String, Windows>,
     min_size: u64,
     halo_bp: u64,
 ) {
     for (chr, ivs) in windows_map {
-        let mut out: Vec<(u64, u64)> = Vec::new();
-        for (start, end, _) in ivs.into_inner() {
+        let mut out: Vec<Interval<u64>> = Vec::new();
+        for window in ivs.into_inner() {
+            let start = window.start();
+            let end = window.end();
             if end <= start {
                 continue;
             }
@@ -77,7 +90,10 @@ fn accumulate_blacklist_windows(
             }
             let halo_start = start.saturating_sub(halo_bp);
             let halo_end = end.saturating_add(halo_bp);
-            out.push((halo_start, halo_end));
+            out.push(
+                Interval::new(halo_start, halo_end)
+                    .expect("blacklist halo expansion must preserve non-empty intervals"),
+            );
         }
         if !out.is_empty() {
             merged.entry(chr).or_default().extend(out);

@@ -31,6 +31,7 @@ use crate::{
         blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE, is_blacklisted},
         fragment::segment_kmer_fragment::FragmentWithKmerSegments,
         fragment_iterator::fragments_with_kmer_segments_from_bam,
+        interval::Interval,
         io::create_text_writer,
         kmers::{
             kmer_codec::{KmerCodes, KmerSpec, build_kmer_specs, build_left_aligned_codes_per_k},
@@ -461,7 +462,7 @@ fn process_tile(
     position_cache: Arc<PositionSelectionCache>,
     window_ctx: &WindowContext,
     tile_window_span: Option<&TileWindowSpan>,
-    blacklist_intervals: &[(u64, u64)],
+    blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
     counts_path: &Path,
@@ -481,40 +482,45 @@ fn process_tile(
             &opt.shared_args.ref_genome.ref_2bit,
             &tile.chr,
             // NOTE: Need for full fetch span to get GC of overlapping fragments!
-            (tile.fetch_start as usize)..(tile.fetch_end as usize),
+            (tile.fetch_start() as usize)..(tile.fetch_end() as usize),
         )?;
         Some(build_gc_prefixes(&seq_bytes))
     } else {
         None
     };
 
-    let fetch_span = determine_fetch_span(tile, window_ctx, tile_window_span, chrom_len);
-    let Some((fetch_from, fetch_to)) = fetch_span else {
+    let Some(fetch_span) = determine_fetch_span(tile, window_ctx, tile_window_span, chrom_len)?
+    else {
         return Ok(TileResult {
             chr: tile.chr.clone(),
             counts_path: None,
             counter: FragmentKmersCounters::default(),
         });
     };
+    let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
 
     // Extend the reference slice to include k-mers at the right tile edge
     let max_k: u32 = kmer_specs.keys().copied().max().unwrap_or(1) as u32;
-    let seq_end_abs = (tile.core_end as u64)
+    let seq_end_abs = (tile.core_end() as u64)
         .saturating_add((max_k as u64).saturating_sub(1))
         .min(chrom_len) as usize;
 
     let mut seq_bytes = read_seq_in_range(
         &opt.shared_args.ref_genome.ref_2bit,
         &tile.chr,
-        (tile.core_start as usize)..(seq_end_abs),
+        (tile.core_start() as usize)..(seq_end_abs),
     )?;
 
-    apply_blacklist_mask_to_seq(&mut seq_bytes, blacklist_intervals, tile.core_start as u64);
+    apply_blacklist_mask_to_seq(
+        &mut seq_bytes,
+        blacklist_intervals,
+        tile.core_start() as u64,
+    );
 
     // Scaled weights to count up
     let positional_scaling_weights = if !scaling_chr.is_empty() {
         let mut scaling_weights = vec![1.0; seq_bytes.len()];
-        apply_scaling_to_coverage_in_place(&mut scaling_weights, tile.core_start, scaling_chr);
+        apply_scaling_to_coverage_in_place(&mut scaling_weights, tile.core_start(), scaling_chr);
         // "Blacklist" positions with scaling factors of 0, so they don't get counted
         for (base, weight) in seq_bytes.iter_mut().zip(&scaling_weights) {
             if *weight == 0.0 {
@@ -586,9 +592,9 @@ fn process_tile(
         move |fragment: &FragmentWithKmerSegments, fetch_start: u32| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
-                    let rel_start = (fragment.start - fetch_start) as u64;
-                    let rel_end = (fragment.end - fetch_start) as u64;
-                    corrector.correct_fragment(rel_start, rel_end, prefixes)
+                    let fetch_relative_fragment =
+                        fragment.interval.try_to_u64()?.shift_left(fetch_start as u64)?;
+                    corrector.correct_fragment(fetch_relative_fragment, prefixes)
                 }
                 _ => Ok(None),
             }
@@ -596,7 +602,7 @@ fn process_tile(
     };
 
     let correct_gc = opt.shared_args.gc.gc_file.is_some();
-    let fetch_start = tile.fetch_start;
+    let fetch_start = tile.fetch_start();
 
     let store_positions = opt.positional_counts;
     let has_nearest_frame = position_cache
@@ -611,8 +617,7 @@ fn process_tile(
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.shared_args.blacklist_strategy,
-            fragment.start.into(),
-            fragment.end.into(),
+            fragment.interval.try_to_u64()?,
             opt.shared_args.fragment_lengths.max_fragment_length as u64,
             &mut bl_ptr,
         );
@@ -667,23 +672,22 @@ fn process_tile(
             // Use smallest possible k to include all positions in interval for overlap
             .bounds(fragment.len(), cache.offsets.keys().copied().min().unwrap())
             .expect("non-empty offsets must have bounds");
-        let interval_start = fragment.start as u64 + first as u64;
-        let interval_end = fragment.start as u64 + last as u64 + 1;
+        let interval_start = fragment.start() as u64 + first as u64;
+        let interval_end = fragment.start() as u64 + last as u64 + 1;
         if interval_start >= interval_end {
             continue;
         }
 
         // Find all overlapping count-windows
-        debug_assert!(interval_start >= fragment.start as u64);
+        debug_assert!(interval_start >= fragment.start() as u64);
         let lookback_distance = opt.shared_args.fragment_lengths.max_fragment_length as u64
-            + (interval_start - fragment.start as u64);
+            + (interval_start - fragment.start() as u64);
         let overlapping_windows = find_overlapping_windows(
             chrom_len,
             &mut wd_ptr,
             window_ctx.windows_slice(),
             opt.shared_args.windows.by_size,
-            interval_start,
-            interval_end,
+            Interval::new(interval_start, interval_end)?,
             1. / (opt.shared_args.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
             lookback_distance,
         )?;
@@ -707,8 +711,8 @@ fn process_tile(
                 counts,
                 positional_scaling_weights.as_deref(),
                 gc_weight,
-                tile.core_start,
-                tile.core_end,
+                tile.core_start(),
+                tile.core_end(),
                 has_nearest_frame,
             );
         }
@@ -759,7 +763,7 @@ pub fn count_kmers_at_positions(
 ) {
     // We perform comparisons in absolute genome coordinates first, then translate
     // back to fragment-relative offsets only after clipping
-    let fragment_start = fragment.start as u64;
+    let fragment_start = fragment.start() as u64;
     let tile_start = tile_core_start as u64;
     let tile_end = tile_core_end as u64;
 
@@ -806,12 +810,9 @@ pub fn count_kmers_at_positions(
 
         // Fragments may be gapped by indels, so we examine each contiguous segment
         // and clip it to the tile coordinates before accepting offsets
-        'segments: for &(seg_start_raw, seg_end_raw) in &fragment.segments {
-            let seg_start = seg_start_raw as u64;
-            let seg_end = seg_end_raw as u64;
-            if seg_start >= seg_end {
-                continue;
-            }
+        'segments: for segment in &fragment.segments {
+            let seg_start = segment.start() as u64;
+            let seg_end = segment.end() as u64;
 
             if seg_end <= tile_start {
                 // Segment lies completely before the tile

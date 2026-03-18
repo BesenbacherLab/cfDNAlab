@@ -953,17 +953,17 @@ mod tests_postprocess {
     use std::sync::Arc;
 
     fn win(chrom: &str, start: u32, end: u32, group: &str, score: Option<f32>) -> Window {
-        Window {
-            chrom: Arc::<str>::from(chrom.to_string()),
-            original_start: start,
-            original_end: end,
-            resized_start: start,
-            resized_end: end,
-            label_tuples: vec![LabelTuple::new(group.to_string())],
-            group_key: group.to_string(),
+        Window::from_bounds(
+            Arc::<str>::from(chrom.to_string()),
+            start,
+            end,
+            start,
+            end,
+            vec![LabelTuple::new(group.to_string())],
+            group.to_string(),
             score,
-            merged: false,
-        }
+        )
+        .expect("test window should be valid")
     }
 
     fn snapshot(windows: &[Window]) -> Vec<(String, u32, u32, String, Option<f32>)> {
@@ -972,8 +972,8 @@ mod tests_postprocess {
             .map(|w| {
                 (
                     w.chrom.as_ref().to_string(),
-                    w.resized_start,
-                    w.resized_end,
+                    w.resized_start(),
+                    w.resized_end(),
                     w.group_key.clone(),
                     w.score,
                 )
@@ -1319,17 +1319,17 @@ mod tests_mergers {
     use std::sync::Arc;
 
     fn win(chrom: &str, start: u32, end: u32, group: &str) -> Window {
-        Window {
-            chrom: Arc::<str>::from(chrom.to_string()),
-            original_start: start,
-            original_end: end,
-            resized_start: start,
-            resized_end: end,
-            label_tuples: vec![LabelTuple::new(group.to_string())],
-            group_key: group.to_string(),
-            score: None,
-            merged: false,
-        }
+        Window::from_bounds(
+            Arc::<str>::from(chrom.to_string()),
+            start,
+            end,
+            start,
+            end,
+            vec![LabelTuple::new(group.to_string())],
+            group.to_string(),
+            None,
+        )
+        .expect("test window should be valid")
     }
 
     fn snapshot(windows: &[Window]) -> Vec<(String, u32, u32, Vec<String>)> {
@@ -1338,8 +1338,8 @@ mod tests_mergers {
             .map(|w| {
                 (
                     w.chrom.as_ref().to_string(),
-                    w.resized_start,
-                    w.resized_end,
+                    w.resized_start(),
+                    w.resized_end(),
                     w.label_tuples.iter().map(|t| t.input.clone()).collect(),
                 )
             })
@@ -1659,6 +1659,11 @@ mod tests_near_file {
 
     // TODO: Test strand: Strand::Minus and strand: Strand::Unknown!
 
+    fn near_interval(start: u32, end: u32, group_id: Option<u32>, strand: Strand) -> NearInterval {
+        NearInterval::from_coords(start, end, group_id, strand)
+            .expect("test near interval should be valid")
+    }
+
     #[test]
     fn load_near_index_parses_groups_no_strand() -> anyhow::Result<()> {
         let dir = TempDir::new()?;
@@ -1705,12 +1710,7 @@ mod tests_near_file {
     #[test]
     fn nearest_edge_distance_handles_overlap_and_sign() {
         let mut chrom = NearChrom {
-            intervals: vec![NearInterval {
-                start: 10,
-                end: 20,
-                group_id: Some(0),
-                strand: Strand::Plus,
-            }],
+            intervals: vec![near_interval(10, 20, Some(0), Strand::Plus)],
             cursor: 0,
         };
         let overlap = nearest_edge_distance(
@@ -1771,12 +1771,7 @@ mod tests_near_file {
     #[test]
     fn nearest_edge_distance_zero_on_interval_boundary() {
         let mut chrom = NearChrom {
-            intervals: vec![NearInterval {
-                start: 10,
-                end: 20,
-                group_id: Some(0),
-                strand: Strand::Plus,
-            }],
+            intervals: vec![near_interval(10, 20, Some(0), Strand::Plus)],
             cursor: 0,
         };
         let on_boundary = nearest_edge_distance(
@@ -1840,12 +1835,7 @@ mod tests_near_file {
     #[test]
     fn nearest_edge_distance_respects_left_edge_mode() {
         let mut chrom = NearChrom {
-            intervals: vec![NearInterval {
-                start: 10,
-                end: 20,
-                group_id: Some(1),
-                strand: Strand::Plus,
-            }],
+            intervals: vec![near_interval(10, 20, Some(1), Strand::Plus)],
             cursor: 0,
         };
         let dist = nearest_edge_distance(
@@ -1871,18 +1861,8 @@ mod tests_near_file {
     fn nearest_edge_distance_reports_ties_with_sides() {
         let mut chrom = NearChrom {
             intervals: vec![
-                NearInterval {
-                    start: 0,
-                    end: 5,
-                    group_id: Some(1),
-                    strand: Strand::Plus,
-                },
-                NearInterval {
-                    start: 25,
-                    end: 30,
-                    group_id: Some(2),
-                    strand: Strand::Plus,
-                },
+                near_interval(0, 5, Some(1), Strand::Plus),
+                near_interval(25, 30, Some(2), Strand::Plus),
             ],
             cursor: 0,
         };
@@ -1936,17 +1916,17 @@ mod tests_writers {
     use tempfile::TempDir;
 
     fn win(chrom: &str, start: u32, end: u32, group: &str) -> Window {
-        Window {
-            chrom: chrom.to_string().into(),
-            original_start: start,
-            original_end: end,
-            resized_start: start,
-            resized_end: end,
-            label_tuples: vec![LabelTuple::new(group.to_string())],
-            group_key: group.to_string(),
-            score: None,
-            merged: false,
-        }
+        Window::from_bounds(
+            chrom.to_string().into(),
+            start,
+            end,
+            start,
+            end,
+            vec![LabelTuple::new(group.to_string())],
+            group.to_string(),
+            None,
+        )
+        .expect("test window should be valid")
     }
 
     fn label_schema() -> LabelSchema {
@@ -2089,17 +2069,17 @@ mod tests_chunk {
     use tempfile::TempDir;
 
     fn win(chrom: &str, start: u32, end: u32, group: &str) -> Window {
-        Window {
-            chrom: Arc::<str>::from(chrom.to_string()),
-            original_start: start,
-            original_end: end,
-            resized_start: start,
-            resized_end: end,
-            label_tuples: vec![LabelTuple::new(group.to_string())],
-            group_key: group.to_string(),
-            score: None,
-            merged: false,
-        }
+        Window::from_bounds(
+            Arc::<str>::from(chrom.to_string()),
+            start,
+            end,
+            start,
+            end,
+            vec![LabelTuple::new(group.to_string())],
+            group.to_string(),
+            None,
+        )
+        .expect("test window should be valid")
     }
 
     fn label_schema() -> LabelSchema {
@@ -2360,8 +2340,8 @@ mod tests_chunk {
             .collect();
         // Tuples are stored separately in intermediate files
         assert_eq!(parsed.chrom, "chr1");
-        assert_eq!(parsed.start, 0);
-        assert_eq!(parsed.end, 10);
+        assert_eq!(parsed.start(), 0);
+        assert_eq!(parsed.end(), 10);
         assert_eq!(inputs, vec!["g1", "g2"]);
         Ok(())
     }

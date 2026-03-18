@@ -1,4 +1,5 @@
 use crate::shared::fragment::{minimal_fragment::Fragment, segment_fragment::FragmentWithSegments};
+use crate::shared::interval::Interval;
 use anyhow::{Result, bail};
 use rayon::prelude::*;
 
@@ -20,6 +21,7 @@ enum Stage {
 /// use cfdnalab::shared::coverage::Coverage;
 /// use cfdnalab::shared::fragment::minimal_fragment::Fragment;
 /// use cfdnalab::shared::gc_tag::GcTagValue;
+/// use cfdnalab::shared::interval::Interval;
 ///
 /// # use anyhow::Result;
 /// # fn demo() -> Result<()> {
@@ -29,8 +31,7 @@ enum Stage {
 /// // Unweighted fragment
 /// cp.add_fragment(Fragment {
 ///     tid: 0,
-///     start: 100,
-///     end: 200,
+///     interval: Interval::new(100, 200)?,
 ///     gc_tag: GcTagValue::default(),
 /// })?;
 ///
@@ -38,23 +39,23 @@ enum Stage {
 /// cp.add_fragment_weighted(
 ///     Fragment {
 ///         tid: 0,
-///         start: 150,
-///         end: 250,
+///         interval: Interval::new(150, 250)?,
 ///         gc_tag: GcTagValue::default(),
 ///     },
 ///     0.87,
 /// )?;
 ///
 /// // Optional blacklist
-/// cp.set_blacklist_mask(&vec![(120, 140), (150, 153)])?;
+/// let blacklist_intervals = Interval::from_tuples(&[(120, 140), (150, 153)])?;
+/// cp.set_blacklist_mask(&blacklist_intervals)?;
 ///
 /// // Build per-base coverage and query indexes
 /// cp.finalize_coverage(true);  // free delta after building coverage
 /// cp.build_indexes(true)?; // build psums and free coverage
 ///
 /// // Query averages
-/// let avg_all = cp.avg_coverage(100, 300, false)?;   // Includes blacklisted bases
-/// let avg_ok  = cp.avg_coverage(100, 300, true)?;    // Excludes blacklisted bases
+/// let avg_all = cp.avg_coverage(Interval::new(100, 300)?, false)?;   // Includes blacklisted bases
+/// let avg_ok  = cp.avg_coverage(Interval::new(100, 300)?, true)?;    // Excludes blacklisted bases
 ///
 /// // Raw positional coverage if needed
 /// let cov = cp.coverage().unwrap();
@@ -71,8 +72,8 @@ pub struct Coverage {
 
     // Prefix sums for fast queries
     psum_all: Option<Vec<f64>>,           // Σ coverage
-    psum_allowed: Option<Vec<f64>>,       // Σ coverage over non-blacklisted positions
-    psum_allowed_count: Option<Vec<u32>>, // Σ 1 over non-blacklisted positions
+    psum_unmasked: Option<Vec<f64>>,       // Σ coverage over non-blacklisted positions
+    psum_unmasked_count: Option<Vec<u32>>, // Σ 1 over non-blacklisted positions
 
     cov_stage: Stage, // Lifecycle for coverage
 }
@@ -96,8 +97,8 @@ impl Coverage {
             coverage: None,
             bl_mask: None,
             psum_all: None,
-            psum_allowed: None,
-            psum_allowed_count: None,
+            psum_unmasked: None,
+            psum_unmasked_count: None,
             cov_stage: Stage::Building,
         }
     }
@@ -140,12 +141,9 @@ impl Coverage {
         }
 
         let n = self.delta.len();
-        let start = frag.start as usize;
-        let end = frag.end as usize;
+        let start = frag.start() as usize;
+        let end = frag.end() as usize;
 
-        if start >= end {
-            anyhow::bail!("fragment start {} >= end {}", frag.start, frag.end);
-        }
         if end > self.length as usize || end >= n {
             anyhow::bail!(
                 "fragment end {} out of bounds for sequence length {}",
@@ -201,8 +199,7 @@ impl Coverage {
                 // Plain span
                 let base = Fragment {
                     tid: frag.tid,
-                    start: frag.start,
-                    end: frag.end,
+                    interval: frag.interval,
                     gc_tag: crate::shared::gc_tag::GcTagValue::default(),
                 };
                 self.add_fragment_weighted(base, weight)
@@ -211,22 +208,19 @@ impl Coverage {
                 // Apply +w/-w per segment
                 let n = self.delta.len();
                 let len = self.length as usize;
-                for (s, e) in segs {
-                    if s >= e {
-                        continue;
-                    }
-                    let a = s as usize;
-                    let b = e as usize;
-                    if b > len || a >= n {
+                for segment in segs {
+                    let start_idx = segment.start() as usize;
+                    let end_idx = segment.end() as usize;
+                    if end_idx > len || start_idx >= n {
                         anyhow::bail!(
                             "segment [{}..{}) out of bounds for sequence length {}",
-                            s,
-                            e,
+                            segment.start(),
+                            segment.end(),
                             self.length
                         );
                     }
-                    self.delta[a] += weight;
-                    self.delta[b] -= weight;
+                    self.delta[start_idx] += weight;
+                    self.delta[end_idx] -= weight;
                 }
                 self.invalidate_indexes();
                 Ok(())
@@ -278,7 +272,7 @@ impl Coverage {
     ///
     /// Errors
     /// - Returns an error if any interval violates the contract (out of bounds or empty).
-    pub fn set_blacklist_mask(&mut self, intervals: &[(u64, u64)]) -> Result<()> {
+    pub fn set_blacklist_mask(&mut self, intervals: &[Interval<u64>]) -> Result<()> {
         if intervals.is_empty() {
             // No blacklist -> drop mask to avoid allocating an all-zero vector.
             self.bl_mask = None;
@@ -289,7 +283,9 @@ impl Coverage {
         let n = self.length as usize;
         let mut mask = vec![0u8; n];
 
-        for &(s64, e64) in intervals {
+        for interval in intervals {
+            let s64 = interval.start();
+            let e64 = interval.end();
             if s64 >= e64 {
                 bail!("blacklist interval start {} >= end {}", s64, e64);
             }
@@ -317,7 +313,7 @@ impl Coverage {
     /// What gets built
     /// ---------------
     /// - Always builds `psum_all`  (Σ coverage over all bases) with length = n+1
-    /// - Only builds `psum_allowed` and `psum_allowed_count` when a blacklist mask exists
+    /// - Only builds `psum_unmasked` and `psum_unmasked_count` when a blacklist mask exists
     ///
     /// Safety
     /// ------
@@ -339,37 +335,37 @@ impl Coverage {
                 mask.len(),
                 n
             );
-            // Mask present -> also build allowed sums & counts
-            let mut psum_allowed = Vec::with_capacity(n + 1);
-            let mut psum_allowed_count = Vec::with_capacity(n + 1);
-            psum_allowed.push(0.0_f64);
-            psum_allowed_count.push(0u32);
+            // Mask present -> also build unmasked sums & counts
+            let mut psum_unmasked = Vec::with_capacity(n + 1);
+            let mut psum_unmasked_count = Vec::with_capacity(n + 1);
+            psum_unmasked.push(0.0_f64);
+            psum_unmasked_count.push(0u32);
 
-            let (mut all, mut allow, mut cnt) = (0.0_f64, 0.0_f64, 0u32);
+            let (mut all, mut unmasked_sum, mut unmasked_count) = (0.0_f64, 0.0_f64, 0u32);
             for i in 0..n {
                 let c = cov[i] as f64;
                 all += c;
                 psum_all.push(all);
 
                 if mask[i] == 0 {
-                    allow += c;
-                    cnt = cnt.saturating_add(1);
+                    unmasked_sum += c;
+                    unmasked_count = unmasked_count.saturating_add(1);
                 }
-                psum_allowed.push(allow);
-                psum_allowed_count.push(cnt);
+                psum_unmasked.push(unmasked_sum);
+                psum_unmasked_count.push(unmasked_count);
             }
 
-            self.psum_allowed = Some(psum_allowed);
-            self.psum_allowed_count = Some(psum_allowed_count);
+            self.psum_unmasked = Some(psum_unmasked);
+            self.psum_unmasked_count = Some(psum_unmasked_count);
         } else {
-            // No mask -> only psum_all; keep allowed structures None to save RAM
+            // No mask -> only psum_all; keep unmasked structures None to save RAM
             let mut all = 0.0_f64;
             for i in 0..n {
                 all += cov[i] as f64;
                 psum_all.push(all);
             }
-            self.psum_allowed = None;
-            self.psum_allowed_count = None;
+            self.psum_unmasked = None;
+            self.psum_unmasked_count = None;
         }
 
         self.psum_all = Some(psum_all);
@@ -380,200 +376,166 @@ impl Coverage {
         Ok(())
     }
 
-    /// sum_coverage: sum of coverage in `[start, end)`
+    /// Return the coverage sum over an interval.
     ///
     /// Parameters
     /// ----------
-    /// - start:
-    ///     Start of interval, inclusive.
-    /// - end:
-    ///     End of interval, exclusive.
-    /// - exclude_blacklisted:
-    ///     Exclude blacklisted positions from the sum, if a blacklist is available.
+    /// - `interval`:
+    ///     Checked half-open interval `[start, end)` to query.
+    /// - `exclude_blacklisted`:
+    ///     Exclude blacklisted positions from the sum when a blacklist mask is available.
     ///
     /// Returns
     /// -------
-    /// - sum:
+    /// - `sum`:
     ///     Coverage sum over the interval, masked if requested.
+    ///
+    /// Notes
+    /// -----
+    /// - `interval` must be non-empty because `Interval` enforces `end > start`.
+    /// - The interval must lie within `0..self.length`.
     #[inline]
-    pub fn sum_coverage(&mut self, start: u32, end: u32, exclude_blacklisted: bool) -> Result<f64> {
+    pub fn sum_coverage(&mut self, interval: Interval<u32>, exclude_blacklisted: bool) -> Result<f64> {
         self.ensure_ready_for_queries()?;
-        self.check_bounds(start, end)?;
+        self.check_interval(interval)?;
 
-        let a = start as usize;
-        let b = end as usize;
+        let start_idx = interval.start() as usize;
+        let end_idx = interval.end() as usize;
 
         let sum = if exclude_blacklisted && self.has_blacklist() {
-            let pa = self.psum_allowed.as_ref().unwrap();
-            pa[b] - pa[a]
+            let prefix_sums_unmasked = self.psum_unmasked.as_ref().unwrap();
+            prefix_sums_unmasked[end_idx] - prefix_sums_unmasked[start_idx]
         } else {
-            let pa = self.psum_all.as_ref().unwrap();
-            pa[b] - pa[a]
+            let prefix_sums_all = self.psum_all.as_ref().unwrap();
+            prefix_sums_all[end_idx] - prefix_sums_all[start_idx]
         };
         Ok(sum)
     }
 
-    /// avg_coverage: average coverage in `[start, end)`
+    /// Return the average coverage over an interval.
     ///
     /// Parameters
     /// ----------
-    /// - start:
-    ///     Start of interval, inclusive.
-    /// - end:
-    ///     End of interval, exclusive.
-    /// - exclude_blacklisted:
-    ///     Exclude blacklisted positions from the average, if a blacklist is available.
+    /// - `interval`:
+    ///     Checked half-open interval `[start, end)` to query.
+    /// - `exclude_blacklisted`:
+    ///     Exclude blacklisted positions from the average when a blacklist mask is available.
     ///
     /// Returns
     /// -------
-    /// - avg:
+    /// - `avg`:
     ///     Coverage average over the interval, masked if requested.
+    ///
+    /// Notes
+    /// -----
+    /// - `interval` must be non-empty because `Interval` enforces `end > start`.
+    /// - When `exclude_blacklisted` is true and every position in the interval is blacklisted,
+    ///   this returns `0.0`.
     #[inline]
-    pub fn avg_coverage(&mut self, start: u32, end: u32, exclude_blacklisted: bool) -> Result<f32> {
+    pub fn avg_coverage(&mut self, interval: Interval<u32>, exclude_blacklisted: bool) -> Result<f32> {
         self.ensure_ready_for_queries()?;
-        self.check_bounds(start, end)?;
+        self.check_interval(interval)?;
 
-        let a = start as usize;
-        let b = end as usize;
+        let start_idx = interval.start() as usize;
+        let end_idx = interval.end() as usize;
 
         if exclude_blacklisted && self.has_blacklist() {
-            let pa = self.psum_allowed.as_ref().unwrap();
-            let cnt = self.psum_allowed_count.as_ref().unwrap();
-            let sum = pa[b] - pa[a];
-            let n_ok = cnt[b] - cnt[a];
-            if n_ok == 0 {
+            let prefix_sums_unmasked = self.psum_unmasked.as_ref().unwrap();
+            let prefix_unmasked_counts = self.psum_unmasked_count.as_ref().unwrap();
+            let sum = prefix_sums_unmasked[end_idx] - prefix_sums_unmasked[start_idx];
+            let unmasked_position_count = prefix_unmasked_counts[end_idx] - prefix_unmasked_counts[start_idx];
+            if unmasked_position_count == 0 {
                 return Ok(0.0);
             }
-            Ok((sum / n_ok as f64) as f32)
+            Ok((sum / unmasked_position_count as f64) as f32)
         } else {
-            let pa = self.psum_all.as_ref().unwrap();
-            let span = end - start;
-            if span == 0 {
-                return Ok(0.0);
-            }
-            let sum = pa[b] - pa[a];
-            Ok((sum / span as f64) as f32)
+            let prefix_sums_all = self.psum_all.as_ref().unwrap();
+            let sum = prefix_sums_all[end_idx] - prefix_sums_all[start_idx];
+            Ok((sum / interval.len() as f64) as f32)
         }
     }
 
-    /// Batch sum over intervals using prefix sums.
+    /// Return coverage sums for many intervals using prefix sums.
     ///
     /// Parameters
     /// ----------
-    /// - intervals:
-    ///     Half-open intervals `[start, end)`.
-    /// - exclude_blacklisted:
-    ///     Exclude blacklisted positions from the sum, if a blacklist is available.
-    /// - parallelize:
+    /// - `intervals`:
+    ///     Checked half-open intervals `[start, end)` to query.
+    /// - `exclude_blacklisted`:
+    ///     Exclude blacklisted positions from the sums when a blacklist mask is available.
+    /// - `parallelize`:
     ///     Process intervals with rayon parallel iterators.
     ///
     /// Returns
     /// -------
-    /// - sums:
-    ///     A coverage sum per interval.
+    /// - `sums`:
+    ///     One coverage sum per interval, in the same order as the input slice.
     #[inline]
     pub fn bulk_sum_coverage(
         &mut self,
-        intervals: &[(u32, u32)],
+        intervals: &[Interval<u32>],
         exclude_blacklisted: bool,
         parallelize: bool,
     ) -> Result<Vec<f64>> {
         self.ensure_ready_for_queries()?;
-        for &(a, b) in intervals {
-            self.check_bounds(a, b)?;
+        for &interval in intervals {
+            self.check_interval(interval)?;
         }
 
-        if exclude_blacklisted && self.has_blacklist() {
-            let pa = self.psum_allowed.as_ref().unwrap();
-            let f = |&(a, b): &(u32, u32)| -> f64 {
-                let a = a as usize;
-                let b = b as usize;
-                pa[b] - pa[a]
-            };
-            Ok(if parallelize {
-                intervals.par_iter().map(f).collect()
-            } else {
-                intervals.iter().map(f).collect()
-            })
+        Ok(if exclude_blacklisted && self.has_blacklist() {
+            let prefix_sums_unmasked = self.psum_unmasked.as_ref().unwrap();
+            self.bulk_sums_with_prefix_intervals(intervals, prefix_sums_unmasked, parallelize)
         } else {
-            let pa = self.psum_all.as_ref().unwrap();
-            let f = |&(a, b): &(u32, u32)| -> f64 {
-                let a = a as usize;
-                let b = b as usize;
-                pa[b] - pa[a]
-            };
-            Ok(if parallelize {
-                intervals.par_iter().map(f).collect()
-            } else {
-                intervals.iter().map(f).collect()
-            })
-        }
+            let prefix_sums_all = self.psum_all.as_ref().unwrap();
+            self.bulk_sums_with_prefix_intervals(intervals, prefix_sums_all, parallelize)
+        })
     }
 
-    /// Batch average over intervals using prefix sums.
+    /// Return coverage averages for many intervals using prefix sums.
     ///
     /// Parameters
     /// ----------
-    /// - intervals:
-    ///     Half-open intervals `[start, end)`.
-    /// - exclude_blacklisted:
-    ///     Exclude blacklisted positions from the averages, if a blacklist is available.
-    /// - parallelize:
+    /// - `intervals`:
+    ///     Checked half-open intervals `[start, end)` to query.
+    /// - `exclude_blacklisted`:
+    ///     Exclude blacklisted positions from the averages when a blacklist mask is available.
+    /// - `parallelize`:
     ///     Process intervals with rayon parallel iterators.
     ///
     /// Returns
     /// -------
-    /// - avgs:
-    ///     An average coverage per interval.
+    /// - `avgs`:
+    ///     One average coverage value per interval, in the same order as the input slice.
+    ///
+    /// Notes
+    /// -----
+    /// - When `exclude_blacklisted` is true and an interval is fully blacklisted, the returned
+    ///   average for that interval is `0.0`.
     #[inline]
     pub fn bulk_avg_coverage(
         &mut self,
-        intervals: &[(u32, u32)],
+        intervals: &[Interval<u32>],
         exclude_blacklisted: bool,
         parallelize: bool,
     ) -> Result<Vec<f32>> {
         self.ensure_ready_for_queries()?;
-        for &(a, b) in intervals {
-            self.check_bounds(a, b)?;
+        for &interval in intervals {
+            self.check_interval(interval)?;
         }
 
-        if exclude_blacklisted && self.has_blacklist() {
-            let pa = self.psum_allowed.as_ref().unwrap();
-            let cnt = self.psum_allowed_count.as_ref().unwrap();
-            let f = |&(a, b): &(u32, u32)| -> f32 {
-                let a = a as usize;
-                let b = b as usize;
-                let sum = pa[b] - pa[a];
-                let n_ok = cnt[b] - cnt[a];
-                if n_ok == 0 {
-                    0.0
-                } else {
-                    (sum / n_ok as f64) as f32
-                }
-            };
-            Ok(if parallelize {
-                intervals.par_iter().map(f).collect()
-            } else {
-                intervals.iter().map(f).collect()
-            })
+        Ok(if exclude_blacklisted && self.has_blacklist() {
+            let prefix_sums_unmasked = self.psum_unmasked.as_ref().unwrap();
+            let prefix_unmasked_counts = self.psum_unmasked_count.as_ref().unwrap();
+            self.bulk_avgs_with_prefix_intervals(
+                intervals,
+                prefix_sums_unmasked,
+                Some(prefix_unmasked_counts),
+                parallelize,
+            )
         } else {
-            let pa = self.psum_all.as_ref().unwrap();
-            let f = |&(a, b): &(u32, u32)| -> f32 {
-                let a = a as usize;
-                let b = b as usize;
-                let span = b - a;
-                if span == 0 {
-                    0.0
-                } else {
-                    ((pa[b] - pa[a]) / span as f64) as f32
-                }
-            };
-            Ok(if parallelize {
-                intervals.par_iter().map(f).collect()
-            } else {
-                intervals.iter().map(f).collect()
-            })
-        }
+            let prefix_sums_all = self.psum_all.as_ref().unwrap();
+            self.bulk_avgs_with_prefix_intervals(intervals, prefix_sums_all, None, parallelize)
+        })
     }
 
     /// Return raw coverage at the requested positions.
@@ -658,7 +620,7 @@ impl Coverage {
 
     /// Return blacklist mask values at the requested positions.
     ///
-    /// Value is 1 for blacklisted, 0 for allowed.
+    /// Value is 1 for blacklisted, 0 for unmasked.
     ///
     /// Parameters
     /// ----------
@@ -805,12 +767,12 @@ impl Coverage {
         self.psum_all.as_deref()
     }
     #[inline]
-    pub fn psum_allowed_ref(&self) -> Option<&[f64]> {
-        self.psum_allowed.as_deref()
+    pub fn psum_unmasked_ref(&self) -> Option<&[f64]> {
+        self.psum_unmasked.as_deref()
     }
     #[inline]
-    pub fn psum_allowed_count_ref(&self) -> Option<&[u32]> {
-        self.psum_allowed_count.as_deref()
+    pub fn psum_unmasked_count_ref(&self) -> Option<&[u32]> {
+        self.psum_unmasked_count.as_deref()
     }
 
     // Private helpers
@@ -828,8 +790,8 @@ impl Coverage {
 
     fn invalidate_indexes(&mut self) {
         self.psum_all = None;
-        self.psum_allowed = None;
-        self.psum_allowed_count = None;
+        self.psum_unmasked = None;
+        self.psum_unmasked_count = None;
     }
 
     #[inline]
@@ -848,6 +810,67 @@ impl Coverage {
             anyhow::bail!("end {} exceeds sequence length {}", end, self.length);
         }
         Ok(())
+    }
+
+    fn check_interval(&self, interval: Interval<u32>) -> Result<()> {
+        if interval.end() > self.length {
+            anyhow::bail!(
+                "end {} exceeds sequence length {}",
+                interval.end(),
+                self.length
+            );
+        }
+        Ok(())
+    }
+
+    fn bulk_sums_with_prefix_intervals(
+        &self,
+        intervals: &[Interval<u32>],
+        prefix_sums: &[f64],
+        parallelize: bool,
+    ) -> Vec<f64> {
+        let compute = |interval: &Interval<u32>| -> f64 {
+            let start_idx = interval.start() as usize;
+            let end_idx = interval.end() as usize;
+            prefix_sums[end_idx] - prefix_sums[start_idx]
+        };
+
+        if parallelize {
+            intervals.par_iter().map(compute).collect()
+        } else {
+            intervals.iter().map(compute).collect()
+        }
+    }
+
+    fn bulk_avgs_with_prefix_intervals(
+        &self,
+        intervals: &[Interval<u32>],
+        prefix_sums: &[f64],
+        unmasked_counts: Option<&[u32]>,
+        parallelize: bool,
+    ) -> Vec<f32> {
+        let compute = |interval: &Interval<u32>| -> f32 {
+            let start_idx = interval.start() as usize;
+            let end_idx = interval.end() as usize;
+            let sum = prefix_sums[end_idx] - prefix_sums[start_idx];
+
+            if let Some(counts) = unmasked_counts {
+                let unmasked_position_count = counts[end_idx] - counts[start_idx];
+                if unmasked_position_count == 0 {
+                    0.0
+                } else {
+                    (sum / unmasked_position_count as f64) as f32
+                }
+            } else {
+                (sum / interval.len() as f64) as f32
+            }
+        };
+
+        if parallelize {
+            intervals.par_iter().map(compute).collect()
+        } else {
+            intervals.iter().map(compute).collect()
+        }
     }
 
     #[inline]

@@ -1,6 +1,11 @@
 use crate::{
     commands::cli_common::WindowSpec,
-    shared::{bam::Contigs, bed::Windows, blacklist::compute_blacklist_overlap},
+    shared::{
+        bam::Contigs,
+        bed::Windows,
+        blacklist::compute_blacklist_overlap,
+        interval::{IndexedInterval, Interval},
+    },
 };
 use anyhow::{Context, Result};
 use fxhash::FxHashMap;
@@ -10,14 +15,14 @@ use fxhash::FxHashMap;
 /// Stores the context needed to convert chromosome-local indices into global window ids for a tile.
 pub struct WindowContext<'a> {
     pub spec: &'a WindowSpec,
-    pub windows: Option<&'a [(u64, u64, u64)]>,
+    pub windows: Option<&'a [IndexedInterval<u64>]>,
     pub chr_idx_offset: u64,
 }
 
 impl<'a> WindowContext<'a> {
     #[inline]
     /// Return the per-chromosome windows slice when operating in BED mode.
-    pub fn windows_slice(&self) -> Option<&'a [(u64, u64, u64)]> {
+    pub fn windows_slice(&self) -> Option<&'a [IndexedInterval<u64>]> {
         self.windows
     }
 
@@ -40,7 +45,9 @@ impl<'a> WindowContext<'a> {
                     .expect("window index overflow for size-based windows")
             }
             WindowSpec::Bed(_) => {
-                self.windows.expect("windows slice required for BED mode")[chrom_window_idx].2
+                // In BED mode the stored idx is the original window index that
+                // downstream arrays and output rows are keyed by
+                self.windows.expect("windows slice required for BED mode")[chrom_window_idx].idx()
             }
         }
     }
@@ -114,7 +121,7 @@ pub fn build_bin_info(
     chromosomes: &[String],
     contigs: &Contigs,
     windows_map: Option<&FxHashMap<String, Windows>>,
-    blacklist_map: &FxHashMap<String, Vec<(u64, u64)>>,
+    blacklist_map: &FxHashMap<String, Vec<Interval<u64>>>,
     chr_offsets: &FxHashMap<String, u64>,
 ) -> Result<Vec<(String, u64, u64, u64, f64)>> {
     let mut out = Vec::new();
@@ -137,8 +144,12 @@ pub fn build_bin_info(
 
                 while start < len {
                     let end = (start + *size).min(len);
-                    let overlap =
-                        compute_blacklist_overlap(blacklist_intervals, start, end, 0, &mut bl_ptr);
+                    let overlap = compute_blacklist_overlap(
+                        blacklist_intervals,
+                        Interval::new(start, end)?,
+                        0,
+                        &mut bl_ptr,
+                    );
                     out.push((
                         chr.clone(),
                         start,
@@ -160,9 +171,16 @@ pub fn build_bin_info(
                 let mut bl_ptr = 0usize;
                 let blacklist_intervals =
                     blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]);
-                for &(start, end, original_idx) in windows {
-                    let overlap =
-                        compute_blacklist_overlap(blacklist_intervals, start, end, 0, &mut bl_ptr);
+                for window in windows {
+                    // Preserve the original BED window index rather than the
+                    // chromosome-local loop position
+                    let (start, end, original_idx) = window.as_tuple();
+                    let overlap = compute_blacklist_overlap(
+                        blacklist_intervals,
+                        Interval::new(start, end)?,
+                        0,
+                        &mut bl_ptr,
+                    );
                     out.push((chr.clone(), start, end, original_idx, overlap));
                 }
             }

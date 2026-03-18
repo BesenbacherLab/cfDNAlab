@@ -4,7 +4,10 @@ use cfdnalab::{
     commands::gc_bias::counting::{
         GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window,
     },
-    shared::blacklist::apply_blacklist_mask_to_seq,
+    shared::{
+        blacklist::apply_blacklist_mask_to_seq,
+        interval::{IndexedInterval, Interval},
+    },
 };
 
 #[test]
@@ -13,7 +16,7 @@ fn counts_gc_for_each_window_with_end_offset() -> Result<()> {
     // End offset trims one base on each side so GC is counted on the inner span.
     let seq = b"ACGTACGTACGT".to_vec();
     let prefixes = build_gc_prefixes(&seq);
-    let windows = vec![(0, 6, 0), (6, 12, 1)];
+    let windows = IndexedInterval::from_tuples(&[(0, 6, 0), (6, 12, 1)])?;
     let starts = vec![0usize, 6usize];
     let mut counts_by_bin = vec![
         GCCounts::new(4, 6, 1, (0, 0))?,
@@ -50,9 +53,10 @@ fn counts_gc_for_each_window_with_end_offset() -> Result<()> {
 fn skips_counts_after_blacklist_removes_acgt_support() -> Result<()> {
     // Arrange: Blacklist the middle of the fragment so only half the bases remain ACGT
     let mut seq = b"ACGT".to_vec();
-    apply_blacklist_mask_to_seq(&mut seq, &[(1, 3)], 0);
+    let blacklist_intervals = Interval::from_tuples(&[(1, 3)])?;
+    apply_blacklist_mask_to_seq(&mut seq, &blacklist_intervals, 0);
     let prefixes = build_gc_prefixes(&seq);
-    let windows = vec![(0, 4, 0)];
+    let windows = IndexedInterval::from_tuples(&[(0, 4, 0)])?;
     let starts = vec![0usize];
     let mut counts_by_bin = vec![GCCounts::new(4, 4, 0, (0, 0))?];
 

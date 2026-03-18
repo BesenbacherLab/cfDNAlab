@@ -68,8 +68,8 @@ pub fn write_windows<W: Write>(
             writer,
             "{}{sep}{}{sep}{}",
             w.chrom.as_ref(),
-            w.resized_start,
-            w.resized_end,
+            w.resized_start(),
+            w.resized_end(),
             sep = separator
         )?;
         for key in out_labels {

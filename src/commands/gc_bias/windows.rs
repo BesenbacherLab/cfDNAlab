@@ -3,6 +3,7 @@ use crate::commands::gc_bias::counting::{GCCounts, GCPrefixes};
 use crate::shared::{
     bam::Contigs,
     bed::Windows,
+    interval::{IndexedInterval, Interval},
     tiled_run::{Tile, TileWindowSpan, overlapping_windows_for_tile},
 };
 use anyhow::{Result, anyhow, bail, ensure};
@@ -33,8 +34,9 @@ pub fn compute_window_stats(
             let mut count: u64 = 0;
             for chr in chromosomes {
                 if let Some(ws) = map.get(chr) {
-                    for (s, e, _) in ws.as_slice() {
-                        total_len = total_len.saturating_add(e.saturating_sub(*s));
+                    for window in ws.as_slice() {
+                        total_len =
+                            total_len.saturating_add(window.end().saturating_sub(window.start()));
                         count += 1;
                     }
                 }
@@ -88,30 +90,39 @@ pub fn compute_window_stats(
     }
 }
 
+/// Mutable state for one GC-bias counting interval.
+///
+/// The struct holds the interval being accumulated, whether that interval is fully contained in
+/// the tile core, the current counts, and bookkeeping used while windows are streamed, finalized,
+/// and optionally spilled for later reduction.
 #[derive(Clone, Debug)]
 pub struct WindowState {
+    // Stable window index in the current mode
     pub idx: u64,
-    pub start: u64,
-    pub end: u64,
+    // Checked genomic interval represented by this state
+    pub interval: Interval<u64>,
+    // Whether the interval lies fully inside the tile core
     pub contained: bool,
+    // Counts accumulated for this interval
     pub counts: GCCounts,
+    // Whether any fragment has contributed counts to this state
     pub has_counts: bool,
+    // Number of finalized contributions merged into this state
     pub weight: usize,
+    // Optional path to spill data written for later reduction
     pub crossing_file: Option<PathBuf>,
 }
 
 impl WindowState {
     pub fn new(
         idx: u64,
-        start: u64,
-        end: u64,
+        interval: Interval<u64>,
         contained: bool,
         template: &GCCounts,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             idx,
-            start,
-            end,
+            interval,
             contained,
             counts: template.zeroed_like()?,
             has_counts: false,
@@ -123,14 +134,12 @@ impl WindowState {
     pub fn reset(
         &mut self,
         idx: u64,
-        start: u64,
-        end: u64,
+        interval: Interval<u64>,
         contained: bool,
         template: &GCCounts,
     ) -> anyhow::Result<()> {
         self.idx = idx;
-        self.start = start;
-        self.end = end;
+        self.interval = interval;
         self.contained = contained;
         if self.counts.buffer_len() != template.buffer_len() {
             self.counts = template.zeroed_like()?;
@@ -142,12 +151,26 @@ impl WindowState {
         self.crossing_file = None;
         Ok(())
     }
+
+    #[inline]
+    pub fn start(&self) -> u64 {
+        self.interval.start()
+    }
+
+    #[inline]
+    pub fn end(&self) -> u64 {
+        self.interval.end()
+    }
 }
 
-pub fn fixed_size_window_bounds(idx: u64, window_bp: u64, chrom_len: u64) -> (u64, u64) {
+pub fn fixed_size_window_interval(
+    idx: u64,
+    window_bp: u64,
+    chrom_len: u64,
+) -> crate::Result<Interval<u64>> {
     let start = idx.saturating_mul(window_bp);
     let end = start.saturating_add(window_bp).min(chrom_len);
-    (start, end)
+    Interval::new(start, end)
 }
 
 #[inline]
@@ -159,9 +182,10 @@ pub fn window_state_from_idx(
     core_end: u64,
     template: &GCCounts,
 ) -> Result<WindowState> {
-    let (start, end) = fixed_size_window_bounds(idx, window_bp, chrom_len);
+    let interval = fixed_size_window_interval(idx, window_bp, chrom_len)?;
+    let (start, end) = interval.as_tuple();
     let contained = start >= core_start && end <= core_end;
-    WindowState::new(idx, start, end, contained, template)
+    WindowState::new(idx, interval, contained, template)
 }
 
 /// Compute the number of ACGT bases in the current window using prefix sums.
@@ -182,11 +206,8 @@ pub fn window_state_from_idx(
 /// - `gc_prefixes`:
 ///     Prefix sums where each entry stores total ACGT up to that index.
 ///
-/// - `seq_start`:
-///     Genomic start coordinate associated with the prefix sums.
-///
-/// - `seq_end`:
-///     Genomic end coordinate associated with the prefix sums.
+/// - `sequence_interval`:
+///     Genomic interval associated with the prefix sums.
 ///
 /// Returns
 /// -------
@@ -195,16 +216,16 @@ pub fn window_state_from_idx(
 pub fn compute_window_acgt(
     buf: &mut WindowState,
     gc_prefixes: &GCPrefixes,
-    seq_start: u64,
-    seq_end: u64,
+    sequence_interval: Interval<u64>,
 ) -> Result<()> {
-    let observed_start = buf.start.max(seq_start).min(seq_end);
-    let observed_end = buf.end.min(seq_end);
+    let (seq_start, seq_end) = sequence_interval.as_tuple();
+    let observed_start = buf.start().max(seq_start).min(seq_end);
+    let observed_end = buf.end().min(seq_end);
     ensure!(
         observed_end > observed_start,
         "Window [{}, {}) does not overlap sequence [{}, {})",
-        buf.start,
-        buf.end,
+        buf.start(),
+        buf.end(),
         seq_start,
         seq_end
     );
@@ -266,7 +287,7 @@ pub struct PreparedTileWindows {
 ///     chromosomes.
 pub fn prepare_tile_windows(
     window_opt: &WindowSpec,
-    windows_opt: Option<&[(u64, u64, u64)]>,
+    windows_opt: Option<&[IndexedInterval<u64>]>,
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
     chrom_len: u64,
@@ -276,8 +297,8 @@ pub fn prepare_tile_windows(
     let mut streaming_buffers: Option<(u64, WindowState, WindowState)> = None;
     let mut skip_tile = false;
 
-    let core_start = tile.core_start as u64;
-    let core_end = tile.core_end as u64;
+    let core_start = tile.core_start() as u64;
+    let core_end = tile.core_end() as u64;
 
     match window_opt {
         WindowSpec::Bed(_) => {
@@ -294,14 +315,14 @@ pub fn prepare_tile_windows(
                     .map(|span| span.last_idx_exclusive.saturating_sub(span.first_idx))
                     .unwrap_or(win_slice.len());
                 windows.reserve(capacity);
-                for &(window_start, window_end, window_idx) in
-                    overlapping_windows_for_tile(win_slice, tile, tile_window_span)
-                {
+                for window in overlapping_windows_for_tile(win_slice, tile, tile_window_span) {
+                    let window_start = window.start();
+                    let window_end = window.end();
+                    let window_idx = window.idx();
                     let contained = window_start >= core_start && window_end <= core_end;
                     windows.push(WindowState::new(
                         window_idx,
-                        window_start,
-                        window_end,
+                        window.interval,
                         contained,
                         template,
                     )?);
@@ -327,7 +348,12 @@ pub fn prepare_tile_windows(
             streaming_buffers = Some((*window_bp, current, next));
         }
         WindowSpec::Global => {
-            windows.push(WindowState::new(0, core_start, core_end, true, template)?);
+            windows.push(WindowState::new(
+                0,
+                Interval::new(core_start, core_end)?,
+                true,
+                template,
+            )?);
         }
     }
 

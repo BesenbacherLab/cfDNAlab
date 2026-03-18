@@ -2,6 +2,7 @@ use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 use std::sync::Arc;
 
+use crate::shared::interval::Interval;
 use anyhow::{Context, Result};
 use rust_htslib::bam::{self, Record, record::Aux};
 
@@ -22,10 +23,21 @@ pub type SharedTags = Arc<RecordTags>;
 
 /// A buffered BAM record with its sort keys.
 pub struct RecordEntry {
-    pub start: u32,
-    pub end: u32,
+    pub interval: Interval<u32>,
     pub record: Record,
     pub tags: SharedTags,
+}
+
+impl RecordEntry {
+    #[inline]
+    pub fn start(&self) -> u32 {
+        self.interval.start()
+    }
+
+    #[inline]
+    pub fn end(&self) -> u32 {
+        self.interval.end()
+    }
 }
 
 /// Keeps a bounded in-memory buffer so fragments are written in strict coordinate order
@@ -101,8 +113,7 @@ pub struct RecordEntry {
 /// let mut sorter = WindowSorter::new(200);
 /// let record = Record::new();
 /// let entry = RecordEntry {
-///     start: 10,
-///     end: 60,
+///     interval: cfdnalab::shared::interval::Interval::new(10, 60)?,
 ///     record,
 ///     tags: Arc::new(RecordTags {
 ///         fragment_length: 50,
@@ -137,8 +148,8 @@ impl WindowSorter {
 
     /// Push a new entry and flush anything safely behind the window to `writer`.
     pub fn push<W: RecordWriter>(&mut self, entry: RecordEntry, writer: &mut W) -> Result<()> {
-        if entry.start > self.max_seen_start {
-            self.max_seen_start = entry.start;
+        if entry.start() > self.max_seen_start {
+            self.max_seen_start = entry.start();
         }
         self.heap.push(Reverse(HeapEntry {
             serial: self.next_serial,
@@ -209,14 +220,14 @@ struct HeapEntry {
 impl HeapEntry {
     #[inline]
     fn start(&self) -> u32 {
-        self.entry.start
+        self.entry.start()
     }
 
     #[inline]
     fn cmp_key(&self) -> (u32, u32, bool, &[u8], u64) {
         (
-            self.entry.start,
-            self.entry.end,
+            self.entry.start(),
+            self.entry.end(),
             self.entry.record.is_reverse(),
             self.entry.record.qname(),
             self.serial,

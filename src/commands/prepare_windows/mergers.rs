@@ -74,10 +74,7 @@ pub fn merge_within_groups(
             && windows[i].start_for(merge_on) <= current.end_for(merge_on).saturating_add(gap)
         {
             merged = true;
-            current.original_start = current.original_start.min(windows[i].original_start);
-            current.original_end = current.original_end.max(windows[i].original_end);
-            current.resized_start = current.resized_start.min(windows[i].resized_start);
-            current.resized_end = current.resized_end.max(windows[i].resized_end);
+            current.expand_intervals_to_include(&windows[i]);
             if let MergeLabel::Join = merge_label {
                 current
                     .label_tuples
@@ -116,10 +113,7 @@ pub fn merge_across_groups(
             && windows[i].start_for(merge_on) <= current.end_for(merge_on).saturating_add(gap)
         {
             merged = true;
-            current.original_start = current.original_start.min(windows[i].original_start);
-            current.original_end = current.original_end.max(windows[i].original_end);
-            current.resized_start = current.resized_start.min(windows[i].resized_start);
-            current.resized_end = current.resized_end.max(windows[i].resized_end);
+            current.expand_intervals_to_include(&windows[i]);
             match merge_label {
                 MergeLabel::Join => {
                     current

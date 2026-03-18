@@ -23,7 +23,8 @@ use crate::{
         blacklist::{compute_blacklist_overlap, is_blacklisted},
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
         fragment_iterator::fragments_with_indel_counts_from_bam,
-        io::create_text_writer,
+        interval::{IndexedInterval, Interval},
+        io::{create_text_writer, dot_join},
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         read::{default_include_read_paired_end, default_include_read_unpaired},
@@ -162,8 +163,8 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     );
 
     let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
-    let partials_prefix = &format!("{prefix}.part");
-    let cross_prefix = &format!("{prefix}.cross");
+    let partials_prefix = &dot_join(&[prefix, "part"]);
+    let cross_prefix = &dot_join(&[prefix, "cross"]);
 
     println!("Start: Counting per tile");
 
@@ -177,10 +178,10 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<TileOutputs> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
-            let windows_chr: Option<&[(u64, u64, u64)]> = windows_map
+            let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
                 .as_ref()
                 .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
-            let blacklist_chr: &[(u64, u64)] = blacklist_map
+            let blacklist_chr: &[Interval<u64>] = blacklist_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
@@ -279,8 +280,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                     let end = (start + *window_bp).min(chrom_len);
                     let overlap_perc = compute_blacklist_overlap(
                         blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
-                        start,
-                        end,
+                        Interval::new(start, end)?,
                         0u64,
                         &mut bl_ptr,
                     );
@@ -319,17 +319,21 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
 
                 // Create bin info
                 let mut bl_ptr = 0;
-                for ((win_start, win_end, orig_idx), lc) in
-                    wchr_slice.iter().zip(counts.into_iter())
-                {
+                for (window, lc) in wchr_slice.iter().zip(counts.into_iter()) {
                     let overlap_perc = compute_blacklist_overlap(
                         blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
-                        *win_start,
-                        *win_end,
+                        window.interval,
                         0u64,
                         &mut bl_ptr,
                     );
-                    bin_info.push((chr.clone(), *win_start, *win_end, *orig_idx, overlap_perc));
+                    bin_info.push((
+                        chr.clone(),
+                        window.start(),
+                        window.end(),
+                        // Preserve the original window index for downstream ordering and output
+                        window.idx(),
+                        overlap_perc,
+                    ));
                     all_bins.push(lc);
                 }
             }
@@ -369,7 +373,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     write_npy(
         opt.ioc
             .output_dir
-            .join(format!("{prefix}.length_counts.npy")),
+            .join(dot_join(&[prefix, "length_counts.npy"])),
         &stack_length_counts(&all_bins),
     )
     .context("Write final fail")?;
@@ -378,7 +382,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     let settings_path = opt
         .ioc
         .output_dir
-        .join(format!("{prefix}.fragment_length_settings.json"));
+        .join(dot_join(&[prefix, "fragment_length_settings.json"]));
     let mut settings_writer =
         create_text_writer(&settings_path).context("Create fragment length settings file")?;
     writeln!(
@@ -422,7 +426,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
             let plot_path = opt
                 .ioc
                 .output_dir
-                .join(format!("{prefix}.fragment_lengths_overall.png"));
+                .join(dot_join(&[prefix, "fragment_lengths_overall.png"]));
 
             write_line_plot_png(
                 &plot_path,
@@ -442,7 +446,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     // Write bins BED file
     if !matches!(window_opt, WindowSpec::Global) {
         println!("Start: Writing window coordinates to disk");
-        let bins_path = opt.ioc.output_dir.join(format!("{prefix}.bins.bed"));
+        let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.bed"]));
         let mut bed_writer = create_text_writer(&bins_path).context("Create bed fail")?;
         for (chr, start, end, _, overlap_perc) in &bin_info {
             writeln!(bed_writer, "{}\t{}\t{}\t{}", chr, start, end, overlap_perc)
@@ -496,9 +500,9 @@ fn process_tile(
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
     windows_aligned_to_tiles: bool,
-    windows_chr: Option<&[(u64, u64, u64)]>,
+    windows_chr: Option<&[IndexedInterval<u64>]>,
     window_opt: &WindowSpec,
-    blacklist_intervals: &[(u64, u64)],
+    blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<LengthAgnosticGCCorrector>,
     template: &LengthCounts,
@@ -523,7 +527,7 @@ fn process_tile(
             ref_2bit,
             &tile.chr,
             // NOTE: Need for full fetch span to get GC of overlapping fragments!
-            (tile.fetch_start as usize)..(tile.fetch_end as usize),
+            (tile.fetch_start() as usize)..(tile.fetch_end() as usize),
         )?;
         Some(build_gc_prefixes(&seq_bytes))
     } else {
@@ -531,8 +535,8 @@ fn process_tile(
     };
 
     // Adapt the fetch coordinates to the present windows (*in windowed mode!*)
-    let Some((fetch_from, fetch_to)) =
-        fetch_span_for_tile(tile, tile_window_span, windows_chr, window_opt, chrom_len)
+    let Some(fetch_span) =
+        fetch_span_for_tile(tile, tile_window_span, windows_chr, window_opt, chrom_len)?
     else {
         // Skip tiles with no relevant windows
         return Ok(TileOutputs {
@@ -540,6 +544,7 @@ fn process_tile(
             global_counts: None,
         });
     };
+    let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
 
     reader
         .fetch((tile.tid, fetch_from, fetch_to))
@@ -570,9 +575,9 @@ fn process_tile(
             let chrom_bin_count = chrom_len.div_ceil(*window_bp) as usize;
             // Leftmost bin whose start is at or before the core start
             // (may begin before the core when cores are not aligned)
-            let min_bin_idx = (tile.core_start as u64 / *window_bp) as usize;
+            let min_bin_idx = (tile.core_start() as u64 / *window_bp) as usize;
             // Furthest coordinate a fragment starting in this tile can reach
-            let max_reachable_end = (tile.core_end as u64)
+            let max_reachable_end = (tile.core_end() as u64)
                 .saturating_add(opt.fragment_lengths.max_fragment_length as u64)
                 .min(chrom_len);
             // One past the last bin that could overlap that reach
@@ -589,7 +594,7 @@ fn process_tile(
                 let start = idx as u64 * *window_bp;
                 let end = (start + *window_bp).min(chrom_len);
                 // Contained means the bin sits fully inside the tile core
-                let contained = start >= tile.core_start as u64 && end <= tile.core_end as u64;
+                let contained = start >= tile.core_start() as u64 && end <= tile.core_end() as u64;
                 counts.push(Some(TileCounts {
                     counts: template.zeroed_like(),
                     contained,
@@ -600,23 +605,26 @@ fn process_tile(
 
         // BED mode: reuse the precomputed span but "drop" windows ending before the core start
         WindowSpec::Bed(_) => {
-            let span = tile_window_span
-                .expect("tile_window_span missing for BED windows despite fetch span");
-            let wchr = windows_chr.expect("windows missing for BED mode");
+            let span = tile_window_span.context(
+                "BED length counting requires a cached tile window span after fetch-span selection",
+            )?;
+            let wchr = windows_chr.context("BED length counting requires loaded windows")?;
             let span_len = span.last_idx_exclusive.saturating_sub(span.first_idx);
             let mut counts = Vec::with_capacity(span_len);
             for idx in span.first_idx..span.last_idx_exclusive {
-                let (win_start, win_end, _) = wchr[idx];
+                let window = wchr[idx];
+                let win_start = window.start();
+                let win_end = window.end();
                 // Windows fully to the left of the core cannot be hit because every counted fragment
                 // starts inside the core. We store None to preserve the global index while skipping
                 // both counting work and output rows for those windows
-                if win_end <= tile.core_start as u64 {
+                if win_end <= tile.core_start() as u64 {
                     counts.push(None);
                     continue;
                 }
                 // Contained flags windows fully inside the core
                 let contained =
-                    win_start >= tile.core_start as u64 && win_end <= tile.core_end as u64;
+                    win_start >= tile.core_start() as u64 && win_end <= tile.core_end() as u64;
                 counts.push(Some(TileCounts {
                     counts: template.zeroed_like(),
                     contained,
@@ -638,8 +646,10 @@ fn process_tile(
     };
 
     // Replace scaling factor with unused index (for compatibility with overlap finder)
-    let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
-        scaling_chr.iter().map(|(s, e, _)| (*s, *e, 0u64)).collect();
+    let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
+        .iter()
+        .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
+        .collect::<crate::Result<_>>()?;
 
     // Function for filtering fragments after pairing
     let fragment_filter = {
@@ -671,13 +681,13 @@ fn process_tile(
     let get_gc_weight = {
         let gc_corrector = gc_corrector_opt.as_ref();
         let gc_prefixes = gc_prefixes_opt.as_ref();
-        let fetch_start = tile.fetch_start;
+        let fetch_start = tile.fetch_start();
         move |fragment: &FragmentWithIndelCounts| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
-                    let rel_start = (fragment.start - fetch_start) as u64;
-                    let rel_end = (fragment.end - fetch_start) as u64;
-                    corrector.correct_fragment(rel_start, rel_end, prefixes)
+                    let fetch_relative_fragment =
+                        fragment.interval.try_to_u64()?.shift_left(fetch_start as u64)?;
+                    corrector.correct_fragment(fetch_relative_fragment, prefixes)
                 }
                 _ => Ok(None),
             }
@@ -698,7 +708,7 @@ fn process_tile(
         let fragment = fragment_res.context("reading fragment")?;
 
         // Only count fragments whose start is inside the core to prevent double counting across tiles
-        if fragment.start < tile.core_start || fragment.start >= tile.core_end {
+        if fragment.start() < tile.core_start() || fragment.start() >= tile.core_end() {
             continue;
         }
 
@@ -706,8 +716,7 @@ fn process_tile(
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.blacklist_strategy,
-            fragment.start.into(),
-            fragment.end.into(),
+            fragment.interval.try_to_u64()?,
             opt.fragment_lengths.max_fragment_length as u64,
             &mut bl_ptr,
         );
@@ -723,16 +732,16 @@ fn process_tile(
         // Find all overlapping count-windows
 
         // Calculate what part needs to overlap to some degree
-        let (interval_start, interval_end) = match opt.window_assignment.assign_by {
+        let query_interval = match opt.window_assignment.assign_by {
             WindowAssigner::Midpoint => {
                 let midpoint =
-                    midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
-                (midpoint, midpoint + 1)
+                    midpoint_random_even_with_thread_rng(fragment.start(), fragment_length);
+                Interval::new(midpoint.into(), (midpoint + 1).into())?
             }
             WindowAssigner::Any
             | WindowAssigner::All
             | WindowAssigner::Proportion(_)
-            | WindowAssigner::CountOverlap => (fragment.start, fragment.end),
+            | WindowAssigner::CountOverlap => fragment.interval.try_to_u64()?,
         };
         let by_size = match window_opt {
             WindowSpec::Size(bp) => Some(*bp),
@@ -743,8 +752,7 @@ fn process_tile(
             &mut wd_ptr,
             windows_chr,
             by_size,
-            interval_start.into(),
-            interval_end.into(),
+            query_interval,
             min_overlap_fraction,
             opt.fragment_lengths.max_fragment_length.into(),
         )?;
@@ -781,8 +789,7 @@ fn process_tile(
                 &mut sf_ptr,
                 Some(&scaling_with_bin_idx),
                 None,
-                fragment.start.into(), // Full fragment
-                fragment.end.into(),
+                fragment.interval.try_to_u64()?, // Full fragment
                 1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
                 opt.fragment_lengths.max_fragment_length.into(),
             )

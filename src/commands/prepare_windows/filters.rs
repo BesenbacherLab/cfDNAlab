@@ -870,8 +870,8 @@ fn filter_single_key_and_write_output(
             write_output_line(
                 &mut out,
                 &window.chrom,
-                window.start,
-                window.end,
+                window.start(),
+                window.end(),
                 &kept_tuples,
                 &kept_tuple_compositions,
                 label_schema,
@@ -972,16 +972,12 @@ fn filter_min_per_pass(
             }
 
             let writer = ensure_temp_writer_for_chrom(&window.chrom, &temp_dir, &mut writers)?;
-            write_intermediate_window(
-                writer.writer(),
-                &IntermediateWindow {
-                    chrom: window.chrom,
-                    start: window.start,
-                    end: window.end,
-                    label_tuples: kept_tuples,
-                },
-                separator,
-            )?;
+            let filtered_window = IntermediateWindow::new(
+                window.chrom,
+                crate::shared::interval::Interval::new(window.start(), window.end())?,
+                kept_tuples,
+            );
+            write_intermediate_window(writer.writer(), &filtered_window, separator)?;
         }
     }
 
@@ -1319,8 +1315,8 @@ fn write_output_from_entries(
                 write_output_line(
                     &mut out,
                     &window.chrom,
-                    window.start,
-                    window.end,
+                    window.start(),
+                    window.end(),
                     &window.label_tuples,
                     &[],
                     label_schema,
@@ -1339,8 +1335,8 @@ fn write_output_from_entries(
             write_output_line(
                 &mut out,
                 &window.chrom,
-                window.start,
-                window.end,
+                window.start(),
+                window.end(),
                 &window.label_tuples,
                 &tuple_compositions,
                 label_schema,

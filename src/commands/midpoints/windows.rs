@@ -9,8 +9,10 @@ pub fn ensure_uniform_window_len(
     let mut reference_len: Option<usize> = None;
 
     for (chr, gw) in windows_by_chr {
-        for (start, end, _) in &gw.windows {
-            let len = end.checked_sub(*start).with_context(|| {
+        for window in &gw.windows {
+            let start = window.start();
+            let end = window.end();
+            let len = end.checked_sub(start).with_context(|| {
                 format!("Invalid window on {chr}: end ({end}) < start ({start})")
             })? as usize;
 

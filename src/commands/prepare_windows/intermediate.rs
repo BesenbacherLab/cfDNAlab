@@ -1,5 +1,6 @@
 use crate::commands::prepare_windows::labels::LabelTuple;
 use crate::commands::prepare_windows::prepare_windows::Window;
+use crate::shared::interval::Interval;
 use anyhow::{Context, Result, bail};
 use std::io::Write;
 
@@ -11,9 +12,37 @@ const PART_SEPARATOR: char = '|';
 #[derive(Clone, Debug)]
 pub struct IntermediateWindow {
     pub chrom: String,
-    pub start: u32,
-    pub end: u32,
+    pub interval: Interval<u32>,
     pub label_tuples: Vec<LabelTuple>,
+}
+
+impl IntermediateWindow {
+    pub fn new(chrom: String, interval: Interval<u32>, label_tuples: Vec<LabelTuple>) -> Self {
+        Self {
+            chrom,
+            interval,
+            label_tuples,
+        }
+    }
+
+    pub fn from_coords(
+        chrom: String,
+        start: u32,
+        end: u32,
+        label_tuples: Vec<LabelTuple>,
+    ) -> Result<Self> {
+        Ok(Self::new(chrom, Interval::new(start, end)?, label_tuples))
+    }
+
+    #[inline]
+    pub fn start(&self) -> u32 {
+        self.interval.start()
+    }
+
+    #[inline]
+    pub fn end(&self) -> u32 {
+        self.interval.end()
+    }
 }
 
 /// Write one intermediate window record.
@@ -27,8 +56,8 @@ pub fn write_intermediate_window<W: Write>(
         writer,
         "{}{sep}{}{sep}{}{sep}{}",
         window.chrom,
-        window.start,
-        window.end,
+        window.start(),
+        window.end(),
         tuples,
         sep = separator
     )?;
@@ -63,8 +92,8 @@ pub fn write_intermediate_windows<W: Write>(
             writer,
             "{}{sep}{}{sep}{}{sep}{}",
             window.chrom.as_ref(),
-            window.resized_start,
-            window.resized_end,
+            window.resized_start(),
+            window.resized_end(),
             tuples,
             sep = separator
         )?;
@@ -96,12 +125,7 @@ pub fn parse_intermediate_line(line: &str, separator: char) -> Result<Intermedia
     let tuples_raw = fields.next().context("Missing label tuples field")?.trim();
     let label_tuples = parse_label_tuples(tuples_raw)?;
 
-    Ok(IntermediateWindow {
-        chrom,
-        start,
-        end,
-        label_tuples,
-    })
+    IntermediateWindow::from_coords(chrom, start, end, label_tuples)
 }
 
 #[inline]

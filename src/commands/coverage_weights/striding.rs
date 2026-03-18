@@ -1,13 +1,13 @@
 use anyhow::Result;
 use fxhash::FxHashMap;
 
+use crate::shared::interval::Interval;
+
 /// Represents a single stride bin with coverage and its overlapping mega-bin average coverage.
 #[derive(Debug, Clone, Copy)]
 pub struct StrideBin {
-    /// Start coordinate of the stride-bin
-    pub start: u32,
-    /// End coordinate of the stride-bin
-    pub end: u32,
+    /// Checked genomic span of the stride-bin
+    pub interval: Interval<u32>,
     /// Average fragment coverage for the stride-bin
     pub avg_coverage: f32,
     /// Average coverage of overlapping mega-bins
@@ -19,9 +19,21 @@ pub struct StrideBin {
 }
 
 impl StrideBin {
+    /// Return the inclusive start coordinate of the stride-bin.
+    #[inline]
+    pub fn start(&self) -> u32 {
+        self.interval.start()
+    }
+
+    /// Return the exclusive end coordinate of the stride-bin.
+    #[inline]
+    pub fn end(&self) -> u32 {
+        self.interval.end()
+    }
+
     /// Calculates the size (length) of the bin.
     pub fn size(&self) -> u32 {
-        self.end.saturating_sub(self.start) // Handles cases where start > end (TODO: Should not happen?)
+        self.interval.len()
     }
 }
 

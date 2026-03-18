@@ -90,9 +90,30 @@ mod test_minimal_fragment {
         );
         let frag = collect_fragment_from_records(&f, &r).expect("fragment");
         assert_eq!(frag.tid, 0);
-        assert_eq!(frag.start, 100);
-        assert_eq!(frag.end, 170);
+        assert_eq!(frag.start(), 100);
+        assert_eq!(frag.end(), 170);
         assert_eq!(frag.len(), 70);
+    }
+
+    #[test]
+    fn test_collect_fragment_uses_directional_pair_span_not_interval_union() {
+        // Forward 100..200 and reverse 150..180 are still an inward-oriented pair because the
+        // forward start is left of the reverse start. Our fragment definition is directional:
+        // [forward.start(), reverse.end()), so the fragment must end at 180 rather than taking
+        // the union end 200.
+        let (f, r) = mk_pair_basic(
+            0,
+            100,
+            cigar(&[('M', 100)]),
+            &vec![b'A'; 100],
+            150,
+            cigar(&[('M', 30)]),
+            &vec![b'A'; 30],
+        );
+        let frag = collect_fragment_from_records(&f, &r).expect("fragment");
+        assert_eq!(frag.start(), 100);
+        assert_eq!(frag.end(), 180);
+        assert_eq!(frag.len(), 80);
     }
 
     #[test]
@@ -125,8 +146,8 @@ mod test_minimal_fragment {
     //     );
 
     //     let ov = FragmentOverlapMM::from_pair(&f, &r).expect("overlap mm");
-    //     assert_eq!(ov.overlap.start, 140);
-    //     assert_eq!(ov.overlap.end, 160);
+    //     assert_eq!(ov.overlap.start(), 140);
+    //     assert_eq!(ov.overlap.end(), 160);
     //     assert_eq!(ov.ref_coords.len(), 20);
     //     assert_eq!(ov.left_bases.len(), 20);
     //     assert_eq!(ov.right_bases.len(), 20);
@@ -173,8 +194,8 @@ mod test_minimal_fragment {
     //         &vec![b'G'; 22],
     //     );
     //     let ov = FragmentOverlapMM::from_pair(&f, &r).expect("overlap mm");
-    //     assert_eq!(ov.overlap.start, 100);
-    //     assert_eq!(ov.overlap.end, 120);
+    //     assert_eq!(ov.overlap.start(), 100);
+    //     assert_eq!(ov.overlap.end(), 120);
     //     assert_eq!(ov.ref_coords.len(), 20); // Insertion dropped (no ref coord)
     //     // Check exact reference coordinates are 100..120 (no duplicates at the insertion boundary)
     //     let expected: Vec<u32> = (100..120).collect();
@@ -214,8 +235,8 @@ mod test_minimal_fragment {
     //         &[vec![b'G'; 10], vec![b'A'; 2], vec![b'G'; 10]].concat(),
     //     );
     //     let ov = FragmentOverlapMM::from_pair(&f, &r).expect("overlap mm");
-    //     assert_eq!(ov.overlap.start, 100);
-    //     assert_eq!(ov.overlap.end, 122);
+    //     assert_eq!(ov.overlap.start(), 100);
+    //     assert_eq!(ov.overlap.end(), 122);
 
     //     // Expect reference coords 100..110 and 112..122 (skip 110,111 where the deletion is)
     //     let mut expected: Vec<u32> = (100..110).collect();
@@ -269,8 +290,8 @@ mod test_minimal_fragment {
     //     let frag_seq = FragmentWithSequences::from_pair(&f, &r).expect("frag seq");
 
     //     // Fragment spans full reference window
-    //     assert_eq!(frag_seq.frag.start, 100);
-    //     assert_eq!(frag_seq.frag.end, 122);
+    //     assert_eq!(frag_seq.frag.start(), 100);
+    //     assert_eq!(frag_seq.frag.end(), 122);
 
     //     // Left sequence length excludes deleted reference columns (still 20 bases emitted)
     //     assert_eq!(frag_seq.left_seq.len(), 20);
@@ -323,8 +344,8 @@ mod test_minimal_fragment {
     //     let frag_seq = FragmentWithSequences::from_pair(&f, &r).expect("frag seq");
     //     assert_eq!(frag_seq.left_seq.len() as u32, 15);
     //     assert_eq!(frag_seq.right_seq.len() as u32, 20);
-    //     assert_eq!(frag_seq.frag.start, 100);
-    //     assert_eq!(frag_seq.frag.end, 130);
+    //     assert_eq!(frag_seq.frag.start(), 100);
+    //     assert_eq!(frag_seq.frag.end(), 130);
     // }
 }
 
@@ -334,6 +355,7 @@ mod test_segmented_fragments {
     use cfdnalab::shared::fragment::{
         minimal_fragment::oriented_pair_from_read_info, segment_fragment::*,
     };
+    use cfdnalab::shared::interval::Interval;
 
     // Tiny helper to construct SegmentedReadInfo without pulling in BAM types
     fn sri(
@@ -347,14 +369,17 @@ mod test_segmented_fragments {
     ) -> SegmentedReadInfo {
         SegmentedReadInfo {
             tid,
-            pos,
-            end,
+            interval: Interval::new(pos, end).expect("test read interval should be valid"),
             is_reverse,
             has_ref_gap,
             max_ref_gap,
             ref_mapped_segments: segs.to_vec(),
             gc_tag: Default::default(),
         }
+    }
+
+    fn segment_tuples(segments: &[Interval<u32>]) -> Vec<(u32, u32)> {
+        segments.iter().map(Interval::as_tuple).collect()
     }
 
     #[test]
@@ -378,12 +403,12 @@ mod test_segmented_fragments {
         let rev = sri(0, 40, 50, true, false, 0, &[]);
 
         let fws = collect_fragment_with_segments(&fwd, &rev, 1, false).expect("pair");
-        assert_eq!(fws.start, 10);
-        assert_eq!(fws.end, 50);
+        assert_eq!(fws.start(), 10);
+        assert_eq!(fws.end(), 50);
 
         // Expect two explicit segments: [10,20] and [40,50]
         let segs = fws.segments.as_ref().expect("segments present");
-        assert_eq!(&segs[..], &[(10u32, 20u32), (40u32, 50u32)][..]);
+        assert_eq!(segment_tuples(segs), vec![(10u32, 20u32), (40u32, 50u32)]);
     }
 
     #[test]
@@ -393,8 +418,8 @@ mod test_segmented_fragments {
         let rev = sri(0, 40, 50, true, false, 0, &[]);
 
         let fws = collect_fragment_with_segments(&fwd, &rev, 1, true).expect("pair");
-        assert_eq!(fws.start, 10);
-        assert_eq!(fws.end, 50);
+        assert_eq!(fws.start(), 10);
+        assert_eq!(fws.end(), 50);
         assert!(fws.segments.is_none());
     }
 
@@ -406,12 +431,12 @@ mod test_segmented_fragments {
         let rev = sri(0, 40, 50, true, false, 0, &[]);
 
         let fws = collect_fragment_with_segments(&fwd, &rev, 1, true).expect("pair");
-        assert_eq!(fws.start, 10);
-        assert_eq!(fws.end, 50);
+        assert_eq!(fws.start(), 10);
+        assert_eq!(fws.end(), 50);
 
         // Expected segments after adding gap and merging: [10..20], [25..50]
         let segs = fws.segments.as_ref().expect("segments present");
-        assert_eq!(&segs[..], &[(10u32, 20u32), (25u32, 50u32)][..]);
+        assert_eq!(segment_tuples(segs), vec![(10u32, 20u32), (25u32, 50u32)]);
     }
 
     #[test]
@@ -425,9 +450,60 @@ mod test_segmented_fragments {
 
         // Expected: [10..20], [25..30], [40..50]
         assert_eq!(
-            &segs[..],
-            &[(10u32, 20u32), (25u32, 30u32), (40u32, 50u32)][..]
+            segment_tuples(segs),
+            vec![(10u32, 20u32), (25u32, 30u32), (40u32, 50u32)]
         );
+    }
+
+    #[test]
+    fn collect_segments_uses_directional_fragment_span_not_interval_union() {
+        // Forward 100..200 and reverse 150..180 define a fragment span of [100,180) by project
+        // convention, even though the aligned-interval union would extend to 200.
+        let fwd = sri(0, 100, 200, false, false, 0, &[]);
+        let rev = sri(0, 150, 180, true, false, 0, &[]);
+
+        let frag = collect_fragment_with_segments(&fwd, &rev, 1, true).expect("pair");
+        assert_eq!(frag.start(), 100);
+        assert_eq!(frag.end(), 180);
+        assert!(frag.segments.is_none());
+    }
+}
+
+#[cfg(test)]
+mod test_frag_file_fragment {
+    use cfdnalab::shared::fragment::frag_file_fragment::{
+        FragReadInfo, collect_fragment_with_frag_file_info,
+    };
+    use cfdnalab::shared::interval::Interval;
+
+    #[test]
+    fn collect_frag_file_fragment_uses_directional_pair_span_not_interval_union() {
+        // Forward 100..200 and reverse 150..180 form an inward pair. The fragment written to the
+        // frag file must follow the cfDNA definition [forward.start(), reverse.end()) rather than
+        // the aligned-interval union.
+        let forward = FragReadInfo {
+            tid: 0,
+            interval: Interval::new(100, 200).expect("test read interval should be valid"),
+            is_reverse: false,
+            mapq: 60,
+            strand: '+',
+            is_read_1: true,
+        };
+        let reverse = FragReadInfo {
+            tid: 0,
+            interval: Interval::new(150, 180).expect("test read interval should be valid"),
+            is_reverse: true,
+            mapq: 50,
+            strand: '-',
+            is_read_1: false,
+        };
+
+        let frag = collect_fragment_with_frag_file_info(&forward, &reverse).expect("fragment");
+        assert_eq!(frag.start(), 100);
+        assert_eq!(frag.end(), 180);
+        assert_eq!(frag.len(), 80);
+        assert_eq!(frag.min_mapq, 50);
+        assert_eq!(frag.read1_strand, '+');
     }
 }
 
@@ -437,6 +513,7 @@ mod tests_fragment_with_indel_counts {
     use cfdnalab::shared::fragment::minimal_fragment::{
         is_inwards_oriented, oriented_pair_from_read_info,
     };
+    use cfdnalab::shared::interval::Interval;
     use rust_htslib::bam::Record;
     use rust_htslib::bam::record::{Cigar, CigarString};
 
@@ -485,24 +562,35 @@ mod tests_fragment_with_indel_counts {
     fn indelreadinfo_parses_deletions_and_insertions() {
         // Forward read: start 100, cigar M50 D5 M45 => deletions at [150,155)
         let r = make_rec(0, 100, false, m_del_m(50, 5, 45));
-        let info = IndelReadInfo::from(&r);
-        assert_eq!(info.pos, 100);
-        assert_eq!(info.end, 100 + 50 + 5 + 45);
-        assert_eq!(info.deletions, vec![(150, 155)]);
+        let info = IndelReadInfo::try_from(&r).expect("test indel read should be valid");
+        assert_eq!(info.start(), 100);
+        assert_eq!(info.end(), 100 + 50 + 5 + 45);
+        assert_eq!(
+            info.deletions,
+            vec![Interval::new(150, 155).expect("test deletion should be valid")]
+        );
         assert!(info.insertions.is_empty());
 
         // Reverse read: start 200, cigar M30 I4 M20 => insertion at ref pos 230 length 4
         let r2 = make_rec(0, 200, true, m_ins_m(30, 4, 20));
-        let info2 = IndelReadInfo::from(&r2);
-        assert_eq!(info2.insertions, vec![(230, 4)]);
+        let info2 = IndelReadInfo::try_from(&r2).expect("test indel read should be valid");
+        assert_eq!(
+            info2.insertions,
+            vec![InsertionAnchor {
+                reference_position: 230,
+                inserted_length: 4,
+            }]
+        );
         assert!(info2.deletions.is_empty());
     }
 
     #[test]
     fn orientation_and_inward_check() {
         // Forward at 100..160, Reverse at 150..210 (inward: forward.pos <= reverse.pos)
-        let f = IndelReadInfo::from(&make_rec(0, 100, false, m(60)));
-        let r = IndelReadInfo::from(&make_rec(0, 150, true, m(60)));
+        let f = IndelReadInfo::try_from(&make_rec(0, 100, false, m(60)))
+            .expect("test indel read should be valid");
+        let r = IndelReadInfo::try_from(&make_rec(0, 150, true, m(60)))
+            .expect("test indel read should be valid");
         let (fwd, rev) = oriented_pair_from_read_info(&f, &r).unwrap();
         assert!(is_inwards_oriented(fwd, rev));
     }
@@ -514,8 +602,8 @@ mod tests_fragment_with_indel_counts {
         let r = make_rec(0, 180, true, m(40));
         let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
         assert_eq!(frag.tid, 0);
-        assert_eq!(frag.start, 100);
-        assert_eq!(frag.end, 220);
+        assert_eq!(frag.start(), 100);
+        assert_eq!(frag.end(), 220);
         assert_eq!(frag.len_ref(), 120);
         assert_eq!(frag.deletions_nonoverlap, 0);
         assert_eq!(frag.insertions_nonoverlap, 0);
@@ -577,6 +665,74 @@ mod tests_fragment_with_indel_counts {
     }
 
     #[test]
+    fn deletion_crossing_overlap_start_splits_into_left_nonoverlap_and_supported_overlap() {
+        // Forward 100..180 and reverse 160..180 give aligned overlap [160,180).
+        //
+        // Forward deletion [150,170) crosses the overlap start:
+        // - left non-overlap part: [150,160) => 10 bp
+        // - overlap part:         [160,170)
+        //
+        // Reverse deletion [165,175) lies fully inside the overlap.
+        // Supported overlap deletion is the intersection of [160,170) and [165,175),
+        // which is [165,170) => 5 bp.
+        let forward = IndelReadInfo {
+            tid: 0,
+            interval: Interval::new(100, 180).expect("test read interval should be valid"),
+            is_reverse: false,
+            deletions: vec![Interval::new(150, 170).expect("test deletion should be valid")],
+            insertions: vec![],
+        };
+        let reverse = IndelReadInfo {
+            tid: 0,
+            interval: Interval::new(160, 180).expect("test read interval should be valid"),
+            is_reverse: true,
+            deletions: vec![Interval::new(165, 175).expect("test deletion should be valid")],
+            insertions: vec![],
+        };
+
+        let frag = collect_fragment_with_indel_counts(&forward, &reverse, false, true).unwrap();
+
+        assert_eq!(frag.deletions_nonoverlap, 10);
+        assert_eq!(frag.deletions_overlap_supported, 5);
+        assert_eq!(frag.insertions_nonoverlap, 0);
+        assert_eq!(frag.insertions_overlap_supported, 0);
+    }
+
+    #[test]
+    fn deletion_crossing_overlap_end_splits_into_right_nonoverlap_and_supported_overlap() {
+        // Forward 100..180 and reverse 160..220 give aligned overlap [160,180).
+        //
+        // Reverse deletion [170,190) crosses the overlap end:
+        // - overlap part:         [170,180)
+        // - right non-overlap:    [180,190) => 10 bp
+        //
+        // Forward deletion [165,175) lies fully inside the overlap.
+        // Supported overlap deletion is the intersection of [165,175) and [170,180),
+        // which is [170,175) => 5 bp.
+        let forward = IndelReadInfo {
+            tid: 0,
+            interval: Interval::new(100, 180).expect("test read interval should be valid"),
+            is_reverse: false,
+            deletions: vec![Interval::new(165, 175).expect("test deletion should be valid")],
+            insertions: vec![],
+        };
+        let reverse = IndelReadInfo {
+            tid: 0,
+            interval: Interval::new(160, 220).expect("test read interval should be valid"),
+            is_reverse: true,
+            deletions: vec![Interval::new(170, 190).expect("test deletion should be valid")],
+            insertions: vec![],
+        };
+
+        let frag = collect_fragment_with_indel_counts(&forward, &reverse, false, true).unwrap();
+
+        assert_eq!(frag.deletions_nonoverlap, 10);
+        assert_eq!(frag.deletions_overlap_supported, 5);
+        assert_eq!(frag.insertions_nonoverlap, 0);
+        assert_eq!(frag.insertions_overlap_supported, 0);
+    }
+
+    #[test]
     fn overlap_insertions_require_both_mates_same_ref_pos() {
         // Overlap [160,180).
         // Forward insertion at ref 165 len 5; Reverse insertion at ref 165 len 3 -> min = 3 counted.
@@ -610,6 +766,7 @@ mod test_kmer_segments {
     use cfdnalab::shared::fragment::segment_kmer_fragment::{
         FragmentWithKmerSegments, KmerSegmentedReadInfo, collect_fragment_with_kmer_segments,
     };
+    use cfdnalab::shared::interval::Interval;
     use cfdnalab::shared::indel_mode::IndelMode;
     use rust_htslib::bam::record::{Cigar, CigarString, Record};
     fn read_len(cigar: &[Cigar]) -> usize {
@@ -650,20 +807,22 @@ mod test_kmer_segments {
         end_offset: u32,
     ) -> Option<FragmentWithKmerSegments> {
         let capture_segments = matches!(indel_mode, IndelMode::Adjust);
-        let f_info = KmerSegmentedReadInfo::from_record(forward, capture_segments, None);
-        let r_info = KmerSegmentedReadInfo::from_record(reverse, capture_segments, None);
+        let f_info = KmerSegmentedReadInfo::from_record(forward, capture_segments, None)
+            .expect("test k-mer segmented read should be valid");
+        let r_info = KmerSegmentedReadInfo::from_record(reverse, capture_segments, None)
+            .expect("test k-mer segmented read should be valid");
         collect_fragment_with_kmer_segments(&f_info, &r_info, indel_mode, include_gap, end_offset)
     }
     fn segments(frag: &FragmentWithKmerSegments) -> Vec<(u32, u32)> {
-        frag.segments.iter().copied().collect()
+        frag.segments.iter().map(Interval::as_tuple).collect()
     }
     #[test]
     fn ignore_mode_without_gap_tracks_per_read_spans() {
         let forward = make_record(0, 100, false, &[Cigar::Match(30)]);
         let reverse = make_record(0, 140, true, &[Cigar::Match(30)]);
         let frag = collect_pair(&forward, &reverse, IndelMode::Ignore, false, 0).expect("fragment");
-        assert_eq!(frag.start, 100);
-        assert_eq!(frag.end, 170);
+        assert_eq!(frag.start(), 100);
+        assert_eq!(frag.end(), 170);
         assert_eq!(segments(&frag), vec![(100, 130), (140, 170)]);
     }
     #[test]
@@ -671,8 +830,8 @@ mod test_kmer_segments {
         let forward = make_record(0, 100, false, &[Cigar::Match(30)]);
         let reverse = make_record(0, 140, true, &[Cigar::Match(30)]);
         let frag = collect_pair(&forward, &reverse, IndelMode::Ignore, true, 0).expect("fragment");
-        assert_eq!(frag.start, 100);
-        assert_eq!(frag.end, 170);
+        assert_eq!(frag.start(), 100);
+        assert_eq!(frag.end(), 170);
         assert_eq!(segments(&frag), vec![(100, 170)]);
     }
     #[test]
@@ -696,8 +855,8 @@ mod test_kmer_segments {
         );
         let reverse = make_record(0, 150, true, &[Cigar::Match(15)]);
         let frag = collect_pair(&forward, &reverse, IndelMode::Adjust, false, 0).expect("fragment");
-        assert_eq!(frag.start, 100);
-        assert_eq!(frag.end, 165);
+        assert_eq!(frag.start(), 100);
+        assert_eq!(frag.end(), 165);
         assert_eq!(segments(&frag), vec![(100, 110), (110, 120), (150, 165)]);
     }
     #[test]
@@ -705,8 +864,8 @@ mod test_kmer_segments {
         let forward = make_record(0, 100, false, &[Cigar::Match(20), Cigar::Ins(2)]);
         let reverse = make_record(0, 130, true, &[Cigar::Match(20)]);
         let frag = collect_pair(&forward, &reverse, IndelMode::Adjust, true, 0).expect("fragment");
-        assert_eq!(frag.start, 100);
-        assert_eq!(frag.end, 150);
+        assert_eq!(frag.start(), 100);
+        assert_eq!(frag.end(), 150);
         // Not merged at the left boundary but merged on the right
         assert_eq!(segments(&frag), vec![(100, 120), (120, 150)]);
     }
@@ -715,8 +874,8 @@ mod test_kmer_segments {
         let forward = make_record(0, 100, false, &[Cigar::Match(40)]);
         let reverse = make_record(0, 120, true, &[Cigar::Match(40)]);
         let frag = collect_pair(&forward, &reverse, IndelMode::Ignore, true, 5).expect("fragment");
-        assert_eq!(frag.start, 100);
-        assert_eq!(frag.end, 160);
+        assert_eq!(frag.start(), 100);
+        assert_eq!(frag.end(), 160);
         assert_eq!(segments(&frag), vec![(105, 155)]);
     }
 
@@ -753,8 +912,8 @@ mod test_kmer_segments {
 
         let frag = collect_pair(&forward, &reverse, IndelMode::Adjust, false, 0).expect("fragment");
 
-        assert_eq!(frag.start, 100);
-        assert_eq!(frag.end, 151);
+        assert_eq!(frag.start(), 100);
+        assert_eq!(frag.end(), 151);
         assert_eq!(
             segments(&frag),
             vec![
@@ -777,8 +936,8 @@ mod test_kmer_segments {
 
         let frag = collect_pair(&forward, &reverse, IndelMode::Adjust, true, 0).expect("fragment");
 
-        assert_eq!(frag.start, 100);
-        assert_eq!(frag.end, 158);
+        assert_eq!(frag.start(), 100);
+        assert_eq!(frag.end(), 158);
         assert_eq!(segments(&frag), vec![(100, 115), (115, 140), (140, 158)]);
     }
 
@@ -849,8 +1008,8 @@ mod test_kmer_segments {
 
         let frag = collect_pair(&forward, &reverse, IndelMode::Adjust, false, 0).expect("fragment");
 
-        assert_eq!(frag.start, 100);
-        assert_eq!(frag.end, 160);
+        assert_eq!(frag.start(), 100);
+        assert_eq!(frag.end(), 160);
         assert_eq!(
             segments(&frag),
             vec![(100, 110), (110, 125), (125, 130), (132, 145), (145, 160)]
@@ -863,8 +1022,8 @@ mod test_kmer_segments {
         let frag_offset =
             collect_pair(&forward, &reverse, IndelMode::Adjust, false, 12).expect("fragment");
 
-        assert_eq!(frag_offset.start, 100);
-        assert_eq!(frag_offset.end, 160);
+        assert_eq!(frag_offset.start(), 100);
+        assert_eq!(frag_offset.end(), 160);
         assert_eq!(
             segments(&frag_offset),
             vec![(112, 125), (125, 130), (132, 145), (145, 148)]

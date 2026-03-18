@@ -4,6 +4,7 @@ use anyhow::{Context, Result, ensure};
 use ndarray::{Array1, Array2, ArrayView1};
 use ndarray_npy::{NpzReader, NpzWriter, ReadNpyExt};
 
+use crate::shared::interval::{IndexedInterval, Interval};
 use crate::{
     commands::{cli_common::WindowSpec, lengths::counting::LengthCounts},
     shared::tiled_run::{
@@ -254,35 +255,44 @@ pub fn reduce_partials_for_chr(
 /// - `chrom_len`: Chromosome length used to clamp fetch coordinates.
 ///
 /// Returns
-/// - `(start, end)` fetch coordinates as `i64`, or `None` when no windows apply.
+/// - Checked absolute fetch interval, or `None` when no windows apply.
 pub fn fetch_span_for_tile(
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
-    windows_chr: Option<&[(u64, u64, u64)]>,
+    windows_chr: Option<&[IndexedInterval<u64>]>,
     window_opt: &WindowSpec,
     chrom_len: u64,
-) -> Option<(i64, i64)> {
+) -> Result<Option<Interval<u64>>> {
     match window_opt {
-        WindowSpec::Global => Some((
-            tile.fetch_start as i64,
-            (tile.fetch_end.min(chrom_len as u32)) as i64,
-        )),
+        WindowSpec::Global => {
+            let fetch_start = tile.fetch_start() as u64;
+            let fetch_end = (tile.fetch_end().min(chrom_len as u32)) as u64;
+            if fetch_start >= fetch_end {
+                return Ok(None);
+            }
+            Ok(Some(Interval::new(fetch_start, fetch_end)?))
+        }
         WindowSpec::Size(window_bp) => {
-            let core_start = tile.core_start as u64;
-            let core_end = (tile.core_end as u64).min(chrom_len);
+            let core_start = tile.core_start() as u64;
+            let core_end = (tile.core_end() as u64).min(chrom_len);
             if core_start >= chrom_len || core_end == 0 {
-                return None;
+                return Ok(None);
             }
             let window_idx_start = core_start / window_bp;
             let window_idx_end = (core_end.saturating_sub(1)) / window_bp;
             let window_start = window_idx_start * window_bp;
             let window_end = ((window_idx_end + 1) * window_bp).min(chrom_len);
-            clamp_fetch_to_window_span(tile, chrom_len, window_start, window_end)
+            let window_span = Interval::new(window_start, window_end)?;
+            Ok(clamp_fetch_to_window_span(tile, chrom_len, window_span, 0)?)
         }
         WindowSpec::Bed(_) => {
-            let wchr = windows_chr?;
-            let (min_ws, max_we) = tile_window_min_max(wchr, tile, tile_window_span)?;
-            clamp_fetch_to_window_span(tile, chrom_len, min_ws, max_we)
+            let Some(wchr) = windows_chr else {
+                return Ok(None);
+            };
+            let Some(window_span) = tile_window_min_max(wchr, tile, tile_window_span)? else {
+                return Ok(None);
+            };
+            Ok(clamp_fetch_to_window_span(tile, chrom_len, window_span, 0)?)
         }
     }
 }

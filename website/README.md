@@ -4,23 +4,19 @@ This folder contains the Docusaurus website for cfDNAlab documentation.
 
 ## Local development
 
-1. Generate CLI docs:
-
-```bash
-../scripts/docs/generate_cli_docs.sh
-```
-
-2. Install dependencies:
+1. Install dependencies:
 
 ```bash
 npm install
 ```
 
-3. Start local dev server:
+2. Start local dev server:
 
 ```bash
 npm run start
 ```
+
+`npm run start` generates the CLI reference docs and release notes before starting Docusaurus.
 
 Open the URL printed by Docusaurus in your browser.
 
@@ -29,6 +25,8 @@ Open the URL printed by Docusaurus in your browser.
 ```bash
 npm run build
 ```
+
+`npm run build` generates the CLI reference docs and release notes before building the site.
 
 Build output is written to `website/generated-site/`.
 

@@ -31,6 +31,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::shared::fragment::minimal_fragment::Fragment;
+use crate::shared::interval::Interval;
 
 /// Function type for mapping chromosome names to `tid`
 pub type NameToTidFn = Arc<dyn Fn(&str) -> Option<i32> + Send + Sync>;
@@ -109,8 +110,7 @@ impl<R: BufRead> FragFileIter<R> {
             );
             Ok(Fragment {
                 tid,
-                start,
-                end,
+                interval: Interval::new(start, end)?,
                 gc_tag: crate::shared::gc_tag::GcTagValue::default(),
             })
         };

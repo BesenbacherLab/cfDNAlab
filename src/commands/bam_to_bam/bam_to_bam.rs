@@ -26,6 +26,7 @@ use crate::{
         blacklist::is_blacklisted,
         fragment::with_records_fragment::WithRecordsFragment,
         fragment_iterator::fragments_with_records_from_bam,
+        interval::{IndexedInterval, Interval},
         overlaps::find_overlapping_windows,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq,
@@ -212,8 +213,8 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
 fn process_chrom(
     chr: &str,
     opt: &BamToBamConfig,
-    windows: Option<&[(u64, u64, u64)]>,
-    blacklist_intervals: &[(u64, u64)],
+    windows: Option<&[IndexedInterval<u64>]>,
+    blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
     writer: &mut bam::Writer,
@@ -236,14 +237,16 @@ fn process_chrom(
     };
 
     // Replace scaling factor with unused index
-    let scaling_with_bin_idx: Vec<(u64, u64, u64)> =
-        scaling_chr.iter().map(|(s, e, _)| (*s, *e, 0u64)).collect();
+    let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
+        .iter()
+        .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
+        .collect::<crate::Result<_>>()?;
 
     // Get coordinates to fetch reads from and to
     let (fetch_from, fetch_to) = if windows.is_some() {
         let wn = windows.unwrap();
-        let fetch_start = wn[0].0 as i64;
-        let fetch_end = wn.iter().map(|w| w.1).max().unwrap() as i64;
+        let fetch_start = wn[0].start() as i64;
+        let fetch_end = wn.iter().map(|window| window.end()).max().unwrap() as i64;
         (
             (fetch_start - opt.fragment_lengths.max_fragment_length as i64).max(0i64),
             (fetch_end + opt.fragment_lengths.max_fragment_length as i64).min(chrom_len as i64),
@@ -290,7 +293,7 @@ fn process_chrom(
         move |fragment: &WithRecordsFragment| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
-                    corrector.correct_fragment(fragment.start as u64, fragment.end as u64, prefixes)
+                    corrector.correct_fragment(fragment.interval.try_to_u64()?, prefixes)
                 }
                 _ => Ok(None),
             }
@@ -315,8 +318,7 @@ fn process_chrom(
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.blacklist_strategy,
-            fragment.start.into(),
-            fragment.end.into(),
+            fragment.interval.try_to_u64()?,
             opt.fragment_lengths.max_fragment_length as u64,
             &mut bl_ptr,
         );
@@ -331,8 +333,7 @@ fn process_chrom(
             &mut wd_ptr,
             windows,
             None,
-            fragment.start.into(),
-            fragment.end.into(),
+            fragment.interval.try_to_u64()?,
             1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
             opt.fragment_lengths.max_fragment_length.into(),
         )?;
@@ -361,8 +362,7 @@ fn process_chrom(
                 &mut sf_ptr,
                 Some(&scaling_with_bin_idx),
                 None,
-                fragment.start.into(), // Full fragment
-                fragment.end.into(),
+                fragment.interval.try_to_u64()?, // Full fragment
                 1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
                 opt.fragment_lengths.max_fragment_length.into(),
             )
@@ -414,8 +414,10 @@ fn process_chrom(
                 .expect("Single record must exist in unpaired (--reads-are-fragments) mode");
             sorter.push(
                 RecordEntry {
-                    start: single_record.pos() as u32,
-                    end: single_record.reference_end() as u32,
+                    interval: Interval::new(
+                        single_record.pos() as u32,
+                        single_record.reference_end() as u32,
+                    )?,
                     record: single_record,
                     tags: tags.clone(),
                 },
@@ -429,8 +431,10 @@ fn process_chrom(
 
             sorter.push(
                 RecordEntry {
-                    start: forward_record.pos() as u32,
-                    end: forward_record.reference_end() as u32,
+                    interval: Interval::new(
+                        forward_record.pos() as u32,
+                        forward_record.reference_end() as u32,
+                    )?,
                     record: forward_record,
                     tags: tags.clone(),
                 },
@@ -440,8 +444,10 @@ fn process_chrom(
             // Push reverse read
             sorter.push(
                 RecordEntry {
-                    start: reverse_record.pos() as u32,
-                    end: reverse_record.reference_end() as u32,
+                    interval: Interval::new(
+                        reverse_record.pos() as u32,
+                        reverse_record.reference_end() as u32,
+                    )?,
                     record: reverse_record,
                     tags,
                 },

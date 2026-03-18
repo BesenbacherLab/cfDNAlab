@@ -4,6 +4,7 @@ use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
 use ndarray::{Array2, ArrayView3, Axis, s};
 
+use crate::shared::io::dot_join;
 use crate::shared::plotters::{
     heatmap::{HeatmapFormat, HeatmapUpsample, write_heatmap},
     lineplot::write_line_plot_png,
@@ -88,8 +89,10 @@ pub fn plot_midpoint_profiles(
             continue;
         }
 
-        let plot_path =
-            output_dir.join(format!("{prefix}.midpoint_profile.group_{}.png", group_idx));
+        let plot_path = output_dir.join(dot_join(&[
+            prefix,
+            &format!("midpoint_profile.group_{}.png", group_idx),
+        ]));
         let title = group_idx_to_name
             .get(&(group_idx as u64))
             .map(|name| format!("Midpoint profile ({})", name))
@@ -107,10 +110,10 @@ pub fn plot_midpoint_profiles(
                 .get(&(group_idx as u64))
                 .map(|name| format!("Midpoint profile by length bin ({})", name))
                 .unwrap_or_else(|| format!("Midpoint profile by length bin (group {})", group_idx));
-            let heatmap_path = output_dir.join(format!(
-                "{prefix}.midpoint_profile.group_{}.heatmap.png",
-                group_idx
-            ));
+            let heatmap_path = output_dir.join(dot_join(&[
+                prefix,
+                &format!("midpoint_profile.group_{}.heatmap.png", group_idx),
+            ]));
             write_heatmap(
                 &heatmap_path,
                 &title,

@@ -17,6 +17,7 @@ use crate::{
         bam::Contigs,
         bed::{Windows, load_windows_from_bed},
         blacklist::apply_blacklist_mask_to_seq,
+        interval::{IndexedInterval, Interval},
         reference::{read_seq_in_range, twobit_contig_lengths},
         sampling::{sample_starts_in_core, sampling_density},
         thread_pool::init_global_pool,
@@ -171,10 +172,10 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         .map(|(tile_idx, tile)| {
             let chr = tile.chr.as_str();
             let tile_span = tile_window_spans_for_threads[tile_idx];
-            let windows_chr: Option<&[(u64, u64, u64)]> = windows_map
+            let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
                 .as_ref()
                 .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
-            let blacklist_chr: &[(u64, u64)] = blacklist_map
+            let blacklist_chr: &[Interval<u64>] = blacklist_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
@@ -184,8 +185,8 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
             let mut tile_rng = StdRng::seed_from_u64(tile_seeds[tile_idx]);
             let starts = sample_starts_in_core(
                 &mut tile_rng,
-                tile.core_start as u64,
-                tile.core_end as u64,
+                tile.core_start() as u64,
+                tile.core_end() as u64,
                 chr_len as u64,
                 opt.fragment_lengths.max_fragment_length as u64,
                 start_position_sampling_density,
@@ -360,13 +361,13 @@ fn process_tile(
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
     chrom_len: u64,
-    windows: Option<&[(u64, u64, u64)]>,
+    windows: Option<&[IndexedInterval<u64>]>,
     start_positions: &[usize],
-    blacklist_intervals: &[(u64, u64)],
+    blacklist_intervals: &[Interval<u64>],
     opt: &RefGCBiasConfig,
 ) -> Result<(GCCounts, u64)> {
-    let core_start = tile.core_start as u64;
-    let core_end = tile.core_end as u64;
+    let core_start = tile.core_start() as u64;
+    let core_end = tile.core_end() as u64;
     if core_start >= core_end || core_start >= chrom_len {
         let empty = GCCounts::new(
             opt.fragment_lengths.min_fragment_length as usize,
@@ -377,8 +378,8 @@ fn process_tile(
         return Ok((empty, 0));
     }
 
-    let seq_start = tile.fetch_start.min(tile.core_start) as u64;
-    let seq_end = tile.fetch_end.min(chrom_len as u32) as u64;
+    let seq_start = tile.fetch_start().min(tile.core_start()) as u64;
+    let seq_end = tile.fetch_end().min(chrom_len as u32) as u64;
 
     // Load only the tile span (core plus padding) so starts in the core have full context
     let mut seq_bytes = read_seq_in_range(
@@ -399,24 +400,30 @@ fn process_tile(
     // Build windows that start in the core but may extend into the right halo
     // We keep starts inside the core (so starts are unique per tile) while letting fragment ends
     // reach into the fetched halo, which carries the needed sequence context
-    let mut tile_windows: Vec<(u64, u64, u64)> = Vec::new();
+    let mut tile_windows: Vec<IndexedInterval<u64>> = Vec::new();
     if let Some(win_chr) = windows {
         let iter = overlapping_windows_for_tile(win_chr, tile, tile_window_span);
-        for (ws, we, idx) in iter {
-            let start_abs = (*ws).max(core_start).max(seq_start);
-            let end_abs = (*we).min(seq_end);
+        for window in iter {
+            let start_abs = window.start().max(core_start).max(seq_start);
+            let end_abs = window.end().min(seq_end);
             if end_abs <= start_abs {
                 continue;
             }
-            tile_windows.push((start_abs - seq_start, end_abs - seq_start, *idx));
+            tile_windows.push(IndexedInterval::new(
+                start_abs - seq_start,
+                end_abs - seq_start,
+                // Preserve the original window index so downstream counts map back
+                // to the same BED window identity
+                window.idx(),
+            )?);
         }
     } else {
         // Global mode: one window spanning the tile core
-        tile_windows.push((
+        tile_windows.push(IndexedInterval::new(
             core_start.saturating_sub(seq_start),
             seq_end.saturating_sub(seq_start),
             0,
-        ));
+        )?);
     }
     if tile_windows.is_empty() {
         let empty = GCCounts::new(
@@ -454,7 +461,7 @@ fn process_tile(
             opt.fragment_lengths.min_fragment_length as u64,
             opt.fragment_lengths.max_fragment_length as u64 + 1,
         ),
-        &tile_windows,
+        tile_windows.as_slice(),
         tile_starts.as_slice(),
         seq_end - seq_start,
         1.0,
@@ -469,9 +476,9 @@ fn process_tile(
     let mut total_acgt_in_core = 0u64;
     let core_start_local = core_start - seq_start;
     let core_end_local = core_end - seq_start;
-    for (wstart, wend, _) in &tile_windows {
-        let clipped_start = (*wstart).max(core_start_local);
-        let clipped_end = (*wend).min(core_end_local);
+    for window in &tile_windows {
+        let clipped_start = window.start().max(core_start_local);
+        let clipped_end = window.end().min(core_end_local);
         if clipped_end <= clipped_start {
             continue;
         }

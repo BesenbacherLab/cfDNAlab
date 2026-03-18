@@ -2,6 +2,8 @@ use crate::commands::prepare_windows::{
     config::{CoordinateSet, DedupKeep, DistancePolicy, MergeScope},
     prepare_windows::Window,
 };
+use crate::shared::interval::Interval;
+use anyhow::Result;
 use fxhash::FxHashMap;
 use std::cmp::Ordering;
 use std::sync::Arc;
@@ -202,11 +204,15 @@ pub fn enforce_min_distance_within_group(
 ///
 /// Returns
 /// -------
-/// - `()`:
-///     Updates `windows` in place.
-pub fn apply_cluster_labels(windows: &mut [Window], min_overlaps: u32, coord_set: CoordinateSet) {
+/// - `out`:
+///     `Ok(())` after updating `windows` in place.
+pub fn apply_cluster_labels(
+    windows: &mut [Window],
+    min_overlaps: u32,
+    coord_set: CoordinateSet,
+) -> Result<()> {
     if windows.is_empty() {
-        return;
+        return Ok(());
     }
 
     let min_avg_overlap = min_overlaps as u64;
@@ -260,9 +266,9 @@ pub fn apply_cluster_labels(windows: &mut [Window], min_overlaps: u32, coord_set
                 end_segment_idx += 1;
             }
             // Compute total overlap depth by summing coverage across the window span
+            let window_interval = Interval::new(window_start, window_end)?;
             let total_overlap = overlap_sum_with_segments(
-                window_start,
-                window_end,
+                window_interval,
                 start_segment_by_window[offset],
                 end_segment_idx,
                 &boundaries,
@@ -283,6 +289,8 @@ pub fn apply_cluster_labels(windows: &mut [Window], min_overlaps: u32, coord_set
 
         start_idx = end_idx;
     }
+
+    Ok(())
 }
 
 fn build_coverage_index(
@@ -300,8 +308,11 @@ fn build_coverage_index(
     let mut deltas: Vec<i32> = Vec::new();
     for (pos, delta) in events {
         if boundaries.last().copied() == Some(pos) {
-            let slot = deltas.last_mut().expect("delta slot");
-            *slot += delta;
+            if let Some(slot) = deltas.last_mut() {
+                *slot += delta;
+            } else {
+                deltas.push(delta);
+            }
         } else {
             boundaries.push(pos);
             deltas.push(delta);
@@ -326,24 +337,26 @@ fn build_coverage_index(
 }
 
 fn overlap_sum_with_segments(
-    start: u32,
-    end: u32,
+    interval: Interval<u32>,
     start_segment_idx: usize,
     end_segment_idx: usize,
     boundaries: &[u32],
     coverage_by_segment: &[u32],
     coverage_prefix: &[u64],
 ) -> u64 {
-    if start >= end || boundaries.len() < 2 {
+    if boundaries.len() < 2 {
         return 0;
     }
+
+    let start = interval.start();
+    let end = interval.end();
 
     let max_segment = coverage_by_segment.len().saturating_sub(1);
     let start_idx = start_segment_idx.min(max_segment);
     let end_idx = end_segment_idx.min(max_segment);
 
     if start_idx == end_idx {
-        let segment_len = end.saturating_sub(start) as u64;
+        let segment_len = interval.len() as u64;
         return (coverage_by_segment[start_idx] as u64) * segment_len;
     }
 
@@ -704,3 +717,6 @@ fn choose_candidate(
         DistancePolicy::KeepLongest => candidates.iter().max_by_key(|c| c.length).unwrap().clone(),
     }
 }
+
+#[cfg(test)]
+mod postprocess_tests;

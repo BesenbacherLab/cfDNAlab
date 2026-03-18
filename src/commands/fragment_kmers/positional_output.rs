@@ -1,4 +1,5 @@
 use crate::commands::fragment_kmers::{positions::PositionGroup, tiling::PositionDescriptor};
+use crate::shared::io::dot_join;
 use crate::shared::kmers::{kmer_codec::KmerSpec, process_counts::DecodedCounts};
 use anyhow::{Context, Result};
 use fxhash::FxHashMap;
@@ -169,7 +170,7 @@ fn write_positional_dense_matrix(
         }
     }
 
-    let counts_path = output_dir.join(format!("{prefix}.k{k}_{}_counts.npy", label));
+    let counts_path = output_dir.join(dot_join(&[prefix, &format!("k{k}_{label}_counts.npy")]));
     write_npy(&counts_path, &array)?;
 
     write_motif_list(prefix, k, label, motifs, output_dir)?;
@@ -227,7 +228,10 @@ fn write_positional_sparse_matrix(
     shape_arr.write_npy(Cursor::new(&mut shape_buf))?;
     let format_buf = numpy_string_scalar("coo")?;
 
-    let npz_path = output_dir.join(format!("{prefix}.k{k}_{}_counts_sparse.npz", label));
+    let npz_path = output_dir.join(dot_join(&[
+        prefix,
+        &format!("k{k}_{label}_counts_sparse.npz"),
+    ]));
     let file =
         File::create(&npz_path).with_context(|| format!("creating {}", npz_path.display()))?;
     let mut npz = ZipWriter::new(file);
@@ -258,7 +262,7 @@ fn write_motif_list(
     motifs: &[String],
     output_dir: &Path,
 ) -> Result<()> {
-    let path = output_dir.join(format!("{prefix}.k{k}_{}_motifs.txt", label));
+    let path = output_dir.join(dot_join(&[prefix, &format!("k{k}_{label}_motifs.txt")]));
     let mut file = File::create(&path).with_context(|| format!("creating {}", path.display()))?;
     for motif in motifs {
         writeln!(file, "{motif}")?;
@@ -274,7 +278,7 @@ fn write_grid_metadata(
     positions: usize,
     output_dir: &Path,
 ) -> Result<()> {
-    let path = output_dir.join(format!("{prefix}.k{k}_{}_grid.txt", label));
+    let path = output_dir.join(dot_join(&[prefix, &format!("k{k}_{label}_grid.txt")]));
     let mut file = File::create(&path).with_context(|| format!("creating {}", path.display()))?;
     writeln!(file, "windows\t{}", windows)?;
     writeln!(file, "positions\t{}", positions)?;
