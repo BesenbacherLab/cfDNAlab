@@ -10,6 +10,7 @@ use crate::commands::visualize_positions::model::{
 };
 use crate::commands::visualize_positions::select::ReadClamp;
 use crate::commands::visualize_positions::{render_ascii, render_svg};
+use crate::shared::interval::Interval;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use ndarray::Array3;
 use ndarray_npy::read_npy;
@@ -92,7 +93,7 @@ fn compute_visualizations(
     for (window, window_counts) in synthetic.windows.iter().zip(counts.into_iter()) {
         let mut viz = build_tracks_from_counts(
             main_positional_spec.frame,
-            window.length,
+            window.len(),
             clamp_mode,
             &window_counts.offsets,
             &window_counts.coverage,
@@ -103,7 +104,7 @@ fn compute_visualizations(
         {
             let overlays = build_overlays_from_counts(
                 main_positional_spec.frame,
-                window.length,
+                window.len(),
                 &viz.tracks,
                 kmer_sizes,
                 &window_counts.offsets_by_k,
@@ -118,9 +119,24 @@ fn compute_visualizations(
 }
 
 struct FragmentWindow {
-    length: u32,
-    start: u32,
-    end: u32,
+    interval: Interval<u32>,
+}
+
+impl FragmentWindow {
+    #[inline]
+    fn len(&self) -> u32 {
+        self.interval.len()
+    }
+
+    #[inline]
+    fn start(&self) -> u32 {
+        self.interval.start()
+    }
+
+    #[inline]
+    fn end(&self) -> u32 {
+        self.interval.end()
+    }
 }
 
 struct SyntheticInputs {
@@ -144,8 +160,9 @@ fn synthesize_inputs(viz_cfg: &VizConfig, temp_dir: &Path) -> Result<SyntheticIn
         let end = start
             .checked_add(length)
             .ok_or_else(|| anyhow!("fragment length overflow"))?;
-        fragments.push(FragmentSpec { start, length });
-        windows.push(FragmentWindow { length, start, end });
+        let interval = Interval::new(start, end)?;
+        fragments.push(FragmentSpec { interval });
+        windows.push(FragmentWindow { interval });
         cursor = end
             .checked_add(FRAGMENT_GAP)
             .ok_or_else(|| anyhow!("fragment length overflow"))?;
@@ -166,8 +183,19 @@ fn synthesize_inputs(viz_cfg: &VizConfig, temp_dir: &Path) -> Result<SyntheticIn
 }
 
 struct FragmentSpec {
-    start: u32,
-    length: u32,
+    interval: Interval<u32>,
+}
+
+impl FragmentSpec {
+    #[inline]
+    fn start(&self) -> u32 {
+        self.interval.start()
+    }
+
+    #[inline]
+    fn len(&self) -> u32 {
+        self.interval.len()
+    }
 }
 
 fn write_bam(temp_dir: &Path, reference: &[u8], fragments: &[FragmentSpec]) -> Result<PathBuf> {
@@ -190,21 +218,22 @@ fn write_bam(temp_dir: &Path, reference: &[u8], fragments: &[FragmentSpec]) -> R
 
     let mut records = Vec::with_capacity(fragments.len() * 2);
     for (idx, fragment) in fragments.iter().enumerate() {
-        let forward_len = (fragment.length / 2).max(1);
-        let mut reverse_len = fragment.length.saturating_sub(forward_len);
+        let fragment_length = fragment.len();
+        let forward_len = (fragment_length / 2).max(1);
+        let mut reverse_len = fragment_length.saturating_sub(forward_len);
         if reverse_len == 0 {
             reverse_len = 1;
         }
 
-        let forward_start = fragment.start;
+        let forward_start = fragment.start();
         let reverse_start = fragment
-            .start
-            .checked_add(fragment.length)
+            .start()
+            .checked_add(fragment_length)
             .and_then(|end| end.checked_sub(reverse_len))
             .ok_or_else(|| anyhow!("invalid fragment geometry"))?;
 
-        let fragment_size = (fragment.length as i64).max(1);
-        let qname = format!("frag{}_{}", idx, fragment.start);
+        let fragment_size = (fragment_length as i64).max(1);
+        let qname = format!("frag{}_{}", idx, fragment.start());
 
         let forward = build_read(
             &qname,
@@ -359,7 +388,10 @@ fn write_windows_bed(temp_dir: &Path, windows: &[FragmentWindow]) -> Result<Path
         writeln!(
             file,
             "{}\t{}\t{}\twin{}",
-            CHROM_NAME, window.start, window.end, index
+            CHROM_NAME,
+            window.start(),
+            window.end(),
+            index
         )?;
     }
     Ok(bed_path)
@@ -454,7 +486,10 @@ fn collect_counts(
     ];
 
     for (group, label) in groups {
-        let positions_path = temp_dir.join(format!("{prefix}.{label}_positions.txt"));
+        let positions_path = temp_dir.join(crate::shared::io::dot_join(&[
+            prefix,
+            &format!("{label}_positions.txt"),
+        ]));
         if !positions_path.exists() {
             continue;
         }
@@ -483,7 +518,10 @@ fn collect_counts(
         }
 
         for &k in kmer_sizes {
-            let counts_path = temp_dir.join(format!("{prefix}.k{k}_{label}_counts.npy"));
+            let counts_path = temp_dir.join(crate::shared::io::dot_join(&[
+                prefix,
+                &format!("k{k}_{label}_counts.npy"),
+            ]));
             if !counts_path.exists() {
                 continue;
             }
@@ -511,7 +549,7 @@ fn collect_counts(
                                 let cov_set =
                                     results[window_idx].coverage.entry(group).or_default();
                                 let span = coverage_span(
-                                    windows[window_idx].length,
+                                    windows[window_idx].len(),
                                     *offset,
                                     k as i32,
                                     group,

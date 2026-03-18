@@ -16,6 +16,7 @@ use crate::commands::wps_peaks::window_peak_results::PeaksWindowAction;
 use crate::shared::bam::Contigs;
 use crate::shared::bed::load_windows_from_bed;
 use crate::shared::interval::{IndexedInterval, Interval};
+use crate::shared::io::dot_join;
 use crate::shared::thread_pool::init_global_pool;
 use crate::shared::tiled_run::{
     Tile, TileMode, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
@@ -247,7 +248,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
                         chrom_len,
                         tile.core_start() as u64,
                         tile.core_end() as u64,
-                    );
+                    )?;
                     Some(compute_window_stats_contributions(
                         windows.as_slice(),
                         &peaks,
@@ -276,8 +277,8 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
                         writer,
                         "{}\t{}\t{}\t{}\t{}",
                         peak.chromosome,
-                        peak.start,
-                        peak.end,
+                        peak.start(),
+                        peak.end(),
                         peak.peak_position,
                         format_float(peak.height, opt.shared_args.decimals as usize)
                     )?;
@@ -303,7 +304,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
                 opt.shared_args
                     .ioc
                     .output_dir
-                    .join(format!("{prefix}.wps.peaks.tsv.zst")),
+                    .join(dot_join(&[prefix, "wps.peaks.tsv.zst"])),
                 opt.shared_args.ioc.n_threads as u32,
             )?;
             for result in &tile_results {
@@ -498,14 +499,14 @@ where
             .ok_or_else(|| anyhow!("missing peak height"))?
             .parse()
             .context("parse peak height")?;
-        handler(PeakCall {
-            chromosome: chr.to_string(),
+        handler(PeakCall::new(
+            chr.to_string(),
             start,
             end,
             peak_position,
             height,
-            segment_id: 0,
-        })?;
+            0,
+        )?)?;
     }
     Ok(())
 }
@@ -517,7 +518,7 @@ enum WindowOutputMode {
 }
 
 enum WindowSource {
-    Bed(FxHashMap<String, Vec<(u64, u64, u64)>>),
+    Bed(FxHashMap<String, Vec<IndexedInterval<u64>>>),
     FixedSizeBuffered(FixedSizeWindows),
     FixedSizeAligned(Arc<FixedSizeAlignedWindows>),
 }
@@ -552,12 +553,6 @@ impl FixedSizeWindows {
         }
     }
 
-    fn ensure_progress(&mut self, chr: &str) {
-        self.progress
-            .entry(chr.to_string())
-            .or_insert_with(FixedChromProgress::default);
-    }
-
     fn add_windows_for_tile(
         &mut self,
         chr: &str,
@@ -569,8 +564,10 @@ impl FixedSizeWindows {
             .chrom_lengths
             .get(chr)
             .ok_or_else(|| anyhow!("missing contig length for {}", chr))?;
-        self.ensure_progress(chr);
-        let state = self.progress.get_mut(chr).expect("progress initialized");
+        let state = self
+            .progress
+            .entry(chr.to_string())
+            .or_insert_with(FixedChromProgress::default);
 
         while state.next_start < tile_end && state.next_start < chrom_len {
             let window_start = state.next_start;
@@ -583,7 +580,7 @@ impl FixedSizeWindows {
                 continue;
             }
 
-            accumulator.push_window((window_start, window_end, idx));
+            accumulator.push_window(IndexedInterval::new(window_start, window_end, idx)?);
         }
 
         Ok(())
@@ -643,9 +640,9 @@ impl WindowOutputWriter {
     ) -> Result<Self> {
         let mode = WindowOutputMode::from(action);
         let path = output_dir.join(match mode {
-            WindowOutputMode::Unique => format!("{prefix}.wps.peaks.unique.tsv.zst"),
-            WindowOutputMode::Indexed => format!("{prefix}.wps.peaks.indexed.tsv.zst"),
-            WindowOutputMode::Stats => format!("{prefix}.wps.peaks.stats.tsv.zst"),
+            WindowOutputMode::Unique => dot_join(&[prefix, "wps.peaks.unique.tsv.zst"]),
+            WindowOutputMode::Indexed => dot_join(&[prefix, "wps.peaks.indexed.tsv.zst"]),
+            WindowOutputMode::Stats => dot_join(&[prefix, "wps.peaks.stats.tsv.zst"]),
         });
         let mut writer = open_zstd_auto_writer(&path, 3, Some(threads))?;
         match mode {
@@ -769,7 +766,7 @@ impl WindowOutputWriter {
                     chrom_len,
                     tile.core_start() as u64,
                     tile.core_end() as u64,
-                );
+                )?;
                 self.write_aligned_stats(
                     tile.chr.as_str(),
                     &windows,
@@ -802,8 +799,8 @@ impl WindowOutputWriter {
                 self.writer,
                 "{}\t{}\t{}\t{}\t{}\t{}",
                 peak.chromosome,
-                peak.start,
-                peak.end,
+                peak.start(),
+                peak.end(),
                 peak.peak_position,
                 format_float(peak.height, self.decimals),
                 idx
@@ -815,7 +812,7 @@ impl WindowOutputWriter {
     fn write_aligned_stats(
         &mut self,
         chr: &str,
-        windows: &[(u64, u64, u64)],
+        windows: &[IndexedInterval<u64>],
         contributions: &[WindowStatsContribution],
     ) -> Result<()> {
         let mut contrib_lookup: FxHashMap<u64, &WindowStatsContribution> =
@@ -824,7 +821,8 @@ impl WindowOutputWriter {
             contrib_lookup.insert(contribution.window_idx, contribution);
         }
 
-        for &(start, end, idx) in windows {
+        for window in windows {
+            let (start, end, idx) = window.as_tuple();
             if let Some(contribution) = contrib_lookup.get(&idx) {
                 let (avg, median) = stats_distance_summary(
                     contribution.distance_sum,
@@ -963,18 +961,20 @@ pub fn peaks_for_tile(
         &wps_values,
         Some(&mask),
         &processing_opts,
-    );
+    )?;
 
     for mut peak in peaks_all {
         if peak.peak_position >= tile.core_start() as u64
             && peak.peak_position < tile.core_end() as u64
         {
-            peak.start = peak.start.max(tile.core_start() as u64);
-            peak.end = peak.end.min(tile.core_end() as u64);
+            peak.clamp_to_bounds(Interval::new(
+                tile.core_start() as u64,
+                tile.core_end() as u64,
+            )?)?;
             peaks.push(peak);
         }
     }
-    peaks.sort_by_key(|p| p.start);
+    peaks.sort_by_key(|peak| peak.start());
     Ok((counter, peaks))
 }
 
@@ -992,9 +992,7 @@ pub fn compute_window_stats_contributions(
 
     // Windows arrive sorted by start (they may overlap), so `start_idx` can increase monotonically
     for window in windows {
-        let start = window.start();
-        let end = window.end();
-        let idx = window.idx();
+        let (start, end, idx) = window.as_tuple();
         while start_idx < peaks.len() && peaks[start_idx].peak_position < start {
             start_idx += 1;
         }
@@ -1043,9 +1041,9 @@ fn build_fixed_size_windows_for_tile(
     chrom_len: u64,
     tile_start: u64,
     tile_end: u64,
-) -> Vec<IndexedInterval<u64>> {
+) -> Result<Vec<IndexedInterval<u64>>> {
     if bin_size == 0 || tile_start >= chrom_len {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     // Windows are aligned to multiples of bin_size (0, bin_size, 2*bin_size, ...).
     // We start from the alignment that covers tile_start so we never skip windows
@@ -1057,13 +1055,10 @@ fn build_fixed_size_windows_for_tile(
         let window_start = start;
         let end = (start + bin_size).min(chrom_len);
         let idx = window_start / bin_size;
-        windows.push(
-            IndexedInterval::new(window_start, end, idx)
-                .expect("fixed-size tile windows must be valid non-empty intervals"),
-        );
+        windows.push(IndexedInterval::new(window_start, end, idx)?);
         start = start.saturating_add(bin_size);
     }
-    windows
+    Ok(windows)
 }
 
 fn last_mask_end_before(intervals: &[Interval<u64>], position: u64) -> u64 {
@@ -1098,7 +1093,7 @@ enum WindowAccumulatorKind {
 }
 
 pub struct WindowState {
-    entry: (u64, u64, u64),
+    entry: IndexedInterval<u64>,
     data: WindowStateData,
 }
 
@@ -1130,7 +1125,7 @@ pub fn peaks_from_wps_values(
     wps_values: &[f32],
     mask: Option<&[u8]>,
     options: &PeakSignalProcessingOptions,
-) -> Vec<PeakCall> {
+) -> Result<Vec<PeakCall>> {
     if let Some(mask_slice) = mask {
         assert_eq!(
             mask_slice.len(),
@@ -1210,7 +1205,7 @@ impl WindowAccumulator {
     ///
     /// Stats windows keep enough state (first/last peaks plus histogram) to merge contributions
     /// across tiles without replaying peaks on tile boundaries.
-    fn push_window(&mut self, entry: (u64, u64, u64)) {
+    fn push_window(&mut self, entry: IndexedInterval<u64>) {
         self.active.push(WindowState {
             entry,
             data: match self.kind {
@@ -1231,19 +1226,19 @@ impl WindowAccumulator {
 
     pub fn add_windows_for_tile(
         &mut self,
-        windows: &[(u64, u64, u64)],
+        windows: &[IndexedInterval<u64>],
         next_idx: &mut usize,
         tile_start: u64,
         tile_end: u64,
     ) {
         // Windows come sorted by start, so we append in order and skip ones that end before the tile
-        while *next_idx < windows.len() && windows[*next_idx].0 < tile_end {
-            let entry = windows[*next_idx];
-            if entry.1 <= tile_start {
+        while *next_idx < windows.len() && windows[*next_idx].start() < tile_end {
+            let window = windows[*next_idx];
+            if window.end() <= tile_start {
                 *next_idx += 1;
                 continue;
             }
-            self.push_window(entry);
+            self.push_window(window);
             *next_idx += 1;
         }
     }
@@ -1255,7 +1250,7 @@ impl WindowAccumulator {
     /// that subsequent tiles can add one cross-tile distance when merging contributions.
     pub fn push_peak(&mut self, peak: &PeakCall) {
         while self.scan_start < self.active.len()
-            && self.active[self.scan_start].entry.1 <= peak.peak_position
+            && self.active[self.scan_start].entry.end() <= peak.peak_position
         {
             self.scan_start += 1;
         }
@@ -1263,7 +1258,7 @@ impl WindowAccumulator {
         let mut window_idx = self.scan_start;
         while window_idx < self.active.len() {
             let state = &mut self.active[window_idx];
-            let (start, end, _) = state.entry;
+            let (start, end, _) = state.entry.as_tuple();
             if start > peak.peak_position {
                 break;
             }
@@ -1320,7 +1315,8 @@ impl WindowAccumulator {
         writer: &mut W,
     ) -> Result<()> {
         let mut remove_count = 0;
-        while remove_count < self.active.len() && self.active[remove_count].entry.1 <= tile_end {
+        while remove_count < self.active.len() && self.active[remove_count].entry.end() <= tile_end
+        {
             remove_count += 1;
         }
         if remove_count == 0 {
@@ -1363,7 +1359,7 @@ impl WindowAccumulator {
         let state = self
             .active
             .iter_mut()
-            .find(|st| st.entry.2 == contribution.window_idx)
+            .find(|state| state.entry.idx() == contribution.window_idx)
             .ok_or_else(|| {
                 anyhow!(
                     "stats contribution references inactive window {}",
@@ -1423,7 +1419,7 @@ impl WindowAccumulator {
     }
 
     pub fn write_window<W: Write>(&self, writer: &mut W, state: WindowState) -> Result<()> {
-        let (start, end, idx) = state.entry;
+        let (start, end, idx) = state.entry.as_tuple();
         match state.data {
             WindowStateData::Unique(map) => {
                 for (pos, height) in map {
@@ -1443,8 +1439,8 @@ impl WindowAccumulator {
                         writer,
                         "{}\t{}\t{}\t{}\t{}\t{}",
                         peak.chromosome,
-                        peak.start,
-                        peak.end,
+                        peak.start(),
+                        peak.end(),
                         peak.peak_position,
                         format_float(peak.height, self.decimals),
                         idx

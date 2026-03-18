@@ -4,19 +4,18 @@ use crate::shared::interval::Interval;
 pub fn is_blacklisted(
     blacklist_intervals: &[Interval<u64>],
     blacklist_strategy: BlacklistStrategy,
-    start: u64,
-    end: u64,
+    interval: Interval<u64>,
     look_back: u64,
     ptr: &mut usize,
 ) -> bool {
     // Determine blacklist status
 
     match blacklist_strategy {
-        BlacklistStrategy::All => is_all(blacklist_intervals, start, end, look_back, ptr),
-        BlacklistStrategy::Any => is_any(blacklist_intervals, start, end, look_back, ptr),
-        BlacklistStrategy::Midpoint => is_midpoint(blacklist_intervals, start, end, look_back, ptr),
+        BlacklistStrategy::All => is_all(blacklist_intervals, interval, look_back, ptr),
+        BlacklistStrategy::Any => is_any(blacklist_intervals, interval, look_back, ptr),
+        BlacklistStrategy::Midpoint => is_midpoint(blacklist_intervals, interval, look_back, ptr),
         BlacklistStrategy::Proportion(th) => {
-            is_proportion(blacklist_intervals, start, end, look_back, ptr, th)
+            is_proportion(blacklist_intervals, interval, look_back, ptr, th)
         }
     }
 }
@@ -28,11 +27,11 @@ pub fn is_blacklisted(
 /// Intervals must be sorted by start position and be non‐overlapping.
 pub fn compute_blacklist_overlap(
     intervals: &[Interval<u64>],
-    start: u64,
-    end: u64,
+    interval: Interval<u64>,
     look_back: u64,
     ptr: &mut usize,
 ) -> f64 {
+    let (start, end) = interval.as_tuple();
     // Skip intervals that end at or before the bin start minus `look_back`
     while *ptr < intervals.len() && intervals[*ptr].end() <= start.saturating_sub(look_back) {
         *ptr += 1;
@@ -41,34 +40,32 @@ pub fn compute_blacklist_overlap(
     let mut covered = 0;
     let mut i = *ptr;
     while i < intervals.len() && intervals[i].start() < end {
-        let interval = intervals[i];
-        let interval_start = interval.start();
-        let interval_end = interval.end();
-        covered += interval_end
+        let blacklist_interval = intervals[i];
+        let (blacklist_start, blacklist_end) = blacklist_interval.as_tuple();
+        covered += blacklist_end
             .min(end)
-            .saturating_sub(interval_start.max(start));
+            .saturating_sub(blacklist_start.max(start));
         i += 1;
     }
-    covered as f64 / (end - start) as f64
+    covered as f64 / (interval.len() as f64)
 }
 
 /// Check if the full fragment lies within an interval
 pub fn is_all(
     intervals: &[Interval<u64>],
-    start: u64,
-    end: u64,
+    interval: Interval<u64>,
     look_back: u64,
     ptr: &mut usize,
 ) -> bool {
     // Skip any intervals that end entirely before our fragment start minus `look_back`
-    while *ptr < intervals.len() && intervals[*ptr].end() <= start.saturating_sub(look_back) {
+    while *ptr < intervals.len()
+        && intervals[*ptr].end() <= interval.start().saturating_sub(look_back)
+    {
         *ptr += 1;
     }
     // If there's an interval here, check full overlap of [start,end)
-    if let Some(interval) = intervals.get(*ptr) {
-        let interval_start = interval.start();
-        let interval_end = interval.end();
-        interval_start <= start && interval_end >= end
+    if let Some(blacklist_interval) = intervals.get(*ptr) {
+        blacklist_interval.contains_interval(interval)
     } else {
         false
     }
@@ -77,11 +74,11 @@ pub fn is_all(
 /// Check if fragment midpoint lies within an interval
 pub fn is_midpoint(
     intervals: &[Interval<u64>],
-    start: u64,
-    end: u64,
+    interval: Interval<u64>,
     look_back: u64,
     ptr: &mut usize,
 ) -> bool {
+    let (start, end) = interval.as_tuple();
     // Compute fragment midpoint
     let mid = start + (end - start) / 2;
     // Skip any intervals that end entirely before the fragment start minus `look_back`
@@ -91,10 +88,7 @@ pub fn is_midpoint(
     // Iterate over every interval that could cover the midpoint
     let mut i = *ptr;
     while i < intervals.len() && intervals[i].start() <= mid {
-        let interval = intervals[i];
-        let interval_start = interval.start();
-        let interval_end = interval.end();
-        if interval_start <= mid && mid < interval_end {
+        if intervals[i].contains_point(mid) {
             return true;
         }
         i += 1;
@@ -107,12 +101,12 @@ pub fn is_midpoint(
 /// so we never “lose” an interval that might still overlap the next fragment.
 pub fn is_proportion(
     intervals: &[Interval<u64>],
-    start: u64,
-    end: u64,
+    interval: Interval<u64>,
     look_back: u64,
     ptr: &mut usize,
     thr: f64,
 ) -> bool {
+    let (start, end) = interval.as_tuple();
     // Skip any intervals that end entirely before our fragment start minus `look_back`
     while *ptr < intervals.len() && intervals[*ptr].end() <= start.saturating_sub(look_back) {
         *ptr += 1;
@@ -122,13 +116,11 @@ pub fn is_proportion(
     let mut i = *ptr;
     // Sum overlaps only through intervals whose .0 < end
     while i < intervals.len() && intervals[i].start() < end {
-        let interval = intervals[i];
-        let interval_start = interval.start();
-        let interval_end = interval.end();
-        covered += (interval_end
-            .min(end)
-            .saturating_sub(interval_start.max(start)) as f64)
-            / ((end - start) as f64);
+        let blacklist_interval = intervals[i];
+        covered += blacklist_interval
+            .intersection(interval)
+            .map(|shared_interval| shared_interval.len() as f64 / interval.len() as f64)
+            .unwrap_or(0.0);
         if covered >= thr {
             // Early stopping if we reached the threshold
             break;
@@ -144,11 +136,11 @@ pub fn is_proportion(
 /// “lose” an interval that might still overlap the next fragment.
 pub fn is_any(
     intervals: &[Interval<u64>],
-    start: u64,
-    end: u64,
+    interval: Interval<u64>,
     look_back: u64,
     ptr: &mut usize,
 ) -> bool {
+    let (start, end) = interval.as_tuple();
     // Skip any intervals that end entirely before our fragment start minus `look_back`
     while *ptr < intervals.len() && intervals[*ptr].end() <= start.saturating_sub(look_back) {
         *ptr += 1;
@@ -158,12 +150,11 @@ pub fn is_any(
     let mut i = *ptr;
     // Sum overlaps only through intervals whose .0 < end
     while i < intervals.len() && intervals[i].start() < end {
-        let interval = intervals[i];
-        let interval_start = interval.start();
-        let interval_end = interval.end();
-        covered_bases += interval_end
-            .min(end)
-            .saturating_sub(interval_start.max(start)) as u16;
+        let blacklist_interval = intervals[i];
+        covered_bases += blacklist_interval
+            .intersection(interval)
+            .map(|shared_interval| shared_interval.len() as u16)
+            .unwrap_or(0);
         if covered_bases > 0 {
             // Early stopping if we reached the threshold
             break;

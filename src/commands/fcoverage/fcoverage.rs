@@ -904,8 +904,8 @@ fn process_tile(
             let psum_all = cp
                 .psum_all_ref()
                 .ok_or_else(|| anyhow::anyhow!("psum_all missing"))?;
-            let psum_allowed = cp.psum_allowed_ref();
-            let psum_cnt_allowed = cp.psum_allowed_count_ref();
+            let psum_unmasked = cp.psum_unmasked_ref();
+            let psum_cnt_unmasked = cp.psum_unmasked_count_ref();
             let mask: Option<&[u8]> = cp.blacklist_mask();
 
             // Writers: compressed partials and cross sidecar
@@ -942,8 +942,8 @@ fn process_tile(
                     local_overlap.local_end_idx,
                     masked,
                     psum_all,
-                    psum_allowed,
-                    psum_cnt_allowed,
+                    psum_unmasked,
+                    psum_cnt_unmasked,
                     mask,
                 );
 
@@ -980,8 +980,8 @@ fn process_tile(
             let psum_all = cp
                 .psum_all_ref()
                 .ok_or_else(|| anyhow::anyhow!("psum_all missing"))?;
-            let psum_allowed = cp.psum_allowed_ref();
-            let psum_cnt_allowed = cp.psum_allowed_count_ref();
+            let psum_unmasked = cp.psum_unmasked_ref();
+            let psum_cnt_unmasked = cp.psum_unmasked_count_ref();
             let mask: Option<&[u8]> = cp.blacklist_mask();
 
             // Determine the fixed-size windows that overlap the tile core
@@ -1019,8 +1019,8 @@ fn process_tile(
                         local_overlap.local_end_idx,
                         masked,
                         psum_all,
-                        psum_allowed,
-                        psum_cnt_allowed,
+                        psum_unmasked,
+                        psum_cnt_unmasked,
                         mask,
                     );
 
@@ -1071,8 +1071,8 @@ fn process_tile(
                         local_overlap.local_end_idx,
                         masked,
                         psum_all,
-                        psum_allowed,
-                        psum_cnt_allowed,
+                        psum_unmasked,
+                        psum_cnt_unmasked,
                         mask,
                     );
 

@@ -172,11 +172,9 @@ pub fn build_bin_info(
                 let blacklist_intervals =
                     blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]);
                 for window in windows {
-                    let start = window.start();
-                    let end = window.end();
                     // Preserve the original BED window index rather than the
                     // chromosome-local loop position
-                    let original_idx = window.idx();
+                    let (start, end, original_idx) = window.as_tuple();
                     let overlap = compute_blacklist_overlap(
                         blacklist_intervals,
                         Interval::new(start, end)?,

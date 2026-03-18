@@ -152,7 +152,7 @@ pub fn compute_window_outputs(
                 .iter()
                 .map(|window| Interval::new(window.start() as u32, window.end() as u32))
                 .collect::<std::result::Result<_, _>>()?;
-            let avgs = cp.bulk_avg_coverage_in_intervals(&spans, nan_blacklisted, false)?;
+            let avgs = cp.bulk_avg_coverage(&spans, nan_blacklisted, false)?;
 
             let mut results = Vec::with_capacity(windows.len());
             for (window, &avg) in windows.iter().zip(avgs.iter()) {
@@ -176,7 +176,7 @@ pub fn compute_window_outputs(
                 .iter()
                 .map(|window| Interval::new(window.start() as u32, window.end() as u32))
                 .collect::<std::result::Result<_, _>>()?;
-            let sums = cp.bulk_sum_coverage_in_intervals(&spans, nan_blacklisted, false)?;
+            let sums = cp.bulk_sum_coverage(&spans, nan_blacklisted, false)?;
 
             let mut results = Vec::with_capacity(windows.len());
             for (window, &sum) in windows.iter().zip(sums.iter()) {

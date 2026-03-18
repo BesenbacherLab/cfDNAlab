@@ -1,4 +1,4 @@
-use crate::shared::interval::IndexedInterval;
+use crate::shared::interval::{IndexedInterval, ScoredInterval};
 use crate::shared::io::open_text_reader;
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
@@ -192,8 +192,8 @@ pub fn load_windows_from_bed(
 
     let windows_mapping: FxHashMap<String, Windows> = vec_mapping
         .into_iter()
-        .map(|(chr, windows)| (chr, Windows::new(windows)))
-        .collect();
+        .map(|(chr, windows)| Ok((chr, Windows::from_tuples(&windows)?)))
+        .collect::<crate::Result<_>>()?;
 
     Ok(windows_mapping)
 }
@@ -230,21 +230,22 @@ impl Windows {
     /// Construct from any window list (may be unsorted/overlapping).
     /// Ensures start- and end-sorted order (does not retain initial order)
     /// and computes span as `min(start)` .. `max(end)`.
-    pub fn new(mut windows: Vec<(u64, u64, u64)>) -> Self {
-        windows.sort_unstable_by_key(|window| (window.0, window.1));
+    pub fn new(mut windows: Vec<IndexedInterval<u64>>) -> Self {
+        windows.sort_unstable_by_key(|window| (window.start(), window.end()));
         Windows::from_sorted(windows)
+    }
+
+    /// Construct from raw `(start, end, idx)` tuples.
+    ///
+    /// Use this when a loader or tiny fixture still naturally produces tuples.
+    /// Prefer `new` and `from_sorted` when the windows are already checked.
+    pub fn from_tuples(windows: &[(u64, u64, u64)]) -> crate::Result<Self> {
+        Ok(Self::new(IndexedInterval::from_tuples(windows)?))
     }
 
     /// Construct from a list you guarantee is already sorted by start (non-decreasing).
     /// Computes span as `min(start)` .. `max(end)` (robust to irregular ends).
-    pub fn from_sorted(windows: Vec<(u64, u64, u64)>) -> Self {
-        let indexed_windows: Vec<IndexedInterval<u64>> = windows
-            .into_iter()
-            .map(|window| {
-                IndexedInterval::try_from(window)
-                    .expect("Windows::from_sorted requires non-empty half-open windows")
-            })
-            .collect();
+    pub fn from_sorted(indexed_windows: Vec<IndexedInterval<u64>>) -> Self {
         debug_assert!(
             is_sorted_by_start_indexed(&indexed_windows),
             "windows must be start-sorted"
@@ -430,15 +431,9 @@ fn is_sorted_by_start_indexed(ws: &[IndexedInterval<u64>]) -> bool {
 }
 
 #[inline]
-fn is_sorted_by_start(ws: &[(u64, u64, u64)]) -> bool {
+fn is_sorted_by_start_with_scores(ws: &[ScoredInterval<u64>]) -> bool {
     ws.windows(2)
-        .all(|window_pair| window_pair[0].0 <= window_pair[1].0)
-}
-
-#[inline]
-fn is_sorted_by_start_with_scores(ws: &[(u64, u64, u64, f64)]) -> bool {
-    ws.windows(2)
-        .all(|window_pair| window_pair[0].0 <= window_pair[1].0)
+        .all(|window_pair| window_pair[0].start() <= window_pair[1].start())
 }
 
 /* GROUPED bed files */
@@ -640,11 +635,12 @@ pub fn load_grouped_windows_from_bed(
         );
     }
 
-    // Convert to Windows collections (Windows::new sorts internally)
+    // Convert parsed tuples into typed grouped windows.
+    // GroupedWindows::from_tuples delegates to GroupedWindows::new, which sorts internally.
     let windows_mapping: FxHashMap<String, GroupedWindows> = vec_mapping
         .into_iter()
-        .map(|(chr, windows)| (chr.to_string(), GroupedWindows::new(windows)))
-        .collect();
+        .map(|(chr, windows)| Ok((chr.to_string(), GroupedWindows::from_tuples(&windows)?)))
+        .collect::<crate::Result<_>>()?;
 
     // Invert the group mapping to allow getting the group name from the group index
     let group_idx_to_name: FxHashMap<u64, String> = group_name_to_idx
@@ -663,7 +659,7 @@ pub fn load_grouped_windows_from_bed(
 /// - Coordinates are half-open: `[start, end)`.
 #[derive(Debug, Clone)]
 pub struct GroupedWindows {
-    pub windows: Vec<(u64, u64, u64)>, // (start, end, group idx)
+    pub windows: Vec<IndexedInterval<u64>>, // (start, end, group idx)
     /// Span start (inclusive) across all windows, as `i64`.
     /// This is the most-left coordinate covered by any of the windows.
     span_start: i64,
@@ -676,24 +672,39 @@ impl GroupedWindows {
     /// Construct from any window list (may be unsorted/overlapping).
     /// Ensures start- and end-sorted order (does not retain initial order)
     /// and computes span as `min(start)` .. `max(end)`.
-    pub fn new(mut windows: Vec<(u64, u64, u64)>) -> Self {
-        windows.sort_unstable_by_key(|window| (window.0, window.1));
+    pub fn new(mut windows: Vec<IndexedInterval<u64>>) -> Self {
+        windows.sort_unstable_by_key(|window| (window.start(), window.end()));
         GroupedWindows::from_sorted(windows)
+    }
+
+    /// Construct from raw `(start, end, group_idx)` tuples.
+    ///
+    /// Use this when grouped BED parsing still works in tuple space.
+    /// Prefer `new` and `from_sorted` when the windows are already checked.
+    pub fn from_tuples(windows: &[(u64, u64, u64)]) -> crate::Result<Self> {
+        Ok(Self::new(IndexedInterval::from_tuples(windows)?))
     }
 
     /// Construct from a list you guarantee is already sorted by start (non-decreasing).
     /// Computes span as `min(start)` .. `max(end)` (robust to irregular ends).
-    pub fn from_sorted(windows: Vec<(u64, u64, u64)>) -> Self {
-        debug_assert!(is_sorted_by_start(&windows), "windows must be start-sorted");
-        let (span_start, span_end) = if windows.is_empty() {
+    pub fn from_sorted(grouped_windows: Vec<IndexedInterval<u64>>) -> Self {
+        debug_assert!(
+            is_sorted_by_start_indexed(&grouped_windows),
+            "windows must be start-sorted"
+        );
+        let (span_start, span_end) = if grouped_windows.is_empty() {
             (0, 0)
         } else {
-            let min_start = windows[0].0 as i64;
-            let max_end = windows.iter().map(|window| window.1).max().unwrap() as i64;
+            let min_start = grouped_windows[0].start() as i64;
+            let max_end = grouped_windows
+                .iter()
+                .map(|window| window.end())
+                .max()
+                .unwrap() as i64;
             (min_start, max_end)
         };
         Self {
-            windows,
+            windows: grouped_windows,
             span_start,
             span_end,
         }
@@ -713,13 +724,13 @@ impl GroupedWindows {
 
     /// Borrow the underlying windows.
     #[inline]
-    pub fn as_slice(&self) -> &[(u64, u64, u64)] {
+    pub fn as_slice(&self) -> &[IndexedInterval<u64>] {
         &self.windows
     }
 
     /// Consume and return the inner vector.
     #[inline]
-    pub fn into_inner(self) -> Vec<(u64, u64, u64)> {
+    pub fn into_inner(self) -> Vec<IndexedInterval<u64>> {
         self.windows
     }
 
@@ -982,11 +993,12 @@ pub fn load_scored_windows_from_bed(
         );
     }
 
-    // Convert to Windows collections (Windows::new sorts internally)
+    // Convert parsed tuples into typed scored windows.
+    // ScoredWindows::from_tuples delegates to ScoredWindows::new, which sorts internally.
     let windows_mapping: FxHashMap<String, ScoredWindows> = vec_mapping
         .into_iter()
-        .map(|(chr, windows)| (chr.to_string(), ScoredWindows::new(windows)))
-        .collect();
+        .map(|(chr, windows)| Ok((chr.to_string(), ScoredWindows::from_tuples(&windows)?)))
+        .collect::<crate::Result<_>>()?;
 
     Ok(windows_mapping)
 }
@@ -999,7 +1011,7 @@ pub fn load_scored_windows_from_bed(
 /// - Coordinates are half-open: `[start, end)`.
 #[derive(Debug, Clone)]
 pub struct ScoredWindows {
-    pub windows: Vec<(u64, u64, u64, f64)>, // (start, end, original_idx, score)
+    pub windows: Vec<ScoredInterval<u64>>, // (start, end, original_idx, score)
     /// Span start (inclusive) across all windows, as `i64`.
     /// This is the most-left coordinate covered by any of the windows.
     span_start: i64,
@@ -1012,24 +1024,24 @@ impl ScoredWindows {
     /// Construct from any window list (may be unsorted/overlapping).
     /// Ensures start- and end-sorted order (does not retain initial order)
     /// and computes span as `min(start)` .. `max(end)`.
-    pub fn new(mut windows: Vec<(u64, u64, u64, f64)>) -> Self {
-        windows.sort_unstable_by_key(|window| (window.0, window.1));
+    pub fn new(mut windows: Vec<ScoredInterval<u64>>) -> Self {
+        windows.sort_unstable_by_key(|window| (window.start(), window.end()));
         ScoredWindows::from_sorted(windows)
+    }
+
+    /// Construct from raw `(start, end, idx, score)` tuples.
+    pub fn from_tuples(windows: &[(u64, u64, u64, f64)]) -> crate::Result<Self> {
+        Ok(Self::new(ScoredInterval::from_tuples(windows)?))
     }
 
     /// Convert to Windows collection by dropping the score.
     pub fn to_windows(&self) -> Windows {
-        Windows::from_sorted(
-            self.windows
-                .iter()
-                .map(|(start, end, idx, _)| (*start, *end, *idx))
-                .collect(),
-        )
+        Windows::from_sorted(self.windows.iter().map(|window| window.window).collect())
     }
 
     /// Construct from a list you guarantee is already sorted by start (non-decreasing).
     /// Computes span as `min(start)` .. `max(end)` (robust to irregular ends).
-    pub fn from_sorted(windows: Vec<(u64, u64, u64, f64)>) -> Self {
+    pub fn from_sorted(windows: Vec<ScoredInterval<u64>>) -> Self {
         debug_assert!(
             is_sorted_by_start_with_scores(&windows),
             "windows must be start-sorted"
@@ -1037,8 +1049,8 @@ impl ScoredWindows {
         let (span_start, span_end) = if windows.is_empty() {
             (0, 0)
         } else {
-            let min_start = windows[0].0 as i64;
-            let max_end = windows.iter().map(|window| window.1).max().unwrap() as i64;
+            let min_start = windows[0].start() as i64;
+            let max_end = windows.iter().map(|window| window.end()).max().unwrap() as i64;
             (min_start, max_end)
         };
         Self {
@@ -1062,13 +1074,13 @@ impl ScoredWindows {
 
     /// Borrow the underlying windows.
     #[inline]
-    pub fn as_slice(&self) -> &[(u64, u64, u64, f64)] {
+    pub fn as_slice(&self) -> &[ScoredInterval<u64>] {
         &self.windows
     }
 
     /// Consume and return the inner vector.
     #[inline]
-    pub fn into_inner(self) -> Vec<(u64, u64, u64, f64)> {
+    pub fn into_inner(self) -> Vec<ScoredInterval<u64>> {
         self.windows
     }
 

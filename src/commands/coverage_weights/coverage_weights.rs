@@ -275,7 +275,7 @@ fn process_chrom(
 
     for bin in bins.iter_mut() {
         // Calculate total coverage in bin
-        bin.avg_coverage = cp.avg_coverage_in_interval(bin.interval, exclude_blacklisted)?;
+        bin.avg_coverage = cp.avg_coverage(bin.interval, exclude_blacklisted)?;
     }
 
     // Update the avg_overlap_coverage per bin

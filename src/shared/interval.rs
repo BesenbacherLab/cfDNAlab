@@ -329,6 +329,12 @@ where
 
     /// Return the interval and index as `(start, end, idx)`.
     #[inline]
+    pub fn as_tuple(&self) -> (T, T, I) {
+        (self.interval.start(), self.interval.end(), self.idx)
+    }
+
+    /// Return the interval and index as `(start, end, idx)`.
+    #[inline]
     pub fn into_tuple(self) -> (T, T, I) {
         (self.interval.start(), self.interval.end(), self.idx)
     }

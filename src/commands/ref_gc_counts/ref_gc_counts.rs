@@ -16,6 +16,7 @@ use crate::{
     shared::{
         bed::load_windows_from_bed,
         blacklist::{apply_blacklist_mask_to_seq, compute_blacklist_overlap},
+        interval::{IndexedInterval, Interval},
         io::create_text_writer,
         reference::{read_seq, twobit_contig_lengths},
         sampling::sample_starts_per_chrom,
@@ -348,10 +349,10 @@ fn write_reference_gc_package(
 fn process_chrom(
     chr: &str,
     opt: &RefGCCountsConfig,
-    windows: Option<&[(u64, u64, u64)]>,
+    windows: Option<&[IndexedInterval<u64>]>,
     window_opt: &WindowSpec,
     // gc_bins: usize,
-    blacklist_intervals: &[(u64, u64)],
+    blacklist_intervals: &[Interval<u64>],
     start_positions: &[usize],
 ) -> anyhow::Result<(
     Vec<GCCounts>,
@@ -359,7 +360,7 @@ fn process_chrom(
     u64,
 )> {
     let mut seq_bytes = read_seq(&opt.ref_genome.ref_2bit, chr)?;
-    apply_blacklist_mask_to_seq(&mut seq_bytes, &blacklist_intervals, 0);
+    apply_blacklist_mask_to_seq(&mut seq_bytes, blacklist_intervals, 0);
     let chrom_len = seq_bytes.len() as u64;
 
     let gc_prefixes = build_gc_prefixes(&seq_bytes);
@@ -368,15 +369,21 @@ fn process_chrom(
     drop(seq_bytes);
 
     // Calculate window coordinates for all windowing options
-    let windows: Vec<(u64, u64, u64)> = match window_opt {
+    let windows: Vec<IndexedInterval<u64>> = match window_opt {
         WindowSpec::Bed(_) => windows.unwrap().to_owned(),
         WindowSpec::Size(sz) => {
             let num_windows = ((chrom_len + sz - 1) / sz) as u64;
             (0..num_windows)
-                .map(|s| ((s * sz) as u64, (sz + s * sz) as u64, s as u64))
-                .collect()
+                .map(|window_index| {
+                    IndexedInterval::new(
+                        window_index * sz,
+                        (sz + window_index * sz).min(chrom_len),
+                        window_index,
+                    )
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?
         }
-        WindowSpec::Global => vec![(0, chrom_len as u64, 0u64)],
+        WindowSpec::Global => vec![IndexedInterval::new(0, chrom_len, 0u64)?],
     };
     let num_bins = windows.len();
 
@@ -398,7 +405,7 @@ fn process_chrom(
             opt.fragment_lengths.min_fragment_length as u64,
             opt.fragment_lengths.max_fragment_length as u64 + 1, // make exclusive
         ),
-        &windows,
+        windows.as_slice(),
         start_positions,
         chrom_len,
         // We only count those where all bases are proper, so non-supported combinations
@@ -413,9 +420,9 @@ fn process_chrom(
     // count per occurence - but this is okay for normalization
     let total_acgt_in_chrom = {
         let mut total_acgt = 0u64;
-        for (start, end, _) in windows.iter() {
-            let clamped_end = *end.min(&chrom_len);
-            let clamped_start = *start.min(&chrom_len);
+        for window in &windows {
+            let clamped_end = window.end().min(chrom_len);
+            let clamped_start = window.start().min(chrom_len);
             if clamped_end <= clamped_start {
                 continue;
             }
@@ -431,27 +438,39 @@ fn process_chrom(
         // chrom,start,end,total_count
         let mut bl_ptr = 0;
         let mut bin_info = Vec::with_capacity(num_bins);
-        for b in 0..num_bins {
-            let start = b as u64 * size;
-            let end = (start + size).min(chrom_len);
-            let overlap_perc =
-                compute_blacklist_overlap(blacklist_intervals, start, end, 0u64, &mut bl_ptr);
-            // Note: b (index) is a placeholder that is removed later
-            bin_info.push((chr.to_string(), start, end, b as u64, overlap_perc));
+        for window in &windows {
+            let overlap_perc = compute_blacklist_overlap(
+                blacklist_intervals,
+                Interval::new(start, end)?,
+                0u64,
+                &mut bl_ptr,
+            );
+            bin_info.push((
+                chr.to_string(),
+                window.start(),
+                window.end(),
+                // Note: index is a placeholder that is removed later
+                window.idx(),
+                overlap_perc,
+            ));
         }
         Some(bin_info)
     } else if opt.windows.by_bed.is_some() {
         // build bin_info from the exact BED windows
         let mut bl_ptr = 0;
         let mut bin_info = Vec::with_capacity(num_bins);
-        for (_b, (wstart, wend, original_win_idx)) in windows.iter().cloned().enumerate() {
-            let overlap_perc =
-                compute_blacklist_overlap(blacklist_intervals, wstart, wend, 0u64, &mut bl_ptr);
+        for window in &windows {
+            let overlap_perc = compute_blacklist_overlap(
+                blacklist_intervals,
+                Interval::new(start, end)?,
+                0u64,
+                &mut bl_ptr,
+            );
             bin_info.push((
                 chr.to_string(),
-                wstart,
-                wend,
-                original_win_idx as u64,
+                window.start(),
+                window.end(),
+                window.idx(),
                 overlap_perc,
             ));
         }
