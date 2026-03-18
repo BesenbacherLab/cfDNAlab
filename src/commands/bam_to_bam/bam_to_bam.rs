@@ -292,10 +292,9 @@ fn process_chrom(
         let gc_prefixes = gc_prefixes_opt.as_ref();
         move |fragment: &WithRecordsFragment| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
-                (Some(corrector), Some(prefixes)) => corrector.correct_fragment(
-                    Interval::new(fragment.start as u64, fragment.end as u64)?,
-                    prefixes,
-                ),
+                (Some(corrector), Some(prefixes)) => {
+                    corrector.correct_fragment(fragment.interval.try_to_u64()?, prefixes)
+                }
                 _ => Ok(None),
             }
         }
@@ -319,7 +318,7 @@ fn process_chrom(
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.blacklist_strategy,
-            Interval::new(fragment.start as u64, fragment.end as u64)?,
+            fragment.interval.try_to_u64()?,
             opt.fragment_lengths.max_fragment_length as u64,
             &mut bl_ptr,
         );
@@ -334,8 +333,7 @@ fn process_chrom(
             &mut wd_ptr,
             windows,
             None,
-            fragment.start.into(),
-            fragment.end.into(),
+            fragment.interval.try_to_u64()?,
             1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
             opt.fragment_lengths.max_fragment_length.into(),
         )?;
@@ -364,8 +362,7 @@ fn process_chrom(
                 &mut sf_ptr,
                 Some(&scaling_with_bin_idx),
                 None,
-                fragment.start.into(), // Full fragment
-                fragment.end.into(),
+                fragment.interval.try_to_u64()?, // Full fragment
                 1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
                 opt.fragment_lengths.max_fragment_length.into(),
             )

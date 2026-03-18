@@ -1,6 +1,8 @@
 use crate::shared::fragment::minimal_fragment::{
     PairOrientable, is_inwards_oriented, oriented_pair_from_read_info,
 };
+use crate::shared::interval::Interval;
+use crate::Result;
 use rust_htslib::bam::ext::BamRecordExtensions; // reference_end()
 use rust_htslib::bam::record::Record;
 
@@ -8,8 +10,7 @@ use rust_htslib::bam::record::Record;
 #[derive(Debug, Clone)]
 pub struct FragReadInfo {
     pub tid: i32,
-    pub pos: u32, // Leftmost aligned reference pos
-    pub end: u32, // Exclusive rightmost aligned reference end
+    pub interval: Interval<u32>, // Aligned reference span [start: pos(), end: reference_end())
     pub is_reverse: bool,
     pub mapq: u8,
     /// Aligned strand
@@ -18,19 +19,32 @@ pub struct FragReadInfo {
     pub is_read_1: bool,
 }
 
-impl From<&Record> for FragReadInfo {
+impl TryFrom<&Record> for FragReadInfo {
+    type Error = crate::Error;
+
     #[inline]
-    fn from(r: &Record) -> Self {
+    fn try_from(r: &Record) -> Result<Self> {
         let strand: char = r.strand().strand_symbol().chars().collect::<Vec<char>>()[0];
-        FragReadInfo {
+        Ok(FragReadInfo {
             tid: r.tid(),
-            pos: r.pos() as u32,
-            end: r.reference_end() as u32,
+            interval: Interval::new(r.pos() as u32, r.reference_end() as u32)?,
             is_reverse: r.is_reverse(),
             mapq: r.mapq(),
             strand,
             is_read_1: r.is_first_in_template(),
-        }
+        })
+    }
+}
+
+impl FragReadInfo {
+    #[inline]
+    pub fn start(&self) -> u32 {
+        self.interval.start()
+    }
+
+    #[inline]
+    pub fn end(&self) -> u32 {
+        self.interval.end()
     }
 }
 
@@ -45,7 +59,7 @@ impl PairOrientable for FragReadInfo {
     }
     #[inline]
     fn pos(&self) -> u32 {
-        self.pos
+        self.start()
     }
 }
 
@@ -53,17 +67,28 @@ impl PairOrientable for FragReadInfo {
 #[derive(Debug, Clone)]
 pub struct FragFileFragment {
     pub tid: i32,
-    pub start: u32, // forward.pos
-    pub end: u32,   // reverse.end (end-exclusive)
+    pub interval: Interval<u32>, // fragment span [forward.pos, reverse.end)
     pub min_mapq: u8,
     pub read1_strand: char,
 }
 
 impl FragFileFragment {
+    /// Inclusive fragment start on the reference.
+    #[inline]
+    pub fn start(&self) -> u32 {
+        self.interval.start()
+    }
+
+    /// Exclusive fragment end on the reference.
+    #[inline]
+    pub fn end(&self) -> u32 {
+        self.interval.end()
+    }
+
     /// Reference-span fragment length (end - start).
     #[inline]
     pub fn len(&self) -> u32 {
-        self.end - self.start
+        self.interval.len()
     }
 }
 
@@ -73,8 +98,8 @@ pub fn collect_fragment_with_frag_file_info_from_records(
     a: &Record,
     b: &Record,
 ) -> Option<FragFileFragment> {
-    let ai = FragReadInfo::from(a);
-    let bi = FragReadInfo::from(b);
+    let ai = FragReadInfo::try_from(a).ok()?;
+    let bi = FragReadInfo::try_from(b).ok()?;
     collect_fragment_with_frag_file_info(&ai, &bi)
 }
 
@@ -98,8 +123,7 @@ pub fn collect_fragment_with_frag_file_info(
 
     Some(FragFileFragment {
         tid: forward.tid,
-        start: forward.pos,
-        end: reverse.end,
+        interval: Interval::new(forward.start(), reverse.end()).ok()?,
         min_mapq: forward.mapq.min(reverse.mapq),
         read1_strand: if forward.is_read_1 {
             forward.strand
@@ -113,14 +137,9 @@ pub fn collect_fragment_with_frag_file_info(
 pub fn collect_fragment_with_frag_file_info_from_single_read(
     read: &FragReadInfo,
 ) -> Option<FragFileFragment> {
-    if read.end <= read.pos {
-        return None;
-    }
-
     Some(FragFileFragment {
         tid: read.tid,
-        start: read.pos,
-        end: read.end,
+        interval: read.interval,
         min_mapq: read.mapq,
         // No read 1/2 so just the strand of the single read
         read1_strand: read.strand,

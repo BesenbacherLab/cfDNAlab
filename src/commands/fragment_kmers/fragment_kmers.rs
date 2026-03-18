@@ -592,9 +592,9 @@ fn process_tile(
         move |fragment: &FragmentWithKmerSegments, fetch_start: u32| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
-                    let rel_start = (fragment.start - fetch_start) as u64;
-                    let rel_end = (fragment.end - fetch_start) as u64;
-                    corrector.correct_fragment(Interval::new(rel_start, rel_end)?, prefixes)
+                    let fetch_relative_fragment =
+                        fragment.interval.try_to_u64()?.shift_left(fetch_start as u64)?;
+                    corrector.correct_fragment(fetch_relative_fragment, prefixes)
                 }
                 _ => Ok(None),
             }
@@ -617,7 +617,7 @@ fn process_tile(
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.shared_args.blacklist_strategy,
-            Interval::new(fragment.start as u64, fragment.end as u64)?,
+            fragment.interval.try_to_u64()?,
             opt.shared_args.fragment_lengths.max_fragment_length as u64,
             &mut bl_ptr,
         );
@@ -672,23 +672,22 @@ fn process_tile(
             // Use smallest possible k to include all positions in interval for overlap
             .bounds(fragment.len(), cache.offsets.keys().copied().min().unwrap())
             .expect("non-empty offsets must have bounds");
-        let interval_start = fragment.start as u64 + first as u64;
-        let interval_end = fragment.start as u64 + last as u64 + 1;
+        let interval_start = fragment.start() as u64 + first as u64;
+        let interval_end = fragment.start() as u64 + last as u64 + 1;
         if interval_start >= interval_end {
             continue;
         }
 
         // Find all overlapping count-windows
-        debug_assert!(interval_start >= fragment.start as u64);
+        debug_assert!(interval_start >= fragment.start() as u64);
         let lookback_distance = opt.shared_args.fragment_lengths.max_fragment_length as u64
-            + (interval_start - fragment.start as u64);
+            + (interval_start - fragment.start() as u64);
         let overlapping_windows = find_overlapping_windows(
             chrom_len,
             &mut wd_ptr,
             window_ctx.windows_slice(),
             opt.shared_args.windows.by_size,
-            interval_start,
-            interval_end,
+            Interval::new(interval_start, interval_end)?,
             1. / (opt.shared_args.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
             lookback_distance,
         )?;
@@ -764,7 +763,7 @@ pub fn count_kmers_at_positions(
 ) {
     // We perform comparisons in absolute genome coordinates first, then translate
     // back to fragment-relative offsets only after clipping
-    let fragment_start = fragment.start as u64;
+    let fragment_start = fragment.start() as u64;
     let tile_start = tile_core_start as u64;
     let tile_end = tile_core_end as u64;
 
@@ -811,12 +810,9 @@ pub fn count_kmers_at_positions(
 
         // Fragments may be gapped by indels, so we examine each contiguous segment
         // and clip it to the tile coordinates before accepting offsets
-        'segments: for &(seg_start_raw, seg_end_raw) in &fragment.segments {
-            let seg_start = seg_start_raw as u64;
-            let seg_end = seg_end_raw as u64;
-            if seg_start >= seg_end {
-                continue;
-            }
+        'segments: for segment in &fragment.segments {
+            let seg_start = segment.start() as u64;
+            let seg_end = segment.end() as u64;
 
             if seg_end <= tile_start {
                 // Segment lies completely before the tile

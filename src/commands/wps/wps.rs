@@ -775,9 +775,9 @@ pub fn wps_for_tile(
         move |fragment: &Fragment, fetch_start: u32| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
-                    let rel_start = (fragment.start - fetch_start) as u64;
-                    let rel_end = (fragment.end - fetch_start) as u64;
-                    corrector.correct_fragment(rel_start, rel_end, prefixes)
+                    let fetch_relative_fragment =
+                        fragment.interval.try_to_u64()?.shift_left(fetch_start as u64)?;
+                    corrector.correct_fragment(fetch_relative_fragment, prefixes)
                 }
                 _ => Ok(None),
             }
@@ -791,7 +791,7 @@ pub fn wps_for_tile(
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
 
-        if fragment.start < fetch_start || fragment.end > fetch_end {
+        if fragment.start() < fetch_start || fragment.end() > fetch_end {
             // Fragment won't overlap the counting region (assuming correct max_fragment_length+window halo!)
             continue;
         }
@@ -836,8 +836,8 @@ pub fn wps_for_tile(
             }
         };
 
-        let fragment_start = fragment.start as i64;
-        let fragment_end = fragment.end as i64;
+        let fragment_start = fragment.start() as i64;
+        let fragment_end = fragment.end() as i64;
 
         // Full-span contribution: window stays entirely inside the fragment (edges may align)
         let was_pushed_1 = push_range(
@@ -886,9 +886,9 @@ pub fn wps_for_tile(
 
     // Build a positional mask over the dilated span so blacklist and chromosome-edge positions
     // never contribute to protected/end counts
+    let dilated_interval = Interval::new(dilated_start_abs as u64, dilated_end_abs as u64)?;
     let mask = build_mask_for_core(
-        dilated_start_abs,
-        dilated_end_abs,
+        dilated_interval,
         blacklist_chr,
         chrom_len,
         window_left,
@@ -1231,38 +1231,25 @@ fn finalize_diff(diff: &mut [f32]) -> Vec<f32> {
 /// Build a mask over the dilated tile span marking blacklisted bases and centers
 /// whose WPS window would exceed chromosome bounds.
 fn build_mask_for_core(
-    dilated_start: u32,
-    dilated_end: u32,
+    dilated_interval: Interval<u64>,
     blacklist_intervals: &[Interval<u64>],
     chromosome_length: u64,
     left_span: u32,
     right_span: u32,
 ) -> Option<Vec<u8>> {
-    let dilated_span_len = (dilated_end - dilated_start) as usize;
-    if dilated_span_len == 0 {
-        return None;
-    }
-
-    let dilated_start_abs = dilated_start as u64;
-    let dilated_end_abs = dilated_end as u64;
+    let dilated_span_len = dilated_interval.len() as usize;
+    let dilated_start_abs = dilated_interval.start();
     let mut mask = vec![0u8; dilated_span_len];
     let mut has_masked_positions = false;
 
     for interval in blacklist_intervals {
-        let interval_start = interval.start();
-        let interval_end = interval.end();
-        if interval_end <= dilated_start_abs || interval_start >= dilated_end_abs {
+        let Some(clipped_interval) = interval.clip_to(dilated_interval) else {
             continue;
-        }
-        let clipped_start = interval_start.max(dilated_start_abs);
-        let clipped_end = interval_end.min(dilated_end_abs);
-        if clipped_start >= clipped_end {
-            continue;
-        }
+        };
 
         // Treat blacklist intervals as half-open [start, end) so the end offset stays exclusive
-        let start_offset = (clipped_start - dilated_start_abs) as usize;
-        let end_offset_exclusive = (clipped_end - dilated_start_abs) as usize;
+        let start_offset = (clipped_interval.start() - dilated_start_abs) as usize;
+        let end_offset_exclusive = (clipped_interval.end() - dilated_start_abs) as usize;
         if end_offset_exclusive > start_offset {
             mask[start_offset..end_offset_exclusive].fill(1);
             has_masked_positions = true;

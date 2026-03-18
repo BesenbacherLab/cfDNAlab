@@ -14,6 +14,7 @@ This file is the authoritative entry point for repo-specific agent instructions.
 - If I ask for a new code review, never rely on memory to answer.
 - Do not make conclusions about code you have not re-read.
 - Base answers about existing functionality on actual code behavior, not comments etc. that might be outdated.
+- For fragment code, preserve the project’s domain semantics and vocabulary. Paired fragment spans are defined directionally as `forward.pos` to `reverse.reference_end`, and docs/comments should keep using `pos` / `end` / `reference_end` terminology even if the implementation stores checked intervals internally.
 
 ## Read These Files When Relevant
 

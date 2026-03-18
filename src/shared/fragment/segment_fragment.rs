@@ -2,28 +2,40 @@ use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::{Cigar, Record};
 use smallvec::SmallVec;
 
+use crate::Result;
 use crate::shared::fragment::minimal_fragment::{
     Fragment, PairOrientable, is_inwards_oriented, oriented_pair_from_read_info,
 };
 use crate::shared::gc_tag::{GcTagValue, combine_gc_tag_values, read_gc_tag_from_record};
+use crate::shared::interval::{Interval, TouchingMergePolicy, merge_sorted_intervals};
 
 /// Fragment that may carry explicit reference-coverage segments
 ///
-/// If `segments` is `None`, use the plain fragment span `[start, end)`
+/// If `segments` is `None`, use the plain fragment interval `[start, end)`
 /// If `segments` is `Some`, use those `[start, end)` segments instead
 #[derive(Debug, Clone)]
 pub struct FragmentWithSegments {
     pub tid: i32,
-    pub start: u32, // forward.start
-    pub end: u32,   // reverse.end (end-exclusive)
-    pub segments: Option<SmallVec<[(u32, u32); 12]>>,
+    pub interval: Interval<u32>, // forward.start .. reverse.end
+    pub segments: Option<SmallVec<[Interval<u32>; 12]>>,
     pub gc_tag: GcTagValue,
 }
 
 impl FragmentWithSegments {
+    #[inline]
+    pub fn start(&self) -> u32 {
+        self.interval.start()
+    }
+
+    #[inline]
+    pub fn end(&self) -> u32 {
+        self.interval.end()
+    }
+
     /// Length of the fragment (end - start).
+    #[inline]
     pub fn len(&self) -> u32 {
-        self.end - self.start
+        self.interval.len()
     }
 }
 
@@ -31,8 +43,7 @@ impl From<Fragment> for FragmentWithSegments {
     fn from(f: Fragment) -> Self {
         FragmentWithSegments {
             tid: f.tid,
-            start: f.start,
-            end: f.end,
+            interval: f.interval,
             segments: None,
             gc_tag: GcTagValue::default(),
         }
@@ -48,14 +59,13 @@ impl From<Fragment> for FragmentWithSegments {
 ///
 /// Notes
 /// -----
-/// - `pos` and `end` are the read’s aligned reference coordinates
-/// - `ref_mapped_segments` elements are relative to `pos`
+/// - `interval` is the read’s aligned reference span
+/// - `ref_mapped_segments` elements are relative to `interval.start()`
 /// - Adjacent segments separated only by non-reference ops are merged
 #[derive(Debug, Clone)]
 pub struct SegmentedReadInfo {
-    pub tid: i32, // Contig id
-    pub pos: u32, // Leftmost aligned ref pos
-    pub end: u32, // Exclusive rightmost aligned ref pos
+    pub tid: i32,                // Contig id
+    pub interval: Interval<u32>, // Aligned reference span [start: pos(), end: reference_end())
     pub is_reverse: bool,
     pub has_ref_gap: bool,                    // True if any D/N present
     pub max_ref_gap: u32,                     // Longest single D/N length (0 if none)
@@ -64,8 +74,26 @@ pub struct SegmentedReadInfo {
 }
 
 impl SegmentedReadInfo {
+    /// Return the read's inclusive start on the reference.
     #[inline]
-    pub fn from_record_with_gc_tag(r: &Record, gc_tag: Option<&[u8]>) -> Self {
+    pub fn start(&self) -> u32 {
+        self.interval.start()
+    }
+
+    /// Return the read's exclusive end on the reference.
+    #[inline]
+    pub fn end(&self) -> u32 {
+        self.interval.end()
+    }
+
+    /// Return the read's aligned reference span `[pos, end)`.
+    #[inline]
+    pub fn aligned_interval(&self) -> Interval<u32> {
+        self.interval
+    }
+
+    #[inline]
+    pub fn from_record_with_gc_tag(r: &Record, gc_tag: Option<&[u8]>) -> Result<Self> {
         // Detect any D/N and track max gap length
         let mut has_ref_gap = false;
         let mut max_gap: u32 = 0;
@@ -140,22 +168,23 @@ impl SegmentedReadInfo {
             .map(|tag| read_gc_tag_from_record(r, tag))
             .unwrap_or_default();
 
-        SegmentedReadInfo {
+        Ok(SegmentedReadInfo {
             tid: r.tid(),
-            pos: r.pos() as u32,
-            end: r.reference_end() as u32,
+            interval: Interval::new(r.pos() as u32, r.reference_end() as u32)?,
             is_reverse: r.is_reverse(),
             has_ref_gap,
             max_ref_gap: max_gap,
             ref_mapped_segments,
             gc_tag: gc_tag_value,
-        }
+        })
     }
 }
 
-impl From<&Record> for SegmentedReadInfo {
+impl TryFrom<&Record> for SegmentedReadInfo {
+    type Error = crate::Error;
+
     #[inline]
-    fn from(r: &Record) -> Self {
+    fn try_from(r: &Record) -> Result<Self> {
         SegmentedReadInfo::from_record_with_gc_tag(r, None)
     }
 }
@@ -171,7 +200,7 @@ impl PairOrientable for SegmentedReadInfo {
     }
     #[inline]
     fn pos(&self) -> u32 {
-        self.pos
+        self.start()
     }
 }
 
@@ -206,20 +235,18 @@ pub fn collect_fragment_with_segments(
         return None;
     }
 
-    let span_start = forward.pos;
-    let span_end = reverse.end;
+    let fragment_interval = Interval::new(forward.start(), reverse.end()).ok()?;
     let gc_tag = combine_gc_tag_values(&forward.gc_tag, &reverse.gc_tag);
 
     // Decide if we switch to segments
     let trigger = (forward.has_ref_gap && forward.max_ref_gap >= trigger_min_gap_bp)
         || (reverse.has_ref_gap && reverse.max_ref_gap >= trigger_min_gap_bp);
 
-    // If no trigger and user wants full fragment counting, return the plain span
+    // If no trigger and user wants full fragment counting, return the plain fragment interval
     if !trigger && include_inter_mate_gap {
         return Some(FragmentWithSegments {
             tid: forward.tid,
-            start: span_start,
-            end: span_end,
+            interval: fragment_interval,
             segments: None,
             gc_tag,
         });
@@ -229,7 +256,7 @@ pub fn collect_fragment_with_segments(
     // - Triggered ref gaps, and optionally add the inter-mate gap
     // - Or, when not triggered and include_inter_mate_gap == false (the +2),
     //   exclude the inter-mate gap by using only per-read spans
-    let mut abs: Vec<(u32, u32)> = Vec::with_capacity(
+    let mut abs: Vec<Interval<u32>> = Vec::with_capacity(
         2 + forward
             .ref_mapped_segments
             .len()
@@ -240,26 +267,32 @@ pub fn collect_fragment_with_segments(
     //
     // Each stored tuple is (offset_from_pos, len) measured on the reference
     // Add `pos` to get absolute [start, end) on the chromosome
-    // If the list is empty (no gaps worth storing), fall back to the read's aligned span [pos, end)
+    // If the list is empty (no gaps worth storing), fall back to the read's aligned interval [pos, end)
     if !forward.ref_mapped_segments.is_empty() {
         for (off, len) in &forward.ref_mapped_segments {
-            let segment_start = forward.pos.saturating_add(*off);
+            let segment_start = forward.start().saturating_add(*off);
             let segment_end = segment_start.saturating_add(*len);
-            abs.push((segment_start, segment_end));
+            let Ok(segment) = Interval::new(segment_start, segment_end) else {
+                continue;
+            };
+            abs.push(segment);
         }
     } else {
-        abs.push((forward.pos, forward.end));
+        abs.push(forward.aligned_interval());
     }
 
     // Same expansion for the reverse read
     if !reverse.ref_mapped_segments.is_empty() {
         for (off, len) in &reverse.ref_mapped_segments {
-            let segment_start = reverse.pos.saturating_add(*off);
+            let segment_start = reverse.start().saturating_add(*off);
             let segment_end = segment_start.saturating_add(*len);
-            abs.push((segment_start, segment_end));
+            let Ok(segment) = Interval::new(segment_start, segment_end) else {
+                continue;
+            };
+            abs.push(segment);
         }
     } else {
-        abs.push((reverse.pos, reverse.end));
+        abs.push(reverse.aligned_interval());
     }
 
     // Optionally include the fragment insert between mates
@@ -270,53 +303,29 @@ pub fn collect_fragment_with_segments(
     // (when they do not overlap). If reads overlap, there is no gap to add
     //
     // Note: When !trigger and include_inter_mate_gap == false we intentionally do not add the gap
-    if trigger && include_inter_mate_gap && forward.end < reverse.pos {
-        abs.push((forward.end, reverse.pos));
+    if trigger && include_inter_mate_gap && forward.end() < reverse.start() {
+        abs.push(Interval::new(forward.end(), reverse.start()).ok()?);
     }
 
     if abs.is_empty() {
-        // Fallback to plain span
+        // Fallback to the plain fragment interval
         return Some(FragmentWithSegments {
             tid: forward.tid,
-            start: span_start,
-            end: span_end,
+            interval: fragment_interval,
             segments: None,
             gc_tag,
         });
     }
 
-    abs.sort_unstable_by_key(|&(segment_start, _)| segment_start);
+    abs.sort_unstable_by_key(|segment| segment.start());
 
-    // Merge and clip to fragment span
-    let mut merged: Vec<(u32, u32)> = Vec::with_capacity(abs.len());
-    for (mut segment_start, mut segment_end) in abs {
-        // Check validity of segment
-        if segment_start >= segment_end {
-            continue;
-        }
-        if segment_end <= span_start || segment_start >= span_end {
-            continue;
-        }
-
-        // Clip to span
-        if segment_start < span_start {
-            segment_start = span_start;
-        }
-        if segment_end > span_end {
-            segment_end = span_end;
-        }
-
-        // Merge overlapping segments by increasing the previous segment
-        if let Some(last) = merged.last_mut()
-            && segment_start <= last.1
-        {
-            if segment_end > last.1 {
-                last.1 = segment_end;
-            }
-            continue;
-        }
-        merged.push((segment_start, segment_end));
-    }
+    // Merge and clip to the fragment interval
+    let merged = merge_sorted_intervals(
+        abs.into_iter()
+            .filter_map(|segment| segment.clip_to(fragment_interval))
+            .collect(),
+        TouchingMergePolicy::MergeTouching,
+    );
 
     let segments = if merged.is_empty() {
         None
@@ -326,8 +335,7 @@ pub fn collect_fragment_with_segments(
 
     Some(FragmentWithSegments {
         tid: forward.tid,
-        start: span_start,
-        end: span_end,
+        interval: fragment_interval,
         segments,
         gc_tag,
     })
@@ -338,22 +346,16 @@ pub fn collect_fragment_with_segments_from_single_read(
     read: &SegmentedReadInfo,
     trigger_min_gap_bp: u32,
 ) -> Option<FragmentWithSegments> {
-    if read.end <= read.pos {
-        return None;
-    }
-
-    let span_start = read.pos;
-    let span_end = read.end;
+    let fragment_interval = read.aligned_interval();
 
     // Decide if we switch to segments based on reference gaps
     let trigger = read.has_ref_gap && read.max_ref_gap >= trigger_min_gap_bp;
 
-    // If no trigger, return the plain span
+    // If no trigger, return the plain fragment interval
     if !trigger {
         return Some(FragmentWithSegments {
             tid: read.tid,
-            start: span_start,
-            end: span_end,
+            interval: fragment_interval,
             segments: None,
             gc_tag: read.gc_tag,
         });
@@ -363,20 +365,22 @@ pub fn collect_fragment_with_segments_from_single_read(
     //
     // Each stored tuple is (offset_from_pos, len) measured on the reference
     // Add `pos` to get absolute [start, end) on the chromosome
-    let mut abs: Vec<(u32, u32)> = Vec::with_capacity(read.ref_mapped_segments.len());
+    let mut abs: Vec<Interval<u32>> = Vec::with_capacity(read.ref_mapped_segments.len());
     if !read.ref_mapped_segments.is_empty() {
         for (off, len) in &read.ref_mapped_segments {
-            let segment_start = read.pos.saturating_add(*off);
+            let segment_start = read.start().saturating_add(*off);
             let segment_end = segment_start.saturating_add(*len);
-            abs.push((segment_start, segment_end));
+            let Ok(segment) = Interval::new(segment_start, segment_end) else {
+                continue;
+            };
+            abs.push(segment);
         }
     }
 
     if abs.is_empty() {
         return Some(FragmentWithSegments {
             tid: read.tid,
-            start: span_start,
-            end: span_end,
+            interval: fragment_interval,
             segments: None,
             gc_tag: read.gc_tag,
         });
@@ -388,26 +392,17 @@ pub fn collect_fragment_with_segments_from_single_read(
         None
     } else {
         let mut v = SmallVec::with_capacity(abs.len());
-        for (mut s, mut e) in abs
-            .into_iter()
-            .filter(|(s, e)| s < e && *e > span_start && *s < span_end)
-        {
-            // Clip to span
-            if s < span_start {
-                s = span_start;
+        for segment in abs {
+            if let Some(segment) = segment.clip_to(fragment_interval) {
+                v.push(segment);
             }
-            if e > span_end {
-                e = span_end;
-            }
-            v.push((s, e));
         }
         if v.is_empty() { None } else { Some(v) }
     };
 
     Some(FragmentWithSegments {
         tid: read.tid,
-        start: span_start,
-        end: span_end,
+        interval: fragment_interval,
         segments,
         gc_tag: read.gc_tag,
     })

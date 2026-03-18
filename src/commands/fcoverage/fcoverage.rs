@@ -697,37 +697,33 @@ fn process_tile(
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
 
-            if fragment.start < fetch_start || fragment.end > fetch_end {
+            if fragment.start() < fetch_start || fragment.end() > fetch_end {
                 // Fragment won't overlap the tile core (assuming correct max_fragment_length halo!)
                 // Note that more fragments (smaller than max_fragment_length) could be outside the tiles
                 continue;
             }
 
-            let rel_start = (fragment.start - fetch_start) as u64;
-            let rel_end = (fragment.end - fetch_start) as u64;
+            let fetch_relative_fragment = fragment
+                .interval
+                .try_to_u64()?
+                .shift_left(fetch_start as u64)?;
 
-            let weight = match gc_corrector
-                .correct_fragment(Interval::new(rel_start, rel_end)?, &gc_prefixes)?
-            {
-                Some(weight) => weight,
-                None => {
-                    counter.gc_failed_fragments += 1;
-                    if opt.gc.drop_invalid_gc {
-                        continue;
-                    } else {
-                        1.0
+            let weight =
+                match gc_corrector.correct_fragment(fetch_relative_fragment, &gc_prefixes)? {
+                    Some(weight) => weight,
+                    None => {
+                        counter.gc_failed_fragments += 1;
+                        if opt.gc.drop_invalid_gc {
+                            continue;
+                        } else {
+                            1.0
+                        }
                     }
-                }
-            };
+                };
 
             // Clip and add to tile core coverage (segments respected)
-            let was_counted = add_fragment_clipped_to_core(
-                &mut cp,
-                &fragment,
-                weight as f32,
-                tile.core_start(),
-                tile.core_end(),
-            )?;
+            let was_counted =
+                add_fragment_clipped_to_core(&mut cp, &fragment, weight as f32, tile.core)?;
 
             if was_counted {
                 counter.base.counted_fragments += 1;
@@ -758,13 +754,8 @@ fn process_tile(
                 }
             };
 
-            let was_counted = add_fragment_clipped_to_core(
-                &mut cp,
-                &fragment,
-                gc_weight,
-                tile.core_start(),
-                tile.core_end(),
-            )?;
+            let was_counted =
+                add_fragment_clipped_to_core(&mut cp, &fragment, gc_weight, tile.core)?;
 
             if was_counted {
                 counter.base.counted_fragments += 1;
@@ -775,13 +766,7 @@ fn process_tile(
             let fragment = fragment_res.context("reading fragment")?;
 
             // Clip and add to tile core coverage (segments respected)
-            let was_counted = add_fragment_clipped_to_core(
-                &mut cp,
-                &fragment,
-                1.0,
-                tile.core_start(),
-                tile.core_end(),
-            )?;
+            let was_counted = add_fragment_clipped_to_core(&mut cp, &fragment, 1.0, tile.core)?;
 
             if was_counted {
                 counter.base.counted_fragments += 1;
@@ -1170,39 +1155,39 @@ pub fn add_fragment_clipped_to_core(
     cp: &mut Coverage,
     fragment: &FragmentWithSegments,
     weight: f32,
-    core_start: u32,
-    core_end: u32,
+    core_interval: Interval<u32>,
 ) -> Result<bool> {
     // Use explicit segments if present
     let mut counted = false;
+    let core_start = core_interval.start();
+    let to_core_local = |interval: Interval<u32>| -> Result<Interval<u32>> {
+        interval.shift_left(core_start).map_err(anyhow::Error::from)
+    };
     if let Some(segments) = &fragment.segments {
-        for &(seg_start_abs, seg_end_abs) in segments {
-            let clipped_start = seg_start_abs.max(core_start);
-            let clipped_end = seg_end_abs.min(core_end);
-            if clipped_start < clipped_end {
+        for segment in segments {
+            let Some(clipped_interval) = segment.clip_to(core_interval) else {
                 // Skips fragments completely outside tile
-                // Shift to tile-local coordinates
-                let local = Fragment {
-                    tid: fragment.tid,
-                    start: clipped_start - core_start,
-                    end: clipped_end - core_start,
-                    gc_tag: Default::default(),
-                };
-                cp.add_fragment_weighted(local, weight)?;
-                counted = true;
-            }
+                continue;
+            };
+            // Shift to tile-local coordinates
+            let local_interval = to_core_local(clipped_interval)?;
+            let local = Fragment {
+                tid: fragment.tid,
+                interval: local_interval,
+                gc_tag: Default::default(),
+            };
+            cp.add_fragment_weighted(local, weight)?;
+            counted = true;
         }
     } else {
         // No explicit segments -> treat as one span (this already encodes your include_inter_mate_gap policy)
-        let clipped_start = fragment.start.max(core_start);
-        let clipped_end = fragment.end.min(core_end);
-        if clipped_start < clipped_end {
-            // Skips fragments completely outside tile
+        // Skips fragments completely outside tile
+        if let Some(clipped_interval) = fragment.interval.clip_to(core_interval) {
             // Shift to tile-local coordinates
+            let local_interval = to_core_local(clipped_interval)?;
             let local = Fragment {
                 tid: fragment.tid,
-                start: clipped_start - core_start,
-                end: clipped_end - core_start,
+                interval: local_interval,
                 gc_tag: Default::default(),
             };
 

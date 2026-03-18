@@ -1,4 +1,5 @@
 use crate::{Error, Result};
+use num_traits::{CheckedAdd, CheckedSub, Signed, Unsigned};
 use std::fmt::Display;
 use std::ops::Sub;
 
@@ -11,6 +12,15 @@ use std::ops::Sub;
 pub struct Interval<T> {
     start: T,
     end: T,
+}
+
+/// Controls whether interval-list merging collapses touching intervals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TouchingMergePolicy {
+    /// Merge only intervals with positive overlap.
+    KeepTouchingSeparate,
+    /// Merge intervals that overlap or meet at one boundary.
+    MergeTouching,
 }
 
 impl<T> Interval<T>
@@ -188,6 +198,171 @@ where
     }
 }
 
+/// Append `next_interval` to a start-sorted interval list, merging with the previous
+/// entry when the chosen touching policy allows it.
+///
+/// Use this when you are building a merged interval list incrementally and the
+/// input order is already sorted by interval start. The merge policy controls
+/// whether touching intervals like `[10,20)` and `[20,30)` collapse into one
+/// interval or remain separate.
+pub fn push_merged_interval<T>(
+    merged_intervals: &mut Vec<Interval<T>>,
+    next_interval: Interval<T>,
+    touching_merge_policy: TouchingMergePolicy,
+) where
+    T: Copy + Ord,
+{
+    if let Some(last_interval) = merged_intervals.last_mut() {
+        let should_merge = match touching_merge_policy {
+            TouchingMergePolicy::KeepTouchingSeparate => last_interval.end > next_interval.start,
+            TouchingMergePolicy::MergeTouching => last_interval.end >= next_interval.start,
+        };
+        if should_merge {
+            if next_interval.end > last_interval.end {
+                *last_interval = last_interval.expand_to_include(next_interval);
+            }
+            return;
+        }
+    }
+
+    merged_intervals.push(next_interval);
+}
+
+/// Merge a start-sorted interval list with the chosen touching policy.
+///
+/// This assumes `intervals` are already sorted by `(start, end)`. Use this when
+/// you already have the full interval vector and want the merged result without
+/// re-sorting it.
+pub fn merge_sorted_intervals<T>(
+    intervals: Vec<Interval<T>>,
+    touching_merge_policy: TouchingMergePolicy,
+) -> Vec<Interval<T>>
+where
+    T: Copy + Ord,
+{
+    let mut merged_intervals: Vec<Interval<T>> = Vec::with_capacity(intervals.len());
+    for interval in intervals {
+        push_merged_interval(&mut merged_intervals, interval, touching_merge_policy);
+    }
+    merged_intervals
+}
+
+/// Sort and merge an interval list with the chosen touching policy.
+///
+/// Use this when you already have the full interval vector but do not know
+/// whether it is sorted by `(start, end)`.
+pub fn merge_intervals<T>(
+    mut intervals: Vec<Interval<T>>,
+    touching_merge_policy: TouchingMergePolicy,
+) -> Vec<Interval<T>>
+where
+    T: Copy + Ord,
+{
+    intervals.sort_unstable_by_key(|interval| (interval.start, interval.end));
+    merge_sorted_intervals(intervals, touching_merge_policy)
+}
+
+impl<T> Interval<T>
+where
+    T: Copy + Display + CheckedAdd + Signed,
+{
+    /// Return a new interval shifted by `delta`.
+    ///
+    /// The offset uses the same signed numeric type as the interval
+    /// coordinates. A negative `delta` shifts the interval left. This does not
+    /// mutate the receiver and returns an error when the shifted bounds would
+    /// overflow or underflow the coordinate type.
+    pub fn offset(self, delta: T) -> Result<Self> {
+        let start = match self.start.checked_add(&delta) {
+            Some(value) => value,
+            None => {
+                return Err(Error::InvalidIntervalOffset {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    offset: delta.to_string(),
+                });
+            }
+        };
+        let end = match self.end.checked_add(&delta) {
+            Some(value) => value,
+            None => {
+                return Err(Error::InvalidIntervalOffset {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    offset: delta.to_string(),
+                });
+            }
+        };
+        Ok(Self { start, end })
+    }
+}
+
+impl<T> Interval<T>
+where
+    T: Copy + Display + CheckedAdd + Unsigned,
+{
+    /// Return a new interval shifted right by `amount`.
+    ///
+    /// This does not mutate the receiver and returns an error when the shifted
+    /// bounds would overflow the coordinate type.
+    pub fn shift_right(self, amount: T) -> Result<Self> {
+        let start = match self.start.checked_add(&amount) {
+            Some(value) => value,
+            None => {
+                return Err(Error::InvalidIntervalOffset {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    offset: amount.to_string(),
+                });
+            }
+        };
+        let end = match self.end.checked_add(&amount) {
+            Some(value) => value,
+            None => {
+                return Err(Error::InvalidIntervalOffset {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    offset: amount.to_string(),
+                });
+            }
+        };
+        Ok(Self { start, end })
+    }
+}
+
+impl<T> Interval<T>
+where
+    T: Copy + Display + CheckedSub + Unsigned,
+{
+    /// Return a new interval shifted left by `amount`.
+    ///
+    /// This does not mutate the receiver and returns an error when the shifted
+    /// bounds would underflow the coordinate type.
+    pub fn shift_left(self, amount: T) -> Result<Self> {
+        let start = match self.start.checked_sub(&amount) {
+            Some(value) => value,
+            None => {
+                return Err(Error::InvalidIntervalOffset {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    offset: amount.to_string(),
+                });
+            }
+        };
+        let end = match self.end.checked_sub(&amount) {
+            Some(value) => value,
+            None => {
+                return Err(Error::InvalidIntervalOffset {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    offset: amount.to_string(),
+                });
+            }
+        };
+        Ok(Self { start, end })
+    }
+}
+
 impl Interval<u64> {
     /// Convert a checked unsigned interval into a checked signed interval.
     ///
@@ -197,18 +372,87 @@ impl Interval<u64> {
         let start = match i64::try_from(self.start) {
             Ok(value) => value,
             Err(_) => {
-                return Err(Error::InvalidIntervalBounds {
+                return Err(Error::InvalidIntervalConversion {
                     start: self.start.to_string(),
                     end: self.end.to_string(),
+                    target_type: "i64",
                 });
             }
         };
         let end = match i64::try_from(self.end) {
             Ok(value) => value,
             Err(_) => {
-                return Err(Error::InvalidIntervalBounds {
+                return Err(Error::InvalidIntervalConversion {
                     start: self.start.to_string(),
                     end: self.end.to_string(),
+                    target_type: "i64",
+                });
+            }
+        };
+        Interval::new(start, end)
+    }
+}
+
+impl Interval<u32> {
+    /// Convert a checked unsigned interval into a checked signed interval.
+    pub fn try_to_i64(self) -> Result<Interval<i64>> {
+        Interval::new(self.start as i64, self.end as i64)
+    }
+
+    /// Convert a checked `u32` interval into a checked `u64` interval.
+    pub fn try_to_u64(self) -> Result<Interval<u64>> {
+        Interval::new(self.start as u64, self.end as u64)
+    }
+}
+
+impl Interval<i64> {
+    /// Convert a checked signed interval into a checked unsigned interval.
+    ///
+    /// Use this after signed interval arithmetic when the result must be passed
+    /// back into APIs that use non-negative genomic coordinates.
+    pub fn try_to_u64(self) -> Result<Interval<u64>> {
+        let start = match u64::try_from(self.start) {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(Error::InvalidIntervalConversion {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    target_type: "u64",
+                });
+            }
+        };
+        let end = match u64::try_from(self.end) {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(Error::InvalidIntervalConversion {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    target_type: "u64",
+                });
+            }
+        };
+        Interval::new(start, end)
+    }
+
+    /// Convert a checked signed interval into a checked `u32` interval.
+    pub fn try_to_u32(self) -> Result<Interval<u32>> {
+        let start = match u32::try_from(self.start) {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(Error::InvalidIntervalConversion {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    target_type: "u32",
+                });
+            }
+        };
+        let end = match u32::try_from(self.end) {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(Error::InvalidIntervalConversion {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    target_type: "u32",
                 });
             }
         };

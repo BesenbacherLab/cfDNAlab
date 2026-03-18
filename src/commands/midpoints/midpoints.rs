@@ -456,9 +456,9 @@ fn process_tile(
         move |fragment: &Fragment, fetch_start: u32| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
-                    let rel_start = (fragment.start - fetch_start) as u64;
-                    let rel_end = (fragment.end - fetch_start) as u64;
-                    corrector.correct_fragment(Interval::new(rel_start, rel_end)?, prefixes)
+                    let fetch_relative_fragment =
+                        fragment.interval.try_to_u64()?.shift_left(fetch_start as u64)?;
+                    corrector.correct_fragment(fetch_relative_fragment, prefixes)
                 }
                 _ => Ok(None),
             }
@@ -477,7 +477,7 @@ fn process_tile(
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.blacklist_strategy,
-            Interval::new(fragment.start as u64, fragment.end as u64)?,
+            fragment.interval.try_to_u64()?,
             max_fragment_length as u64,
             &mut bl_ptr,
         );
@@ -488,7 +488,7 @@ fn process_tile(
 
         // Determine fragment midpoint
         // Uses random rounding for even-sized fragments to avoid bias
-        let midpoint = midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
+        let midpoint = midpoint_random_even_with_thread_rng(fragment.start(), fragment_length);
 
         // Only keep fragments with midpoints within the tile
         if midpoint < tile.core_start() || midpoint >= tile.core_end() {
@@ -543,8 +543,7 @@ fn process_tile(
             &mut wd_ptr,
             Some(&core_overlapping_windows),
             None,
-            midpoint.into(),
-            (midpoint + 1).into(),
+            Interval::new(midpoint.into(), (midpoint + 1).into())?,
             0.99, // "Full" 1bp overlap but avoid rounding error
             max_fragment_length.into(),
         )?;
@@ -565,8 +564,7 @@ fn process_tile(
                 &mut sf_ptr,
                 Some(&scaling_with_bin_idx),
                 None,
-                fragment.start.into(), // Full fragment
-                fragment.end.into(),
+                fragment.interval.try_to_u64()?, // Full fragment
                 1. / (max_fragment_length as f64 + 1.0), // Any overlap
                 max_fragment_length.into(),
             )?

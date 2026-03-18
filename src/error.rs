@@ -8,6 +8,18 @@ use std::fmt::{Display, Formatter};
 pub enum Error {
     /// The interval bounds did not define a non-empty half-open interval.
     InvalidIntervalBounds { start: String, end: String },
+    /// Converting an interval to another numeric coordinate type failed.
+    InvalidIntervalConversion {
+        start: String,
+        end: String,
+        target_type: &'static str,
+    },
+    /// Shifting an interval by the requested offset would overflow or underflow.
+    InvalidIntervalOffset {
+        start: String,
+        end: String,
+        offset: String,
+    },
     /// The span bounds were inverted (`end < start`).
     InvalidSpanBounds { start: String, end: String },
     /// A fixed-bin helper received a bin size of zero.
@@ -25,6 +37,22 @@ impl Display for Error {
                 write!(
                     formatter,
                     "interval end ({end}) must be greater than start ({start})"
+                )
+            }
+            Error::InvalidIntervalConversion {
+                start,
+                end,
+                target_type,
+            } => {
+                write!(
+                    formatter,
+                    "converting interval [{start}, {end}) to {target_type} failed"
+                )
+            }
+            Error::InvalidIntervalOffset { start, end, offset } => {
+                write!(
+                    formatter,
+                    "offsetting interval [{start}, {end}) by {offset} would go out of bounds"
                 )
             }
             Error::InvalidSpanBounds { start, end } => {

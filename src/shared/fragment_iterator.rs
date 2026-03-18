@@ -146,7 +146,7 @@ pub struct PairingAdapter<I, P, R, F> {
     fragment_filter: Option<Box<dyn Fn(&F) -> bool + Send + Sync>>,
     counters: Box<dyn FragmentCounters + Send>,
     bam_include_read: Option<Box<dyn Fn(&Record) -> bool + Send + Sync>>,
-    bam_map_read: Option<Box<dyn Fn(&Record) -> R + Send + Sync>>,
+    bam_map_read: Option<Box<dyn Fn(&Record) -> Result<R> + Send + Sync>>,
     // Optional converter used only when `pairer` is None (unpaired --reads-are-fragments mode).
     bam_single_fragment_from_read: Option<Box<dyn Fn(&R) -> Option<F> + Send + Sync>>,
 }
@@ -178,7 +178,7 @@ where
     pub fn with_bam_filter_and_mapper(
         mut self,
         include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
-        map_read: impl Fn(&Record) -> R + Send + Sync + 'static,
+        map_read: impl Fn(&Record) -> Result<R> + Send + Sync + 'static,
     ) -> Self {
         self.bam_include_read = Some(Box::new(include_read));
         self.bam_map_read = Some(Box::new(map_read));
@@ -259,7 +259,12 @@ where
                     let Some(map_read) = &self.bam_map_read else {
                         return Some(Err(anyhow!("BAM record seen but no mapper configured")));
                     };
-                    let mapped = map_read(&rec);
+                    let mapped = match map_read(&rec) {
+                        Ok(mapped_read) => mapped_read,
+                        Err(error) => {
+                            return Some(Err(error.context("mapping BAM record")));
+                        }
+                    };
 
                     // *Unpaired* path when no pairer is present
                     if self.pairer.is_none() {
@@ -376,6 +381,7 @@ where
     )
     .with_bam_filter_and_mapper(include_read, move |rec| {
         SegmentedReadInfo::from_record_with_gc_tag(rec, gc_tag_bytes.as_deref())
+            .map_err(anyhow::Error::from)
     })
     .with_fragment_filter(fragment_filter);
 
@@ -471,6 +477,7 @@ where
     )
     .with_bam_filter_and_mapper(include_read, move |rec| {
         KmerSegmentedReadInfo::from_record(rec, capture_segments, gc_tag_bytes.as_deref())
+            .map_err(anyhow::Error::from)
     })
     .with_fragment_filter(fragment_filter);
 
@@ -529,11 +536,11 @@ where
         },
     )
     .with_bam_filter_and_mapper(include_read, move |rec| {
-        let mut info = MinimalReadInfo::from(rec);
+        let mut info = MinimalReadInfo::try_from(rec).map_err(anyhow::Error::from)?;
         if let Some(tag) = gc_tag_bytes.as_deref() {
             info.gc_tag = crate::shared::gc_tag::read_gc_tag_from_record(rec, tag);
         }
-        info
+        Ok(info)
     })
     .with_fragment_filter(fragment_filter);
 
@@ -617,7 +624,9 @@ where
             Some(pairer)
         },
     )
-    .with_bam_filter_and_mapper(include_read, |rec| IndelReadInfo::from(rec))
+    .with_bam_filter_and_mapper(include_read, |rec| {
+        IndelReadInfo::try_from(rec).map_err(anyhow::Error::from)
+    })
     .with_fragment_filter(fragment_filter);
 
     if unpaired {
@@ -688,7 +697,9 @@ where
             Some(pairer)
         },
     )
-    .with_bam_filter_and_mapper(include_read, |rec| FragReadInfo::from(rec))
+    .with_bam_filter_and_mapper(include_read, |rec| {
+        FragReadInfo::try_from(rec).map_err(anyhow::Error::from)
+    })
     .with_fragment_filter(fragment_filter);
 
     if unpaired {
@@ -761,7 +772,9 @@ where
             Some(pairer)
         },
     )
-    .with_bam_filter_and_mapper(include_read, |rec| WithRecordReadInfo::from(rec))
+    .with_bam_filter_and_mapper(include_read, |rec| {
+        WithRecordReadInfo::try_from(rec).map_err(anyhow::Error::from)
+    })
     .with_fragment_filter(fragment_filter);
 
     if unpaired {

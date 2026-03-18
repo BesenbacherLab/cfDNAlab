@@ -62,8 +62,8 @@ pub fn get_fragment_gc(
     gc_prefixes: &GCPrefixes,
     min_acgt_fraction: f32,
 ) -> Result<Option<usize>> {
-    let gc_window_start = fragment.start.saturating_add(end_offset);
-    let gc_window_end = fragment.end.saturating_sub(end_offset);
+    let gc_window_start = fragment.start().saturating_add(end_offset);
+    let gc_window_end = fragment.end().saturating_sub(end_offset);
     if gc_window_end <= gc_window_start {
         return Ok(None);
     }
@@ -869,12 +869,12 @@ fn process_tile(
             let fragment_length = fragment.len();
 
             // Only count fragments whose start lies inside the tile core to avoid double counting
-            if fragment.start < tile.core_start() || fragment.start >= tile.core_end() {
+            if fragment.start() < tile.core_start() || fragment.start() >= tile.core_end() {
                 continue;
             }
 
             // If the fragment is past the current window, finalize and advance the buffers
-            while fragment.start as u64 >= current.end() {
+            while fragment.start() as u64 >= current.end() {
                 finalize_window_buffer(
                     &mut current,
                     &gc_prefixes,
@@ -917,13 +917,13 @@ fn process_tile(
             let (interval_start, interval_end) = match opt.window_assignment.assign_by {
                 WindowAssigner::Midpoint => {
                     let midpoint =
-                        midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
+                        midpoint_random_even_with_thread_rng(fragment.start(), fragment_length);
                     (midpoint, midpoint + 1)
                 }
                 WindowAssigner::Any
                 | WindowAssigner::All
                 | WindowAssigner::Proportion(_)
-                | WindowAssigner::CountOverlap => (fragment.start, fragment.end),
+                | WindowAssigner::CountOverlap => (fragment.start(), fragment.end()),
             };
 
             let fragment_span_length = (interval_end - interval_start) as f64;
@@ -1028,7 +1028,7 @@ fn process_tile(
                 let fragment_length = fragment.len();
 
                 // Only count fragments whose start lies inside the tile core to avoid double counting
-                if fragment.start < tile.core_start() || fragment.start >= tile.core_end() {
+                if fragment.start() < tile.core_start() || fragment.start() >= tile.core_end() {
                     continue;
                 }
 
@@ -1047,24 +1047,23 @@ fn process_tile(
                 // Find all overlapping windows
 
                 // Calculate what part needs to overlap to some degree
-                let (interval_start, interval_end) = match opt.window_assignment.assign_by {
+                let query_interval = match opt.window_assignment.assign_by {
                     WindowAssigner::Midpoint => {
                         let midpoint =
-                            midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
-                        (midpoint, midpoint + 1)
+                            midpoint_random_even_with_thread_rng(fragment.start(), fragment_length);
+                        Interval::new(midpoint.into(), (midpoint + 1).into())?
                     }
                     WindowAssigner::Any
                     | WindowAssigner::All
                     | WindowAssigner::Proportion(_)
-                    | WindowAssigner::CountOverlap => (fragment.start, fragment.end),
+                    | WindowAssigner::CountOverlap => fragment.interval.try_to_u64()?,
                 };
                 let overlapping_windows = find_overlapping_windows(
                     chrom_len,
                     &mut window_ptr,
                     Some(tile_window_intervals.as_slice()),
                     None,
-                    interval_start.into(),
-                    interval_end.into(),
+                    query_interval,
                     min_overlap_fraction,
                     reference_metadata.max_fragment_length as u64,
                 )?;

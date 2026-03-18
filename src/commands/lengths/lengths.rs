@@ -685,9 +685,9 @@ fn process_tile(
         move |fragment: &FragmentWithIndelCounts| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
-                    let rel_start = (fragment.start - fetch_start) as u64;
-                    let rel_end = (fragment.end - fetch_start) as u64;
-                    corrector.correct_fragment(Interval::new(rel_start, rel_end)?, prefixes)
+                    let fetch_relative_fragment =
+                        fragment.interval.try_to_u64()?.shift_left(fetch_start as u64)?;
+                    corrector.correct_fragment(fetch_relative_fragment, prefixes)
                 }
                 _ => Ok(None),
             }
@@ -708,7 +708,7 @@ fn process_tile(
         let fragment = fragment_res.context("reading fragment")?;
 
         // Only count fragments whose start is inside the core to prevent double counting across tiles
-        if fragment.start < tile.core_start() || fragment.start >= tile.core_end() {
+        if fragment.start() < tile.core_start() || fragment.start() >= tile.core_end() {
             continue;
         }
 
@@ -716,7 +716,7 @@ fn process_tile(
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.blacklist_strategy,
-            Interval::new(fragment.start as u64, fragment.end as u64)?,
+            fragment.interval.try_to_u64()?,
             opt.fragment_lengths.max_fragment_length as u64,
             &mut bl_ptr,
         );
@@ -732,16 +732,16 @@ fn process_tile(
         // Find all overlapping count-windows
 
         // Calculate what part needs to overlap to some degree
-        let (interval_start, interval_end) = match opt.window_assignment.assign_by {
+        let query_interval = match opt.window_assignment.assign_by {
             WindowAssigner::Midpoint => {
                 let midpoint =
-                    midpoint_random_even_with_thread_rng(fragment.start, fragment_length);
-                (midpoint, midpoint + 1)
+                    midpoint_random_even_with_thread_rng(fragment.start(), fragment_length);
+                Interval::new(midpoint.into(), (midpoint + 1).into())?
             }
             WindowAssigner::Any
             | WindowAssigner::All
             | WindowAssigner::Proportion(_)
-            | WindowAssigner::CountOverlap => (fragment.start, fragment.end),
+            | WindowAssigner::CountOverlap => fragment.interval.try_to_u64()?,
         };
         let by_size = match window_opt {
             WindowSpec::Size(bp) => Some(*bp),
@@ -752,8 +752,7 @@ fn process_tile(
             &mut wd_ptr,
             windows_chr,
             by_size,
-            interval_start.into(),
-            interval_end.into(),
+            query_interval,
             min_overlap_fraction,
             opt.fragment_lengths.max_fragment_length.into(),
         )?;
@@ -790,8 +789,7 @@ fn process_tile(
                 &mut sf_ptr,
                 Some(&scaling_with_bin_idx),
                 None,
-                fragment.start.into(), // Full fragment
-                fragment.end.into(),
+                fragment.interval.try_to_u64()?, // Full fragment
                 1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
                 opt.fragment_lengths.max_fragment_length.into(),
             )

@@ -31,8 +31,7 @@ enum Stage {
 /// // Unweighted fragment
 /// cp.add_fragment(Fragment {
 ///     tid: 0,
-///     start: 100,
-///     end: 200,
+///     interval: Interval::new(100, 200)?,
 ///     gc_tag: GcTagValue::default(),
 /// })?;
 ///
@@ -40,8 +39,7 @@ enum Stage {
 /// cp.add_fragment_weighted(
 ///     Fragment {
 ///         tid: 0,
-///         start: 150,
-///         end: 250,
+///         interval: Interval::new(150, 250)?,
 ///         gc_tag: GcTagValue::default(),
 ///     },
 ///     0.87,
@@ -143,12 +141,9 @@ impl Coverage {
         }
 
         let n = self.delta.len();
-        let start = frag.start as usize;
-        let end = frag.end as usize;
+        let start = frag.start() as usize;
+        let end = frag.end() as usize;
 
-        if start >= end {
-            anyhow::bail!("fragment start {} >= end {}", frag.start, frag.end);
-        }
         if end > self.length as usize || end >= n {
             anyhow::bail!(
                 "fragment end {} out of bounds for sequence length {}",
@@ -204,8 +199,7 @@ impl Coverage {
                 // Plain span
                 let base = Fragment {
                     tid: frag.tid,
-                    start: frag.start,
-                    end: frag.end,
+                    interval: frag.interval,
                     gc_tag: crate::shared::gc_tag::GcTagValue::default(),
                 };
                 self.add_fragment_weighted(base, weight)
@@ -214,17 +208,14 @@ impl Coverage {
                 // Apply +w/-w per segment
                 let n = self.delta.len();
                 let len = self.length as usize;
-                for (segment_start, segment_end) in segs {
-                    if segment_start >= segment_end {
-                        continue;
-                    }
-                    let start_idx = segment_start as usize;
-                    let end_idx = segment_end as usize;
+                for segment in segs {
+                    let start_idx = segment.start() as usize;
+                    let end_idx = segment.end() as usize;
                     if end_idx > len || start_idx >= n {
                         anyhow::bail!(
                             "segment [{}..{}) out of bounds for sequence length {}",
-                            segment_start,
-                            segment_end,
+                            segment.start(),
+                            segment.end(),
                             self.length
                         );
                     }

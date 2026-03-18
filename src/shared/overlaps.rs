@@ -153,10 +153,8 @@ impl OverlappingWindows {
 ///
 /// Parameters
 /// ----------
-/// - `interval_start`:
-///   Interval start coordinate, inclusive.
-/// - `interval_end`:
-///   Interval end coordinate, exclusive. Must be greater than `interval_start`.
+/// - `interval`:
+///   Checked queried interval.
 /// - `bin_size`:
 ///   Bin size in bases. Must be greater than zero.
 ///
@@ -166,14 +164,12 @@ impl OverlappingWindows {
 ///   Half-open range of touched 0-based bin indices.
 #[inline]
 pub fn create_overlapping_bins_by_size(
-    interval_start: u64,
-    interval_end: u64,
+    interval: Interval<u64>,
     bin_size: u64,
 ) -> Result<std::ops::Range<u64>> {
     if bin_size == 0 {
         return Err(Error::InvalidBinSize { bin_size });
     }
-    let interval = Interval::new(interval_start, interval_end)?;
     let first = interval.start() / bin_size;
     let last_excl = (interval.end().saturating_sub(1)) / bin_size + 1;
     Ok(first..last_excl)
@@ -224,10 +220,8 @@ pub fn half_open_intervals_overlap(interval_a: Interval<u64>, interval_b: Interv
 /// - `by_size`:
 ///   Fixed bin size. When present, fixed-size mode is used instead of
 ///   `windows`.
-/// - `interval_start`:
-///   Queried interval start coordinate, inclusive.
-/// - `interval_end`:
-///   Queried interval end coordinate, exclusive.
+/// - `query_interval`:
+///   Queried checked non-empty interval.
 /// - `min_overlap_fraction`:
 ///   Minimum fraction of the queried interval that must overlap a window for
 ///   that window to be retained.
@@ -245,19 +239,16 @@ pub fn find_overlapping_windows(
     wd_ptr: &mut usize,
     windows: Option<&[IndexedInterval<u64>]>,
     by_size: Option<u64>, // bin size for size‑mode
-    interval_start: u64,
-    interval_end: u64,
+    query_interval: Interval<u64>,
     min_overlap_fraction: f64,
     look_back: u64,
 ) -> Result<Option<OverlappingWindows>> {
-    let query_interval = Interval::new(interval_start, interval_end)?;
-
     // Build window list according to mode
     let mut overlaps = OverlappingWindows::new(query_interval);
 
     // Size‑mode bins
     if let Some(bin_size) = by_size {
-        for bin_idx in create_overlapping_bins_by_size(interval_start, interval_end, bin_size)? {
+        for bin_idx in create_overlapping_bins_by_size(query_interval, bin_size)? {
             let window_start = bin_idx * bin_size;
             let window_end = (bin_idx * bin_size + bin_size).min(chrom_len);
             if window_end <= window_start {
@@ -278,14 +269,17 @@ pub fn find_overlapping_windows(
     // BED‑mode windows
     } else if let Some(window_list) = windows {
         // Skip any intervals that end entirely before the interval start (minus `look_back`)
-        // Note that `interval_start` may not be the most left interval position in the outer stash
+        // Note that `query_interval.start()` may not be the most left interval position in the
+        // outer stash
         while *wd_ptr < window_list.len()
-            && window_list[*wd_ptr].end() <= interval_start.saturating_sub(look_back)
+            && window_list[*wd_ptr]
+                .end()
+                <= query_interval.start().saturating_sub(look_back)
         {
             *wd_ptr += 1;
         }
         let mut bin_idx = *wd_ptr;
-        while bin_idx < window_list.len() && window_list[bin_idx].start() < interval_end {
+        while bin_idx < window_list.len() && window_list[bin_idx].start() < query_interval.end() {
             let window = window_list[bin_idx];
             let win_start = window.start();
             let win_end = window.end().min(chrom_len);

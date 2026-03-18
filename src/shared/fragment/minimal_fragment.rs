@@ -1,4 +1,6 @@
 use crate::shared::gc_tag::{GcTagValue, combine_gc_tag_values};
+use crate::shared::interval::Interval;
+use crate::Result;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::Record;
 
@@ -7,18 +9,29 @@ use rust_htslib::bam::record::Record;
 pub struct Fragment {
     /// tid/contig id
     pub tid: i32,
-    /// inclusive start (left boundary of the forward read)
-    pub start: u32,
-    /// exclusive end (right boundary of the reverse read)
-    pub end: u32,
+    /// Checked non-empty fragment span on the reference.
+    pub interval: Interval<u32>,
     /// Optional GC weight from aux tag if provided
     pub gc_tag: crate::shared::gc_tag::GcTagValue,
 }
 
 impl Fragment {
+    /// Inclusive start (left boundary of the forward read).
+    #[inline]
+    pub fn start(&self) -> u32 {
+        self.interval.start()
+    }
+
+    /// Exclusive end (right boundary of the reverse read).
+    #[inline]
+    pub fn end(&self) -> u32 {
+        self.interval.end()
+    }
+
     /// Length of the fragment (end - start).
+    #[inline]
     pub fn len(&self) -> u32 {
-        self.end - self.start
+        self.interval.len()
     }
 }
 
@@ -26,23 +39,43 @@ impl Fragment {
 #[derive(Debug, Clone, Copy)]
 pub struct MinimalReadInfo {
     pub tid: i32, // Contig id
-    pub pos: u32, // leftmost aligned ref pos
-    pub end: u32, // exclusive rightmost aligned ref pos (reference_end)
+    pub interval: Interval<u32>, // Aligned reference span [start: pos(), end: reference_end())
     pub is_reverse: bool,
     pub gc_tag: crate::shared::gc_tag::GcTagValue,
 }
 
-impl From<&Record> for MinimalReadInfo {
+impl TryFrom<&Record> for MinimalReadInfo {
+    type Error = crate::Error;
+
     #[inline]
-    fn from(r: &Record) -> Self {
-        MinimalReadInfo {
+    fn try_from(r: &Record) -> Result<Self> {
+        Ok(MinimalReadInfo {
             tid: r.tid(),
-            pos: r.pos() as u32,
-            end: r.reference_end() as u32,
+            interval: Interval::new(r.pos() as u32, r.reference_end() as u32)?,
             is_reverse: r.is_reverse(),
             // Default tag value so tag reads are opt-in at iterator level
             gc_tag: GcTagValue::default(),
-        }
+        })
+    }
+}
+
+impl MinimalReadInfo {
+    /// Return the read's inclusive start on the reference.
+    #[inline]
+    pub fn start(&self) -> u32 {
+        self.interval.start()
+    }
+
+    /// Return the read's exclusive end on the reference.
+    #[inline]
+    pub fn end(&self) -> u32 {
+        self.interval.end()
+    }
+
+    /// Return the read's aligned reference span `[pos, end)`.
+    #[inline]
+    pub fn aligned_interval(&self) -> Interval<u32> {
+        self.interval
     }
 }
 
@@ -57,7 +90,7 @@ impl PairOrientable for MinimalReadInfo {
     }
     #[inline]
     fn pos(&self) -> u32 {
-        self.pos
+        self.start()
     }
 }
 
@@ -76,7 +109,7 @@ impl PairOrientable for MinimalReadInfo {
 ///     The fragment if both reads are mapped to the same contig, on opposite strands,
 ///     and inward-facing; otherwise `None`.
 pub fn collect_fragment_from_records(a: &Record, b: &Record) -> Option<Fragment> {
-    collect_fragment(&MinimalReadInfo::from(a), &MinimalReadInfo::from(b))
+    collect_fragment(&MinimalReadInfo::try_from(a).ok()?, &MinimalReadInfo::try_from(b).ok()?)
 }
 
 /// Build a Fragment from two `MinimalReadInfo`s (no full BAM records needed).
@@ -86,23 +119,19 @@ pub fn collect_fragment(a: &MinimalReadInfo, b: &MinimalReadInfo) -> Option<Frag
         return None;
     }
     let gc_tag = combine_gc_tag_values(&forward.gc_tag, &reverse.gc_tag);
+    let fragment_interval = Interval::new(forward.start(), reverse.end()).ok()?;
     Some(Fragment {
         tid: forward.tid,
-        start: forward.pos,
-        end: reverse.end,
+        interval: fragment_interval,
         gc_tag,
     })
 }
 
 /// Build a Fragment from a single read (unpaired input).
 pub fn collect_fragment_from_single_read(read: &MinimalReadInfo) -> Option<Fragment> {
-    if read.end <= read.pos {
-        return None;
-    }
     Some(Fragment {
         tid: read.tid,
-        start: read.pos,
-        end: read.end,
+        interval: read.aligned_interval(),
         gc_tag: read.gc_tag,
     })
 }
