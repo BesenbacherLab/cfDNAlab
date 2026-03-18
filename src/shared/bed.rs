@@ -1,4 +1,4 @@
-use crate::shared::interval::{IndexedInterval, ScoredInterval};
+use crate::shared::interval::{IndexedInterval, ScoredInterval, Span};
 use crate::shared::io::open_text_reader;
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
@@ -218,12 +218,8 @@ fn start_end_are_valid_coordinates(start_str: &str, end_str: &str) -> Option<()>
 #[derive(Debug, Clone)]
 pub struct Windows {
     pub windows: Vec<IndexedInterval<u64>>,
-    /// Span start (inclusive) across all windows, as `i64`.
-    /// This is the most-left coordinate covered by any of the windows.
-    span_start: i64,
-    /// Span end (exclusive) across all windows, as `i64`.
-    /// This is the most-right coordinate covered by any of the windows.
-    span_end: i64,
+    /// Cached outer envelope across all windows.
+    span: Span<i64>,
 }
 
 impl Windows {
@@ -250,8 +246,8 @@ impl Windows {
             is_sorted_by_start_indexed(&indexed_windows),
             "windows must be start-sorted"
         );
-        let (span_start, span_end) = if indexed_windows.is_empty() {
-            (0, 0)
+        let span = if indexed_windows.is_empty() {
+            Span::from_ordered(0, 0)
         } else {
             let min_start = indexed_windows[0].start() as i64;
             let max_end = indexed_windows
@@ -259,12 +255,11 @@ impl Windows {
                 .map(|window| window.end())
                 .max()
                 .unwrap() as i64;
-            (min_start, max_end)
+            Span::from_ordered(min_start, max_end)
         };
         Self {
             windows: indexed_windows,
-            span_start,
-            span_end,
+            span,
         }
     }
 
@@ -296,24 +291,27 @@ impl Windows {
     /// This is the most-left coordinate covered by any of the windows.
     #[inline]
     pub fn span_start(&self) -> i64 {
-        self.span_start
+        self.span.start()
     }
 
     /// Span end (exclusive).
     /// This is the most-right coordinate covered by any of the windows.
     #[inline]
     pub fn span_end(&self) -> i64 {
-        self.span_end
+        self.span.end()
     }
 
-    /// Span tuple `(start, end)`.
-    /// These are the most-left and most-right coordinates covered by any of the windows.
+    /// Return the collection span.
     ///
-    /// There are no guarantees that all positions between these two coordinates
-    /// are covered by the windows.
+    /// This is the outer envelope of the stored windows: the smallest start and
+    /// largest end seen in the collection. It returns `Span<i64>` rather than
+    /// `Interval<i64>` because empty collections use the empty span `[0, 0)`.
+    ///
+    /// There are no guarantees that every position inside this span is covered
+    /// by a window.
     #[inline]
-    pub fn span(&self) -> (i64, i64) {
-        (self.span_start, self.span_end)
+    pub fn span(&self) -> Span<i64> {
+        self.span
     }
 
     /// Merge/flatten touching or overlapping windows and reindex them sequentially **in-place**.
@@ -340,8 +338,7 @@ impl Windows {
             return (
                 Windows {
                     windows: merged_windows,
-                    span_start: 0,
-                    span_end: 0,
+                    span: Span::from_ordered(0, 0),
                 },
                 start_idx,
             );
@@ -401,8 +398,7 @@ impl Windows {
         (
             Windows {
                 windows: merged_windows,
-                span_start,
-                span_end,
+                span: Span::from_ordered(span_start, span_end),
             },
             next_idx,
         )
@@ -660,12 +656,8 @@ pub fn load_grouped_windows_from_bed(
 #[derive(Debug, Clone)]
 pub struct GroupedWindows {
     pub windows: Vec<IndexedInterval<u64>>, // (start, end, group idx)
-    /// Span start (inclusive) across all windows, as `i64`.
-    /// This is the most-left coordinate covered by any of the windows.
-    span_start: i64,
-    /// Span end (exclusive) across all windows, as `i64`.
-    /// This is the most-right coordinate covered by any of the windows.
-    span_end: i64,
+    /// Cached outer envelope across all windows.
+    span: Span<i64>,
 }
 
 impl GroupedWindows {
@@ -692,8 +684,8 @@ impl GroupedWindows {
             is_sorted_by_start_indexed(&grouped_windows),
             "windows must be start-sorted"
         );
-        let (span_start, span_end) = if grouped_windows.is_empty() {
-            (0, 0)
+        let span = if grouped_windows.is_empty() {
+            Span::from_ordered(0, 0)
         } else {
             let min_start = grouped_windows[0].start() as i64;
             let max_end = grouped_windows
@@ -701,12 +693,11 @@ impl GroupedWindows {
                 .map(|window| window.end())
                 .max()
                 .unwrap() as i64;
-            (min_start, max_end)
+            Span::from_ordered(min_start, max_end)
         };
         Self {
             windows: grouped_windows,
-            span_start,
-            span_end,
+            span,
         }
     }
 
@@ -738,24 +729,27 @@ impl GroupedWindows {
     /// This is the most-left coordinate covered by any of the windows.
     #[inline]
     pub fn span_start(&self) -> i64 {
-        self.span_start
+        self.span.start()
     }
 
     /// Span end (exclusive).
     /// This is the most-right coordinate covered by any of the windows.
     #[inline]
     pub fn span_end(&self) -> i64 {
-        self.span_end
+        self.span.end()
     }
 
-    /// Span tuple `(start, end)`.
-    /// These are the most-left and most-right coordinates covered by any of the windows.
+    /// Return the collection span.
     ///
-    /// There are no guarantees that all positions between these two coordinates
-    /// are covered by the windows.
+    /// This is the outer envelope of the stored windows: the smallest start and
+    /// largest end seen in the collection. It returns `Span<i64>` rather than
+    /// `Interval<i64>` because empty collections use the empty span `[0, 0)`.
+    ///
+    /// There are no guarantees that every position inside this span is covered
+    /// by a window.
     #[inline]
-    pub fn span(&self) -> (i64, i64) {
-        (self.span_start, self.span_end)
+    pub fn span(&self) -> Span<i64> {
+        self.span
     }
 }
 
@@ -1012,12 +1006,8 @@ pub fn load_scored_windows_from_bed(
 #[derive(Debug, Clone)]
 pub struct ScoredWindows {
     pub windows: Vec<ScoredInterval<u64>>, // (start, end, original_idx, score)
-    /// Span start (inclusive) across all windows, as `i64`.
-    /// This is the most-left coordinate covered by any of the windows.
-    span_start: i64,
-    /// Span end (exclusive) across all windows, as `i64`.
-    /// This is the most-right coordinate covered by any of the windows.
-    span_end: i64,
+    /// Cached outer envelope across all windows.
+    span: Span<i64>,
 }
 
 impl ScoredWindows {
@@ -1046,18 +1036,14 @@ impl ScoredWindows {
             is_sorted_by_start_with_scores(&windows),
             "windows must be start-sorted"
         );
-        let (span_start, span_end) = if windows.is_empty() {
-            (0, 0)
+        let span = if windows.is_empty() {
+            Span::from_ordered(0, 0)
         } else {
             let min_start = windows[0].start() as i64;
             let max_end = windows.iter().map(|window| window.end()).max().unwrap() as i64;
-            (min_start, max_end)
+            Span::from_ordered(min_start, max_end)
         };
-        Self {
-            windows,
-            span_start,
-            span_end,
-        }
+        Self { windows, span }
     }
 
     /// Number of windows.
@@ -1088,24 +1074,27 @@ impl ScoredWindows {
     /// This is the most-left coordinate covered by any of the windows.
     #[inline]
     pub fn span_start(&self) -> i64 {
-        self.span_start
+        self.span.start()
     }
 
     /// Span end (exclusive).
     /// This is the most-right coordinate covered by any of the windows.
     #[inline]
     pub fn span_end(&self) -> i64 {
-        self.span_end
+        self.span.end()
     }
 
-    /// Span tuple `(start, end)`.
-    /// These are the most-left and most-right coordinates covered by any of the windows.
+    /// Return the collection span.
     ///
-    /// There are no guarantees that all positions between these two coordinates
-    /// are covered by the windows.
+    /// This is the outer envelope of the stored windows: the smallest start and
+    /// largest end seen in the collection. It returns `Span<i64>` rather than
+    /// `Interval<i64>` because empty collections use the empty span `[0, 0)`.
+    ///
+    /// There are no guarantees that every position inside this span is covered
+    /// by a window.
     #[inline]
-    pub fn span(&self) -> (i64, i64) {
-        (self.span_start, self.span_end)
+    pub fn span(&self) -> Span<i64> {
+        self.span
     }
 }
 

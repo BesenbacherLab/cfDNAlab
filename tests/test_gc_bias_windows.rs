@@ -5,6 +5,7 @@ use cfdnalab::commands::gc_bias::windows::{
 };
 use cfdnalab::shared::bam::Contigs;
 use cfdnalab::shared::bed::Windows;
+use cfdnalab::shared::interval::{IndexedInterval, Interval};
 use fxhash::FxHashMap;
 
 fn build_contigs(entries: &[(&str, u32)]) -> Contigs {
@@ -16,12 +17,24 @@ fn build_contigs(entries: &[(&str, u32)]) -> Contigs {
 }
 
 fn build_windows(entries: Vec<(u64, u64, u64)>) -> Windows {
-    Windows::from_sorted(entries)
+    let windows = entries
+        .into_iter()
+        .map(|(start, end, idx)| {
+            IndexedInterval::new(start, end, idx).expect("test windows should be valid")
+        })
+        .collect();
+    Windows::from_sorted(windows)
 }
 
 fn make_window_state(start: u64, end: u64) -> WindowState {
     let template = GCCounts::new(1, 1, 0, (0, 0)).expect("failed to create template");
-    WindowState::new(0, start, end, true, &template).expect("failed to build window state")
+    WindowState::new(
+        0,
+        Interval::new(start, end).expect("test interval should be valid"),
+        true,
+        &template,
+    )
+    .expect("failed to build window state")
 }
 
 mod test_compute_window_stats {
@@ -104,7 +117,12 @@ mod tests_compute_window_acgt {
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(1, 5); // covers "ACGT"
 
-        compute_window_acgt(&mut window, &prefixes, 0, seq.len() as u64).unwrap();
+        compute_window_acgt(
+            &mut window,
+            &prefixes,
+            Interval::new(0, seq.len() as u64).expect("test sequence interval should be valid"),
+        )
+        .unwrap();
 
         assert_eq!(
             window.counts.num_acgt_out_of,
@@ -120,7 +138,12 @@ mod tests_compute_window_acgt {
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(1, 5); // covers "ANGT"
 
-        compute_window_acgt(&mut window, &prefixes, 0, seq.len() as u64).unwrap();
+        compute_window_acgt(
+            &mut window,
+            &prefixes,
+            Interval::new(0, seq.len() as u64).expect("test sequence interval should be valid"),
+        )
+        .unwrap();
 
         assert_eq!(
             window.counts.num_acgt_out_of,
@@ -136,8 +159,12 @@ mod tests_compute_window_acgt {
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(10, 12);
 
-        let err = compute_window_acgt(&mut window, &prefixes, 0, seq.len() as u64)
-            .expect_err("expected an overlap error");
+        let err = compute_window_acgt(
+            &mut window,
+            &prefixes,
+            Interval::new(0, seq.len() as u64).expect("test sequence interval should be valid"),
+        )
+        .expect_err("expected an overlap error");
 
         let msg = format!("{err}");
         assert!(
@@ -153,8 +180,12 @@ mod tests_compute_window_acgt {
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(0, 6);
 
-        let err = compute_window_acgt(&mut window, &prefixes, 0, 6)
-            .expect_err("expected a prefix bounds error");
+        let err = compute_window_acgt(
+            &mut window,
+            &prefixes,
+            Interval::new(0, 6).expect("test sequence interval should be valid"),
+        )
+        .expect_err("expected a prefix bounds error");
 
         let msg = format!("{err}");
         assert!(
@@ -269,13 +300,13 @@ mod tests_prepare_tile_windows {
         assert_eq!(window_bp, 200);
 
         assert_eq!(current.idx, 1);
-        assert_eq!(current.start, 200);
-        assert_eq!(current.end, 400);
+        assert_eq!(current.start(), 200);
+        assert_eq!(current.end(), 400);
         assert!(!current.contained);
 
         assert_eq!(next.idx, 2);
-        assert_eq!(next.start, 400);
-        assert_eq!(next.end, 600);
+        assert_eq!(next.start(), 400);
+        assert_eq!(next.end(), 600);
         assert!(!next.contained);
         Ok(())
     }
@@ -293,8 +324,8 @@ mod tests_prepare_tile_windows {
         assert_eq!(prepared.windows.len(), 1);
         let window = &prepared.windows[0];
         assert_eq!(window.idx, 0);
-        assert_eq!(window.start, tile.core_start() as u64);
-        assert_eq!(window.end, tile.core_end() as u64);
+        assert_eq!(window.start(), tile.core_start() as u64);
+        assert_eq!(window.end(), tile.core_end() as u64);
         assert!(window.contained);
         Ok(())
     }
@@ -341,7 +372,7 @@ mod tests_gc_bias_window_logic {
         counts.set(10, 0, 2.0);
         counts.set(10, 1, 4.0);
 
-        let scaled = process_window(counts, &cfg, Some(100.0))?.expect("window should be retained");
+        let scaled = process_window(counts, &cfg, 100.0)?.expect("window should be retained");
 
         // Assert
         let c0 = scaled.get(10, 0).unwrap();
@@ -362,7 +393,7 @@ mod tests_gc_bias_window_logic {
         counts.set(10, 0, 5.0);
 
         // Act
-        let result = process_window(counts, &cfg, Some(100.0))?;
+        let result = process_window(counts, &cfg, 100.0)?;
 
         // Assert
         assert!(

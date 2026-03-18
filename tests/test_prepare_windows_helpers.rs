@@ -58,31 +58,31 @@ mod tests_prepare_windows_helpers {
     }
 
     fn build_window(chrom: &str, start: u32, end: u32, group_key: &str) -> Window {
-        Window {
-            chrom: Arc::from(chrom),
-            original_start: start,
-            original_end: end,
-            resized_start: start,
-            resized_end: end,
-            merged: false,
-            label_tuples: Vec::new(),
-            group_key: group_key.to_string(),
-            score: None,
-        }
+        Window::from_bounds(
+            Arc::from(chrom),
+            start,
+            end,
+            start,
+            end,
+            Vec::new(),
+            group_key.to_string(),
+            None,
+        )
+        .expect("test window should be valid")
     }
 
     fn build_window_with_tuple(chrom: &str, start: u32, end: u32) -> Window {
-        Window {
-            chrom: Arc::from(chrom),
-            original_start: start,
-            original_end: end,
-            resized_start: start,
-            resized_end: end,
-            merged: false,
-            label_tuples: vec![LabelTuple::new("A".to_string())],
-            group_key: "A".to_string(),
-            score: None,
-        }
+        Window::from_bounds(
+            Arc::from(chrom),
+            start,
+            end,
+            start,
+            end,
+            vec![LabelTuple::new("A".to_string())],
+            "A".to_string(),
+            None,
+        )
+        .expect("test window should be valid")
     }
 
     fn assert_min_per_window_data(

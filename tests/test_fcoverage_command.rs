@@ -222,7 +222,9 @@ fn per_position_outputs_basic_fragment() -> Result<()> {
 
     run(&cfg)?;
 
-    let bedgraph = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let bedgraph = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
     assert!(bedgraph.exists(), "expected positional bedgraph output");
     let text = read_zst_to_string(&bedgraph)?;
     assert!(
@@ -251,7 +253,7 @@ fn per_position_keep_zero_runs_toggles_zero_segments() -> Result<()> {
 
     let without_zeros_path = out_dir_without_zeros
         .path()
-        .join("testcov.per_position.bedgraph.zst");
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
     let without_zeros_text = read_zst_to_string(&without_zeros_path)?;
     let without_zeros_lines: Vec<_> = without_zeros_text.lines().collect();
     assert_eq!(without_zeros_lines, vec!["chr1\t20\t80\t1"]);
@@ -267,7 +269,7 @@ fn per_position_keep_zero_runs_toggles_zero_segments() -> Result<()> {
 
     let with_zeros_path = out_dir_with_zeros
         .path()
-        .join("testcov.per_position.bedgraph.zst");
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
     let with_zeros_text = read_zst_to_string(&with_zeros_path)?;
     let with_zeros_lines: Vec<_> = with_zeros_text.lines().collect();
     assert_eq!(
@@ -295,7 +297,9 @@ fn ignore_gap_removes_inter_mate_gap_from_positional_output() -> Result<()> {
     // - With ignore_gap=true, only the read-covered segments remain.
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let output_path = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(lines, vec!["chr1\t20\t40\t1", "chr1\t60\t80\t1"]);
@@ -318,7 +322,9 @@ fn unpaired_single_read_matches_fragment_span_output() -> Result<()> {
     // - The single read spans [20, 80), so output should match a fragment over that span.
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let output_path = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(lines, vec!["chr1\t20\t80\t1"]);
@@ -380,7 +386,9 @@ fn blacklist_masks_positions_in_positional_output() -> Result<()> {
     // - The blacklist removes [30, 35) from the output entirely, so the run splits.
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let output_path = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(lines, vec!["chr1\t20\t30\t1", "chr1\t35\t80\t1"]);
@@ -409,7 +417,9 @@ fn blacklist_masks_positions_in_positional_output_across_tile_boundary() -> Resu
     //   but the second covered run is split into [35, 66) and [66, 80).
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let output_path = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
@@ -443,7 +453,7 @@ fn blacklist_reduces_by_size_totals_and_reports_blacklisted_positions() -> Resul
     // - Remaining windows on chr1 have zero coverage and no blacklisted positions.
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.total.tsv.zst");
+    let output_path = out_dir.path().join("testcov.fcoverage.total.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
@@ -493,7 +503,7 @@ fn blacklist_crossing_tile_boundary_keeps_same_by_size_output() -> Result<()> {
         //   the final rows, even when the blacklist itself crosses a tile boundary.
         run(&cfg)?;
 
-        let output_path = out_dir.path().join("testcov.total.tsv.zst");
+        let output_path = out_dir.path().join("testcov.fcoverage.total.tsv.zst");
         outputs.push(read_zst_to_string(&output_path)?);
     }
 
@@ -535,7 +545,7 @@ fn blacklist_average_uses_only_unmasked_positions_in_denominator() -> Result<()>
     // - Remaining windows: 0
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.avg.tsv.zst");
+    let output_path = out_dir.path().join("testcov.fcoverage.avg.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
@@ -585,7 +595,7 @@ fn per_position_and_by_size_totals_conserve_total_covered_bases() -> Result<()> 
 
         let positional_path = positional_out_dir
             .path()
-            .join("testcov.per_position.bedgraph.zst");
+            .join("testcov.fcoverage.per_position.bedgraph.zst");
         let positional_text = read_zst_to_string(&positional_path)?;
         let positional_total: u64 = positional_text
             .lines()
@@ -623,7 +633,9 @@ fn per_position_and_by_size_totals_conserve_total_covered_bases() -> Result<()> 
 
         run(&by_size_cfg)?;
 
-        let totals_path = by_size_out_dir.path().join("testcov.total.tsv.zst");
+        let totals_path = by_size_out_dir
+            .path()
+            .join("testcov.fcoverage.total.tsv.zst");
         let totals_text = read_zst_to_string(&totals_path)?;
         let by_size_total: u64 = totals_text
             .lines()
@@ -692,7 +704,7 @@ fn by_bed_total_is_invariant_when_windows_cross_tile_boundaries() -> Result<()> 
         //   The by-bed reducer must still merge the partials back to the same final rows.
         run(&cfg)?;
 
-        let output_path = out_dir.path().join("testcov.total.tsv.zst");
+        let output_path = out_dir.path().join("testcov.fcoverage.total.tsv.zst");
         outputs.push(read_zst_to_string(&output_path)?);
     }
 
@@ -723,7 +735,7 @@ fn by_size_total_counts_covered_bases_per_window() -> Result<()> {
 
     run(&cfg)?;
 
-    let totals = out_dir.path().join("testcov.total.tsv.zst");
+    let totals = out_dir.path().join("testcov.fcoverage.total.tsv.zst");
     assert!(totals.exists(), "expected per-window totals output");
     let text = read_zst_to_string(&totals)?;
     let mut lines = text.lines();
@@ -766,7 +778,7 @@ fn by_size_average_reduces_across_non_aligned_tiles() -> Result<()> {
     // - tile_size=55 forces the non-aligned reducer path, but should not change values.
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.avg.tsv.zst");
+    let output_path = out_dir.path().join("testcov.fcoverage.avg.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
@@ -813,7 +825,7 @@ fn by_bed_average_matches_manual_window_means() -> Result<()> {
     // - Window [70, 90): covered length 10 of 20 -> average 0.5
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.avg.tsv.zst");
+    let output_path = out_dir.path().join("testcov.fcoverage.avg.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
@@ -875,7 +887,7 @@ fn by_bed_average_handles_three_chromosomes_with_global_window_indices() -> Resu
     // - chr3 fragment spans [40, 90), so window [50, 100) has 40 covered bases -> 40 / 50 = 0.8.
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.avg.tsv.zst");
+    let output_path = out_dir.path().join("testcov.fcoverage.avg.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
@@ -885,6 +897,50 @@ fn by_bed_average_handles_three_chromosomes_with_global_window_indices() -> Resu
             "chr1\t0\t40\t0.5\t0",
             "chr2\t0\t40\t0.75\t0",
             "chr3\t50\t100\t0.8\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn by_bed_average_skips_chromosomes_without_windows_and_keeps_later_chromosomes() -> Result<()> {
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
+        vec![
+            paired_fragment_on_tid(0, 20, 60, 20),
+            paired_fragment_on_tid(1, 10, 40, 20),
+        ],
+        Vec::new(),
+        "fcoverage_bed_avg_skip_empty_chr",
+    )?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("aggregate_windows_chr2_only.bed");
+    write_bed(&bed_path, &[("chr2", 0, 40, "chr2_window")])?;
+
+    let mut windows = WindowsArgs::default();
+    windows.by_bed = Some(bed_path);
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.chromosomes = base_chromosomes(&["chr1", "chr2"]);
+    cfg.set_decimals(2);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_windows(windows);
+
+    // Manual expectations:
+    // - chr1 has a fragment but no BED windows, so BED mode should skip that chromosome entirely.
+    // - chr2 has one fragment on [10, 50) and one BED window [0, 40), so the covered overlap is
+    //   30 bases and the mean coverage is 30 / 40 = 0.75.
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join("testcov.fcoverage.avg.tsv.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chr2\t0\t40\t0.75\t0",
         ]
     );
 
@@ -916,7 +972,9 @@ fn per_position_handles_three_chromosomes_in_global_mode() -> Result<()> {
 
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let output_path = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
@@ -956,7 +1014,7 @@ fn by_size_total_handles_three_chromosomes() -> Result<()> {
 
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.total.tsv.zst");
+    let output_path = out_dir.path().join("testcov.fcoverage.total.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
@@ -1001,7 +1059,7 @@ fn by_bed_total_matches_manual_window_sums() -> Result<()> {
     // - Window [70, 90): total covered bases = 10
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.total.tsv.zst");
+    let output_path = out_dir.path().join("testcov.fcoverage.total.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
@@ -1048,7 +1106,9 @@ fn by_bed_unique_positions_merge_overlapping_windows() -> Result<()> {
     // - Zero runs outside those intersections are omitted.
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let output_path = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(lines, vec!["chr1\t20\t40\t1", "chr1\t70\t80\t1"]);
@@ -1090,7 +1150,7 @@ fn by_bed_indexed_positions_keep_window_indices_and_overlap_duplicates() -> Resu
 
     let output_path = out_dir
         .path()
-        .join("testcov.per_position_per_window.tsv.zst");
+        .join("testcov.fcoverage.per_position_per_window.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
@@ -1158,7 +1218,9 @@ fn scaling_keeps_fractional_outputs_and_applies_rounding() -> Result<()> {
     // - With decimals=1, those become 1.2 and 1.3 in the bedGraph output.
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let output_path = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(lines, vec!["chr1\t20\t50\t1.2", "chr1\t50\t80\t1.3"]);
@@ -1188,7 +1250,9 @@ fn gc_tag_weights_unpaired_positional_output() -> Result<()> {
     // - Coverage is therefore 2.5 across the whole span.
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let output_path = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(lines, vec!["chr1\t20\t80\t2.5"]);
@@ -1222,7 +1286,9 @@ fn gc_tag_averages_valid_mate_weights_in_paired_mode() -> Result<()> {
     // - Coverage is therefore 3 across the full fragment span.
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let output_path = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(lines, vec!["chr1\t20\t80\t3"]);
@@ -1271,7 +1337,9 @@ fn gc_tag_paired_edge_cases_follow_fragment_combination_rules() -> Result<()> {
         //   With keep_zero_runs=true, the whole chromosome is a single zero-coverage segment.
         run(&cfg)?;
 
-        let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+        let output_path = out_dir
+            .path()
+            .join("testcov.fcoverage.per_position.bedgraph.zst");
         let text = read_zst_to_string(&output_path)?;
         let lines: Vec<_> = text.lines().collect();
         assert_eq!(
@@ -1321,7 +1389,9 @@ fn gc_tag_missing_or_invalid_values_fall_back_or_drop() -> Result<()> {
         // - With drop_invalid_gc=true, the fragment is skipped entirely.
         run(&cfg)?;
 
-        let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+        let output_path = out_dir
+            .path()
+            .join("testcov.fcoverage.per_position.bedgraph.zst");
         let text = read_zst_to_string(&output_path)?;
         let lines: Vec<_> = text.lines().collect();
         assert_eq!(
@@ -1377,7 +1447,9 @@ fn gc_file_weights_positional_output_from_reference_package() -> Result<()> {
     // - The test GC package assigns weight 10.0 to that bin, so coverage is 10 on [20, 80).
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let output_path = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(lines, vec!["chr1\t20\t80\t10"]);
@@ -1421,7 +1493,9 @@ fn gc_file_drop_invalid_controls_short_effective_length_fragments() -> Result<()
         // - With drop_invalid_gc=true, the fragment is skipped.
         run(&cfg)?;
 
-        let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+        let output_path = out_dir
+            .path()
+            .join("testcov.fcoverage.per_position.bedgraph.zst");
         let text = read_zst_to_string(&output_path)?;
         let lines: Vec<_> = text.lines().collect();
         assert_eq!(
@@ -1463,7 +1537,9 @@ fn unique_positions_split_one_merged_window_into_multiple_runs() -> Result<()> {
     // - Intersecting [15, 85) with the covered span keeps the same three runs
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.per_position.bedgraph.zst");
+    let output_path = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
@@ -1506,7 +1582,7 @@ fn indexed_positions_repeat_window_index_for_each_run_and_duplicate_overlap() ->
 
     let output_path = out_dir
         .path()
-        .join("testcov.per_position_per_window.tsv.zst");
+        .join("testcov.fcoverage.per_position_per_window.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(

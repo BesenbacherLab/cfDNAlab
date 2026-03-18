@@ -1,6 +1,7 @@
 mod tests {
     use cfdnalab::Error;
     use cfdnalab::commands::fcoverage::tiling::adapt_fetch_to_extreme_windows;
+    use cfdnalab::commands::midpoints::midpoints::get_overlapping_sites_and_adapt_fetch_to_extremes;
     use cfdnalab::shared::bam::Contigs;
     use cfdnalab::shared::interval::{IndexedInterval, Interval};
     use cfdnalab::shared::tiled_run::{
@@ -122,17 +123,22 @@ mod tests {
     fn clamp_fetch_respects_halo_and_chrom() {
         let tile = make_tile(100, 150, 80, 170, 0);
         // Windows span 90..160; halos are 20 left, 20 right; chrom len 155
-        let res = clamp_fetch_to_window_span(&tile, 155, 90, 160, 0).unwrap();
+        let window_span = Interval::new(90, 160).expect("test span should be valid");
+        let res = clamp_fetch_to_window_span(&tile, 155, window_span, 0)
+            .unwrap()
+            .expect("fetch interval expected");
         // Left: 90 - 20 = 70, clamped to fetch_start 80 => 80
         // Right: 160 + 20 = 180, clamped to fetch_end 170 and chrom_len 155 => 155
-        assert_eq!(res, (80, 155));
+        assert_eq!(res, Interval::new(80, 155).unwrap());
     }
 
     #[test]
     fn clamp_fetch_returns_none_on_empty_span() {
         let tile = make_tile(100, 150, 80, 170, 0);
-        // min_ws >= max_we should return None
-        assert!(clamp_fetch_to_window_span(&tile, 200, 120, 120, 0).is_none());
+        // Empty spans are rejected at interval construction, so the helper no longer
+        // needs a separate runtime path for this case
+        let _ = tile;
+        assert!(Interval::new(120, 120).is_err());
     }
 
     #[test]
@@ -140,7 +146,9 @@ mod tests {
         let tile = make_tile(100, 150, 90, 200, 0);
         // Windows far left. Even after adding halos the span ends before fetch_start,
         // so there is nothing to fetch and the range is discarded
-        let res = clamp_fetch_to_window_span(&tile, 300, 10, 20, 0);
+        let window_span = Interval::new(10, 20).expect("test span should be valid");
+        let res = clamp_fetch_to_window_span(&tile, 300, window_span, 0)
+            .expect("fetch span computation should succeed");
         assert!(res.is_none());
     }
 
@@ -148,10 +156,13 @@ mod tests {
     fn clamp_fetch_clamps_to_chrom_when_windows_right_of_chrom() {
         let tile = make_tile(50, 70, 40, 120, 0);
         // Windows extend beyond chrom_len=100
-        let res = clamp_fetch_to_window_span(&tile, 100, 80, 150, 0).unwrap();
+        let window_span = Interval::new(80, 150).expect("test span should be valid");
+        let res = clamp_fetch_to_window_span(&tile, 100, window_span, 0)
+            .unwrap()
+            .expect("fetch interval expected");
         // Left bound follows the nearest window minus halo (80-10) = 70, not the original fetch_start,
         // because there is no window support between 40 and 70; right clamp hits chrom_len=100
-        assert_eq!(res, (70, 100));
+        assert_eq!(res, Interval::new(70, 100).unwrap());
     }
 
     #[test]
@@ -159,7 +170,9 @@ mod tests {
         let tile = make_tile(100, 150, 90, 200, 0);
         // Windows sit to the right of the tile; even after halo expansion the span begins at 210-10=200,
         // matching fetch_end, so start >= end and the fetch range is discarded
-        let res = clamp_fetch_to_window_span(&tile, 230, 210, 220, 0);
+        let window_span = Interval::new(210, 220).expect("test span should be valid");
+        let res = clamp_fetch_to_window_span(&tile, 230, window_span, 0)
+            .expect("fetch span computation should succeed");
         assert!(res.is_none());
     }
 
@@ -171,8 +184,10 @@ mod tests {
             first_idx: 1,
             last_idx_exclusive: 3,
         };
-        let (min_ws, max_we) = tile_window_min_max(&windows, &tile, Some(&span)).unwrap();
-        assert_eq!((min_ws, max_we), (40, 200));
+        let interval = tile_window_min_max(&windows, &tile, Some(&span))
+            .unwrap()
+            .expect("window span expected");
+        assert_eq!(interval, Interval::new(40, 200).unwrap());
     }
 
     #[test]
@@ -210,6 +225,26 @@ mod tests {
         // TODO: Fetch ends should of course not extend outside the chromosome end, we must fix that if its the case
         assert!(tiles[2].fetch_end() == 95);
         assert!(tiles[2].fetch_start() == 70);
+    }
+
+    #[test]
+    fn midpoint_fetch_span_keeps_fragment_halo_near_chromosome_end() {
+        let tile = make_tile(80, 95, 70, 95, 0);
+        let windows = indexed_windows(&[(90, 95, 0)]);
+        let span = TileWindowSpan {
+            first_idx: 0,
+            last_idx_exclusive: 1,
+        };
+
+        let (sites, fetch_span) =
+            get_overlapping_sites_and_adapt_fetch_to_extremes(&windows, Some(&span), &tile, 95, 10)
+                .unwrap()
+                .expect("midpoint site should produce a fetch span");
+
+        assert_eq!(sites, windows);
+        // The tile already carries the only usable left halo near chromosome end. Shrinking to the
+        // extreme site must preserve that halo instead of collapsing the fetch span to [90,95).
+        assert_eq!(fetch_span, Interval::new(80, 95).unwrap());
     }
 
     #[test]
@@ -278,14 +313,20 @@ mod tests {
             first_idx: 0,
             last_idx_exclusive: 0,
         };
-        assert!(tile_window_min_max(&windows, &tile, Some(&span)).is_none());
+        assert!(
+            tile_window_min_max(&windows, &tile, Some(&span))
+                .expect("window span computation should succeed")
+                .is_none()
+        );
     }
 
     #[test]
     fn clamp_fetch_returns_none_when_clamping_collapses_span() {
         let tile = make_tile(10, 20, 0, 100, 0);
         // Window span sits right of the chromosome, clamping pulls end left of start
-        let res = clamp_fetch_to_window_span(&tile, 120, 150, 160, 0);
+        let window_span = Interval::new(150, 160).expect("test span should be valid");
+        let res = clamp_fetch_to_window_span(&tile, 120, window_span, 0)
+            .expect("fetch span computation should succeed");
         assert!(res.is_none());
     }
 
@@ -297,9 +338,12 @@ mod tests {
         // The old logic therefore narrowed a window span of [0, 40) to exactly [0, 40), which is
         // too short to reconstruct fragments extending beyond the window. The explicit halo must
         // widen the fetch to [0, 60) while still staying inside the original tile fetch band.
-        let narrowed_fetch = clamp_fetch_to_window_span(&tile, 200, 0, 40, 20).unwrap();
+        let window_span = Interval::new(0, 40).expect("test span should be valid");
+        let narrowed_fetch = clamp_fetch_to_window_span(&tile, 200, window_span, 20)
+            .unwrap()
+            .expect("fetch interval expected");
 
-        assert_eq!(narrowed_fetch, (0, 60));
+        assert_eq!(narrowed_fetch, Interval::new(0, 60).unwrap());
     }
 
     #[test]
@@ -315,8 +359,11 @@ mod tests {
 
         // The overlapping BED window itself ends at 40, but fragment reconstruction for this mode
         // still needs an extra halo. With halo_bp=20, the narrowed fetch must keep [0, 60).
-        let narrowed_fetch = adapt_fetch_to_extreme_windows(&tile, None, &mode, 200, 20).unwrap();
+        let narrowed_fetch = adapt_fetch_to_extreme_windows(&tile, None, &mode, 200, 20)
+            .unwrap()
+            .expect("fetch interval expected");
 
-        assert_eq!(narrowed_fetch, (0, 60));
+        assert_eq!(narrowed_fetch.start(), 0);
+        assert_eq!(narrowed_fetch.end(), 60);
     }
 }

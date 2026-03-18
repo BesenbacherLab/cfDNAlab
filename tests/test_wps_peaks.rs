@@ -146,6 +146,7 @@ mod tests_wps_peaks_helpers {
     use cfdnalab::commands::wps_peaks::call_peaks::*;
     use cfdnalab::commands::wps_peaks::window_peak_results::PeaksWindowAction;
     use cfdnalab::commands::wps_peaks::wps_peaks::*;
+    use cfdnalab::shared::interval::IndexedInterval;
     use cfdnalab::shared::tiled_run::Tile;
     use std::collections::BTreeMap;
     use std::io::Write;
@@ -153,19 +154,17 @@ mod tests_wps_peaks_helpers {
     use tempfile::NamedTempFile;
 
     fn make_peak(chr: &str, position: u64, height: f32) -> PeakCall {
-        PeakCall {
-            chromosome: chr.to_string(),
-            start: position,
-            end: position + 1,
-            peak_position: position,
-            height,
-            segment_id: 0,
-        }
+        PeakCall::new(chr.to_string(), position, position + 1, position, height, 0)
+            .expect("test peak should be valid")
+    }
+
+    fn indexed_windows(entries: &[(u64, u64, u64)]) -> Vec<IndexedInterval<u64>> {
+        IndexedInterval::from_tuples(entries).expect("test windows should be valid")
     }
 
     #[test]
     fn compute_stats_contributions_extracts_metrics() {
-        let windows = vec![(0, 100, 0), (100, 200, 1)];
+        let windows = indexed_windows(&[(0, 100, 0), (100, 200, 1)]);
         let peaks = vec![
             make_peak("chr1", 10, 1.0),
             make_peak("chr1", 50, 1.0),
@@ -225,7 +224,7 @@ mod tests_wps_peaks_helpers {
     fn stats_contributions_merge_across_tiles() {
         let mut acc = WindowAccumulator::new(PeaksWindowAction::Stats, 2);
         acc.reset_for_chromosome("chr1".to_string());
-        let windows = vec![(0, 100, 0)];
+        let windows = indexed_windows(&[(0, 100, 0)]);
         let mut next_idx = 0usize;
         acc.add_windows_for_tile(&windows, &mut next_idx, 0, 60);
 
@@ -269,7 +268,7 @@ mod tests_wps_peaks_helpers {
         let mut acc = WindowAccumulator::new(PeaksWindowAction::OnlyIncludeThesePositionsUnique, 2);
         acc.reset_for_chromosome("chr1".to_string());
 
-        let windows = vec![(0, 100, 0), (100, 200, 1)];
+        let windows = indexed_windows(&[(0, 100, 0), (100, 200, 1)]);
         let mut next_idx = 0usize;
 
         acc.add_windows_for_tile(&windows, &mut next_idx, 0, 150);
@@ -298,7 +297,7 @@ mod tests_wps_peaks_helpers {
         let mut acc = WindowAccumulator::new(PeaksWindowAction::Stats, 2);
         acc.reset_for_chromosome("chr2".to_string());
 
-        let windows = vec![(0, 100, 0), (100, 200, 1)];
+        let windows = indexed_windows(&[(0, 100, 0), (100, 200, 1)]);
         let mut next_idx = 0usize;
 
         acc.add_windows_for_tile(&windows, &mut next_idx, 0, 150);
@@ -335,7 +334,7 @@ mod tests_wps_peaks_helpers {
         // segment markers differ, so merging must not invent a 100bp gap between them.
         let mut acc = WindowAccumulator::new(PeaksWindowAction::Stats, 2);
         acc.reset_for_chromosome("chr1".to_string());
-        let windows = vec![(0, 200, 0)];
+        let windows = indexed_windows(&[(0, 200, 0)]);
         let mut next_idx = 0usize;
         acc.add_windows_for_tile(&windows, &mut next_idx, 0, 200);
 
@@ -460,7 +459,7 @@ mod tests_wps_peaks_helpers {
     struct FixedSizeTestData {
         tile: Tile,
         peaks: Vec<PeakCall>,
-        windows: Vec<(u64, u64, u64)>,
+        windows: Vec<IndexedInterval<u64>>,
         decimals: usize,
     }
 
@@ -487,7 +486,7 @@ mod tests_wps_peaks_helpers {
     struct MultiTileTestData {
         tiles: Vec<Tile>,
         peaks_by_tile: Vec<Vec<PeakCall>>,
-        all_windows: Vec<(u64, u64, u64)>,
+        all_windows: Vec<IndexedInterval<u64>>,
         bin_size: u64,
         chrom_len: u64,
         decimals: usize,
@@ -556,7 +555,7 @@ mod tests_wps_peaks_helpers {
 
     fn buffered_unique_rows(
         tile: &Tile,
-        windows: &[(u64, u64, u64)],
+        windows: &[IndexedInterval<u64>],
         peak_path: &Path,
         decimals: usize,
     ) -> String {
@@ -600,7 +599,7 @@ mod tests_wps_peaks_helpers {
 
     fn buffered_unique_rows_multi(
         tiles: &[Tile],
-        windows: &[(u64, u64, u64)],
+        windows: &[IndexedInterval<u64>],
         peak_paths: &[PathBuf],
         decimals: usize,
     ) -> String {
@@ -661,7 +660,7 @@ mod tests_wps_peaks_helpers {
 
     fn buffered_stats_rows(
         tile: &Tile,
-        windows: &[(u64, u64, u64)],
+        windows: &[IndexedInterval<u64>],
         peak_path: &Path,
         decimals: usize,
     ) -> String {
@@ -691,7 +690,7 @@ mod tests_wps_peaks_helpers {
 
     fn aligned_stats_rows(
         chr: &str,
-        windows: &[(u64, u64, u64)],
+        windows: &[IndexedInterval<u64>],
         contributions: &[WindowStatsContribution],
         decimals: usize,
     ) -> String {
@@ -700,7 +699,10 @@ mod tests_wps_peaks_helpers {
             lookup.insert(contribution.window_idx, contribution);
         }
         let mut out = String::new();
-        for &(start, end, idx) in windows {
+        for window in windows {
+            let start = window.start();
+            let end = window.end();
+            let idx = window.idx();
             if let Some(contribution) = lookup.get(&idx) {
                 let (avg, median) = stats_distance_summary(
                     contribution.distance_sum,
@@ -734,7 +736,7 @@ mod tests_wps_peaks_helpers {
 
     fn buffered_stats_rows_multi(
         tiles: &[Tile],
-        windows: &[(u64, u64, u64)],
+        windows: &[IndexedInterval<u64>],
         peak_paths: &[PathBuf],
         decimals: usize,
     ) -> String {
@@ -800,7 +802,7 @@ mod tests_wps_peaks_helpers {
         chrom_len: u64,
         tile_start: u64,
         tile_end: u64,
-    ) -> Vec<(u64, u64, u64)> {
+    ) -> Vec<IndexedInterval<u64>> {
         if bin_size == 0 || tile_start >= chrom_len {
             return Vec::new();
         }
@@ -810,7 +812,10 @@ mod tests_wps_peaks_helpers {
             let window_start = start;
             let end = (start + bin_size).min(chrom_len);
             let idx = window_start / bin_size;
-            windows.push((window_start, end, idx));
+            windows.push(
+                IndexedInterval::new(window_start, end, idx)
+                    .expect("test fixed-size windows should be valid"),
+            );
             start = start.saturating_add(bin_size);
         }
         windows
@@ -822,7 +827,11 @@ mod tests_wps_peaks_helpers {
             writeln!(
                 temp,
                 "{}\t{}\t{}\t{}\t{}",
-                peak.chromosome, peak.start, peak.end, peak.peak_position, peak.height
+                peak.chromosome,
+                peak.start(),
+                peak.end(),
+                peak.peak_position,
+                peak.height
             )
             .expect("write peak line");
         }
@@ -854,8 +863,8 @@ mod tests_peak_signal_processing {
     };
 
     fn assert_peak(peak: &PeakCall, start: u64, end: u64, height: f32) {
-        assert_eq!(peak.start, start);
-        assert_eq!(peak.end, end);
+        assert_eq!(peak.start(), start);
+        assert_eq!(peak.end(), end);
         assert!(
             (peak.height - height).abs() < 1e-6,
             "expected height {height} got {}",
@@ -864,7 +873,7 @@ mod tests_peak_signal_processing {
     }
 
     #[test]
-    fn peaks_from_signal_detects_single_long_run() {
+    fn peaks_from_signal_detects_single_long_run() -> anyhow::Result<()> {
         // Residual WPS has a 55bp plateau starting at index 10, exceeding Snyder's 50bp minimum,
         // so the run should be kept as a single peak once the helper converts residuals into peaks.
         let mut residual = vec![0.0f32; 80];
@@ -878,14 +887,15 @@ mod tests_peak_signal_processing {
             min_peak_height: 1.0,
             initial_segment_marker: 0,
         };
-        let peaks = peaks_from_wps_values("chrX", 1_000, &residual, None, &opts);
+        let peaks = peaks_from_wps_values("chrX", 1_000, &residual, None, &opts)?;
         assert_eq!(peaks.len(), 1);
         let peak = &peaks[0];
         assert_peak(peak, 1_010, 1_065, 3.0);
+        Ok(())
     }
 
     #[test]
-    fn peaks_from_signal_breaks_runs_on_masked_segments() {
+    fn peaks_from_signal_breaks_runs_on_masked_segments() -> anyhow::Result<()> {
         // Same plateau shape, but we mask a 10bp band (indices 90-99). Snyder requires >=50bp runs,
         // so we extend the positive segments to 10..89 and 100..169 (80bp and 70bp respectively)
         // to stay above the cutoff after the mask splits the trace. Each unmasked run therefore
@@ -903,14 +913,15 @@ mod tests_peak_signal_processing {
             min_peak_height: 1.0,
             initial_segment_marker: 0,
         };
-        let peaks = peaks_from_wps_values("chrY", 500, &residual, Some(&mask), &opts);
+        let peaks = peaks_from_wps_values("chrY", 500, &residual, Some(&mask), &opts)?;
         assert_eq!(peaks.len(), 2);
         assert_peak(&peaks[0], 510, 590, 2.5);
         assert_peak(&peaks[1], 600, 670, 2.5);
+        Ok(())
     }
 
     #[test]
-    fn peaks_from_signal_supports_normalization() {
+    fn peaks_from_signal_supports_normalization() -> anyhow::Result<()> {
         // Raw WPS has a 100bp plateau at +5 surrounded by zeros. A 200bp rolling median stays at 0,
         // so residuals remain >0 and the helper should recover one peak covering the plateau.
         let mut wps = vec![0.0f32; 400];
@@ -924,16 +935,17 @@ mod tests_peak_signal_processing {
             min_peak_height: 1.0,
             initial_segment_marker: 0,
         };
-        let peaks = peaks_from_wps_values("chrZ", 0, &wps, None, &opts);
+        let peaks = peaks_from_wps_values("chrZ", 0, &wps, None, &opts)?;
         assert_eq!(peaks.len(), 1);
         let peak = &peaks[0];
-        assert_eq!(peak.start, 120);
-        assert_eq!(peak.end, 220);
+        assert_eq!(peak.start(), 120);
+        assert_eq!(peak.end(), 220);
         assert!(peak.height > 2.0 && peak.height <= 5.0);
+        Ok(())
     }
 
     #[test]
-    fn stats_ignore_distances_across_masked_regions() {
+    fn stats_ignore_distances_across_masked_regions() -> anyhow::Result<()> {
         // Two positive plateaus separated by a masked band emulate two segments inside one window.
         // The stats helper must not report the cross-gap distance because the segment markers differ.
         let mut residual = vec![0.0f32; 200];
@@ -952,25 +964,47 @@ mod tests_peak_signal_processing {
             min_peak_height: 1.0,
             initial_segment_marker: 0,
         };
-        let peaks = peaks_from_wps_values("chr1", 0, &residual, Some(&mask), &opts);
+        let peaks = peaks_from_wps_values("chr1", 0, &residual, Some(&mask), &opts)?;
         assert_eq!(peaks.len(), 2);
-        let windows = vec![(0, 200, 0)];
+        let windows = indexed_windows(&[(0, 200, 0)]);
         let contributions = compute_window_stats_contributions(&windows, &peaks);
         let stats = contributions.first().expect("stats contribution missing");
         assert_eq!(stats.count, 2);
         assert!(stats.distance_histogram.is_empty());
         assert_eq!(stats.distance_sum, 0.0);
+        Ok(())
     }
 
     fn segmented_peak(position: u64, segment: u64) -> PeakCall {
-        PeakCall {
-            chromosome: "chr1".to_string(),
-            start: position,
-            end: position + 1,
-            peak_position: position,
-            height: 1.0,
-            segment_id: segment,
-        }
+        PeakCall::new(
+            "chr1".to_string(),
+            position,
+            position + 1,
+            position,
+            1.0,
+            segment,
+        )
+        .expect("test peak should be valid")
+    }
+
+    #[test]
+    fn peak_call_requires_peak_position_inside_half_open_interval() {
+        // Half-open interval semantics are [start, end):
+        // - a peak at 99 is before [100,110) and must fail
+        // - a peak at 110 lands exactly on the exclusive end and must also fail
+        let start_error = PeakCall::new("chr1".to_string(), 100, 110, 99, 1.0, 0)
+            .expect_err("peak before interval should fail");
+        assert_eq!(
+            start_error.to_string(),
+            "Peak position 99 must lie inside interval [100, 110)"
+        );
+
+        let end_error = PeakCall::new("chr1".to_string(), 100, 110, 110, 1.0, 0)
+            .expect_err("peak at exclusive end should fail");
+        assert_eq!(
+            end_error.to_string(),
+            "Peak position 110 must lie inside interval [100, 110)"
+        );
     }
 
     #[test]
@@ -1112,7 +1146,7 @@ mod tests_wps_peaks_command {
                     }
                 }),
         );
-        expected_peaks.sort_by_key(|peak| peak.start);
+        expected_peaks.sort_by_key(|peak| peak.start());
         assert_eq!(peak_rows.len(), expected_peaks.len());
         for (actual, expected) in peak_rows.iter().zip(expected_peaks.iter()) {
             assert_eq!(actual.start, expected.start);
@@ -1142,7 +1176,7 @@ mod tests_wps_peaks_command {
         // Windows: binning the 4.7kb contig yields indices 0-4. Populated windows capture the repeated
         // 400bp spacing between adjacent overlaps, so both average and median distances equal 400bp,
         // while windows with fewer than two peaks report `NaN`.
-        let peak_positions: Vec<u64> = expected_peaks.iter().map(|peak| peak.start).collect();
+        let peak_positions: Vec<u64> = expected_peaks.iter().map(|peak| peak.start()).collect();
         let chrom_len_bp = LONG_FRAGMENT_STARTS.last().copied().unwrap_or(0) as u64
             + LONG_FRAGMENT_LENGTH as u64
             + 500;

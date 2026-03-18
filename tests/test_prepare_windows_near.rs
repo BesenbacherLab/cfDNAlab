@@ -23,17 +23,17 @@ mod tests_prepare_windows_near {
     use tempfile::NamedTempFile;
 
     fn build_window(chrom: &str, start: u32, end: u32, input_label: &str) -> Window {
-        Window {
-            chrom: Arc::from(chrom),
-            original_start: start,
-            original_end: end,
-            resized_start: start,
-            resized_end: end,
-            merged: false,
-            label_tuples: vec![LabelTuple::new(input_label.to_string())],
-            group_key: input_label.to_string(),
-            score: None,
-        }
+        Window::from_bounds(
+            Arc::from(chrom),
+            start,
+            end,
+            start,
+            end,
+            vec![LabelTuple::new(input_label.to_string())],
+            input_label.to_string(),
+            None,
+        )
+        .expect("test window should be valid")
     }
 
     fn label_schema_from_compose(tokens: &[&str]) -> LabelSchema {
@@ -58,17 +58,17 @@ mod tests_prepare_windows_near {
         idx
     }
 
+    fn near_interval(start: u32, end: u32, group_id: Option<u32>, strand: Strand) -> NearInterval {
+        NearInterval::from_coords(start, end, group_id, strand)
+            .expect("test near interval should be valid")
+    }
+
     #[test]
     fn nearest_edge_distance_reports_negative_upstream_on_plus_strand() {
         // Arrange
         // Interval on + strand: upstream edge is left coordinate 100
         // Window lies to the left (50-60), closest point to edge 100 is end=60 -> distance -40
-        let interval = NearInterval {
-            start: 100,
-            end: 110,
-            group_id: None,
-            strand: Strand::Plus,
-        };
+        let interval = near_interval(100, 110, None, Strand::Plus);
         let mut chrom = NearChrom {
             intervals: vec![interval],
             cursor: 0,
@@ -104,12 +104,7 @@ mod tests_prepare_windows_near {
         // Arrange
         // Interval on - strand: upstream edge is right coordinate 110
         // Window lies to the right (130-140); genomic distance is +20, but strand flips sign
-        let interval = NearInterval {
-            start: 100,
-            end: 110,
-            group_id: None,
-            strand: Strand::Minus,
-        };
+        let interval = near_interval(100, 110, None, Strand::Minus);
         let mut chrom = NearChrom {
             intervals: vec![interval],
             cursor: 0,
@@ -145,18 +140,8 @@ mod tests_prepare_windows_near {
         // Arrange
         // Window 15-25 is 5 bp away from right edge of left interval (10) and left edge of right interval (30)
         let intervals = vec![
-            NearInterval {
-                start: 0,
-                end: 10,
-                group_id: None,
-                strand: Strand::Plus,
-            },
-            NearInterval {
-                start: 30,
-                end: 40,
-                group_id: None,
-                strand: Strand::Plus,
-            },
+            near_interval(0, 10, None, Strand::Plus),
+            near_interval(30, 40, None, Strand::Plus),
         ];
         let mut chrom = NearChrom {
             intervals,
@@ -221,12 +206,7 @@ mod tests_prepare_windows_near {
     fn apply_near_annotations_drops_when_direction_mismatch_and_distance_max() {
         // Arrange
         // Near interval exists downstream, but we only accept upstream; distance_max forces drop
-        let interval = NearInterval {
-            start: 100,
-            end: 110,
-            group_id: None,
-            strand: Strand::Plus,
-        };
+        let interval = near_interval(100, 110, None, Strand::Plus);
         let mut near_index = cfdnalab::commands::prepare_windows::near_file::NearIndex::default();
         near_index.per_chrom.insert(
             "chr1".to_string(),
@@ -260,18 +240,8 @@ mod tests_prepare_windows_near {
         // Window equidistant to upstream and downstream sites with group names; tie annotate
         // produces two tuples that render to comma-joined composition
         let intervals = vec![
-            NearInterval {
-                start: 0,
-                end: 10,
-                group_id: Some(0),
-                strand: Strand::Plus,
-            },
-            NearInterval {
-                start: 30,
-                end: 40,
-                group_id: Some(1),
-                strand: Strand::Plus,
-            },
+            near_interval(0, 10, Some(0), Strand::Plus),
+            near_interval(30, 40, Some(1), Strand::Plus),
         ];
         let mut near_index = cfdnalab::commands::prepare_windows::near_file::NearIndex::default();
         near_index.group_id_to_name = vec!["LEFT".to_string(), "RIGHT".to_string()];
@@ -325,12 +295,7 @@ mod tests_prepare_windows_near {
     fn nearest_edge_distance_reports_overlap_as_zero() {
         // Arrange
         // Window overlaps interval (5-15 vs 10-20) so distance must be 0 regardless of edge/direction
-        let interval = NearInterval {
-            start: 10,
-            end: 20,
-            group_id: None,
-            strand: Strand::Plus,
-        };
+        let interval = near_interval(10, 20, None, Strand::Plus);
         let mut chrom = NearChrom {
             intervals: vec![interval],
             cursor: 0,
@@ -365,12 +330,7 @@ mod tests_prepare_windows_near {
     fn nearest_edge_distance_falls_back_for_unknown_strand_on_directional_edge() {
         // Arrange
         // Unknown strand causes upstream edge mode to behave like nearest; window right of interval so side downstream
-        let interval = NearInterval {
-            start: 100,
-            end: 110,
-            group_id: None,
-            strand: Strand::Unknown,
-        };
+        let interval = near_interval(100, 110, None, Strand::Unknown);
         let mut chrom = NearChrom {
             intervals: vec![interval],
             cursor: 0,
@@ -411,12 +371,7 @@ mod tests_prepare_windows_near {
         near_index.per_chrom.insert(
             "chr1".to_string(),
             NearChrom {
-                intervals: vec![NearInterval {
-                    start: 10,
-                    end: 12,
-                    group_id: None,
-                    strand: Strand::Plus,
-                }],
+                intervals: vec![near_interval(10, 12, None, Strand::Plus)],
                 cursor: 0,
             },
         );
@@ -429,8 +384,9 @@ mod tests_prepare_windows_near {
         let bins = parse_distance_bins(cfg.distance_bins.as_ref().unwrap())?;
 
         let mut window = build_window("chr1", 20, 30, "A");
-        window.resized_start = 15;
-        window.resized_end = 35;
+        window
+            .set_resized_bounds(15, 35)
+            .expect("resized test window should stay valid");
         let windows = vec![window]; // resized coordinates now differ from original
 
         // Act
@@ -459,12 +415,7 @@ mod tests_prepare_windows_near {
         near_index.per_chrom.insert(
             "chr1".to_string(),
             NearChrom {
-                intervals: vec![NearInterval {
-                    start: 10,
-                    end: 12,
-                    group_id: None,
-                    strand: Strand::Plus,
-                }],
+                intervals: vec![near_interval(10, 12, None, Strand::Plus)],
                 cursor: 0,
             },
         );
@@ -614,12 +565,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn near_direction_upstream_filters_out_downstream_hit() {
         // Arrange: window downstream of near interval, direction=upstream should block it
-        let intervals = vec![NearInterval {
-            start: 0,
-            end: 10,
-            group_id: None,
-            strand: Strand::Plus,
-        }];
+        let intervals = vec![near_interval(0, 10, None, Strand::Plus)];
         let mut chrom = NearChrom {
             intervals,
             cursor: 0,
@@ -642,12 +588,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn near_direction_downstream_filters_out_upstream_hit() {
         // Arrange: window upstream of near interval, direction=downstream should block it
-        let intervals = vec![NearInterval {
-            start: 100,
-            end: 110,
-            group_id: None,
-            strand: Strand::Plus,
-        }];
+        let intervals = vec![near_interval(100, 110, None, Strand::Plus)];
         let mut chrom = NearChrom {
             intervals,
             cursor: 0,
@@ -671,12 +612,7 @@ mod tests_prepare_windows_near {
     fn bins_applied_when_no_hit_sets_no_near_labels() -> Result<()> {
         // Arrange: chromosome present in near index but window falls outside direction/edge filter.
         // Current behavior keeps the window unchanged when `distance_max` is unset.
-        let intervals = vec![NearInterval {
-            start: 0,
-            end: 10,
-            group_id: None,
-            strand: Strand::Plus,
-        }];
+        let intervals = vec![near_interval(0, 10, None, Strand::Plus)];
         let near_index = make_near_index(intervals);
         let mut cfg = PrepareConfig::default();
         cfg.near_direction = NearDirection::Upstream; // window downstream
@@ -708,12 +644,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn touch_is_treated_as_overlap_with_zero_distance() {
         // Arrange: window ends exactly where interval starts; treated as overlap with distance 0
-        let intervals = vec![NearInterval {
-            start: 20,
-            end: 30,
-            group_id: None,
-            strand: Strand::Plus,
-        }];
+        let intervals = vec![near_interval(20, 30, None, Strand::Plus)];
         let mut chrom = NearChrom {
             intervals,
             cursor: 0,
@@ -748,18 +679,8 @@ mod tests_prepare_windows_near {
     fn upstream_edge_respects_strand_when_strand_column_present() {
         // Arrange: same genomic interval annotated on + and -; upstream edge differs by strand
         let intervals = vec![
-            NearInterval {
-                start: 100,
-                end: 110,
-                group_id: None,
-                strand: Strand::Plus,
-            },
-            NearInterval {
-                start: 200,
-                end: 210,
-                group_id: None,
-                strand: Strand::Minus,
-            },
+            near_interval(100, 110, None, Strand::Plus),
+            near_interval(200, 210, None, Strand::Minus),
         ];
         let mut chrom = NearChrom {
             intervals,
@@ -817,18 +738,8 @@ mod tests_prepare_windows_near {
     fn downstream_edge_respects_strand_when_strand_column_present() {
         // Arrange: same as prior but downstream edge selection
         let intervals = vec![
-            NearInterval {
-                start: 100,
-                end: 110,
-                group_id: None,
-                strand: Strand::Plus,
-            },
-            NearInterval {
-                start: 200,
-                end: 210,
-                group_id: None,
-                strand: Strand::Minus,
-            },
+            near_interval(100, 110, None, Strand::Plus),
+            near_interval(200, 210, None, Strand::Minus),
         ];
         let mut chrom = NearChrom {
             intervals,
@@ -884,12 +795,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn distance_max_with_overlap_keeps_overlap() {
         // Arrange: overlap distance is 0, so distance_max should keep it even when set small
-        let intervals = vec![NearInterval {
-            start: 10,
-            end: 20,
-            group_id: None,
-            strand: Strand::Plus,
-        }];
+        let intervals = vec![near_interval(10, 20, None, Strand::Plus)];
         let near_index = make_near_index(intervals);
         let mut cfg = PrepareConfig::default();
         cfg.distance_max = Some(1);
@@ -912,12 +818,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn unknown_strand_upstream_falls_back_to_nearest_for_distance() {
         // Arrange: unknown strand and upstream edge should behave like nearest
-        let intervals = vec![NearInterval {
-            start: 100,
-            end: 110,
-            group_id: None,
-            strand: Strand::Unknown,
-        }];
+        let intervals = vec![near_interval(100, 110, None, Strand::Unknown)];
         let mut chrom = NearChrom {
             intervals,
             cursor: 0,
@@ -953,12 +854,7 @@ mod tests_prepare_windows_near {
         // Arrange: many intervals; ensure cursor advances without quadratic behavior by checking it reaches near end
         let mut intervals: Vec<NearInterval> = Vec::new();
         for i in 0..1000 {
-            intervals.push(NearInterval {
-                start: i * 100,
-                end: i * 100 + 10,
-                group_id: None,
-                strand: Strand::Plus,
-            });
+            intervals.push(near_interval(i * 100, i * 100 + 10, None, Strand::Plus));
         }
         let mut chrom = NearChrom {
             intervals,
@@ -1048,12 +944,7 @@ mod tests_prepare_windows_near {
     fn cursor_rewinds_when_window_moves_backward() {
         // Arrange
         // First call moves cursor forward; second call with earlier window should still find upstream interval
-        let interval = NearInterval {
-            start: 10,
-            end: 20,
-            group_id: None,
-            strand: Strand::Plus,
-        };
+        let interval = near_interval(10, 20, None, Strand::Plus);
         let mut chrom = NearChrom {
             intervals: vec![interval],
             cursor: 0,
@@ -1098,12 +989,7 @@ mod tests_prepare_windows_near {
     fn overlapping_window_kept_when_direction_is_upstream_only() {
         // Arrange
         // Overlap should always count as a hit even if direction filter would otherwise block
-        let interval = NearInterval {
-            start: 10,
-            end: 20,
-            group_id: None,
-            strand: Strand::Plus,
-        };
+        let interval = near_interval(10, 20, None, Strand::Plus);
         let mut chrom = NearChrom {
             intervals: vec![interval],
             cursor: 0,
@@ -1137,12 +1023,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn distance_max_drops_when_direction_and_edge_block_hits() {
         // Arrange: interval exists but edge/direction filter makes it invisible; distance_max should drop window
-        let intervals = vec![NearInterval {
-            start: 100,
-            end: 110,
-            group_id: None,
-            strand: Strand::Plus,
-        }];
+        let intervals = vec![near_interval(100, 110, None, Strand::Plus)];
         let near_index = make_near_index(intervals);
         let mut cfg = PrepareConfig::default();
         cfg.distance_max = Some(50);
@@ -1171,12 +1052,7 @@ mod tests_prepare_windows_near {
         idx.per_chrom.insert(
             "chr1".to_string(),
             NearChrom {
-                intervals: vec![NearInterval {
-                    start: 0,
-                    end: 10,
-                    group_id: None,
-                    strand: Strand::Plus,
-                }],
+                intervals: vec![near_interval(0, 10, None, Strand::Plus)],
                 cursor: 0,
             },
         );
@@ -1225,12 +1101,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn signed_bins_split_around_zero() -> Result<()> {
         // Arrange: signed mode, bins straddle zero to classify upstream/overlap/downstream
-        let near_index = make_near_index(vec![NearInterval {
-            start: 100,
-            end: 110,
-            group_id: None,
-            strand: Strand::Plus,
-        }]);
+        let near_index = make_near_index(vec![near_interval(100, 110, None, Strand::Plus)]);
         let mut cfg = PrepareConfig::default();
         cfg.distance_sign = DistSign::Signed;
         cfg.distance_bins = Some(vec![
@@ -1282,12 +1153,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn absolute_mode_still_emits_direction_prefix() -> Result<()> {
         // Arrange: distance_sign absolute but win-direction should include +/- based on position
-        let near_index = make_near_index(vec![NearInterval {
-            start: 100,
-            end: 110,
-            group_id: None,
-            strand: Strand::Plus,
-        }]);
+        let near_index = make_near_index(vec![near_interval(100, 110, None, Strand::Plus)]);
         let mut cfg = PrepareConfig::default();
         cfg.distance_sign = DistSign::Absolute;
         cfg.out_labels = vec!["win-direction".to_string()];
@@ -1311,12 +1177,7 @@ mod tests_prepare_windows_near {
     #[test]
     fn far_hit_dropped_by_distance_max_absolute() {
         // Arrange: absolute distance beyond max drops window
-        let near_index = make_near_index(vec![NearInterval {
-            start: 0,
-            end: 10,
-            group_id: None,
-            strand: Strand::Plus,
-        }]);
+        let near_index = make_near_index(vec![near_interval(0, 10, None, Strand::Plus)]);
         let mut cfg = PrepareConfig::default();
         cfg.distance_sign = DistSign::Absolute;
         cfg.distance_max = Some(5);
@@ -1340,12 +1201,7 @@ mod tests_prepare_windows_near {
         // Arrange: non-overlapping downstream window. Left/right modes should differ.
         // Overlaps are defined to return distance 0 regardless of edge choice, so the
         // window must sit fully outside the interval to exercise edge asymmetry.
-        let intervals = vec![NearInterval {
-            start: 0,
-            end: 100,
-            group_id: None,
-            strand: Strand::Plus,
-        }];
+        let intervals = vec![near_interval(0, 100, None, Strand::Plus)];
         let mut chrom_left = NearChrom {
             intervals: intervals.clone(),
             cursor: 0,
@@ -1414,12 +1270,7 @@ mod tests_prepare_windows_near {
     fn signed_bins_classify_upstream_overlap_and_downstream() -> Result<()> {
         // Arrange
         // Signed distances with bins that straddle zero; upstream negative, downstream positive, overlap zero
-        let near_index = make_near_index(vec![NearInterval {
-            start: 1000,
-            end: 1010,
-            group_id: None,
-            strand: Strand::Plus,
-        }]);
+        let near_index = make_near_index(vec![near_interval(1000, 1010, None, Strand::Plus)]);
         let mut cfg = PrepareConfig::default();
         cfg.distance_sign = DistSign::Signed;
         cfg.distance_bins = Some(vec![
@@ -1490,12 +1341,7 @@ mod tests_prepare_windows_near {
         // dist1: upstream beyond -2500
         // prox: between -2500 and +500 (inclusive)
         // dist2: downstream beyond +500
-        let near_index = make_near_index(vec![NearInterval {
-            start: 5000,
-            end: 5001,
-            group_id: None,
-            strand: Strand::Plus,
-        }]);
+        let near_index = make_near_index(vec![near_interval(5000, 5001, None, Strand::Plus)]);
         let mut cfg = PrepareConfig::default();
         cfg.distance_sign = DistSign::Signed;
         cfg.distance_bins = Some(vec![

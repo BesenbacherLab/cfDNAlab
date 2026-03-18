@@ -1,7 +1,5 @@
 #![cfg(feature = "cmd_fcoverage")]
 
-// TODO: Check manually - generated but not validated!
-
 #[cfg(test)]
 mod tests_coverage_prefix {
     use anyhow::Result;
@@ -24,6 +22,14 @@ mod tests_coverage_prefix {
     }
 
     fn intervals(entries: &[(u64, u64)]) -> Vec<Interval<u64>> {
+        Interval::from_tuples(entries).expect("test intervals should be valid")
+    }
+
+    fn interval_u32(start: u32, end: u32) -> Interval<u32> {
+        Interval::new(start, end).expect("test interval should be valid")
+    }
+
+    fn intervals_u32(entries: &[(u32, u32)]) -> Vec<Interval<u32>> {
         Interval::from_tuples(entries).expect("test intervals should be valid")
     }
 
@@ -107,8 +113,9 @@ mod tests_coverage_prefix {
         // [200,250): 50 * 0.87 = 43.5
         // [250,300): 50 * 0.0 = 0.0
         // Total including masked = 187.0; excluding masked = 167.0
-        let sum_all = cp.sum_coverage(100, 300, false)?;
-        let sum_ok = cp.sum_coverage(100, 300, true)?;
+        let query = interval_u32(100, 300);
+        let sum_all = cp.sum_coverage(query, false)?;
+        let sum_ok = cp.sum_coverage(query, true)?;
 
         let cov_vec = cp.coverage().unwrap().to_vec(); // clones, borrow ends here
         let manual = cov_vec[100..300].iter().map(|&x| x as f64).sum::<f64>();
@@ -118,8 +125,8 @@ mod tests_coverage_prefix {
         assert!(deq(sum_all, 187.0, 1e-6));
         assert!(deq(sum_ok, 167.0, 1e-6));
 
-        let avg_all = cp.avg_coverage(100, 300, false)?;
-        let avg_ok = cp.avg_coverage(100, 300, true)?;
+        let avg_all = cp.avg_coverage(query, false)?;
+        let avg_ok = cp.avg_coverage(query, true)?;
         assert!(feq(avg_all, 187.0 / 200.0, 1e-6));
         assert!(feq(avg_ok, 167.0 / 180.0, 1e-6)); // 20 masked bases removed from denominator
 
@@ -158,14 +165,15 @@ mod tests_coverage_prefix {
             gc_tag: Default::default(),
         })?;
         // Now any query should complain coverage not finalized
-        let err = cp.sum_coverage(0, 40, false).unwrap_err();
+        let err = cp.sum_coverage(interval_u32(0, 40), false).unwrap_err();
         assert!(format!("{err}").contains("coverage not finalized"));
 
-        // Re-finalize and query again
+        // Re-finalize and query again.
+        // Manual expectation: [10,20) contributes 10 bases and [20,30) contributes another 10,
+        // so the total sum over [0,40) is 20.
         cp.finalize_coverage(false);
         cp.build_indexes(false)?;
-        let sum = cp.sum_coverage(0, 40, false)?;
-        // Expected sum = 10 + 10 = 20
+        let sum = cp.sum_coverage(interval_u32(0, 40), false)?;
         assert!(deq(sum, 20.0, 1e-9));
         Ok(())
     }
@@ -209,7 +217,7 @@ mod tests_coverage_prefix {
         // No blacklist
         cp.build_indexes(true)?;
 
-        let intervals = vec![(0, 10), (10, 110), (100, 300), (350, 450), (900, 1000)];
+        let intervals = intervals_u32(&[(0, 10), (10, 110), (100, 300), (350, 450), (900, 1000)]);
         let sums_ser = cp.bulk_sum_coverage(&intervals, false, false)?;
         let sums_par = cp.bulk_sum_coverage(&intervals, false, true)?;
         assert_eq!(sums_ser.len(), intervals.len());
@@ -297,7 +305,7 @@ mod tests_coverage_prefix {
             gc_tag: Default::default(),
         })?;
         cp.finalize_coverage(true);
-        let err = cp.sum_coverage(10, 60, false).unwrap_err();
+        let err = cp.sum_coverage(interval_u32(10, 60), false).unwrap_err();
         assert!(format!("{err}").contains("exceeds sequence length"));
 
         Ok(())
@@ -311,8 +319,9 @@ mod tests_coverage_prefix {
         assert_eq!(cov.len(), 0);
         cp.build_indexes(true)?;
         // Bulk queries on empty set of intervals
-        let sums = cp.bulk_sum_coverage(&[], false, false)?;
-        let avgs = cp.bulk_avg_coverage(&[], false, false)?;
+        let empty: Vec<Interval<u32>> = Vec::new();
+        let sums = cp.bulk_sum_coverage(&empty, false, false)?;
+        let avgs = cp.bulk_avg_coverage(&empty, false, false)?;
         assert!(sums.is_empty());
         assert!(avgs.is_empty());
         Ok(())
@@ -328,12 +337,11 @@ mod tests_coverage_prefix {
             gc_tag: Default::default(),
         })?;
         let cov = cp.finalize_coverage(true);
+        // The only base 0 lies inside the only fragment [0,1), so both sum and average must be 1.
         assert_eq!(cov, &[1.0]);
         cp.build_indexes(true)?;
-        assert!(deq(cp.sum_coverage(0, 1, false)?, 1.0, 1e-12));
-        assert!(feq(cp.avg_coverage(0, 1, false)?, 1.0, 1e-6));
-        // Zero-width interval average
-        assert!(feq(cp.avg_coverage(1, 1, false)?, 0.0, 1e-6));
+        assert!(deq(cp.sum_coverage(interval_u32(0, 1), false)?, 1.0, 1e-12));
+        assert!(feq(cp.avg_coverage(interval_u32(0, 1), false)?, 1.0, 1e-6));
         Ok(())
     }
 
@@ -348,12 +356,14 @@ mod tests_coverage_prefix {
         })?;
         cp.finalize_coverage(true);
         cp.build_indexes(true)?;
-        // No blacklist present, excluding should equal including
-        let a = cp.sum_coverage(0, 200, false)?;
-        let b = cp.sum_coverage(0, 200, true)?;
+        // No blacklist is set, so the "exclude masked" path has nothing to exclude and must match
+        // the inclusive path exactly for both sums and averages.
+        let query = interval_u32(0, 200);
+        let a = cp.sum_coverage(query, false)?;
+        let b = cp.sum_coverage(query, true)?;
         assert!(deq(a, b, 1e-12));
-        let a = cp.avg_coverage(0, 200, false)?;
-        let b = cp.avg_coverage(0, 200, true)?;
+        let a = cp.avg_coverage(query, false)?;
+        let b = cp.avg_coverage(query, true)?;
         assert!(feq(a, b, 1e-6));
         Ok(())
     }
@@ -369,12 +379,13 @@ mod tests_coverage_prefix {
         })?;
         cp.finalize_coverage(true);
         cp.build_indexes(false)?;
-        let s1 = cp.sum_coverage(0, 50, false)?;
-        let a1 = cp.avg_coverage(0, 50, false)?;
-        // Rebuild indexes again
+        let query = interval_u32(0, 50);
+        let s1 = cp.sum_coverage(query, false)?;
+        let a1 = cp.avg_coverage(query, false)?;
+        // Rebuilding indexes must not change any derived prefix-sum answers.
         cp.build_indexes(true)?;
-        let s2 = cp.sum_coverage(0, 50, false)?;
-        let a2 = cp.avg_coverage(0, 50, false)?;
+        let s2 = cp.sum_coverage(query, false)?;
+        let a2 = cp.avg_coverage(query, false)?;
         assert!(deq(s1, s2, 1e-12));
         assert!(feq(a1, a2, 1e-6));
         Ok(())
@@ -391,8 +402,9 @@ mod tests_coverage_prefix {
         })?;
         cp.finalize_coverage(true);
         cp.build_indexes(true)?;
-        let sums = cp.bulk_sum_coverage(&[], false, false)?;
-        let avgs = cp.bulk_avg_coverage(&[], false, false)?;
+        let empty: Vec<Interval<u32>> = Vec::new();
+        let sums = cp.bulk_sum_coverage(&empty, false, false)?;
+        let avgs = cp.bulk_avg_coverage(&empty, false, false)?;
         assert!(sums.is_empty());
         assert!(avgs.is_empty());
         Ok(())
@@ -408,7 +420,7 @@ mod tests_coverage_prefix {
             gc_tag: Default::default(),
         })?;
         cp.finalize_coverage(true);
-        // In-bounds positions
+        // Coverage is 1 exactly on bases 1,2,3 because the fragment is [1,4).
         let vals = cp.coverage_at_positions(&[0, 1, 3, 4])?;
         assert_eq!(vals, vec![0.0, 1.0, 1.0, 0.0]);
         // Out-of-bounds should error
@@ -442,19 +454,20 @@ mod tests_coverage_prefix {
         cp.build_indexes(true)?;
 
         // Sum including mask
-        let s_all = cp.sum_coverage(0, 100, false)?;
+        let full_query = interval_u32(0, 100);
+        let s_all = cp.sum_coverage(full_query, false)?;
         // Manual sum: 20*1 + 50*0.5 = 45.0
         assert!(deq(s_all, 45.0, 1e-12));
 
         // Excluding masked removes [20,25) and [80,100) from numerator
-        let s_exc = cp.sum_coverage(0, 100, true)?;
+        let s_exc = cp.sum_coverage(full_query, true)?;
         // Manual excluding removes 5*1 + 10*0.5 = 10
         assert!(deq(s_exc, 35.0, 1e-12));
 
         // Averages
-        let a_all = cp.avg_coverage(0, 100, false)?;
+        let a_all = cp.avg_coverage(full_query, false)?;
         assert!(feq(a_all, 45.0 / 100.0, 1e-6));
-        let a_exc = cp.avg_coverage(0, 100, true)?;
+        let a_exc = cp.avg_coverage(full_query, true)?;
         // Denominator excludes 5 + 20 = 25 masked bases
         assert!(feq(a_exc, 35.0 / 75.0, 1e-6));
 
@@ -500,15 +513,14 @@ mod tests_coverage_prefix {
 
         cp.build_indexes(true)?;
 
-        let intervals: Vec<(u32, u32)> = vec![
-            (0, 0),
+        let intervals = intervals_u32(&[
             (0, 1000),
             (250, 260),
             (390, 410),  // spans into masked region
             (440, 460),  // mostly masked
             (700, 900),  // fully masked
             (900, 1000), // masked then unmasked
-        ];
+        ]);
 
         let s_ser = cp.bulk_sum_coverage(&intervals, true, false)?;
         let s_par = cp.bulk_sum_coverage(&intervals, true, true)?;
@@ -548,13 +560,8 @@ mod tests_coverage_prefix {
         cp.finalize_coverage(true);
         cp.build_indexes(true)?;
         // Full range
-        assert!(deq(cp.sum_coverage(0, 10, false)?, 10.0, 1e-12));
-        // Left edge zero-width
-        assert!(feq(cp.avg_coverage(0, 0, false)?, 0.0, 1e-6));
-        // Right edge zero-width
-        assert!(feq(cp.avg_coverage(10, 10, false)?, 0.0, 1e-6));
-        // Single base at last position
-        assert!(feq(cp.avg_coverage(9, 10, false)?, 1.0, 1e-6));
+        assert!(deq(cp.sum_coverage(interval_u32(0, 10), false)?, 10.0, 1e-12));
+        assert!(feq(cp.avg_coverage(interval_u32(9, 10), false)?, 1.0, 1e-6));
         Ok(())
     }
 
@@ -580,10 +587,11 @@ mod tests_coverage_prefix {
         let cov = cp.finalize_coverage(true).to_vec();
         cp.build_indexes(true)?;
 
-        let intervals = vec![(0, 200), (0, 20), (20, 60), (50, 120), (140, 160)];
-        for &(a, b) in &intervals {
+        let intervals = intervals_u32(&[(0, 200), (0, 20), (20, 60), (50, 120), (140, 160)]);
+        for interval in &intervals {
+            let (a, b) = interval.as_tuple();
             let sum_manual: f64 = cov[a as usize..b as usize].iter().map(|&x| x as f64).sum();
-            let sum_indexed = cp.sum_coverage(a, b, false)?;
+            let sum_indexed = cp.sum_coverage(*interval, false)?;
             assert!(deq(sum_manual, sum_indexed, 1e-9));
         }
         Ok(())
@@ -629,7 +637,8 @@ mod tests_coverage_prefix {
         })?;
         cp.finalize_coverage(false); // Cannot refinalize if delta is dropped
         cp.build_indexes(false)?;
-        let s1 = cp.sum_coverage(0, 100, false)?;
+        let full_query = interval_u32(0, 100);
+        let s1 = cp.sum_coverage(full_query, false)?;
         assert!(deq(s1, 10.0, 1e-12));
 
         // Add more fragments, which should invalidate coverage and indexes
@@ -640,13 +649,13 @@ mod tests_coverage_prefix {
             gc_tag: Default::default(),
         })?;
         // Now querying should fail because coverage not finalized
-        let err = cp.avg_coverage(0, 100, false).unwrap_err();
+        let err = cp.avg_coverage(full_query, false).unwrap_err();
         assert!(format!("{err}").contains("coverage not finalized"));
 
         // Finalize again and rebuild
         cp.finalize_coverage(true);
         cp.build_indexes(true)?;
-        let s2 = cp.sum_coverage(0, 100, false)?;
+        let s2 = cp.sum_coverage(full_query, false)?;
         assert!(deq(s2, 20.0, 1e-12));
         Ok(())
     }
@@ -667,11 +676,11 @@ mod tests_coverage_prefix {
         cp.build_indexes(true)?;
 
         // Only read spans counted: 10..20 (10 bp) and 40..50 (10 bp) => 20
-        let s = cp.sum_coverage(10, 50, false)?;
+        let s = cp.sum_coverage(interval_u32(10, 50), false)?;
         assert!(deq(s, 20.0, 1e-9));
 
         // Gap 20..40 should be zero
-        let gap = cp.sum_coverage(20, 40, false)?;
+        let gap = cp.sum_coverage(interval_u32(20, 40), false)?;
         assert!(deq(gap, 0.0, 1e-9));
         Ok(())
     }
@@ -689,7 +698,7 @@ mod tests_coverage_prefix {
         cp.finalize_coverage(true);
         cp.build_indexes(true)?;
 
-        let s = cp.sum_coverage(10, 50, false)?;
+        let s = cp.sum_coverage(interval_u32(10, 50), false)?;
         assert!(deq(s, 40.0, 1e-9));
         Ok(())
     }
@@ -709,11 +718,11 @@ mod tests_coverage_prefix {
         cp.build_indexes(true)?;
 
         // 10..20 (10) + 25..50 (25) = 35
-        let s = cp.sum_coverage(10, 50, false)?;
+        let s = cp.sum_coverage(interval_u32(10, 50), false)?;
         assert!(deq(s, 35.0, 1e-9));
 
         // The deletion hole 20..25 is zero
-        let hole = cp.sum_coverage(20, 25, false)?;
+        let hole = cp.sum_coverage(interval_u32(20, 25), false)?;
         assert!(deq(hole, 0.0, 1e-9));
         Ok(())
     }
@@ -731,7 +740,7 @@ mod tests_coverage_prefix {
         cp.build_indexes(true)?;
 
         // 10..20 (10) + 25..30 (5) + 40..50 (10) = 25
-        let s = cp.sum_coverage(10, 50, false)?;
+        let s = cp.sum_coverage(interval_u32(10, 50), false)?;
         assert!(deq(s, 25.0, 1e-9));
         Ok(())
     }
@@ -762,7 +771,11 @@ mod tests_window_results {
         commands::fcoverage::window_results::{
             CoverageOutput, CoverageWindowAction, WindowValue, compute_window_outputs,
         },
-        shared::{coverage::Coverage, fragment::minimal_fragment::Fragment, interval::Interval},
+        shared::{
+            coverage::Coverage,
+            fragment::minimal_fragment::Fragment,
+            interval::{IndexedInterval, Interval},
+        },
     };
 
     fn deq_f32(a: f32, b: f32, tol: f32) -> bool {
@@ -774,6 +787,10 @@ mod tests_window_results {
 
     fn intervals(entries: &[(u64, u64)]) -> Vec<Interval<u64>> {
         Interval::from_tuples(entries).expect("test intervals should be valid")
+    }
+
+    fn indexed_windows(entries: &[(u64, u64, u64)]) -> Vec<IndexedInterval<u64>> {
+        IndexedInterval::from_tuples(entries).expect("test windows should be valid")
     }
 
     fn make_cp_with_simple_fragments(len: u32) -> Result<Coverage> {
@@ -800,7 +817,7 @@ mod tests_window_results {
         let mut cp = make_cp_with_simple_fragments(100)?;
 
         // Average across [10,20) and [30,40) should both be 1.0
-        let windows = vec![(10_u64, 20_u64, 0_u64), (30, 40, 1)];
+        let windows = indexed_windows(&[(10_u64, 20_u64, 0_u64), (30, 40, 1)]);
         let out = compute_window_outputs(
             &mut cp,
             Some(&windows),
@@ -812,9 +829,9 @@ mod tests_window_results {
             CoverageOutput::PerWindow { action, results } => {
                 assert_eq!(action, CoverageWindowAction::Average);
                 assert_eq!(results.len(), 2);
-                assert_eq!(results[0].start, 10);
-                assert_eq!(results[0].end, 20);
-                assert_eq!(results[0].original_idx, 0);
+                assert_eq!(results[0].start(), 10);
+                assert_eq!(results[0].end(), 20);
+                assert_eq!(results[0].original_idx(), 0);
                 match results[0].value {
                     WindowValue::Average(v) => assert!(deq_f32(v, 1.0, 1e-6)),
                     _ => return Err(anyhow!("unexpected payload for Average")),
@@ -835,7 +852,7 @@ mod tests_window_results {
         let mut cp = make_cp_with_simple_fragments(100)?;
 
         // Totals should be window length since coverage is 1.0 in-block
-        let windows = vec![(10_u64, 20_u64, 0_u64), (30, 40, 1)];
+        let windows = indexed_windows(&[(10_u64, 20_u64, 0_u64), (30, 40, 1)]);
         let out =
             compute_window_outputs(&mut cp, Some(&windows), CoverageWindowAction::Total, false)?;
 
@@ -874,7 +891,7 @@ mod tests_window_results {
         cp.set_blacklist_mask(&intervals(&[(9, 12)]))?;
 
         // Window [8, 13) -> positions 8,9,10,11,12
-        let windows = vec![(8_u64, 13_u64, 0_u64)];
+        let windows = indexed_windows(&[(8_u64, 13_u64, 0_u64)]);
         let out = compute_window_outputs(
             &mut cp,
             Some(&windows),
@@ -919,9 +936,9 @@ mod tests_window_results {
         )?;
 
         match out {
-            CoverageOutput::WholePositional { start, end, values } => {
-                assert_eq!(start, 0);
-                assert_eq!(end, 50);
+            CoverageOutput::WholePositional { interval, values } => {
+                assert_eq!(interval.start(), 0);
+                assert_eq!(interval.end(), 50);
                 assert_eq!(values.len(), 50);
                 // Spot check
                 assert!(deq_f32(values[9], 0.0, 1e-6)); // Just before first fragment
@@ -939,7 +956,7 @@ mod tests_window_results {
     fn compute_windows_errors_if_coverage_not_finalized() -> Result<()> {
         let mut cp = Coverage::new(30);
         // Do not finalize_coverage here
-        let windows = vec![(0_u64, 10_u64, 0_u64)];
+        let windows = indexed_windows(&[(0_u64, 10_u64, 0_u64)]);
         let res =
             compute_window_outputs(&mut cp, Some(&windows), CoverageWindowAction::Total, false);
         assert!(res.is_err());
@@ -949,7 +966,7 @@ mod tests_window_results {
     #[test]
     fn compute_windows_errors_on_out_of_bounds() -> Result<()> {
         let mut cp = make_cp_with_simple_fragments(50)?;
-        let windows = vec![(0_u64, 51_u64, 0_u64)]; // end > length
+        let windows = indexed_windows(&[(0_u64, 51_u64, 0_u64)]); // end > length
         let res =
             compute_window_outputs(&mut cp, Some(&windows), CoverageWindowAction::Total, false);
         assert!(res.is_err());

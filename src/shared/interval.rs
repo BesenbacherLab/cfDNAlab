@@ -6,7 +6,7 @@ use std::ops::Sub;
 ///
 /// Use this for the geometric part of domain structs that carry genomic spans.
 /// This type only represents non-empty intervals, so construction requires
-/// `end > start`.
+/// `end > start`. For ordered bounds that may be empty, use `Span<T>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Interval<T> {
     start: T,
@@ -213,6 +213,90 @@ impl Interval<u64> {
             }
         };
         Interval::new(start, end)
+    }
+}
+
+/// A checked half-open span `[start, end)` that may be empty.
+///
+/// Use this when code needs ordered genomic bounds but the empty case is valid,
+/// for example collection envelopes or optional extents. For guaranteed
+/// non-empty geometry, use `Interval<T>` instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Span<T> {
+    start: T,
+    end: T,
+}
+
+impl<T> Span<T>
+where
+    T: Copy + PartialOrd + Display,
+{
+    /// Create a checked half-open span `[start, end)`.
+    ///
+    /// Unlike `Interval`, this type allows `end == start` for empty spans, but
+    /// still rejects inverted bounds where `end < start`.
+    pub fn new(start: T, end: T) -> Result<Self> {
+        if end < start {
+            return Err(Error::InvalidSpanBounds {
+                start: start.to_string(),
+                end: end.to_string(),
+            });
+        }
+        Ok(Self { start, end })
+    }
+
+    /// Return the inclusive start coordinate.
+    #[inline]
+    pub fn start(&self) -> T {
+        self.start
+    }
+
+    /// Return the exclusive end coordinate.
+    #[inline]
+    pub fn end(&self) -> T {
+        self.end
+    }
+
+    /// Return the span bounds as `(start, end)`.
+    #[inline]
+    pub fn as_tuple(&self) -> (T, T) {
+        (self.start, self.end)
+    }
+
+    /// Return the span bounds as `(start, end)`.
+    #[inline]
+    pub fn into_inner(self) -> (T, T) {
+        (self.start, self.end)
+    }
+
+    /// Create a span from bounds that are already known to be ordered.
+    #[inline]
+    pub(crate) fn from_ordered(start: T, end: T) -> Self {
+        debug_assert!(end >= start, "span bounds must be ordered");
+        Self { start, end }
+    }
+}
+
+impl<T> Span<T>
+where
+    T: Copy + PartialEq,
+{
+    /// Return whether this span is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.start == self.end
+    }
+}
+
+impl<T> TryFrom<(T, T)> for Span<T>
+where
+    T: Copy + PartialOrd + Display,
+{
+    type Error = Error;
+
+    /// Convert a `(start, end)` tuple into a checked half-open span.
+    fn try_from(bounds: (T, T)) -> Result<Self> {
+        Self::new(bounds.0, bounds.1)
     }
 }
 

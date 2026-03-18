@@ -14,6 +14,7 @@ use cfdnalab::commands::frag_to_bam::{
     config::FragToBamConfig, frag_to_bam::run as run_frag_to_bam,
 };
 use cfdnalab::shared::blacklist::BlacklistStrategy;
+use cfdnalab::shared::io::dot_join;
 #[cfg(feature = "cmd_bam_to_frag")]
 use flate2::read::MultiGzDecoder;
 use rust_htslib::bam::ext::BamRecordExtensions;
@@ -107,6 +108,10 @@ fn make_config(
         fragment_lengths.max_fragment_length = 1_000;
     }
     config
+}
+
+fn output_bam_path(output_dir: &Path, prefix: &str) -> PathBuf {
+    output_dir.join(dot_join(&[prefix, "fragments.bam"]))
 }
 
 fn read_bam_rows(path: &Path) -> Result<Vec<BamRow>> {
@@ -278,7 +283,7 @@ fn run_blacklist_strategy_case(strategy: BlacklistStrategy) -> Result<Vec<u64>> 
 
     run_frag_to_bam(&config)?;
 
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
     Ok(rows.iter().map(|row| row.start).collect())
 }
@@ -308,7 +313,7 @@ fn given_valid_frag_when_run_then_writes_expected_unpaired_bam_records() -> Resu
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
 
     // Assert
@@ -360,7 +365,7 @@ fn given_filters_and_extra_columns_when_run_then_only_expected_fragments_remain(
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
 
     // Assert
@@ -413,7 +418,7 @@ fn given_length_bounds_when_run_then_only_fragments_within_inclusive_range_are_k
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
 
     // Assert
@@ -501,7 +506,7 @@ fn given_unsupported_extra_columns_and_ignore_extras_when_run_then_conversion_su
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
     let aux_tags = read_aux_tags(&output_bam_path)?;
 
@@ -550,7 +555,7 @@ fn given_inline_header_with_unknown_extra_and_allow_unknown_extras_when_run_then
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
     let aux_tags = read_aux_tags(&output_bam_path)?;
 
@@ -597,7 +602,7 @@ fn given_supported_extra_column_names_when_run_then_gc_cov_and_flen_are_transfer
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
     let aux_tags = read_aux_tags(&output_bam_path)?;
 
@@ -646,7 +651,7 @@ fn given_no_header_and_extra_columns_when_run_then_extra_columns_are_ignored_and
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
     let aux_tags = read_aux_tags(&output_bam_path)?;
 
@@ -693,7 +698,7 @@ fn given_inline_header_with_only_flen_when_run_then_only_flen_aux_tag_is_written
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
     let aux_tags = read_aux_tags(&output_bam_path)?;
 
@@ -743,7 +748,7 @@ fn given_explicit_header_with_only_flen_when_run_then_only_flen_aux_tag_is_writt
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
     let aux_tags = read_aux_tags(&output_bam_path)?;
 
@@ -835,7 +840,7 @@ fn given_explicit_header_with_unsupported_extra_column_and_ignore_extras_when_ru
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
     let aux_tags = read_aux_tags(&output_bam_path)?;
 
@@ -882,7 +887,7 @@ fn given_explicit_header_with_unknown_extra_and_allow_unknown_extras_when_run_th
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
     let aux_tags = read_aux_tags(&output_bam_path)?;
 
@@ -928,7 +933,7 @@ fn given_companion_header_with_only_flen_when_run_then_only_flen_aux_tag_is_writ
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
     let aux_tags = read_aux_tags(&output_bam_path)?;
 
@@ -975,7 +980,7 @@ fn given_companion_header_with_unsupported_extra_column_and_ignore_extras_when_r
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
     let aux_tags = read_aux_tags(&output_bam_path)?;
 
@@ -1021,7 +1026,7 @@ fn given_companion_header_with_unknown_extra_and_allow_unknown_extras_when_run_t
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
     let aux_tags = read_aux_tags(&output_bam_path)?;
 
@@ -1165,7 +1170,7 @@ fn given_explicit_and_companion_headers_when_run_then_explicit_header_takes_prec
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
     let aux_tags = read_aux_tags(&output_bam_path)?;
 
@@ -1395,7 +1400,7 @@ fn given_all_fragments_fail_mapq_when_run_then_writes_empty_bam() -> Result<()> 
     // is observed at all. If chromosomes are observed but all fragments are later
     // filtered (e.g. by mapq), it returns success and writes an empty BAM.
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let rows = read_bam_rows(&output_bam_path)?;
     assert!(rows.is_empty(), "expected no records in output BAM");
 
@@ -1463,7 +1468,7 @@ fn given_chromosomes_all_when_run_then_header_and_output_follow_chrom_sizes_orde
 
     // Act
     run_frag_to_bam(&config)?;
-    let output_bam_path = output_dir.path().join("restored.bam");
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
     let header_chromosomes = read_bam_header_chromosomes(&output_bam_path)?;
     let rows = read_bam_rows(&output_bam_path)?;
 
@@ -1632,7 +1637,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_roundtrip_then_restores_all_available
 
     // Act 2: FRAG -> BAM
     run_frag_to_bam(&frag_to_bam_config)?;
-    let restored_bam_path = frag_to_bam_output.path().join("restored.bam");
+    let restored_bam_path = output_bam_path(frag_to_bam_output.path(), "restored");
     let restored_rows = read_bam_rows(&restored_bam_path)?;
 
     // Assert 2: all available fields are restored exactly
