@@ -228,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn midpoint_fetch_span_keeps_fragment_halo_near_chromosome_end() {
+    fn midpoint_fetch_span_preserves_tile_carried_halo_near_chromosome_end() {
         let tile = make_tile(80, 95, 70, 95, 0);
         let windows = indexed_windows(&[(90, 95, 0)]);
         let span = TileWindowSpan {
@@ -243,8 +243,46 @@ mod tests {
 
         assert_eq!(sites, windows);
         // The tile already carries the only usable left halo near chromosome end. Shrinking to the
-        // extreme site must preserve that halo instead of collapsing the fetch span to [90,95).
+        // extreme site must preserve that tile-carried halo instead of collapsing the fetch span
+        // to [90,95).
         assert_eq!(fetch_span, Interval::new(80, 95).unwrap());
+    }
+
+    #[test]
+    fn midpoint_fetch_span_keeps_fragment_start_that_old_symmetric_halo_would_drop() {
+        let tile = make_tile(80, 95, 70, 95, 0);
+        let windows = indexed_windows(&[(90, 95, 0)]);
+        let span = TileWindowSpan {
+            first_idx: 0,
+            last_idx_exclusive: 1,
+        };
+
+        let (_sites, fetch_span) =
+            get_overlapping_sites_and_adapt_fetch_to_extremes(&windows, Some(&span), &tile, 95, 10)
+                .unwrap()
+                .expect("midpoint site should produce a fetch span");
+
+        // Manual derivation of the old bad behavior:
+        // - The last tile is core [80,95) with fetch [70,95), so chromosome-end clipping leaves an
+        //   asymmetric halo: 10 bp on the left and 0 on the right.
+        // - The old bug inferred one combined halo budget from the total extra fetched bases
+        //   (25 - 15 = 10) and then split that budget as 5 bp per side, instead of keeping the
+        //   full required halo independently on both sides.
+        // - Narrowing the site [90,95) with that inferred 5 bp halo would have produced [85,95),
+        //   which is too late to read a required fragment starting at 84.
+        let old_bad_fetch = Interval::new(85, 95).unwrap();
+        let required_fragment_start = 84_u64;
+
+        assert_eq!(fetch_span, Interval::new(80, 95).unwrap());
+        assert_eq!(old_bad_fetch, Interval::new(85, 95).unwrap());
+        assert!(
+            fetch_span.start() <= required_fragment_start,
+            "current fetch span should still reach the fragment start at 84"
+        );
+        assert!(
+            old_bad_fetch.start() > required_fragment_start,
+            "old symmetric-halo narrowing would have dropped the fragment start at 84"
+        );
     }
 
     #[test]
@@ -347,6 +385,20 @@ mod tests {
     }
 
     #[test]
+    fn clamp_fetch_uses_full_explicit_halo_on_both_sides() {
+        let tile = make_tile(0, 200, 0, 200, 0);
+        let window_span = Interval::new(80, 120).expect("test span should be valid");
+
+        // The current contract is "keep halo_bp on both sides before clamping".
+        // So [80,120) with halo 20 must widen to [60,140), not to [70,130).
+        let narrowed_fetch = clamp_fetch_to_window_span(&tile, 200, window_span, 20)
+            .unwrap()
+            .expect("fetch interval expected");
+
+        assert_eq!(narrowed_fetch, Interval::new(60, 140).unwrap());
+    }
+
+    #[test]
     fn adapt_fetch_keeps_fragment_context_for_bed_aggregate_tiles() {
         let tile = make_tile(0, 200, 0, 200, 0);
         let windows = indexed_windows(&[(0, 40, 0)]);
@@ -365,5 +417,46 @@ mod tests {
 
         assert_eq!(narrowed_fetch.start(), 0);
         assert_eq!(narrowed_fetch.end(), 60);
+    }
+
+    #[test]
+    fn adapt_fetch_keeps_left_halo_when_chrom_end_clips_last_tile_in_fcoverage() {
+        let tile = make_tile(80, 95, 70, 95, 0);
+        let windows = indexed_windows(&[(90, 95, 0)]);
+        let span = TileWindowSpan {
+            first_idx: 0,
+            last_idx_exclusive: 1,
+        };
+        let mode = TileMode::AggregatesByBed {
+            windows: windows.as_slice(),
+            masked: false,
+            partials_out: PathBuf::from("partials.tsv.zst"),
+            cross_idx_out: PathBuf::from("cross.tsv.zst"),
+        };
+
+        let narrowed_fetch = adapt_fetch_to_extreme_windows(&tile, Some(&span), &mode, 95, 10)
+            .unwrap()
+            .expect("fetch interval expected");
+
+        // Manual derivation of the old bad behavior:
+        // - The last tile is core [80,95) with fetch [70,95), so chromosome-end clipping leaves an
+        //   asymmetric tile halo: 10 bp on the left and 0 on the right.
+        // - The old bug inferred one combined halo budget from those 10 extra fetched bases and
+        //   then split it as 5 bp per side, instead of keeping the full required halo
+        //   independently on both sides.
+        // - For the terminal window [90,95), that would have narrowed to [85,95), which misses a
+        //   required fragment start at 84.
+        let old_bad_fetch = Interval::new(85, 95).unwrap();
+        let required_fragment_start = 84_u64;
+
+        assert_eq!(narrowed_fetch, Interval::new(80, 95).unwrap());
+        assert!(
+            narrowed_fetch.start() <= required_fragment_start,
+            "current fcoverage fetch span should still reach the fragment start at 84"
+        );
+        assert!(
+            old_bad_fetch.start() > required_fragment_start,
+            "old symmetric-halo narrowing would have dropped the fragment start at 84"
+        );
     }
 }

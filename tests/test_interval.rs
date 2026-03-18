@@ -192,6 +192,21 @@ fn shifts_unsigned_interval_left() -> anyhow::Result<()> {
 }
 
 #[test]
+fn shifts_unsigned_interval_right() -> anyhow::Result<()> {
+    // Arrange: shifting [20,40) right by 5 should preserve the length 20 and move both bounds
+    // together to [25,45).
+    let interval = Interval::new(20_u64, 40_u64)?;
+
+    // Act
+    let shifted = interval.shift_right(5)?;
+
+    // Assert
+    assert_eq!(shifted, Interval::new(25_u64, 45_u64)?);
+    assert_eq!(shifted.len(), interval.len());
+    Ok(())
+}
+
+#[test]
 fn rejects_unsigned_left_shift_that_would_underflow() -> anyhow::Result<()> {
     // Arrange: shifting [3,8) left by 5 would try to move the start below zero, so the checked
     // shift must fail instead of wrapping the coordinates.

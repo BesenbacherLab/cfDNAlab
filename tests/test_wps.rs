@@ -546,6 +546,55 @@ fn by_size_total_handles_three_chromosomes() -> Result<()> {
 }
 
 #[test]
+fn by_size_total_non_aligned_tiles_reduce_crossing_bins_by_logical_start() -> Result<()> {
+    let fixture = bam_from_specs(
+        vec![("chr1".to_string(), 300u32)],
+        Vec::new(),
+        Vec::new(),
+        "wps_non_aligned_by_size_reduce",
+    )?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = make_config(
+        4,
+        false,
+        &fixture.bam,
+        out_dir.path(),
+        "non_aligned_by_size",
+    );
+    cfg.shared_args.chromosomes.chromosomes = Some(vec!["chr1".to_string()]);
+    cfg.set_tile_size(200);
+    cfg.shared_args.windows = WindowsArgs {
+        by_size: Some(150),
+        by_bed: None,
+    };
+    cfg.per_window = Some(CoverageWindowAction::Total);
+
+    // Manual expectations:
+    // - tile_size=200 and by_size=150 do not align, so the reducer must combine cross-tile
+    //   partials instead of concatenating aligned tile finals.
+    // - The logical bins are [0,150) and [150,300). The second bin crosses the tile boundary at 200,
+    //   so both tiles must contribute under the same logical start=150 key.
+    // - Empty BAM means total WPS is 0 in both bins.
+    // - With window size 4, invalid centers are 0, 1, and 299 because the WPS window would extend
+    //   past chromosome bounds. That gives blacklisted_positions 2 for [0,150) and 1 for [150,300).
+    run_fn(&cfg)?;
+
+    let output_path = out_dir.path().join("non_aligned_by_size.wps.total.tsv.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chr1\t0\t150\t0\t2",
+            "chr1\t150\t300\t0\t1",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
 fn by_bed_total_handles_three_chromosomes() -> Result<()> {
     let fixture =
         make_three_chrom_fixture("wps_three_chr_by_bed", &[(10, 22), (10, 22), (10, 22)])?;
@@ -584,6 +633,49 @@ fn by_bed_total_handles_three_chromosomes() -> Result<()> {
             "chr1\t0\t100\t4\t0",
             "chr2\t0\t100\t4\t0",
             "chr3\t0\t100\t4\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn by_bed_total_skips_chromosomes_without_windows_and_keeps_later_chromosomes() -> Result<()> {
+    let fixture = bam_from_specs(
+        vec![("chr1".to_string(), 100), ("chr2".to_string(), 100)],
+        vec![
+            fragment_spec_on_tid(0, 10, 22),
+            fragment_spec_on_tid(1, 10, 22),
+        ],
+        Vec::new(),
+        "wps_bed_skip_empty_chr",
+    )?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("chr2_only_windows.bed");
+    write_bed(&bed_path, &[("chr2", 0, 100, "chr2_window")])?;
+
+    let mut cfg = make_config(4, false, &fixture.bam, out_dir.path(), "chr2_only_by_bed");
+    cfg.shared_args.chromosomes.chromosomes = Some(vec!["chr1".to_string(), "chr2".to_string()]);
+    cfg.shared_args.windows = WindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+    };
+    cfg.per_window = Some(CoverageWindowAction::Total);
+
+    // Manual expectations:
+    // - chr1 has a fragment but no BED windows, so BED mode should skip that chromosome entirely.
+    // - chr2 has one fragment [10, 22) and one BED window [0, 100). The single-fragment
+    //   derivation used elsewhere in this file gives a total WPS sum of 4 over that whole window.
+    run_fn(&cfg)?;
+
+    let output_path = out_dir.path().join("chr2_only_by_bed.wps.total.tsv.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chr2\t0\t100\t4\t0",
         ]
     );
 

@@ -4,8 +4,10 @@ mod tests {
 
     use anyhow::{Context, Result};
     use cfdnalab::shared::{
-        fragment::indel_counting_fragment::{IndelReadInfo, collect_fragment_with_indel_counts},
-        interval::IndexedInterval,
+        fragment::indel_counting_fragment::{
+            IndelReadInfo, InsertionAnchor, collect_fragment_with_indel_counts,
+        },
+        interval::{IndexedInterval, Interval},
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
@@ -33,6 +35,10 @@ mod tests {
             .collect()
     }
 
+    fn query_interval(start: u64, end: u64) -> Interval<u64> {
+        Interval::new(start, end).expect("test query interval should be valid non-empty")
+    }
+
     fn scaling_indices_for_fragment(
         scaling_chr: &[(u64, u64, f32)],
         frag_start: u64,
@@ -56,8 +62,7 @@ mod tests {
             &mut sf_ptr,
             Some(&scaling_bed),
             None, // by_size
-            frag_start,
-            frag_end,
+            query_interval(frag_start, frag_end),
             0.0,   // accept any overlap
             1_000, // look_back (large enough)
         )?
@@ -82,8 +87,7 @@ mod tests {
             &mut wd_ptr,
             Some(&count_wins),
             None,
-            frag_start,
-            frag_end,
+            query_interval(frag_start, frag_end),
             0.0,
             1000,
         )?
@@ -115,8 +119,7 @@ mod tests {
             &mut wd_ptr,
             Some(&count_wins),
             None,
-            frag_start,
-            frag_end,
+            query_interval(frag_start, frag_end),
             0.0,
             1000,
         )?
@@ -157,8 +160,7 @@ mod tests {
             &mut wd_ptr,
             Some(&count_wins),
             None,
-            frag_start,
-            frag_end,
+            query_interval(frag_start, frag_end),
             0.0,
             1000,
         )?
@@ -199,8 +201,7 @@ mod tests {
             &mut wd_ptr,
             Some(&count_wins),
             None,
-            frag_start,
-            frag_end,
+            query_interval(frag_start, frag_end),
             0.0,
             1000,
         )?
@@ -231,8 +232,7 @@ mod tests {
             &mut wd_ptr,
             Some(&count_wins),
             None,
-            frag_start,
-            frag_end,
+            query_interval(frag_start, frag_end),
             0.0,
             1000,
         )?
@@ -265,8 +265,7 @@ mod tests {
             &mut wd_ptr,
             Some(&count_wins),
             None,
-            frag_start,
-            frag_end,
+            query_interval(frag_start, frag_end),
             0.0,
             1000,
         )?
@@ -293,8 +292,7 @@ mod tests {
             &mut wd_ptr,
             Some(&count_wins),
             None,
-            frag_start,
-            frag_end,
+            query_interval(frag_start, frag_end),
             0.0,
             1000,
         )?
@@ -328,8 +326,7 @@ mod tests {
             &mut wd_ptr,
             Some(&count_wins),
             None,
-            frag_start,
-            frag_end,
+            query_interval(frag_start, frag_end),
             0.0,
             1000,
         )?
@@ -367,8 +364,7 @@ mod tests {
                 &mut wd_ptr,
                 Some(&wins),
                 None,
-                90,
-                100,
+                query_interval(90, 100),
                 0.0,
                 500,
             )?
@@ -380,8 +376,7 @@ mod tests {
                 &mut wd_ptr,
                 Some(&wins),
                 None,
-                99,
-                199,
+                query_interval(99, 199),
                 0.0,
                 500,
             )?
@@ -397,8 +392,7 @@ mod tests {
                 &mut wd_ptr,
                 Some(&wins),
                 None,
-                90,
-                100,
+                query_interval(90, 100),
                 0.05,
                 500,
             )?
@@ -410,8 +404,7 @@ mod tests {
                 &mut wd_ptr,
                 Some(&wins),
                 None,
-                99,
-                199,
+                query_interval(99, 199),
                 0.05,
                 500,
             )?;
@@ -431,8 +424,7 @@ mod tests {
                 &mut wd_ptr,
                 Some(&wins),
                 None,
-                0,
-                100,
+                query_interval(0, 100),
                 1.0,
                 500,
             )?;
@@ -446,8 +438,7 @@ mod tests {
                 &mut wd_ptr,
                 Some(&wins),
                 None,
-                20,
-                80,
+                query_interval(20, 80),
                 1.0,
                 500,
             )?;
@@ -461,8 +452,7 @@ mod tests {
                 &mut wd_ptr,
                 Some(&wins),
                 None,
-                50,
-                150,
+                query_interval(50, 150),
                 1.0,
                 500,
             )?;
@@ -499,23 +489,36 @@ mod tests {
         // Overlap will be [120,150) so ref pos 125 lies in the overlap.
         let fwd = IndelReadInfo {
             tid: 0,
-            pos: 100,
-            end: 150,
+            interval: Interval::new(100, 150).expect("test read interval should be valid"),
             is_reverse: false,
             // One deletion in non-overlap (inside fragment), one within overlap
-            deletions: vec![(110, 115), (120, 122)],
+            deletions: vec![
+                Interval::new(110, 115).expect("test deletion should be valid"),
+                Interval::new(120, 122).expect("test deletion should be valid"),
+            ],
             // One insertion in non-overlap (inside fragment) and one in overlap at ref 125
-            insertions: vec![(105, 2), (125, 3)],
+            insertions: vec![
+                InsertionAnchor {
+                    reference_position: 105,
+                    inserted_length: 2,
+                },
+                InsertionAnchor {
+                    reference_position: 125,
+                    inserted_length: 3,
+                },
+            ],
         };
         let rev = IndelReadInfo {
             tid: 0,
-            pos: 120,
-            end: 200,
+            interval: Interval::new(120, 200).expect("test read interval should be valid"),
             is_reverse: true,
             // Deletion overlaps [120,122) by 2 bp (121..122), rest are discarded as non-consensus
-            deletions: vec![(121, 124)],
+            deletions: vec![Interval::new(121, 124).expect("test deletion should be valid")],
             // Insertion at same overlap ref pos 125 but length 1 (min rule will pick 1)
-            insertions: vec![(125, 1)],
+            insertions: vec![InsertionAnchor {
+                reference_position: 125,
+                inserted_length: 1,
+            }],
         };
 
         let frag = collect_fragment_with_indel_counts(&fwd, &rev, false, true).unwrap();
@@ -545,8 +548,8 @@ mod tests {
 
         // Count_indels = false -> Zero adjustments returned
         let r = collect_fragment_with_indel_counts(&fwd, &rev, false, false).unwrap();
-        assert_eq!(r.start, 100);
-        assert_eq!(r.end, 200);
+        assert_eq!(r.start(), 100);
+        assert_eq!(r.end(), 200);
         assert_eq!(r.deletions_nonoverlap, 0);
         assert_eq!(r.insertions_nonoverlap, 0);
         assert_eq!(r.deletions_overlap_supported, 0);
@@ -568,8 +571,7 @@ mod tests {
             &mut wd_ptr,
             Some(&count_wins),
             None,
-            frag_start,
-            frag_end,
+            query_interval(frag_start, frag_end),
             0.0,
             1000,
         )?
@@ -605,8 +607,7 @@ mod tests {
             &mut wd_ptr,
             Some(&wins),
             None,
-            midpoint_start,
-            midpoint_end,
+            query_interval(midpoint_start, midpoint_end),
             0.99, // Require nearly full (for 1 bp, this is fine)
             500,
         )?
@@ -633,8 +634,7 @@ mod tests {
             &mut wd_ptr,
             None,    // BED-mode windows not used
             by_size, // fixed-size bins
-            frag_start,
-            frag_end,
+            query_interval(frag_start, frag_end),
             0.0, // no min fraction threshold
             1_000,
         )?
@@ -668,8 +668,7 @@ mod tests {
             &mut wd_ptr,
             None,
             Some(10),
-            3,
-            27,
+            query_interval(3, 27),
             0.30, // threshold
             1_000,
         )?
@@ -693,13 +692,29 @@ mod tests {
         // Touching at 20: no overlap
         let mut wd_ptr = 0usize;
         let none1 =
-            find_overlapping_windows(chrom_len, &mut wd_ptr, Some(&wins), None, 10, 20, 0.0, 500)?;
+            find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                Some(&wins),
+                None,
+                query_interval(10, 20),
+                0.0,
+                500,
+            )?;
         assert!(none1.is_none(), "pure edge touch should not overlap");
 
         // Still no overlap for [19,20)
         wd_ptr = 0;
         let none2 =
-            find_overlapping_windows(chrom_len, &mut wd_ptr, Some(&wins), None, 19, 20, 0.0, 500)?;
+            find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                Some(&wins),
+                None,
+                query_interval(19, 20),
+                0.0,
+                500,
+            )?;
         assert!(
             none2.is_none(),
             "1bp ending at 20 should not overlap [20,30)"
@@ -708,7 +723,15 @@ mod tests {
         // [19,21): 1 bp overlap with window -> fraction = 1/2 of the fragment
         wd_ptr = 0;
         let some =
-            find_overlapping_windows(chrom_len, &mut wd_ptr, Some(&wins), None, 19, 21, 0.0, 500)?
+            find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                Some(&wins),
+                None,
+                query_interval(19, 21),
+                0.0,
+                500,
+            )?
                 .context("expected a small overlap")?;
         assert_eq!(some.windows.len(), 1);
         approx_eq(some.windows[0].overlap_fraction as f64, 1.0 / 2.0, 1e-6);
@@ -729,8 +752,7 @@ mod tests {
             &mut wd_ptr,
             Some(&wins),
             None,
-            midpoint,
-            midpoint + 1,
+            query_interval(midpoint, midpoint + 1),
             0.99, // effectively require 1/1 bp overlap
             1_000,
         )?
@@ -754,8 +776,7 @@ mod tests {
             &mut wd_ptr,
             None,
             Some(10),
-            m,
-            m + 1,
+            query_interval(m, m + 1),
             0.99,
             1_000,
         )?
@@ -783,8 +804,7 @@ mod tests {
             &mut wd_ptr,
             Some(&wins),
             None,
-            10,
-            20,
+            query_interval(10, 20),
             0.0,
             look_back,
         )?
@@ -798,8 +818,7 @@ mod tests {
             &mut wd_ptr,
             Some(&wins),
             None,
-            150,
-            160,
+            query_interval(150, 160),
             0.0,
             look_back,
         )?
@@ -817,7 +836,15 @@ mod tests {
         let mut wd_ptr = 0usize;
 
         let res =
-            find_overlapping_windows(chrom_len, &mut wd_ptr, None, Some(10), 9, 10, 0.0, 1_000)?
+            find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                None,
+                Some(10),
+                query_interval(9, 10),
+                0.0,
+                1_000,
+            )?
                 .context("expect overlap at left boundary")?;
 
         assert_eq!(res.windows.len(), 1);
@@ -834,7 +861,15 @@ mod tests {
         let mut wd_ptr = 0usize;
 
         let res =
-            find_overlapping_windows(chrom_len, &mut wd_ptr, None, Some(10), 10, 11, 0.0, 1_000)?
+            find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                None,
+                Some(10),
+                query_interval(10, 11),
+                0.0,
+                1_000,
+            )?
                 .context("expect overlap at right boundary")?;
 
         assert_eq!(res.windows.len(), 1);
@@ -850,7 +885,15 @@ mod tests {
         let mut wd_ptr = 0usize;
 
         let res =
-            find_overlapping_windows(chrom_len, &mut wd_ptr, None, Some(10), 10, 11, 0.99, 1_000)?
+            find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                None,
+                Some(10),
+                query_interval(10, 11),
+                0.99,
+                1_000,
+            )?
                 .context("expect overlap at boundary with strict threshold")?;
 
         assert_eq!(res.windows.len(), 1);
@@ -878,8 +921,7 @@ mod tests {
             &mut wd_ptr,
             Some(&wins),
             None,
-            210,
-            220,
+            query_interval(210, 220),
             0.0,
             look_back,
         )?
@@ -893,8 +935,7 @@ mod tests {
             &mut wd_ptr,
             Some(&wins),
             None,
-            150,
-            160,
+            query_interval(150, 160),
             0.0,
             look_back,
         )?
@@ -917,7 +958,15 @@ mod tests {
         let mut wd_ptr = 0usize;
 
         let res =
-            find_overlapping_windows(chrom_len, &mut wd_ptr, None, Some(10), 5, 95, 0.11, 1_000)?
+            find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                None,
+                Some(10),
+                query_interval(5, 95),
+                0.11,
+                1_000,
+            )?
                 .context("expect multiple bins after thresholding")?;
 
         // Expect bins 1..=8 (8 bins).
@@ -947,7 +996,15 @@ mod tests {
         let mut wd_ptr = 0usize;
 
         let res =
-            find_overlapping_windows(chrom_len, &mut wd_ptr, None, Some(10), 3, 27, 0.0, 1_000)?
+            find_overlapping_windows(
+                chrom_len,
+                &mut wd_ptr,
+                None,
+                Some(10),
+                query_interval(3, 27),
+                0.0,
+                1_000,
+            )?
                 .context("partition fractions")?;
 
         let sum: f64 = res.windows.iter().map(|w| w.overlap_fraction as f64).sum();

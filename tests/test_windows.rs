@@ -1,16 +1,18 @@
 #[cfg(test)]
 mod tests_flattening {
     use cfdnalab::shared::bed::*;
-    use cfdnalab::shared::interval::IndexedInterval;
+    use cfdnalab::shared::interval::{IndexedInterval, ScoredInterval, Span};
 
     // Helper: build a start-sorted Windows from (s,e) pairs (original_idx is dummy)
     fn mk_sorted(pairs: &[(u64, u64)]) -> Windows {
-        let v: Vec<(u64, u64, u64)> = pairs
+        let windows = pairs
             .iter()
             .enumerate()
-            .map(|(i, &(s, e))| (s, e, i as u64))
+            .map(|(i, &(start, end))| {
+                IndexedInterval::new(start, end, i as u64).expect("test windows should be valid")
+            })
             .collect();
-        Windows::from_sorted(v)
+        Windows::from_sorted(windows)
     }
 
     // Helper: assert strictly sorted and non-overlapping (touching should have been merged away)
@@ -141,5 +143,128 @@ mod tests_flattening {
         assert_eq!(next, 1_000_003);
         assert_sorted_non_overlapping(a);
         assert_sequential_indices(a, 1_000_000);
+    }
+
+    #[test]
+    fn grouped_windows_sort_and_preserve_group_indices() {
+        // Arrange:
+        // - Inputs are unsorted by start, but group indices are payload and must survive sorting.
+        // - After sorting by start we expect [10,15) idx 3, [15,18) idx 5, [20,30) idx 7.
+        // - Span is therefore min start 10 and max end 30.
+        let grouped = GroupedWindows::from_tuples(&[(20, 30, 7), (10, 15, 3), (15, 18, 5)])
+            .expect("grouped test windows should be valid");
+
+        let windows = grouped.as_slice();
+
+        assert_eq!(windows.len(), 3);
+        assert_eq!(windows[0].into_tuple(), (10, 15, 3));
+        assert_eq!(windows[1].into_tuple(), (15, 18, 5));
+        assert_eq!(windows[2].into_tuple(), (20, 30, 7));
+        assert_eq!(grouped.span_start(), 10);
+        assert_eq!(grouped.span_end(), 30);
+    }
+
+    #[test]
+    fn grouped_windows_span_uses_max_end_not_last_sorted_end() {
+        // Sorting by start yields [10,40), [20,25), [30,32). The last sorted window ends at 32,
+        // but the collection span must use the true maximum end 40.
+        let grouped = GroupedWindows::new(vec![
+            IndexedInterval::new(20, 25, 0).expect("grouped interval should be valid"),
+            IndexedInterval::new(10, 40, 1).expect("grouped interval should be valid"),
+            IndexedInterval::new(30, 32, 2).expect("grouped interval should be valid"),
+        ]);
+
+        assert_eq!(grouped.span(), Span::new(10, 40).unwrap());
+    }
+
+    #[test]
+    fn grouped_windows_empty_has_zero_span() {
+        let grouped = GroupedWindows::from_sorted(Vec::new());
+
+        assert!(grouped.as_slice().is_empty());
+        assert_eq!(grouped.span_start(), 0);
+        assert_eq!(grouped.span_end(), 0);
+    }
+
+    #[test]
+    fn grouped_windows_from_tuples_rejects_invalid_interval() {
+        let error = GroupedWindows::from_tuples(&[(10, 10, 3)])
+            .expect_err("invalid grouped interval should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "interval end (10) must be greater than start (10)"
+        );
+    }
+
+    #[test]
+    fn scored_windows_sort_and_preserve_scores() {
+        // Arrange:
+        // - Sorting by start should reorder [20,30) and [10,15) into [10,15), [20,30).
+        // - Score and original index are payload, so they must stay attached to their intervals.
+        // - Span is the overall covered range [10,30).
+        let scored = ScoredWindows::from_tuples(&[(20, 30, 7, 1.5), (10, 15, 3, 2.5)])
+            .expect("scored test windows should be valid");
+
+        let windows = scored.as_slice();
+
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].into_tuple(), (10, 15, 3, 2.5));
+        assert_eq!(windows[1].into_tuple(), (20, 30, 7, 1.5));
+        assert_eq!(scored.span_start(), 10);
+        assert_eq!(scored.span_end(), 30);
+    }
+
+    #[test]
+    fn scored_windows_span_uses_max_end_not_last_sorted_end() {
+        // Sorting by start yields [10,45), [20,25), [30,33). As with grouped windows, span_end
+        // must be the global maximum end 45 rather than the last sorted end 33.
+        let scored = ScoredWindows::new(vec![
+            ScoredInterval::new(20, 25, 0, 0.5).expect("scored interval should be valid"),
+            ScoredInterval::new(10, 45, 1, 1.5).expect("scored interval should be valid"),
+            ScoredInterval::new(30, 33, 2, 2.5).expect("scored interval should be valid"),
+        ]);
+
+        assert_eq!(scored.span(), Span::new(10, 45).unwrap());
+    }
+
+    #[test]
+    fn scored_windows_to_windows_drops_score_but_keeps_interval_and_index() {
+        // Converting scored windows to plain windows should discard only the score field.
+        // Interval bounds, original indices, and the collection span must remain unchanged.
+        let scored = ScoredWindows::new(vec![
+            ScoredInterval::new(5, 9, 11, 0.5).expect("scored interval should be valid"),
+            ScoredInterval::new(10, 15, 12, 1.0).expect("scored interval should be valid"),
+        ]);
+
+        let plain = scored.to_windows();
+        let windows = plain.as_slice();
+
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].into_tuple(), (5, 9, 11));
+        assert_eq!(windows[1].into_tuple(), (10, 15, 12));
+        assert_eq!(plain.span(), Span::new(5, 15).unwrap());
+    }
+
+    #[test]
+    fn windows_from_tuples_rejects_invalid_interval() {
+        let error =
+            Windows::from_tuples(&[(12, 12, 0)]).expect_err("invalid plain interval should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "interval end (12) must be greater than start (12)"
+        );
+    }
+
+    #[test]
+    fn scored_windows_from_tuples_rejects_invalid_interval() {
+        let error = ScoredWindows::from_tuples(&[(20, 19, 7, 1.5)])
+            .expect_err("invalid scored interval should fail");
+
+        assert_eq!(
+            error.to_string(),
+            "interval end (19) must be greater than start (20)"
+        );
     }
 }
