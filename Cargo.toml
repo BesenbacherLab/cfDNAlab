@@ -59,7 +59,7 @@ ndarray-npy = "0.9.1"
 needletail = { version = "0.6.3", default-features = false, features = ["flate2", "zstd"] }
 num-traits = "0.2.19"
 num_cpus = "1.17.0"
-plotters = { version = "0.3.7", optional = true }
+plotters = { version = "0.3.7", features = ["fontconfig-dlopen"], optional = true }
 rand = "0.9.1"
 rayon = "1.10.0"
 rust-htslib = "0.50.0"
