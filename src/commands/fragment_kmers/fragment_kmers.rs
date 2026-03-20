@@ -39,6 +39,7 @@ use crate::{
             write::write_decoded_counts_matrix,
         },
         overlaps::find_overlapping_windows,
+        progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
         scale_genome::apply_scaling_to_coverage_in_place,
@@ -50,7 +51,6 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
-use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{convert::TryInto, io::Write, path::Path, sync::Arc, time::Instant};
@@ -259,15 +259,8 @@ pub fn run_inner(opt: &FragmentKmersConfig) -> Result<FragmentKmersCounters> {
     let temp_dir = Arc::new(temp_dir);
 
     // Create progress bar
-    let pb = Arc::new(ProgressBar::new(total_tiles as u64));
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .unwrap(),
-    );
-    if quiet {
-        pb.set_draw_target(ProgressDrawTarget::hidden());
-    }
+    let progress = ProgressFactory::with_enabled(!quiet);
+    let pb = Arc::new(progress.default_bar(total_tiles as u64));
 
     // Configure global thread‐pool size
     init_global_pool(opt.shared_args.ioc.n_threads)?;
@@ -592,8 +585,10 @@ fn process_tile(
         move |fragment: &FragmentWithKmerSegments, fetch_start: u32| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
-                    let fetch_relative_fragment =
-                        fragment.interval.try_to_u64()?.shift_left(fetch_start as u64)?;
+                    let fetch_relative_fragment = fragment
+                        .interval
+                        .try_to_u64()?
+                        .shift_left(fetch_start as u64)?;
                     corrector.correct_fragment(fetch_relative_fragment, prefixes)
                 }
                 _ => Ok(None),

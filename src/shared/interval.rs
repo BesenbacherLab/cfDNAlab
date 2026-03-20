@@ -363,6 +363,50 @@ where
     }
 }
 
+impl<T> Interval<T>
+where
+    T: Copy + Display + CheckedAdd + CheckedSub + Ord + Unsigned,
+{
+    /// Return a new interval expanded on both sides by `amount`.
+    ///
+    /// This does not mutate the receiver. Returns an error when expanding
+    /// would move the start below zero or move the end past the coordinate
+    /// type's upper bound.
+    pub fn expand(self, amount: T) -> Result<Self> {
+        let start = match self.start.checked_sub(&amount) {
+            Some(value) => value,
+            None => {
+                return Err(Error::InvalidIntervalOffset {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    offset: amount.to_string(),
+                });
+            }
+        };
+        let end = match self.end.checked_add(&amount) {
+            Some(value) => value,
+            None => {
+                return Err(Error::InvalidIntervalOffset {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    offset: amount.to_string(),
+                });
+            }
+        };
+        Ok(Self { start, end })
+    }
+
+    /// Return a new interval contracted on both sides by `amount`, if any span remains.
+    ///
+    /// This does not mutate the receiver. Returns `None` when the contracted
+    /// interval would be empty or when the bound math would overflow.
+    pub fn contract(self, amount: T) -> Option<Self> {
+        let start = self.start.checked_add(&amount)?;
+        let end = self.end.checked_sub(&amount)?;
+        (end > start).then_some(Self { start, end })
+    }
+}
+
 impl Interval<u64> {
     /// Convert a checked unsigned interval into a checked signed interval.
     ///

@@ -272,9 +272,7 @@ pub fn find_overlapping_windows(
         // Note that `query_interval.start()` may not be the most left interval position in the
         // outer stash
         while *wd_ptr < window_list.len()
-            && window_list[*wd_ptr]
-                .end()
-                <= query_interval.start().saturating_sub(look_back)
+            && window_list[*wd_ptr].end() <= query_interval.start().saturating_sub(look_back)
         {
             *wd_ptr += 1;
         }

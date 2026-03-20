@@ -17,6 +17,7 @@ use crate::shared::bam::Contigs;
 use crate::shared::bed::load_windows_from_bed;
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::dot_join;
+use crate::shared::progress::ProgressFactory;
 use crate::shared::thread_pool::init_global_pool;
 use crate::shared::tiled_run::{
     Tile, TileMode, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
@@ -24,7 +25,6 @@ use crate::shared::tiled_run::{
 use crate::shared::writers::open_zstd_auto_writer;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use fxhash::FxHashMap;
-use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -191,12 +191,8 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     ));
 
     let total_tiles = tiles.len();
-    let pb = Arc::new(ProgressBar::new(total_tiles as u64));
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .unwrap(),
-    );
+    let progress = ProgressFactory::new();
+    let pb = Arc::new(progress.default_bar(total_tiles as u64));
     println!("Start: Calling peaks per tile");
 
     // Configure global thread‐pool size

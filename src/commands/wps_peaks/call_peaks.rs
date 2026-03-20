@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
-use anyhow::{Context, Result, anyhow};
 use crate::shared::interval::Interval;
+use anyhow::{Context, Result, anyhow};
 
 const MIN_LENGTH: usize = 50;
 const MAX_LENGTH: usize = 150;

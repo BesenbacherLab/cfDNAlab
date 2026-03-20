@@ -38,8 +38,20 @@ mod tests_stream_helpers_and_finalizer {
 
     #[test]
     fn overlap_length_returns_expected_span() {
-        assert_eq!(overlap_length(0, 10, 5, 15), 5);
-        assert_eq!(overlap_length(0, 10, 10, 20), 0);
+        assert_eq!(
+            overlap_length(
+                Interval::new(0, 10).expect("test interval should be valid"),
+                Interval::new(5, 15).expect("test interval should be valid")
+            ),
+            5
+        );
+        assert_eq!(
+            overlap_length(
+                Interval::new(0, 10).expect("test interval should be valid"),
+                Interval::new(10, 20).expect("test interval should be valid")
+            ),
+            0
+        );
     }
 
     #[test]

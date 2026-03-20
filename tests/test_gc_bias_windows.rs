@@ -304,6 +304,7 @@ mod tests_prepare_tile_windows {
         assert_eq!(current.end(), 400);
         assert!(!current.contained);
 
+        let next = next.expect("expected next fixed-size window buffer");
         assert_eq!(next.idx, 2);
         assert_eq!(next.start(), 400);
         assert_eq!(next.end(), 600);

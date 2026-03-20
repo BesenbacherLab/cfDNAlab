@@ -14,13 +14,13 @@ use crate::{
         fragment_iterator::fragments_from_bam,
         interval::Interval,
         io::dot_join,
+        progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         thread_pool::init_global_pool,
     },
 };
 use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
-use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{
@@ -62,12 +62,8 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
     let (chromosomes, _contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     opt.check_bin_sizes()?;
-    let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .unwrap(),
-    );
+    let progress = ProgressFactory::new();
+    let pb = Arc::new(progress.default_bar(chromosomes.len() as u64));
 
     // Create output directory
     ensure_output_dir(&opt.ioc.output_dir)?;

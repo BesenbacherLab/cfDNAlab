@@ -183,8 +183,8 @@ fn midpoint_profiles_written_with_group_index() -> Result<()> {
 }
 
 #[test]
-fn midpoint_fetch_narrowing_preserves_tile_halo_near_chromosome_end_on_three_chromosomes(
-) -> Result<()> {
+fn midpoint_fetch_narrowing_preserves_tile_halo_near_chromosome_end_on_three_chromosomes()
+-> Result<()> {
     let bam = bam_from_specs(
         vec![
             ("chr1".to_string(), 95),
@@ -260,8 +260,8 @@ fn midpoint_fetch_narrowing_preserves_tile_halo_near_chromosome_end_on_three_chr
 }
 
 #[test]
-fn midpoint_fetch_narrowing_reads_all_eligible_fragments_near_chromosome_end_on_three_chromosomes(
-) -> Result<()> {
+fn midpoint_fetch_narrowing_reads_all_eligible_fragments_near_chromosome_end_on_three_chromosomes()
+-> Result<()> {
     let bam = bam_from_specs(
         vec![
             ("chr1".to_string(), 95),
@@ -286,7 +286,9 @@ fn midpoint_fetch_narrowing_reads_all_eligible_fragments_near_chromosome_end_on_
         "midpoints_chrom_end_fetch_reads_all_eligible",
     )?;
     let temp = TempDir::new()?;
-    let bed_path = temp.path().join("windows_three_chr_fetch_read_coverage.bed");
+    let bed_path = temp
+        .path()
+        .join("windows_three_chr_fetch_read_coverage.bed");
     write_bed(
         &bed_path,
         &[
@@ -324,7 +326,9 @@ fn midpoint_fetch_narrowing_reads_all_eligible_fragments_near_chromosome_end_on_
     // - Each group row must therefore be exactly [1,0,1,0,1,0,0,0,0,0].
     run(&cfg)?;
 
-    let counts_path = temp.path().join("sites_fetch_reads_all.midpoint_profiles.npy");
+    let counts_path = temp
+        .path()
+        .join("sites_fetch_reads_all.midpoint_profiles.npy");
     let arr: Array3<f32> = read_npy(&counts_path)?;
     assert_eq!(arr.shape(), &[3, 1, 10]);
 

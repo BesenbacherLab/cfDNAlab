@@ -73,10 +73,7 @@ mod tests_coverage_prefix {
 
         // Unweighted and weighted fragments
         cp.add_fragment(frag(0, 100, 200))?;
-        cp.add_fragment_weighted(
-            frag(0, 150, 250),
-            0.87,
-        )?;
+        cp.add_fragment_weighted(frag(0, 150, 250), 0.87)?;
 
         // Optional blacklist
         cp.set_blacklist_mask(&intervals(&[(120, 140)]))?;
@@ -169,9 +166,7 @@ mod tests_coverage_prefix {
     fn drop_deltas_blocks_additions() -> Result<()> {
         let mut cp = Coverage::new(50);
         cp.drop_deltas();
-        let err = cp
-            .add_fragment(frag(0, 0, 1))
-            .unwrap_err();
+        let err = cp.add_fragment(frag(0, 0, 1)).unwrap_err();
         assert!(format!("{err}").contains("prefix was dropped"));
         Ok(())
     }
@@ -181,10 +176,7 @@ mod tests_coverage_prefix {
         let mut cp = Coverage::new(1000);
         // Create a few simple fragments
         cp.add_fragment(frag(0, 10, 110))?;
-        cp.add_fragment_weighted(
-            frag(0, 200, 400),
-            0.5,
-        )?;
+        cp.add_fragment_weighted(frag(0, 200, 400), 0.5)?;
         cp.finalize_coverage(true);
         // No blacklist
         cp.build_indexes(true)?;
@@ -236,12 +228,7 @@ mod tests_coverage_prefix {
         let mut cp = Coverage::new(50);
 
         // Negative weight
-        let err = cp
-            .add_fragment_weighted(
-                frag(0, 0, 10),
-                -0.1,
-            )
-            .unwrap_err();
+        let err = cp.add_fragment_weighted(frag(0, 0, 10), -0.1).unwrap_err();
         assert!(format!("{err}").contains("invalid weight"));
 
         // Fragment intervals are now checked at construction time, so [10,10) is rejected
@@ -360,10 +347,7 @@ mod tests_coverage_prefix {
         let mut cp = Coverage::new(100);
         // Coverage segments: [10,30)=1.0 and [40,90)=0.5
         cp.add_fragment(frag(0, 10, 30))?;
-        cp.add_fragment_weighted(
-            frag(0, 40, 90),
-            0.5,
-        )?;
+        cp.add_fragment_weighted(frag(0, 40, 90), 0.5)?;
         cp.finalize_coverage(true);
         // Blacklist [20,25) and [80,100)
         cp.set_blacklist_mask(&intervals(&[(20, 25), (80, 100)]))?;
@@ -405,10 +389,7 @@ mod tests_coverage_prefix {
     fn bulk_parallel_vs_serial_equivalence_with_mask() -> Result<()> {
         let mut cp = Coverage::new(1000);
         cp.add_fragment(frag(0, 0, 500))?;
-        cp.add_fragment_weighted(
-            frag(0, 250, 750),
-            0.5,
-        )?;
+        cp.add_fragment_weighted(frag(0, 250, 750), 0.5)?;
         cp.finalize_coverage(true);
         cp.set_blacklist_mask(&intervals(&[(400, 450), (700, 900)]))?;
 
@@ -456,7 +437,11 @@ mod tests_coverage_prefix {
         cp.finalize_coverage(true);
         cp.build_indexes(true)?;
         // Full range
-        assert!(deq(cp.sum_coverage(interval_u32(0, 10), false)?, 10.0, 1e-12));
+        assert!(deq(
+            cp.sum_coverage(interval_u32(0, 10), false)?,
+            10.0,
+            1e-12
+        ));
         assert!(feq(cp.avg_coverage(interval_u32(9, 10), false)?, 1.0, 1e-6));
         Ok(())
     }
@@ -466,10 +451,7 @@ mod tests_coverage_prefix {
         let mut cp = Coverage::new(200);
         // Coverage 1.0 on [20,60) and 0.5 on [100,150)
         cp.add_fragment(frag(0, 20, 60))?;
-        cp.add_fragment_weighted(
-            frag(0, 100, 150),
-            0.5,
-        )?;
+        cp.add_fragment_weighted(frag(0, 100, 150), 0.5)?;
         let cov = cp.finalize_coverage(true).to_vec();
         cp.build_indexes(true)?;
 

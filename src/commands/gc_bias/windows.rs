@@ -169,6 +169,13 @@ pub fn fixed_size_window_interval(
     chrom_len: u64,
 ) -> crate::Result<Interval<u64>> {
     let start = idx.saturating_mul(window_bp);
+    if start >= chrom_len {
+        return Err(crate::Error::InvalidFixedWindowIndex {
+            idx,
+            start,
+            chrom_len,
+        });
+    }
     let end = start.saturating_add(window_bp).min(chrom_len);
     Interval::new(start, end)
 }
@@ -178,14 +185,81 @@ pub fn window_state_from_idx(
     idx: u64,
     window_bp: u64,
     chrom_len: u64,
-    core_start: u64,
-    core_end: u64,
+    core_interval: Interval<u64>,
     template: &GCCounts,
 ) -> Result<WindowState> {
     let interval = fixed_size_window_interval(idx, window_bp, chrom_len)?;
-    let (start, end) = interval.as_tuple();
-    let contained = start >= core_start && end <= core_end;
+    let contained = core_interval.contains_interval(interval);
     WindowState::new(idx, interval, contained, template)
+}
+
+/// Build the rolling fixed-size window buffers for one tile.
+///
+/// Fixed-size GC bias counting keeps two buffers alive at a time: the current
+/// window and the next window. This helper creates those checked buffers from
+/// the checked tile core interval so callers do not repeat the index math.
+///
+/// The two-buffer setup works for most tiles because a fragment can only overlap
+/// the current fixed window and the one immediately after it. Near chromosome
+/// end, the "next" window may be the last partial window, and there may be no
+/// valid non-empty window after that. In those cases, the missing next window
+/// is represented as `None`.
+fn prepare_fixed_size_streaming_buffers(
+    window_bp: u64,
+    chrom_len: u64,
+    core_interval: Interval<u64>,
+    template: &GCCounts,
+) -> Result<(WindowState, Option<WindowState>)> {
+    let current_idx = core_interval.start() / window_bp;
+    let current =
+        window_state_from_idx(current_idx, window_bp, chrom_len, core_interval, template)?;
+
+    let next_idx = current_idx + 1;
+    let next = if next_idx.saturating_mul(window_bp) < chrom_len {
+        Some(window_state_from_idx(
+            next_idx,
+            window_bp,
+            chrom_len,
+            core_interval,
+            template,
+        )?)
+    } else {
+        None
+    };
+
+    Ok((current, next))
+}
+
+/// Advance the rolling fixed-size window buffers by one window.
+///
+/// After the old current window has been finalized, the old next window becomes
+/// current and the recycled allocation is reset to the following window when it
+/// exists.
+///
+/// This is the only place where the streaming path asks for the synthetic
+/// window after the current `next` buffer. That means the chromosome-end edge
+/// case also lives here: if `next` already points at the last partial window,
+/// the following window should become `None` instead of constructing a fake
+/// end-of-chromosome interval.
+pub(crate) fn advance_fixed_size_streaming_buffers(
+    current: WindowState,
+    next: WindowState,
+    window_bp: u64,
+    chrom_len: u64,
+    core_interval: Interval<u64>,
+    template: &GCCounts,
+) -> Result<(WindowState, Option<WindowState>)> {
+    let mut recycled = current;
+    let current = next;
+    let next_idx = current.idx + 1;
+    if next_idx.saturating_mul(window_bp) >= chrom_len {
+        return Ok((current, None));
+    }
+
+    let next_interval = fixed_size_window_interval(next_idx, window_bp, chrom_len)?;
+    let next_contained = core_interval.contains_interval(next_interval);
+    recycled.reset(next_idx, next_interval, next_contained, template)?;
+    Ok((current, Some(recycled)))
 }
 
 /// Compute the number of ACGT bases in the current window using prefix sums.
@@ -245,16 +319,14 @@ pub fn compute_window_acgt(
     Ok(())
 }
 
-pub fn overlap_length(a_start: u64, a_end: u64, b_start: u64, b_end: u64) -> u64 {
-    let start = a_start.max(b_start);
-    let end = a_end.min(b_end);
-    end.saturating_sub(start)
+pub fn overlap_length(a: Interval<u64>, b: Interval<u64>) -> u64 {
+    a.intersection(b).map_or(0, |shared| shared.len())
 }
 
 #[derive(Debug)]
 pub struct PreparedTileWindows {
     pub windows: Vec<WindowState>,
-    pub streaming_buffers: Option<(u64, WindowState, WindowState)>,
+    pub streaming_buffers: Option<(u64, WindowState, Option<WindowState>)>,
     pub skip_tile: bool,
 }
 
@@ -294,9 +366,10 @@ pub fn prepare_tile_windows(
     template: &GCCounts,
 ) -> Result<PreparedTileWindows> {
     let mut windows: Vec<WindowState> = Vec::new();
-    let mut streaming_buffers: Option<(u64, WindowState, WindowState)> = None;
+    let mut streaming_buffers: Option<(u64, WindowState, Option<WindowState>)> = None;
     let mut skip_tile = false;
 
+    let core_interval = tile.core.try_to_u64()?;
     let core_start = tile.core_start() as u64;
     let core_end = tile.core_end() as u64;
 
@@ -330,21 +403,12 @@ pub fn prepare_tile_windows(
             }
         }
         WindowSpec::Size(window_bp) => {
-            let current_idx = core_start / *window_bp;
-            let current = window_state_from_idx(
-                current_idx,
+            let (current, next) = prepare_fixed_size_streaming_buffers(
                 *window_bp,
                 chrom_len,
-                core_start,
-                core_end,
+                core_interval,
                 template,
             )?;
-
-            let next_idx = current_idx + 1;
-            let next = window_state_from_idx(
-                next_idx, *window_bp, chrom_len, core_start, core_end, template,
-            )?;
-
             streaming_buffers = Some((*window_bp, current, next));
         }
         WindowSpec::Global => {
@@ -362,4 +426,9 @@ pub fn prepare_tile_windows(
         streaming_buffers,
         skip_tile,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    include!("windows_tests.rs");
 }

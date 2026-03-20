@@ -71,7 +71,7 @@ pub struct Coverage {
     bl_mask: Option<Vec<u8>>, // Per-base blacklist mask after finalize_blacklist_prefix, 1 = blacklisted
 
     // Prefix sums for fast queries
-    psum_all: Option<Vec<f64>>,           // Σ coverage
+    psum_all: Option<Vec<f64>>,            // Σ coverage
     psum_unmasked: Option<Vec<f64>>,       // Σ coverage over non-blacklisted positions
     psum_unmasked_count: Option<Vec<u32>>, // Σ 1 over non-blacklisted positions
 
@@ -395,7 +395,11 @@ impl Coverage {
     /// - `interval` must be non-empty because `Interval` enforces `end > start`.
     /// - The interval must lie within `0..self.length`.
     #[inline]
-    pub fn sum_coverage(&mut self, interval: Interval<u32>, exclude_blacklisted: bool) -> Result<f64> {
+    pub fn sum_coverage(
+        &mut self,
+        interval: Interval<u32>,
+        exclude_blacklisted: bool,
+    ) -> Result<f64> {
         self.ensure_ready_for_queries()?;
         self.check_interval(interval)?;
 
@@ -432,7 +436,11 @@ impl Coverage {
     /// - When `exclude_blacklisted` is true and every position in the interval is blacklisted,
     ///   this returns `0.0`.
     #[inline]
-    pub fn avg_coverage(&mut self, interval: Interval<u32>, exclude_blacklisted: bool) -> Result<f32> {
+    pub fn avg_coverage(
+        &mut self,
+        interval: Interval<u32>,
+        exclude_blacklisted: bool,
+    ) -> Result<f32> {
         self.ensure_ready_for_queries()?;
         self.check_interval(interval)?;
 
@@ -443,7 +451,8 @@ impl Coverage {
             let prefix_sums_unmasked = self.psum_unmasked.as_ref().unwrap();
             let prefix_unmasked_counts = self.psum_unmasked_count.as_ref().unwrap();
             let sum = prefix_sums_unmasked[end_idx] - prefix_sums_unmasked[start_idx];
-            let unmasked_position_count = prefix_unmasked_counts[end_idx] - prefix_unmasked_counts[start_idx];
+            let unmasked_position_count =
+                prefix_unmasked_counts[end_idx] - prefix_unmasked_counts[start_idx];
             if unmasked_position_count == 0 {
                 return Ok(0.0);
             }

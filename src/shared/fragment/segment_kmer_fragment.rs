@@ -2,13 +2,13 @@ use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::{Cigar, Record};
 use smallvec::SmallVec;
 
+use crate::Result;
 use crate::shared::fragment::minimal_fragment::{
     PairOrientable, is_inwards_oriented, oriented_pair_from_read_info,
 };
 use crate::shared::gc_tag::{GcTagValue, combine_gc_tag_values, read_gc_tag_from_record};
 use crate::shared::indel_mode::IndelMode;
 use crate::shared::interval::{Interval, TouchingMergePolicy, merge_sorted_intervals};
-use crate::Result;
 
 /// Represents a fragment together with the reference segments that are safe for k-mer analysis.
 #[derive(Debug, Clone)]

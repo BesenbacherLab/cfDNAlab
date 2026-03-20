@@ -159,7 +159,10 @@ fn should_sort_grouped_windows_and_reuse_group_indices_when_loading_bed() -> Res
 
     assert_eq!(map.len(), 2);
     let chr1 = map.get("chr1").expect("chr1 missing");
-    assert_eq!(chr1.as_slice(), indexed_windows(&[(10, 12, 1), (15, 18, 0)]));
+    assert_eq!(
+        chr1.as_slice(),
+        indexed_windows(&[(10, 12, 1), (15, 18, 0)])
+    );
 
     let chr2 = map.get("chr2").expect("chr2 missing");
     assert_eq!(chr2.as_slice(), indexed_windows(&[(5, 8, 1), (20, 30, 0)]));
@@ -245,11 +248,7 @@ fn should_keep_original_indices_when_loading_scored_bed_with_whitelist() -> Resu
     // - File order gives original indices 0:[0,4), 1:[9,12), 2:[4,8).
     // - Whitelisting chr2 removes line 0 but must keep the surviving original indices 1 and 2.
     // - Sorting within chr2 then places [4,8) before [9,12), so the expected order is idx 2 then 1.
-    let bed = write_bed(&[
-        "chr1\t0\t4\t1.0",
-        "chr2\t9\t12\t2.0",
-        "chr2\t4\t8\t3.0",
-    ])?;
+    let bed = write_bed(&["chr1\t0\t4\t1.0", "chr2\t9\t12\t2.0", "chr2\t4\t8\t3.0"])?;
     let whitelist = vec!["chr2".to_string()];
 
     let map = load_scored_windows_from_bed(bed.path(), Some(whitelist.as_slice()), None, Some(3))?;

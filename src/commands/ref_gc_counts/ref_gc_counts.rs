@@ -18,12 +18,12 @@ use crate::{
         blacklist::{apply_blacklist_mask_to_seq, compute_blacklist_overlap},
         interval::{IndexedInterval, Interval},
         io::create_text_writer,
+        progress::ProgressFactory,
         reference::{read_seq, twobit_contig_lengths},
         sampling::sample_starts_per_chrom,
     },
 };
 use anyhow::{Context, Result, ensure};
-use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array1, Array2, Array3};
 use ndarray_npy::NpzWriter;
 use rand::{SeedableRng, rngs::StdRng};
@@ -35,12 +35,8 @@ pub fn run(opt: &RefGCCountsConfig) -> Result<()> {
     let chromosomes = opt.chromosomes.resolve_chromosomes(None)?;
     let window_opt = opt.windows.resolve_windows();
     opt.check_smoothing_settings()?;
-    let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .unwrap(),
-    );
+    let progress = ProgressFactory::new();
+    let pb = Arc::new(progress.default_bar(chromosomes.len() as u64));
 
     let min_effective_len = opt
         .fragment_lengths

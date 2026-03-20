@@ -192,7 +192,8 @@ fn partition_deletion_by_aligned_overlap(
                     nonoverlap_bases_bp.saturating_add(left_nonoverlap_interval.len());
             }
 
-            if let Some(overlap_deletion_interval) = deletion_interval.clip_to(aligned_overlap_interval)
+            if let Some(overlap_deletion_interval) =
+                deletion_interval.clip_to(aligned_overlap_interval)
             {
                 overlap_deletion_intervals.push(overlap_deletion_interval);
             }

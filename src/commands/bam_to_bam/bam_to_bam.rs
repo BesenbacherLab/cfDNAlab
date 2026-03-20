@@ -1,6 +1,5 @@
 use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
-use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use rust_htslib::bam::{self, Format, Header, Read, Record, ext::BamRecordExtensions};
 use std::{sync::Arc, time::Instant};
 
@@ -28,6 +27,7 @@ use crate::{
         fragment_iterator::fragments_with_records_from_bam,
         interval::{IndexedInterval, Interval},
         overlaps::find_overlapping_windows,
+        progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq,
         scale_genome::compute_window_scaling_over_fragment,
@@ -156,15 +156,8 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
     )?;
 
     // Create progress bar
-    let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .unwrap(),
-    );
-    if quiet {
-        pb.set_draw_target(ProgressDrawTarget::hidden());
-    }
+    let progress = ProgressFactory::with_enabled(!quiet);
+    let pb = Arc::new(progress.default_bar(chromosomes.len() as u64));
 
     if !quiet {
         println!("Start: Converting per chromosome");
