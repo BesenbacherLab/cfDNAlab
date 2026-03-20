@@ -18,14 +18,14 @@ Suggest a tool or feature [here](https://github.com/BesenbacherLab/cfDNAlab/issu
 You may need a few dependencies that can be installed as a conda environment with:
 
 ```bash
-conda create -n cfdnalab rust=1.87.0 zstandard perl fontconfig conda-forge::llvmdev conda-forge::clangdev
+conda create -n cfdnalab rust=1.94.0 zstandard perl fontconfig conda-forge::llvmdev conda-forge::clangdev
 conda activate cfdnalab
 ```
 
 Compile and install:
 
 ```bash
-cargo install --git https://github.com/BesenbacherLab/cfDNAlab --release --features cli,plotters
+cargo install --git https://github.com/BesenbacherLab/cfDNAlab --features cli,plotters
 cfdna --help
 # or clone + build
 git clone https://github.com/BesenbacherLab/cfDNAlab

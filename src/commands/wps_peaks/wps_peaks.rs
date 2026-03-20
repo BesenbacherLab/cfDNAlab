@@ -585,6 +585,12 @@ impl FixedSizeWindows {
 
         Ok(())
     }
+
+    fn ensure_progress(&mut self, chr: &str) {
+        self.progress
+            .entry(chr.to_string())
+            .or_insert_with(FixedChromProgress::default);
+    }
 }
 
 impl FixedSizeAlignedWindows {

@@ -684,7 +684,7 @@ pub fn wps_for_tile(
         tile_window_span,
         &mode,
         chrom_len as u32,
-        opt.fragment_lengths.max_fragment_length as u64,
+        opt.max_fragment_length as u64,
     )?
     else {
         return Ok((counter, None, None));
@@ -1135,8 +1135,7 @@ pub fn wps_for_tile(
                     write_final_row(
                         &mut finals_writer,
                         &tile.chr,
-                        local_overlap.clipped_abs_interval.start(),
-                        local_overlap.clipped_abs_interval.end(),
+                        local_overlap.clipped_abs_interval,
                         value,
                         blacklisted,
                         decimals,

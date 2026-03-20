@@ -625,8 +625,7 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
                 && is_blacklisted(
                     cursor.intervals.as_slice(),
                     cfg.blacklist_strategy,
-                    resized_start as u64,
-                    resized_end as u64,
+                    resized_interval.try_to_u64()?,
                     blacklist_look_back,
                     &mut cursor.pre_cursor,
                 )

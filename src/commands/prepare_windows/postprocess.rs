@@ -719,4 +719,6 @@ fn choose_candidate(
 }
 
 #[cfg(test)]
-mod postprocess_tests;
+mod tests {
+    include!("postprocess_tests.rs");
+}
