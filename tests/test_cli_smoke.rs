@@ -512,7 +512,9 @@ fn frag_to_bam_cli_minimal_invocation_writes_output_bam() -> Result<()> {
     assert_success_with_logs(&output, "cfdna frag-to-bam minimal invocation");
 
     // Assert
-    let bam_path = output_dir.path().join(format!("{output_prefix}.bam"));
+    let bam_path = output_dir
+        .path()
+        .join(format!("{output_prefix}.fragments.bam"));
     assert!(bam_path.exists(), "Expected {}", bam_path.display());
     let file_size = std::fs::metadata(&bam_path)?.len();
     assert!(file_size > 0, "Expected non-empty BAM output");

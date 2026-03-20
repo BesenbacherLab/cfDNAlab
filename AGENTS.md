@@ -9,7 +9,7 @@ This file is the authoritative entry point for repo-specific agent instructions.
 - Keep functions small and single-purpose when reasonable.
 - Prefer explicit names over abbreviations. Do not use single-letter variable names.
 - Do not fail silently. If something is wrong, the program should tell the user.
-- Run `cargo check --features cli,plotters` after code changes.
+- Run `cargo check --features cli,plotters` after code changes. After major refactors, run `cargo check --all-features`.
 - If a file is changed, always read it before answering.
 - If I ask for a new code review, never rely on memory to answer.
 - Do not make conclusions about code you have not re-read.

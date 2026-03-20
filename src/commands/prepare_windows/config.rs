@@ -830,13 +830,12 @@ pub struct PrepareConfig {
     /// The interval and resize combinations look like the following (2+3 leads to
     /// random selection of midpoint to reduce midpoint selection bias):
     ///
-    ///     Interval size 6, resize 4: [011110] -> unique placement
-    ///
-    ///     Interval size 6, resize 3: [001110] or [011100] -> left or right choice
-    ///
-    ///     Interval size 5, resize 4: [11110] or [01111] -> left or right choice
-    ///
-    ///     Interval size 5, resize 3: [01110] -> unique placement
+    /// ```text
+    /// Interval size 6, resize 4: [011110] -> unique placement
+    /// Interval size 6, resize 3: [001110] or [011100] -> left or right choice
+    /// Interval size 5, resize 4: [11110] or [01111] -> left or right choice
+    /// Interval size 5, resize 3: [01110] -> unique placement
+    /// ```
     ///
     /// Only one of `--resize` and `--flank` can be specified at a time.
     #[cfg_attr(

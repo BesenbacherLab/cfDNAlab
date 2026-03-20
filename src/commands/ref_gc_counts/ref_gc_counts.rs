@@ -433,7 +433,7 @@ fn process_chrom(
         total_acgt
     };
 
-    let bin_info = if let Some(size) = opt.windows.by_size {
+    let bin_info = if opt.windows.by_size.is_some() {
         // Build bin information for chromosome
         // chrom,start,end,total_count
         let mut bl_ptr = 0;
@@ -441,7 +441,7 @@ fn process_chrom(
         for window in &windows {
             let overlap_perc = compute_blacklist_overlap(
                 blacklist_intervals,
-                Interval::new(start, end)?,
+                Interval::new(window.start(), window.end())?,
                 0u64,
                 &mut bl_ptr,
             );
@@ -462,7 +462,7 @@ fn process_chrom(
         for window in &windows {
             let overlap_perc = compute_blacklist_overlap(
                 blacklist_intervals,
-                Interval::new(start, end)?,
+                Interval::new(window.start(), window.end())?,
                 0u64,
                 &mut bl_ptr,
             );

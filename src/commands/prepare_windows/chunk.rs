@@ -20,6 +20,7 @@ use crate::commands::prepare_windows::{
     writers::{ChromTempWriter, ensure_temp_writer_for_chrom},
 };
 use crate::shared::blacklist::{BlacklistStrategy, is_blacklisted};
+use crate::shared::interval::Interval;
 use anyhow::Result;
 use fxhash::FxHashMap;
 use std::path::Path;
@@ -830,11 +831,15 @@ fn filter_blacklisted_post_merge(
             let mut retained: Vec<Window> = Vec::with_capacity(windows.len());
             for entry in windows.into_iter() {
                 if entry.merged {
+                    let output_interval = Interval::new(
+                        entry.start_for(coord_set) as u64,
+                        entry.end_for(coord_set) as u64,
+                    )
+                    .expect("merged windows should keep valid non-empty coordinates");
                     if is_blacklisted(
                         intervals,
                         strategy,
-                        entry.start_for(coord_set) as u64,
-                        entry.end_for(coord_set) as u64,
+                        output_interval,
                         look_back,
                         &mut cursor.post_cursor,
                     ) {

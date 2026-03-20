@@ -861,6 +861,11 @@ mod tests_peak_signal_processing {
     use cfdnalab::commands::wps_peaks::wps_peaks::{
         PeakSignalProcessingOptions, compute_window_stats_contributions, peaks_from_wps_values,
     };
+    use cfdnalab::shared::interval::IndexedInterval;
+
+    fn indexed_windows(entries: &[(u64, u64, u64)]) -> Vec<IndexedInterval<u64>> {
+        IndexedInterval::from_tuples(entries).expect("test windows should be valid")
+    }
 
     fn assert_peak(peak: &PeakCall, start: u64, end: u64, height: f32) {
         assert_eq!(peak.start(), start);
@@ -1012,7 +1017,7 @@ mod tests_peak_signal_processing {
         // Tile boundary sits at 2,000bp. First scenario: blacklist begins far upstream so the halo
         // never crosses it, meaning both tiles reuse the same segment marker and the histogram keeps
         // the cross-tile distance 400bp (between the last peak of tile A and first peak of tile B).
-        let windows = vec![(0, 4_000, 0)];
+        let windows = indexed_windows(&[(0, 4_000, 0)]);
         let peaks_same = vec![
             segmented_peak(1_200, 0),
             segmented_peak(1_500, 0),
@@ -1146,7 +1151,7 @@ mod tests_wps_peaks_command {
                     }
                 }),
         );
-        expected_peaks.sort_by_key(|peak| peak.start());
+        expected_peaks.sort_by_key(|peak| peak.start);
         assert_eq!(peak_rows.len(), expected_peaks.len());
         for (actual, expected) in peak_rows.iter().zip(expected_peaks.iter()) {
             assert_eq!(actual.start, expected.start);
@@ -1176,7 +1181,7 @@ mod tests_wps_peaks_command {
         // Windows: binning the 4.7kb contig yields indices 0-4. Populated windows capture the repeated
         // 400bp spacing between adjacent overlaps, so both average and median distances equal 400bp,
         // while windows with fewer than two peaks report `NaN`.
-        let peak_positions: Vec<u64> = expected_peaks.iter().map(|peak| peak.start()).collect();
+        let peak_positions: Vec<u64> = expected_peaks.iter().map(|peak| peak.start).collect();
         let chrom_len_bp = LONG_FRAGMENT_STARTS.last().copied().unwrap_or(0) as u64
             + LONG_FRAGMENT_LENGTH as u64
             + 500;
@@ -1269,8 +1274,9 @@ mod tests_wps_peaks_command {
         let peaks_path = out_dir.path().join("three_chr_global.wps.peaks.tsv.zst");
         let text = read_zst_to_string(&peaks_path)?;
         assert!(
-            text.trim().is_empty(),
-            "Empty three-chromosome input should not produce any global peaks"
+            text.lines()
+                .eq(["chromosome\tstart\tend\tpeak_position\theight"]),
+            "Empty three-chromosome input should produce only the global peaks header"
         );
 
         Ok(())
