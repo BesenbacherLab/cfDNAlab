@@ -17,39 +17,6 @@ pub const DEFAULT_OUTLIER_QUANTILES: [f32; 2] = [0.03, 0.97];
 pub const DEFAULT_OUTLIER_METHOD: OutlierMethodArg = OutlierMethodArg::Iqr;
 pub const DEFAULT_OUTLIER_SCOPE: OutlierScopeArg = OutlierScopeArg::Global;
 
-#[derive(Default, Clone, Debug)]
-pub enum WindowWeightingSchemes {
-    Equal,
-    Coverage,
-    #[default]
-    ValidPositions,
-}
-
-impl WindowWeightingSchemes {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            WindowWeightingSchemes::Equal => "equal",
-            WindowWeightingSchemes::Coverage => "coverage",
-            WindowWeightingSchemes::ValidPositions => "valid-positions",
-        }
-    }
-}
-
-impl FromStr for WindowWeightingSchemes {
-    type Err = String;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        if s == "equal" {
-            Ok(WindowWeightingSchemes::Equal)
-        } else if s == "coverage" {
-            Ok(WindowWeightingSchemes::Coverage)
-        } else if s == "valid-positions" {
-            Ok(WindowWeightingSchemes::ValidPositions)
-        } else {
-            Err("Use 'equal', 'coverage', or 'valid-positions'".into())
-        }
-    }
-}
-
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutlierMethodArg {
