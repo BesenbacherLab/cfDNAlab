@@ -1,7 +1,7 @@
 use crate::commands::cli_common::*;
 use crate::commands::gc_bias::outliers::{OutlierAction, OutlierRule, OutlierScope};
 use anyhow::{Result, anyhow};
-use std::{path::PathBuf, str::FromStr};
+use std::path::PathBuf;
 
 // Central defaults to keep CLI and programmatic creation in sync
 pub const DEFAULT_TILE_SIZE: u32 = 10_000_000;

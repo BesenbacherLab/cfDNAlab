@@ -2,6 +2,7 @@ use crate::{
     commands::{
         cli_common::*,
         gc_bias::{
+            GC_CORRECTION_SCHEMA_VERSION,
             counting::{
                 GCCounts, apply_gc_percent_width_correction, build_gc_prefixes,
                 count_reference_gc_and_length_by_window, gc_percent_widths, stack_gc_counts,
@@ -323,6 +324,7 @@ fn write_reference_gc_package(
     npz.add_array("support_mask_unobservables", support_unobservables)?;
     npz.add_array("support_mask_outliers", support_outliers)?;
     npz.add_array("gc_percent_widths", gc_percent_widths)?;
+    npz.add_array("version", &Array1::from(vec![GC_CORRECTION_SCHEMA_VERSION]))?;
     npz.add_array(
         "length_range",
         &Array1::from(vec![length_min as u32, length_max as u32]),

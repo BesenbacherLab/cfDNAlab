@@ -308,6 +308,108 @@ fn ignore_gap_removes_inter_mate_gap_from_positional_output() -> Result<()> {
 }
 
 #[test]
+fn ignore_gap_keeps_scaling_and_blacklist_on_genomic_coordinates() -> Result<()> {
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let blacklist_path = out_dir.path().join("ignore_gap_blacklist.bed");
+    let scaling_path = out_dir.path().join("ignore_gap_scaling.tsv");
+    write_bed(&blacklist_path, &[("chr1", 25, 35, "masked")])?;
+    write_scaling_factors(
+        &scaling_path,
+        &[
+            ("chr1", 0, 30, 2.0_f32),
+            ("chr1", 30, 70, 3.0_f32),
+            ("chr1", 70, 200, 5.0_f32),
+        ],
+    )?;
+
+    let mut scale_genome = ScaleGenomeArgs::default();
+    scale_genome.scaling_factors = Some(scaling_path);
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(0);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_keep_zero_runs(false);
+    cfg.set_ignore_gap(true);
+    cfg.set_scale_genome(scale_genome);
+    cfg.blacklist = Some(vec![blacklist_path]);
+
+    // Manual expectations:
+    // - With ignore_gap=true, only the read-covered segments remain: [20, 40) and [60, 80).
+    // - Scaling still applies on genomic coordinates:
+    //   [20, 30): factor 2, [30, 70): factor 3, [70, 80): factor 5.
+    // - Blacklisting [25, 35) still masks those reference positions after coverage/scaling.
+    // - The final positional runs are therefore:
+    //   [20, 25): 2
+    //   [35, 40): 3
+    //   [60, 70): 3
+    //   [70, 80): 5
+    run(&cfg)?;
+
+    let output_path = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "chr1\t20\t25\t2",
+            "chr1\t35\t40\t3",
+            "chr1\t60\t70\t3",
+            "chr1\t70\t80\t5",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn blacklist_inside_inter_mate_gap_only_matters_without_ignore_gap() -> Result<()> {
+    let bam = simple_inward_bam()?;
+    let blacklist_rows = [("chr1", 45, 55, "gap_mask")];
+
+    let run_with_ignore_gap = |ignore_gap: bool| -> Result<Vec<String>> {
+        let out_dir = TempDir::new()?;
+        let blacklist_path = out_dir.path().join(format!("gap_blacklist_{ignore_gap}.bed"));
+        write_bed(&blacklist_path, &blacklist_rows)?;
+
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        cfg.set_decimals(0);
+        cfg.set_per_window(CoverageWindowAction::Average);
+        cfg.set_keep_zero_runs(false);
+        cfg.set_ignore_gap(ignore_gap);
+        cfg.blacklist = Some(vec![blacklist_path]);
+
+        run(&cfg)?;
+
+        let output_path = out_dir
+            .path()
+            .join("testcov.fcoverage.per_position.bedgraph.zst");
+        let text = read_zst_to_string(&output_path)?;
+        Ok(text.lines().map(|line| line.to_string()).collect())
+    };
+
+    // Manual expectations:
+    // - The paired reads cover [20, 40) and [60, 80), with an inter-mate gap [40, 60).
+    // - The blacklist [45, 55) lies entirely inside that gap.
+    // - Without ignore-gap, coverage is over the full fragment span [20, 80), so the blacklist
+    //   removes part of the covered interval and splits the run.
+    // - With ignore-gap, the gap is already absent from coverage, so masking inside the gap
+    //   must not change the surviving read-covered segments.
+    let without_ignore_gap = run_with_ignore_gap(false)?;
+    let with_ignore_gap = run_with_ignore_gap(true)?;
+
+    assert_eq!(
+        without_ignore_gap,
+        vec!["chr1\t20\t45\t1", "chr1\t55\t80\t1"]
+    );
+    assert_eq!(with_ignore_gap, vec!["chr1\t20\t40\t1", "chr1\t60\t80\t1"]);
+
+    Ok(())
+}
+
+#[test]
 fn unpaired_single_read_matches_fragment_span_output() -> Result<()> {
     let bam = single_read_fragment_bam("fcoverage_unpaired_single_read")?;
     let out_dir = TempDir::new()?;

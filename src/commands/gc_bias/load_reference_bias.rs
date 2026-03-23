@@ -1,3 +1,4 @@
+use crate::commands::gc_bias::GC_CORRECTION_SCHEMA_VERSION;
 use anyhow::{Context, Result, ensure};
 use ndarray::{Array1, Array2};
 use ndarray_npy::NpzReader;
@@ -66,6 +67,9 @@ fn read_reference_gc_package(
     let gc_percent_widths: Array2<u16> = reader
         .by_name("gc_percent_widths")
         .context("Missing gc_percent_widths in reference GC package")?;
+    let version_arr: Array1<u32> = reader
+        .by_name("version")
+        .context("missing version in reference GC package")?;
     let lengths: Array1<u32> = reader
         .by_name("length_range")
         .context("missing length_range in reference GC package")?;
@@ -90,9 +94,41 @@ fn read_reference_gc_package(
         .by_name("skip_smoothing")
         .context("missing skip_smoothing in reference GC package")?;
     ensure!(
+        version_arr.len() == 1,
+        "version should be length 1. Found len={}",
+        version_arr.len()
+    );
+    ensure!(
         end_offset_arr.len() == 1,
         "end_offset should be length 1. Found len={}",
         end_offset_arr.len()
+    );
+    ensure!(
+        skip_interpolation_arr.len() == 1,
+        "skip_interpolation should be length 1. Found len={}",
+        skip_interpolation_arr.len()
+    );
+    ensure!(
+        smoothing_radius_arr.len() == 1,
+        "smoothing_radius should be length 1. Found len={}",
+        smoothing_radius_arr.len()
+    );
+    ensure!(
+        smoothing_sigma_arr.len() == 1,
+        "smoothing_sigma should be length 1. Found len={}",
+        smoothing_sigma_arr.len()
+    );
+    ensure!(
+        skip_smoothing_arr.len() == 1,
+        "skip_smoothing should be length 1. Found len={}",
+        skip_smoothing_arr.len()
+    );
+    ensure!(
+        version_arr[0] == GC_CORRECTION_SCHEMA_VERSION,
+        "Reference GC package schema version mismatch: file={}, expected={}; \
+        Incompatible with this version of cfDNAlab.",
+        version_arr[0],
+        GC_CORRECTION_SCHEMA_VERSION
     );
     let metadata = ReferenceGCMetadata {
         min_fragment_length: lengths[0] as usize,

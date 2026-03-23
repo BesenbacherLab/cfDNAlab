@@ -16,6 +16,7 @@ mod tests_lengths_command {
     };
     use cfdnalab::commands::lengths::config::LengthsConfig;
     use cfdnalab::commands::lengths::lengths::run;
+    use cfdnalab::shared::blacklist::strategy::BlacklistStrategy;
     use cfdnalab::shared::indel_mode::IndelMode;
     use cfdnalab::shared::io::dot_join;
     use fixtures::{
@@ -706,6 +707,171 @@ mod tests_lengths_command {
         let l24 = 24 - 10;
         assert!((skip_arr[(0, l24)] - 1.0).abs() < 1e-6);
         assert!((skip_arr.sum() - 1.0).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
+    fn indel_adjust_bins_by_adjusted_length_but_scales_over_reference_span() -> Result<()> {
+        let bam = indel_bam_fixture()?;
+        let out_dir = TempDir::new()?;
+        let scaling_path = out_dir.path().join("indel_adjust_scaling.tsv");
+        write_scaling_factors(
+            &scaling_path,
+            &[("chr1", 0, 10, 1.0_f32), ("chr1", 10, 40, 3.0_f32)],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 2,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Adjust);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_scaling_factors(Some(scaling_path));
+        {
+            let frag = cfg.fragment_lengths_mut();
+            // Keep only the insertion-bearing fragment from the edge fixture.
+            frag.min_fragment_length = 17;
+            frag.max_fragment_length = 17;
+        }
+
+        // Manual expectations:
+        // - In adjust mode, the insertion fragment is counted in adjusted-length bin 17.
+        // - Its reference span is still [5, 21), which is 16 bp long.
+        // - Scaling is intentionally computed over that full reference span:
+        //   [5, 10): 5 bp at factor 1
+        //   [10, 21): 11 bp at factor 3
+        //   average scaling = (5*1 + 11*3) / 16 = 38 / 16 = 2.375
+        run(&cfg)?;
+
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.shape(), &[1, 1]);
+        assert!((arr[(0, 0)] - 2.375).abs() < 1e-6);
+        assert!((arr.sum() - 2.375).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
+    fn indel_adjust_blacklist_uses_full_reference_span_not_only_adjusted_length() -> Result<()> {
+        let bam = indel_bam_fixture()?;
+        let out_dir = TempDir::new()?;
+        let blacklist_path = out_dir.path().join("indel_adjust_blacklist.bed");
+        fixtures::write_bed(&blacklist_path, &[("chr1", 19, 20, "deleted_base")])?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 2,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Adjust);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.blacklist = Some(vec![blacklist_path]);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            // Keep only the deletion-bearing fragment from the edge fixture.
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Manual expectations:
+        // - In adjust mode, the deletion fragment is counted in adjusted-length bin 10.
+        // - Its full reference span is [16, 27), even though one deleted base means the
+        //   adjusted length is shorter than the reference interval.
+        // - Blacklisting [19, 20) therefore still overlaps the fragment and must exclude it.
+        run(&cfg)?;
+
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.shape(), &[1, 1]);
+        assert!((arr.sum()).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
+    fn indel_adjust_blacklist_proportion_uses_reference_span_denominator() -> Result<()> {
+        let bam = indel_bam_fixture()?;
+        let out_dir = TempDir::new()?;
+        let blacklist_path = out_dir.path().join("indel_adjust_blacklist_proportion.bed");
+        fixtures::write_bed(&blacklist_path, &[("chr1", 19, 20, "deleted_base")])?;
+
+        let mut base_cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 2,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        base_cfg.set_windows(WindowsArgs::default());
+        base_cfg.set_window_assignment(AssignToWindowArgs::default());
+        base_cfg.set_min_mapq(0);
+        base_cfg.set_require_proper_pair(false);
+        base_cfg.blacklist = Some(vec![blacklist_path]);
+        base_cfg.blacklist_strategy = BlacklistStrategy::Proportion(0.095);
+
+        // Manual expectations:
+        // - The deletion fragment has adjusted length 10 but reference span [16, 27), length 11.
+        // - The blacklist contributes exactly 1 bp of overlap: [19, 20).
+        // - With proportion=0.095:
+        //   expected behavior uses the full reference span:
+        //   1 / 11 = 0.090909... < 0.095                        -> survives
+        //   buggy adjusted-length denominator would instead use:
+        //   1 / 10 = 0.1 >= 0.095                              -> blacklisted
+        // - With proportion=0.09:
+        //   expected behavior still uses the full reference span:
+        //   1 / 11 = 0.090909... >= 0.09                        -> blacklisted
+        // - Therefore both Ignore and Adjust must:
+        //   survive at 0.095, and
+        //   be blacklisted at 0.09.
+        // - If Adjust used the adjusted length as denominator, it would already be dropped at 0.095.
+
+        let run_sum = |indel_mode: IndelMode, threshold: f64| -> Result<f64> {
+            let mut cfg = base_cfg.clone();
+            cfg.set_indel_mode(indel_mode);
+            cfg.blacklist_strategy = BlacklistStrategy::Proportion(threshold);
+            {
+                let frag = cfg.fragment_lengths_mut();
+                frag.min_fragment_length = 10;
+                frag.max_fragment_length = 11;
+            }
+
+            run(&cfg)?;
+            let npy_path = out_dir
+                .path()
+                .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+            let arr: Array2<f64> = read_npy(&npy_path)?;
+            Ok(arr.sum())
+        };
+
+        let ignore_survives = run_sum(IndelMode::Ignore, 0.095)?;
+        let adjust_survives = run_sum(IndelMode::Adjust, 0.095)?;
+        let ignore_blacklisted = run_sum(IndelMode::Ignore, 0.09)?;
+        let adjust_blacklisted = run_sum(IndelMode::Adjust, 0.09)?;
+
+        assert!((ignore_survives - 1.0).abs() < 1e-6);
+        assert!((adjust_survives - 1.0).abs() < 1e-6);
+        assert!((ignore_blacklisted).abs() < 1e-6);
+        assert!((adjust_blacklisted).abs() < 1e-6);
 
         Ok(())
     }

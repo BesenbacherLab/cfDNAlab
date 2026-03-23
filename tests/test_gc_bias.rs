@@ -2,6 +2,7 @@ mod tests_gc_bias {
     use anyhow::Result;
     use fxhash::FxHashMap;
     use ndarray::array;
+    use ndarray_npy::NpzWriter;
     use tempfile::tempdir;
 
     use cfdnalab::commands::gc_bias::{
@@ -9,6 +10,7 @@ mod tests_gc_bias {
         binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
         correct::{GCCorrector, LengthAgnosticGCCorrector, MarginalizeLengthsWeightingScheme},
         gc_bias::interpolate_masked_corrections,
+        load_reference_bias::load_reference_gc_data,
         outliers::{
             OutlierAction, OutlierRule, OutlierScope, OutlierStats, apply_outliers_to_matrix,
             interpolated_quantile, outlier_bounds,
@@ -401,6 +403,145 @@ mod tests_gc_bias {
         assert!((matrix[[0, 1]] - 75.25).abs() < 1e-6);
         assert!((matrix[[1, 0]] - 1.0).abs() < 1e-6);
         assert!((matrix[[1, 1]] - 1.0).abs() < 1e-6);
+    }
+
+    fn write_reference_gc_package_fixture(
+        out_dir: &std::path::Path,
+        version: &[u32],
+        skip_interpolation: &[bool],
+        smoothing_radius: &[u32],
+        smoothing_sigma: &[f64],
+        skip_smoothing: &[bool],
+    ) -> Result<()> {
+        let package_path = out_dir.join("ref_gc_package.npz");
+        let counts = array![[1.0_f64, 2.0_f64], [3.0_f64, 4.0_f64]];
+        let support_unobservables = array![[true, false], [true, true]];
+        let support_outliers = array![[true, true], [false, true]];
+        let gc_percent_widths = array![[10_u16, 20_u16], [30_u16, 40_u16]];
+
+        let file = std::fs::File::create(&package_path)?;
+        let mut npz = NpzWriter::new(file);
+        npz.add_array("counts", &counts)?;
+        npz.add_array("support_mask_unobservables", &support_unobservables)?;
+        npz.add_array("support_mask_outliers", &support_outliers)?;
+        npz.add_array("gc_percent_widths", &gc_percent_widths)?;
+        npz.add_array("version", &ndarray::Array1::from(version.to_vec()))?;
+        npz.add_array("length_range", &ndarray::Array1::from(vec![30_u32, 40_u32]))?;
+        npz.add_array("end_offset", &ndarray::Array1::from(vec![10_u32]))?;
+        npz.add_array(
+            "skip_interpolation",
+            &ndarray::Array1::from(skip_interpolation.to_vec()),
+        )?;
+        npz.add_array(
+            "smoothing_radius",
+            &ndarray::Array1::from(smoothing_radius.to_vec()),
+        )?;
+        npz.add_array(
+            "smoothing_sigma",
+            &ndarray::Array1::from(smoothing_sigma.to_vec()),
+        )?;
+        npz.add_array(
+            "skip_smoothing",
+            &ndarray::Array1::from(skip_smoothing.to_vec()),
+        )?;
+        npz.finish()?;
+        Ok(())
+    }
+
+    #[test]
+    fn loads_versioned_reference_gc_package() -> Result<()> {
+        // Arrange: write a minimal reference package with the current schema version and scalar
+        // metadata fields.
+        let tmp = tempdir()?;
+        write_reference_gc_package_fixture(
+            tmp.path(),
+            &[GC_CORRECTION_SCHEMA_VERSION],
+            &[false],
+            &[2],
+            &[0.55],
+            &[true],
+        )?;
+
+        // Act
+        let loaded = load_reference_gc_data(tmp.path())?;
+
+        // Assert: arrays and scalar metadata survive round-trip exactly.
+        assert_eq!(
+            loaded.counts,
+            array![[1.0_f64, 2.0_f64], [3.0_f64, 4.0_f64]]
+        );
+        assert_eq!(
+            loaded.unobservables_support_mask,
+            array![[true, false], [true, true]]
+        );
+        assert_eq!(
+            loaded.outliers_support_mask,
+            array![[true, true], [false, true]]
+        );
+        assert_eq!(
+            loaded.gc_percent_widths,
+            array![[10_u16, 20_u16], [30_u16, 40_u16]]
+        );
+        assert_eq!(loaded.metadata.min_fragment_length, 30);
+        assert_eq!(loaded.metadata.max_fragment_length, 40);
+        assert_eq!(loaded.metadata.end_offset, 10);
+        assert!(!loaded.metadata.skip_interpolation);
+        assert_eq!(loaded.metadata.smoothing_radius, 2);
+        assert!((loaded.metadata.smoothing_sigma - 0.55).abs() < 1e-12);
+        assert!(loaded.metadata.skip_smoothing);
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_reference_gc_package_with_non_scalar_metadata_array() -> Result<()> {
+        // Arrange: `skip_smoothing` is written with two values. This should fail cleanly instead of
+        // indexing `[0]` and panicking.
+        let tmp = tempdir()?;
+        write_reference_gc_package_fixture(
+            tmp.path(),
+            &[GC_CORRECTION_SCHEMA_VERSION],
+            &[false],
+            &[2],
+            &[0.55],
+            &[true, false],
+        )?;
+
+        // Act
+        let error = load_reference_gc_data(tmp.path()).expect_err("expected scalar-length error");
+
+        // Assert
+        assert!(
+            error
+                .to_string()
+                .contains("skip_smoothing should be length 1")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_reference_gc_package_with_schema_version_mismatch() -> Result<()> {
+        // Arrange: same package shape, but an incompatible version number.
+        let tmp = tempdir()?;
+        write_reference_gc_package_fixture(
+            tmp.path(),
+            &[GC_CORRECTION_SCHEMA_VERSION + 1],
+            &[false],
+            &[2],
+            &[0.55],
+            &[true],
+        )?;
+
+        // Act
+        let error =
+            load_reference_gc_data(tmp.path()).expect_err("expected schema version mismatch");
+
+        // Assert
+        assert!(
+            error
+                .to_string()
+                .contains("Reference GC package schema version mismatch")
+        );
+        Ok(())
     }
 }
 
