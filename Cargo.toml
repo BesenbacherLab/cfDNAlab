@@ -2,6 +2,7 @@
 name = "cfdnalab"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.94"
 authors = ["Ludvig Renbo Olsen", "Søren Besenbacher"]
 description = "Ultra-fast command-line tools for cell-free DNA fragmentomics analysis"
 license = "MIT"
