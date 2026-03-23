@@ -19,8 +19,8 @@ use crate::{
                 build_extreme_bins_support_mask, set_masked_entries_to_value, stats_by_support_mask,
             },
             windows::{
-                WindowState, compute_window_acgt, compute_window_stats, fixed_size_window_interval,
-                overlap_length, prepare_tile_windows,
+                WindowState, advance_fixed_size_streaming_buffers, compute_window_acgt,
+                compute_window_stats, overlap_length, prepare_tile_windows,
             },
         },
     },
@@ -33,6 +33,7 @@ use crate::{
         interval::{IndexedInterval, Interval},
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
+        progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
         thread_pool::init_global_pool,
@@ -43,7 +44,6 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use fxhash::FxHashMap;
-use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array1, Array2, ArrayBase, Axis, Data, DataMut, Ix2, Zip};
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
@@ -55,39 +55,61 @@ use std::{fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
 /// Returns `None` when the trimmed interval is empty, outside the loaded sequence,
 /// or lacks sufficient ACGT support.
 pub fn get_fragment_gc(
-    fragment: &Fragment,
-    seq_start: u64,
-    seq_end: u64,
+    fragment_interval: Interval<u64>,
+    sequence_interval: Interval<u64>,
     end_offset: u32,
     gc_prefixes: &GCPrefixes,
     min_acgt_fraction: f32,
 ) -> Result<Option<usize>> {
-    let gc_window_start = fragment.start().saturating_add(end_offset);
-    let gc_window_end = fragment.end().saturating_sub(end_offset);
-    if gc_window_end <= gc_window_start {
-        return Ok(None);
-    }
-    if gc_window_end as u64 > seq_end || (gc_window_start as u64) < seq_start {
-        return Ok(None);
-    }
+    let gc_window = match fragment_interval.contract(end_offset as u64) {
+        Some(interval) => interval,
+        None => return Ok(None),
+    };
 
-    let acgt = gc_prefixes.acgt[(gc_window_end - seq_start as u32) as usize]
-        - gc_prefixes.acgt[(gc_window_start - seq_start as u32) as usize];
+    if !sequence_interval.contains_interval(gc_window) {
+        return Ok(None);
+    }
+    let seq_start = sequence_interval.start();
+    let (gc_window_start, gc_window_end) = gc_window.as_tuple();
+
+    let acgt = gc_prefixes.acgt[(gc_window_end - seq_start) as usize]
+        - gc_prefixes.acgt[(gc_window_start - seq_start) as usize];
     if acgt < MIN_ACGT_BASES_FOR_GC_FRACTION
-        || (acgt as f32 / (gc_window_end - gc_window_start) as f32) < min_acgt_fraction
+        || (acgt as f32 / gc_window.len() as f32) < min_acgt_fraction
     {
         return Ok(None);
     }
 
-    let gc = gc_prefixes.gc[(gc_window_end - seq_start as u32) as usize]
-        - gc_prefixes.gc[(gc_window_start - seq_start as u32) as usize];
+    let gc = gc_prefixes.gc[(gc_window_end - seq_start) as usize]
+        - gc_prefixes.gc[(gc_window_start - seq_start) as usize];
     ensure!(
-        gc <= (gc_window_end - gc_window_start),
+        gc <= gc_window.len() as u32,
         "GC count exceeded interval length: {} > {}",
         gc,
-        gc_window_end - gc_window_start
+        gc_window.len()
     );
     Ok(Some(gc as usize))
+}
+
+/// Build the interval used for window assignment for one fragment.
+///
+/// GC bias counts use the same checked interval semantics for fixed-size and
+/// non-streaming windows. Keeping the assignment span as an `Interval` avoids
+/// open-coding start/end math in each path.
+fn fragment_assignment_interval(
+    fragment: &Fragment,
+    assign_by: WindowAssigner,
+) -> Result<Interval<u64>> {
+    match assign_by {
+        WindowAssigner::Midpoint => {
+            let midpoint = midpoint_random_even_with_thread_rng(fragment.start(), fragment.len());
+            Ok(Interval::new(midpoint.into(), (midpoint + 1).into())?)
+        }
+        WindowAssigner::Any
+        | WindowAssigner::All
+        | WindowAssigner::Proportion(_)
+        | WindowAssigner::CountOverlap => Ok(fragment.interval.try_to_u64()?),
+    }
 }
 
 pub fn finalize_window_buffer(
@@ -251,12 +273,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     };
     let (tiles, windows_aligned_to_tiles) =
         build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, align_bp)?;
-    let pb = Arc::new(ProgressBar::new(tiles.len() as u64));
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .expect("hardcoded progress template"),
-    );
+    let progress = ProgressFactory::new();
+    let pb = Arc::new(progress.default_bar(tiles.len() as u64));
 
     let windows_lookup = windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
@@ -771,9 +789,11 @@ fn process_tile(
     }
     let mut windows = prepared_windows.windows;
     let streaming_buffers = prepared_windows.streaming_buffers;
+    let tile_core_interval = tile.core.try_to_u64()?;
 
     let seq_start = tile.fetch_start() as u64;
     let seq_end = tile.fetch_end().min(chrom_len as u32) as u64;
+    let sequence_interval = Interval::new(seq_start, seq_end)?;
 
     let gc_prefixes = {
         // Load only the tile span (core plus halo)
@@ -867,6 +887,7 @@ fn process_tile(
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
             let fragment_length = fragment.len();
+            let fragment_interval = fragment.interval.try_to_u64()?;
 
             // Only count fragments whose start lies inside the tile core to avoid double counting
             if fragment.start() < tile.core_start() || fragment.start() >= tile.core_end() {
@@ -889,23 +910,26 @@ fn process_tile(
                     &mut tile_output,
                     &mut crossing_parts,
                 )?;
-                let mut recycled = current;
-                current = next;
-
-                // Prepare the next buffer using the recycled allocation
-                let next_idx = current.idx + 1;
-                let next_interval = fixed_size_window_interval(next_idx, window_bp, chrom_len)?;
-                let (next_start, next_end) = next_interval.as_tuple();
-                let next_contained =
-                    next_start >= tile.core_start() as u64 && next_end <= tile.core_end() as u64;
-                recycled.reset(next_idx, next_interval, next_contained, template)?;
-                next = recycled;
+                let current_next = match next.take() {
+                    Some(window) => window,
+                    None => break,
+                };
+                // Fixed-size mode only needs two live window buffers at a time.
+                // The helper owns the "promote next -> current, then build a new next"
+                // transition so the chromosome-end behavior stays in one place.
+                (current, next) = advance_fixed_size_streaming_buffers(
+                    current,
+                    current_next,
+                    window_bp,
+                    chrom_len,
+                    tile_core_interval,
+                    template,
+                )?;
             }
 
             let Some(gc_count) = get_fragment_gc(
-                &fragment,
-                seq_start,
-                seq_end,
+                fragment_interval,
+                sequence_interval,
                 reference_metadata.end_offset as u32,
                 &gc_prefixes,
                 1.0,
@@ -914,28 +938,13 @@ fn process_tile(
                 continue;
             };
 
-            let (interval_start, interval_end) = match opt.window_assignment.assign_by {
-                WindowAssigner::Midpoint => {
-                    let midpoint =
-                        midpoint_random_even_with_thread_rng(fragment.start(), fragment_length);
-                    (midpoint, midpoint + 1)
-                }
-                WindowAssigner::Any
-                | WindowAssigner::All
-                | WindowAssigner::Proportion(_)
-                | WindowAssigner::CountOverlap => (fragment.start(), fragment.end()),
-            };
-
-            let fragment_span_length = (interval_end - interval_start) as f64;
+            let assignment_interval =
+                fragment_assignment_interval(&fragment, opt.window_assignment.assign_by)?;
+            let fragment_span_length = assignment_interval.len() as f64;
 
             // Choose buffers to update: at most current and next for fixed-size windows
             let mut current_weight: Option<f64> = None;
-            let overlap_current = overlap_length(
-                interval_start as u64,
-                interval_end as u64,
-                current.start(),
-                current.end(),
-            );
+            let overlap_current = overlap_length(assignment_interval, current.interval);
             if overlap_current > 0 {
                 let fraction = overlap_current as f64 / fragment_span_length;
                 if fraction >= min_overlap_fraction {
@@ -949,21 +958,18 @@ fn process_tile(
             }
 
             let mut next_weight: Option<f64> = None;
-            let overlap_next = overlap_length(
-                interval_start as u64,
-                interval_end as u64,
-                next.start(),
-                next.end(),
-            );
-            if overlap_next > 0 {
-                let fraction = overlap_next as f64 / fragment_span_length;
-                if fraction >= min_overlap_fraction {
-                    // Increment counter by 1.0 or by the overlap fraction
-                    let count_weight = match opt.window_assignment.assign_by {
-                        WindowAssigner::CountOverlap => fraction,
-                        _ => 1.0,
-                    };
-                    next_weight = Some(count_weight);
+            if let Some(next_window) = next.as_ref() {
+                let overlap_next = overlap_length(assignment_interval, next_window.interval);
+                if overlap_next > 0 {
+                    let fraction = overlap_next as f64 / fragment_span_length;
+                    if fraction >= min_overlap_fraction {
+                        // Increment counter by 1.0 or by the overlap fraction
+                        let count_weight = match opt.window_assignment.assign_by {
+                            WindowAssigner::CountOverlap => fraction,
+                            _ => 1.0,
+                        };
+                        next_weight = Some(count_weight);
+                    }
                 }
             }
 
@@ -979,14 +985,24 @@ fn process_tile(
                     .counts
                     .incr_weighted(fragment_length as usize, gc_count, count_weight);
             }
-            if let Some(count_weight) = next_weight {
-                next.has_counts = true;
-                next.counts
-                    .incr_weighted(fragment_length as usize, gc_count, count_weight);
+            match (next_weight, next.as_mut()) {
+                (Some(count_weight), Some(next_window)) => {
+                    next_window.has_counts = true;
+                    next_window.counts.incr_weighted(
+                        fragment_length as usize,
+                        gc_count,
+                        count_weight,
+                    );
+                }
+                (Some(_), None) => {
+                    bail!("computed next-window GC counts without a live next window");
+                }
+                (None, _) => {}
             }
         }
 
-        // Flush both buffers so partially filled windows still reach downstream reducers
+        // Flush the current buffer and the optional next buffer so partially
+        // filled windows still reach downstream reducers.
         finalize_window_buffer(
             &mut current,
             &gc_prefixes,
@@ -1001,20 +1017,22 @@ fn process_tile(
             &mut tile_output,
             &mut crossing_parts,
         )?;
-        finalize_window_buffer(
-            &mut next,
-            &gc_prefixes,
-            seq_start,
-            seq_end,
-            tile.core_start() as u64,
-            tile.core_end() as u64,
-            windows_aligned_to_tiles,
-            apply_window_scaling,
-            opt,
-            avg_window_span,
-            &mut tile_output,
-            &mut crossing_parts,
-        )?;
+        if let Some(next_window) = next.as_mut() {
+            finalize_window_buffer(
+                next_window,
+                &gc_prefixes,
+                seq_start,
+                seq_end,
+                tile.core_start() as u64,
+                tile.core_end() as u64,
+                windows_aligned_to_tiles,
+                apply_window_scaling,
+                opt,
+                avg_window_span,
+                &mut tile_output,
+                &mut crossing_parts,
+            )?;
+        }
     } else {
         let mut window_ptr = 0usize; // Genomic window pointer reused by overlap finder
         {
@@ -1026,6 +1044,7 @@ fn process_tile(
             for fragment_res in iter.by_ref() {
                 let fragment = fragment_res.context("reading fragment")?;
                 let fragment_length = fragment.len();
+                let fragment_interval = fragment.interval.try_to_u64()?;
 
                 // Only count fragments whose start lies inside the tile core to avoid double counting
                 if fragment.start() < tile.core_start() || fragment.start() >= tile.core_end() {
@@ -1033,9 +1052,8 @@ fn process_tile(
                 }
 
                 let Some(gc_count) = get_fragment_gc(
-                    &fragment,
-                    seq_start,
-                    seq_end,
+                    fragment_interval,
+                    sequence_interval,
                     reference_metadata.end_offset as u32,
                     &gc_prefixes,
                     1.0,
@@ -1047,17 +1065,8 @@ fn process_tile(
                 // Find all overlapping windows
 
                 // Calculate what part needs to overlap to some degree
-                let query_interval = match opt.window_assignment.assign_by {
-                    WindowAssigner::Midpoint => {
-                        let midpoint =
-                            midpoint_random_even_with_thread_rng(fragment.start(), fragment_length);
-                        Interval::new(midpoint.into(), (midpoint + 1).into())?
-                    }
-                    WindowAssigner::Any
-                    | WindowAssigner::All
-                    | WindowAssigner::Proportion(_)
-                    | WindowAssigner::CountOverlap => fragment.interval.try_to_u64()?,
-                };
+                let query_interval =
+                    fragment_assignment_interval(&fragment, opt.window_assignment.assign_by)?;
                 let overlapping_windows = find_overlapping_windows(
                     chrom_len,
                     &mut window_ptr,

@@ -1,8 +1,8 @@
+use crate::Result;
 use crate::shared::fragment::minimal_fragment::{
     PairOrientable, is_inwards_oriented, oriented_pair_from_read_info,
 };
 use crate::shared::interval::Interval;
-use crate::Result;
 use rust_htslib::bam::ext::BamRecordExtensions; // reference_end()
 use rust_htslib::bam::record::Record;
 

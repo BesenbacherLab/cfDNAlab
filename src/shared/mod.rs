@@ -15,6 +15,7 @@ pub mod iterator_counter;
 pub mod kmers;
 pub mod midpoint;
 pub mod overlaps;
+pub mod progress;
 pub mod read;
 pub mod reference;
 pub mod sampling;

@@ -974,11 +974,8 @@ fn filter_min_per_pass(
             let writer = ensure_temp_writer_for_chrom(&window.chrom, &temp_dir, &mut writers)?;
             let window_interval =
                 crate::shared::interval::Interval::new(window.start(), window.end())?;
-            let filtered_window = IntermediateWindow::new(
-                window.chrom,
-                window_interval,
-                kept_tuples,
-            );
+            let filtered_window =
+                IntermediateWindow::new(window.chrom, window_interval, kept_tuples);
             write_intermediate_window(writer.writer(), &filtered_window, separator)?;
         }
     }

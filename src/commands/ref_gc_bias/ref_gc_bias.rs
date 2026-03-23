@@ -2,6 +2,7 @@ use crate::{
     commands::{
         cli_common::*,
         gc_bias::{
+            GC_CORRECTION_SCHEMA_VERSION,
             counting::{
                 GCCounts, apply_gc_percent_width_correction, build_gc_prefixes,
                 count_reference_gc_and_length_by_window, gc_percent_widths,
@@ -18,6 +19,7 @@ use crate::{
         bed::{Windows, load_windows_from_bed},
         blacklist::apply_blacklist_mask_to_seq,
         interval::{IndexedInterval, Interval},
+        progress::ProgressFactory,
         reference::{read_seq_in_range, twobit_contig_lengths},
         sampling::{sample_starts_in_core, sampling_density},
         thread_pool::init_global_pool,
@@ -29,7 +31,6 @@ use crate::{
 };
 use anyhow::{Context, Result, ensure};
 use fxhash::FxHashMap;
-use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array1, Array2};
 use ndarray_npy::NpzWriter;
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -130,12 +131,8 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     let (tiles, _) = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, None)?;
     // Derive per-tile seeds to keep sampling deterministic without storing all start positions
     let tile_seeds: Vec<u64> = (0..tiles.len()).map(|_| seed_rng.random()).collect();
-    let pb = Arc::new(ProgressBar::new(tiles.len() as u64));
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .expect("hardcoded progress template"),
-    );
+    let progress = ProgressFactory::new();
+    let pb = Arc::new(progress.default_bar(tiles.len() as u64));
 
     let windows_lookup = windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
@@ -338,6 +335,7 @@ fn write_reference_gc_package(
     npz.add_array("support_mask_unobservables", support_unobservables)?;
     npz.add_array("support_mask_outliers", support_outliers)?;
     npz.add_array("gc_percent_widths", gc_percent_widths)?;
+    npz.add_array("version", &Array1::from(vec![GC_CORRECTION_SCHEMA_VERSION]))?;
     npz.add_array(
         "length_range",
         &Array1::from(vec![length_min as u32, length_max as u32]),

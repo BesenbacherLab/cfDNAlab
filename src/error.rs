@@ -24,6 +24,12 @@ pub enum Error {
     InvalidSpanBounds { start: String, end: String },
     /// A fixed-bin helper received a bin size of zero.
     InvalidBinSize { bin_size: u64 },
+    /// A fixed-size window index started at or past chromosome end.
+    InvalidFixedWindowIndex {
+        idx: u64,
+        start: u64,
+        chrom_len: u64,
+    },
     /// An overlap fraction fell outside the inclusive range `[0.0, 1.0]`.
     OverlapFractionOutOfBounds { overlap_fraction: f32 },
     /// A tile fetch range did not fully cover the tile core.
@@ -63,6 +69,16 @@ impl Display for Error {
             }
             Error::InvalidBinSize { bin_size } => {
                 write!(formatter, "bin_size must be greater than 0, got {bin_size}")
+            }
+            Error::InvalidFixedWindowIndex {
+                idx,
+                start,
+                chrom_len,
+            } => {
+                write!(
+                    formatter,
+                    "fixed-size window index {idx} starts at {start} beyond chromosome length {chrom_len}"
+                )
             }
             Error::OverlapFractionOutOfBounds { overlap_fraction } => {
                 write!(

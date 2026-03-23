@@ -1,6 +1,6 @@
+use crate::Result;
 use crate::shared::gc_tag::{GcTagValue, combine_gc_tag_values};
 use crate::shared::interval::Interval;
-use crate::Result;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::Record;
 
@@ -38,7 +38,7 @@ impl Fragment {
 /// Minimal per-read info needed to build a Fragment without stashing full Records.
 #[derive(Debug, Clone, Copy)]
 pub struct MinimalReadInfo {
-    pub tid: i32, // Contig id
+    pub tid: i32,                // Contig id
     pub interval: Interval<u32>, // Aligned reference span [start: pos(), end: reference_end())
     pub is_reverse: bool,
     pub gc_tag: crate::shared::gc_tag::GcTagValue,
@@ -109,7 +109,10 @@ impl PairOrientable for MinimalReadInfo {
 ///     The fragment if both reads are mapped to the same contig, on opposite strands,
 ///     and inward-facing; otherwise `None`.
 pub fn collect_fragment_from_records(a: &Record, b: &Record) -> Option<Fragment> {
-    collect_fragment(&MinimalReadInfo::try_from(a).ok()?, &MinimalReadInfo::try_from(b).ok()?)
+    collect_fragment(
+        &MinimalReadInfo::try_from(a).ok()?,
+        &MinimalReadInfo::try_from(b).ok()?,
+    )
 }
 
 /// Build a Fragment from two `MinimalReadInfo`s (no full BAM records needed).

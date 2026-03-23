@@ -17,6 +17,7 @@ use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment_iterator::fragments_from_bam;
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::dot_join;
+use crate::shared::progress::ProgressFactory;
 use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
@@ -37,7 +38,6 @@ use crate::{
 };
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
-use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::io::Write;
@@ -263,12 +263,8 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     let total_tiles = tiles.len();
 
     // Create progress bar
-    let pb = Arc::new(ProgressBar::new(total_tiles as u64));
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .expect("hardcoded progress template"),
-    );
+    let progress = ProgressFactory::new();
+    let pb = Arc::new(progress.default_bar(total_tiles as u64));
 
     // Configure global thread‐pool size
     init_global_pool(opt.shared_args.ioc.n_threads as usize)?;
@@ -775,8 +771,10 @@ pub fn wps_for_tile(
         move |fragment: &Fragment, fetch_start: u32| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
-                    let fetch_relative_fragment =
-                        fragment.interval.try_to_u64()?.shift_left(fetch_start as u64)?;
+                    let fetch_relative_fragment = fragment
+                        .interval
+                        .try_to_u64()?
+                        .shift_left(fetch_start as u64)?;
                     corrector.correct_fragment(fetch_relative_fragment, prefixes)
                 }
                 _ => Ok(None),

@@ -27,6 +27,7 @@ use crate::{
         io::{create_text_writer, dot_join},
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
+        progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
         scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
@@ -38,7 +39,6 @@ use crate::{
 };
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
-use indicatif::{ProgressBar, ProgressStyle};
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
@@ -131,15 +131,10 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     };
 
     // Build tiles (core plus halo)
-    let (tiles, guaranteed_aligned) =
-        build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, align_bp)?;
+    let (tiles, _) = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, align_bp)?;
 
-    let pb = Arc::new(ProgressBar::new(tiles.len() as u64));
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .expect("hardcoded progress template"),
-    );
+    let progress = ProgressFactory::new();
+    let pb = Arc::new(progress.default_bar(tiles.len() as u64));
 
     let windows_lookup = windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
@@ -194,7 +189,6 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 opt,
                 tile,
                 tile_span.as_ref(),
-                guaranteed_aligned,
                 windows_chr,
                 &window_opt,
                 blacklist_chr,
@@ -499,7 +493,6 @@ fn process_tile(
     opt: &LengthsConfig,
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
-    windows_aligned_to_tiles: bool,
     windows_chr: Option<&[IndexedInterval<u64>]>,
     window_opt: &WindowSpec,
     blacklist_intervals: &[Interval<u64>],
@@ -685,8 +678,10 @@ fn process_tile(
         move |fragment: &FragmentWithIndelCounts| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
-                    let fetch_relative_fragment =
-                        fragment.interval.try_to_u64()?.shift_left(fetch_start as u64)?;
+                    let fetch_relative_fragment = fragment
+                        .interval
+                        .try_to_u64()?
+                        .shift_left(fetch_start as u64)?;
                     corrector.correct_fragment(fetch_relative_fragment, prefixes)
                 }
                 _ => Ok(None),
@@ -880,7 +875,11 @@ fn process_tile(
             window_idxs_chr.push(idx);
             counts.push(tile_counts.counts);
             contained_flags.push(tile_counts.contained);
-            if !windows_aligned_to_tiles && !tile_counts.contained {
+            // Aligned tile/window boundaries do not make non-contained bins tile-exclusive.
+            // A fragment can start near the right edge of this core and still contribute to a
+            // downstream bin that is fully contained in the next tile. Every non-contained row
+            // must therefore stay in the cross-index so the reducer knows to merge it.
+            if !tile_counts.contained {
                 crossing_window_idxs_chr.push(idx);
             }
         }

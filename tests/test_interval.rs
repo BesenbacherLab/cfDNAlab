@@ -1,6 +1,6 @@
 use cfdnalab::shared::interval::{
-    IndexedInterval, Interval, Span, TouchingMergePolicy, merge_intervals,
-    merge_sorted_intervals, push_merged_interval,
+    IndexedInterval, Interval, Span, TouchingMergePolicy, merge_intervals, merge_sorted_intervals,
+    push_merged_interval,
 };
 
 #[test]
@@ -174,6 +174,36 @@ fn expands_interval_to_cover_other_interval() -> anyhow::Result<()> {
 
     // Assert: the combined covered span is from the earlier start 5 to the later end 20.
     assert_eq!(expanded, Interval::new(5, 20)?);
+    Ok(())
+}
+
+#[test]
+fn expands_interval_on_both_sides() -> anyhow::Result<()> {
+    let interval = Interval::new(12_u64, 20_u64)?;
+
+    let expanded = interval.expand(3)?;
+
+    assert_eq!(expanded, Interval::new(9_u64, 23_u64)?);
+    Ok(())
+}
+
+#[test]
+fn contracts_interval_on_both_sides() -> anyhow::Result<()> {
+    let interval = Interval::new(12_u64, 20_u64)?;
+
+    let contracted = interval.contract(3);
+
+    assert_eq!(contracted, Some(Interval::new(15_u64, 17_u64)?));
+    Ok(())
+}
+
+#[test]
+fn returns_none_when_contracted_interval_would_be_empty() -> anyhow::Result<()> {
+    let interval = Interval::new(12_u64, 20_u64)?;
+
+    let contracted = interval.contract(4);
+
+    assert_eq!(contracted, None);
     Ok(())
 }
 
@@ -361,7 +391,10 @@ fn pushes_sorted_intervals_with_explicit_touching_policy() -> anyhow::Result<()>
     // - the touching interval collapses into [10,30) in the second path
     assert_eq!(
         keep_touching_separate,
-        vec![Interval::new(10_u32, 25_u32)?, Interval::new(25_u32, 30_u32)?]
+        vec![
+            Interval::new(10_u32, 25_u32)?,
+            Interval::new(25_u32, 30_u32)?
+        ]
     );
     assert_eq!(merge_touching, vec![Interval::new(10_u32, 30_u32)?]);
     Ok(())
@@ -398,7 +431,10 @@ fn merges_sorted_intervals_without_resorting() -> anyhow::Result<()> {
     );
     assert_eq!(
         merge_touching,
-        vec![Interval::new(5_u32, 12_u32)?, Interval::new(20_u32, 25_u32)?]
+        vec![
+            Interval::new(5_u32, 12_u32)?,
+            Interval::new(20_u32, 25_u32)?
+        ]
     );
     Ok(())
 }
@@ -416,12 +452,18 @@ fn sorts_then_merges_unsorted_intervals() -> anyhow::Result<()> {
     ];
 
     // Act
-    let merged = merge_intervals(unsorted_intervals, TouchingMergePolicy::KeepTouchingSeparate);
+    let merged = merge_intervals(
+        unsorted_intervals,
+        TouchingMergePolicy::KeepTouchingSeparate,
+    );
 
     // Assert
     assert_eq!(
         merged,
-        vec![Interval::new(5_u32, 12_u32)?, Interval::new(20_u32, 30_u32)?]
+        vec![
+            Interval::new(5_u32, 12_u32)?,
+            Interval::new(20_u32, 30_u32)?
+        ]
     );
     Ok(())
 }

@@ -31,13 +31,14 @@ use crate::shared::bed::{detect_header, line_looks_like_header};
 use crate::shared::blacklist::{is_blacklisted, load_blacklists};
 use crate::shared::interval::Interval;
 use crate::shared::io::open_text_reader;
+use crate::shared::progress::ProgressFactory;
 use crate::shared::reference::load_chrom_sizes;
 use crate::shared::thread_pool::init_global_pool;
 use crate::shared::tiled_run::make_temp_dir;
 use anyhow::{Context, Result, bail};
 use ctrlc;
 use fxhash::{FxHashMap, FxHashSet};
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::ProgressStyle;
 use std::collections::hash_map::Entry;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -45,7 +46,7 @@ use std::process;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use std::{env, fs, mem};
 
 /// Window representation used throughout the prepare pipeline.
@@ -421,23 +422,17 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
     init_global_pool(cfg.n_threads as usize)?;
 
     let has_known_chroms = !chromosomes.is_empty();
+    let progress = ProgressFactory::new();
     let pb = if has_known_chroms {
-        let bar = Arc::new(ProgressBar::new(chromosomes.len() as u64));
-        bar.set_style(
-            ProgressStyle::default_bar()
-                .template("Chromosomes {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-                .unwrap(),
-        );
-        bar
+        Arc::new(progress.default_bar(chromosomes.len() as u64))
     } else {
-        let spinner = Arc::new(ProgressBar::new_spinner());
-        spinner.set_style(
-            ProgressStyle::default_spinner()
-                .template("Chromosomes {spinner} {msg} [{elapsed_precise}]")
-                .unwrap(),
-        );
-        spinner.enable_steady_tick(Duration::from_millis(100));
-        spinner
+        Arc::new(
+            progress.spinner_with_style(
+                ProgressStyle::default_spinner()
+                    .template("Chromosomes {spinner} {msg} [{elapsed_precise}]")
+                    .expect("hardcoded progress template"),
+            ),
+        )
     };
 
     let mut processed_chrom_count: u64 = 0;

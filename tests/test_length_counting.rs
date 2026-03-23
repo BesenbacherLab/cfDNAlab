@@ -691,30 +691,28 @@ mod tests {
 
         // Touching at 20: no overlap
         let mut wd_ptr = 0usize;
-        let none1 =
-            find_overlapping_windows(
-                chrom_len,
-                &mut wd_ptr,
-                Some(&wins),
-                None,
-                query_interval(10, 20),
-                0.0,
-                500,
-            )?;
+        let none1 = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            Some(&wins),
+            None,
+            query_interval(10, 20),
+            0.0,
+            500,
+        )?;
         assert!(none1.is_none(), "pure edge touch should not overlap");
 
         // Still no overlap for [19,20)
         wd_ptr = 0;
-        let none2 =
-            find_overlapping_windows(
-                chrom_len,
-                &mut wd_ptr,
-                Some(&wins),
-                None,
-                query_interval(19, 20),
-                0.0,
-                500,
-            )?;
+        let none2 = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            Some(&wins),
+            None,
+            query_interval(19, 20),
+            0.0,
+            500,
+        )?;
         assert!(
             none2.is_none(),
             "1bp ending at 20 should not overlap [20,30)"
@@ -722,17 +720,16 @@ mod tests {
 
         // [19,21): 1 bp overlap with window -> fraction = 1/2 of the fragment
         wd_ptr = 0;
-        let some =
-            find_overlapping_windows(
-                chrom_len,
-                &mut wd_ptr,
-                Some(&wins),
-                None,
-                query_interval(19, 21),
-                0.0,
-                500,
-            )?
-                .context("expected a small overlap")?;
+        let some = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            Some(&wins),
+            None,
+            query_interval(19, 21),
+            0.0,
+            500,
+        )?
+        .context("expected a small overlap")?;
         assert_eq!(some.windows.len(), 1);
         approx_eq(some.windows[0].overlap_fraction as f64, 1.0 / 2.0, 1e-6);
         Ok(())
@@ -835,17 +832,16 @@ mod tests {
         let chrom_len = 1_000;
         let mut wd_ptr = 0usize;
 
-        let res =
-            find_overlapping_windows(
-                chrom_len,
-                &mut wd_ptr,
-                None,
-                Some(10),
-                query_interval(9, 10),
-                0.0,
-                1_000,
-            )?
-                .context("expect overlap at left boundary")?;
+        let res = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            None,
+            Some(10),
+            query_interval(9, 10),
+            0.0,
+            1_000,
+        )?
+        .context("expect overlap at left boundary")?;
 
         assert_eq!(res.windows.len(), 1);
         assert_eq!(res.windows[0].idx, 0);
@@ -860,17 +856,16 @@ mod tests {
         let chrom_len = 1_000;
         let mut wd_ptr = 0usize;
 
-        let res =
-            find_overlapping_windows(
-                chrom_len,
-                &mut wd_ptr,
-                None,
-                Some(10),
-                query_interval(10, 11),
-                0.0,
-                1_000,
-            )?
-                .context("expect overlap at right boundary")?;
+        let res = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            None,
+            Some(10),
+            query_interval(10, 11),
+            0.0,
+            1_000,
+        )?
+        .context("expect overlap at right boundary")?;
 
         assert_eq!(res.windows.len(), 1);
         assert_eq!(res.windows[0].idx, 1);
@@ -884,17 +879,16 @@ mod tests {
         let chrom_len = 1_000;
         let mut wd_ptr = 0usize;
 
-        let res =
-            find_overlapping_windows(
-                chrom_len,
-                &mut wd_ptr,
-                None,
-                Some(10),
-                query_interval(10, 11),
-                0.99,
-                1_000,
-            )?
-                .context("expect overlap at boundary with strict threshold")?;
+        let res = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            None,
+            Some(10),
+            query_interval(10, 11),
+            0.99,
+            1_000,
+        )?
+        .context("expect overlap at boundary with strict threshold")?;
 
         assert_eq!(res.windows.len(), 1);
         assert_eq!(res.windows[0].idx, 1);
@@ -957,17 +951,16 @@ mod tests {
         let chrom_len = 1_000;
         let mut wd_ptr = 0usize;
 
-        let res =
-            find_overlapping_windows(
-                chrom_len,
-                &mut wd_ptr,
-                None,
-                Some(10),
-                query_interval(5, 95),
-                0.11,
-                1_000,
-            )?
-                .context("expect multiple bins after thresholding")?;
+        let res = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            None,
+            Some(10),
+            query_interval(5, 95),
+            0.11,
+            1_000,
+        )?
+        .context("expect multiple bins after thresholding")?;
 
         // Expect bins 1..=8 (8 bins).
         assert_eq!(res.windows.len(), 8);
@@ -995,17 +988,16 @@ mod tests {
         let chrom_len = 1_000;
         let mut wd_ptr = 0usize;
 
-        let res =
-            find_overlapping_windows(
-                chrom_len,
-                &mut wd_ptr,
-                None,
-                Some(10),
-                query_interval(3, 27),
-                0.0,
-                1_000,
-            )?
-                .context("partition fractions")?;
+        let res = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            None,
+            Some(10),
+            query_interval(3, 27),
+            0.0,
+            1_000,
+        )?
+        .context("partition fractions")?;
 
         let sum: f64 = res.windows.iter().map(|w| w.overlap_fraction as f64).sum();
 

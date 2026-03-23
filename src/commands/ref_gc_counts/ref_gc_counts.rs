@@ -2,6 +2,7 @@ use crate::{
     commands::{
         cli_common::*,
         gc_bias::{
+            GC_CORRECTION_SCHEMA_VERSION,
             counting::{
                 GCCounts, apply_gc_percent_width_correction, build_gc_prefixes,
                 count_reference_gc_and_length_by_window, gc_percent_widths, stack_gc_counts,
@@ -18,12 +19,12 @@ use crate::{
         blacklist::{apply_blacklist_mask_to_seq, compute_blacklist_overlap},
         interval::{IndexedInterval, Interval},
         io::create_text_writer,
+        progress::ProgressFactory,
         reference::{read_seq, twobit_contig_lengths},
         sampling::sample_starts_per_chrom,
     },
 };
 use anyhow::{Context, Result, ensure};
-use indicatif::{ProgressBar, ProgressStyle};
 use ndarray::{Array1, Array2, Array3};
 use ndarray_npy::NpzWriter;
 use rand::{SeedableRng, rngs::StdRng};
@@ -35,12 +36,8 @@ pub fn run(opt: &RefGCCountsConfig) -> Result<()> {
     let chromosomes = opt.chromosomes.resolve_chromosomes(None)?;
     let window_opt = opt.windows.resolve_windows();
     opt.check_smoothing_settings()?;
-    let pb = Arc::new(ProgressBar::new(chromosomes.len() as u64));
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .unwrap(),
-    );
+    let progress = ProgressFactory::new();
+    let pb = Arc::new(progress.default_bar(chromosomes.len() as u64));
 
     let min_effective_len = opt
         .fragment_lengths
@@ -327,6 +324,7 @@ fn write_reference_gc_package(
     npz.add_array("support_mask_unobservables", support_unobservables)?;
     npz.add_array("support_mask_outliers", support_outliers)?;
     npz.add_array("gc_percent_widths", gc_percent_widths)?;
+    npz.add_array("version", &Array1::from(vec![GC_CORRECTION_SCHEMA_VERSION]))?;
     npz.add_array(
         "length_range",
         &Array1::from(vec![length_min as u32, length_max as u32]),

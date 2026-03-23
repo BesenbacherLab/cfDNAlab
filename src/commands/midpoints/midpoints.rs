@@ -24,6 +24,7 @@ use crate::{
         io::dot_join,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
+        progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
         scale_genome::compute_window_scaling_over_fragment,
@@ -36,7 +37,6 @@ use crate::{
 };
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
-use indicatif::{ProgressBar, ProgressStyle};
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
@@ -164,12 +164,8 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         .output_dir
         .join(dot_join(&[prefix, "group_index.tsv"]));
 
-    let pb = Arc::new(ProgressBar::new(total_tiles as u64));
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("       {bar:40} {pos}/{len} [{elapsed_precise}] {msg}")
-            .expect("hardcoded progress template"),
-    );
+    let progress = ProgressFactory::new();
+    let pb = Arc::new(progress.default_bar(total_tiles as u64));
 
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads)?;
@@ -456,8 +452,10 @@ fn process_tile(
         move |fragment: &Fragment, fetch_start: u32| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
-                    let fetch_relative_fragment =
-                        fragment.interval.try_to_u64()?.shift_left(fetch_start as u64)?;
+                    let fetch_relative_fragment = fragment
+                        .interval
+                        .try_to_u64()?
+                        .shift_left(fetch_start as u64)?;
                     corrector.correct_fragment(fetch_relative_fragment, prefixes)
                 }
                 _ => Ok(None),

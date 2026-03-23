@@ -766,8 +766,8 @@ mod test_kmer_segments {
     use cfdnalab::shared::fragment::segment_kmer_fragment::{
         FragmentWithKmerSegments, KmerSegmentedReadInfo, collect_fragment_with_kmer_segments,
     };
-    use cfdnalab::shared::interval::Interval;
     use cfdnalab::shared::indel_mode::IndelMode;
+    use cfdnalab::shared::interval::Interval;
     use rust_htslib::bam::record::{Cigar, CigarString, Record};
     fn read_len(cigar: &[Cigar]) -> usize {
         cigar
