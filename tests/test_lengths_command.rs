@@ -145,6 +145,65 @@ mod tests_lengths_command {
     }
 
     #[test]
+    fn counts_reference_lengths_size_aligned_tiles_reduce_cross_tile_bins() -> Result<()> {
+        let bam = bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            vec![fixtures::paired_fragment(95, 40, 20)],
+            Vec::new(),
+            "lengths_size_aligned_cross_tile",
+        )?;
+        let out_dir = TempDir::new()?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 2,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs {
+            by_size: Some(10),
+            by_bed: None,
+        });
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_tile_size(100);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 50;
+        }
+
+        run(&cfg)?;
+
+        let prefix = cfg.output_prefix.trim();
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[prefix, "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+
+        // The fragment spans [95, 135), so in count-overlap mode it contributes:
+        //  5/40 to 90-100
+        // 10/40 to 100-110
+        // 10/40 to 110-120
+        // 10/40 to 120-130
+        //  5/40 to 130-140
+        // The three middle bins sit fully inside tile 1, but tile 0 still reaches them.
+        let len40_idx = 40 - 10;
+        assert_eq!(arr.shape(), &[20, 41]);
+        assert!((arr[(9, len40_idx)] - 0.125).abs() < 1e-6);
+        assert!((arr[(10, len40_idx)] - 0.25).abs() < 1e-6);
+        assert!((arr[(11, len40_idx)] - 0.25).abs() < 1e-6);
+        assert!((arr[(12, len40_idx)] - 0.25).abs() < 1e-6);
+        assert!((arr[(13, len40_idx)] - 0.125).abs() < 1e-6);
+        assert!((arr.sum() - 1.0).abs() < 1e-6);
+        Ok(())
+    }
+
+    #[test]
     fn counts_reference_lengths_bed_single_window() -> Result<()> {
         let bam = simple_inward_bam()?;
         let out_dir = TempDir::new()?;

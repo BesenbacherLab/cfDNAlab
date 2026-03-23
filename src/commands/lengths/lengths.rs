@@ -131,8 +131,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     };
 
     // Build tiles (core plus halo)
-    let (tiles, guaranteed_aligned) =
-        build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, align_bp)?;
+    let (tiles, _) = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, align_bp)?;
 
     let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(tiles.len() as u64));
@@ -190,7 +189,6 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 opt,
                 tile,
                 tile_span.as_ref(),
-                guaranteed_aligned,
                 windows_chr,
                 &window_opt,
                 blacklist_chr,
@@ -495,7 +493,6 @@ fn process_tile(
     opt: &LengthsConfig,
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
-    windows_aligned_to_tiles: bool,
     windows_chr: Option<&[IndexedInterval<u64>]>,
     window_opt: &WindowSpec,
     blacklist_intervals: &[Interval<u64>],
@@ -878,7 +875,11 @@ fn process_tile(
             window_idxs_chr.push(idx);
             counts.push(tile_counts.counts);
             contained_flags.push(tile_counts.contained);
-            if !windows_aligned_to_tiles && !tile_counts.contained {
+            // Aligned tile/window boundaries do not make non-contained bins tile-exclusive.
+            // A fragment can start near the right edge of this core and still contribute to a
+            // downstream bin that is fully contained in the next tile. Every non-contained row
+            // must therefore stay in the cross-index so the reducer knows to merge it.
+            if !tile_counts.contained {
                 crossing_window_idxs_chr.push(idx);
             }
         }
