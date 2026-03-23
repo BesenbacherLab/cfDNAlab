@@ -8,15 +8,23 @@ use cfdnalab::commands::bam_to_frag::{
     bam_to_frag::run_inner as run_bam_to_frag, config::BamToFragConfig,
 };
 use cfdnalab::commands::cli_common::ChromosomeArgs;
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
+use cfdnalab::commands::cli_common::AssignToWindowArgs;
 #[cfg(feature = "cmd_bam_to_frag")]
 use cfdnalab::commands::cli_common::IOCArgs;
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
+use cfdnalab::commands::fcoverage::{config::FCoverageConfig, fcoverage::run as run_fcoverage};
 use cfdnalab::commands::frag_to_bam::{
     config::FragToBamConfig, frag_to_bam::run as run_frag_to_bam,
 };
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
+use cfdnalab::commands::lengths::{config::LengthsConfig, lengths::run as run_lengths};
 use cfdnalab::shared::blacklist::BlacklistStrategy;
 use cfdnalab::shared::io::dot_join;
 #[cfg(feature = "cmd_bam_to_frag")]
 use flate2::read::MultiGzDecoder;
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
+use ndarray_npy::read_npy;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::Aux;
 use rust_htslib::bam::{self, Read};
@@ -28,6 +36,8 @@ use tempfile::TempDir;
 
 #[cfg(feature = "cmd_bam_to_frag")]
 use fixtures::{FragmentSpec, ReadSpec, bam_from_specs};
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
+use fixtures::read_zst_to_string;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BamRow {
@@ -112,6 +122,17 @@ fn make_config(
 
 fn output_bam_path(output_dir: &Path, prefix: &str) -> PathBuf {
     output_dir.join(dot_join(&[prefix, "fragments.bam"]))
+}
+
+fn build_bai_for_test_bam(bam_path: &Path) -> Result<PathBuf> {
+    let bai_path = bam_path.with_extension("bam.bai");
+    bam::index::build(bam_path, None, bam::index::Type::Bai, 1)
+        .with_context(|| format!("index bam {}", bam_path.display()))?;
+    let target = bam_path.with_extension("bai");
+    if bai_path.exists() {
+        fs::rename(&bai_path, &target)?;
+    }
+    Ok(target)
 }
 
 fn read_bam_rows(path: &Path) -> Result<Vec<BamRow>> {
@@ -1408,6 +1429,100 @@ fn given_all_fragments_fail_mapq_when_run_then_writes_empty_bam() -> Result<()> 
 }
 
 #[test]
+fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_twenty() -> Result<()> {
+    // Arrange:
+    // `frag-to-bam` intentionally defaults to `min_mapq = 0`.
+    // Use two frag rows on chr1:
+    // - [10,20) with MAPQ 10
+    // - [30,45) with MAPQ 30
+    //
+    // Therefore:
+    // - default config must keep both rows
+    // - explicit `min_mapq = 0` must match exactly
+    // - explicit `min_mapq = 20` must drop only the MAPQ-10 row
+    let input_dir = TempDir::new()?;
+    let out_default = TempDir::new()?;
+    let out_zero = TempDir::new()?;
+    let out_twenty = TempDir::new()?;
+    let frag_path = input_dir.path().join("input.frag.tsv");
+    let chrom_sizes_path = input_dir.path().join("chrom.sizes");
+
+    write_frag_file(&frag_path, &["chr1\t10\t20\t10\t+", "chr1\t30\t45\t30\t-"])?;
+    write_chrom_sizes(&chrom_sizes_path, &[("chr1", 100)])?;
+
+    let default_config = make_config(
+        frag_path.clone(),
+        out_default.path().to_path_buf(),
+        chrom_sizes_path.clone(),
+        base_chromosomes(&["chr1"]),
+    );
+    let mut explicit_zero_config = make_config(
+        frag_path.clone(),
+        out_zero.path().to_path_buf(),
+        chrom_sizes_path.clone(),
+        base_chromosomes(&["chr1"]),
+    );
+    explicit_zero_config.set_min_mapq(0);
+    let mut explicit_twenty_config = make_config(
+        frag_path,
+        out_twenty.path().to_path_buf(),
+        chrom_sizes_path,
+        base_chromosomes(&["chr1"]),
+    );
+    explicit_twenty_config.set_min_mapq(20);
+
+    // Act
+    run_frag_to_bam(&default_config)?;
+    run_frag_to_bam(&explicit_zero_config)?;
+    run_frag_to_bam(&explicit_twenty_config)?;
+
+    // Assert:
+    // `frag-to-bam` writes one unpaired BAM record per kept row. The row fields map directly to:
+    // - chromosome/start/end
+    // - mapq
+    // - strand
+    // So default and explicit-zero runs must contain both rows, while `min_mapq = 20` keeps only
+    // the second row.
+    let default_rows = read_bam_rows(&output_bam_path(out_default.path(), "restored"))?;
+    let explicit_zero_rows = read_bam_rows(&output_bam_path(out_zero.path(), "restored"))?;
+    let explicit_twenty_rows = read_bam_rows(&output_bam_path(out_twenty.path(), "restored"))?;
+
+    assert_eq!(default_rows, explicit_zero_rows);
+    assert_eq!(default_rows.len(), 2);
+    assert_unpaired_full_match_record(
+        &default_rows[0],
+        "chr1",
+        10,
+        20,
+        10,
+        '+',
+        "fragment_1",
+    );
+    assert_unpaired_full_match_record(
+        &default_rows[1],
+        "chr1",
+        30,
+        45,
+        30,
+        '-',
+        "fragment_2",
+    );
+
+    assert_eq!(explicit_twenty_rows.len(), 1);
+    assert_unpaired_full_match_record(
+        &explicit_twenty_rows[0],
+        "chr1",
+        30,
+        45,
+        30,
+        '-',
+        "fragment_2",
+    );
+
+    Ok(())
+}
+
+#[test]
 fn given_all_fragments_fail_chromosome_selection_when_run_then_returns_clear_error() -> Result<()> {
     // The command raises "No fragments passed filters; no BAM to write" when
     // no chromosome survives selection and therefore no chromosome is observed.
@@ -1491,6 +1606,55 @@ fn read_gzip_text(path: &Path) -> Result<String> {
     let mut text = String::new();
     decoder.read_to_string(&mut text)?;
     Ok(text)
+}
+
+#[cfg(feature = "cmd_bam_to_frag")]
+fn roundtrip_simple_inward_to_unpaired_bam() -> Result<(fixtures::BamFixture, TempDir, PathBuf)> {
+    let source_bam = fixtures::simple_inward_bam()?;
+    let bam_to_frag_output = TempDir::new()?;
+    let frag_to_bam_output = TempDir::new()?;
+    let chrom_sizes_path = frag_to_bam_output.path().join("chrom.sizes");
+    write_chrom_sizes(&chrom_sizes_path, &[("chr1", 200)])?;
+
+    let mut bam_to_frag_config = BamToFragConfig::new(
+        IOCArgs {
+            bam: source_bam.bam.clone(),
+            output_dir: bam_to_frag_output.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+    );
+    bam_to_frag_config.set_output_prefix("roundtrip");
+    bam_to_frag_config.set_min_mapq(0);
+    {
+        let fragment_lengths = bam_to_frag_config.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 10;
+        fragment_lengths.max_fragment_length = 200;
+    }
+    run_bam_to_frag(&bam_to_frag_config)?;
+
+    let frag_path = bam_to_frag_output.path().join("roundtrip.frag.tsv.gz");
+
+    let mut frag_to_bam_config = make_config(
+        frag_path,
+        frag_to_bam_output.path().to_path_buf(),
+        chrom_sizes_path,
+        base_chromosomes(&["chr1"]),
+    );
+    frag_to_bam_config.set_min_mapq(0);
+    {
+        let fragment_lengths = frag_to_bam_config.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 10;
+        fragment_lengths.max_fragment_length = 200;
+    }
+    run_frag_to_bam(&frag_to_bam_config)?;
+
+    let restored_bam_path = output_bam_path(frag_to_bam_output.path(), "restored");
+    // Downstream counting commands fetch by genomic region and therefore require an index.
+    // `frag-to-bam` intentionally does not create one, so this roundtrip helper adds it
+    // explicitly to keep the test focused on roundtrip scientific equivalence.
+    build_bai_for_test_bam(&restored_bam_path)?;
+    Ok((source_bam, frag_to_bam_output, restored_bam_path))
 }
 
 #[cfg(feature = "cmd_bam_to_frag")]
@@ -1644,6 +1808,180 @@ fn given_bam_to_frag_then_frag_to_bam_when_roundtrip_then_restores_all_available
     assert_eq!(restored_rows.len(), 2);
     assert_unpaired_full_match_record(&restored_rows[0], "chr1", 100, 180, 45, '+', "fragment_1");
     assert_unpaired_full_match_record(&restored_rows[1], "chr2", 200, 280, 30, '-', "fragment_2");
+
+    Ok(())
+}
+
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
+#[test]
+fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_then_roundtrip_matches_original()
+-> Result<()> {
+    // Arrange:
+    // `simple_inward_bam` contains exactly one inward fragment on chr1:
+    // - forward read covers [20, 40)
+    // - reverse read covers [60, 80)
+    // - fragment span is therefore [20, 80)
+    // - fragment length is 80 - 20 = 60
+    //
+    // `bam-to-frag` emits the row:
+    //   chr1  20  80  60  +
+    //
+    // `frag-to-bam` restores that as one unpaired BAM record spanning [20, 80).
+    //
+    // `lengths` defines fragment length as:
+    // - paired mode: end(reverse) - start(forward)
+    // - reads_are_fragments mode: end(read) - start(read)
+    //
+    // So both inputs must yield one global-window count in the length-60 bin only.
+    let (source_bam, _restored_dir, restored_bam_path) = roundtrip_simple_inward_to_unpaired_bam()?;
+
+    let original_out = TempDir::new()?;
+    let restored_out = TempDir::new()?;
+
+    let mut original_cfg = LengthsConfig::new(
+        IOCArgs {
+            bam: source_bam.bam.clone(),
+            output_dir: original_out.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+    );
+    original_cfg.set_min_mapq(0);
+    original_cfg.set_require_proper_pair(false);
+    original_cfg.set_window_assignment(AssignToWindowArgs::default());
+    {
+        let fragment_lengths = original_cfg.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 10;
+        fragment_lengths.max_fragment_length = 100;
+    }
+
+    let mut restored_cfg = LengthsConfig::new(
+        IOCArgs {
+            bam: restored_bam_path.clone(),
+            output_dir: restored_out.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+    );
+    restored_cfg.set_min_mapq(0);
+    restored_cfg.unpaired.reads_are_fragments = true;
+    restored_cfg.set_require_proper_pair(false);
+    restored_cfg.set_window_assignment(AssignToWindowArgs::default());
+    {
+        let fragment_lengths = restored_cfg.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 10;
+        fragment_lengths.max_fragment_length = 100;
+    }
+
+    // Act
+    run_lengths(&original_cfg)?;
+    run_lengths(&restored_cfg)?;
+
+    let original_counts: ndarray::Array2<f64> = read_npy(
+        original_out
+            .path()
+            .join(dot_join(&[original_cfg.output_prefix.trim(), "length_counts.npy"])),
+    )?;
+    let restored_counts: ndarray::Array2<f64> = read_npy(
+        restored_out
+            .path()
+            .join(dot_join(&[restored_cfg.output_prefix.trim(), "length_counts.npy"])),
+    )?;
+
+    // Assert:
+    // One global window and lengths 10..=100 give shape (1, 91).
+    // Length 60 is column 60 - 10 = 50.
+    assert_eq!(original_counts.dim(), (1, 91));
+    assert_eq!(restored_counts.dim(), (1, 91));
+    assert_eq!(original_counts, restored_counts);
+
+    let len60_idx = 60 - 10;
+    assert!((original_counts[(0, len60_idx)] - 1.0).abs() < 1e-12);
+    for idx in 0..original_counts.ncols() {
+        if idx == len60_idx {
+            continue;
+        }
+        assert!(
+            original_counts[(0, idx)].abs() < 1e-12,
+            "expected only length 60 to be occupied, but column {idx} had {}",
+            original_counts[(0, idx)]
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
+#[test]
+fn given_bam_to_frag_then_frag_to_bam_when_counting_coverage_then_roundtrip_matches_original()
+-> Result<()> {
+    // Arrange:
+    // The same `simple_inward_bam` roundtrip represents exactly one fragment/read spanning [20, 80).
+    //
+    // `fcoverage` counts:
+    // - paired input by the fragment span [20, 80)
+    // - unpaired `reads_are_fragments` input by the read span [20, 80)
+    //
+    // Therefore both inputs must yield the same positional bedGraph:
+    //   chr1  20  80  1
+    let (source_bam, _restored_dir, restored_bam_path) = roundtrip_simple_inward_to_unpaired_bam()?;
+
+    let original_out = TempDir::new()?;
+    let restored_out = TempDir::new()?;
+
+    let mut original_cfg = FCoverageConfig::new(
+        IOCArgs {
+            bam: source_bam.bam.clone(),
+            output_dir: original_out.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+    );
+    original_cfg.set_output_prefix("origcov");
+    original_cfg.set_tile_size(1_000);
+    original_cfg.set_min_mapq(0);
+    original_cfg.set_require_proper_pair(false);
+    original_cfg.set_ignore_gap(false);
+    {
+        let fragment_lengths = original_cfg.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 10;
+        fragment_lengths.max_fragment_length = 100;
+    }
+
+    let mut restored_cfg = FCoverageConfig::new(
+        IOCArgs {
+            bam: restored_bam_path.clone(),
+            output_dir: restored_out.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+    );
+    restored_cfg.set_output_prefix("restoredcov");
+    restored_cfg.set_tile_size(1_000);
+    restored_cfg.set_min_mapq(0);
+    restored_cfg.set_require_proper_pair(false);
+    restored_cfg.unpaired.reads_are_fragments = true;
+    {
+        let fragment_lengths = restored_cfg.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 10;
+        fragment_lengths.max_fragment_length = 100;
+    }
+
+    // Act
+    run_fcoverage(&original_cfg)?;
+    run_fcoverage(&restored_cfg)?;
+
+    let original_text =
+        read_zst_to_string(&original_out.path().join("origcov.fcoverage.per_position.bedgraph.zst"))?;
+    let restored_text = read_zst_to_string(
+        &restored_out
+            .path()
+            .join("restoredcov.fcoverage.per_position.bedgraph.zst"),
+    )?;
+
+    // Assert
+    assert_eq!(original_text, restored_text);
+    assert_eq!(original_text.trim(), "chr1\t20\t80\t1");
 
     Ok(())
 }

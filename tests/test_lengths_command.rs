@@ -8,20 +8,26 @@ mod tests_lengths_command {
 
     use anyhow::Result;
     use cfdnalab::commands::cli_common::{
-        AssignToWindowArgs, ChromosomeArgs, IOCArgs, WindowAssigner, WindowsArgs,
+        AssignToWindowArgs, ChromosomeArgs, GCWindowsArgs, IOCArgs, Ref2BitRequiredArgs,
+        WindowAssigner, WindowsArgs,
+    };
+    #[cfg(feature = "cmd_coverage_weights")]
+    use cfdnalab::commands::coverage_weights::{
+        config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
     };
     use cfdnalab::commands::gc_bias::{
-        GC_CORRECTION_SCHEMA_VERSION, correct::MarginalizeLengthsWeightingScheme,
-        package::GCCorrectionPackage,
+        GC_CORRECTION_SCHEMA_VERSION, config::GCConfig, correct::MarginalizeLengthsWeightingScheme,
+        gc_bias::run as run_gc_bias, package::GCCorrectionPackage,
     };
     use cfdnalab::commands::lengths::config::LengthsConfig;
     use cfdnalab::commands::lengths::lengths::run;
+    use cfdnalab::commands::ref_gc_bias::{config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias};
     use cfdnalab::shared::blacklist::strategy::BlacklistStrategy;
     use cfdnalab::shared::indel_mode::IndelMode;
     use cfdnalab::shared::io::dot_join;
     use fixtures::{
         BamFixture, FragmentSpec, ReadSpec, bam_from_specs, simple_inward_bam,
-        simple_reference_twobit, write_scaling_factors,
+        simple_reference_twobit, write_bed, write_scaling_factors,
     };
     use ndarray::Array2;
     use ndarray::array;
@@ -44,6 +50,27 @@ mod tests_lengths_command {
         fragment
     }
 
+    fn single_read_fragment_bam(name: &str, fragment_start: i64, fragment_len: u32) -> Result<BamFixture> {
+        bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            Vec::new(),
+            vec![ReadSpec {
+                tid: 0,
+                pos: fragment_start,
+                cigar: vec![('M', fragment_len)],
+                seq: vec![b'A'; fragment_len as usize],
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: 0,
+                mate_tid: None,
+                mate_pos: None,
+                insert_size: 0,
+            }],
+            name,
+        )
+    }
+
     fn three_chrom_length_fixture(name: &str) -> Result<BamFixture> {
         bam_from_specs(
             vec![
@@ -59,6 +86,32 @@ mod tests_lengths_command {
             Vec::new(),
             name,
         )
+    }
+
+    #[cfg(feature = "cmd_coverage_weights")]
+    fn make_simple_coverage_weights_config(
+        out_dir: &std::path::Path,
+        bam: &std::path::Path,
+    ) -> CoverageWeightsConfig {
+        let mut cfg = CoverageWeightsConfig::new(
+            IOCArgs {
+                bam: bam.to_path_buf(),
+                output_dir: out_dir.to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_bin_size(20);
+        cfg.set_stride(20);
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_output_prefix("coverage".to_string());
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 200;
+        }
+        cfg
     }
 
     #[test]
@@ -250,6 +303,191 @@ mod tests_lengths_command {
     }
 
     #[test]
+    fn global_by_size_and_bed_full_chromosome_windows_match_exactly() -> Result<()> {
+        // Arrange:
+        // `simple_inward_bam()` contains one fragment spanning [20, 80), length 60, on a single
+        // 200 bp chromosome.
+        //
+        // Compare three logically equivalent window specifications:
+        // - global mode
+        // - one by-size window [0, 200)
+        // - one BED window [0, 200)
+        //
+        // In all three cases there is only one logical window covering the full chromosome, so the
+        // fragment is fully assigned to that window. The expected output matrix is therefore:
+        // - shape [1, 191] for lengths 10..=200
+        // - one count in length bin 60
+        // - zero elsewhere
+        //
+        // The stronger contract is exact equality of the full arrays, not just equality of the
+        // occupied bin.
+        let bam = simple_inward_bam()?;
+        let global_out = TempDir::new()?;
+        let by_size_out = TempDir::new()?;
+        let by_bed_out = TempDir::new()?;
+        let bed_path = by_bed_out.path().join("whole_chr_window.bed");
+        fixtures::write_bed(&bed_path, &[("chr1", 0, 200, "whole_chr")])?;
+
+        let make_cfg = |out_dir: &std::path::Path, windows: WindowsArgs| {
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: out_dir.to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.set_windows(windows);
+            cfg.set_window_assignment(AssignToWindowArgs::default());
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            {
+                let frag = cfg.fragment_lengths_mut();
+                frag.min_fragment_length = 10;
+                frag.max_fragment_length = 200;
+            }
+            cfg
+        };
+
+        let global_cfg = make_cfg(global_out.path(), WindowsArgs::default());
+        let by_size_cfg = make_cfg(
+            by_size_out.path(),
+            WindowsArgs {
+                by_size: Some(200),
+                by_bed: None,
+            },
+        );
+        let by_bed_cfg = make_cfg(
+            by_bed_out.path(),
+            WindowsArgs {
+                by_size: None,
+                by_bed: Some(bed_path),
+            },
+        );
+
+        // Act
+        run(&global_cfg)?;
+        run(&by_size_cfg)?;
+        run(&by_bed_cfg)?;
+
+        // Assert
+        let read_counts = |dir: &TempDir| -> Result<Array2<f64>> {
+            let npy_path = dir.path().join(dot_join(&["", "length_counts.npy"]));
+            read_npy(&npy_path).map_err(Into::into)
+        };
+
+        let global_arr = read_counts(&global_out)?;
+        let by_size_arr = read_counts(&by_size_out)?;
+        let by_bed_arr = read_counts(&by_bed_out)?;
+
+        let len60_idx = 60 - 10;
+        assert_eq!(global_arr.shape(), &[1, 191]);
+        assert_eq!(global_arr, by_size_arr);
+        assert_eq!(global_arr, by_bed_arr);
+        assert!((global_arr[(0, len60_idx)] - 1.0).abs() < 1e-12);
+        assert!((global_arr.sum() - 1.0).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
+        // Arrange:
+        // Use three fragments with distinct lengths and MAPQ:
+        // - [20, 80): length 60, MAPQ 60
+        // - [100, 170): length 70, MAPQ 0
+        // - [180, 260): length 80, MAPQ 30
+        //
+        // In global mode the output is one row of length counts, so the expected
+        // distributions are:
+        // - default `min_mapq = 30`: lengths 60 and 80 count once each
+        // - explicit `min_mapq = 30`: identical to default
+        // - explicit `min_mapq = 0`: lengths 60, 70, and 80 count once each
+        let fragment_with_mapq =
+            |start: i64, fragment_len: i64, mapq: u8| -> fixtures::FragmentSpec {
+                let mut fragment = fixtures::paired_fragment(start, fragment_len, 20);
+                fragment.forward.mapq = mapq;
+                fragment.reverse.mapq = mapq;
+                fragment
+            };
+        let bam = bam_from_specs(
+            vec![("chr1".to_string(), 300)],
+            vec![
+                fragment_with_mapq(20, 60, 60),
+                fragment_with_mapq(100, 70, 0),
+                fragment_with_mapq(180, 80, 30),
+            ],
+            Vec::new(),
+            "lengths_default_min_mapq",
+        )?;
+        let out_default = TempDir::new()?;
+        let out_thirty = TempDir::new()?;
+        let out_zero = TempDir::new()?;
+
+        let make_cfg = |out_dir: &std::path::Path, prefix: &str| {
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: out_dir.to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.output_prefix = prefix.to_string();
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.set_windows(WindowsArgs::default());
+            cfg.set_window_assignment(AssignToWindowArgs::default());
+            cfg.set_require_proper_pair(false);
+            {
+                let frag = cfg.fragment_lengths_mut();
+                frag.min_fragment_length = 50;
+                frag.max_fragment_length = 120;
+            }
+            cfg
+        };
+
+        let default_cfg = make_cfg(out_default.path(), "default");
+        let mut explicit_thirty_cfg = make_cfg(out_thirty.path(), "explicit_thirty");
+        explicit_thirty_cfg.set_min_mapq(30);
+        let mut explicit_zero_cfg = make_cfg(out_zero.path(), "explicit_zero");
+        explicit_zero_cfg.set_min_mapq(0);
+
+        // Act
+        run(&default_cfg)?;
+        run(&explicit_thirty_cfg)?;
+        run(&explicit_zero_cfg)?;
+
+        // Assert
+        let read_counts = |dir: &TempDir, prefix: &str| -> Result<Array2<f64>> {
+            let npy_path = dir.path().join(dot_join(&[prefix, "length_counts.npy"]));
+            read_npy(&npy_path).map_err(Into::into)
+        };
+
+        let default_arr = read_counts(&out_default, "default")?;
+        let explicit_thirty_arr = read_counts(&out_thirty, "explicit_thirty")?;
+        let explicit_zero_arr = read_counts(&out_zero, "explicit_zero")?;
+
+        let len60_idx = 60 - 50;
+        let len70_idx = 70 - 50;
+        let len80_idx = 80 - 50;
+
+        assert_eq!(default_arr.shape(), &[1, 71]);
+        assert_eq!(default_arr, explicit_thirty_arr);
+        assert!((default_arr[(0, len60_idx)] - 1.0).abs() < 1e-6);
+        assert_eq!(default_arr[(0, len70_idx)], 0.0);
+        assert!((default_arr[(0, len80_idx)] - 1.0).abs() < 1e-6);
+        assert!((default_arr.sum() - 2.0).abs() < 1e-6);
+
+        assert!((explicit_zero_arr[(0, len60_idx)] - 1.0).abs() < 1e-6);
+        assert!((explicit_zero_arr[(0, len70_idx)] - 1.0).abs() < 1e-6);
+        assert!((explicit_zero_arr[(0, len80_idx)] - 1.0).abs() < 1e-6);
+        assert!((explicit_zero_arr.sum() - 3.0).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
     fn counts_reference_lengths_global_window_across_three_chromosomes() -> Result<()> {
         let bam = three_chrom_length_fixture("lengths_three_chr_global")?;
         let out_dir = TempDir::new()?;
@@ -289,6 +527,71 @@ mod tests_lengths_command {
         assert!((arr[(0, 80 - 10)] - 1.0).abs() < 1e-6);
         assert!((arr[(0, 100 - 10)] - 1.0).abs() < 1e-6);
         assert!((arr.sum() - 3.0).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
+    fn unpaired_single_read_matches_paired_fragment_length_count_for_same_span() -> Result<()> {
+        // Arrange:
+        // Compare two representations of the same physical fragment span [20, 80):
+        // - paired-end fixture `simple_inward_bam()`
+        // - one unpaired read with aligned span [20, 80)
+        //
+        // In both commands:
+        // - paired mode defines fragment span as [forward.pos, reverse.end)
+        // - unpaired `reads_are_fragments` mode defines fragment span as [read.pos, read.end)
+        //
+        // So both inputs represent one fragment of length 60 and must produce the same global
+        // length distribution: one count in length bin 60, zero elsewhere.
+        let paired_bam = simple_inward_bam()?;
+        let unpaired_bam = single_read_fragment_bam("lengths_unpaired_single_read", 20, 60)?;
+        let paired_out = TempDir::new()?;
+        let unpaired_out = TempDir::new()?;
+
+        let make_cfg = |bam_path: &std::path::Path, out_dir: &std::path::Path, unpaired: bool| {
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam_path.to_path_buf(),
+                    output_dir: out_dir.to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.set_windows(WindowsArgs::default());
+            cfg.set_window_assignment(AssignToWindowArgs::default());
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            cfg.set_unpaired(cfdnalab::commands::cli_common::UnpairedArgs {
+                reads_are_fragments: unpaired,
+            });
+            {
+                let frag = cfg.fragment_lengths_mut();
+                frag.min_fragment_length = 10;
+                frag.max_fragment_length = 200;
+            }
+            cfg
+        };
+
+        let paired_cfg = make_cfg(&paired_bam.bam, paired_out.path(), false);
+        let unpaired_cfg = make_cfg(&unpaired_bam.bam, unpaired_out.path(), true);
+
+        // Act
+        run(&paired_cfg)?;
+        run(&unpaired_cfg)?;
+
+        // Assert
+        let paired_arr: Array2<f64> =
+            read_npy(paired_out.path().join(dot_join(&["", "length_counts.npy"])))?;
+        let unpaired_arr: Array2<f64> =
+            read_npy(unpaired_out.path().join(dot_join(&["", "length_counts.npy"])))?;
+
+        let len60_idx = 60 - 10;
+        assert_eq!(paired_arr, unpaired_arr);
+        assert_eq!(paired_arr.shape(), &[1, 191]);
+        assert!((paired_arr[(0, len60_idx)] - 1.0).abs() < 1e-12);
+        assert!((paired_arr.sum() - 1.0).abs() < 1e-12);
 
         Ok(())
     }
@@ -490,6 +793,67 @@ mod tests_lengths_command {
         Ok(())
     }
 
+    fn build_real_neutral_gc_package(
+        bam_path: &std::path::Path,
+        reference_path: &std::path::Path,
+        out_dir: &std::path::Path,
+    ) -> Result<std::path::PathBuf> {
+        let fragment_length = 60_u32;
+        let ref_gc_dir = TempDir::new()?;
+        let ref_cfg = RefGCBiasConfig {
+            ref_genome: Ref2BitRequiredArgs {
+                ref_2bit: reference_path.to_path_buf(),
+            },
+            output_dir: ref_gc_dir.path().to_path_buf(),
+            n_threads: 1,
+            // `simple_reference_twobit()` is 256 bp long. With fragment length 60 there are
+            // only 256 - 60 + 1 = 197 valid start positions, so keep `n_positions` well below that.
+            n_positions: 100,
+            seed: Some(7),
+            windows: Default::default(),
+            chromosomes: base_chromosomes(&["chr1"]),
+            blacklist: None,
+            fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+                min_fragment_length: fragment_length,
+                max_fragment_length: fragment_length,
+            },
+            end_offset: 0,
+            skip_interpolation: true,
+            smoothing_sigma: 0.55,
+            smoothing_radius: 2,
+            skip_smoothing: true,
+            tile_size: 1_000_000,
+        };
+        run_ref_gc_bias(&ref_cfg)?;
+
+        let gc_out_dir = out_dir.join("real_gc_bias");
+        std::fs::create_dir_all(&gc_out_dir)?;
+        let mut gc_cfg = GCConfig::new(
+            IOCArgs {
+                bam: bam_path.to_path_buf(),
+                output_dir: gc_out_dir.clone(),
+                n_threads: 1,
+            },
+            reference_path.to_path_buf(),
+            ref_gc_dir.path().to_path_buf(),
+            base_chromosomes(&["chr1"]),
+        );
+        gc_cfg.set_min_mapq(0);
+        gc_cfg.set_tile_size(1_000_000);
+        gc_cfg.set_min_window_acgt_pct(0);
+        gc_cfg.set_num_extreme_gc_bins(0);
+        gc_cfg.set_num_short_length_bins(0);
+        gc_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+        gc_cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        run_gc_bias(&gc_cfg)?;
+
+        Ok(gc_out_dir.join("gc_bias_correction.npz"))
+    }
+
     #[test]
     fn applies_gc_correction_weighting_modes() -> Result<()> {
         let bam = simple_inward_bam()?;
@@ -559,6 +923,183 @@ mod tests_lengths_command {
                 observed
             );
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_lengths() -> Result<()>
+    {
+        let bam = simple_inward_bam()?;
+        let ref_twobit = simple_reference_twobit()?;
+        let out_dir = TempDir::new()?;
+        let gc_path = build_real_neutral_gc_package(&bam.bam, &ref_twobit.path, out_dir.path())?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            drop_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+        cfg.set_gc_length_weighting(MarginalizeLengthsWeightingScheme::Equal);
+        {
+            let fragment_lengths = cfg.fragment_lengths_mut();
+            fragment_lengths.min_fragment_length = 60;
+            fragment_lengths.max_fragment_length = 60;
+        }
+
+        // Manual expectations:
+        // - `ref-gc-bias` is run for exactly one fragment length: 60 bp.
+        // - On the simple reference ("ACGT" repeated), every 60 bp fragment has GC%=50,
+        //   so the reference package has exactly one populated GC-by-length cell.
+        // - `gc-bias` on `simple_inward_bam` also places all cfDNA mass in that same single cell.
+        // - A 1x1 normalized cfDNA count divided by a 1x1 normalized reference count gives 1.0,
+        //   so the produced correction package is neutral.
+        // - `lengths` therefore receives GC weight 1.0 for the only fragment and must match the
+        //   uncorrected global result: one count at fragment length 60 and zero elsewhere.
+        run(&cfg)?;
+
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.dim(), (1, 91));
+
+        let len60_idx = 60 - 10;
+        assert!((arr[(0, len60_idx)] - 1.0).abs() < 1e-12);
+        for idx in 0..arr.ncols() {
+            if idx == len60_idx {
+                continue;
+            }
+            assert!(
+                arr[(0, idx)].abs() < 1e-12,
+                "expected only length 60 to be occupied, but column {idx} had {}",
+                arr[(0, idx)]
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range() -> Result<()> {
+        // Arrange:
+        // `simple_inward_bam()` contains one fragment of length 60.
+        // Give `lengths` a GC package that only covers fragment lengths 10..=59:
+        //   length_edges = [10, 59]
+        // Restrict the command to [60, 60] so the shared GC loader must reject the package before
+        // any reference lookup or length counting begins.
+        let bam = simple_inward_bam()?;
+        let ref_twobit = simple_reference_twobit()?;
+        let out_dir = TempDir::new()?;
+        let gc_path = out_dir.path().join("gc_pkg_short.npz");
+        let package = GCCorrectionPackage {
+            version: GC_CORRECTION_SCHEMA_VERSION,
+            end_offset: 0,
+            length_edges: vec![10, 59],
+            gc_edges: vec![0, 101],
+            length_bin_frequencies: array![1.0_f64],
+            correction_matrix: array![[1.0_f64]],
+        };
+        package.write_npz(&gc_path)?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            drop_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 60;
+            frag.max_fragment_length = 60;
+        }
+
+        // Act
+        let err = run(&cfg).expect_err("out-of-range GC package should fail");
+
+        // Assert
+        let msg = err.to_string();
+        assert!(
+            msg.contains("fragment length range [60-60] is outside the range covered by the correction package [10-59]"),
+            "unexpected error message: {msg}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
+        // Arrange:
+        // Build a minimal GC correction package with an intentionally incompatible schema version.
+        // `lengths` should fail while loading the package, before any reference lookup or length
+        // counting begins.
+        let bam = simple_inward_bam()?;
+        let ref_twobit = simple_reference_twobit()?;
+        let out_dir = TempDir::new()?;
+        let gc_path = out_dir.path().join("gc_pkg_bad_version.npz");
+        let package = GCCorrectionPackage {
+            version: GC_CORRECTION_SCHEMA_VERSION + 1,
+            end_offset: 0,
+            length_edges: vec![10, 200],
+            gc_edges: vec![0, 101],
+            length_bin_frequencies: array![1.0_f64],
+            correction_matrix: array![[1.0_f64]],
+        };
+        package.write_npz(&gc_path)?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            drop_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+
+        // Act
+        let err = run(&cfg).expect_err("schema version mismatch should fail");
+
+        // Assert
+        let msg = err.to_string();
+        assert!(
+            msg.contains("GC correction package schema version mismatch"),
+            "unexpected error message: {msg}"
+        );
 
         Ok(())
     }
@@ -1126,6 +1667,157 @@ mod tests_lengths_command {
         assert!((arr_prop[(0, len_idx)] - 1.0).abs() < 1e-6);
         assert!((arr_prop[(1, len_idx)] - 1.0).abs() < 1e-6);
         assert!((arr_prop.sum() - 2.0).abs() < 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn scaling_tsv_must_cover_requested_chromosome_end_in_lengths() -> Result<()> {
+        // Arrange:
+        // `simple_inward_bam()` uses chr1 length 200.
+        // A valid scaling TSV must cover every requested chromosome contiguously from 0 up to
+        // the exact chromosome length. Here we intentionally stop at 100:
+        //   [0,100) factor 2.0
+        //
+        // The fragment itself lies inside that span, but the artifact is still malformed for the
+        // requested chromosome and should be rejected before any counting starts.
+        let bam = simple_inward_bam()?;
+        let out_dir = TempDir::new()?;
+        let scaling_path = out_dir.path().join("truncated_scaling.tsv");
+        write_scaling_factors(&scaling_path, &[("chr1", 0, 100, 2.0_f32)])?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_scaling_factors(Some(scaling_path));
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 200;
+        }
+
+        // Act
+        let err = run(&cfg).expect_err("truncated scaling TSV should fail");
+
+        // Assert:
+        // `lengths` wraps the shared loader with `load scaling factors`, so inspect the full
+        // error chain rather than only the top-level context string.
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("scaling TSV: bins on 'chr1' must end at chrom_len=200 (got end=100)"),
+            "unexpected error message: {msg}"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "cmd_coverage_weights")]
+    #[test]
+    fn coverage_weights_tsv_in_count_overlap_mode_uses_overlap_span_scaling() -> Result<()> {
+        // Arrange:
+        // Producer BAM:
+        // - `simple_inward_bam()` has one fragment [20, 80).
+        // - Run `coverage-weights` with `bin_size = stride = 20`, so the overlap kernel is the
+        //   identity and the written scaling factors are:
+        //     [0,20):  0
+        //     [20,40): 1
+        //     [40,60): 1
+        //     [60,80): 1
+        //     [80,200): 0
+        //
+        // Consumer BAM:
+        // - One odd-length fragment [20, 81), length 61.
+        //
+        // Count window:
+        // - BED window [45, 56), length 11.
+        // - The fragment fully covers this window, so in `count-overlap` mode:
+        //     overlap fraction = 11 / 61.
+        //
+        // Crucial scaling derivation for `lengths` in `count-overlap` mode:
+        // - This mode averages scaling only over the fragment/window overlap span, not the full
+        //   fragment.
+        // - The overlap span is exactly [45, 56), which lies entirely inside scaling bin [40, 60)
+        //   with factor 1.
+        // - The scaling multiplier is therefore exactly 1.0.
+        // - Final contribution to length 61 is:
+        //     (overlap fraction) * (overlap-span scaling) = (11 / 61) * 1 = 11 / 61.
+        //
+        // If the implementation incorrectly averaged scaling over the full fragment, this test
+        // would instead observe:
+        //     (11 / 61) * (60 / 61),
+        // because the fragment spends 60 bp in factor-1 bins and 1 bp in a factor-0 bin.
+        let producer_bam = simple_inward_bam()?;
+        let consumer_bam = bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            vec![fragment_on_tid(0, 20, 61, 20)],
+            Vec::new(),
+            "lengths_scaling_consumer",
+        )?;
+        let out_dir = TempDir::new()?;
+        let weights_out_dir = out_dir.path().join("coverage_weights");
+        std::fs::create_dir_all(&weights_out_dir)?;
+        let scaling_cfg = make_simple_coverage_weights_config(&weights_out_dir, &producer_bam.bam);
+        let bed_path = out_dir.path().join("windows.bed");
+        write_bed(&bed_path, &[("chr1", 45, 56, "w0")])?;
+
+        // Act
+        run_coverage_weights(&scaling_cfg)?;
+        let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: consumer_bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::CountOverlap,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_scaling_factors(Some(scaling_path));
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 61;
+            frag.max_fragment_length = 61;
+        }
+
+        run(&cfg)?;
+
+        // Assert
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.shape(), &[1, 1]);
+
+        let expected = 11.0_f64 / 61.0_f64;
+        assert!(
+            (arr[(0, 0)] - expected).abs() <= 1e-9,
+            "expected weighted count {expected}, got {}",
+            arr[(0, 0)]
+        );
+        assert!(
+            (arr.sum() - expected).abs() <= 1e-9,
+            "expected total mass {expected}, got {}",
+            arr.sum()
+        );
         Ok(())
     }
 }

@@ -1,22 +1,30 @@
+mod fixtures;
+
 mod tests_gc_bias {
     use anyhow::Result;
+    use crate::fixtures;
     use fxhash::FxHashMap;
     use ndarray::array;
-    use ndarray_npy::NpzWriter;
-    use tempfile::tempdir;
+    use ndarray_npy::{NpzWriter, read_npy};
+    use tempfile::{TempDir, tempdir};
 
-    use cfdnalab::commands::gc_bias::{
-        GC_CORRECTION_SCHEMA_VERSION,
-        binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
-        correct::{GCCorrector, LengthAgnosticGCCorrector, MarginalizeLengthsWeightingScheme},
-        gc_bias::interpolate_masked_corrections,
-        load_reference_bias::load_reference_gc_data,
-        outliers::{
-            OutlierAction, OutlierRule, OutlierScope, OutlierStats, apply_outliers_to_matrix,
-            interpolated_quantile, outlier_bounds,
+    use cfdnalab::commands::{
+        cli_common::{ChromosomeArgs, GCWindowsArgs, IOCArgs, Ref2BitRequiredArgs},
+        gc_bias::{
+            GC_CORRECTION_SCHEMA_VERSION,
+            binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
+            config::GCConfig,
+            correct::{GCCorrector, LengthAgnosticGCCorrector, MarginalizeLengthsWeightingScheme},
+            gc_bias::{interpolate_masked_corrections, run as run_gc_bias},
+            load_reference_bias::load_reference_gc_data,
+            outliers::{
+                OutlierAction, OutlierRule, OutlierScope, OutlierStats,
+                apply_outliers_to_matrix, interpolated_quantile, outlier_bounds,
+            },
+            package::GCCorrectionPackage,
+            support_masking::build_extreme_bins_support_mask,
         },
-        package::GCCorrectionPackage,
-        support_masking::build_extreme_bins_support_mask,
+        ref_gc_bias::{config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias},
     };
 
     #[test]
@@ -209,6 +217,993 @@ mod tests_gc_bias {
         // Row with highest frequency is [3.0, 5.0]
         assert!((agnostic.get_correction_weight(0)? - 3.0).abs() < 1e-12);
         assert!((agnostic.get_correction_weight(50)? - 5.0).abs() < 1e-12);
+        Ok(())
+    }
+
+    fn write_reference_package_for_single_length(
+        reference_path: &std::path::Path,
+        out_dir: &TempDir,
+        fragment_length: u32,
+        end_offset: u8,
+    ) -> Result<()> {
+        let cfg = RefGCBiasConfig {
+            ref_genome: Ref2BitRequiredArgs {
+                ref_2bit: reference_path.to_path_buf(),
+            },
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 1,
+            // These tests use small synthetic references, for example:
+            // - `simple_reference_twobit()` is 256 bp
+            // - the smallest custom GC-bias fixture here is 200 bp
+            //
+            // `ref-gc-bias` samples fragment starts from the set of valid start positions,
+            // so `n_positions` must stay below that count:
+            //   valid_starts = chrom_len - fragment_length + 1
+            //
+            // Using 100 keeps the helper valid for all current fixtures while still exercising
+            // the full producer -> consumer path. The exact number is not part of the behavior
+            // under test in this file.
+            n_positions: 100,
+            seed: Some(7),
+            windows: Default::default(),
+            chromosomes: ChromosomeArgs {
+                chromosomes: Some(vec!["chr1".to_string()]),
+                chromosomes_file: None,
+            },
+            blacklist: None,
+            fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+                min_fragment_length: fragment_length,
+                max_fragment_length: fragment_length,
+            },
+            end_offset,
+            skip_interpolation: true,
+            smoothing_sigma: 0.55,
+            smoothing_radius: 2,
+            skip_smoothing: true,
+            tile_size: 1_000_000,
+        };
+        run_ref_gc_bias(&cfg)
+    }
+
+    fn make_gc_bias_cfg(
+        bam_path: &std::path::Path,
+        reference_path: &std::path::Path,
+        ref_gc_dir: &std::path::Path,
+        output_dir: &std::path::Path,
+    ) -> GCConfig {
+        let ioc = IOCArgs {
+            bam: bam_path.to_path_buf(),
+            output_dir: output_dir.to_path_buf(),
+            n_threads: 1,
+        };
+        let mut cfg = GCConfig::new(
+            ioc,
+            reference_path.to_path_buf(),
+            ref_gc_dir.to_path_buf(),
+            ChromosomeArgs {
+                chromosomes: Some(vec!["chr1".to_string()]),
+                chromosomes_file: None,
+            },
+        );
+        cfg.set_min_mapq(0);
+        cfg.set_tile_size(1_000_000);
+        cfg.set_min_window_acgt_pct(0);
+        cfg.set_save_intermediates(true);
+        cfg
+    }
+
+    #[test]
+    fn default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
+        // Arrange:
+        // Use the repeated 256 bp ACGT reference from `simple_reference_twobit()`.
+        // For fragment length 60, every 60 bp fragment contains exactly 30 GC bases because:
+        // - the reference repeats a 4 bp cycle with 2 GC bases per cycle
+        // - 60 = 15 * 4, so each fragment spans exactly 15 full cycles
+        // - therefore GC fraction is 30 / 60 = 50%, i.e. GC% bin 50
+        //
+        // We then place three 60 bp fragments with different MAPQ:
+        // - fragment A: MAPQ 60
+        // - fragment B: MAPQ 0
+        // - fragment C: MAPQ 30
+        //
+        // Run in global mode with `save_intermediates=true`, because global mode keeps one
+        // combined raw count table instead of per-window mean scaling. The saved
+        // `avg_cfdna_counts` matrix should therefore be raw surviving counts:
+        // - default `min_mapq = 30`: 2 counts at GC% 50
+        // - explicit `min_mapq = 30`: same as default
+        // - explicit `min_mapq = 0`: 3 counts at GC% 50
+        let reference = fixtures::simple_reference_twobit()?;
+        let fragment_with_mapq = |start: i64, mapq: u8| {
+            let mut fragment = fixtures::paired_fragment(start, 60, 20);
+            fragment.forward.mapq = mapq;
+            fragment.reverse.mapq = mapq;
+            fragment
+        };
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 256)],
+            vec![
+                fragment_with_mapq(20, 60),
+                fragment_with_mapq(80, 0),
+                fragment_with_mapq(140, 30),
+            ],
+            Vec::new(),
+            "gc_bias_default_min_mapq",
+        )?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
+
+        let out_default = TempDir::new()?;
+        let out_thirty = TempDir::new()?;
+        let out_zero = TempDir::new()?;
+
+        let make_cfg = |output_dir: &std::path::Path| {
+            let ioc = IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: output_dir.to_path_buf(),
+                n_threads: 1,
+            };
+            let mut cfg = GCConfig::new(
+                ioc,
+                reference.path.clone(),
+                ref_gc_dir.path().to_path_buf(),
+                ChromosomeArgs {
+                    chromosomes: Some(vec!["chr1".to_string()]),
+                    chromosomes_file: None,
+                },
+            );
+            cfg.set_windows(GCWindowsArgs {
+                by_size: None,
+                by_bed: None,
+                global: true,
+            });
+            cfg.set_tile_size(1_000_000);
+            cfg.set_min_window_acgt_pct(0);
+            cfg.set_num_extreme_gc_bins(0);
+            cfg.set_num_short_length_bins(0);
+            cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+            cfg.set_save_intermediates(true);
+            cfg
+        };
+
+        let default_cfg = make_cfg(out_default.path());
+        let mut explicit_thirty_cfg = make_cfg(out_thirty.path());
+        explicit_thirty_cfg.set_min_mapq(30);
+        let mut explicit_zero_cfg = make_cfg(out_zero.path());
+        explicit_zero_cfg.set_min_mapq(0);
+
+        // Act
+        run_gc_bias(&default_cfg)?;
+        run_gc_bias(&explicit_thirty_cfg)?;
+        run_gc_bias(&explicit_zero_cfg)?;
+
+        // Assert
+        let read_avg_counts = |dir: &TempDir| -> Result<ndarray::Array2<f64>> {
+            read_npy(dir.path().join("gc_bias.avg_cfdna_counts.0.npy")).map_err(Into::into)
+        };
+
+        let default_counts = read_avg_counts(&out_default)?;
+        let explicit_thirty_counts = read_avg_counts(&out_thirty)?;
+        let explicit_zero_counts = read_avg_counts(&out_zero)?;
+
+        assert_eq!(default_counts.dim(), (1, 101));
+        assert_eq!(default_counts, explicit_thirty_counts);
+        assert!((default_counts[(0, 50)] - 2.0).abs() < 1e-12);
+        assert!((default_counts.sum() - 2.0).abs() < 1e-12);
+
+        assert_eq!(explicit_zero_counts.dim(), (1, 101));
+        assert!((explicit_zero_counts[(0, 50)] - 3.0).abs() < 1e-12);
+        assert!((explicit_zero_counts.sum() - 3.0).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn default_windows_match_explicit_by_size_and_differ_from_global() -> Result<()> {
+        // Arrange:
+        // Build a two-window genome with the command's default GC window size.
+        // - chr1[0,100000) is all A, so any 10 bp fragment there has GC=0 -> GC%=0.
+        // - chr1[100000,200000) is all C, so any 10 bp fragment there has GC=10 -> GC%=100.
+        //
+        // Sample fragments:
+        // - one fragment in the left window
+        // - nine fragments in the right window
+        //
+        // This makes the default `by-size 100000` path scientifically different from `--global`:
+        // - windowed mode scales each window by its own mean count before averaging windows
+        // - global mode keeps one combined raw count table
+        //
+        // For length 10 with end_offset 0 there are 11 reachable GC-count cells (0..=10), so:
+        //
+        // Windowed/default path:
+        // - left window raw counts: one fragment at gc=0
+        //   mean_count = 1 / 11
+        //   scale      = 1 / (1/11) * (100000 / 100000) = 11
+        //   scaled row = 11 at GC%=0
+        // - right window raw counts: nine fragments at gc=10
+        //   mean_count = 9 / 11
+        //   scale      = 1 / (9/11) * (100000 / 100000) = 11/9
+        //   scaled row = 11 at GC%=100
+        // - average across two windows -> 5.5 at GC%=0 and 5.5 at GC%=100
+        //
+        // Global path:
+        // - `gc-bias` does not apply per-window scaling in global mode.
+        // - There is one combined raw count table with:
+        //     1 count at GC%=0
+        //     9 counts at GC%=100
+        // - So the saved `avg_cfdna_counts` array is exactly those raw counts.
+        //
+        // The width correction is a no-op here because length 10 maps exactly to GC% bins
+        // {0,10,20,...,100}, each with width 1.
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_two_window_reference",
+            vec![(
+                "chr1".to_string(),
+                format!("{}{}", "A".repeat(100_000), "C".repeat(100_000)),
+            )],
+        )?;
+        let starts = [
+            100_i64, 100_100, 100_120, 100_140, 100_160, 100_180, 100_200, 100_220, 100_240,
+            100_260,
+        ];
+        let fragments = starts
+            .into_iter()
+            .map(|start| fixtures::paired_fragment(start, 10, 5))
+            .collect();
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 200_000)],
+            fragments,
+            Vec::new(),
+            "gc_bias_two_window_bam",
+        )?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 10, 0)?;
+
+        let default_out = TempDir::new()?;
+        let explicit_out = TempDir::new()?;
+        let global_out = TempDir::new()?;
+
+        let default_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            default_out.path(),
+        );
+
+        let mut explicit_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            explicit_out.path(),
+        );
+        explicit_cfg.set_windows(GCWindowsArgs {
+            by_size: Some(100_000),
+            by_bed: None,
+            global: false,
+        });
+
+        let mut global_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            global_out.path(),
+        );
+        global_cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+
+        // Act
+        run_gc_bias(&default_cfg)?;
+        run_gc_bias(&explicit_cfg)?;
+        run_gc_bias(&global_cfg)?;
+
+        let default_counts: ndarray::Array2<f64> =
+            read_npy(default_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        let explicit_counts: ndarray::Array2<f64> =
+            read_npy(explicit_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        let global_counts: ndarray::Array2<f64> =
+            read_npy(global_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+
+        // Assert:
+        // The implicit default must be exactly the same behavior as explicit `--by-size 100000`.
+        assert_eq!(default_counts, explicit_counts);
+        assert_eq!(default_counts.dim(), (1, 101));
+        assert_eq!(global_counts.dim(), (1, 101));
+
+        for (gc_pct, &value) in default_counts.row(0).iter().enumerate() {
+            match gc_pct {
+                0 | 100 => assert!(
+                    (value - 5.5).abs() < 1e-12,
+                    "default by-size expected 5.5 at GC% {gc_pct}, got {value}"
+                ),
+                _ => assert!(
+                    value.abs() < 1e-12,
+                    "default by-size expected 0 outside GC% 0/100, got bin {gc_pct}={value}"
+                ),
+            }
+        }
+
+        for (gc_pct, &value) in global_counts.row(0).iter().enumerate() {
+            match gc_pct {
+                0 => assert!(
+                    (value - 1.0).abs() < 1e-12,
+                    "global expected 1.0 at GC% 0, got {value}"
+                ),
+                100 => assert!(
+                    (value - 9.0).abs() < 1e-12,
+                    "global expected 9.0 at GC% 100, got {value}"
+                ),
+                _ => assert!(
+                    value.abs() < 1e-12,
+                    "global expected 0 outside GC% 0/100, got bin {gc_pct}={value}"
+                ),
+            }
+        }
+
+        assert_ne!(
+            default_counts, global_counts,
+            "default gc-bias windowing should not collapse to the global calculation here"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn errors_when_blacklist_removes_all_usable_gc_support() -> Result<()> {
+        // Arrange:
+        // The blacklist masks the entire chromosome to N for gc-bias counting.
+        // The command then cannot compute GC for any fragment, so no window contributes counts.
+        // The scientifically correct outcome is a hard error rather than silently writing a
+        // degenerate correction package.
+        let bam = fixtures::simple_inward_bam()?;
+        let reference = fixtures::simple_reference_twobit()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
+
+        let out_dir = TempDir::new()?;
+        let blacklist_path = out_dir.path().join("blacklist.bed");
+        fixtures::write_bed(&blacklist_path, &[("chr1", 0, 256, "all_masked")])?;
+
+        let mut cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        cfg.set_blacklist(Some(vec![blacklist_path]));
+
+        // Act
+        let err = run_gc_bias(&cfg).expect_err("fully masked input should fail");
+
+        // Assert:
+        // All fragments lose their usable ACGT support after masking, so `scaled_weight` stays 0
+        // and the command must fail at the explicit guardrail in `run()`.
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("No usable GC bias windows produced counts"),
+            "unexpected error message: {msg}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn correction_package_propagates_reference_end_offset_for_single_length() -> Result<()> {
+        // Arrange:
+        // Use a reference package and cfDNA run that both allow exactly one fragment length (60 bp)
+        // and trim 2 bp from each end when computing GC.
+        //
+        // The correction package should therefore:
+        // - preserve the schema version
+        // - preserve `end_offset = 2`
+        // - keep exactly one length bin, whose inclusive edge encoding is [60, 60]
+        // - assign all length-bin frequency mass to that single bin
+        let bam = fixtures::simple_inward_bam()?;
+        let reference = fixtures::simple_reference_twobit()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 2)?;
+
+        let out_dir = TempDir::new()?;
+        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+
+        // Act
+        run_gc_bias(&cfg)?;
+        let package = GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+
+        // Assert:
+        assert_eq!(package.version, GC_CORRECTION_SCHEMA_VERSION);
+        assert_eq!(package.end_offset, 2);
+        assert_eq!(package.length_edges, vec![60, 60]);
+        assert_eq!(package.length_bin_frequencies.len(), 1);
+        assert!((package.length_bin_frequencies[0] - 1.0).abs() < 1e-12);
+        assert_eq!(package.correction_matrix.nrows(), 1);
+        assert_eq!(package.gc_edges.len(), package.correction_matrix.ncols() + 1);
+        assert_eq!(package.gc_edges.first().copied(), Some(0));
+        assert_eq!(package.gc_edges.last().copied(), Some(100));
+        assert!(
+            package
+                .correction_matrix
+                .iter()
+                .all(|value| value.is_finite() && *value >= 0.1 && *value <= 10.0),
+            "correction factors should be finite and inside the final clamp range"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn overlapping_and_touching_bed_windows_match_explicitly_merged_gc_bias_run() -> Result<()> {
+        let bam = fixtures::simple_inward_bam()?;
+        let reference = fixtures::simple_reference_twobit()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
+
+        let split_out = TempDir::new()?;
+        let merged_out = TempDir::new()?;
+        let split_bed = split_out.path().join("split_windows.bed");
+        let merged_bed = merged_out.path().join("merged_windows.bed");
+        std::fs::write(&split_bed, "chr1\t0\t40\nchr1\t20\t60\nchr1\t60\t100\n")?;
+        std::fs::write(&merged_bed, "chr1\t0\t100\n")?;
+
+        let mut split_cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), split_out.path());
+        split_cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: Some(split_bed),
+            global: false,
+        });
+
+        let mut merged_cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), merged_out.path());
+        merged_cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: Some(merged_bed),
+            global: false,
+        });
+
+        // Manual expectations:
+        // - `gc-bias` flattens overlapping and touching BED windows to unique positions before
+        //   counting sample windows.
+        // - The split BED:
+        //     [0,40), [20,60), [60,100)
+        //   has the same unique covered positions as the explicitly merged BED:
+        //     [0,100)
+        // - The BAM, reference, and reference-GC package are identical across both runs.
+        // - Therefore both command runs must produce exactly the same sample count intermediates
+        //   and exactly the same final correction package.
+        run_gc_bias(&split_cfg)?;
+        run_gc_bias(&merged_cfg)?;
+
+        let split_avg: ndarray::Array2<f64> =
+            read_npy(split_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        let merged_avg: ndarray::Array2<f64> =
+            read_npy(merged_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        assert_eq!(split_avg, merged_avg);
+
+        let split_pkg = GCCorrectionPackage::from_file(
+            split_out.path().join("gc_bias_correction.npz"),
+        )?;
+        let merged_pkg = GCCorrectionPackage::from_file(
+            merged_out.path().join("gc_bias_correction.npz"),
+        )?;
+        assert_eq!(split_pkg.version, merged_pkg.version);
+        assert_eq!(split_pkg.end_offset, merged_pkg.end_offset);
+        assert_eq!(split_pkg.length_edges, merged_pkg.length_edges);
+        assert_eq!(split_pkg.gc_edges, merged_pkg.gc_edges);
+        assert_eq!(split_pkg.length_bin_frequencies, merged_pkg.length_bin_frequencies);
+        assert_eq!(split_pkg.correction_matrix, merged_pkg.correction_matrix);
+
+        Ok(())
+    }
+
+    #[test]
+    fn by_size_gc_bias_is_invariant_to_aligned_vs_misaligned_tile_sizes() -> Result<()> {
+        // Arrange:
+        // Build a 2 Mb two-state genome in 100 kb windows:
+        // - windows with even index are all A  -> GC%=0 for 10 bp fragments
+        // - windows with odd  index are all C  -> GC%=100 for 10 bp fragments
+        //
+        // Place one 10 bp fragment in each 100 kb window, 20 windows total.
+        //
+        // This means the logical GC-bias result is completely determined by the windowing, not by
+        // the tile cuts:
+        // - 10 windows contribute one fragment at GC%=0
+        // - 10 windows contribute one fragment at GC%=100
+        // - every per-window scaled row is therefore identical within its GC state
+        //
+        // We then run the same explicit `--by-size 100000` command with:
+        // - tile_size = 1,000,000  -> aligned to the 100 kb window grid
+        // - tile_size =   950,000  -> misaligned (ratio < 10, so no alignment correction)
+        //
+        // The chromosome is long enough to span multiple tiles in both cases, so both the aligned
+        // and the general cross-tile reducer paths are real. Since tiling is an execution detail,
+        // the final averaged cfDNA counts and correction package must be identical.
+        let window_bp = 100_000usize;
+        let num_windows = 20usize;
+        let mut sequence = String::with_capacity(window_bp * num_windows);
+        let mut fragments = Vec::with_capacity(num_windows);
+        for window_idx in 0..num_windows {
+            let base = if window_idx % 2 == 0 { 'A' } else { 'C' };
+            sequence.push_str(&base.to_string().repeat(window_bp));
+            let start = (window_idx * window_bp + 100) as i64;
+            fragments.push(fixtures::paired_fragment(start, 10, 5));
+        }
+        let chrom_len = (window_bp * num_windows) as u32;
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_tile_invariance_reference",
+            vec![("chr1".to_string(), sequence)],
+        )?;
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), chrom_len)],
+            fragments,
+            Vec::new(),
+            "gc_bias_tile_invariance_bam",
+        )?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 10, 0)?;
+
+        let aligned_out = TempDir::new()?;
+        let misaligned_out = TempDir::new()?;
+
+        let mut aligned_cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), aligned_out.path());
+        aligned_cfg.set_windows(GCWindowsArgs {
+            by_size: Some(100_000),
+            by_bed: None,
+            global: false,
+        });
+        aligned_cfg.set_tile_size(1_000_000);
+
+        let mut misaligned_cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), misaligned_out.path());
+        misaligned_cfg.set_windows(GCWindowsArgs {
+            by_size: Some(100_000),
+            by_bed: None,
+            global: false,
+        });
+        misaligned_cfg.set_tile_size(950_000);
+
+        // Act
+        run_gc_bias(&aligned_cfg)?;
+        run_gc_bias(&misaligned_cfg)?;
+
+        // Assert
+        let aligned_avg: ndarray::Array2<f64> =
+            read_npy(aligned_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        let misaligned_avg: ndarray::Array2<f64> =
+            read_npy(misaligned_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        assert_eq!(aligned_avg, misaligned_avg);
+
+        let aligned_pkg =
+            GCCorrectionPackage::from_file(aligned_out.path().join("gc_bias_correction.npz"))?;
+        let misaligned_pkg =
+            GCCorrectionPackage::from_file(misaligned_out.path().join("gc_bias_correction.npz"))?;
+        assert_eq!(aligned_pkg.version, misaligned_pkg.version);
+        assert_eq!(aligned_pkg.end_offset, misaligned_pkg.end_offset);
+        assert_eq!(aligned_pkg.length_edges, misaligned_pkg.length_edges);
+        assert_eq!(aligned_pkg.gc_edges, misaligned_pkg.gc_edges);
+        assert_eq!(
+            aligned_pkg.length_bin_frequencies,
+            misaligned_pkg.length_bin_frequencies
+        );
+        assert_eq!(aligned_pkg.correction_matrix, misaligned_pkg.correction_matrix);
+
+        Ok(())
+    }
+
+    #[test]
+    fn equivalent_bed_windows_match_by_size_gc_bias_run() -> Result<()> {
+        // Arrange:
+        // Use the same two-window A/C genome as the default-window test, but compare two
+        // different *window representations* of the same logical partition:
+        //   by-size 100000
+        //   by-bed  [0,100000), [100000,200000)
+        //
+        // The chromosome is split at the same 100 kb boundary in both runs, and the fragment
+        // placement is identical:
+        // - one 10 bp fragment in the left A-only window -> GC%=0
+        // - nine 10 bp fragments in the right C-only window -> GC%=100
+        //
+        // With window scaling enabled, the expected per-window scaled rows are exactly the same
+        // as in `default_windows_match_explicit_by_size_and_differ_from_global`:
+        // - left window  -> scaled count 11 at GC%=0
+        // - right window -> scaled count 11 at GC%=100
+        // - averaged over the two windows -> 5.5 at GC%=0 and 5.5 at GC%=100
+        //
+        // We deliberately use `tile_size = 95_000` so neither 100 kb window is tile-contained.
+        // That makes the fixed-size streaming path and the explicit BED-window path both exercise
+        // real cross-tile counting/reduction instead of a degenerate one-tile case.
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_by_size_vs_bed_reference",
+            vec![(
+                "chr1".to_string(),
+                format!("{}{}", "A".repeat(100_000), "C".repeat(100_000)),
+            )],
+        )?;
+        let starts = [
+            100_i64, 100_100, 100_120, 100_140, 100_160, 100_180, 100_200, 100_220, 100_240,
+            100_260,
+        ];
+        let fragments = starts
+            .into_iter()
+            .map(|start| fixtures::paired_fragment(start, 10, 5))
+            .collect();
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 200_000)],
+            fragments,
+            Vec::new(),
+            "gc_bias_by_size_vs_bed_bam",
+        )?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 10, 0)?;
+
+        let by_size_out = TempDir::new()?;
+        let by_bed_out = TempDir::new()?;
+        let bed_path = by_bed_out.path().join("windows.bed");
+        std::fs::write(&bed_path, "chr1\t0\t100000\nchr1\t100000\t200000\n")?;
+
+        let mut by_size_cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), by_size_out.path());
+        by_size_cfg.set_windows(GCWindowsArgs {
+            by_size: Some(100_000),
+            by_bed: None,
+            global: false,
+        });
+        by_size_cfg.set_tile_size(95_000);
+
+        let mut by_bed_cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), by_bed_out.path());
+        by_bed_cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+            global: false,
+        });
+        by_bed_cfg.set_tile_size(95_000);
+
+        // Act
+        run_gc_bias(&by_size_cfg)?;
+        run_gc_bias(&by_bed_cfg)?;
+
+        // Assert:
+        // The logical windows are identical, so both the sample-side average counts and the final
+        // correction package must be exactly equal.
+        let by_size_avg: ndarray::Array2<f64> =
+            read_npy(by_size_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        let by_bed_avg: ndarray::Array2<f64> =
+            read_npy(by_bed_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        assert_eq!(by_size_avg, by_bed_avg);
+        assert_eq!(by_size_avg.dim(), (1, 101));
+
+        for (gc_pct, &value) in by_size_avg.row(0).iter().enumerate() {
+            match gc_pct {
+                0 | 100 => assert!(
+                    (value - 5.5).abs() < 1e-12,
+                    "expected 5.5 at GC% {gc_pct}, got {value}"
+                ),
+                _ => assert!(
+                    value.abs() < 1e-12,
+                    "expected 0 outside GC% 0/100, got bin {gc_pct}={value}"
+                ),
+            }
+        }
+
+        let by_size_pkg =
+            GCCorrectionPackage::from_file(by_size_out.path().join("gc_bias_correction.npz"))?;
+        let by_bed_pkg =
+            GCCorrectionPackage::from_file(by_bed_out.path().join("gc_bias_correction.npz"))?;
+        assert_eq!(by_size_pkg.version, by_bed_pkg.version);
+        assert_eq!(by_size_pkg.end_offset, by_bed_pkg.end_offset);
+        assert_eq!(by_size_pkg.length_edges, by_bed_pkg.length_edges);
+        assert_eq!(by_size_pkg.gc_edges, by_bed_pkg.gc_edges);
+        assert_eq!(
+            by_size_pkg.length_bin_frequencies,
+            by_bed_pkg.length_bin_frequencies
+        );
+        assert_eq!(by_size_pkg.correction_matrix, by_bed_pkg.correction_matrix);
+
+        Ok(())
+    }
+
+    #[test]
+    fn save_intermediates_writes_expected_sequence_and_mean_scaled_average_counts() -> Result<()> {
+        // Arrange:
+        // Use a single global window and a reference package that already disables smoothing and
+        // interpolation. In that configuration `gc-bias` should save exactly six intermediate
+        // arrays:
+        //   0 avg_cfdna_counts
+        //   1 normalized_avg_cfdna_counts
+        //   2 binned_ref_counts
+        //   3 binned_cfdna_counts
+        //   4 normalized_binned_cfdna_counts
+        //   5 normalized_binned_ref_counts
+        //
+        // The strongest low-level coherence check in this branch is the first normalization step:
+        // `normalized_avg_cfdna_counts` must equal `avg_cfdna_counts / supported_mean`, where the
+        // mean is taken only over the reference outlier-support mask.
+        let bam = fixtures::simple_inward_bam()?;
+        let reference = fixtures::simple_reference_twobit()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
+
+        let out_dir = TempDir::new()?;
+        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        cfg.set_save_intermediates(true);
+
+        // Act
+        run_gc_bias(&cfg)?;
+
+        // Assert:
+        // No interpolation/smoothing intermediates should exist for this reference package, so the
+        // numbering must stay dense across exactly six saved arrays.
+        let mut intermediate_files: Vec<String> = std::fs::read_dir(out_dir.path())?
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                if name.starts_with("gc_bias.") && name.ends_with(".npy") {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        intermediate_files.sort();
+        assert_eq!(
+            intermediate_files,
+            vec![
+                "gc_bias.avg_cfdna_counts.0.npy".to_string(),
+                "gc_bias.binned_cfdna_counts.3.npy".to_string(),
+                "gc_bias.binned_ref_counts.2.npy".to_string(),
+                "gc_bias.normalized_avg_cfdna_counts.1.npy".to_string(),
+                "gc_bias.normalized_binned_cfdna_counts.4.npy".to_string(),
+                "gc_bias.normalized_binned_ref_counts.5.npy".to_string(),
+            ]
+        );
+
+        let avg_counts: ndarray::Array2<f64> =
+            read_npy(out_dir.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        let normalized_avg: ndarray::Array2<f64> =
+            read_npy(out_dir.path().join("gc_bias.normalized_avg_cfdna_counts.1.npy"))?;
+        let reference_data = load_reference_gc_data(ref_gc_dir.path())?;
+
+        // The support mask defines exactly which cells contribute to the mean-scaling denominator.
+        let mut supported_sum = 0.0_f64;
+        let mut supported_count = 0usize;
+        for (value, supported) in avg_counts
+            .iter()
+            .zip(reference_data.outliers_support_mask.iter())
+        {
+            if *supported {
+                supported_sum += *value;
+                supported_count += 1;
+            }
+        }
+        assert!(supported_count > 0, "fixture must have supported reference bins");
+        let supported_mean = supported_sum / supported_count as f64;
+        assert!(
+            supported_mean > 0.0,
+            "supported mean must be positive for mean scaling"
+        );
+
+        for ((row_idx, col_idx), avg_value) in avg_counts.indexed_iter() {
+            let expected = *avg_value / supported_mean;
+            let actual = normalized_avg[(row_idx, col_idx)];
+            assert!(
+                (actual - expected).abs() < 1e-12,
+                "normalized avg mismatch at ({row_idx}, {col_idx}): expected {expected}, got {actual}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn min_window_acgt_pct_excludes_mostly_blacklisted_window_but_keeps_clean_window() -> Result<()> {
+        // Arrange:
+        // Two explicit 100 bp windows on a 200 bp chromosome:
+        // - left  window [0,100)   is all A
+        // - right window [100,200) is all C
+        //
+        // Blacklist [0,85), leaving only 15 usable ACGT bases in the left window.
+        // We place one valid 10 bp fragment fully inside the surviving 15 bp tail:
+        //   [85,95) -> GC%=0
+        // and one valid 10 bp fragment in the clean right window:
+        //   [110,120) -> GC%=100
+        //
+        // This lets us separate fragment-level validity from window-level validity:
+        // - the left fragment is valid because its own 10 bp span is entirely unmasked
+        // - but the left window has only 15 / 100 = 15% usable ACGT, so it should be rejected
+        //   when `min_window_acgt_pct = 20`
+        //
+        // Window scaling math for length 10 (11 reachable GC-count cells):
+        //
+        // Threshold = 0:
+        // - left window:
+        //     raw count at GC%=0 = 1
+        //     mean_count         = 1 / 11
+        //     usable ACGT        = 15
+        //     scale              = (1 / (1/11)) * (15 / 100) = 11 * 0.15 = 1.65
+        //     scaled row         = 1.65 at GC%=0
+        // - right window:
+        //     raw count at GC%=100 = 1
+        //     mean_count           = 1 / 11
+        //     usable ACGT          = 100
+        //     scale                = (1 / (1/11)) * (100 / 100) = 11
+        //     scaled row           = 11 at GC%=100
+        // - average over two kept windows:
+        //     GC%=0   -> 1.65 / 2 = 0.825
+        //     GC%=100 -> 11   / 2 = 5.5
+        //
+        // Threshold = 20:
+        // - left window is rejected because 15% < 20%
+        // - right window remains, so the final average is just:
+        //     GC%=100 -> 11
+        //
+        // As elsewhere for length 10, width correction is a no-op because GC%=0 and 100 are exact
+        // reachable percentage bins with width 1.
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_min_window_acgt_reference",
+            vec![(
+                "chr1".to_string(),
+                format!("{}{}", "A".repeat(100), "C".repeat(100)),
+            )],
+        )?;
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            vec![
+                fixtures::paired_fragment(85, 10, 5),
+                fixtures::paired_fragment(110, 10, 5),
+            ],
+            Vec::new(),
+            "gc_bias_min_window_acgt_bam",
+        )?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 10, 0)?;
+
+        let threshold0_out = TempDir::new()?;
+        let threshold20_out = TempDir::new()?;
+        let blacklist_path = threshold20_out.path().join("blacklist.bed");
+        std::fs::write(&blacklist_path, "chr1\t0\t85\n")?;
+
+        let mut threshold0_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            threshold0_out.path(),
+        );
+        threshold0_cfg.set_windows(GCWindowsArgs {
+            by_size: Some(100),
+            by_bed: None,
+            global: false,
+        });
+        threshold0_cfg.set_tile_size(95);
+        threshold0_cfg.set_blacklist(Some(vec![blacklist_path.clone()]));
+        threshold0_cfg.set_min_window_acgt_pct(0);
+
+        let mut threshold20_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            threshold20_out.path(),
+        );
+        threshold20_cfg.set_windows(GCWindowsArgs {
+            by_size: Some(100),
+            by_bed: None,
+            global: false,
+        });
+        threshold20_cfg.set_tile_size(95);
+        threshold20_cfg.set_blacklist(Some(vec![blacklist_path]));
+        threshold20_cfg.set_min_window_acgt_pct(20);
+
+        // Act
+        run_gc_bias(&threshold0_cfg)?;
+        run_gc_bias(&threshold20_cfg)?;
+
+        // Assert
+        let threshold0_counts: ndarray::Array2<f64> =
+            read_npy(threshold0_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        let threshold20_counts: ndarray::Array2<f64> =
+            read_npy(threshold20_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        assert_eq!(threshold0_counts.dim(), (1, 101));
+        assert_eq!(threshold20_counts.dim(), (1, 101));
+
+        for (gc_pct, &value) in threshold0_counts.row(0).iter().enumerate() {
+            match gc_pct {
+                0 => assert!(
+                    (value - 0.825).abs() < 1e-12,
+                    "threshold 0 expected 0.825 at GC% 0, got {value}"
+                ),
+                100 => assert!(
+                    (value - 5.5).abs() < 1e-12,
+                    "threshold 0 expected 5.5 at GC% 100, got {value}"
+                ),
+                _ => assert!(
+                    value.abs() < 1e-12,
+                    "threshold 0 expected 0 outside GC% 0/100, got bin {gc_pct}={value}"
+                ),
+            }
+        }
+
+        for (gc_pct, &value) in threshold20_counts.row(0).iter().enumerate() {
+            match gc_pct {
+                100 => assert!(
+                    (value - 11.0).abs() < 1e-12,
+                    "threshold 20 expected 11.0 at GC% 100, got {value}"
+                ),
+                _ => assert!(
+                    value.abs() < 1e-12,
+                    "threshold 20 expected 0 outside GC% 100, got bin {gc_pct}={value}"
+                ),
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn gc_bias_run_rejects_reference_package_with_non_scalar_metadata_array() -> Result<()> {
+        let bam = fixtures::simple_inward_bam()?;
+        let reference = fixtures::simple_reference_twobit()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_gc_package_fixture(
+            ref_gc_dir.path(),
+            &[GC_CORRECTION_SCHEMA_VERSION],
+            &[false],
+            &[2],
+            &[0.55],
+            &[true, false],
+        )?;
+        let out_dir = TempDir::new()?;
+        let cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+
+        // Manual expectations:
+        // - The reference package is malformed before the command ever starts sample counting:
+        //   `skip_smoothing` is written as a length-2 array instead of a scalar metadata field.
+        // - `gc-bias` loads the reference package at the start of `run()`, so the correct
+        //   behavior is an immediate loader failure with the scalar-shape guardrail message.
+        let err = run_gc_bias(&cfg).expect_err("non-scalar reference metadata should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("skip_smoothing should be length 1"),
+            "unexpected error message: {msg}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn gc_bias_run_rejects_reference_package_with_schema_version_mismatch() -> Result<()> {
+        let bam = fixtures::simple_inward_bam()?;
+        let reference = fixtures::simple_reference_twobit()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_gc_package_fixture(
+            ref_gc_dir.path(),
+            &[GC_CORRECTION_SCHEMA_VERSION + 1],
+            &[false],
+            &[2],
+            &[0.55],
+            &[true],
+        )?;
+        let out_dir = TempDir::new()?;
+        let cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+
+        // Manual expectations:
+        // - The package schema version is intentionally incompatible.
+        // - `gc-bias` must fail while loading the reference-GC artifact, before producing any
+        //   sample-side intermediates or correction output.
+        let err = run_gc_bias(&cfg).expect_err("schema version mismatch should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Reference GC package schema version mismatch"),
+            "unexpected error message: {msg}"
+        );
+
         Ok(())
     }
 
@@ -448,6 +1443,33 @@ mod tests_gc_bias {
         Ok(())
     }
 
+    fn write_reference_gc_package_with_shape_mismatch(out_dir: &std::path::Path) -> Result<()> {
+        let package_path = out_dir.join("ref_gc_package.npz");
+        let counts = array![[1.0_f64, 2.0_f64], [3.0_f64, 4.0_f64]];
+        let support_unobservables = array![[true, false]];
+        let support_outliers = array![[true, true]];
+        let gc_percent_widths = array![[10_u16, 20_u16], [30_u16, 40_u16]];
+
+        let file = std::fs::File::create(&package_path)?;
+        let mut npz = NpzWriter::new(file);
+        npz.add_array("counts", &counts)?;
+        npz.add_array("support_mask_unobservables", &support_unobservables)?;
+        npz.add_array("support_mask_outliers", &support_outliers)?;
+        npz.add_array("gc_percent_widths", &gc_percent_widths)?;
+        npz.add_array(
+            "version",
+            &ndarray::Array1::from(vec![GC_CORRECTION_SCHEMA_VERSION]),
+        )?;
+        npz.add_array("length_range", &ndarray::Array1::from(vec![30_u32, 40_u32]))?;
+        npz.add_array("end_offset", &ndarray::Array1::from(vec![10_u32]))?;
+        npz.add_array("skip_interpolation", &ndarray::Array1::from(vec![false]))?;
+        npz.add_array("smoothing_radius", &ndarray::Array1::from(vec![2_u32]))?;
+        npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
+        npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
+        npz.finish()?;
+        Ok(())
+    }
+
     #[test]
     fn loads_versioned_reference_gc_package() -> Result<()> {
         // Arrange: write a minimal reference package with the current schema version and scalar
@@ -541,6 +1563,33 @@ mod tests_gc_bias {
                 .to_string()
                 .contains("Reference GC package schema version mismatch")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn gc_bias_run_rejects_reference_package_with_incompatible_support_mask_shape() -> Result<()> {
+        let bam = fixtures::simple_inward_bam()?;
+        let reference = fixtures::simple_reference_twobit()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_gc_package_with_shape_mismatch(ref_gc_dir.path())?;
+        let out_dir = TempDir::new()?;
+        let cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+
+        // Manual expectations:
+        // - The reference package is syntactically present, but the support masks are the wrong
+        //   shape for the count matrix:
+        //     counts                     = (2, 2)
+        //     support_mask_unobservables = (1, 2)
+        //     support_mask_outliers      = (1, 2)
+        // - `gc-bias` must reject this immediately while loading the artifact rather than trying
+        //   to continue with inconsistent masking semantics.
+        let err = run_gc_bias(&cfg).expect_err("shape-mismatched reference package should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Reference counts") && msg.contains("incompatible shapes"),
+            "unexpected error message: {msg}"
+        );
+
         Ok(())
     }
 }

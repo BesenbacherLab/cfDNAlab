@@ -163,6 +163,45 @@ mod tests {
     }
 
     #[test]
+    fn ndarray3_view_matches_allocating_copy_for_all_cells() -> Result<()> {
+        let mut c = make_counts(); // G=3, P=5, L=2 => flat layout has 30 cells
+
+        // Fill every flat cell with a unique value so any stride mistake shows up immediately.
+        // Internal layout is (group, position, length_bin), so the flat index is:
+        //   idx = group * (P * L) + position * L + len_bin
+        for (idx, value) in c.counts.iter_mut().enumerate() {
+            *value = idx as f32 + 0.25;
+        }
+
+        let copied = c.to_3d_group_len_pos();
+        let viewed = c.view_ndarray3_group_len_pos();
+
+        assert_eq!(viewed.shape(), &[3, 2, 5]);
+
+        // Spot-check a few hand-derived cells before comparing the whole array:
+        // - (g=0, len=0, pos=0) -> idx = 0*(5*2) + 0*2 + 0 = 0
+        // - (g=1, len=1, pos=3) -> idx = 1*(5*2) + 3*2 + 1 = 17
+        // - (g=2, len=0, pos=4) -> idx = 2*(5*2) + 4*2 + 0 = 28
+        approx_eq(viewed[(0, 0, 0)], 0.25, 1e-6);
+        approx_eq(viewed[(1, 1, 3)], 17.25, 1e-6);
+        approx_eq(viewed[(2, 0, 4)], 28.25, 1e-6);
+
+        for group_idx in 0..3 {
+            for len_bin in 0..2 {
+                for position in 0..5 {
+                    approx_eq(
+                        viewed[(group_idx, len_bin, position)],
+                        copied[group_idx][len_bin][position],
+                        1e-6,
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn display_has_shape_info() {
         let c = make_counts();
         let s = format!("{}", c);

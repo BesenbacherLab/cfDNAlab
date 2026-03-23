@@ -7,9 +7,14 @@ use std::{collections::HashMap, fs, path::Path};
 use anyhow::Result;
 use cfdnalab::commands::{
     bam_to_bam::{bam_to_bam::run_inner, config::BamToBamConfig},
-    cli_common::ChromosomeArgs,
+    cli_common::{ApplyGCArgFileOnly, ChromosomeArgs},
+    gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage},
 };
-use fixtures::{FragmentSpec, ReadSpec, bam_from_specs, paired_fragment};
+use fixtures::{
+    FragmentSpec, ReadSpec, bam_from_specs, paired_fragment, simple_inward_bam,
+    simple_reference_twobit,
+};
+use ndarray::array;
 use rust_htslib::bam::{self, Read, record::Aux};
 use tempfile::tempdir;
 
@@ -132,6 +137,62 @@ fn blacklisting_removes_fragment_when_gap_is_blacklisted() -> Result<()> {
 }
 
 #[test]
+fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_thirty() -> Result<()> {
+    // Arrange:
+    // Build one inward fragment where both mates have MAPQ 20.
+    //
+    // `bam-to-bam` intentionally defaults to `min_mapq = 0`, so:
+    // - default config must keep the fragment
+    // - explicit `min_mapq = 0` must do the same
+    // - explicit `min_mapq = 30` must remove the fragment entirely
+    //
+    // Because the command writes both mates of each kept fragment, the expected BAM row counts are:
+    // - default / explicit 0: 2 records for qname `frag0_20`
+    // - explicit 30:         0 records
+    let mut low_mapq = paired_fragment(20, 60, 20);
+    low_mapq.forward.mapq = 20;
+    low_mapq.reverse.mapq = 20;
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        vec![low_mapq],
+        Vec::new(),
+        "bam_to_bam_default_min_mapq",
+    )?;
+
+    let work = tempdir()?;
+    let default_out = work.path().join("default.bam");
+    let explicit_zero_out = work.path().join("explicit_zero.bam");
+    let explicit_thirty_out = work.path().join("explicit_thirty.bam");
+
+    let default_cfg = base_config(&bam.bam, &default_out);
+
+    let mut explicit_zero_cfg = base_config(&bam.bam, &explicit_zero_out);
+    explicit_zero_cfg.set_min_mapq(0);
+
+    let mut explicit_thirty_cfg = base_config(&bam.bam, &explicit_thirty_out);
+    explicit_thirty_cfg.set_min_mapq(30);
+
+    // Act
+    run_inner(&default_cfg)?;
+    run_inner(&explicit_zero_cfg)?;
+    run_inner(&explicit_thirty_cfg)?;
+
+    // Assert
+    let default_counts = read_qname_counts(&default_out)?;
+    let explicit_zero_counts = read_qname_counts(&explicit_zero_out)?;
+    let explicit_thirty_counts = read_qname_counts(&explicit_thirty_out)?;
+
+    assert_eq!(default_counts, explicit_zero_counts);
+    assert_eq!(default_counts, HashMap::from([("frag0_20".to_string(), 2usize)]));
+    assert!(
+        explicit_thirty_counts.is_empty(),
+        "raising min_mapq to 30 should remove the MAPQ-20 fragment"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn respects_chromosome_sort_toggle() -> Result<()> {
     let frag_chr2 = paired_fragment(10, 160, 40);
     let frag_chr10 = fragment_on_tid(paired_fragment(20, 160, 40), 1);
@@ -166,6 +227,76 @@ fn respects_chromosome_sort_toggle() -> Result<()> {
         first_record_chrom(&unsorted_out)?,
         "chr2",
         "Skipping chromosome sort should keep the provided order"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn chromosomes_all_default_sorts_lexicographically_instead_of_bam_header_order() -> Result<()> {
+    // Arrange:
+    // Build a BAM whose header/contig order is intentionally non-lexicographic:
+    //   [chr2, chr10, chr1]
+    //
+    // With `--chromosomes all`, `bam-to-bam` first resolves chromosomes from the BAM header and
+    // then, by default, sorts them lexicographically unless `--skip-chromosome-sort` is set.
+    //
+    // Therefore the output processing order must be:
+    //   chr1, chr10, chr2
+    //
+    // We place one fragment on each chromosome so the emitted record order reveals that behavior
+    // directly. Each kept fragment writes two BAM records, so the expected chromosome sequence is:
+    //   [chr1, chr1, chr10, chr10, chr2, chr2]
+    let bam = bam_from_specs(
+        vec![
+            ("chr2".to_string(), 500),
+            ("chr10".to_string(), 500),
+            ("chr1".to_string(), 500),
+        ],
+        vec![
+            fragment_on_tid(paired_fragment(10, 120, 40), 0),
+            fragment_on_tid(paired_fragment(20, 120, 40), 1),
+            fragment_on_tid(paired_fragment(30, 120, 40), 2),
+        ],
+        Vec::new(),
+        "bam_to_bam_all_default_sort",
+    )?;
+
+    let work = tempdir()?;
+    let out_bam = work.path().join("all_sorted.bam");
+    let chrom_args = ChromosomeArgs {
+        chromosomes: Some(vec!["all".to_string()]),
+        chromosomes_file: None,
+    };
+    let cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
+
+    // Act
+    run_inner(&cfg)?;
+
+    // Assert
+    let mut reader = bam::Reader::from_path(&out_bam)?;
+    let header = reader.header().to_owned();
+    let mut record_chromosomes = Vec::new();
+    for record_result in reader.records() {
+        let record = record_result?;
+        let tid = record.tid() as u32;
+        record_chromosomes.push(
+            std::str::from_utf8(header.tid2name(tid))
+                .unwrap()
+                .to_string(),
+        );
+    }
+    assert_eq!(
+        record_chromosomes,
+        vec![
+            "chr1".to_string(),
+            "chr1".to_string(),
+            "chr10".to_string(),
+            "chr10".to_string(),
+            "chr2".to_string(),
+            "chr2".to_string(),
+        ],
+        "`--chromosomes all` should still follow the command's default lexicographic sorting"
     );
 
     Ok(())
@@ -365,6 +496,179 @@ fn writes_coverage_weight_when_scaling_factors_provided() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn gc_file_fallback_writes_gc_tag_one_on_both_mates() -> Result<()> {
+    let bam = simple_inward_bam()?;
+    let ref_twobit = simple_reference_twobit()?;
+    let work = tempdir()?;
+    let out_bam = work.path().join("gc_fallback.bam");
+    let gc_path = work.path().join("gc_pkg.npz");
+    build_gc_package(&gc_path, 26)?;
+
+    let mut cfg = base_config(&bam.bam, &out_bam);
+    cfg.set_gc(ApplyGCArgFileOnly {
+        gc_file: Some(gc_path),
+        drop_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+    {
+        let frag = cfg.fragment_lengths_mut();
+        // The GC package uses end_offset=26, so the command requires min length > 52.
+        frag.min_fragment_length = 53;
+        frag.max_fragment_length = 200;
+    }
+
+    // Manual expectations:
+    // - The fixture contains one paired fragment spanning [20, 80), length 60.
+    // - With end_offset=26, the GC-corrected span is only 8 bp long.
+    // - The corrector requires at least 10 A/C/G/T bases, so GC lookup fails.
+    // - `bam-to-bam` follows the same fallback semantics as `bam-to-frag` here:
+    //   the fragment is kept, `gc_failed_fragments` increments once per fragment,
+    //   and both mates receive a `GC` AUX tag of 1.0.
+    let counters = run_inner(&cfg)?;
+
+    assert_eq!(counters.base.counted_fragments, 1);
+    assert_eq!(counters.gc_failed_fragments, 1);
+
+    let gc_weights = read_tag_values(&out_bam, b"GC")?;
+    assert_eq!(
+        gc_weights,
+        vec![1.0_f32, 1.0_f32],
+        "both mates should receive the GC fallback weight"
+    );
+
+    let lengths = read_fragment_lengths(&out_bam)?;
+    assert_eq!(
+        lengths,
+        vec![60_u32, 60_u32],
+        "the fragment should still be emitted with its FLEN tags"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range() -> Result<()> {
+    // Arrange:
+    // The fixture contributes one fragment of length 60. We configure the converter to accept
+    // exactly that length, then write the smallest valid GC package that only covers 10..=59.
+    //
+    // The converter validates the GC package before it starts chromosome iteration, so the
+    // expected error is the shared compatibility failure from the GC loader.
+    let bam = simple_inward_bam()?;
+    let ref_twobit = simple_reference_twobit()?;
+    let work = tempdir()?;
+    let out_bam = work.path().join("gc_range_error.bam");
+    let gc_path = work.path().join("gc_pkg_short.npz");
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 0,
+        length_edges: vec![10, 59],
+        gc_edges: vec![0, 101],
+        length_bin_frequencies: array![1.0_f64],
+        correction_matrix: array![[1.0_f64]],
+    };
+    package.write_npz(&gc_path)?;
+
+    let mut cfg = base_config(&bam.bam, &out_bam);
+    cfg.set_gc(ApplyGCArgFileOnly {
+        gc_file: Some(gc_path),
+        drop_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 60;
+        frag.max_fragment_length = 60;
+    }
+
+    // Act
+    let err = run_inner(&cfg).expect_err("out-of-range GC package should fail");
+
+    // Assert
+    let msg = err.to_string();
+    assert!(
+        msg.contains("fragment length range [60-60] is outside the range covered by the correction package [10-59]"),
+        "unexpected error message: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
+    // Arrange:
+    // Build the smallest valid GC correction package shape, but with an intentionally
+    // incompatible schema version. `bam-to-bam` should reject it while loading the package,
+    // before chromosome processing starts or any output BAM records are written.
+    let bam = simple_inward_bam()?;
+    let ref_twobit = simple_reference_twobit()?;
+    let work = tempdir()?;
+    let out_bam = work.path().join("gc_bad_version.bam");
+    let gc_path = work.path().join("gc_pkg_bad_version.npz");
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION + 1,
+        end_offset: 0,
+        length_edges: vec![10, 200],
+        gc_edges: vec![0, 101],
+        length_bin_frequencies: array![1.0_f64],
+        correction_matrix: array![[1.0_f64]],
+    };
+    package.write_npz(&gc_path)?;
+
+    let mut cfg = base_config(&bam.bam, &out_bam);
+    cfg.set_gc(ApplyGCArgFileOnly {
+        gc_file: Some(gc_path),
+        drop_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+
+    // Act
+    let err = run_inner(&cfg).expect_err("schema version mismatch should fail");
+
+    // Assert
+    let msg = err.to_string();
+    assert!(
+        msg.contains("GC correction package schema version mismatch"),
+        "unexpected error message: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn scaling_tsv_must_cover_requested_chromosome_end_in_bam_to_bam() -> Result<()> {
+    // Arrange:
+    // `simple_inward_bam()` uses chr1 length 200.
+    // The shared scaling loader requires bins to cover the whole requested chromosome exactly.
+    //
+    // This TSV stops at 100:
+    //   [0,100) factor 2.0
+    // so the converter must reject it before chromosome processing begins.
+    let bam = simple_inward_bam()?;
+    let work = tempdir()?;
+    let out_bam = work.path().join("scaling_truncated.bam");
+    let scaling_path = work.path().join("truncated_scaling.tsv");
+    write_scaling_file(&scaling_path, "chr1", 100, 2.0)?;
+
+    let mut cfg = base_config(&bam.bam, &out_bam);
+    cfg.scale_genome.scaling_factors = Some(scaling_path);
+
+    // Act
+    let err = run_inner(&cfg).expect_err("truncated scaling TSV should fail");
+
+    // Assert:
+    // `bam-to-bam` wraps the shared loader with `load scaling factors`, so inspect the full
+    // error chain rather than only the top-level context.
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("scaling TSV: bins on 'chr1' must end at chrom_len=200 (got end=100)"),
+        "unexpected error message: {msg}"
+    );
+
+    Ok(())
+}
+
 fn base_config(in_bam: &Path, out_bam: &Path) -> BamToBamConfig {
     let chrom_args = ChromosomeArgs {
         chromosomes: Some(vec!["chr1".to_string()]),
@@ -460,5 +764,18 @@ fn write_bed(path: &Path, windows: &[(u64, u64)]) -> Result<()> {
 fn write_scaling_file(path: &Path, chr: &str, len: u64, factor: f32) -> Result<()> {
     let contents = format!("chromosome\tstart\tend\tscaling_factor\n{chr}\t0\t{len}\t{factor}\n");
     fs::write(path, contents)?;
+    Ok(())
+}
+
+fn build_gc_package(path: &Path, end_offset: u64) -> Result<()> {
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset,
+        length_edges: vec![10, 60, 200],
+        gc_edges: vec![0, 50, 101],
+        length_bin_frequencies: array![1.0_f64, 3.0_f64],
+        correction_matrix: array![[1.0_f64, 1.0_f64], [2.0_f64, 10.0_f64]],
+    };
+    package.write_npz(path)?;
     Ok(())
 }

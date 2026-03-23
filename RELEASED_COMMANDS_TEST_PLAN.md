@@ -62,6 +62,7 @@ Concrete evidence from the current tree:
 - `gc-bias` has a meaningful default windowing choice (`--by-size 100000`, not global), but there is little active evidence that the default behavior is pinned against the explicit equivalent or against the global alternative
 - Shared config code exposes materially different defaults across released commands: `fcoverage` and `lengths` default to global/windowless counting, `gc-bias` defaults to `--by-size 100000`, released counting commands usually default to `min_mapq = 30`, while released transformer commands intentionally default to `min_mapq = 0`
 - Chromosome semantics are also intentionally non-uniform: the shared default selection is `chr1..chr22`, `--chromosomes all` resolves from the BAM header when possible, `bam-to-bam` sorts chromosomes lexicographically by default, and `frag-to-bam` builds its BAM header in `--chrom-sizes` order
+- Current audit work has likely surfaced two real `gc-bias` bugs rather than missing tests: the fixed-size path appears non-invariant between aligned and misaligned tiling, and equivalent `--by-size` versus `--by-bed` windows appear not to agree in some cross-tile cases. Those should be treated as code fixes, not test rewrites, once the surrounding test setup noise is removed
 
 That means the highest-value work is not "add 100 more small tests". It is to close the structural gaps that can still let scientifically wrong outputs pass.
 
@@ -104,6 +105,7 @@ Why this is first:
 - We have already found real reducer/tile bugs
 - These commands all rely on chunking and merge logic
 - Silent tile bugs are high-impact and hard to detect from superficial tests
+- See also: [SA.4](#sa4) for oversized BED windows spanning 3+ tiles, and [SA.6](#sa6) for the separate NPZ-based cross-tile merge contract in `gc-bias`
 
 ### P0.2 Windowing semantics campaign
 
@@ -228,6 +230,7 @@ Why this is first:
 
 - These are multiplicative modifiers with high scientific impact
 - Bugs here often produce plausible-looking but wrong outputs
+- See also: [SA.3](#sa3) for sparse-bin scaling blowups, and [SA.5](#sa5) for the concrete GC-fallback semantics already present in `bam-to-frag`
 
 ### P0.5 Cross-command interoperability campaign
 
@@ -381,6 +384,7 @@ Why high priority:
 
 - It feeds the GC correction pipeline
 - If it is wrong, downstream corrections can all be wrong in a coordinated way
+- See also: [SA.2](#sa2) for the support-threshold step-function that can make test-scale and production-scale behavior diverge
 
 ### `gc-bias`
 
@@ -416,11 +420,13 @@ Needs:
 - Command-level tests that the default no-window-flag behavior equals explicit `--by-size 100000`, and differs from explicit global mode only when the intended window-scaling semantics make it differ
 - Full command-level tests for outlier configuration (`none`, quantile, IQR, stddev, MAD), outlier scope, and `save_intermediates`, since these are exposed scientific knobs with very little active run-level evidence
 - Command-level tests for `min_window_acgt_pct` thresholds and the failure mode where no usable windows remain after filtering/blacklisting
+- Likely active bug to fix after test cleanup: fixed-size `gc-bias` windowing appears to disagree across aligned vs misaligned tile sizes and across logically equivalent `--by-size` and `--by-bed` window definitions when tiles split the windows
 
 Why high priority:
 
 - This is a mathematically dense command with many tuning knobs
 - Local helper coverage does not substitute for command-level validation
+- See also: [SA.6](#sa6) for the NPZ-based cross-tile merge shape contract that sits underneath the command-level tiling story
 
 ### `coverage-weights`
 
@@ -451,6 +457,7 @@ Why high priority:
 
 - This command defines downstream normalization factors
 - Small edge mistakes propagate into all smoothed analyses
+- See also: [SA.3](#sa3) for the specific near-zero non-zero coverage case that can explode scaling factors
 
 ### `midpoints`
 
@@ -486,6 +493,7 @@ Note:
 Why high priority:
 
 - Group-collapsed profiles are easy to get mostly right while still mis-indexing length or position axes
+- See also: [SA.1](#sa1) for the concrete ndarray stride/view parity test that proves the written array is interpreted correctly
 
 ### `bam-to-frag`
 
@@ -516,6 +524,7 @@ Why high priority:
 
 - This is a format boundary command
 - Format boundary commands need strong contract tests, not just smoke tests
+- See also: [SA.5](#sa5) for the specific GC-file fallback behavior that must be pinned before release
 
 ### `bam-to-bam`
 
@@ -587,6 +596,7 @@ Needs:
 The following were identified by reading the actual algorithm implementations, not just
 the architectural descriptions. They are ordered by scientific impact.
 
+<a id="sa1"></a>
 ### SA.1 `midpoints`: `view_ndarray3_group_len_pos` vs `to_3d_group_len_pos` parity
 
 **Source**: `counting_by_group.rs` lines 304 and 343. The code itself marks the ndarray3
@@ -608,6 +618,7 @@ bug in the stride math would produce silently wrong midpoint profiles for every 
 consumer of the written NPY file. Adding this parity test is the minimal proof of the
 `TODO: Test!!` marker in the code.
 
+<a id="sa2"></a>
 ### SA.2 `ref-gc-bias`: support-threshold integer-division plateau
 
 **Source**: `ref_gc_bias.rs` line 238: `let threshold_per_mb = 1 + opt.n_positions / 100000000;`
@@ -630,6 +641,7 @@ used in tests) all produce the same threshold. This is an invisible calibration 
 between test-scale and production-scale runs that could mask support-mask bugs entirely
 in the test suite.
 
+<a id="sa3"></a>
 ### SA.3 `coverage-weights`: near-zero non-zero bins producing very large or infinite scaling factors
 
 **Source**: `striding.rs` lines 274-285. The `inverter` closure does `1.0 / x` for any
@@ -656,6 +668,16 @@ scaling factor of, say, 80,000x or worse infinity as f32. A fragment in that str
 will dominate any weighted output by an arbitrary multiple of the genome-wide mean.
 This is a real scenario at chromosome ends with shallow coverage.
 
+Priority note:
+
+- The first thing to pin here is the realistic sparse-coverage regime: very low but
+  non-zero stride bins that produce huge yet finite scaling factors and can dominate
+  downstream weighted outputs
+- The explicit smallest-non-zero-`f32` to `inf` boundary is still worth testing, but it
+  is a second-order numerical guardrail after the scientifically realistic huge-but-finite
+  amplification case
+
+<a id="sa4"></a>
 ### SA.4 `fcoverage` reducer: BED windows wider than 2 × tile size (spanning 3+ tiles)
 
 **Source**: `reducer.rs` lines 232-264. `expected_contribs` is built by counting how many
@@ -684,6 +706,7 @@ If the cross-index count logic is off-by-one for spanning windows, the safety ch
 catching the error is the only guard. Verifying this path is concrete, low-cost, and
 covers a plausible real-world input shape.
 
+<a id="sa5"></a>
 ### SA.5 `bam-to-frag`: GC correction fallback is weight=1.0, not a drop
 
 **Source**: `bam_to_frag.rs` lines 380-388. When `gc_file` is set and `correct_fragment`
@@ -712,6 +735,7 @@ it means GC-corrected outputs include unweighted fragments instead of excluding 
 which inflates their contribution relative to fragments with valid weights. Whether this
 is intentional must be pinned by an explicit test before release.
 
+<a id="sa6"></a>
 ### SA.6 `gc-bias`: NPZ-based cross-tile merge shape contract
 
 **Source**: `gc_bias/cross_tile_parts.rs`. The cross-tile GC accumulation serializes
