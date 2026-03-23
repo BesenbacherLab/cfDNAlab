@@ -582,6 +582,162 @@ Needs:
 - Stronger order/blacklist/filter workflow tests so the converter is validated as part of a release pipeline, not just as a parser
 - Explicit downstream parity tests where `frag-to-bam` output feeds `bam-to-bam`, `lengths`, and `fcoverage`, proving that external frag ingestion preserves the intended chromosome order, blacklist behavior, and optional tag semantics through the released workflows
 
+## Second-opinion additions: gaps found by direct source review
+
+The following were identified by reading the actual algorithm implementations, not just
+the architectural descriptions. They are ordered by scientific impact.
+
+### SA.1 `midpoints`: `view_ndarray3_group_len_pos` vs `to_3d_group_len_pos` parity
+
+**Source**: `counting_by_group.rs` lines 304 and 343. The code itself marks the ndarray3
+view with `// TODO: Test!!`.
+
+What must be proven:
+
+- `view_ndarray3_group_len_pos()` and `to_3d_group_len_pos()` return identical values for
+  the same data, using a non-trivial fixture where all three axes have more than one element,
+  groups, length bins, and positions are all different sizes, and the counts are not symmetric
+- The zero-copy stride math `(group*p*l, 1, l)` for shape `(g, l, p)` reinterprets the
+  internal `(group, position, length_bin)` flat buffer correctly
+
+Why this matters above what is already in the plan:
+
+The plan mentions the 3D view contract but does not pin the specific test that proves the
+zero-copy non-contiguous stride view and the allocating copy produce the same array. A
+bug in the stride math would produce silently wrong midpoint profiles for every downstream
+consumer of the written NPY file. Adding this parity test is the minimal proof of the
+`TODO: Test!!` marker in the code.
+
+### SA.2 `ref-gc-bias`: support-threshold integer-division plateau
+
+**Source**: `ref_gc_bias.rs` line 238: `let threshold_per_mb = 1 + opt.n_positions / 100000000;`
+
+What must be proven:
+
+- For any `n_positions < 100_000_000`, integer division yields 0, so `threshold_per_mb`
+  is always 1 regardless of how small `n_positions` is
+- The "per-Mb" semantics are only activated once `n_positions >= 100_000_000`
+- Tests should verify the threshold value at the exact crossover boundaries:
+  `99_999_999`, `100_000_000`, and `200_000_000`
+- Tests should verify that support-mask coverage changes in the expected direction as
+  `n_positions` crosses those boundaries
+
+Why this matters above what is already in the plan:
+
+The plan mentions support-threshold behavior but treats it as a continuous parameter. The
+integer division creates a step-function where small `n_positions` values (including those
+used in tests) all produce the same threshold. This is an invisible calibration difference
+between test-scale and production-scale runs that could mask support-mask bugs entirely
+in the test suite.
+
+### SA.3 `coverage-weights`: near-zero non-zero bins producing very large or infinite scaling factors
+
+**Source**: `striding.rs` lines 274-285. The `inverter` closure does `1.0 / x` for any
+non-zero `x`. The caller skips `NaN`, `inf`, and exactly zero, but not near-zero values.
+
+What must be proven:
+
+- When a chromosome end has a stride-bin with very low but non-zero average coverage
+  (e.g., 1-3 fragments in a 500kb bin), the inverted scaling factor is large but finite
+  in the intended range
+- Downstream consumers (`fcoverage`, `lengths`, `midpoints`) handle very large scaling
+  factors gracefully: either the scientific result is intentional, or there is a cap
+- At the f32 boundary: `avg_overlap_coverage` values that round to the smallest
+  non-zero f32 when cast from f64 produce an inverted f32 of `inf`, which propagates
+  into weighted sums downstream silently
+- Tests should cover: single-read stride bin at chromosome end, inverted factor written
+  to TSV, downstream consumer reads that TSV, output is finite or the behavior is pinned
+
+Why this matters above what is already in the plan:
+
+The plan covers zero-coverage regions and last-bin truncation. It does not cover the
+near-zero non-zero case where the inversion is mathematically valid but produces a
+scaling factor of, say, 80,000x or worse infinity as f32. A fragment in that stride bin
+will dominate any weighted output by an arbitrary multiple of the genome-wide mean.
+This is a real scenario at chromosome ends with shallow coverage.
+
+### SA.4 `fcoverage` reducer: BED windows wider than 2 × tile size (spanning 3+ tiles)
+
+**Source**: `reducer.rs` lines 232-264. `expected_contribs` is built by counting how many
+`cross_index` files list a given `orig_idx`. A window spanning N tiles crosses N-1
+boundaries, so it appears in N-1 cross-index files and gets `expected_contribs = N-1`.
+But the window produces partial rows in N tiles. The accumulator is emitted after
+`N-1` contributions, then the N-th contribution re-inserts the index into `accum_by_idx`,
+which is caught by the safety check at line 364 as an error rather than a silent undercount.
+
+What must be proven:
+
+- A BED window strictly wider than 2 × `tile_size` (e.g., a 30Mb window with 10Mb tiles)
+  either (a) produces the correct aggregated value through whatever mechanism the
+  tiling layer uses for this case, or (b) triggers a clear error that informs the user
+- The `expected_contribs` count correctly matches the actual number of partial rows the
+  window generates for windows spanning exactly 2 tiles, exactly 3 tiles, and 4+ tiles
+- The safety check (`accum_by_idx.is_empty()`) fires with an actionable error message
+  rather than silently passing or panicking if the count is wrong
+
+Why this matters above what is already in the plan:
+
+The tiling campaign in P0.1 covers aligned/misaligned `--by-size` and tile-boundary
+straddling but does not explicitly exercise a single BED window wider than 2 tile sizes.
+Real user BED files (large TADs, chromosomal arm-scale windows) frequently exceed 20Mb.
+If the cross-index count logic is off-by-one for spanning windows, the safety check
+catching the error is the only guard. Verifying this path is concrete, low-cost, and
+covers a plausible real-world input shape.
+
+### SA.5 `bam-to-frag`: GC correction fallback is weight=1.0, not a drop
+
+**Source**: `bam_to_frag.rs` lines 380-388. When `gc_file` is set and `correct_fragment`
+returns `None`, the code sets `gc_weight = Some(1.0)` and increments
+`gc_failed_fragments`, not `filtered_fragments`. The fragment is still written.
+
+What must be proven:
+
+- A fragment whose GC weight cannot be computed (length outside the GC matrix, or
+  reference base ambiguity) contributes weight 1.0 to the frag output, not zero,
+  and not a missing row
+- The `gc_failed_fragments` counter matches the number of rows written with `gc_weight=1.0`
+- The companion header file still lists `gc_weight` as a column when `gc_file` is set,
+  even when all GC lookups fail
+- `frag-to-bam` and downstream consumers that read the frag file receive 1.0 weights for
+  those rows without any further silent fallback
+- Parity test: `bam-to-bam` and `bam-to-frag` should agree on whether a fragment with
+  a missing GC weight is included or excluded, and at what weight
+
+Why this matters above what is already in the plan:
+
+The plan mentions GC fallback behavior under `bam-to-frag` and `bam-to-bam` but calls it
+"drop/fallback behavior" generically. The current implementation silently upgrades failed
+GC lookups to weight 1.0 rather than dropping. This is a meaningful scientific choice:
+it means GC-corrected outputs include unweighted fragments instead of excluding them,
+which inflates their contribution relative to fragments with valid weights. Whether this
+is intentional must be pinned by an explicit test before release.
+
+### SA.6 `gc-bias`: NPZ-based cross-tile merge shape contract
+
+**Source**: `gc_bias/cross_tile_parts.rs`. The cross-tile GC accumulation serializes
+`GCCounts` arrays into a per-tile NPZ file, then merges them. The merge assumes every
+tile's `GCCounts` was initialized from the same template (same shape).
+
+What must be proven:
+
+- When tiles span different chromosome regions (some with dense coverage, some sparse
+  or entirely empty), the per-tile `GCCounts` arrays are initialized with the same shape
+  before merging
+- A tile that processes zero fragments still produces a zero-filled `GCCounts` of the
+  correct shape (not a missing or differently shaped array), so the NPZ merge does not
+  silently drop its contribution
+- Cross-tile NPZ files from misaligned tiles (windows straddle a tile boundary) merge
+  into the same final GC matrix as a non-tiled run
+
+Why this matters above what is already in the plan:
+
+The plan covers gc-bias tiling invariance at the command level but does not specifically
+address the NPZ-based cross-tile merge path. The fcoverage and gc-bias cross-tile
+mechanisms are structurally different (text partials vs NPZ arrays). A shape mismatch
+in the NPZ merge for an empty tile would produce a silent count underestimate for
+windows near tile boundaries, which is exactly the kind of bug the prior tile-alignment
+fix was needed to address.
+
 ## Priority 3: Small and easy checks to do later
 
 These should be done, but only after the structural work above.
