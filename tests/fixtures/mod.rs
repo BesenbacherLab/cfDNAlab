@@ -1,7 +1,15 @@
 #![allow(dead_code)]
 
 use anyhow::{Context, Result, anyhow};
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+use cfdnalab::commands::cli_common::{
+    ChromosomeArgs, GCWindowsArgs, IOCArgs, Ref2BitRequiredArgs,
+};
 use cfdnalab::commands::cli_common::{BaseSelectionArgs, FragmentPositionSelectionArgs};
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+use cfdnalab::commands::gc_bias::{config::GCConfig, gc_bias::run as run_gc_bias};
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+use cfdnalab::commands::ref_gc_bias::{config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias};
 use cfdnalab::commands::fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 use rust_htslib::bam::{self, header::HeaderRecord, record::Cigar, record::CigarString};
 use std::{
@@ -171,6 +179,151 @@ fn write_fasta<P: AsRef<Path>>(path: P, sequences: &[(String, String)]) -> Resul
 pub fn simple_reference_twobit() -> Result<TwoBitFixture> {
     let chr1 = ("chr1".to_string(), "ACGT".repeat(64));
     twobit_from_sequences("simple_reference", vec![chr1])
+}
+
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+fn base_chromosomes(chromosome_names: &[&str]) -> ChromosomeArgs {
+    ChromosomeArgs {
+        chromosomes: Some(
+            chromosome_names
+                .iter()
+                .map(|name| name.to_string())
+                .collect(),
+        ),
+        chromosomes_file: None,
+    }
+}
+
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+fn configure_gc_bias_common(gc_cfg: &mut GCConfig) {
+    gc_cfg.set_min_mapq(0);
+    gc_cfg.set_tile_size(1_000_000);
+    gc_cfg.set_min_window_acgt_pct(0);
+    gc_cfg.set_num_extreme_gc_bins(0);
+    gc_cfg.set_num_short_length_bins(0);
+    gc_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+    gc_cfg.set_windows(GCWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        global: true,
+    });
+}
+
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+pub fn build_real_neutral_gc_package(
+    bam_path: &Path,
+    reference_path: &Path,
+    out_dir: &Path,
+    fragment_length: u32,
+) -> Result<PathBuf> {
+    let ref_gc_dir = TempDir::new()?;
+    let ref_cfg = RefGCBiasConfig {
+        ref_genome: Ref2BitRequiredArgs {
+            ref_2bit: reference_path.to_path_buf(),
+        },
+        output_dir: ref_gc_dir.path().to_path_buf(),
+        n_threads: 1,
+        // `simple_reference_twobit()` is 256 bp long. For the current neutral-package tests we
+        // only need a deterministic but valid sample of start positions, so 100 stays safely below
+        // both:
+        //   length 60 -> 256 - 60 + 1 = 197 valid starts
+        //   length 61 -> 256 - 61 + 1 = 196 valid starts
+        n_positions: 100,
+        seed: Some(7),
+        windows: Default::default(),
+        chromosomes: base_chromosomes(&["chr1"]),
+        blacklist: None,
+        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+            min_fragment_length: fragment_length,
+            max_fragment_length: fragment_length,
+        },
+        end_offset: 0,
+        skip_interpolation: true,
+        smoothing_sigma: 0.55,
+        smoothing_radius: 2,
+        skip_smoothing: true,
+        tile_size: 1_000_000,
+    };
+    run_ref_gc_bias(&ref_cfg)?;
+
+    let gc_out_dir = out_dir.join(format!("real_gc_bias_neutral_len_{fragment_length}"));
+    std::fs::create_dir_all(&gc_out_dir)?;
+    let mut gc_cfg = GCConfig::new(
+        IOCArgs {
+            bam: bam_path.to_path_buf(),
+            output_dir: gc_out_dir.clone(),
+            n_threads: 1,
+        },
+        reference_path.to_path_buf(),
+        ref_gc_dir.path().to_path_buf(),
+        base_chromosomes(&["chr1"]),
+    );
+    configure_gc_bias_common(&mut gc_cfg);
+    run_gc_bias(&gc_cfg)?;
+
+    Ok(gc_out_dir.join("gc_bias_correction.npz"))
+}
+
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+pub fn build_real_non_neutral_gc_package(
+    bam_path: &Path,
+    reference_path: &Path,
+    out_dir: &Path,
+    fragment_length: u32,
+    reference_windows_bed: &str,
+    n_positions: usize,
+) -> Result<PathBuf> {
+    let ref_gc_dir = TempDir::new()?;
+    let bed_path = ref_gc_dir.path().join("pure_windows.bed");
+    std::fs::write(&bed_path, reference_windows_bed)?;
+    let ref_cfg = RefGCBiasConfig {
+        ref_genome: Ref2BitRequiredArgs {
+            ref_2bit: reference_path.to_path_buf(),
+        },
+        output_dir: ref_gc_dir.path().to_path_buf(),
+        n_threads: 1,
+        // Callers pass the exact number of sampled starts because the non-neutral tests rely on
+        // fully hand-derived reference-side counts. Keeping that arithmetic at the call site makes
+        // the expected consumer weights easy to audit next to each test.
+        n_positions,
+        seed: Some(23),
+        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+            by_bed: Some(bed_path),
+        },
+        chromosomes: base_chromosomes(&["chr1"]),
+        blacklist: None,
+        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+            min_fragment_length: fragment_length,
+            max_fragment_length: fragment_length,
+        },
+        end_offset: 0,
+        skip_interpolation: true,
+        smoothing_sigma: 0.55,
+        smoothing_radius: 2,
+        skip_smoothing: true,
+        tile_size: 1_000_000,
+    };
+    run_ref_gc_bias(&ref_cfg)?;
+
+    let gc_out_dir = out_dir.join(format!("real_gc_bias_non_neutral_len_{fragment_length}"));
+    std::fs::create_dir_all(&gc_out_dir)?;
+    let mut gc_cfg = GCConfig::new(
+        IOCArgs {
+            bam: bam_path.to_path_buf(),
+            output_dir: gc_out_dir.clone(),
+            n_threads: 1,
+        },
+        reference_path.to_path_buf(),
+        ref_gc_dir.path().to_path_buf(),
+        base_chromosomes(&["chr1"]),
+    );
+    configure_gc_bias_common(&mut gc_cfg);
+    gc_cfg.set_min_gc_bin_mass(1.0);
+    gc_cfg.set_min_length_bin_mass(0.0);
+    gc_cfg.set_min_length_bin_width(1);
+    run_gc_bias(&gc_cfg)?;
+
+    Ok(gc_out_dir.join("gc_bias_correction.npz"))
 }
 
 pub fn single_position_selection(

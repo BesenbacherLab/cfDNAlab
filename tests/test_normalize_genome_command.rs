@@ -64,6 +64,10 @@ fn assert_approx(actual: f64, expected: f64, tolerance: f64, label: &str) {
     );
 }
 
+fn scaling_row_chromosomes(rows: &[ScalingRow]) -> Vec<String> {
+    rows.iter().map(|row| row.chromosome.clone()).collect()
+}
+
 fn make_simple_coverage_weights_config(
     out_dir: &std::path::Path,
     bam: &std::path::Path,
@@ -106,6 +110,29 @@ fn single_read_fragment_bam(name: &str) -> Result<fixtures::BamFixture> {
             mate_pos: None,
             insert_size: 0,
         }],
+        name,
+    )
+}
+
+fn multi_chrom_order_bam(name: &str) -> Result<fixtures::BamFixture> {
+    // BAM header order is intentionally non-lexicographic:
+    //   chr2, chr10, chr1
+    //
+    // We add one 10 bp fragment on each chromosome. With `bin_size = stride = 20`, each
+    // chromosome contributes exactly one TSV row, so the written chromosome sequence directly
+    // exposes the command's row-order contract.
+    bam_from_specs(
+        vec![
+            ("chr2".to_string(), 20),
+            ("chr10".to_string(), 20),
+            ("chr1".to_string(), 20),
+        ],
+        vec![
+            fragment_on_tid(paired_fragment(0, 10, 60), 0),
+            fragment_on_tid(paired_fragment(0, 10, 60), 1),
+            fragment_on_tid(paired_fragment(0, 10, 60), 2),
+        ],
+        Vec::new(),
         name,
     )
 }
@@ -750,6 +777,107 @@ fn default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> 
             &format!("explicit-zero scaling factor at row {row_index}"),
         );
     }
+
+    Ok(())
+}
+
+#[test]
+fn explicit_chromosome_order_controls_scaling_tsv_row_order() -> Result<()> {
+    // Arrange:
+    // The command writes rows by iterating the resolved chromosome list.
+    // For explicit `--chromosomes`, `ChromosomeArgs::resolve_chromosomes` returns the user-supplied
+    // order unchanged.
+    //
+    // We therefore build a BAM with header order [chr2, chr10, chr1] but request:
+    //   --chromosomes chr10,chr2
+    //
+    // With `bin_size = stride = 20` and one fragment per chromosome, each selected chromosome
+    // yields exactly one TSV row. The output chromosome sequence must therefore be exactly:
+    //   [chr10, chr2]
+    let bam = multi_chrom_order_bam("coverage_weights_explicit_order_bam")?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = CoverageWeightsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 2,
+        },
+        ChromosomeArgs {
+            chromosomes: Some(vec!["chr10".to_string(), "chr2".to_string()]),
+            chromosomes_file: None,
+        },
+    );
+    cfg.set_output_prefix("coverage".to_string());
+    cfg.set_bin_size(20);
+    cfg.set_stride(20);
+    cfg.set_min_mapq(0);
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 1;
+        frag.max_fragment_length = 200;
+    }
+
+    // Act
+    run(&cfg)?;
+    let rows = parse_scaling_rows(&out_dir.path().join("coverage.scaling_factors.tsv"))?;
+
+    // Assert
+    assert_eq!(
+        scaling_row_chromosomes(&rows),
+        vec!["chr10".to_string(), "chr2".to_string()]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn chromosomes_all_uses_bam_header_order_for_scaling_tsv_rows() -> Result<()> {
+    // Arrange:
+    // `ChromosomeArgs::resolve_chromosomes` documents that `--chromosomes all` uses BAM header
+    // order for BAM-backed commands.
+    //
+    // The BAM header order here is intentionally:
+    //   [chr2, chr10, chr1]
+    //
+    // With one stride/bin row per chromosome, the scaling TSV must preserve that exact order.
+    let bam = multi_chrom_order_bam("coverage_weights_all_order_bam")?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = CoverageWeightsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 2,
+        },
+        ChromosomeArgs {
+            chromosomes: Some(vec!["all".to_string()]),
+            chromosomes_file: None,
+        },
+    );
+    cfg.set_output_prefix("coverage".to_string());
+    cfg.set_bin_size(20);
+    cfg.set_stride(20);
+    cfg.set_min_mapq(0);
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 1;
+        frag.max_fragment_length = 200;
+    }
+
+    // Act
+    run(&cfg)?;
+    let rows = parse_scaling_rows(&out_dir.path().join("coverage.scaling_factors.tsv"))?;
+
+    // Assert
+    assert_eq!(
+        scaling_row_chromosomes(&rows),
+        vec![
+            "chr2".to_string(),
+            "chr10".to_string(),
+            "chr1".to_string()
+        ]
+    );
 
     Ok(())
 }

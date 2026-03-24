@@ -8,26 +8,25 @@ mod tests_lengths_command {
 
     use anyhow::Result;
     use cfdnalab::commands::cli_common::{
-        AssignToWindowArgs, ChromosomeArgs, GCWindowsArgs, IOCArgs, Ref2BitRequiredArgs,
-        WindowAssigner, WindowsArgs,
+        AssignToWindowArgs, ChromosomeArgs, IOCArgs, WindowAssigner, WindowsArgs,
     };
     #[cfg(feature = "cmd_coverage_weights")]
     use cfdnalab::commands::coverage_weights::{
         config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
     };
     use cfdnalab::commands::gc_bias::{
-        GC_CORRECTION_SCHEMA_VERSION, config::GCConfig, correct::MarginalizeLengthsWeightingScheme,
-        gc_bias::run as run_gc_bias, package::GCCorrectionPackage,
+        GC_CORRECTION_SCHEMA_VERSION, correct::MarginalizeLengthsWeightingScheme,
+        package::GCCorrectionPackage,
     };
     use cfdnalab::commands::lengths::config::LengthsConfig;
     use cfdnalab::commands::lengths::lengths::run;
-    use cfdnalab::commands::ref_gc_bias::{config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias};
     use cfdnalab::shared::blacklist::strategy::BlacklistStrategy;
     use cfdnalab::shared::indel_mode::IndelMode;
     use cfdnalab::shared::io::dot_join;
     use fixtures::{
-        BamFixture, FragmentSpec, ReadSpec, bam_from_specs, simple_inward_bam,
-        simple_reference_twobit, write_bed, write_scaling_factors,
+        BamFixture, FragmentSpec, ReadSpec, bam_from_specs, build_real_neutral_gc_package,
+        build_real_non_neutral_gc_package, simple_inward_bam, simple_reference_twobit, write_bed,
+        write_scaling_factors,
     };
     use ndarray::Array2;
     use ndarray::array;
@@ -793,67 +792,6 @@ mod tests_lengths_command {
         Ok(())
     }
 
-    fn build_real_neutral_gc_package(
-        bam_path: &std::path::Path,
-        reference_path: &std::path::Path,
-        out_dir: &std::path::Path,
-    ) -> Result<std::path::PathBuf> {
-        let fragment_length = 60_u32;
-        let ref_gc_dir = TempDir::new()?;
-        let ref_cfg = RefGCBiasConfig {
-            ref_genome: Ref2BitRequiredArgs {
-                ref_2bit: reference_path.to_path_buf(),
-            },
-            output_dir: ref_gc_dir.path().to_path_buf(),
-            n_threads: 1,
-            // `simple_reference_twobit()` is 256 bp long. With fragment length 60 there are
-            // only 256 - 60 + 1 = 197 valid start positions, so keep `n_positions` well below that.
-            n_positions: 100,
-            seed: Some(7),
-            windows: Default::default(),
-            chromosomes: base_chromosomes(&["chr1"]),
-            blacklist: None,
-            fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
-                min_fragment_length: fragment_length,
-                max_fragment_length: fragment_length,
-            },
-            end_offset: 0,
-            skip_interpolation: true,
-            smoothing_sigma: 0.55,
-            smoothing_radius: 2,
-            skip_smoothing: true,
-            tile_size: 1_000_000,
-        };
-        run_ref_gc_bias(&ref_cfg)?;
-
-        let gc_out_dir = out_dir.join("real_gc_bias");
-        std::fs::create_dir_all(&gc_out_dir)?;
-        let mut gc_cfg = GCConfig::new(
-            IOCArgs {
-                bam: bam_path.to_path_buf(),
-                output_dir: gc_out_dir.clone(),
-                n_threads: 1,
-            },
-            reference_path.to_path_buf(),
-            ref_gc_dir.path().to_path_buf(),
-            base_chromosomes(&["chr1"]),
-        );
-        gc_cfg.set_min_mapq(0);
-        gc_cfg.set_tile_size(1_000_000);
-        gc_cfg.set_min_window_acgt_pct(0);
-        gc_cfg.set_num_extreme_gc_bins(0);
-        gc_cfg.set_num_short_length_bins(0);
-        gc_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
-        gc_cfg.set_windows(GCWindowsArgs {
-            by_size: None,
-            by_bed: None,
-            global: true,
-        });
-        run_gc_bias(&gc_cfg)?;
-
-        Ok(gc_out_dir.join("gc_bias_correction.npz"))
-    }
-
     #[test]
     fn applies_gc_correction_weighting_modes() -> Result<()> {
         let bam = simple_inward_bam()?;
@@ -933,7 +871,8 @@ mod tests_lengths_command {
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let out_dir = TempDir::new()?;
-        let gc_path = build_real_neutral_gc_package(&bam.bam, &ref_twobit.path, out_dir.path())?;
+        let gc_path =
+            build_real_neutral_gc_package(&bam.bam, &ref_twobit.path, out_dir.path(), 60)?;
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -989,6 +928,93 @@ mod tests_lengths_command {
                 arr[(0, idx)]
             );
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn real_ref_gc_bias_then_gc_bias_package_changes_lengths_in_expected_direction() -> Result<()> {
+        // Arrange:
+        // Use the same real non-neutral producer setup as the corresponding `gc-bias` test:
+        // - A/C split reference with pure-start BED windows on the reference side
+        // - one A-only sample fragment and nine C-only sample fragments, all length 10
+        //
+        // The resulting real correction package is hand-derived as:
+        // - weight 5.0   for the GC%=0 bin
+        // - weight 5/9   for the GC%=100 bin
+        //
+        // `lengths` counts fragment mass by length after applying GC weight. All ten fragments
+        // have the same length 10, so the only occupied output cell must be:
+        //   1 * 5.0 + 9 * (5/9) = 10.0
+        let reference = fixtures::twobit_from_sequences(
+            "lengths_real_non_neutral_reference",
+            vec![(
+                "chr1".to_string(),
+                format!("{}{}", "A".repeat(100), "C".repeat(100)),
+            )],
+        )?;
+        let starts = [10_i64, 110, 120, 130, 140, 150, 160, 170, 180, 190];
+        let fragments = starts
+            .into_iter()
+            .map(|start| fixtures::paired_fragment(start, 10, 5))
+            .collect();
+        let bam = bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            fragments,
+            Vec::new(),
+            "lengths_real_non_neutral_bam",
+        )?;
+        let out_dir = TempDir::new()?;
+        let gc_path = build_real_non_neutral_gc_package(
+            &bam.bam,
+            &reference.path,
+            out_dir.path(),
+            10,
+            "chr1\t0\t91\nchr1\t100\t191\n",
+            // Chromosome length 200 and fragment length 10 give:
+            //   200 - 10 + 1 = 191 valid starts.
+            191,
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            drop_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(reference.path.clone()));
+        cfg.set_gc_length_weighting(MarginalizeLengthsWeightingScheme::Equal);
+        {
+            let fragment_lengths = cfg.fragment_lengths_mut();
+            fragment_lengths.min_fragment_length = 10;
+            fragment_lengths.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+
+        // Assert
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.dim(), (1, 1));
+        assert!(
+            (arr[(0, 0)] - 10.0).abs() < 1e-12,
+            "expected total weighted length-10 count 10.0, got {}",
+            arr[(0, 0)]
+        );
 
         Ok(())
     }

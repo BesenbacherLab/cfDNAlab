@@ -907,6 +907,166 @@ mod tests_gc_bias {
     }
 
     #[test]
+    fn real_ref_gc_bias_then_gc_bias_package_is_non_neutral_in_two_bin_case() -> Result<()> {
+        // Arrange:
+        // Build a reference and cfDNA sample where the real producer->consumer workflow must
+        // create a non-neutral correction package with exactly two GC bins.
+        //
+        // Reference genome:
+        // - chr1[0,100)   = all A
+        // - chr1[100,200) = all C
+        //
+        // Reference-GC producer setup:
+        // - fragment length is fixed at 10
+        // - valid starts are 0..=190, so there are exactly 191 valid start positions
+        // - we set `n_positions = 191`, so every valid start is sampled
+        // - BED windows keep only the pure-A and pure-C start ranges:
+        //     [0,91)    -> starts 0..=90   -> GC%=0
+        //     [100,191) -> starts 100..=190 -> GC%=100
+        // - starts 91..=99, which would cross the A/C boundary and create intermediate GC%, are
+        //   intentionally excluded by the BED windows
+        //
+        // Therefore the written reference counts are exactly balanced:
+        // - 91 counts at GC%=0
+        // - 91 counts at GC%=100
+        //
+        // Sample BAM:
+        // - one 10 bp fragment in the A-only region  -> GC%=0
+        // - nine 10 bp fragments in the C-only region -> GC%=100
+        //
+        // `gc-bias` is run in global mode with:
+        // - no extreme-bin masking
+        // - no short-length masking
+        // - no outlier handling
+        // - default `min_gc_bin_mass = 1.0`
+        //
+        // Global sample counts are therefore:
+        // - raw avg counts: 1 at GC%=0, 9 at GC%=100
+        // - reference-supported mean = (1 + 9) / 2 = 5
+        // - normalized avg counts = 0.2 at GC%=0, 1.8 at GC%=100
+        //
+        // GC binning derivation with `min_gc_bin_mass = 1%`:
+        // - total normalized mass = 2.0
+        // - minimum mass per bin = 0.02
+        // - index 0 alone already exceeds 0.02, so the first GC bin is [0]
+        // - indices 1..100 then accumulate until index 100 contributes 1.8, so the second GC
+        //   bin is [1..100]
+        // - therefore the package edges must be [0, 1, 100]
+        //
+        // Reference-side binned counts are balanced, so after per-length normalization they are:
+        // - [1.0, 1.0]
+        //
+        // cfDNA-side binned counts are:
+        // - [0.2, 1.8]
+        //
+        // Raw correction row:
+        // - [0.2 / 1.0, 1.8 / 1.0] = [0.2, 1.8]
+        //
+        // Its mean is already 1.0, so the final re-centering step changes nothing.
+        // The package stores multiplicative correction factors, so the row is inverted:
+        // - [1 / 0.2, 1 / 1.8] = [5.0, 5/9]
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_real_non_neutral_reference",
+            vec![(
+                "chr1".to_string(),
+                format!("{}{}", "A".repeat(100), "C".repeat(100)),
+            )],
+        )?;
+        let starts = [10_i64, 110, 120, 130, 140, 150, 160, 170, 180, 190];
+        let fragments = starts
+            .into_iter()
+            .map(|start| fixtures::paired_fragment(start, 10, 5))
+            .collect();
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            fragments,
+            Vec::new(),
+            "gc_bias_real_non_neutral_bam",
+        )?;
+
+        let ref_gc_dir = TempDir::new()?;
+        let bed_path = ref_gc_dir.path().join("pure_windows.bed");
+        std::fs::write(&bed_path, "chr1\t0\t91\nchr1\t100\t191\n")?;
+        let ref_cfg = RefGCBiasConfig {
+            ref_genome: Ref2BitRequiredArgs {
+                ref_2bit: reference.path.clone(),
+            },
+            output_dir: ref_gc_dir.path().to_path_buf(),
+            n_threads: 1,
+            n_positions: 191,
+            seed: Some(23),
+            windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+                by_bed: Some(bed_path),
+            },
+            chromosomes: ChromosomeArgs {
+                chromosomes: Some(vec!["chr1".to_string()]),
+                chromosomes_file: None,
+            },
+            blacklist: None,
+            fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+                min_fragment_length: 10,
+                max_fragment_length: 10,
+            },
+            end_offset: 0,
+            skip_interpolation: true,
+            smoothing_sigma: 0.55,
+            smoothing_radius: 2,
+            skip_smoothing: true,
+            tile_size: 1_000_000,
+        };
+
+        let out_dir = TempDir::new()?;
+        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        cfg.set_num_extreme_gc_bins(0);
+        cfg.set_num_short_length_bins(0);
+        cfg.set_min_gc_bin_mass(1.0);
+        cfg.set_min_length_bin_mass(0.0);
+        cfg.set_min_length_bin_width(1);
+        cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        // Act
+        run_ref_gc_bias(&ref_cfg)?;
+        run_gc_bias(&cfg)?;
+
+        // Assert
+        let avg_counts: ndarray::Array2<f64> =
+            read_npy(out_dir.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        assert_eq!(avg_counts.dim(), (1, 101));
+        for (gc_pct, &value) in avg_counts.row(0).iter().enumerate() {
+            match gc_pct {
+                0 => assert!(
+                    (value - 1.0).abs() < 1e-12,
+                    "expected raw global count 1.0 at GC% 0, got {value}"
+                ),
+                100 => assert!(
+                    (value - 9.0).abs() < 1e-12,
+                    "expected raw global count 9.0 at GC% 100, got {value}"
+                ),
+                _ => assert!(
+                    value.abs() < 1e-12,
+                    "expected no mass outside GC% 0/100, got bin {gc_pct}={value}"
+                ),
+            }
+        }
+
+        let package = GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+        assert_eq!(package.length_edges, vec![10, 10]);
+        assert_eq!(package.gc_edges, vec![0, 1, 100]);
+        assert_eq!(package.correction_matrix.dim(), (1, 2));
+        assert!((package.correction_matrix[(0, 0)] - 5.0).abs() < 1e-12);
+        assert!((package.correction_matrix[(0, 1)] - (5.0 / 9.0)).abs() < 1e-12);
+        assert_eq!(package.length_bin_frequencies.len(), 1);
+        assert!((package.length_bin_frequencies[0] - 1.0).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
     fn save_intermediates_writes_expected_sequence_and_mean_scaled_average_counts() -> Result<()> {
         // Arrange:
         // Use a single global window and a reference package that already disables smoothing and
@@ -1142,6 +1302,82 @@ mod tests_gc_bias {
                 ),
             }
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn multiple_blacklist_files_with_touching_intervals_match_single_merged_gc_bias_run()
+    -> Result<()> {
+        // Arrange:
+        // `gc-bias` uses the shared blacklist loader with:
+        // - `min_size = 1`
+        // - `halo_bp = 0`
+        //
+        // Therefore, touching intervals from separate files:
+        //   [40, 60) and [60, 80)
+        // must be merged into the same effective masked span as:
+        //   [40, 80)
+        //
+        // We compare two otherwise identical global runs. Because the masked genomic coordinates
+        // are logically identical, both the saved `avg_cfdna_counts` matrix and the final
+        // correction package must match exactly.
+        let bam = fixtures::simple_inward_bam()?;
+        let reference = fixtures::simple_reference_twobit()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
+
+        let split_out_dir = TempDir::new()?;
+        let merged_out_dir = TempDir::new()?;
+        let blacklist_dir = TempDir::new()?;
+        let split_a = blacklist_dir.path().join("blacklist_a.bed");
+        let split_b = blacklist_dir.path().join("blacklist_b.bed");
+        let merged = blacklist_dir.path().join("blacklist_merged.bed");
+        std::fs::write(&split_a, "chr1\t40\t60\n")?;
+        std::fs::write(&split_b, "chr1\t60\t80\n")?;
+        std::fs::write(&merged, "chr1\t40\t80\n")?;
+
+        let make_cfg = |output_dir: &std::path::Path,
+                        blacklist: Vec<std::path::PathBuf>|
+         -> GCConfig {
+            let mut cfg =
+                make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), output_dir);
+            cfg.set_windows(GCWindowsArgs {
+                by_size: None,
+                by_bed: None,
+                global: true,
+            });
+            cfg.set_blacklist(Some(blacklist));
+            cfg
+        };
+
+        // Act
+        run_gc_bias(&make_cfg(
+            split_out_dir.path(),
+            vec![split_a.clone(), split_b.clone()],
+        ))?;
+        run_gc_bias(&make_cfg(merged_out_dir.path(), vec![merged.clone()]))?;
+
+        // Assert
+        let split_avg: ndarray::Array2<f64> =
+            read_npy(split_out_dir.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        let merged_avg: ndarray::Array2<f64> =
+            read_npy(merged_out_dir.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        assert_eq!(split_avg, merged_avg);
+
+        let split_package =
+            GCCorrectionPackage::from_file(split_out_dir.path().join("gc_bias_correction.npz"))?;
+        let merged_package =
+            GCCorrectionPackage::from_file(merged_out_dir.path().join("gc_bias_correction.npz"))?;
+        assert_eq!(split_package.version, merged_package.version);
+        assert_eq!(split_package.end_offset, merged_package.end_offset);
+        assert_eq!(split_package.length_edges, merged_package.length_edges);
+        assert_eq!(split_package.gc_edges, merged_package.gc_edges);
+        assert_eq!(
+            split_package.length_bin_frequencies,
+            merged_package.length_bin_frequencies
+        );
+        assert_eq!(split_package.correction_matrix, merged_package.correction_matrix);
 
         Ok(())
     }
@@ -1470,6 +1706,267 @@ mod tests_gc_bias {
         Ok(())
     }
 
+    fn write_two_bin_reference_gc_package(
+        out_dir: &std::path::Path,
+        length_range: (u32, u32),
+    ) -> Result<()> {
+        let package_path = out_dir.join("ref_gc_package.npz");
+        let n_lengths = (length_range.1 - length_range.0 + 1) as usize;
+        let mut counts = ndarray::Array2::<f64>::zeros((n_lengths, 101));
+        let mut support_unobservables = ndarray::Array2::<bool>::from_elem((n_lengths, 101), false);
+        let mut support_outliers = ndarray::Array2::<bool>::from_elem((n_lengths, 101), false);
+        let mut gc_percent_widths = ndarray::Array2::<u16>::zeros((n_lengths, 101));
+
+        for row_idx in 0..n_lengths {
+            counts[(row_idx, 0)] = 1.0;
+            counts[(row_idx, 100)] = 1.0;
+            support_unobservables[(row_idx, 0)] = true;
+            support_unobservables[(row_idx, 100)] = true;
+            support_outliers[(row_idx, 0)] = true;
+            support_outliers[(row_idx, 100)] = true;
+            gc_percent_widths[(row_idx, 0)] = 1;
+            gc_percent_widths[(row_idx, 100)] = 1;
+        }
+
+        let file = std::fs::File::create(&package_path)?;
+        let mut npz = NpzWriter::new(file);
+        npz.add_array("counts", &counts)?;
+        npz.add_array("support_mask_unobservables", &support_unobservables)?;
+        npz.add_array("support_mask_outliers", &support_outliers)?;
+        npz.add_array("gc_percent_widths", &gc_percent_widths)?;
+        npz.add_array(
+            "version",
+            &ndarray::Array1::from(vec![GC_CORRECTION_SCHEMA_VERSION]),
+        )?;
+        npz.add_array(
+            "length_range",
+            &ndarray::Array1::from(vec![length_range.0, length_range.1]),
+        )?;
+        npz.add_array("end_offset", &ndarray::Array1::from(vec![0_u32]))?;
+        npz.add_array("skip_interpolation", &ndarray::Array1::from(vec![true]))?;
+        npz.add_array("smoothing_radius", &ndarray::Array1::from(vec![2_u32]))?;
+        npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
+        npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
+        npz.finish()?;
+        Ok(())
+    }
+
+    fn write_balanced_two_length_reference_gc_package(out_dir: &std::path::Path) -> Result<()> {
+        let package_path = out_dir.join("ref_gc_package.npz");
+
+        // Hand-built reference package for run-level outlier tests.
+        //
+        // The package covers two fragment lengths, 10 and 11, and marks only GC% 0 and GC% 100
+        // as observed for both lengths. Every supported cell has identical reference mass, so
+        // once `gc-bias` bins the GC axis into `[0]` and `[1..100]`, the reference-side binned
+        // rows are perfectly balanced:
+        //   length 10 -> [1, 1]
+        //   length 11 -> [1, 1]
+        //
+        // That keeps the run-level derivation simple: after per-length normalization the raw
+        // correction matrix is driven entirely by the sample BAM's within-row imbalance.
+        let mut counts = ndarray::Array2::<f64>::zeros((2, 101));
+        counts[(0, 0)] = 1.0;
+        counts[(0, 100)] = 1.0;
+        counts[(1, 0)] = 1.0;
+        counts[(1, 100)] = 1.0;
+
+        let support_unobservables = ndarray::Array2::<bool>::from_elem((2, 101), true);
+        let support_outliers = ndarray::Array2::<bool>::from_elem((2, 101), true);
+        let gc_percent_widths = ndarray::Array2::<u16>::from_elem((2, 101), 1);
+
+        let file = std::fs::File::create(&package_path)?;
+        let mut npz = NpzWriter::new(file);
+        npz.add_array("counts", &counts)?;
+        npz.add_array("support_mask_unobservables", &support_unobservables)?;
+        npz.add_array("support_mask_outliers", &support_outliers)?;
+        npz.add_array("gc_percent_widths", &gc_percent_widths)?;
+        npz.add_array(
+            "version",
+            &ndarray::Array1::from(vec![GC_CORRECTION_SCHEMA_VERSION]),
+        )?;
+        npz.add_array("length_range", &ndarray::Array1::from(vec![10_u32, 11_u32]))?;
+        npz.add_array("end_offset", &ndarray::Array1::from(vec![0_u32]))?;
+        npz.add_array("skip_interpolation", &ndarray::Array1::from(vec![true]))?;
+        npz.add_array("smoothing_radius", &ndarray::Array1::from(vec![2_u32]))?;
+        npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
+        npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
+        npz.finish()?;
+        Ok(())
+    }
+
+    fn write_three_bin_reference_gc_package(out_dir: &std::path::Path) -> Result<()> {
+        let package_path = out_dir.join("ref_gc_package.npz");
+
+        // One fragment length, with only GC% 0, 50, and 100 marked as reference-supported.
+        // That keeps the reference-side normalization easy to reason about for GC binning tests:
+        // every supported GC point starts with the same mass 1.0.
+        let mut counts = ndarray::Array2::<f64>::zeros((1, 101));
+        counts[(0, 0)] = 1.0;
+        counts[(0, 50)] = 1.0;
+        counts[(0, 100)] = 1.0;
+
+        let mut support_unobservables = ndarray::Array2::<bool>::from_elem((1, 101), false);
+        support_unobservables[(0, 0)] = true;
+        support_unobservables[(0, 50)] = true;
+        support_unobservables[(0, 100)] = true;
+
+        let support_outliers = support_unobservables.clone();
+
+        let mut gc_percent_widths = ndarray::Array2::<u16>::zeros((1, 101));
+        gc_percent_widths[(0, 0)] = 1;
+        gc_percent_widths[(0, 50)] = 1;
+        gc_percent_widths[(0, 100)] = 1;
+
+        let file = std::fs::File::create(&package_path)?;
+        let mut npz = NpzWriter::new(file);
+        npz.add_array("counts", &counts)?;
+        npz.add_array("support_mask_unobservables", &support_unobservables)?;
+        npz.add_array("support_mask_outliers", &support_outliers)?;
+        npz.add_array("gc_percent_widths", &gc_percent_widths)?;
+        npz.add_array(
+            "version",
+            &ndarray::Array1::from(vec![GC_CORRECTION_SCHEMA_VERSION]),
+        )?;
+        npz.add_array("length_range", &ndarray::Array1::from(vec![10_u32, 10_u32]))?;
+        npz.add_array("end_offset", &ndarray::Array1::from(vec![0_u32]))?;
+        npz.add_array("skip_interpolation", &ndarray::Array1::from(vec![true]))?;
+        npz.add_array("smoothing_radius", &ndarray::Array1::from(vec![2_u32]))?;
+        npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
+        npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
+        npz.finish()?;
+        Ok(())
+    }
+
+    fn make_two_length_outlier_fixture() -> Result<(fixtures::TwoBitFixture, fixtures::BamFixture)> {
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_two_length_outlier_reference",
+            vec![(
+                "chr1".to_string(),
+                format!("{}{}", "A".repeat(100), "C".repeat(100)),
+            )],
+        )?;
+
+        // Length-10 row:
+        // - one pure-A fragment  -> GC%=0
+        // - nine pure-C fragments -> GC%=100
+        //
+        // Length-11 row:
+        // - five pure-A fragments  -> GC%=0
+        // - five pure-C fragments -> GC%=100
+        //
+        // Later, after global mean-scaling and GC binning into `[0]` and `[1..100]`, the sample
+        // binned rows are proportional to:
+        //   length 10 -> [1, 9] -> normalized to [0.2, 1.8]
+        //   length 11 -> [5, 5] -> normalized to [1.0, 1.0]
+        let mut fragments = Vec::new();
+        fragments.push(fixtures::paired_fragment(10, 10, 5));
+        for start in [110_i64, 120, 130, 140, 150, 160, 170, 180, 190] {
+            fragments.push(fixtures::paired_fragment(start, 10, 5));
+        }
+        for start in [20_i64, 30, 40, 50, 60] {
+            fragments.push(fixtures::paired_fragment(start, 11, 5));
+        }
+        for start in [120_i64, 130, 140, 150, 160] {
+            fragments.push(fixtures::paired_fragment(start, 11, 5));
+        }
+
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            fragments,
+            Vec::new(),
+            "gc_bias_two_length_outlier_bam",
+        )?;
+        Ok((reference, bam))
+    }
+
+    fn make_two_length_low_mass_tail_fixture() -> Result<(fixtures::TwoBitFixture, fixtures::BamFixture)> {
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_two_length_low_mass_tail_reference",
+            vec![(
+                "chr1".to_string(),
+                format!("{}{}", "A".repeat(100), "C".repeat(100)),
+            )],
+        )?;
+
+        // Length-10 row:
+        // - one pure-A fragment  -> GC%=0
+        // - nine pure-C fragments -> GC%=100
+        //
+        // Length-11 row:
+        // - one pure-A fragment -> GC%=0
+        // - one pure-C fragment -> GC%=100
+        //
+        // So before any length binning the per-row normalized correction rows are:
+        //   length 10 -> [0.2, 1.8]
+        //   length 11 -> [1.0, 1.0]
+        //
+        // But the total row masses are deliberately unequal:
+        //   length 10 -> 10
+        //   length 11 -> 2
+        //
+        // That makes length 11 a clean "low-mass tail" row for testing greedy length binning by
+        // percentage mass.
+        let mut fragments = Vec::new();
+        fragments.push(fixtures::paired_fragment(10, 10, 5));
+        for start in [110_i64, 120, 130, 140, 150, 160, 170, 180, 190] {
+            fragments.push(fixtures::paired_fragment(start, 10, 5));
+        }
+        fragments.push(fixtures::paired_fragment(20, 11, 5));
+        fragments.push(fixtures::paired_fragment(120, 11, 5));
+
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            fragments,
+            Vec::new(),
+            "gc_bias_two_length_low_mass_tail_bam",
+        )?;
+        Ok((reference, bam))
+    }
+
+    fn make_three_gc_bin_fixture() -> Result<(fixtures::TwoBitFixture, fixtures::BamFixture)> {
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_three_gc_bin_reference",
+            vec![(
+                "chr1".to_string(),
+                format!(
+                    "{}{}{}",
+                    "A".repeat(40),
+                    "CCCCCAAAAA".repeat(4),
+                    "C".repeat(80)
+                ),
+            )],
+        )?;
+
+        // One fragment length only: 10 bp.
+        //
+        // Chosen starts land in three exact GC classes:
+        // - start 10  -> AAAAAAAAAA   -> GC%=0
+        // - start 40  -> CCCCCAAAAA   -> GC%=50
+        // - start 100 -> CCCCCCCCCC   -> GC%=100
+        //
+        // Counts are deliberately imbalanced:
+        //   GC%=0   -> 1 fragment
+        //   GC%=50  -> 5 fragments
+        //   GC%=100 -> 9 fragments
+        let mut fragments = Vec::new();
+        fragments.push(fixtures::paired_fragment(10, 10, 5));
+        for _ in 0..5 {
+            fragments.push(fixtures::paired_fragment(40, 10, 5));
+        }
+        for _ in 0..9 {
+            fragments.push(fixtures::paired_fragment(100, 10, 5));
+        }
+
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 160)],
+            fragments,
+            Vec::new(),
+            "gc_bias_three_gc_bin_bam",
+        )?;
+        Ok((reference, bam))
+    }
+
     #[test]
     fn loads_versioned_reference_gc_package() -> Result<()> {
         // Arrange: write a minimal reference package with the current schema version and scalar
@@ -1589,6 +2086,908 @@ mod tests_gc_bias {
             msg.contains("Reference counts") && msg.contains("incompatible shapes"),
             "unexpected error message: {msg}"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn quantile_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()> {
+        // Arrange:
+        // Use the synthetic two-length reference package and BAM fixture defined above.
+        //
+        // Reference package after GC binning:
+        // - GC bins are `[0]` and `[1..100]`
+        // - both length rows are balanced, so normalized reference rows are:
+        //     length 10 -> [1.0, 1.0]
+        //     length 11 -> [1.0, 1.0]
+        //
+        // Sample BAM after the same GC binning:
+        // - length 10 raw row is [1, 9], so normalized row is [0.2, 1.8]
+        // - length 11 raw row is [5, 5], so normalized row is [1.0, 1.0]
+        //
+        // Therefore, before outlier handling, the raw correction matrix is:
+        //   [[0.2, 1.8],
+        //    [1.0, 1.0]]
+        //
+        // `--outlier-method none`:
+        // - no winsorization
+        // - no hard clamp, since all values already lie inside [0.1, 10]
+        // - inversion gives:
+        //     [[5.0, 5/9],
+        //      [1.0, 1.0]]
+        //
+        // `--outlier-method quantile --outlier-scope per-length --outlier-quantiles 0.25,0.75`:
+        // - length-10 row sorted values are [0.2, 1.8]
+        // - with the command's linear interpolation:
+        //     Q25 = 0.2 + 0.25 * (1.8 - 0.2) = 0.6
+        //     Q75 = 0.2 + 0.75 * (1.8 - 0.2) = 1.4
+        // - winsorized length-10 row becomes [0.6, 1.4]
+        // - length-11 row stays [1.0, 1.0]
+        // - inversion gives:
+        //     [[5/3, 5/7],
+        //      [1.0, 1.0]]
+        let (reference, bam) = make_two_length_outlier_fixture()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+
+        let out_none = TempDir::new()?;
+        let out_quantile = TempDir::new()?;
+
+        let mut none_cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_none.path());
+        none_cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        none_cfg.set_min_length_bin_mass(0.0);
+        none_cfg.set_min_length_bin_width(1);
+        none_cfg.set_min_gc_bin_mass(1.0);
+        none_cfg.set_num_extreme_gc_bins(0);
+        none_cfg.set_num_short_length_bins(0);
+        none_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        let mut quantile_cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_quantile.path());
+        quantile_cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        quantile_cfg.set_min_length_bin_mass(0.0);
+        quantile_cfg.set_min_length_bin_width(1);
+        quantile_cfg.set_min_gc_bin_mass(1.0);
+        quantile_cfg.set_num_extreme_gc_bins(0);
+        quantile_cfg.set_num_short_length_bins(0);
+        quantile_cfg.outlier_method =
+            cfdnalab::commands::gc_bias::config::OutlierMethodArg::Quantile;
+        quantile_cfg.outlier_scope =
+            cfdnalab::commands::gc_bias::config::OutlierScopeArg::PerLength;
+        quantile_cfg.outlier_quantiles = vec![0.25, 0.75];
+
+        // Act
+        run_gc_bias(&none_cfg)?;
+        run_gc_bias(&quantile_cfg)?;
+
+        // Assert
+        let package_none =
+            GCCorrectionPackage::from_file(out_none.path().join("gc_bias_correction.npz"))?;
+        let package_quantile =
+            GCCorrectionPackage::from_file(out_quantile.path().join("gc_bias_correction.npz"))?;
+
+        assert_eq!(package_none.correction_matrix.dim(), (2, 2));
+        assert_eq!(package_quantile.correction_matrix.dim(), (2, 2));
+        assert_eq!(package_none.gc_edges, vec![0, 1, 100]);
+        assert_eq!(package_quantile.gc_edges, vec![0, 1, 100]);
+        assert_eq!(package_none.length_bin_frequencies.len(), 2);
+        assert_eq!(package_quantile.length_bin_frequencies.len(), 2);
+        assert!((package_none.length_bin_frequencies[0] - 0.5).abs() < 1e-12);
+        assert!((package_none.length_bin_frequencies[1] - 0.5).abs() < 1e-12);
+        assert!((package_quantile.length_bin_frequencies[0] - 0.5).abs() < 1e-12);
+        assert!((package_quantile.length_bin_frequencies[1] - 0.5).abs() < 1e-12);
+
+        assert!((package_none.correction_matrix[(0, 0)] - 5.0).abs() < 1e-12);
+        assert!((package_none.correction_matrix[(0, 1)] - (5.0 / 9.0)).abs() < 1e-12);
+        assert!((package_none.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
+        assert!((package_none.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+
+        assert!((package_quantile.correction_matrix[(0, 0)] - (5.0 / 3.0)).abs() < 1e-12);
+        assert!((package_quantile.correction_matrix[(0, 1)] - (5.0 / 7.0)).abs() < 1e-12);
+        assert!((package_quantile.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
+        assert!((package_quantile.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn quantile_outlier_scope_global_differs_from_per_length_in_real_command() -> Result<()> {
+        // Arrange:
+        // Reuse the same raw correction matrix derivation as the previous test:
+        //   [[0.2, 1.8],
+        //    [1.0, 1.0]]
+        //
+        // With `quantile` and explicit `Q25/Q75 = 0.25/0.75`:
+        //
+        // Per-length scope:
+        // - length 10 row [0.2, 1.8] -> [0.6, 1.4]
+        // - length 11 row [1.0, 1.0] -> [1.0, 1.0]
+        // - final weights:
+        //     [[5/3, 5/7],
+        //      [1.0, 1.0]]
+        //
+        // Global scope:
+        // - full sorted matrix values are [0.2, 1.0, 1.0, 1.8]
+        // - linear interpolation gives:
+        //     Q25 = 0.2 + 0.75 * (1.0 - 0.2) = 0.8
+        //     Q75 = 1.0 + 0.25 * (1.8 - 1.0) = 1.2
+        // - winsorized matrix becomes:
+        //     [[0.8, 1.2],
+        //      [1.0, 1.0]]
+        // - final weights are therefore:
+        //     [[1.25, 5/6],
+        //      [1.0, 1.0]]
+        let (reference, bam) = make_two_length_outlier_fixture()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+
+        let out_per_length = TempDir::new()?;
+        let out_global = TempDir::new()?;
+
+        let make_cfg = |output_dir: &std::path::Path| {
+            let mut cfg =
+                make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), output_dir);
+            cfg.set_windows(GCWindowsArgs {
+                by_size: None,
+                by_bed: None,
+                global: true,
+            });
+            cfg.set_min_length_bin_mass(0.0);
+            cfg.set_min_length_bin_width(1);
+            cfg.set_min_gc_bin_mass(1.0);
+            cfg.set_num_extreme_gc_bins(0);
+            cfg.set_num_short_length_bins(0);
+            cfg.outlier_method =
+                cfdnalab::commands::gc_bias::config::OutlierMethodArg::Quantile;
+            cfg.outlier_quantiles = vec![0.25, 0.75];
+            cfg
+        };
+
+        let mut per_length_cfg = make_cfg(out_per_length.path());
+        per_length_cfg.outlier_scope =
+            cfdnalab::commands::gc_bias::config::OutlierScopeArg::PerLength;
+
+        let mut global_cfg = make_cfg(out_global.path());
+        global_cfg.outlier_scope = cfdnalab::commands::gc_bias::config::OutlierScopeArg::Global;
+
+        // Act
+        run_gc_bias(&per_length_cfg)?;
+        run_gc_bias(&global_cfg)?;
+
+        // Assert
+        let package_per_length =
+            GCCorrectionPackage::from_file(out_per_length.path().join("gc_bias_correction.npz"))?;
+        let package_global =
+            GCCorrectionPackage::from_file(out_global.path().join("gc_bias_correction.npz"))?;
+
+        assert_eq!(package_per_length.correction_matrix.dim(), (2, 2));
+        assert_eq!(package_global.correction_matrix.dim(), (2, 2));
+
+        assert!((package_per_length.correction_matrix[(0, 0)] - (5.0 / 3.0)).abs() < 1e-12);
+        assert!((package_per_length.correction_matrix[(0, 1)] - (5.0 / 7.0)).abs() < 1e-12);
+        assert!((package_per_length.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
+        assert!((package_per_length.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+
+        assert!((package_global.correction_matrix[(0, 0)] - 1.25).abs() < 1e-12);
+        assert!((package_global.correction_matrix[(0, 1)] - (5.0 / 6.0)).abs() < 1e-12);
+        assert!((package_global.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
+        assert!((package_global.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn iqr_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()> {
+        // Arrange:
+        // Reuse the same raw correction matrix as the quantile tests:
+        //   [[0.2, 1.8],
+        //    [1.0, 1.0]]
+        //
+        // We now use `--outlier-method iqr --outlier-scope per-length --outlier-k 0.25`.
+        //
+        // For the skewed length-10 row [0.2, 1.8]:
+        // - Q1 = 0.6
+        // - Q3 = 1.4
+        // - IQR = 0.8
+        // - Tukey bounds with k=0.25 are:
+        //     lower = 0.6 - 0.25 * 0.8 = 0.4
+        //     upper = 1.4 + 0.25 * 0.8 = 1.6
+        // - the row is winsorized to [0.4, 1.6]
+        //
+        // The balanced length-11 row [1.0, 1.0] has IQR=0 and therefore stays [1.0, 1.0].
+        //
+        // After the command's final inversion step, the package must store:
+        //   [[1 / 0.4, 1 / 1.6],
+        //    [1 / 1.0, 1 / 1.0]]
+        // =
+        //   [[2.5, 0.625],
+        //    [1.0, 1.0]]
+        let (reference, bam) = make_two_length_outlier_fixture()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+
+        let out_dir = TempDir::new()?;
+        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        cfg.set_min_length_bin_mass(0.0);
+        cfg.set_min_length_bin_width(1);
+        cfg.set_min_gc_bin_mass(1.0);
+        cfg.set_num_extreme_gc_bins(0);
+        cfg.set_num_short_length_bins(0);
+        cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::Iqr;
+        cfg.outlier_scope = cfdnalab::commands::gc_bias::config::OutlierScopeArg::PerLength;
+        cfg.outlier_k = 0.25;
+
+        // Act
+        run_gc_bias(&cfg)?;
+
+        // Assert
+        let package = GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+        assert_eq!(package.correction_matrix.dim(), (2, 2));
+        assert_eq!(package.gc_edges, vec![0, 1, 100]);
+
+        assert!((package.correction_matrix[(0, 0)] - 2.5).abs() < 1e-12);
+        assert!((package.correction_matrix[(0, 1)] - 0.625).abs() < 1e-12);
+        assert!((package.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
+        assert!((package.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn stddev_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()> {
+        // Arrange:
+        // Reuse the same raw correction matrix as the other run-level outlier tests:
+        //   [[0.2, 1.8],
+        //    [1.0, 1.0]]
+        //
+        // We now use `--outlier-method stddev --outlier-scope per-length --outlier-k 0.6`.
+        //
+        // For the skewed length-10 row [0.2, 1.8]:
+        // - mean = (0.2 + 1.8) / 2 = 1.0
+        // - sd   = sqrt((0.8^2 + 0.8^2) / 2) = 0.8
+        // - bounds are:
+        //     lower = 1.0 - 0.6 * 0.8 = 0.52 = 13/25
+        //     upper = 1.0 + 0.6 * 0.8 = 1.48 = 37/25
+        // - winsorized row becomes [0.52, 1.48]
+        //
+        // The balanced length-11 row [1.0, 1.0] has sd=0 and therefore stays [1.0, 1.0].
+        //
+        // After the command's final inversion step, the package must store:
+        //   [[1 / (13/25), 1 / (37/25)],
+        //    [1 / 1.0,     1 / 1.0]]
+        // =
+        //   [[25/13, 25/37],
+        //    [1.0,   1.0]]
+        let (reference, bam) = make_two_length_outlier_fixture()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+
+        let out_dir = TempDir::new()?;
+        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        cfg.set_min_length_bin_mass(0.0);
+        cfg.set_min_length_bin_width(1);
+        cfg.set_min_gc_bin_mass(1.0);
+        cfg.set_num_extreme_gc_bins(0);
+        cfg.set_num_short_length_bins(0);
+        cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::Stddev;
+        cfg.outlier_scope = cfdnalab::commands::gc_bias::config::OutlierScopeArg::PerLength;
+        cfg.outlier_k = 0.6;
+
+        // Act
+        run_gc_bias(&cfg)?;
+
+        // Assert
+        let package = GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+        assert_eq!(package.correction_matrix.dim(), (2, 2));
+        assert_eq!(package.gc_edges, vec![0, 1, 100]);
+
+        assert!((package.correction_matrix[(0, 0)] - (25.0 / 13.0)).abs() < 1e-12);
+        assert!((package.correction_matrix[(0, 1)] - (25.0 / 37.0)).abs() < 1e-12);
+        assert!((package.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
+        assert!((package.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn mad_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()> {
+        // Arrange:
+        // Reuse the same raw correction matrix as the other run-level outlier tests:
+        //   [[0.2, 1.8],
+        //    [1.0, 1.0]]
+        //
+        // We now use `--outlier-method mad --outlier-scope per-length --outlier-k 0.5`.
+        //
+        // For the skewed length-10 row [0.2, 1.8]:
+        // - median = 1.0
+        // - absolute deviations are [0.8, 0.8]
+        // - the implementation scales MAD by 1.4826, so:
+        //     scaled_mad = 1.4826 * 0.8 = 1.18608
+        // - bounds are:
+        //     lower = 1.0 - 0.5 * 1.18608 = 0.40696
+        //     upper = 1.0 + 0.5 * 1.18608 = 1.59304
+        // - winsorized row becomes [0.40696, 1.59304]
+        //
+        // The balanced length-11 row [1.0, 1.0] has zero MAD and therefore stays [1.0, 1.0].
+        //
+        // After the command's final inversion step, the package must store:
+        //   [[1 / 0.40696, 1 / 1.59304],
+        //    [1 / 1.0,     1 / 1.0]]
+        // =
+        //   [[2.457244200903038, 0.627730626600084],
+        //    [1.0,               1.0]]
+        let (reference, bam) = make_two_length_outlier_fixture()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+
+        let out_dir = TempDir::new()?;
+        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        cfg.set_min_length_bin_mass(0.0);
+        cfg.set_min_length_bin_width(1);
+        cfg.set_min_gc_bin_mass(1.0);
+        cfg.set_num_extreme_gc_bins(0);
+        cfg.set_num_short_length_bins(0);
+        cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::Mad;
+        cfg.outlier_scope = cfdnalab::commands::gc_bias::config::OutlierScopeArg::PerLength;
+        cfg.outlier_k = 0.5;
+
+        // Act
+        run_gc_bias(&cfg)?;
+
+        // Assert
+        let package = GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+        assert_eq!(package.correction_matrix.dim(), (2, 2));
+        assert_eq!(package.gc_edges, vec![0, 1, 100]);
+
+        assert!((package.correction_matrix[(0, 0)] - 2.457244200903038).abs() < 1e-12);
+        assert!((package.correction_matrix[(0, 1)] - 0.627730626600084).abs() < 1e-12);
+        assert!((package.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
+        assert!((package.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn hard_clamp_changes_real_command_correction_matrix_in_expected_way() -> Result<()> {
+        // Arrange:
+        // Use a hand-built reference package that supports only GC% 0 and GC% 100 for length 10.
+        // That keeps the mean-scaling denominator restricted to the two relevant cells.
+        //
+        // Sample BAM:
+        // - one fragment in the A-only region  -> GC%=0
+        // - 999 fragments in the C-only region -> GC%=100
+        //
+        // Before GC binning, global raw counts on the supported cells are [1, 999], so:
+        // - supported mean = (1 + 999) / 2 = 500
+        // - normalized supported counts = [0.002, 1.998]
+        //
+        // With `min_gc_bin_mass = 0.1%`, the total normalized mass is exactly 2.0, so:
+        // - min bin mass = 0.002
+        // - the first GC bin `[0]` already meets threshold
+        // - the second bin is `[1..100]`
+        //
+        // The reference package is balanced across those same two bins, so after reference-side
+        // normalization the raw correction row is:
+        //   [0.002, 1.998]
+        //
+        // Outlier handling is disabled, so only the hard safety clamp applies:
+        // - low cell 0.002 is clamped up to 0.1
+        // - high cell 1.998 is unchanged
+        // giving:
+        //   [0.1, 1.998]
+        //
+        // The command then re-normalizes the row to mean 1.0 before inversion:
+        // - mean = (0.1 + 1.998) / 2 = 1.049
+        // - normalized row = [0.1 / 1.049, 1.998 / 1.049]
+        // - final multiplicative weights after inversion are:
+        //     [1.049 / 0.1, 1.049 / 1.998]
+        //   = [10.49, 0.525025025025025]
+        //
+        // This is the important contract: the hard clamp happens *before* the final re-centering,
+        // so the written package can end up slightly outside the nominal clamp range afterwards.
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_hard_clamp_reference",
+            vec![(
+                "chr1".to_string(),
+                format!("{}{}", "A".repeat(100), "C".repeat(100)),
+            )],
+        )?;
+
+        let mut fragments = Vec::new();
+        fragments.push(fixtures::paired_fragment(10, 10, 5));
+        for _ in 0..999 {
+            fragments.push(fixtures::paired_fragment(120, 10, 5));
+        }
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            fragments,
+            Vec::new(),
+            "gc_bias_hard_clamp_bam",
+        )?;
+
+        let ref_gc_dir = TempDir::new()?;
+        write_two_bin_reference_gc_package(ref_gc_dir.path(), (10, 10))?;
+
+        let out_dir = TempDir::new()?;
+        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        cfg.set_min_length_bin_mass(0.0);
+        cfg.set_min_length_bin_width(1);
+        cfg.set_min_gc_bin_mass(0.1);
+        cfg.set_num_extreme_gc_bins(0);
+        cfg.set_num_short_length_bins(0);
+        cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        // Act
+        run_gc_bias(&cfg)?;
+
+        // Assert
+        let package = GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+        assert_eq!(package.correction_matrix.dim(), (1, 2));
+        assert_eq!(package.gc_edges, vec![0, 1, 100]);
+        assert!((package.correction_matrix[(0, 0)] - 10.49).abs() < 1e-12);
+        assert!((package.correction_matrix[(0, 1)] - 0.525025025025025).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn min_length_bin_width_merges_two_lengths_into_one_binned_correction_row() -> Result<()> {
+        // Arrange:
+        // Reuse the same two-length fixture as the run-level outlier tests. Before any length
+        // binning, the normalized cfDNA rows are exactly:
+        //   length 10 -> [0.2, 1.8]
+        //   length 11 -> [1.0, 1.0]
+        //
+        // and the balanced handcrafted reference package gives:
+        //   reference rows -> [1.0, 1.0] for both lengths
+        //
+        // With:
+        // - `min_length_bin_mass = 0.0`
+        // - `min_length_bin_width = 2`
+        // the greedy length binning must merge the two adjacent lengths into one bin, because a
+        // bin cannot close until it has width >= 2.
+        //
+        // The merged binned rows are then the simple mean of the two source rows:
+        //   merged cfDNA row = ([0.2, 1.8] + [1.0, 1.0]) / 2 = [0.6, 1.4]
+        //   merged ref row   = ([1.0, 1.0] + [1.0, 1.0]) / 2 = [1.0, 1.0]
+        //
+        // So the raw merged correction row is [0.6, 1.4]. Its mean is already 1.0, and with
+        // outlier handling disabled no other transform changes it before inversion.
+        //
+        // The final written correction row must therefore be:
+        //   [1 / 0.6, 1 / 1.4] = [5/3, 5/7]
+        let (reference, bam) = make_two_length_outlier_fixture()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+
+        let out_dir = TempDir::new()?;
+        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        cfg.set_min_length_bin_mass(0.0);
+        cfg.set_min_length_bin_width(2);
+        cfg.set_min_gc_bin_mass(1.0);
+        cfg.set_num_extreme_gc_bins(0);
+        cfg.set_num_short_length_bins(0);
+        cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        // Act
+        run_gc_bias(&cfg)?;
+
+        // Assert
+        let package = GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+        assert_eq!(package.correction_matrix.dim(), (1, 2));
+        assert_eq!(package.length_edges, vec![10, 11]);
+        assert_eq!(package.gc_edges, vec![0, 1, 100]);
+        assert_eq!(package.length_bin_frequencies.len(), 1);
+        assert!((package.length_bin_frequencies[0] - 1.0).abs() < 1e-12);
+        assert!((package.correction_matrix[(0, 0)] - (5.0 / 3.0)).abs() < 1e-12);
+        assert!((package.correction_matrix[(0, 1)] - (5.0 / 7.0)).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn num_short_length_bins_neutralizes_the_shortest_length_row_in_real_command() -> Result<()> {
+        // Arrange:
+        // Reuse the same two-length fixture as the other run-level `gc-bias` tests.
+        //
+        // Baseline, with no short-length masking:
+        //   length 10 -> raw correction [0.2, 1.8] -> final weights [5, 5/9]
+        //   length 11 -> raw correction [1.0, 1.0] -> final weights [1, 1]
+        //
+        // Now set `num_short_length_bins = 1`. After length binning there are exactly two
+        // length rows, so the shortest row is the entire length-10 row.
+        //
+        // The support mask then becomes:
+        //   row 0 (length 10): unsupported everywhere
+        //   row 1 (length 11): supported everywhere
+        //
+        // The pipeline contract is:
+        // 1. Unsupported entries in the normalized cfDNA and reference matrices are set to 1.0.
+        // 2. The raw correction row for the masked shortest length therefore becomes [1, 1].
+        // 3. Re-centering and inversion keep [1, 1] unchanged.
+        //
+        // So the shortest row must change from the informative baseline `[5, 5/9]` to the
+        // neutral row `[1, 1]`, while the longer row stays `[1, 1]`.
+        let (reference, bam) = make_two_length_outlier_fixture()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+
+        let baseline_out = TempDir::new()?;
+        let masked_out = TempDir::new()?;
+
+        let mut baseline_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            baseline_out.path(),
+        );
+        baseline_cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        baseline_cfg.set_min_length_bin_mass(0.0);
+        baseline_cfg.set_min_length_bin_width(1);
+        baseline_cfg.set_min_gc_bin_mass(1.0);
+        baseline_cfg.set_num_extreme_gc_bins(0);
+        baseline_cfg.set_num_short_length_bins(0);
+        baseline_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        let mut masked_cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), masked_out.path());
+        masked_cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        masked_cfg.set_min_length_bin_mass(0.0);
+        masked_cfg.set_min_length_bin_width(1);
+        masked_cfg.set_min_gc_bin_mass(1.0);
+        masked_cfg.set_num_extreme_gc_bins(0);
+        masked_cfg.set_num_short_length_bins(1);
+        masked_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        // Act
+        run_gc_bias(&baseline_cfg)?;
+        run_gc_bias(&masked_cfg)?;
+
+        // Assert
+        let baseline_package =
+            GCCorrectionPackage::from_file(baseline_out.path().join("gc_bias_correction.npz"))?;
+        let masked_package =
+            GCCorrectionPackage::from_file(masked_out.path().join("gc_bias_correction.npz"))?;
+
+        assert_eq!(baseline_package.correction_matrix.dim(), (2, 2));
+        assert_eq!(masked_package.correction_matrix.dim(), (2, 2));
+        assert_eq!(baseline_package.gc_edges, vec![0, 1, 100]);
+        assert_eq!(masked_package.gc_edges, vec![0, 1, 100]);
+
+        assert!((baseline_package.correction_matrix[(0, 0)] - 5.0).abs() < 1e-12);
+        assert!((baseline_package.correction_matrix[(0, 1)] - (5.0 / 9.0)).abs() < 1e-12);
+        assert!((baseline_package.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
+        assert!((baseline_package.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+
+        assert!((masked_package.correction_matrix[(0, 0)] - 1.0).abs() < 1e-12);
+        assert!((masked_package.correction_matrix[(0, 1)] - 1.0).abs() < 1e-12);
+        assert!((masked_package.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
+        assert!((masked_package.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn num_extreme_gc_bins_neutralizes_a_two_bin_gc_axis_in_real_command() -> Result<()> {
+        // Arrange:
+        // Reuse the same two-length fixture again. With `min_gc_bin_mass = 1.0`, the sparse
+        // counts collapse to exactly two GC bins:
+        //   left  bin = GC% 0
+        //   right bin = GC% 1..100
+        //
+        // Baseline, with `num_extreme_gc_bins = 0`:
+        //   length 10 -> [5, 5/9]
+        //   length 11 -> [1, 1]
+        //
+        // Now set `num_extreme_gc_bins = 1`. On a 2-bin GC axis, "one extreme bin from each side"
+        // masks both columns:
+        //   leftmost column  -> masked
+        //   rightmost column -> masked
+        //
+        // So every correction cell is unsupported. The pipeline then sets all masked normalized
+        // cfDNA/reference counts to 1.0 before division, yielding a raw correction matrix of all
+        // ones. Re-centering and inversion keep it at all ones.
+        //
+        // This is an important boundary contract: on a 2-bin GC axis, one extreme bin per side
+        // completely neutralizes the matrix rather than leaving any informative GC correction.
+        let (reference, bam) = make_two_length_outlier_fixture()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+
+        let baseline_out = TempDir::new()?;
+        let masked_out = TempDir::new()?;
+
+        let mut baseline_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            baseline_out.path(),
+        );
+        baseline_cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        baseline_cfg.set_min_length_bin_mass(0.0);
+        baseline_cfg.set_min_length_bin_width(1);
+        baseline_cfg.set_min_gc_bin_mass(1.0);
+        baseline_cfg.set_num_extreme_gc_bins(0);
+        baseline_cfg.set_num_short_length_bins(0);
+        baseline_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        let mut masked_cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), masked_out.path());
+        masked_cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        masked_cfg.set_min_length_bin_mass(0.0);
+        masked_cfg.set_min_length_bin_width(1);
+        masked_cfg.set_min_gc_bin_mass(1.0);
+        masked_cfg.set_num_extreme_gc_bins(1);
+        masked_cfg.set_num_short_length_bins(0);
+        masked_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        // Act
+        run_gc_bias(&baseline_cfg)?;
+        run_gc_bias(&masked_cfg)?;
+
+        // Assert
+        let baseline_package =
+            GCCorrectionPackage::from_file(baseline_out.path().join("gc_bias_correction.npz"))?;
+        let masked_package =
+            GCCorrectionPackage::from_file(masked_out.path().join("gc_bias_correction.npz"))?;
+
+        assert_eq!(baseline_package.correction_matrix.dim(), (2, 2));
+        assert_eq!(masked_package.correction_matrix.dim(), (2, 2));
+        assert_eq!(baseline_package.gc_edges, vec![0, 1, 100]);
+        assert_eq!(masked_package.gc_edges, vec![0, 1, 100]);
+
+        assert!((baseline_package.correction_matrix[(0, 0)] - 5.0).abs() < 1e-12);
+        assert!((baseline_package.correction_matrix[(0, 1)] - (5.0 / 9.0)).abs() < 1e-12);
+        assert!((baseline_package.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
+        assert!((baseline_package.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+
+        for value in masked_package.correction_matrix.iter() {
+            assert!((*value - 1.0).abs() < 1e-12);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn min_length_bin_mass_merges_a_sparse_tail_length_into_the_previous_bin() -> Result<()> {
+        // Arrange:
+        // Use a two-length fixture where the shorter length has mass 10 and the longer tail length
+        // has mass 2.
+        //
+        // Baseline, with `min_length_bin_mass = 0` and width 1:
+        //   length 10 -> [0.2, 1.8] -> final weights [5, 5/9]
+        //   length 11 -> [1.0, 1.0] -> final weights [1, 1]
+        //
+        // Now set `min_length_bin_mass = 20%`.
+        // Total binned mass is 12, so the minimum bin mass is:
+        //   12 * 0.20 = 2.4
+        //
+        // Greedy binning over the length axis then behaves as follows:
+        // - row for length 10 has mass 10, so it can close a bin by itself
+        // - row for length 11 has mass 2, so it cannot form its own bin
+        // - the final underweight tail row is therefore appended to the previous bin
+        //
+        // The merged correction row is the simple arithmetic mean of the two source rows:
+        //   ([0.2, 1.8] + [1.0, 1.0]) / 2 = [0.6, 1.4]
+        //
+        // With no outlier handling, the final multiplicative row is therefore:
+        //   [1 / 0.6, 1 / 1.4] = [5/3, 5/7]
+        let (reference, bam) = make_two_length_low_mass_tail_fixture()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+
+        let baseline_out = TempDir::new()?;
+        let merged_out = TempDir::new()?;
+
+        let mut baseline_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            baseline_out.path(),
+        );
+        baseline_cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        baseline_cfg.set_min_length_bin_mass(0.0);
+        baseline_cfg.set_min_length_bin_width(1);
+        baseline_cfg.set_min_gc_bin_mass(1.0);
+        baseline_cfg.set_num_extreme_gc_bins(0);
+        baseline_cfg.set_num_short_length_bins(0);
+        baseline_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        let mut merged_cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), merged_out.path());
+        merged_cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        merged_cfg.set_min_length_bin_mass(20.0);
+        merged_cfg.set_min_length_bin_width(1);
+        merged_cfg.set_min_gc_bin_mass(1.0);
+        merged_cfg.set_num_extreme_gc_bins(0);
+        merged_cfg.set_num_short_length_bins(0);
+        merged_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        // Act
+        run_gc_bias(&baseline_cfg)?;
+        run_gc_bias(&merged_cfg)?;
+
+        // Assert
+        let baseline_package =
+            GCCorrectionPackage::from_file(baseline_out.path().join("gc_bias_correction.npz"))?;
+        let merged_package =
+            GCCorrectionPackage::from_file(merged_out.path().join("gc_bias_correction.npz"))?;
+
+        assert_eq!(baseline_package.correction_matrix.dim(), (2, 2));
+        assert_eq!(merged_package.correction_matrix.dim(), (1, 2));
+        assert_eq!(merged_package.length_edges, vec![10, 11]);
+        assert_eq!(merged_package.gc_edges, vec![0, 1, 100]);
+        assert_eq!(merged_package.length_bin_frequencies.len(), 1);
+        assert!((merged_package.length_bin_frequencies[0] - 1.0).abs() < 1e-12);
+
+        assert!((baseline_package.correction_matrix[(0, 0)] - 5.0).abs() < 1e-12);
+        assert!((baseline_package.correction_matrix[(0, 1)] - (5.0 / 9.0)).abs() < 1e-12);
+        assert!((baseline_package.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
+        assert!((baseline_package.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+
+        assert!((merged_package.correction_matrix[(0, 0)] - (5.0 / 3.0)).abs() < 1e-12);
+        assert!((merged_package.correction_matrix[(0, 1)] - (5.0 / 7.0)).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn min_gc_bin_mass_greedily_merges_sparse_gc_tail_bins_in_real_command() -> Result<()> {
+        // Arrange:
+        // Use a one-length fixture with exact GC-class masses:
+        //   GC%=0   -> 1
+        //   GC%=50  -> 5
+        //   GC%=100 -> 9
+        //
+        // The handcrafted reference package marks those same three GC points as equally likely.
+        //
+        // Baseline, with `min_gc_bin_mass = 1%`:
+        // - total sample mass = 15
+        // - min bin mass = 0.15
+        // - greedy GC binning therefore closes bins at:
+        //     [0], [1..50], [51..100]
+        // - sample binned row is [1, 5, 9]
+        // - reference binned row is [1, 1, 1]
+        // - normalized correction row is already [0.2, 1.0, 1.8]
+        // - final weights are therefore [5, 1, 5/9]
+        //
+        // Now set `min_gc_bin_mass = 25%`:
+        // - min bin mass = 15 * 0.25 = 3.75
+        // - the first sparse GC point (mass 1 at GC%=0) cannot close a bin by itself
+        // - it gets merged with the next non-zero point at GC%=50
+        // - the resulting GC bins are:
+        //     [0..50], [51..100]
+        //
+        // So the binned rows become:
+        //   sample    -> [1 + 5, 9] = [6, 9]
+        //   reference -> [1 + 1, 1] = [2, 1]
+        //
+        // Per-row normalization gives:
+        //   sample    -> [0.8, 1.2]
+        //   reference -> [4/3, 2/3]
+        //
+        // Raw correction is therefore:
+        //   [0.8 / (4/3), 1.2 / (2/3)] = [0.6, 1.8]
+        //
+        // Re-centering that row to mean 1.0 gives [0.5, 1.5], and inversion yields:
+        //   [2, 2/3]
+        let (reference, bam) = make_three_gc_bin_fixture()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_three_bin_reference_gc_package(ref_gc_dir.path())?;
+
+        let baseline_out = TempDir::new()?;
+        let merged_out = TempDir::new()?;
+
+        let mut baseline_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            baseline_out.path(),
+        );
+        baseline_cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        baseline_cfg.set_min_length_bin_mass(0.0);
+        baseline_cfg.set_min_length_bin_width(1);
+        baseline_cfg.set_min_gc_bin_mass(1.0);
+        baseline_cfg.set_num_extreme_gc_bins(0);
+        baseline_cfg.set_num_short_length_bins(0);
+        baseline_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        let mut merged_cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), merged_out.path());
+        merged_cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        merged_cfg.set_min_length_bin_mass(0.0);
+        merged_cfg.set_min_length_bin_width(1);
+        merged_cfg.set_min_gc_bin_mass(25.0);
+        merged_cfg.set_num_extreme_gc_bins(0);
+        merged_cfg.set_num_short_length_bins(0);
+        merged_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        // Act
+        run_gc_bias(&baseline_cfg)?;
+        run_gc_bias(&merged_cfg)?;
+
+        // Assert
+        let baseline_package =
+            GCCorrectionPackage::from_file(baseline_out.path().join("gc_bias_correction.npz"))?;
+        let merged_package =
+            GCCorrectionPackage::from_file(merged_out.path().join("gc_bias_correction.npz"))?;
+
+        assert_eq!(baseline_package.correction_matrix.dim(), (1, 3));
+        assert_eq!(baseline_package.gc_edges, vec![0, 1, 51, 100]);
+        assert!((baseline_package.correction_matrix[(0, 0)] - 5.0).abs() < 1e-12);
+        assert!((baseline_package.correction_matrix[(0, 1)] - 1.0).abs() < 1e-12);
+        assert!((baseline_package.correction_matrix[(0, 2)] - (5.0 / 9.0)).abs() < 1e-12);
+
+        assert_eq!(merged_package.correction_matrix.dim(), (1, 2));
+        assert_eq!(merged_package.gc_edges, vec![0, 51, 100]);
+        assert!((merged_package.correction_matrix[(0, 0)] - 2.0).abs() < 1e-12);
+        assert!((merged_package.correction_matrix[(0, 1)] - (2.0 / 3.0)).abs() < 1e-12);
 
         Ok(())
     }

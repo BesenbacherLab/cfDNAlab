@@ -3,23 +3,24 @@
 mod fixtures;
 
 use anyhow::Result;
+#[cfg(feature = "cmd_bam_to_bam")]
+use cfdnalab::commands::bam_to_bam::{
+    bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
+};
 use cfdnalab::commands::cli_common::{
-    ApplyGCArgs, ChromosomeArgs, GCWindowsArgs, IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
+    ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs,
 };
 #[cfg(feature = "cmd_coverage_weights")]
 use cfdnalab::commands::coverage_weights::{
     config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
 };
-use cfdnalab::commands::gc_bias::{
-    GC_CORRECTION_SCHEMA_VERSION, config::GCConfig, gc_bias::run as run_gc_bias,
-    package::GCCorrectionPackage,
-};
+use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
 use cfdnalab::commands::midpoints::config::MidpointsConfig;
 use cfdnalab::commands::midpoints::midpoints::run;
-use cfdnalab::commands::ref_gc_bias::{config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias};
 use fixtures::{
-    FragmentSpec, ReadSpec, bam_from_specs, complex_bam_fixture, simple_reference_twobit,
-    write_bed,
+    FragmentSpec, ReadSpec, bam_from_specs, build_real_neutral_gc_package,
+    build_real_non_neutral_gc_package, complex_bam_fixture, simple_reference_twobit,
+    twobit_from_sequences, write_bed,
 };
 use ndarray::array;
 use ndarray::Array3;
@@ -175,67 +176,6 @@ fn read_group_index_map(path: &std::path::Path) -> Result<HashMap<String, usize>
         out.insert(name, idx);
     }
     Ok(out)
-}
-
-fn build_real_neutral_gc_package(
-    bam_path: &std::path::Path,
-    reference_path: &std::path::Path,
-    out_dir: &std::path::Path,
-    fragment_length: u32,
-) -> Result<std::path::PathBuf> {
-    let ref_gc_dir = TempDir::new()?;
-    let ref_cfg = RefGCBiasConfig {
-        ref_genome: Ref2BitRequiredArgs {
-            ref_2bit: reference_path.to_path_buf(),
-        },
-        output_dir: ref_gc_dir.path().to_path_buf(),
-        n_threads: 1,
-        // `simple_reference_twobit()` is 256 bp long. With fragment length 61 there are
-        // only 256 - 61 + 1 = 196 valid start positions, so keep `n_positions` well below that.
-        n_positions: 100,
-        seed: Some(7),
-        windows: Default::default(),
-        chromosomes: base_chromosomes(&["chr1"]),
-        blacklist: None,
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
-            min_fragment_length: fragment_length,
-            max_fragment_length: fragment_length,
-        },
-        end_offset: 0,
-        skip_interpolation: true,
-        smoothing_sigma: 0.55,
-        smoothing_radius: 2,
-        skip_smoothing: true,
-        tile_size: 1_000_000,
-    };
-    run_ref_gc_bias(&ref_cfg)?;
-
-    let gc_out_dir = out_dir.join("real_gc_bias");
-    std::fs::create_dir_all(&gc_out_dir)?;
-    let mut gc_cfg = GCConfig::new(
-        IOCArgs {
-            bam: bam_path.to_path_buf(),
-            output_dir: gc_out_dir.clone(),
-            n_threads: 1,
-        },
-        reference_path.to_path_buf(),
-        ref_gc_dir.path().to_path_buf(),
-        base_chromosomes(&["chr1"]),
-    );
-    gc_cfg.set_min_mapq(0);
-    gc_cfg.set_tile_size(1_000_000);
-    gc_cfg.set_min_window_acgt_pct(0);
-    gc_cfg.set_num_extreme_gc_bins(0);
-    gc_cfg.set_num_short_length_bins(0);
-    gc_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
-    gc_cfg.set_windows(GCWindowsArgs {
-        by_size: None,
-        by_bed: None,
-        global: true,
-    });
-    run_gc_bias(&gc_cfg)?;
-
-    Ok(gc_out_dir.join("gc_bias_correction.npz"))
 }
 
 fn write_minimal_gc_package_excluding_length_61(path: &std::path::Path) -> Result<()> {
@@ -696,6 +636,146 @@ fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_midpo
 }
 
 #[test]
+fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction() -> Result<()> {
+    // Arrange:
+    // Build a real non-neutral GC package, then consume it through `midpoints`.
+    //
+    // Reference genome:
+    // - chr1[0,100)   = all A
+    // - chr1[100,200) = all C
+    //
+    // Real producer setup:
+    // - fragment length is fixed at 61, so midpoint placement is deterministic
+    // - valid starts are 0..=139, because 200 - 61 + 1 = 140
+    // - reference BED windows keep only pure-start intervals:
+    //     [0,40)   -> starts 0..=39   -> GC%=0
+    //     [100,140) -> starts 100..=139 -> GC%=100
+    // - starts 40..=99, which would cross the A/C boundary and create intermediate GC%, are
+    //   intentionally excluded
+    //
+    // So the reference-side counts are exactly balanced:
+    // - 40 starts at GC%=0
+    // - 40 starts at GC%=100
+    //
+    // Producer BAM:
+    // - one A-only fragment [10,71)   -> GC%=0
+    // - nine C-only fragments [110,171) -> GC%=100
+    //
+    // The real produced GC package is therefore the same two-bin non-neutral package as in the
+    // corresponding `gc-bias`/`fcoverage`/`lengths` tests:
+    // - GC%=0   -> weight 5.0
+    // - GC%=100 -> weight 5/9
+    //
+    // Consumer BAM:
+    // - one A-only fragment [10,71), midpoint 40
+    // - one C-only fragment [110,171), midpoint 140
+    //
+    // Consumer windows:
+    // - [35,46)   -> midpoint 40 lands at position 5, groupA
+    // - [135,146) -> midpoint 140 lands at position 5, groupC
+    //
+    // No genomic scaling is applied, so the final midpoint profile must contain:
+    // - groupA: 5.0   at position 5
+    // - groupC: 5/9   at position 5
+    let reference = twobit_from_sequences(
+        "midpoints_real_non_neutral_reference",
+        vec![(
+            "chr1".to_string(),
+            format!("{}{}", "A".repeat(100), "C".repeat(100)),
+        )],
+    )?;
+    let producer_bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        {
+            let mut fragments = vec![paired_fragment_on_tid(0, 10, 61, 20)];
+            for _ in 0..9 {
+                fragments.push(paired_fragment_on_tid(0, 110, 61, 20));
+            }
+            fragments
+        },
+        Vec::new(),
+        "midpoints_real_non_neutral_producer",
+    )?;
+    let consumer_bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        vec![
+            paired_fragment_on_tid(0, 10, 61, 20),
+            paired_fragment_on_tid(0, 110, 61, 20),
+        ],
+        Vec::new(),
+        "midpoints_real_non_neutral_consumer",
+    )?;
+    let temp = TempDir::new()?;
+    let gc_path = build_real_non_neutral_gc_package(
+        &producer_bam.bam,
+        &reference.path,
+        temp.path(),
+        61,
+        "chr1\t0\t40\nchr1\t100\t140\n",
+        // Chromosome length 200 and fragment length 61 give:
+        //   200 - 61 + 1 = 140 valid starts.
+        140,
+    )?;
+    let bed_path = temp.path().join("windows.bed");
+    write_bed(
+        &bed_path,
+        &[("chr1", 35, 46, "groupA"), ("chr1", 135, 146, "groupC")],
+    )?;
+
+    let mut cfg = MidpointsConfig::new(
+        IOCArgs {
+            bam: consumer_bam.bam.clone(),
+            output_dir: temp.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+        bed_path,
+    );
+    cfg.set_output_prefix("sites");
+    cfg.set_length_bins(vec![61, 62]);
+    cfg.set_tile_size(1_000);
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    cfg.set_scale_genome(ScaleGenomeArgs::default());
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        drop_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+
+    // Act
+    run(&cfg)?;
+
+    // Assert
+    let counts_path = temp.path().join("sites.midpoint_profiles.npy");
+    let arr: Array3<f32> = read_npy(&counts_path)?;
+    assert_eq!(arr.shape(), &[2, 1, 11]);
+
+    let map_path = temp.path().join("sites.group_index.tsv");
+    let group_to_idx = read_group_index_map(&map_path)?;
+    let expected = [("groupA", 5.0_f32), ("groupC", (5.0_f32 / 9.0_f32))];
+    for (group_name, expected_weight) in expected {
+        let group_idx = group_to_idx[group_name];
+        let row = arr.slice(ndarray::s![group_idx, 0, ..]).to_vec();
+        for (position, value) in row.iter().enumerate() {
+            let expected_value = if position == 5 { expected_weight } else { 0.0 };
+            assert!(
+                (value - expected_value).abs() <= 1e-6,
+                "unexpected midpoint weight for {group_name} at position {position}: expected {expected_value}, got {value}"
+            );
+        }
+    }
+    assert!(
+        (arr.sum() - (5.0_f32 + 5.0_f32 / 9.0_f32)).abs() <= 1e-6,
+        "unexpected total midpoint mass {}",
+        arr.sum()
+    );
+
+    Ok(())
+}
+
+#[test]
 fn midpoints_rejects_gc_package_when_length_bins_are_outside_supported_range() -> Result<()> {
     // Arrange:
     // The midpoint command resolves its fragment-length range from the configured bin edges:
@@ -906,6 +986,168 @@ fn coverage_weights_tsv_changes_midpoints_by_full_fragment_average_not_window_ov
     Ok(())
 }
 
+#[cfg(feature = "cmd_coverage_weights")]
+#[test]
+fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_midpoints()
+-> Result<()> {
+    // Arrange:
+    // Build a real multi-chromosome scaling artifact, then consume it through `midpoints`.
+    //
+    // Producer BAM:
+    // - chr1 has one 61 bp fragment [20, 81)
+    // - chr2 has two identical 61 bp fragments [20, 81)
+    //
+    // We use `coverage-weights` with `bin_size = stride = 20`, so each TSV row is just the
+    // average positional coverage inside one 20 bp bin.
+    //
+    // Per-bin producer coverage is therefore:
+    // - chr1:
+    //     [20,40): 1
+    //     [40,60): 1
+    //     [60,80): 1
+    //     [80,100): 1/20   (only the last base 80 is covered)
+    // - chr2:
+    //     [20,40): 2
+    //     [40,60): 2
+    //     [60,80): 2
+    //     [80,100): 2/20 = 1/10
+    //
+    // Shared global mean over the 8 non-zero bins:
+    //   ((3 * 1) + 1/20 + (3 * 2) + 1/10) / 8
+    // = (3 + 1/20 + 6 + 1/10) / 8
+    // = (61/20 + 61/10) / 8
+    // = 183/160.
+    //
+    // The written scaling factors are mean / avg_pos_cov:
+    // - chr1 full bins: (183/160) / 1    = 183/160
+    // - chr1 tail bin:  (183/160) / 1/20 = 183/8
+    // - chr2 full bins: (183/160) / 2    = 183/320
+    // - chr2 tail bin:  (183/160) / 1/10 = 183/16
+    //
+    // Consumer BAM:
+    // - one 61 bp fragment [20,81) on chr1
+    // - one 61 bp fragment [20,81) on chr2
+    // - odd length makes midpoint deterministic:
+    //     20 + floor(61 / 2) = 50
+    // - both windows are [45,56), so each midpoint lands at profile position:
+    //     50 - 45 = 5
+    //
+    // `midpoints` averages scaling over the full fragment span:
+    // - chr1 average scaling:
+    //     (20*(183/160) + 20*(183/160) + 20*(183/160) + 1*(183/8)) / 61
+    //   = (183/160) * (60 + 20) / 61
+    //   = 183/122
+    //   = 1.5
+    // - chr2 average scaling:
+    //     (20*(183/320) + 20*(183/320) + 20*(183/320) + 1*(183/16)) / 61
+    //   = (183/320) * (60 + 20) / 61
+    //   = 183/244
+    //   = 0.75
+    //
+    // No GC weighting is applied, so the final midpoint profile must contain:
+    // - group_chr1: 1.5 at position 5
+    // - group_chr2: 0.75 at position 5
+    let producer_bam = bam_from_specs(
+        vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
+        vec![
+            paired_fragment_on_tid(0, 20, 61, 20),
+            paired_fragment_on_tid(1, 20, 61, 20),
+            paired_fragment_on_tid(1, 20, 61, 20),
+        ],
+        Vec::new(),
+        "midpoints_multichrom_scaling_producer",
+    )?;
+    let consumer_bam = bam_from_specs(
+        vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
+        vec![
+            paired_fragment_on_tid(0, 20, 61, 20),
+            paired_fragment_on_tid(1, 20, 61, 20),
+        ],
+        Vec::new(),
+        "midpoints_multichrom_scaling_consumer",
+    )?;
+    let temp = TempDir::new()?;
+    let weights_out_dir = temp.path().join("coverage_weights");
+    std::fs::create_dir_all(&weights_out_dir)?;
+    let bed_path = temp.path().join("windows.bed");
+    write_bed(
+        &bed_path,
+        &[
+            ("chr1", 45, 56, "group_chr1"),
+            ("chr2", 45, 56, "group_chr2"),
+        ],
+    )?;
+
+    let mut scaling_cfg = CoverageWeightsConfig::new(
+        IOCArgs {
+            bam: producer_bam.bam.clone(),
+            output_dir: weights_out_dir.clone(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1", "chr2"]),
+    );
+    scaling_cfg.set_bin_size(20);
+    scaling_cfg.set_stride(20);
+    scaling_cfg.set_min_mapq(0);
+    scaling_cfg.set_require_proper_pair(false);
+    scaling_cfg.set_output_prefix("coverage".to_string());
+    {
+        let frag = scaling_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 200;
+    }
+
+    // Act
+    run_coverage_weights(&scaling_cfg)?;
+    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+
+    let mut midpoints_cfg = MidpointsConfig::new(
+        IOCArgs {
+            bam: consumer_bam.bam.clone(),
+            output_dir: temp.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1", "chr2"]),
+        bed_path,
+    );
+    midpoints_cfg.set_output_prefix("sites");
+    midpoints_cfg.set_length_bins(vec![61, 62]);
+    midpoints_cfg.set_tile_size(1_000);
+    midpoints_cfg.set_min_mapq(0);
+    midpoints_cfg.set_require_proper_pair(false);
+    let mut scale_genome = ScaleGenomeArgs::default();
+    scale_genome.scaling_factors = Some(scaling_path);
+    midpoints_cfg.set_scale_genome(scale_genome);
+    run(&midpoints_cfg)?;
+
+    // Assert
+    let counts_path = temp.path().join("sites.midpoint_profiles.npy");
+    let arr: Array3<f32> = read_npy(&counts_path)?;
+    assert_eq!(arr.shape(), &[2, 1, 11]);
+
+    let map_path = temp.path().join("sites.group_index.tsv");
+    let group_to_idx = read_group_index_map(&map_path)?;
+    let expected_total = 1.5_f32 + 0.75_f32;
+    for (group_name, expected_weight) in [("group_chr1", 1.5_f32), ("group_chr2", 0.75_f32)] {
+        let group_idx = group_to_idx[group_name];
+        let row = arr.slice(ndarray::s![group_idx, 0, ..]).to_vec();
+        for (position, value) in row.iter().enumerate() {
+            let expected = if position == 5 { expected_weight } else { 0.0 };
+            assert!(
+                (value - expected).abs() <= 1e-6,
+                "unexpected midpoint weight for {group_name} at position {position}: expected {expected}, got {value}"
+            );
+        }
+    }
+    assert!(
+        (arr.sum() - expected_total).abs() <= 1e-6,
+        "expected total midpoint mass {expected_total}, got {}",
+        arr.sum()
+    );
+
+    Ok(())
+}
+
 #[test]
 fn gc_tag_pair_average_sets_midpoint_profile_weight() -> Result<()> {
     // Arrange:
@@ -971,6 +1213,134 @@ fn gc_tag_pair_average_sets_midpoint_profile_weight() -> Result<()> {
         "expected total midpoint mass 3.0, got {}",
         arr.sum()
     );
+
+    Ok(())
+}
+
+#[cfg(feature = "cmd_bam_to_bam")]
+#[test]
+fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() -> Result<()> {
+    // Arrange:
+    // One paired fragment spans [20, 81), length 61, so the midpoint is deterministic:
+    //   20 + floor(61 / 2) = 50
+    // One window [45, 56) therefore receives the fragment at profile position:
+    //   50 - 45 = 5
+    //
+    // We use the smallest GC package that assigns a constant weight 3.0 to every 61 bp fragment:
+    // - length_edges = [61, 62]
+    // - gc_edges     = [0, 101]
+    // - correction_matrix = [[3.0]]
+    //
+    // Then we compare two logically equivalent released workflows:
+    // 1. original paired BAM -> `midpoints --gc-file <pkg>`
+    // 2. original paired BAM -> `bam-to-bam --gc-file <pkg>` ->
+    //    `midpoints --gc-tag GC`
+    //
+    // Because the package gives the only supported fragment a constant weight 3.0, both
+    // workflows must produce the same midpoint profile:
+    // - shape [1, 1, 11]
+    // - exactly 3.0 at position 5
+    // - total mass 3.0
+    let source_bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        vec![paired_fragment_on_tid(0, 20, 61, 20)],
+        Vec::new(),
+        "midpoints_bam_to_bam_gc_source",
+    )?;
+    let reference = simple_reference_twobit()?;
+    let temp = TempDir::new()?;
+    let tagged_out_bam = temp.path().join("tagged_gc.bam");
+    let gc_path = temp.path().join("constant_gc_pkg.npz");
+    let bed_path = temp.path().join("windows.bed");
+    write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
+
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 0,
+        length_edges: vec![61, 62],
+        gc_edges: vec![0, 101],
+        length_bin_frequencies: array![1.0_f64],
+        correction_matrix: array![[3.0_f64]],
+    };
+    package.write_npz(&gc_path)?;
+
+    let mut bam_to_bam_cfg = BamToBamConfig::new(
+        source_bam.bam.clone(),
+        tagged_out_bam.clone(),
+        base_chromosomes(&["chr1"]),
+    );
+    bam_to_bam_cfg.skip_chromosome_sort = true;
+    bam_to_bam_cfg.min_mapq = 0;
+    bam_to_bam_cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+        gc_file: Some(gc_path.clone()),
+        drop_invalid_gc: false,
+    });
+    bam_to_bam_cfg.set_ref_2bit(Some(reference.path.clone()));
+    {
+        let frag = bam_to_bam_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 61;
+        frag.max_fragment_length = 61;
+    }
+
+    let mut original_cfg = MidpointsConfig::new(
+        IOCArgs {
+            bam: source_bam.bam.clone(),
+            output_dir: temp.path().join("orig_out"),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+        bed_path.clone(),
+    );
+    original_cfg.set_output_prefix("origsites");
+    original_cfg.set_length_bins(vec![61, 62]);
+    original_cfg.set_tile_size(1_000);
+    original_cfg.set_min_mapq(0);
+    original_cfg.set_require_proper_pair(false);
+    original_cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        drop_invalid_gc: false,
+    });
+    original_cfg.set_ref_2bit(Some(reference.path.clone()));
+
+    // Act 1: write the tagged BAM from the real `bam-to-bam` producer and index it for fetch-based
+    // downstream consumers.
+    run_bam_to_bam(&bam_to_bam_cfg)?;
+    build_bai_for_test_bam(&tagged_out_bam)?;
+
+    // Act 2: compare original `--gc-file` consumption with downstream `--gc-tag GC`.
+    run(&original_cfg)?;
+    let mut tagged_cfg = MidpointsConfig::new(
+        IOCArgs {
+            bam: tagged_out_bam,
+            output_dir: temp.path().join("tagged_out"),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+        bed_path,
+    );
+    tagged_cfg.set_output_prefix("taggedsites");
+    tagged_cfg.set_length_bins(vec![61, 62]);
+    tagged_cfg.set_tile_size(1_000);
+    tagged_cfg.set_min_mapq(0);
+    tagged_cfg.set_require_proper_pair(false);
+    tagged_cfg.set_gc(ApplyGCArgs {
+        gc_file: None,
+        gc_tag: Some("GC".to_string()),
+        drop_invalid_gc: false,
+    });
+    run(&tagged_cfg)?;
+
+    // Assert
+    let original_arr: Array3<f32> =
+        read_npy(&temp.path().join("orig_out/origsites.midpoint_profiles.npy"))?;
+    let tagged_arr: Array3<f32> =
+        read_npy(&temp.path().join("tagged_out/taggedsites.midpoint_profiles.npy"))?;
+
+    assert_eq!(original_arr, tagged_arr);
+    assert_eq!(original_arr.shape(), &[1, 1, 11]);
+    assert_eq!(original_arr[[0, 0, 5]], 3.0);
+    assert_eq!(original_arr.sum(), 3.0);
 
     Ok(())
 }

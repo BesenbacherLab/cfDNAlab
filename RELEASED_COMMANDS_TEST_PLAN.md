@@ -259,6 +259,11 @@ Core test families:
 - `coverage-weights` output changes downstream weighting as expected in `fcoverage`, `lengths`, and `midpoints`
 - `ref-gc-bias` output drives `gc-bias` correctly
 - `gc-bias` output drives `fcoverage` and `lengths` correctly
+- Shared real-artifact fixture builders for:
+  - one neutral `ref-gc-bias -> gc-bias` package
+  - one non-neutral `ref-gc-bias -> gc-bias` package
+  so consumer tests reuse the same produced artifacts instead of rebuilding the full producer
+  pipeline independently in every file
 - Workflow spine:
   - `ref-gc-bias -> gc-bias -> lengths`
   - `ref-gc-bias -> gc-bias -> fcoverage`
@@ -300,6 +305,9 @@ Core test families:
 - `coverage-weights` TSV consumed by `fcoverage`, `lengths`, `midpoints`, `bam-to-bam`, and `bam-to-frag`
 - `bam-to-frag` companion header consumed by `frag-to-bam`
 - `midpoints` group-index TSV checked against the actual 3D array axis contract
+- Real producer helpers should live in shared test fixtures when the produced artifact semantics
+  are already proven elsewhere; downstream consumer tests should focus on their distinct behavior,
+  not duplicate producer setup
 - Corrupt or shape-mismatched artifacts rejected with specific actionable failures
 - GC package version, edge-vector, and length-range compatibility failures checked through the real released commands that load them
 - Reference-GC metadata fields (`skip_smoothing`, `skip_interpolation`, support masks, width corrections) round-tripped through real producer and consumer commands

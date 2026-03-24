@@ -10,9 +10,13 @@ use cfdnalab::commands::{
     cli_common::{ApplyGCArgFileOnly, ChromosomeArgs},
     gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage},
 };
+#[cfg(feature = "cmd_coverage_weights")]
+use cfdnalab::commands::coverage_weights::{
+    config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
+};
 use fixtures::{
-    FragmentSpec, ReadSpec, bam_from_specs, paired_fragment, simple_inward_bam,
-    simple_reference_twobit,
+    FragmentSpec, ReadSpec, bam_from_specs, build_real_non_neutral_gc_package, paired_fragment,
+    simple_inward_bam, simple_reference_twobit, twobit_from_sequences,
 };
 use ndarray::array;
 use rust_htslib::bam::{self, Read, record::Aux};
@@ -303,6 +307,74 @@ fn chromosomes_all_default_sorts_lexicographically_instead_of_bam_header_order()
 }
 
 #[test]
+fn chromosomes_all_with_skip_sort_follows_bam_header_order() -> Result<()> {
+    // Arrange:
+    // Reuse the same intentionally non-lexicographic BAM header/contig order:
+    //   [chr2, chr10, chr1]
+    //
+    // With `--chromosomes all`, chromosome resolution starts from that BAM header order.
+    // When `--skip-chromosome-sort` is enabled, the command should keep that resolved order
+    // instead of applying its default lexicographic reordering.
+    //
+    // With one fragment on each chromosome, the emitted chromosome sequence must therefore be:
+    //   [chr2, chr2, chr10, chr10, chr1, chr1]
+    let bam = bam_from_specs(
+        vec![
+            ("chr2".to_string(), 500),
+            ("chr10".to_string(), 500),
+            ("chr1".to_string(), 500),
+        ],
+        vec![
+            fragment_on_tid(paired_fragment(10, 120, 40), 0),
+            fragment_on_tid(paired_fragment(20, 120, 40), 1),
+            fragment_on_tid(paired_fragment(30, 120, 40), 2),
+        ],
+        Vec::new(),
+        "bam_to_bam_all_skip_sort",
+    )?;
+
+    let work = tempdir()?;
+    let out_bam = work.path().join("all_unsorted.bam");
+    let chrom_args = ChromosomeArgs {
+        chromosomes: Some(vec!["all".to_string()]),
+        chromosomes_file: None,
+    };
+    let mut cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
+    cfg.skip_chromosome_sort = true;
+
+    // Act
+    run_inner(&cfg)?;
+
+    // Assert
+    let mut reader = bam::Reader::from_path(&out_bam)?;
+    let header = reader.header().to_owned();
+    let mut record_chromosomes = Vec::new();
+    for record_result in reader.records() {
+        let record = record_result?;
+        let tid = record.tid() as u32;
+        record_chromosomes.push(
+            std::str::from_utf8(header.tid2name(tid))
+                .unwrap()
+                .to_string(),
+        );
+    }
+    assert_eq!(
+        record_chromosomes,
+        vec![
+            "chr2".to_string(),
+            "chr2".to_string(),
+            "chr10".to_string(),
+            "chr10".to_string(),
+            "chr1".to_string(),
+            "chr1".to_string(),
+        ],
+        "`--skip-chromosome-sort` should preserve BAM-header-derived order for `--chromosomes all`"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn windows_keep_fragment_when_single_read_is_inside() -> Result<()> {
     let target = paired_fragment(20, 200, 40);
     let outside = paired_fragment(400, 200, 40);
@@ -497,6 +569,109 @@ fn writes_coverage_weight_when_scaling_factors_provided() -> Result<()> {
 }
 
 #[test]
+fn paired_and_unpaired_fragment_modes_apply_same_full_fragment_scaling_for_same_span()
+-> Result<()> {
+    // Arrange:
+    // We represent the same physical fragment span [20, 80) in two different supported input
+    // modes:
+    // - paired-end: the `simple_inward_bam()` fixture has one fragment with forward [20, 40) and
+    //   reverse [60, 80), so fragment span = [20, 80), length = 60
+    // - unpaired `reads_are_fragments`: one single read with CIGAR 60M starting at 20, so the
+    //   read span is also [20, 80), length = 60
+    //
+    // `bam-to-bam` computes scaling over the full fragment span in both modes. We therefore use a
+    // non-uniform scaling TSV whose hand-derived full-span average is not an integer:
+    // - [0, 40)  factor 2.0  -> contributes 20 bp over [20, 40)
+    // - [40, 80) factor 1.0  -> contributes 40 bp over [40, 80)
+    // - [80,200) factor 1.0  -> not touched
+    //
+    // Average scaling over [20, 80):
+    //   (20 * 2.0 + 40 * 1.0) / 60 = 80 / 60 = 4/3
+    //
+    // Therefore:
+    // - paired mode must emit two records, each tagged with COV = 4/3 and FLEN = 60
+    // - unpaired mode must emit one record tagged with COV = 4/3 and FLEN = 60
+    let paired_bam = simple_inward_bam()?;
+    let unpaired_bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        Vec::new(),
+        vec![ReadSpec {
+            tid: 0,
+            pos: 20,
+            cigar: vec![('M', 60)],
+            seq: vec![b'A'; 60],
+            qual: 30,
+            is_reverse: false,
+            mapq: 40,
+            flags: 0,
+            mate_tid: None,
+            mate_pos: None,
+            insert_size: 0,
+        }],
+        "bam_to_bam_unpaired_fragment_scaling",
+    )?;
+    let work = tempdir()?;
+    let paired_out = work.path().join("paired_scaled.bam");
+    let unpaired_out = work.path().join("unpaired_scaled.bam");
+    let scaling = work.path().join("piecewise_scaling.tsv");
+    fs::write(
+        &scaling,
+        "chromosome\tstart\tend\tscaling_factor\n\
+chr1\t0\t40\t2.0\n\
+chr1\t40\t80\t1.0\n\
+chr1\t80\t200\t1.0\n",
+    )?;
+
+    let mut paired_cfg = base_config(&paired_bam.bam, &paired_out);
+    paired_cfg.scale_genome.scaling_factors = Some(scaling.clone());
+    paired_cfg.set_min_mapq(0);
+    {
+        let frag = paired_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 100;
+    }
+
+    let mut unpaired_cfg = base_config(&unpaired_bam.bam, &unpaired_out);
+    unpaired_cfg.scale_genome.scaling_factors = Some(scaling);
+    unpaired_cfg.unpaired.reads_are_fragments = true;
+    unpaired_cfg.set_min_mapq(0);
+    {
+        let frag = unpaired_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 100;
+    }
+
+    // Act
+    run_inner(&paired_cfg)?;
+    run_inner(&unpaired_cfg)?;
+
+    // Assert
+    let paired_cov = read_tag_values(&paired_out, b"COV")?;
+    let unpaired_cov = read_tag_values(&unpaired_out, b"COV")?;
+    let paired_flen = read_fragment_lengths(&paired_out)?;
+    let unpaired_flen = read_fragment_lengths(&unpaired_out)?;
+    let expected_cov = 4.0_f32 / 3.0_f32;
+
+    assert_eq!(paired_cov.len(), 2);
+    assert_eq!(unpaired_cov.len(), 1);
+    for value in paired_cov {
+        assert!(
+            (value - expected_cov).abs() <= 1e-6,
+            "paired output should tag both mates with full-fragment scaling 4/3, got {value}"
+        );
+    }
+    assert!(
+        (unpaired_cov[0] - expected_cov).abs() <= 1e-6,
+        "unpaired reads_are_fragments output should use the same full-fragment scaling 4/3, got {}",
+        unpaired_cov[0]
+    );
+    assert_eq!(paired_flen, vec![60_u32, 60_u32]);
+    assert_eq!(unpaired_flen, vec![60_u32]);
+
+    Ok(())
+}
+
+#[test]
 fn gc_file_fallback_writes_gc_tag_one_on_both_mates() -> Result<()> {
     let bam = simple_inward_bam()?;
     let ref_twobit = simple_reference_twobit()?;
@@ -591,6 +766,226 @@ fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range
         msg.contains("fragment length range [60-60] is outside the range covered by the correction package [10-59]"),
         "unexpected error message: {msg}"
     );
+
+    Ok(())
+}
+
+#[test]
+fn real_ref_gc_bias_then_gc_bias_package_changes_bam_to_bam_in_expected_direction() -> Result<()> {
+    // Arrange:
+    // Use the same real non-neutral producer workflow as the corresponding `gc-bias` test:
+    // - reference: chr1[0,100) all A, chr1[100,200) all C
+    // - reference-side windows: [0,91) and [100,191), so only pure-A and pure-C starts are
+    //   counted
+    // - sample BAM: one A-only 10 bp fragment and nine C-only 10 bp fragments
+    //
+    // The resulting real package is hand-derived as:
+    // - GC%=0   -> weight 5.0
+    // - GC%=100 -> weight 5/9
+    //
+    // `bam-to-bam` writes one tagged BAM record per input read, so the expected output is:
+    // - first mate pair tagged GC=5.0, FLEN=10
+    // - remaining nine mate pairs tagged GC=5/9, FLEN=10
+    let reference = twobit_from_sequences(
+        "bam_to_bam_real_non_neutral_reference",
+        vec![(
+            "chr1".to_string(),
+            format!("{}{}", "A".repeat(100), "C".repeat(100)),
+        )],
+    )?;
+    let starts = [10_i64, 110, 120, 130, 140, 150, 160, 170, 180, 190];
+    let fragments = starts
+        .into_iter()
+        .map(|start| paired_fragment(start, 10, 5))
+        .collect();
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        fragments,
+        Vec::new(),
+        "bam_to_bam_real_non_neutral_bam",
+    )?;
+    let work = tempdir()?;
+    let out_bam = work.path().join("real_non_neutral_gc.bam");
+    let gc_path = build_real_non_neutral_gc_package(
+        &bam.bam,
+        &reference.path,
+        work.path(),
+        10,
+        "chr1\t0\t91\nchr1\t100\t191\n",
+        // Chromosome length 200 and fragment length 10 give:
+        //   200 - 10 + 1 = 191 valid starts.
+        191,
+    )?;
+
+    let mut cfg = base_config(&bam.bam, &out_bam);
+    cfg.set_gc(ApplyGCArgFileOnly {
+        gc_file: Some(gc_path),
+        drop_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 10;
+    }
+
+    // Act
+    let counters = run_inner(&cfg)?;
+
+    // Assert
+    assert_eq!(counters.base.counted_fragments, 10);
+    let gc_tags = read_tag_values(&out_bam, b"GC")?;
+    let flens = read_fragment_lengths(&out_bam)?;
+    assert_eq!(gc_tags.len(), 20);
+    assert_eq!(flens, vec![10_u32; 20]);
+    assert_eq!(gc_tags[0], 5.0_f32);
+    assert_eq!(gc_tags[1], 5.0_f32);
+    for value in gc_tags.iter().skip(2) {
+        assert!(
+            (*value as f64 - (5.0 / 9.0)).abs() <= 1e-6,
+            "expected GC tag 5/9 on C-only fragments, got {value}"
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "cmd_coverage_weights")]
+#[test]
+fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_to_bam()
+-> Result<()> {
+    // Arrange:
+    // Reuse the same two-chromosome fixture and hand derivation as the matching `bam-to-frag`
+    // workflow and the command-level `coverage-weights` shared-global-mean test.
+    //
+    // chr1 fragment:
+    // - span [20, 80), length 60
+    // - avg-overlap profile:
+    //   [1/3, 3/4, 1, 3/4, 1/4, 0, ...]
+    //
+    // chr2 fragment:
+    // - span [20, 40), length 20
+    // - avg-overlap profile:
+    //   [1/3, 1/2, 1/4, 0, ...]
+    //
+    // Shared non-zero global mean:
+    //   chr1 sum = 37/12
+    //   chr2 sum = 13/12
+    //   total    = 25/6 across 8 non-zero bins
+    //   mean     = (25/6) / 8 = 25/48
+    //
+    // Inverted per-bin scaling factors are therefore:
+    //   chr1 [20,40) = (25/48) / (3/4) = 25/36
+    //   chr1 [40,60) = (25/48) / 1     = 25/48
+    //   chr1 [60,80) = (25/48) / (3/4) = 25/36
+    //   chr2 [20,40) = (25/48) / (1/2) = 25/24
+    //
+    // `bam-to-bam` averages scaling over the full fragment span:
+    //   chr1 weight = ((25/36) + (25/48) + (25/36)) / 3 = 275/432
+    //   chr2 weight = 25/24
+    //
+    // It writes one tag set per emitted read, so the final BAM must contain:
+    // - two chr1 reads with COV = 275/432 and FLEN = 60
+    // - two chr2 reads with COV = 25/24   and FLEN = 20
+    let mut chr2_fragment = paired_fragment(20, 20, 10);
+    chr2_fragment = fragment_on_tid(chr2_fragment, 1);
+
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
+        vec![paired_fragment(20, 60, 20), chr2_fragment],
+        Vec::new(),
+        "bam_to_bam_real_multi_chr_scaling",
+    )?;
+    let work = tempdir()?;
+
+    let weights_out_dir = work.path().join("weights_out");
+    std::fs::create_dir_all(&weights_out_dir)?;
+    let mut weights_cfg = CoverageWeightsConfig::new(
+        cfdnalab::commands::cli_common::IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: weights_out_dir.clone(),
+            n_threads: 1,
+        },
+        ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string(), "chr2".to_string()]),
+            chromosomes_file: None,
+        },
+    );
+    weights_cfg.set_output_prefix("coverage".to_string());
+    weights_cfg.set_bin_size(40);
+    weights_cfg.set_stride(20);
+    weights_cfg.set_min_mapq(0);
+    weights_cfg.set_require_proper_pair(false);
+    {
+        let frag = weights_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 200;
+    }
+    run_coverage_weights(&weights_cfg)?;
+
+    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+    let out_bam = work.path().join("scaled_multi_chr.bam");
+    let mut cfg = BamToBamConfig::new(
+        bam.bam.clone(),
+        out_bam.clone(),
+        ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string(), "chr2".to_string()]),
+            chromosomes_file: None,
+        },
+    );
+    cfg.skip_chromosome_sort = true;
+    cfg.scale_genome.scaling_factors = Some(scaling_path);
+    cfg.min_mapq = 0;
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 200;
+    }
+
+    // Act
+    let counters = run_inner(&cfg)?;
+
+    // Assert
+    assert_eq!(counters.base.counted_fragments, 2);
+    let mut reader = bam::Reader::from_path(&out_bam)?;
+    let header = reader.header().to_owned();
+    let mut observed: Vec<(String, f32, u32)> = Vec::new();
+    for record_result in reader.records() {
+        let record = record_result?;
+        let tid = record.tid() as u32;
+        let chromosome = std::str::from_utf8(header.tid2name(tid))?.to_string();
+        let scaling = match record.aux(b"COV") {
+            Ok(Aux::Float(value)) => value,
+            other => panic!("expected COV float tag on every read, got {other:?}"),
+        };
+        let flen = match record.aux(b"FLEN") {
+            Ok(Aux::U32(value)) => value,
+            other => panic!("expected FLEN u32 tag on every read, got {other:?}"),
+        };
+        observed.push((chromosome, scaling, flen));
+    }
+    observed.sort_by(|left, right| left.0.cmp(&right.0));
+
+    let expected_chr1 = 275.0_f32 / 432.0_f32;
+    let expected_chr2 = 25.0_f32 / 24.0_f32;
+
+    assert_eq!(observed.len(), 4);
+    for (idx, (chromosome, scaling, flen)) in observed.iter().enumerate() {
+        let (expected_chrom, expected_scaling, expected_flen) = if idx < 2 {
+            ("chr1", expected_chr1, 60_u32)
+        } else {
+            ("chr2", expected_chr2, 20_u32)
+        };
+        assert_eq!(chromosome, expected_chrom);
+        assert!(
+            (*scaling - expected_scaling).abs() <= 1e-6,
+            "unexpected scaling for {expected_chrom}: expected {expected_scaling}, got {scaling}"
+        );
+        assert_eq!(
+            *flen, expected_flen,
+            "unexpected FLEN for {expected_chrom}: expected {expected_flen}, got {flen}"
+        );
+    }
 
     Ok(())
 }

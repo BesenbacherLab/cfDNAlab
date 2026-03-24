@@ -3,9 +3,12 @@
 mod fixtures;
 
 use anyhow::Result;
+#[cfg(feature = "cmd_bam_to_bam")]
+use cfdnalab::commands::bam_to_bam::{
+    bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
+};
 use cfdnalab::commands::cli_common::{
-    ApplyGCArgs, ChromosomeArgs, GCWindowsArgs, IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
-    WindowsArgs,
+    ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs, WindowsArgs,
 };
 #[cfg(feature = "cmd_coverage_weights")]
 use cfdnalab::commands::coverage_weights::{
@@ -14,15 +17,12 @@ use cfdnalab::commands::coverage_weights::{
 use cfdnalab::commands::fcoverage::config::FCoverageConfig;
 use cfdnalab::commands::fcoverage::fcoverage::run;
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
-use cfdnalab::commands::gc_bias::{
-    GC_CORRECTION_SCHEMA_VERSION, config::GCConfig, gc_bias::run as run_gc_bias,
-    package::GCCorrectionPackage,
-};
-use cfdnalab::commands::ref_gc_bias::{config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias};
+use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
 use cfdnalab::shared::fragment::minimal_fragment::collect_fragment_from_records;
 use cfdnalab::shared::read::default_include_read_paired_end;
 use fixtures::{
-    BamFixture, FragmentSpec, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, ReadSpec, bam_from_specs,
+    BamFixture, FragmentSpec, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, ReadSpec,
+    bam_from_specs, build_real_neutral_gc_package, build_real_non_neutral_gc_package,
     long_fragment_bam, paired_fragment, read_zst_to_string, simple_inward_bam,
     simple_reference_twobit, write_bed, write_scaling_factors,
 };
@@ -143,67 +143,6 @@ fn build_gc_package(path: &Path, end_offset: u64) -> Result<()> {
     };
     package.write_npz(path)?;
     Ok(())
-}
-
-fn build_real_neutral_gc_package(
-    bam_path: &Path,
-    reference_path: &Path,
-    out_dir: &Path,
-) -> Result<std::path::PathBuf> {
-    let fragment_length = 60_u32;
-    let ref_gc_dir = TempDir::new()?;
-    let ref_cfg = RefGCBiasConfig {
-        ref_genome: Ref2BitRequiredArgs {
-            ref_2bit: reference_path.to_path_buf(),
-        },
-        output_dir: ref_gc_dir.path().to_path_buf(),
-        n_threads: 1,
-        // `simple_reference_twobit()` is 256 bp long. With fragment length 60 there are
-        // only 256 - 60 + 1 = 197 valid start positions, so keep `n_positions` well below that.
-        n_positions: 100,
-        seed: Some(7),
-        windows: Default::default(),
-        chromosomes: base_chromosomes(&["chr1"]),
-        blacklist: None,
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
-            min_fragment_length: fragment_length,
-            max_fragment_length: fragment_length,
-        },
-        end_offset: 0,
-        skip_interpolation: true,
-        smoothing_sigma: 0.55,
-        smoothing_radius: 2,
-        skip_smoothing: true,
-        tile_size: 1_000_000,
-    };
-    run_ref_gc_bias(&ref_cfg)?;
-
-    let gc_out_dir = out_dir.join("real_gc_bias");
-    std::fs::create_dir_all(&gc_out_dir)?;
-    let mut gc_cfg = GCConfig::new(
-        IOCArgs {
-            bam: bam_path.to_path_buf(),
-            output_dir: gc_out_dir.clone(),
-            n_threads: 1,
-        },
-        reference_path.to_path_buf(),
-        ref_gc_dir.path().to_path_buf(),
-        base_chromosomes(&["chr1"]),
-    );
-    gc_cfg.set_min_mapq(0);
-    gc_cfg.set_tile_size(1_000_000);
-    gc_cfg.set_min_window_acgt_pct(0);
-    gc_cfg.set_num_extreme_gc_bins(0);
-    gc_cfg.set_num_short_length_bins(0);
-    gc_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
-    gc_cfg.set_windows(GCWindowsArgs {
-        by_size: None,
-        by_bed: None,
-        global: true,
-    });
-    run_gc_bias(&gc_cfg)?;
-
-    Ok(gc_out_dir.join("gc_bias_correction.npz"))
 }
 
 #[cfg(feature = "cmd_coverage_weights")]
@@ -1868,6 +1807,154 @@ fn real_coverage_weights_tsv_changes_fcoverage_per_base_not_by_fragment_average(
     Ok(())
 }
 
+#[cfg(feature = "cmd_coverage_weights")]
+#[test]
+fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_fcoverage()
+-> Result<()> {
+    // Arrange:
+    // Build a real multi-chromosome scaling TSV and consume it through per-position coverage.
+    //
+    // Producer BAM:
+    // - chr1 has one 61 bp fragment [20, 81)
+    // - chr2 has two identical 61 bp fragments [20, 81)
+    //
+    // With `bin_size = stride = 20`, each scaling bin is just the average positional coverage in
+    // that 20 bp interval.
+    //
+    // Non-zero producer bins are:
+    // - chr1:
+    //     [20,40): 1
+    //     [40,60): 1
+    //     [60,80): 1
+    //     [80,100): 1/20
+    // - chr2:
+    //     [20,40): 2
+    //     [40,60): 2
+    //     [60,80): 2
+    //     [80,100): 1/10
+    //
+    // Shared global mean over the 8 non-zero bins:
+    //   ((3 * 1) + 1/20 + (3 * 2) + 1/10) / 8
+    // = (3 + 1/20 + 6 + 1/10) / 8
+    // = 183/160.
+    //
+    // Written scaling factors = mean / avg_pos_cov:
+    // - chr1 [20,80):  (183/160) / 1    = 183/160
+    // - chr1 [80,100): (183/160) / 1/20 = 183/8
+    // - chr2 [20,80):  (183/160) / 2    = 183/320
+    // - chr2 [80,100): (183/160) / 1/10 = 183/16
+    //
+    // Consumer BAM:
+    // - one 61 bp fragment [20, 81) on chr1
+    // - one 61 bp fragment [20, 81) on chr2
+    //
+    // `fcoverage` applies scaling per covered base, so the expected bedGraph is:
+    // - chr1  [20,80): 183/160
+    // - chr1  [80,81): 183/8
+    // - chr2  [20,80): 183/320
+    // - chr2  [80,81): 183/16
+    let producer_bam = bam_from_specs(
+        vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
+        vec![
+            paired_fragment_on_tid(0, 20, 61, 20),
+            paired_fragment_on_tid(1, 20, 61, 20),
+            paired_fragment_on_tid(1, 20, 61, 20),
+        ],
+        Vec::new(),
+        "fcoverage_multichrom_scaling_producer",
+    )?;
+    let consumer_bam = bam_from_specs(
+        vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
+        vec![
+            paired_fragment_on_tid(0, 20, 61, 20),
+            paired_fragment_on_tid(1, 20, 61, 20),
+        ],
+        Vec::new(),
+        "fcoverage_multichrom_scaling_consumer",
+    )?;
+    let temp = TempDir::new()?;
+    let weights_out_dir = temp.path().join("coverage_weights");
+    std::fs::create_dir_all(&weights_out_dir)?;
+
+    let mut scaling_cfg = CoverageWeightsConfig::new(
+        IOCArgs {
+            bam: producer_bam.bam.clone(),
+            output_dir: weights_out_dir.clone(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1", "chr2"]),
+    );
+    scaling_cfg.set_bin_size(20);
+    scaling_cfg.set_stride(20);
+    scaling_cfg.set_min_mapq(0);
+    scaling_cfg.set_require_proper_pair(false);
+    scaling_cfg.set_output_prefix("coverage".to_string());
+    {
+        let frag = scaling_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 200;
+    }
+
+    // Act
+    run_coverage_weights(&scaling_cfg)?;
+    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+
+    let mut cfg = FCoverageConfig::new(
+        IOCArgs {
+            bam: consumer_bam.bam.clone(),
+            output_dir: temp.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1", "chr2"]),
+    );
+    cfg.set_output_prefix("testcov");
+    cfg.set_tile_size(1_000);
+    cfg.set_ignore_gap(false);
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_decimals(6);
+    let mut scale_genome = ScaleGenomeArgs::default();
+    scale_genome.scaling_factors = Some(scaling_path);
+    cfg.set_scale_genome(scale_genome);
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 200;
+    }
+    run(&cfg)?;
+
+    // Assert
+    let output_path = temp
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    let expected = [
+        ("chr1", 20_u64, 80_u64, 183.0_f64 / 160.0_f64),
+        ("chr1", 80_u64, 81_u64, 183.0_f64 / 8.0_f64),
+        ("chr2", 20_u64, 80_u64, 183.0_f64 / 320.0_f64),
+        ("chr2", 80_u64, 81_u64, 183.0_f64 / 16.0_f64),
+    ];
+    assert_eq!(lines.len(), expected.len());
+    for (line, (expected_chr, expected_start, expected_end, expected_value)) in
+        lines.iter().zip(expected.iter())
+    {
+        let parts: Vec<_> = line.split('\t').collect();
+        assert_eq!(parts.len(), 4, "unexpected bedGraph row: {line}");
+        assert_eq!(parts[0], *expected_chr);
+        assert_eq!(parts[1].parse::<u64>()?, *expected_start);
+        assert_eq!(parts[2].parse::<u64>()?, *expected_end);
+        let actual = parts[3].parse::<f64>()?;
+        assert!(
+            (actual - expected_value).abs() <= 1e-6,
+            "expected value {expected_value} for row {line}, got {actual}"
+        );
+    }
+
+    Ok(())
+}
+
 #[test]
 fn gc_tag_weights_unpaired_positional_output() -> Result<()> {
     let base_bam = single_read_fragment_bam("fcoverage_gc_tag_base")?;
@@ -1932,6 +2019,107 @@ fn gc_tag_averages_valid_mate_weights_in_paired_mode() -> Result<()> {
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(lines, vec!["chr1\t20\t80\t3"]);
+
+    Ok(())
+}
+
+#[cfg(feature = "cmd_bam_to_bam")]
+#[test]
+fn bam_to_bam_gc_file_output_drives_fcoverage_gc_tag_same_as_original_gc_file() -> Result<()> {
+    // Arrange:
+    // `simple_inward_bam()` contains one paired fragment spanning [20, 80), length 60.
+    // We build the smallest GC package that assigns a constant weight 3.0 to every 60 bp
+    // fragment:
+    // - length_edges = [60, 61]
+    // - gc_edges     = [0, 101]
+    // - correction_matrix = [[3.0]]
+    //
+    // Then we compare two logically equivalent released workflows:
+    // 1. original BAM -> `fcoverage --gc-file <pkg>`
+    // 2. original BAM -> `bam-to-bam --gc-file <pkg>` -> `fcoverage --gc-tag GC`
+    //
+    // The only fragment covers [20, 80), so both workflows must yield the same positional output:
+    //   chr1  20  80  3
+    let bam = simple_inward_bam()?;
+    let reference = simple_reference_twobit()?;
+    let temp = TempDir::new()?;
+    let tagged_bam_path = temp.path().join("tagged_gc.bam");
+    let gc_path = temp.path().join("constant_gc_pkg.npz");
+
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 0,
+        length_edges: vec![60, 61],
+        gc_edges: vec![0, 101],
+        length_bin_frequencies: array![1.0_f64],
+        correction_matrix: array![[3.0_f64]],
+    };
+    package.write_npz(&gc_path)?;
+
+    let mut bam_to_bam_cfg = BamToBamConfig::new(
+        bam.bam.clone(),
+        tagged_bam_path.clone(),
+        base_chromosomes(&["chr1"]),
+    );
+    bam_to_bam_cfg.skip_chromosome_sort = true;
+    bam_to_bam_cfg.min_mapq = 0;
+    bam_to_bam_cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+        gc_file: Some(gc_path.clone()),
+        drop_invalid_gc: false,
+    });
+    bam_to_bam_cfg.set_ref_2bit(Some(reference.path.clone()));
+    {
+        let frag = bam_to_bam_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 60;
+        frag.max_fragment_length = 60;
+    }
+
+    let original_out = TempDir::new()?;
+    let tagged_out = TempDir::new()?;
+    let mut original_cfg = base_config(&bam.bam, original_out.path());
+    original_cfg.set_per_window(CoverageWindowAction::Average);
+    original_cfg.set_decimals(0);
+    original_cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path.clone()),
+        gc_tag: None,
+        drop_invalid_gc: false,
+    });
+    original_cfg.set_ref_2bit(Some(reference.path.clone()));
+    {
+        let frag = original_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 60;
+        frag.max_fragment_length = 60;
+    }
+
+    // Act 1: write the tagged BAM from the real producer and index it for downstream fetching.
+    run_bam_to_bam(&bam_to_bam_cfg)?;
+    build_bai_for_test_bam(&tagged_bam_path)?;
+
+    // Act 2: compare original `--gc-file` consumption with downstream `--gc-tag GC`.
+    run(&original_cfg)?;
+
+    let mut tagged_cfg = base_config(&tagged_bam_path, tagged_out.path());
+    tagged_cfg.set_per_window(CoverageWindowAction::Average);
+    tagged_cfg.set_decimals(0);
+    tagged_cfg.set_gc(ApplyGCArgs {
+        gc_file: None,
+        gc_tag: Some("GC".to_string()),
+        drop_invalid_gc: false,
+    });
+    {
+        let frag = tagged_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 60;
+        frag.max_fragment_length = 60;
+    }
+    run(&tagged_cfg)?;
+
+    // Assert
+    let original_text =
+        read_zst_to_string(&original_out.path().join("testcov.fcoverage.per_position.bedgraph.zst"))?;
+    let tagged_text =
+        read_zst_to_string(&tagged_out.path().join("testcov.fcoverage.per_position.bedgraph.zst"))?;
+    assert_eq!(original_text, tagged_text);
+    assert_eq!(original_text.trim(), "chr1\t20\t80\t3");
 
     Ok(())
 }
@@ -2191,7 +2379,7 @@ fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_fcove
     let bam = simple_inward_bam()?;
     let ref_twobit = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
-    let gc_path = build_real_neutral_gc_package(&bam.bam, &ref_twobit.path, out_dir.path())?;
+    let gc_path = build_real_neutral_gc_package(&bam.bam, &ref_twobit.path, out_dir.path(), 60)?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(0);
@@ -2227,6 +2415,115 @@ fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_fcove
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(lines, vec!["chr1\t20\t80\t1"]);
+
+    Ok(())
+}
+
+#[test]
+fn real_ref_gc_bias_then_gc_bias_package_changes_fcoverage_in_expected_direction() -> Result<()> {
+    // Arrange:
+    // Use the same real two-bin producer logic as the non-neutral `gc-bias` command test:
+    //
+    // Reference genome:
+    // - chr1[0,100)   = all A
+    // - chr1[100,200) = all C
+    //
+    // `ref-gc-bias` is run for length 10 with:
+    // - all 191 valid starts sampled
+    // - BED windows [0,91) and [100,191), so only pure-A and pure-C starts are counted
+    // - that yields balanced reference support: 91 pure-A starts and 91 pure-C starts
+    //
+    // `gc-bias` is then run on a sample BAM with:
+    // - one A-only fragment [10,20)   -> GC%=0
+    // - nine C-only fragments in [110,200) -> GC%=100
+    //
+    // The resulting real correction package is hand-derived as:
+    // - GC bin edges [0, 1, 100]
+    // - correction weights [5.0, 5/9]
+    //
+    // Downstream `fcoverage` should therefore apply:
+    // - weight 5.0 to the A-only fragment [10,20)
+    // - weight 5/9 to each C-only fragment
+    //
+    // The nine C fragments are disjoint 10 bp runs, so the final bedGraph should be:
+    // - chr1 10 20 5
+    // - chr1 110 200 5/9
+    let reference = fixtures::twobit_from_sequences(
+        "fcoverage_real_non_neutral_reference",
+        vec![(
+            "chr1".to_string(),
+            format!("{}{}", "A".repeat(100), "C".repeat(100)),
+        )],
+    )?;
+    let starts = [10_i64, 110, 120, 130, 140, 150, 160, 170, 180, 190];
+    let fragments = starts
+        .into_iter()
+        .map(|start| paired_fragment(start, 10, 5))
+        .collect();
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        fragments,
+        Vec::new(),
+        "fcoverage_real_non_neutral_bam",
+    )?;
+
+    let out_dir = TempDir::new()?;
+    // Reference is 200 bp and fragment length is 10, so there are exactly:
+    //   200 - 10 + 1 = 191 valid starts.
+    // Sampling all valid starts plus BED windows `[0,91)` and `[100,191)` makes the
+    // reference-side masses exactly balanced between the pure-A and pure-C bins.
+    let gc_path = build_real_non_neutral_gc_package(
+        &bam.bam,
+        &reference.path,
+        out_dir.path(),
+        10,
+        "chr1\t0\t91\nchr1\t100\t191\n",
+        191,
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+
+    // Act
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        drop_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 10;
+    }
+    run(&cfg)?;
+
+    // Assert
+    let output_path = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(lines.len(), 2);
+
+    let expected = [
+        ("chr1", 10_u64, 20_u64, 5.0_f64),
+        ("chr1", 110_u64, 200_u64, 5.0_f64 / 9.0_f64),
+    ];
+    for (line, (expected_chr, expected_start, expected_end, expected_value)) in
+        lines.iter().zip(expected.iter())
+    {
+        let parts: Vec<_> = line.split('\t').collect();
+        assert_eq!(parts.len(), 4, "unexpected bedGraph row: {line}");
+        assert_eq!(parts[0], *expected_chr);
+        assert_eq!(parts[1].parse::<u64>()?, *expected_start);
+        assert_eq!(parts[2].parse::<u64>()?, *expected_end);
+        let actual = parts[3].parse::<f64>()?;
+        assert!(
+            (actual - expected_value).abs() <= 1e-6,
+            "expected value {expected_value} for row {line}, got {actual}"
+        );
+    }
 
     Ok(())
 }
