@@ -19,7 +19,8 @@ use cfdnalab::commands::midpoints::config::MidpointsConfig;
 use cfdnalab::commands::midpoints::midpoints::run;
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, build_real_neutral_gc_package,
-    build_real_non_neutral_gc_package, complex_bam_fixture, simple_reference_twobit,
+    bam_from_specs_strict_identity, build_real_non_neutral_gc_package, complex_bam_fixture,
+    simple_reference_twobit,
     twobit_from_sequences, write_bed,
 };
 use ndarray::array;
@@ -30,6 +31,8 @@ use rust_htslib::bam::{self, Read, Reader};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tempfile::TempDir;
+
+const MIDPOINT_F32_TOL: f32 = 1e-5;
 
 fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
     ChromosomeArgs {
@@ -116,6 +119,27 @@ fn single_read_fragment_bam(
         }],
         name,
     )
+}
+
+fn assert_midpoint_profile_row_matches(
+    row: &[f32],
+    expected_weight_at_pos5: f32,
+    context: &str,
+) {
+    // `midpoints` accumulates profile mass in `Vec<f32>` and writes the final NPY as `f32`.
+    // So the scientifically correct contract here is the stored `f32` value, not ideal `f64`
+    // arithmetic carried all the way through the test expectation.
+    for (position, value) in row.iter().enumerate() {
+        let expected = if position == 5 {
+            expected_weight_at_pos5
+        } else {
+            0.0
+        };
+        assert!(
+            (value - expected).abs() <= MIDPOINT_F32_TOL,
+            "{context}: unexpected midpoint weight at position {position}: expected {expected}, got {value}"
+        );
+    }
 }
 
 #[derive(Debug)]
@@ -247,7 +271,7 @@ fn length_bin_range_spec_matches_brace_expansion_edges() -> Result<()> {
 }
 
 #[test]
-fn default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
+fn midpoints_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
     // Arrange:
     // Count one group over one 11 bp window [45, 56). Use three identical 61 bp fragments
     // with midpoint exactly 50, so each accepted fragment contributes one count at profile
@@ -268,7 +292,9 @@ fn default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> 
         fragment.reverse.mapq = mapq;
         fragment
     };
-    let bam = bam_from_specs(
+    // All three fragments share the same start, so the strict fixture is required to keep them as
+    // three distinct molecules instead of one reused qname.
+    let bam = bam_from_specs_strict_identity(
         vec![("chr1".to_string(), 200)],
         vec![
             fragment_with_mapq(60),
@@ -641,17 +667,18 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction
     // Build a real non-neutral GC package, then consume it through `midpoints`.
     //
     // Reference genome:
-    // - chr1[0,100)   = all A
-    // - chr1[100,200) = all C
+    // - chr1[0,100)    = all A
+    // - chr1[100,101)  = one-base spacer that is excluded from the reference BED windows
+    // - chr1[101,201)  = all C
     //
     // Real producer setup:
     // - fragment length is fixed at 61, so midpoint placement is deterministic
-    // - valid starts are 0..=139, because 200 - 61 + 1 = 140
-    // - reference BED windows keep only pure-start intervals:
-    //     [0,40)   -> starts 0..=39   -> GC%=0
-    //     [100,140) -> starts 100..=139 -> GC%=100
-    // - starts 40..=99, which would cross the A/C boundary and create intermediate GC%, are
-    //   intentionally excluded
+    // - valid starts are 0..=140, because 201 - 61 + 1 = 141
+    // - reference BED windows keep only starts that both fall inside the BED row and leave room
+    //   for the full 61 bp fragment:
+    //     [0,100)     -> starts 0..=39     -> GC%=0
+    //     [101,201)   -> starts 101..=140  -> GC%=100
+    // - starts 40..=100 would cross the spacer or boundary and are intentionally excluded
     //
     // So the reference-side counts are exactly balanced:
     // - 40 starts at GC%=0
@@ -681,11 +708,13 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction
         "midpoints_real_non_neutral_reference",
         vec![(
             "chr1".to_string(),
-            format!("{}{}", "A".repeat(100), "C".repeat(100)),
+            format!("{}N{}", "A".repeat(100), "C".repeat(100)),
         )],
     )?;
-    let producer_bam = bam_from_specs(
-        vec![("chr1".to_string(), 200)],
+    // The producer deliberately stacks nine identical C-only fragments at one start. Use the
+    // strict helper so those molecules keep distinct qnames in the BAM pairing layer.
+    let producer_bam = bam_from_specs_strict_identity(
+        vec![("chr1".to_string(), 201)],
         {
             let mut fragments = vec![paired_fragment_on_tid(0, 10, 61, 20)];
             for _ in 0..9 {
@@ -697,7 +726,7 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction
         "midpoints_real_non_neutral_producer",
     )?;
     let consumer_bam = bam_from_specs(
-        vec![("chr1".to_string(), 200)],
+        vec![("chr1".to_string(), 201)],
         vec![
             paired_fragment_on_tid(0, 10, 61, 20),
             paired_fragment_on_tid(0, 110, 61, 20),
@@ -711,10 +740,13 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction
         &reference.path,
         temp.path(),
         61,
-        "chr1\t0\t40\nchr1\t100\t140\n",
-        // Chromosome length 200 and fragment length 61 give:
-        //   200 - 61 + 1 = 140 valid starts.
-        140,
+        "chr1\t0\t100\nchr1\t101\t201\n",
+        // Chromosome length 201 and fragment length 61 give 141 valid starts in total. With
+        // `ref-gc-bias` BED mode, only starts that fit entirely inside the same BED row count, so
+        // these windows contribute exactly:
+        // - starts 0..=39    -> 40 pure-A starts
+        // - starts 101..=140 -> 40 pure-C starts
+        141,
     )?;
     let bed_path = temp.path().join("windows.bed");
     write_bed(
@@ -758,16 +790,10 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction
     for (group_name, expected_weight) in expected {
         let group_idx = group_to_idx[group_name];
         let row = arr.slice(ndarray::s![group_idx, 0, ..]).to_vec();
-        for (position, value) in row.iter().enumerate() {
-            let expected_value = if position == 5 { expected_weight } else { 0.0 };
-            assert!(
-                (value - expected_value).abs() <= 1e-6,
-                "unexpected midpoint weight for {group_name} at position {position}: expected {expected_value}, got {value}"
-            );
-        }
+        assert_midpoint_profile_row_matches(&row, expected_weight, group_name);
     }
     assert!(
-        (arr.sum() - (5.0_f32 + 5.0_f32 / 9.0_f32)).abs() <= 1e-6,
+        (arr.sum() - (5.0_f32 + 5.0_f32 / 9.0_f32)).abs() <= MIDPOINT_F32_TOL,
         "unexpected total midpoint mass {}",
         arr.sum()
     );
@@ -970,15 +996,9 @@ fn coverage_weights_tsv_changes_midpoints_by_full_fragment_average_not_window_ov
 
     let expected_weight = 60.0_f32 / 61.0_f32;
     let row = arr.slice(ndarray::s![0, 0, ..]).to_vec();
-    for (position, value) in row.iter().enumerate() {
-        let expected = if position == 5 { expected_weight } else { 0.0 };
-        assert!(
-            (value - expected).abs() <= 1e-6,
-            "unexpected midpoint weight at position {position}: expected {expected}, got {value}"
-        );
-    }
+    assert_midpoint_profile_row_matches(&row, expected_weight, "single-group scaling");
     assert!(
-        (arr.sum() - expected_weight).abs() <= 1e-6,
+        (arr.sum() - expected_weight).abs() <= MIDPOINT_F32_TOL,
         "expected total midpoint mass {expected_weight}, got {}",
         arr.sum()
     );
@@ -1047,7 +1067,9 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_midpo
     // No GC weighting is applied, so the final midpoint profile must contain:
     // - group_chr1: 1.5 at position 5
     // - group_chr2: 0.75 at position 5
-    let producer_bam = bam_from_specs(
+    // chr2 deliberately stacks two identical fragments at one start. Use strict identity so the
+    // producer really contains three molecules and the derived scaling TSV is correct.
+    let producer_bam = bam_from_specs_strict_identity(
         vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
         vec![
             paired_fragment_on_tid(0, 20, 61, 20),
@@ -1131,16 +1153,10 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_midpo
     for (group_name, expected_weight) in [("group_chr1", 1.5_f32), ("group_chr2", 0.75_f32)] {
         let group_idx = group_to_idx[group_name];
         let row = arr.slice(ndarray::s![group_idx, 0, ..]).to_vec();
-        for (position, value) in row.iter().enumerate() {
-            let expected = if position == 5 { expected_weight } else { 0.0 };
-            assert!(
-                (value - expected).abs() <= 1e-6,
-                "unexpected midpoint weight for {group_name} at position {position}: expected {expected}, got {value}"
-            );
-        }
+        assert_midpoint_profile_row_matches(&row, expected_weight, group_name);
     }
     assert!(
-        (arr.sum() - expected_total).abs() <= 1e-6,
+        (arr.sum() - expected_total).abs() <= MIDPOINT_F32_TOL,
         "expected total midpoint mass {expected_total}, got {}",
         arr.sum()
     );
@@ -1201,16 +1217,123 @@ fn gc_tag_pair_average_sets_midpoint_profile_weight() -> Result<()> {
     assert_eq!(arr.shape(), &[1, 1, 11]);
 
     let row = arr.slice(ndarray::s![0, 0, ..]).to_vec();
-    for (position, value) in row.iter().enumerate() {
-        let expected = if position == 5 { 3.0 } else { 0.0 };
-        assert!(
-            (value - expected).abs() <= 1e-6,
-            "unexpected midpoint GC-tag weight at position {position}: expected {expected}, got {value}"
-        );
-    }
+    assert_midpoint_profile_row_matches(&row, 3.0, "gc-tag");
     assert!(
-        (arr.sum() - 3.0).abs() <= 1e-6,
+        (arr.sum() - 3.0).abs() <= MIDPOINT_F32_TOL,
         "expected total midpoint mass 3.0, got {}",
+        arr.sum()
+    );
+
+    Ok(())
+}
+
+#[cfg(feature = "cmd_coverage_weights")]
+#[test]
+fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
+    // Arrange:
+    // Producer BAM:
+    // - `simple_inward_bam()` contains one fragment [20, 80) on chr1.
+    // - With `bin_size = stride = 20`, the written scaling TSV is the identity profile:
+    //     [20,40): 1
+    //     [40,60): 1
+    //     [60,80): 1
+    //     everything else: 0
+    //
+    // Consumer BAM:
+    // - One odd-length fragment [20, 81), length 61.
+    // - The midpoint is therefore deterministic:
+    //     20 + floor(61 / 2) = 50.
+    // - One window [45, 56) receives that midpoint at profile position:
+    //     50 - 45 = 5.
+    //
+    // Scaling derivation:
+    // - `midpoints` averages scaling over the full fragment span [20, 81):
+    //     [20,40): 20 bp at factor 1
+    //     [40,60): 20 bp at factor 1
+    //     [60,80): 20 bp at factor 1
+    //     [80,81):  1 bp at factor 0
+    // - Average scaling over the fragment is therefore:
+    //     (20 + 20 + 20 + 0) / 61 = 60 / 61.
+    //
+    // GC derivation:
+    // - Use the smallest valid GC package for the only supported fragment length 61:
+    //     length_edges = [61, 62]
+    //     gc_edges     = [0, 101]
+    //     correction_matrix = [[3.0]]
+    // - Every accepted fragment therefore gets GC weight 3.0.
+    //
+    // Combination contract from `midpoints.rs`:
+    // - The command increments counts by `scaling_weight * gc_weight`.
+    // - So the only non-zero output cell must be:
+    //     3.0 * (60 / 61) = 180 / 61
+    //   at group 0, length bin 0, position 5.
+    let producer_bam = fixtures::simple_inward_bam()?;
+    let consumer_bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        vec![paired_fragment_on_tid(0, 20, 61, 20)],
+        Vec::new(),
+        "midpoints_gc_and_scaling_consumer",
+    )?;
+    let reference = simple_reference_twobit()?;
+    let temp = TempDir::new()?;
+    let weights_out_dir = temp.path().join("coverage_weights");
+    std::fs::create_dir_all(&weights_out_dir)?;
+    let scaling_cfg = make_simple_coverage_weights_config(&weights_out_dir, &producer_bam.bam);
+    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+    let gc_path = temp.path().join("constant_gc_pkg.npz");
+    let bed_path = temp.path().join("windows.bed");
+    write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
+
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 0,
+        length_edges: vec![61, 62],
+        gc_edges: vec![0, 101],
+        length_bin_frequencies: array![1.0_f64],
+        correction_matrix: array![[3.0_f64]],
+    };
+    package.write_npz(&gc_path)?;
+
+    // Act
+    run_coverage_weights(&scaling_cfg)?;
+
+    let mut cfg = MidpointsConfig::new(
+        IOCArgs {
+            bam: consumer_bam.bam.clone(),
+            output_dir: temp.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+        bed_path,
+    );
+    cfg.set_output_prefix("sites");
+    cfg.set_length_bins(vec![61, 62]);
+    cfg.set_tile_size(1_000);
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    let mut scale_genome = ScaleGenomeArgs::default();
+    scale_genome.scaling_factors = Some(scaling_path);
+    cfg.set_scale_genome(scale_genome);
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        drop_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+
+    run(&cfg)?;
+
+    // Assert
+    let counts_path = temp.path().join("sites.midpoint_profiles.npy");
+    let arr: Array3<f32> = read_npy(&counts_path)?;
+    assert_eq!(arr.shape(), &[1, 1, 11]);
+
+    let expected_weight = 180.0_f32 / 61.0_f32;
+    let row = arr.slice(ndarray::s![0, 0, ..]).to_vec();
+    assert_midpoint_profile_row_matches(&row, expected_weight, "gc x scaling");
+    assert!(
+        (arr.sum() - expected_weight).abs() <= MIDPOINT_F32_TOL,
+        "expected total midpoint mass {expected_weight}, got {}",
         arr.sum()
     );
 

@@ -136,6 +136,7 @@ pub fn determine_fetch_span(
     window_ctx: &WindowContext,
     tile_window_span: Option<&TileWindowSpan>,
     chrom_len: u64,
+    halo_bp: u64,
 ) -> Result<Option<Interval<u64>>> {
     let chrom_len_u32 = chrom_len.min(u32::MAX as u64) as u32;
     match window_ctx.spec {
@@ -154,7 +155,7 @@ pub fn determine_fetch_span(
                 tile,
                 chrom_len.min(chrom_len_u32 as u64),
                 window_span,
-                0,
+                halo_bp,
             )?)
         }
     }
@@ -313,4 +314,9 @@ pub fn reduce_chromosome_tile_results(
 
     merged.sort_unstable_by_key(|window| window.original_idx);
     Ok(merged)
+}
+
+#[cfg(test)]
+mod tests {
+    include!("tiling_tests.rs");
 }

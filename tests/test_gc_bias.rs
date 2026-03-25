@@ -13,6 +13,7 @@ mod tests_gc_bias {
         gc_bias::{
             GC_CORRECTION_SCHEMA_VERSION,
             binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
+            counting::gc_percent_widths,
             config::GCConfig,
             correct::{GCCorrector, LengthAgnosticGCCorrector, MarginalizeLengthsWeightingScheme},
             gc_bias::{interpolate_masked_corrections, run as run_gc_bias},
@@ -26,6 +27,18 @@ mod tests_gc_bias {
         },
         ref_gc_bias::{config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias},
     };
+
+    const GC_COMMAND_F64_TOL: f64 = 1e-6;
+
+    fn assert_gc_command_close(actual: f64, expected: f64, context: &str) {
+        // The outlier helpers estimate quantiles/bounds in `f32` and only then write the matrix
+        // back as `f64`, so the stable contract here is "matches the hand-derived value within the
+        // command's float precision", not bit-exact `f64` arithmetic on the ideal decimal.
+        assert!(
+            (actual - expected).abs() <= GC_COMMAND_F64_TOL,
+            "{context}: expected {expected}, got {actual}"
+        );
+    }
 
     #[test]
     fn masks_extreme_gc_bins_per_side_in_square_matrix() {
@@ -78,9 +91,16 @@ mod tests_gc_bias {
         // Act: interpolate masked bins.
         interpolate_masked_corrections(&mut matrix, &mask)?;
 
-        // Assert: the masked first row is filled using neighbouring lengths.
-        assert!((matrix[(0, 0)] - 2.0).abs() < 1e-6);
-        assert!((matrix[(0, 1)] - 2.0).abs() < 1e-6);
+        // Assert:
+        // - the masked first row is filled from the nearest supported row
+        // - the supported rows remain unchanged
+        let expected = array![
+            [2.0_f64, 2.0_f64],
+            [2.0_f64, 2.0_f64],
+            [4.0_f64, 4.0_f64],
+            [6.0_f64, 6.0_f64],
+        ];
+        assert_eq!(matrix, expected);
         Ok(())
     }
 
@@ -185,8 +205,18 @@ mod tests_gc_bias {
             &MarginalizeLengthsWeightingScheme::Equal,
         )?;
 
-        assert!((agnostic.get_correction_weight(0)? - 2.0).abs() < 1e-12);
-        assert!((agnostic.get_correction_weight(50)? - 3.5).abs() < 1e-12);
+        for gc_pct in 0..50 {
+            assert!(
+                (agnostic.get_correction_weight(gc_pct)? - 2.0).abs() < 1e-12,
+                "equal weighting should map GC% {gc_pct} into the first GC bin"
+            );
+        }
+        for gc_pct in 50..=100 {
+            assert!(
+                (agnostic.get_correction_weight(gc_pct)? - 3.5).abs() < 1e-12,
+                "equal weighting should map GC% {gc_pct} into the second GC bin"
+            );
+        }
         Ok(())
     }
 
@@ -199,9 +229,19 @@ mod tests_gc_bias {
             &MarginalizeLengthsWeightingScheme::Coverage,
         )?;
 
-        // Weighted average with frequencies [2, 8]
-        assert!((agnostic.get_correction_weight(0)? - 2.6).abs() < 1e-12);
-        assert!((agnostic.get_correction_weight(50)? - 4.4).abs() < 1e-12);
+        // Weighted average with frequencies [0.2, 0.8]
+        for gc_pct in 0..50 {
+            assert!(
+                (agnostic.get_correction_weight(gc_pct)? - 2.6).abs() < 1e-12,
+                "coverage weighting should map GC% {gc_pct} into the first GC bin"
+            );
+        }
+        for gc_pct in 50..=100 {
+            assert!(
+                (agnostic.get_correction_weight(gc_pct)? - 4.4).abs() < 1e-12,
+                "coverage weighting should map GC% {gc_pct} into the second GC bin"
+            );
+        }
         Ok(())
     }
 
@@ -215,8 +255,18 @@ mod tests_gc_bias {
         )?;
 
         // Row with highest frequency is [3.0, 5.0]
-        assert!((agnostic.get_correction_weight(0)? - 3.0).abs() < 1e-12);
-        assert!((agnostic.get_correction_weight(50)? - 5.0).abs() < 1e-12);
+        for gc_pct in 0..50 {
+            assert!(
+                (agnostic.get_correction_weight(gc_pct)? - 3.0).abs() < 1e-12,
+                "max-coverage weighting should map GC% {gc_pct} into the first GC bin"
+            );
+        }
+        for gc_pct in 50..=100 {
+            assert!(
+                (agnostic.get_correction_weight(gc_pct)? - 5.0).abs() < 1e-12,
+                "max-coverage weighting should map GC% {gc_pct} into the second GC bin"
+            );
+        }
         Ok(())
     }
 
@@ -293,7 +343,7 @@ mod tests_gc_bias {
     }
 
     #[test]
-    fn default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
+    fn gc_bias_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
         // Arrange:
         // Use the repeated 256 bp ACGT reference from `simple_reference_twobit()`.
         // For fragment length 60, every 60 bp fragment contains exactly 30 GC bases because:
@@ -561,6 +611,20 @@ mod tests_gc_bias {
         let ref_gc_dir = TempDir::new()?;
         write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
 
+        let baseline_out_dir = TempDir::new()?;
+        let baseline_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            baseline_out_dir.path(),
+        );
+        run_gc_bias(&baseline_cfg)?;
+        let baseline_package = GCCorrectionPackage::from_file(
+            baseline_out_dir.path().join("gc_bias_correction.npz"),
+        )?;
+        assert_eq!(baseline_package.correction_matrix.dim(), (1, 1));
+        assert!((baseline_package.correction_matrix[(0, 0)] - 1.0).abs() < 1e-12);
+
         let out_dir = TempDir::new()?;
         let blacklist_path = out_dir.path().join("blacklist.bed");
         fixtures::write_bed(&blacklist_path, &[("chr1", 0, 256, "all_masked")])?;
@@ -613,39 +677,97 @@ mod tests_gc_bias {
         let package = GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
 
         // Assert:
+        // The reference is `ACGT` repeated and the only cfDNA fragment spans [20,80). With
+        // `end_offset = 2`, every counted 56 bp span still contains exactly 28 GC bases:
+        //   GC% = 28 / 56 = 50
+        // The reference-side counts are built from the same repeated sequence and same effective
+        // length, so all mass also lands at GC% 50. With the default 1% GC-bin mass threshold,
+        // greedy GC binning therefore collapses the whole GC axis into one bin [0,100], and the
+        // correction factor in that only cell must be exactly neutral (1.0).
         assert_eq!(package.version, GC_CORRECTION_SCHEMA_VERSION);
         assert_eq!(package.end_offset, 2);
         assert_eq!(package.length_edges, vec![60, 60]);
         assert_eq!(package.length_bin_frequencies.len(), 1);
         assert!((package.length_bin_frequencies[0] - 1.0).abs() < 1e-12);
         assert_eq!(package.correction_matrix.nrows(), 1);
-        assert_eq!(package.gc_edges.len(), package.correction_matrix.ncols() + 1);
-        assert_eq!(package.gc_edges.first().copied(), Some(0));
-        assert_eq!(package.gc_edges.last().copied(), Some(100));
-        assert!(
-            package
-                .correction_matrix
-                .iter()
-                .all(|value| value.is_finite() && *value >= 0.1 && *value <= 10.0),
-            "correction factors should be finite and inside the final clamp range"
-        );
+        assert_eq!(package.correction_matrix.ncols(), 1);
+        assert_eq!(package.gc_edges, vec![0, 100]);
+        assert!((package.correction_matrix[(0, 0)] - 1.0).abs() < 1e-12);
 
         Ok(())
     }
 
     #[test]
-    fn overlapping_and_touching_bed_windows_match_explicitly_merged_gc_bias_run() -> Result<()> {
-        let bam = fixtures::simple_inward_bam()?;
-        let reference = fixtures::simple_reference_twobit()?;
+    fn overlapping_and_touching_bed_windows_does_not_match_explicitly_merged_gc_bias_run() -> Result<()> {
+        // Arrange:
+        // Build one chromosome with a sharp A->C transition:
+        // - chr1[0,100000)   = all A
+        // - chr1[100000,250000) = all C
+        //
+        // Compare two BED descriptions:
+        // - split BED:
+        //     [0,100000)     -- A-only
+        //     [50000,150000) -- overlaps the first window and touches the third at 150000
+        //     [150000,250000) -- C-only
+        // - merged BED:
+        //     [0,250000)
+        //
+        // Sample fragments:
+        // - one A-only fragment at 60000
+        // - nine C-only fragments in the third window at distinct starts
+        //
+        // With exact BED-window semantics:
+        // - split window 1 -> scaled row 11 at GC%=0
+        // - split window 2 -> scaled row 11 at GC%=0
+        // - split window 3 -> scaled row 11 at GC%=100
+        // - average across the three windows:
+        //     GC% 0   -> 22/3
+        //     GC% 100 -> 11/3
+        //
+        // With merged-window semantics:
+        // - one window with raw row [1, 0, ..., 0, 9]
+        // - for length 10 there are 11 reachable GC-count states, so the mean is 10/11
+        // - scaled row becomes:
+        //     GC% 0   -> 1.1
+        //     GC% 100 -> 9.9
+        //
+        // Therefore the split and merged runs must differ. If `gc-bias` ever starts merging BED
+        // windows again, the split run will collapse to the merged result and this test will fail.
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_overlapping_touching_vs_merged_reference",
+            vec![(
+                "chr1".to_string(),
+                format!("{}{}", "A".repeat(100_000), "C".repeat(150_000)),
+            )],
+        )?;
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 250_000)],
+            {
+                let mut fragments = vec![fixtures::paired_fragment(60_000, 10, 5)];
+                for fragment_idx in 0..9 {
+                    fragments.push(fixtures::paired_fragment(
+                        160_000 + (fragment_idx as i64 * 20),
+                        10,
+                        5,
+                    ));
+                }
+                fragments
+            },
+            Vec::new(),
+            "gc_bias_overlapping_touching_vs_merged_bam",
+        )?;
         let ref_gc_dir = TempDir::new()?;
-        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
+        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 10, 0)?;
 
         let split_out = TempDir::new()?;
         let merged_out = TempDir::new()?;
         let split_bed = split_out.path().join("split_windows.bed");
         let merged_bed = merged_out.path().join("merged_windows.bed");
-        std::fs::write(&split_bed, "chr1\t0\t40\nchr1\t20\t60\nchr1\t60\t100\n")?;
-        std::fs::write(&merged_bed, "chr1\t0\t100\n")?;
+        std::fs::write(
+            &split_bed,
+            "chr1\t0\t100000\nchr1\t50000\t150000\nchr1\t150000\t250000\n",
+        )?;
+        std::fs::write(&merged_bed, "chr1\t0\t250000\n")?;
 
         let mut split_cfg =
             make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), split_out.path());
@@ -654,6 +776,13 @@ mod tests_gc_bias {
             by_bed: Some(split_bed),
             global: false,
         });
+        split_cfg.set_min_gc_bin_mass(1.0);
+        split_cfg.set_min_length_bin_mass(0.0);
+        split_cfg.set_min_length_bin_width(1);
+        // Disable package-stage support masking so the split-vs-merged difference survives all
+        // the way into the written correction matrix.
+        split_cfg.set_num_extreme_gc_bins(0);
+        split_cfg.set_num_short_length_bins(0);
 
         let mut merged_cfg =
             make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), merged_out.path());
@@ -662,25 +791,56 @@ mod tests_gc_bias {
             by_bed: Some(merged_bed),
             global: false,
         });
+        merged_cfg.set_min_gc_bin_mass(1.0);
+        merged_cfg.set_min_length_bin_mass(0.0);
+        merged_cfg.set_min_length_bin_width(1);
+        merged_cfg.set_num_extreme_gc_bins(0);
+        merged_cfg.set_num_short_length_bins(0);
 
-        // Manual expectations:
-        // - `gc-bias` flattens overlapping and touching BED windows to unique positions before
-        //   counting sample windows.
-        // - The split BED:
-        //     [0,40), [20,60), [60,100)
-        //   has the same unique covered positions as the explicitly merged BED:
-        //     [0,100)
-        // - The BAM, reference, and reference-GC package are identical across both runs.
-        // - Therefore both command runs must produce exactly the same sample count intermediates
-        //   and exactly the same final correction package.
+        // Act
         run_gc_bias(&split_cfg)?;
         run_gc_bias(&merged_cfg)?;
 
+        // Assert
         let split_avg: ndarray::Array2<f64> =
             read_npy(split_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
         let merged_avg: ndarray::Array2<f64> =
             read_npy(merged_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
-        assert_eq!(split_avg, merged_avg);
+        assert_eq!(split_avg.dim(), (1, 101));
+        assert_eq!(merged_avg.dim(), (1, 101));
+
+        for (gc_pct, &value) in split_avg.row(0).iter().enumerate() {
+            match gc_pct {
+                0 => assert!(
+                    (value - (22.0 / 3.0)).abs() < 1e-12,
+                    "expected 22/3 at GC% 0 in split-window mode, got {value}"
+                ),
+                100 => assert!(
+                    (value - (11.0 / 3.0)).abs() < 1e-12,
+                    "expected 11/3 at GC% 100 in split-window mode, got {value}"
+                ),
+                _ => assert!(
+                    value.abs() < 1e-12,
+                    "expected 0 outside GC% 0/100 in split-window mode, got bin {gc_pct}={value}"
+                ),
+            }
+        }
+        for (gc_pct, &value) in merged_avg.row(0).iter().enumerate() {
+            match gc_pct {
+                0 => assert!(
+                    (value - 1.1).abs() < 1e-12,
+                    "expected 1.1 at GC% 0 in merged-window mode, got {value}"
+                ),
+                100 => assert!(
+                    (value - 9.9).abs() < 1e-12,
+                    "expected 9.9 at GC% 100 in merged-window mode, got {value}"
+                ),
+                _ => assert!(
+                    value.abs() < 1e-12,
+                    "expected 0 outside GC% 0/100 in merged-window mode, got bin {gc_pct}={value}"
+                ),
+            }
+        }
 
         let split_pkg = GCCorrectionPackage::from_file(
             split_out.path().join("gc_bias_correction.npz"),
@@ -693,7 +853,7 @@ mod tests_gc_bias {
         assert_eq!(split_pkg.length_edges, merged_pkg.length_edges);
         assert_eq!(split_pkg.gc_edges, merged_pkg.gc_edges);
         assert_eq!(split_pkg.length_bin_frequencies, merged_pkg.length_bin_frequencies);
-        assert_eq!(split_pkg.correction_matrix, merged_pkg.correction_matrix);
+        assert_ne!(split_pkg.correction_matrix, merged_pkg.correction_matrix);
 
         Ok(())
     }
@@ -775,6 +935,19 @@ mod tests_gc_bias {
         let misaligned_avg: ndarray::Array2<f64> =
             read_npy(misaligned_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
         assert_eq!(aligned_avg, misaligned_avg);
+        assert_eq!(aligned_avg.dim(), (1, 101));
+        for (gc_pct, &value) in aligned_avg.row(0).iter().enumerate() {
+            match gc_pct {
+                0 | 100 => assert!(
+                    (value - 5.5).abs() < 1e-12,
+                    "expected 5.5 at GC% {gc_pct}, got {value}"
+                ),
+                _ => assert!(
+                    value.abs() < 1e-12,
+                    "expected 0 outside GC% 0/100, got bin {gc_pct}={value}"
+                ),
+            }
+        }
 
         let aligned_pkg =
             GCCorrectionPackage::from_file(aligned_out.path().join("gc_bias_correction.npz"))?;
@@ -789,12 +962,287 @@ mod tests_gc_bias {
             misaligned_pkg.length_bin_frequencies
         );
         assert_eq!(aligned_pkg.correction_matrix, misaligned_pkg.correction_matrix);
+        assert_eq!(aligned_pkg.version, GC_CORRECTION_SCHEMA_VERSION);
+        assert_eq!(aligned_pkg.end_offset, 0);
+        assert_eq!(aligned_pkg.length_edges, vec![10, 10]);
+        assert_eq!(aligned_pkg.gc_edges, vec![0, 1, 100]);
+        assert_eq!(aligned_pkg.length_bin_frequencies.len(), 1);
+        assert!((aligned_pkg.length_bin_frequencies[0] - 1.0).abs() < 1e-12);
+        assert_eq!(aligned_pkg.correction_matrix.dim(), (1, 2));
+        assert!((aligned_pkg.correction_matrix[(0, 0)] - 1.0).abs() < 1e-12);
+        assert!((aligned_pkg.correction_matrix[(0, 1)] - 1.0).abs() < 1e-12);
 
         Ok(())
     }
 
     #[test]
-    fn equivalent_bed_windows_match_by_size_gc_bias_run() -> Result<()> {
+    fn multi_chromosome_by_size_gc_bias_accumulates_windows_across_chromosomes() -> Result<()> {
+        // Arrange:
+        // Build two 100 bp chromosomes and count one 10 bp fragment in one fixed-size window on
+        // each chromosome:
+        // - chr1 = all A, so the fragment contributes only to GC% 0
+        // - chr2 = all C, so the fragment contributes only to GC% 100
+        //
+        // Sample-side window scaling in `gc-bias` is per counted window:
+        // - a 10 bp fragment has 11 reachable GC-count states (0..10), so one observed count in a
+        //   pure window is scaled by 11 after mean normalization
+        // - each chromosome contributes exactly one counted 100 bp window
+        // - the saved `avg_cfdna_counts` is therefore the mean of two scaled windows:
+        //     GC% 0   -> 11 / 2 = 5.5
+        //     GC% 100 -> 11 / 2 = 5.5
+        //     all other GC bins -> 0
+        //
+        // This is the smallest real multi-chromosome `gc-bias::run()` fixture that proves:
+        // - per-chromosome fixed-size windows are all visited
+        // - counts accumulate across chromosomes before the final averaging
+        // - the default single-length package stage neutralizes to the exact 1x2 row [1, 1]
+        //
+        // That package derivation is deterministic here:
+        // - greedy GC binning on the saved sample counts closes bins at [0] and [1..100]
+        // - there is only one length bin, so the default `num_short_length_bins = 1` masks the
+        //   entire row
+        // - on a 2-bin GC axis, the default `num_extreme_gc_bins = 1` also masks both columns
+        // - the package pipeline therefore falls back to the neutral multiplicative row [1, 1]
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_multi_chr_reference",
+            vec![
+                ("chr1".to_string(), "A".repeat(100)),
+                ("chr2".to_string(), "C".repeat(100)),
+            ],
+        )?;
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 100), ("chr2".to_string(), 100)],
+            vec![
+                fixtures::paired_fragment(10, 10, 5),
+                {
+                    let mut fragment = fixtures::paired_fragment(10, 10, 5);
+                    fragment.forward.tid = 1;
+                    fragment.reverse.tid = 1;
+                    fragment.forward.mate_tid = Some(1);
+                    fragment.reverse.mate_tid = Some(1);
+                    fragment
+                },
+            ],
+            Vec::new(),
+            "gc_bias_multi_chr_bam",
+        )?;
+        let ref_gc_dir = TempDir::new()?;
+        let ref_cfg = RefGCBiasConfig {
+            ref_genome: Ref2BitRequiredArgs {
+                ref_2bit: reference.path.clone(),
+            },
+            output_dir: ref_gc_dir.path().to_path_buf(),
+            n_threads: 1,
+            // Two chromosomes of length 100 with fragment length 10 give:
+            //   (100 - 10 + 1) * 2 = 91 * 2 = 182 valid starts.
+            // Sample all of them so the reference package is deterministic and balanced.
+            n_positions: 182,
+            seed: Some(7),
+            windows: Default::default(),
+            chromosomes: ChromosomeArgs {
+                chromosomes: Some(vec!["chr1".to_string(), "chr2".to_string()]),
+                chromosomes_file: None,
+            },
+            blacklist: None,
+            fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+                min_fragment_length: 10,
+                max_fragment_length: 10,
+            },
+            end_offset: 0,
+            skip_interpolation: true,
+            smoothing_sigma: 0.55,
+            smoothing_radius: 2,
+            skip_smoothing: true,
+            tile_size: 1_000_000,
+        };
+        run_ref_gc_bias(&ref_cfg)?;
+
+        let out_dir = TempDir::new()?;
+        let ioc = IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 1,
+        };
+        let mut cfg = GCConfig::new(
+            ioc,
+            reference.path.clone(),
+            ref_gc_dir.path().to_path_buf(),
+            ChromosomeArgs {
+                chromosomes: Some(vec!["chr1".to_string(), "chr2".to_string()]),
+                chromosomes_file: None,
+            },
+        );
+        cfg.set_windows(GCWindowsArgs {
+            by_size: Some(100),
+            by_bed: None,
+            global: false,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_tile_size(1_000_000);
+        cfg.set_min_window_acgt_pct(0);
+        cfg.set_save_intermediates(true);
+
+        // Act
+        run_gc_bias(&cfg)?;
+
+        // Assert
+        let avg_counts: ndarray::Array2<f64> =
+            read_npy(out_dir.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        assert_eq!(avg_counts.dim(), (1, 101));
+        for (gc_pct, &value) in avg_counts.row(0).iter().enumerate() {
+            match gc_pct {
+                0 | 100 => assert!(
+                    (value - 5.5).abs() < 1e-12,
+                    "expected 5.5 at GC% {gc_pct}, got {value}"
+                ),
+                _ => assert!(
+                    value.abs() < 1e-12,
+                    "expected no mass outside GC% 0/100, got bin {gc_pct}={value}"
+                ),
+            }
+        }
+
+        let package =
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+        assert_eq!(package.version, GC_CORRECTION_SCHEMA_VERSION);
+        assert_eq!(package.end_offset, 0);
+        assert_eq!(package.length_edges, vec![10, 10]);
+        assert_eq!(package.gc_edges, vec![0, 1, 100]);
+        assert_eq!(package.length_bin_frequencies.len(), 1);
+        assert!((package.length_bin_frequencies[0] - 1.0).abs() < 1e-12);
+        assert_eq!(package.correction_matrix.dim(), (1, 2));
+        assert!((package.correction_matrix[(0, 0)] - 1.0).abs() < 1e-12);
+        assert!((package.correction_matrix[(0, 1)] - 1.0).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn empty_middle_tile_matches_single_tile_gc_bias_run() -> Result<()> {
+        // Arrange:
+        // Use three logical 100 bp windows on one chromosome:
+        // - [0,100)   = all A, contains one 10 bp fragment -> GC% 0
+        // - [100,200) = all A, contains no fragments       -> empty counted window
+        // - [200,300) = all C, contains one 10 bp fragment -> GC% 100
+        //
+        // For every counted pure window, sample-side window scaling gives 11 at its observed GC
+        // bin, exactly as in the two-window tests. The middle window has zero counts, so
+        // `gc-bias` drops it before the global averaging step. The saved `avg_cfdna_counts` must
+        // therefore be:
+        //   GC% 0   -> 11 / 2 = 5.5
+        //   GC% 100 -> 11 / 2 = 5.5
+        //   all other bins -> 0
+        //
+        // The point of this test is the execution layout:
+        // - `tile_size = 95` forces a four-tile run where tile 1 has no fragments at all
+        // - `tile_size = 1_000` keeps the whole chromosome in one tile
+        // Both runs must produce the same saved counts and the same default single-length package.
+        //
+        // As in the multi-chromosome test above, the exact package is still hand-derivable:
+        // greedy GC binning creates [0] and [1..100], and the default single-length masking then
+        // neutralizes the only row to multiplicative weights [1, 1].
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_empty_tile_reference",
+            vec![(
+                "chr1".to_string(),
+                format!("{}{}{}", "A".repeat(100), "A".repeat(100), "C".repeat(100)),
+            )],
+        )?;
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 300)],
+            vec![
+                fixtures::paired_fragment(10, 10, 5),
+                fixtures::paired_fragment(210, 10, 5),
+            ],
+            Vec::new(),
+            "gc_bias_empty_tile_bam",
+        )?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 10, 0)?;
+
+        let multi_tile_out = TempDir::new()?;
+        let single_tile_out = TempDir::new()?;
+
+        let mut multi_tile_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            multi_tile_out.path(),
+        );
+        multi_tile_cfg.set_windows(GCWindowsArgs {
+            by_size: Some(100),
+            by_bed: None,
+            global: false,
+        });
+        multi_tile_cfg.set_tile_size(95);
+
+        let mut single_tile_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            single_tile_out.path(),
+        );
+        single_tile_cfg.set_windows(GCWindowsArgs {
+            by_size: Some(100),
+            by_bed: None,
+            global: false,
+        });
+        single_tile_cfg.set_tile_size(1_000);
+
+        // Act
+        run_gc_bias(&multi_tile_cfg)?;
+        run_gc_bias(&single_tile_cfg)?;
+
+        // Assert
+        let multi_tile_avg: ndarray::Array2<f64> =
+            read_npy(multi_tile_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        let single_tile_avg: ndarray::Array2<f64> =
+            read_npy(single_tile_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        assert_eq!(multi_tile_avg, single_tile_avg);
+        assert_eq!(multi_tile_avg.dim(), (1, 101));
+        for (gc_pct, &value) in multi_tile_avg.row(0).iter().enumerate() {
+            match gc_pct {
+                0 | 100 => assert!(
+                    (value - 5.5).abs() < 1e-12,
+                    "expected 5.5 at GC% {gc_pct}, got {value}"
+                ),
+                _ => assert!(
+                    value.abs() < 1e-12,
+                    "expected no mass outside GC% 0/100, got bin {gc_pct}={value}"
+                ),
+            }
+        }
+
+        let multi_tile_pkg =
+            GCCorrectionPackage::from_file(multi_tile_out.path().join("gc_bias_correction.npz"))?;
+        let single_tile_pkg = GCCorrectionPackage::from_file(
+            single_tile_out.path().join("gc_bias_correction.npz"),
+        )?;
+        assert_eq!(multi_tile_pkg.version, single_tile_pkg.version);
+        assert_eq!(multi_tile_pkg.end_offset, single_tile_pkg.end_offset);
+        assert_eq!(multi_tile_pkg.length_edges, single_tile_pkg.length_edges);
+        assert_eq!(multi_tile_pkg.gc_edges, single_tile_pkg.gc_edges);
+        assert_eq!(
+            multi_tile_pkg.length_bin_frequencies,
+            single_tile_pkg.length_bin_frequencies
+        );
+        assert_eq!(multi_tile_pkg.correction_matrix, single_tile_pkg.correction_matrix);
+        assert_eq!(multi_tile_pkg.version, GC_CORRECTION_SCHEMA_VERSION);
+        assert_eq!(multi_tile_pkg.end_offset, 0);
+        assert_eq!(multi_tile_pkg.length_edges, vec![10, 10]);
+        assert_eq!(multi_tile_pkg.gc_edges, vec![0, 1, 100]);
+        assert_eq!(multi_tile_pkg.length_bin_frequencies.len(), 1);
+        assert!((multi_tile_pkg.length_bin_frequencies[0] - 1.0).abs() < 1e-12);
+        assert_eq!(multi_tile_pkg.correction_matrix.dim(), (1, 2));
+        assert!((multi_tile_pkg.correction_matrix[(0, 0)] - 1.0).abs() < 1e-12);
+        assert!((multi_tile_pkg.correction_matrix[(0, 1)] - 1.0).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn touching_bed_windows_match_by_size_counts_and_default_single_length_packages()
+    -> Result<()> {
         // Arrange:
         // Use the same two-window A/C genome as the default-window test, but compare two
         // different *window representations* of the same logical partition:
@@ -867,15 +1315,15 @@ mod tests_gc_bias {
         run_gc_bias(&by_bed_cfg)?;
 
         // Assert:
-        // The logical windows are identical, so both the sample-side average counts and the final
-        // correction package must be exactly equal.
+        // `gc-bias` does not merge touching BED windows on load. These two runs therefore encode
+        // the same logical partition and must produce the same averaged counts and the same
+        // default single-length neutral package.
         let by_size_avg: ndarray::Array2<f64> =
             read_npy(by_size_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
         let by_bed_avg: ndarray::Array2<f64> =
             read_npy(by_bed_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
         assert_eq!(by_size_avg, by_bed_avg);
         assert_eq!(by_size_avg.dim(), (1, 101));
-
         for (gc_pct, &value) in by_size_avg.row(0).iter().enumerate() {
             match gc_pct {
                 0 | 100 => assert!(
@@ -902,6 +1350,15 @@ mod tests_gc_bias {
             by_bed_pkg.length_bin_frequencies
         );
         assert_eq!(by_size_pkg.correction_matrix, by_bed_pkg.correction_matrix);
+        assert_eq!(by_size_pkg.version, GC_CORRECTION_SCHEMA_VERSION);
+        assert_eq!(by_size_pkg.end_offset, 0);
+        assert_eq!(by_size_pkg.length_edges, vec![10, 10]);
+        assert_eq!(by_size_pkg.gc_edges, vec![0, 1, 100]);
+        assert_eq!(by_size_pkg.length_bin_frequencies.len(), 1);
+        assert!((by_size_pkg.length_bin_frequencies[0] - 1.0).abs() < 1e-12);
+        assert_eq!(by_size_pkg.correction_matrix.dim(), (1, 2));
+        assert!((by_size_pkg.correction_matrix[(0, 0)] - 1.0).abs() < 1e-12);
+        assert!((by_size_pkg.correction_matrix[(0, 1)] - 1.0).abs() < 1e-12);
 
         Ok(())
     }
@@ -920,15 +1377,16 @@ mod tests_gc_bias {
         // - fragment length is fixed at 10
         // - valid starts are 0..=190, so there are exactly 191 valid start positions
         // - we set `n_positions = 191`, so every valid start is sampled
-        // - BED windows keep only the pure-A and pure-C start ranges:
-        //     [0,91)    -> starts 0..=90   -> GC%=0
-        //     [100,191) -> starts 100..=190 -> GC%=100
-        // - starts 91..=99, which would cross the A/C boundary and create intermediate GC%, are
-        //   intentionally excluded by the BED windows
+        // - BED windows keep only the pure-A and pure-C start ranges that also leave enough room
+        //   for the full 10 bp fragment inside the same BED interval:
+        //     [0,91)    -> starts 0..=81   -> GC%=0
+        //     [100,191) -> starts 100..=181 -> GC%=100
+        // - starts 82..=99 and 182..=190 are inside a BED row but do not fit before its right
+        //   edge, so `ref-gc-bias` excludes them
         //
         // Therefore the written reference counts are exactly balanced:
-        // - 91 counts at GC%=0
-        // - 91 counts at GC%=100
+        // - 82 counts at GC%=0
+        // - 82 counts at GC%=100
         //
         // Sample BAM:
         // - one 10 bp fragment in the A-only region  -> GC%=0
@@ -1319,9 +1777,15 @@ mod tests_gc_bias {
         // must be merged into the same effective masked span as:
         //   [40, 80)
         //
-        // We compare two otherwise identical global runs. Because the masked genomic coordinates
-        // are logically identical, both the saved `avg_cfdna_counts` matrix and the final
-        // correction package must match exactly.
+        // We compare two otherwise identical global runs. To keep the fixture realistic, place the
+        // touching blacklist away from the only fragment in `simple_inward_bam()`:
+        // - fragment span is [20,80)
+        // - touching masked span is [120,160)
+        //
+        // So the blacklist is a real loaded artifact, but it does not invalidate the only
+        // fragment's GC context. Because the effective masked genomic coordinates are logically
+        // identical, both the saved `avg_cfdna_counts` matrix and the final correction package
+        // must match exactly.
         let bam = fixtures::simple_inward_bam()?;
         let reference = fixtures::simple_reference_twobit()?;
         let ref_gc_dir = TempDir::new()?;
@@ -1333,9 +1797,9 @@ mod tests_gc_bias {
         let split_a = blacklist_dir.path().join("blacklist_a.bed");
         let split_b = blacklist_dir.path().join("blacklist_b.bed");
         let merged = blacklist_dir.path().join("blacklist_merged.bed");
-        std::fs::write(&split_a, "chr1\t40\t60\n")?;
-        std::fs::write(&split_b, "chr1\t60\t80\n")?;
-        std::fs::write(&merged, "chr1\t40\t80\n")?;
+        std::fs::write(&split_a, "chr1\t120\t140\n")?;
+        std::fs::write(&split_b, "chr1\t140\t160\n")?;
+        std::fs::write(&merged, "chr1\t120\t160\n")?;
 
         let make_cfg = |output_dir: &std::path::Path,
                         blacklist: Vec<std::path::PathBuf>|
@@ -1364,6 +1828,19 @@ mod tests_gc_bias {
         let merged_avg: ndarray::Array2<f64> =
             read_npy(merged_out_dir.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
         assert_eq!(split_avg, merged_avg);
+        assert_eq!(split_avg.dim(), (1, 101));
+        for (gc_pct, &value) in split_avg.row(0).iter().enumerate() {
+            match gc_pct {
+                50 => assert!(
+                    (value - 1.0).abs() < 1e-12,
+                    "expected exactly one surviving GC%=50 fragment, got {value}"
+                ),
+                _ => assert!(
+                    value.abs() < 1e-12,
+                    "expected no mass outside GC% 50, got bin {gc_pct}={value}"
+                ),
+            }
+        }
 
         let split_package =
             GCCorrectionPackage::from_file(split_out_dir.path().join("gc_bias_correction.npz"))?;
@@ -1378,6 +1855,14 @@ mod tests_gc_bias {
             merged_package.length_bin_frequencies
         );
         assert_eq!(split_package.correction_matrix, merged_package.correction_matrix);
+        assert_eq!(split_package.version, GC_CORRECTION_SCHEMA_VERSION);
+        assert_eq!(split_package.end_offset, 0);
+        assert_eq!(split_package.length_edges, vec![60, 60]);
+        assert_eq!(split_package.gc_edges, vec![0, 100]);
+        assert_eq!(split_package.length_bin_frequencies.len(), 1);
+        assert!((split_package.length_bin_frequencies[0] - 1.0).abs() < 1e-12);
+        assert_eq!(split_package.correction_matrix.dim(), (1, 1));
+        assert!((split_package.correction_matrix[(0, 0)] - 1.0).abs() < 1e-12);
 
         Ok(())
     }
@@ -1713,19 +2198,16 @@ mod tests_gc_bias {
         let package_path = out_dir.join("ref_gc_package.npz");
         let n_lengths = (length_range.1 - length_range.0 + 1) as usize;
         let mut counts = ndarray::Array2::<f64>::zeros((n_lengths, 101));
-        let mut support_unobservables = ndarray::Array2::<bool>::from_elem((n_lengths, 101), false);
         let mut support_outliers = ndarray::Array2::<bool>::from_elem((n_lengths, 101), false);
-        let mut gc_percent_widths = ndarray::Array2::<u16>::zeros((n_lengths, 101));
+        let gc_percent_widths =
+            gc_percent_widths(length_range.0 as usize, length_range.1 as usize, 0);
+        let support_unobservables = gc_percent_widths.mapv(|width| width > 0);
 
         for row_idx in 0..n_lengths {
             counts[(row_idx, 0)] = 1.0;
             counts[(row_idx, 100)] = 1.0;
-            support_unobservables[(row_idx, 0)] = true;
-            support_unobservables[(row_idx, 100)] = true;
             support_outliers[(row_idx, 0)] = true;
             support_outliers[(row_idx, 100)] = true;
-            gc_percent_widths[(row_idx, 0)] = 1;
-            gc_percent_widths[(row_idx, 100)] = 1;
         }
 
         let file = std::fs::File::create(&package_path)?;
@@ -1754,12 +2236,23 @@ mod tests_gc_bias {
     fn write_balanced_two_length_reference_gc_package(out_dir: &std::path::Path) -> Result<()> {
         let package_path = out_dir.join("ref_gc_package.npz");
 
-        // Hand-built reference package for run-level outlier tests.
+        // Hand-built but still realistic reference package for run-level outlier tests.
         //
-        // The package covers two fragment lengths, 10 and 11, and marks only GC% 0 and GC% 100
-        // as observed for both lengths. Every supported cell has identical reference mass, so
-        // once `gc-bias` bins the GC axis into `[0]` and `[1..100]`, the reference-side binned
-        // rows are perfectly balanced:
+        // The package covers two fragment lengths, 10 and 11. We intentionally place reference
+        // mass only at GC% 0 and GC% 100 for both rows, because the paired sample fixture also
+        // lives only in those two extreme classes.
+        //
+        // But the metadata must still look like a real package:
+        // - `support_mask_unobservables` follows the true theoretical GC%-reachability geometry
+        //   for lengths 10 and 11
+        // - `gc_percent_widths` uses the real rounding widths for those lengths
+        // - `support_mask_outliers` marks only the empirically populated bins (0 and 100)
+        //
+        // That keeps the reference-side normalization denominator restricted to the two populated
+        // bins while still preserving realistic theoretical metadata.
+        //
+        // With that support mask, once `gc-bias` bins the GC axis into `[0]` and `[1..100]`, the
+        // reference-side binned rows are perfectly balanced:
         //   length 10 -> [1, 1]
         //   length 11 -> [1, 1]
         //
@@ -1771,9 +2264,13 @@ mod tests_gc_bias {
         counts[(1, 0)] = 1.0;
         counts[(1, 100)] = 1.0;
 
-        let support_unobservables = ndarray::Array2::<bool>::from_elem((2, 101), true);
-        let support_outliers = ndarray::Array2::<bool>::from_elem((2, 101), true);
-        let gc_percent_widths = ndarray::Array2::<u16>::from_elem((2, 101), 1);
+        let gc_percent_widths = gc_percent_widths(10, 11, 0);
+        let support_unobservables = gc_percent_widths.mapv(|width| width > 0);
+        let mut support_outliers = ndarray::Array2::<bool>::from_elem((2, 101), false);
+        support_outliers[(0, 0)] = true;
+        support_outliers[(0, 100)] = true;
+        support_outliers[(1, 0)] = true;
+        support_outliers[(1, 100)] = true;
 
         let file = std::fs::File::create(&package_path)?;
         let mut npz = NpzWriter::new(file);
@@ -1798,25 +2295,25 @@ mod tests_gc_bias {
     fn write_three_bin_reference_gc_package(out_dir: &std::path::Path) -> Result<()> {
         let package_path = out_dir.join("ref_gc_package.npz");
 
-        // One fragment length, with only GC% 0, 50, and 100 marked as reference-supported.
+        // One fragment length, with reference mass only at GC% 0, 50, and 100.
+        //
+        // As above, keep the metadata realistic:
+        // - theoretical support and width correction follow the true length-10 rounding geometry
+        // - empirical outlier support is restricted to the three populated GC bins
+        //
         // That keeps the reference-side normalization easy to reason about for GC binning tests:
-        // every supported GC point starts with the same mass 1.0.
+        // every empirically supported GC point starts with the same mass 1.0.
         let mut counts = ndarray::Array2::<f64>::zeros((1, 101));
         counts[(0, 0)] = 1.0;
         counts[(0, 50)] = 1.0;
         counts[(0, 100)] = 1.0;
 
-        let mut support_unobservables = ndarray::Array2::<bool>::from_elem((1, 101), false);
-        support_unobservables[(0, 0)] = true;
-        support_unobservables[(0, 50)] = true;
-        support_unobservables[(0, 100)] = true;
-
-        let support_outliers = support_unobservables.clone();
-
-        let mut gc_percent_widths = ndarray::Array2::<u16>::zeros((1, 101));
-        gc_percent_widths[(0, 0)] = 1;
-        gc_percent_widths[(0, 50)] = 1;
-        gc_percent_widths[(0, 100)] = 1;
+        let gc_percent_widths = gc_percent_widths(10, 10, 0);
+        let support_unobservables = gc_percent_widths.mapv(|width| width > 0);
+        let mut support_outliers = ndarray::Array2::<bool>::from_elem((1, 101), false);
+        support_outliers[(0, 0)] = true;
+        support_outliers[(0, 50)] = true;
+        support_outliers[(0, 100)] = true;
 
         let file = std::fs::File::create(&package_path)?;
         let mut npz = NpzWriter::new(file);
@@ -1871,7 +2368,9 @@ mod tests_gc_bias {
             fragments.push(fixtures::paired_fragment(start, 11, 5));
         }
 
-        let bam = fixtures::bam_from_specs(
+        // Several length-10 and length-11 fragments deliberately share the same left start. Use
+        // strict BAM identity here so those stacked molecules do not collapse onto one qname.
+        let bam = fixtures::bam_from_specs_strict_identity(
             vec![("chr1".to_string(), 200)],
             fragments,
             Vec::new(),
@@ -1915,7 +2414,9 @@ mod tests_gc_bias {
         fragments.push(fixtures::paired_fragment(20, 11, 5));
         fragments.push(fixtures::paired_fragment(120, 11, 5));
 
-        let bam = fixtures::bam_from_specs(
+        // The low-mass tail fixture reuses start 120 across two distinct fragment lengths, so
+        // each synthetic fragment needs its own qname.
+        let bam = fixtures::bam_from_specs_strict_identity(
             vec![("chr1".to_string(), 200)],
             fragments,
             Vec::new(),
@@ -1958,7 +2459,9 @@ mod tests_gc_bias {
             fragments.push(fixtures::paired_fragment(100, 10, 5));
         }
 
-        let bam = fixtures::bam_from_specs(
+        // This fixture intentionally stacks five fragments at GC%=50 and nine at GC%=100. Use
+        // strict identity so repeated starts still represent repeated molecules.
+        let bam = fixtures::bam_from_specs_strict_identity(
             vec![("chr1".to_string(), 160)],
             fragments,
             Vec::new(),
@@ -2191,10 +2694,18 @@ mod tests_gc_bias {
         assert!((package_none.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
         assert!((package_none.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
 
-        assert!((package_quantile.correction_matrix[(0, 0)] - (5.0 / 3.0)).abs() < 1e-12);
-        assert!((package_quantile.correction_matrix[(0, 1)] - (5.0 / 7.0)).abs() < 1e-12);
-        assert!((package_quantile.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
-        assert!((package_quantile.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+        assert_gc_command_close(
+            package_quantile.correction_matrix[(0, 0)],
+            5.0 / 3.0,
+            "quantile row0 col0",
+        );
+        assert_gc_command_close(
+            package_quantile.correction_matrix[(0, 1)],
+            5.0 / 7.0,
+            "quantile row0 col1",
+        );
+        assert_gc_command_close(package_quantile.correction_matrix[(1, 0)], 1.0, "quantile row1 col0");
+        assert_gc_command_close(package_quantile.correction_matrix[(1, 1)], 1.0, "quantile row1 col1");
 
         Ok(())
     }
@@ -2272,15 +2783,27 @@ mod tests_gc_bias {
         assert_eq!(package_per_length.correction_matrix.dim(), (2, 2));
         assert_eq!(package_global.correction_matrix.dim(), (2, 2));
 
-        assert!((package_per_length.correction_matrix[(0, 0)] - (5.0 / 3.0)).abs() < 1e-12);
-        assert!((package_per_length.correction_matrix[(0, 1)] - (5.0 / 7.0)).abs() < 1e-12);
-        assert!((package_per_length.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
-        assert!((package_per_length.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+        assert_gc_command_close(
+            package_per_length.correction_matrix[(0, 0)],
+            5.0 / 3.0,
+            "per-length quantile row0 col0",
+        );
+        assert_gc_command_close(
+            package_per_length.correction_matrix[(0, 1)],
+            5.0 / 7.0,
+            "per-length quantile row0 col1",
+        );
+        assert_gc_command_close(package_per_length.correction_matrix[(1, 0)], 1.0, "per-length quantile row1 col0");
+        assert_gc_command_close(package_per_length.correction_matrix[(1, 1)], 1.0, "per-length quantile row1 col1");
 
-        assert!((package_global.correction_matrix[(0, 0)] - 1.25).abs() < 1e-12);
-        assert!((package_global.correction_matrix[(0, 1)] - (5.0 / 6.0)).abs() < 1e-12);
-        assert!((package_global.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
-        assert!((package_global.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+        assert_gc_command_close(package_global.correction_matrix[(0, 0)], 1.25, "global quantile row0 col0");
+        assert_gc_command_close(
+            package_global.correction_matrix[(0, 1)],
+            5.0 / 6.0,
+            "global quantile row0 col1",
+        );
+        assert_gc_command_close(package_global.correction_matrix[(1, 0)], 1.0, "global quantile row1 col0");
+        assert_gc_command_close(package_global.correction_matrix[(1, 1)], 1.0, "global quantile row1 col1");
 
         Ok(())
     }
@@ -2339,10 +2862,10 @@ mod tests_gc_bias {
         assert_eq!(package.correction_matrix.dim(), (2, 2));
         assert_eq!(package.gc_edges, vec![0, 1, 100]);
 
-        assert!((package.correction_matrix[(0, 0)] - 2.5).abs() < 1e-12);
-        assert!((package.correction_matrix[(0, 1)] - 0.625).abs() < 1e-12);
-        assert!((package.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
-        assert!((package.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+        assert_gc_command_close(package.correction_matrix[(0, 0)], 2.5, "iqr row0 col0");
+        assert_gc_command_close(package.correction_matrix[(0, 1)], 0.625, "iqr row0 col1");
+        assert_gc_command_close(package.correction_matrix[(1, 0)], 1.0, "iqr row1 col0");
+        assert_gc_command_close(package.correction_matrix[(1, 1)], 1.0, "iqr row1 col1");
 
         Ok(())
     }
@@ -2400,10 +2923,18 @@ mod tests_gc_bias {
         assert_eq!(package.correction_matrix.dim(), (2, 2));
         assert_eq!(package.gc_edges, vec![0, 1, 100]);
 
-        assert!((package.correction_matrix[(0, 0)] - (25.0 / 13.0)).abs() < 1e-12);
-        assert!((package.correction_matrix[(0, 1)] - (25.0 / 37.0)).abs() < 1e-12);
-        assert!((package.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
-        assert!((package.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+        assert_gc_command_close(
+            package.correction_matrix[(0, 0)],
+            25.0 / 13.0,
+            "stddev row0 col0",
+        );
+        assert_gc_command_close(
+            package.correction_matrix[(0, 1)],
+            25.0 / 37.0,
+            "stddev row0 col1",
+        );
+        assert_gc_command_close(package.correction_matrix[(1, 0)], 1.0, "stddev row1 col0");
+        assert_gc_command_close(package.correction_matrix[(1, 1)], 1.0, "stddev row1 col1");
 
         Ok(())
     }
@@ -2463,10 +2994,18 @@ mod tests_gc_bias {
         assert_eq!(package.correction_matrix.dim(), (2, 2));
         assert_eq!(package.gc_edges, vec![0, 1, 100]);
 
-        assert!((package.correction_matrix[(0, 0)] - 2.457244200903038).abs() < 1e-12);
-        assert!((package.correction_matrix[(0, 1)] - 0.627730626600084).abs() < 1e-12);
-        assert!((package.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
-        assert!((package.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
+        assert_gc_command_close(
+            package.correction_matrix[(0, 0)],
+            2.457244200903038,
+            "mad row0 col0",
+        );
+        assert_gc_command_close(
+            package.correction_matrix[(0, 1)],
+            0.627730626600084,
+            "mad row0 col1",
+        );
+        assert_gc_command_close(package.correction_matrix[(1, 0)], 1.0, "mad row1 col0");
+        assert_gc_command_close(package.correction_matrix[(1, 1)], 1.0, "mad row1 col1");
 
         Ok(())
     }
@@ -2485,9 +3024,9 @@ mod tests_gc_bias {
         // - supported mean = (1 + 999) / 2 = 500
         // - normalized supported counts = [0.002, 1.998]
         //
-        // With `min_gc_bin_mass = 0.1%`, the total normalized mass is exactly 2.0, so:
-        // - min bin mass = 0.002
-        // - the first GC bin `[0]` already meets threshold
+        // With `min_gc_bin_mass = 0.09%`, the total normalized mass is exactly 2.0, so:
+        // - min bin mass = 0.0018
+        // - the first GC bin `[0]` already exceeds threshold on its own
         // - the second bin is `[1..100]`
         //
         // The reference package is balanced across those same two bins, so after reference-side
@@ -2522,7 +3061,9 @@ mod tests_gc_bias {
         for _ in 0..999 {
             fragments.push(fixtures::paired_fragment(120, 10, 5));
         }
-        let bam = fixtures::bam_from_specs(
+        // The hard-clamp setup stacks 999 fragments at the same C-only start, so it must opt
+        // into unique qnames to keep those molecules distinct in the paired-end parser.
+        let bam = fixtures::bam_from_specs_strict_identity(
             vec![("chr1".to_string(), 200)],
             fragments,
             Vec::new(),
@@ -2541,7 +3082,9 @@ mod tests_gc_bias {
         });
         cfg.set_min_length_bin_mass(0.0);
         cfg.set_min_length_bin_width(1);
-        cfg.set_min_gc_bin_mass(0.1);
+        // Stay slightly below the exact 0.002 boundary so the GC bin split is not sensitive to
+        // floating-point equality at the threshold.
+        cfg.set_min_gc_bin_mass(0.09);
         cfg.set_num_extreme_gc_bins(0);
         cfg.set_num_short_length_bins(0);
         cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
@@ -2817,11 +3360,25 @@ mod tests_gc_bias {
         // - row for length 11 has mass 2, so it cannot form its own bin
         // - the final underweight tail row is therefore appended to the previous bin
         //
-        // The merged correction row is the simple arithmetic mean of the two source rows:
-        //   ([0.2, 1.8] + [1.0, 1.0]) / 2 = [0.6, 1.4]
+        // The important implementation detail is that greedy *length* merging happens before the
+        // later per-row mean-scaling step in `gc-bias`.
+        //
+        // In this fixture the globally normalized GC rows are:
+        //   length 10 -> [1/3, 3]
+        //   length 11 -> [1/3, 1/3]
+        //
+        // So after greedy length merging, the single merged row is the arithmetic mean of those
+        // pre-row-normalized rows:
+        //   ([1/3, 3] + [1/3, 1/3]) / 2 = [1/3, 5/3]
+        //
+        // The reference side is still balanced after the same merge:
+        //   [1, 1]
+        //
+        // Per-row mean scaling then keeps the raw correction row at:
+        //   [1/3, 5/3]
         //
         // With no outlier handling, the final multiplicative row is therefore:
-        //   [1 / 0.6, 1 / 1.4] = [5/3, 5/7]
+        //   [1 / (1/3), 1 / (5/3)] = [3, 3/5]
         let (reference, bam) = make_two_length_low_mass_tail_fixture()?;
         let ref_gc_dir = TempDir::new()?;
         write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
@@ -2883,8 +3440,8 @@ mod tests_gc_bias {
         assert!((baseline_package.correction_matrix[(1, 0)] - 1.0).abs() < 1e-12);
         assert!((baseline_package.correction_matrix[(1, 1)] - 1.0).abs() < 1e-12);
 
-        assert!((merged_package.correction_matrix[(0, 0)] - (5.0 / 3.0)).abs() < 1e-12);
-        assert!((merged_package.correction_matrix[(0, 1)] - (5.0 / 7.0)).abs() < 1e-12);
+        assert!((merged_package.correction_matrix[(0, 0)] - 3.0).abs() < 1e-12);
+        assert!((merged_package.correction_matrix[(0, 1)] - (3.0 / 5.0)).abs() < 1e-12);
 
         Ok(())
     }

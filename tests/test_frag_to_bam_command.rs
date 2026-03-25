@@ -52,8 +52,9 @@ use tempfile::TempDir;
 
 #[cfg(feature = "cmd_bam_to_frag")]
 use fixtures::{
-    FragmentSpec, ReadSpec, bam_from_specs, build_real_non_neutral_gc_package, paired_fragment,
-    simple_reference_twobit, twobit_from_sequences,
+    FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity,
+    build_real_non_neutral_gc_package, paired_fragment, simple_reference_twobit,
+    twobit_from_sequences,
 };
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
 use fixtures::read_zst_to_string;
@@ -119,6 +120,28 @@ fn write_blacklist_bed(path: &Path, rows: &[(&str, u64, u64)]) -> Result<()> {
     }
     fs::write(path, content)?;
     Ok(())
+}
+
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
+fn read_group_index_map(path: &Path) -> Result<std::collections::HashMap<String, usize>> {
+    let text = fs::read_to_string(path)?;
+    let mut out = std::collections::HashMap::new();
+    for line in text.lines().skip(1) {
+        if line.is_empty() {
+            continue;
+        }
+        let mut fields = line.split('\t');
+        let idx = fields
+            .next()
+            .context("missing group index field")?
+            .parse::<usize>()?;
+        let name = fields
+            .next()
+            .context("missing group name field")?
+            .to_string();
+        out.insert(name, idx);
+    }
+    Ok(out)
 }
 
 fn write_scaling_tsv(path: &Path, rows: &[(&str, u64, u64, f32)]) -> Result<()> {
@@ -1423,11 +1446,18 @@ fn given_same_blacklist_premerged_in_one_file_when_min_size_is_met_then_fragment
         fragment_lengths.max_fragment_length = 100;
     }
 
-    // Act / Assert
-    let error = run_frag_to_bam(&config).expect_err("expected all fragments to be filtered out");
+    // Act
+    run_frag_to_bam(&config)?;
+
+    // Assert:
+    // `frag-to-bam` only raises "No fragments passed filters; no BAM to write" when no
+    // chromosome is observed at all. Here chr1 is observed before the blacklist removes the only
+    // fragment, so the command succeeds and writes an empty BAM.
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
+    let rows = read_bam_rows(&output_bam_path)?;
     assert!(
-        format!("{error}").contains("No fragments passed filters; no BAM to write"),
-        "unexpected error: {error}"
+        rows.is_empty(),
+        "expected the premerged blacklist to filter out the only fragment, got {rows:?}"
     );
 
     Ok(())
@@ -2515,7 +2545,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_midpoints_then_roundtrip_mat
     assert_eq!(original_arr[[0, 0, 5]], 1.0);
     assert_eq!(original_arr.sum(), 1.0);
     assert_eq!(original_groups, restored_groups);
-    assert_eq!(original_groups.trim(), "idx\tgroup\n0\tgroupA");
+    assert_eq!(original_groups.trim(), "group_idx\tgroup_name\n0\tgroupA");
 
     Ok(())
 }
@@ -2691,12 +2721,16 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
     // matrix.
     //
     // Reference genome:
-    // - chr1[0,100)   = all A
-    // - chr1[100,200) = all C
+    // - chr1[0,100)    = all A
+    // - chr1[100,101)  = one-base spacer excluded from the reference BED windows
+    // - chr1[101,201)  = all C
     //
     // Real package derivation:
     // - fragment length is fixed at 61
-    // - reference windows [0,40) and [100,140) include only pure-A and pure-C starts
+    // - reference windows [0,100) and [101,201) count only starts that both lie in the window
+    //   and leave room for the full 61 bp fragment, so the counted support is:
+    //     starts 0..=39    -> GC%=0
+    //     starts 101..=140 -> GC%=100
     // - sample producer BAM has one A-only fragment and nine C-only fragments
     // - resulting weights are:
     //     GC%=0   -> 5.0
@@ -2719,11 +2753,14 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
         "frag_to_bam_real_non_neutral_reference",
         vec![(
             "chr1".to_string(),
-            format!("{}{}", "A".repeat(100), "C".repeat(100)),
+            format!("{}N{}", "A".repeat(100), "C".repeat(100)),
         )],
     )?;
-    let producer_bam = bam_from_specs(
-        vec![("chr1".to_string(), 200)],
+    // The producer BAM stacks nine identical C-only fragments at one start. Give each fragment
+    // a distinct qname here so the real GC package is built from ten molecules, not one pair
+    // that gets aliased by the fixture writer.
+    let producer_bam = bam_from_specs_strict_identity(
+        vec![("chr1".to_string(), 201)],
         {
             let mut fragments = vec![paired_fragment(10, 61, 20)];
             for _ in 0..9 {
@@ -2735,7 +2772,7 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
         "frag_to_bam_real_non_neutral_producer",
     )?;
     let source_bam = bam_from_specs(
-        vec![("chr1".to_string(), 200)],
+        vec![("chr1".to_string(), 201)],
         vec![paired_fragment(10, 61, 20), paired_fragment(110, 61, 20)],
         Vec::new(),
         "frag_to_bam_real_non_neutral_source",
@@ -2750,15 +2787,16 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
         &reference.path,
         work.path(),
         61,
-        "chr1\t0\t40\nchr1\t100\t140\n",
-        // Chromosome length 200 and fragment length 61 give:
-        //   200 - 61 + 1 = 140 valid starts.
-        140,
+        "chr1\t0\t100\nchr1\t101\t201\n",
+        // Chromosome length 201 and fragment length 61 give 141 valid starts in total. Under the
+        // `ref-gc-bias` fit rule these BED rows count exactly 40 pure-A starts and 40 pure-C
+        // starts.
+        141,
     )?;
     let intervals = work.path().join("sites.bed");
     let chrom_sizes_path = frag_to_bam_out.path().join("chrom.sizes");
     fs::write(&intervals, "chr1\t35\t46\tgroupA\nchr1\t135\t146\tgroupC\n")?;
-    write_chrom_sizes(&chrom_sizes_path, &[("chr1", 200)])?;
+    write_chrom_sizes(&chrom_sizes_path, &[("chr1", 201)])?;
 
     let mut bam_to_frag_cfg = BamToFragConfig::new(
         IOCArgs {
@@ -2865,8 +2903,12 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
     );
     assert_eq!(original_arr, restored_arr);
     assert_eq!(original_arr.shape(), &[2, 1, 11]);
-    assert!((original_arr[[0, 0, 5]] - 5.0).abs() <= 1e-6);
-    assert!((original_arr[[1, 0, 5]] - (5.0_f32 / 9.0_f32)).abs() <= 1e-6);
+    let group_to_idx =
+        read_group_index_map(&original_midpoints_out.path().join("origsites.group_index.tsv"))?;
+    let group_a_idx = group_to_idx["groupA"];
+    let group_c_idx = group_to_idx["groupC"];
+    assert!((original_arr[[group_a_idx, 0, 5]] - 5.0).abs() <= 1e-6);
+    assert!((original_arr[[group_c_idx, 0, 5]] - (5.0_f32 / 9.0_f32)).abs() <= 1e-6);
     assert!((original_arr.sum() - (5.0_f32 + 5.0_f32 / 9.0_f32)).abs() <= 1e-6);
 
     Ok(())

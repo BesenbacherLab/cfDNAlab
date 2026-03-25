@@ -254,6 +254,9 @@ pub fn reduce_partials_for_chr(
 ///
 /// - `chrom_len`: Chromosome length used to clamp fetch coordinates.
 ///
+/// - `halo_bp`: Extra bases to keep on both sides of the active window span before clamping back
+///   onto the tile fetch interval.
+///
 /// Returns
 /// - Checked absolute fetch interval, or `None` when no windows apply.
 pub fn fetch_span_for_tile(
@@ -262,6 +265,7 @@ pub fn fetch_span_for_tile(
     windows_chr: Option<&[IndexedInterval<u64>]>,
     window_opt: &WindowSpec,
     chrom_len: u64,
+    halo_bp: u64,
 ) -> Result<Option<Interval<u64>>> {
     match window_opt {
         WindowSpec::Global => {
@@ -283,7 +287,9 @@ pub fn fetch_span_for_tile(
             let window_start = window_idx_start * window_bp;
             let window_end = ((window_idx_end + 1) * window_bp).min(chrom_len);
             let window_span = Interval::new(window_start, window_end)?;
-            Ok(clamp_fetch_to_window_span(tile, chrom_len, window_span, 0)?)
+            Ok(clamp_fetch_to_window_span(
+                tile, chrom_len, window_span, halo_bp,
+            )?)
         }
         WindowSpec::Bed(_) => {
             let Some(wchr) = windows_chr else {
@@ -292,7 +298,9 @@ pub fn fetch_span_for_tile(
             let Some(window_span) = tile_window_min_max(wchr, tile, tile_window_span)? else {
                 return Ok(None);
             };
-            Ok(clamp_fetch_to_window_span(tile, chrom_len, window_span, 0)?)
+            Ok(clamp_fetch_to_window_span(
+                tile, chrom_len, window_span, halo_bp,
+            )?)
         }
     }
 }

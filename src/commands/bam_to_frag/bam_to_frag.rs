@@ -248,6 +248,16 @@ fn process_chrom(
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
 ) -> anyhow::Result<(PathBuf, BamToFragCounters)> {
+    let out_path = temp_dir.join(format!("{chr}.frag.tsv.zst"));
+
+    if matches!(opt.resolve_windows(), WindowSpec::Bed(_))
+        && windows.is_none_or(|window_slice| window_slice.is_empty())
+    {
+        let mut writer = open_zstd_auto_writer(&out_path, 3, Some(1))?;
+        writer.flush()?;
+        return Ok((out_path, BamToFragCounters::default()));
+    }
+
     // Open a fresh BAM reader for this thread
     let (mut reader, tid, chrom_len) = create_chromosome_reader(&opt.ioc.bam, chr)?;
 
@@ -266,7 +276,14 @@ fn process_chrom(
         None
     };
 
-    // Replace scaling factor with unused index
+    // The overlap finder only needs checked BED-like intervals here.
+    //
+    // In BED mode, `find_overlapping_windows(...)` uses the scan position in this ordered slice as
+    // `OverlappingWindow.idx`; it does not use `IndexedInterval.idx`. Because this temporary list
+    // is built in the same order as `scaling_chr`, those scan positions already match the
+    // chromosome-local indices needed for indexing back into `scaling_chr`.
+    //
+    // So the carried `IndexedInterval.idx` value is intentionally a placeholder.
     let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
         .iter()
         .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
@@ -336,8 +353,6 @@ fn process_chrom(
     let mut bl_ptr = 0; // Blacklist interval
     let mut wd_ptr = 0; // Genomic window
     let mut sf_ptr = 0; // Scaling factor bin
-
-    let out_path = temp_dir.join(format!("{chr}.frag.tsv.zst"));
 
     let mut writer = open_zstd_auto_writer(&out_path, 3, Some(1))?;
 
@@ -414,6 +429,7 @@ fn process_chrom(
             // NOTE: `compute_window_scaling_over_fragment` always returns
             // an overlap fraction of 1.0 (count full fragment)!
             let scaling_weight = compute_window_scaling_over_fragment(
+                fragment.interval.try_to_u64()?,
                 &overlapping_windows,
                 &overlapping_scaling_bin_indices,
                 scaling_chr,

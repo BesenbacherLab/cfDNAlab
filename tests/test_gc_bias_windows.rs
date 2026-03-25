@@ -1,7 +1,7 @@
 use cfdnalab::commands::cli_common::WindowSpec;
 use cfdnalab::commands::gc_bias::counting::{GCCounts, build_gc_prefixes};
 use cfdnalab::commands::gc_bias::windows::{
-    WindowState, compute_window_acgt, compute_window_stats,
+    WindowState, compute_window_stats, set_window_acgt_in_observed_interval,
 };
 use cfdnalab::shared::bam::Contigs;
 use cfdnalab::shared::bed::Windows;
@@ -107,8 +107,35 @@ mod test_compute_window_stats {
     }
 }
 
-mod tests_compute_window_acgt {
+mod tests_set_window_acgt_in_observed_interval {
     use super::*;
+
+    #[test]
+    fn counts_only_the_supplied_observed_subinterval() {
+        // The window spans 0-6, but we only observe the middle 2-5 segment.
+        // Sequence A C N G T A
+        //               ^^^^^
+        // observed 2-5 = N G T -> 2 ACGT bases over length 3
+        let seq = b"ACNGTA";
+        let prefixes = build_gc_prefixes(seq);
+        let mut window = make_window_state(0, 6);
+        let observed_interval =
+            Interval::new(2, 5).expect("test observed interval should be valid");
+
+        set_window_acgt_in_observed_interval(
+            &mut window,
+            &prefixes,
+            observed_interval,
+            Interval::new(0, seq.len() as u64).expect("test sequence interval should be valid"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            window.counts.num_acgt_out_of,
+            (2, 3),
+            "expected support to be counted from the observed subinterval, not the full window"
+        );
+    }
 
     #[test]
     fn counts_acgt_when_window_overlaps_sequence() {
@@ -116,10 +143,12 @@ mod tests_compute_window_acgt {
         let seq = b"AACGTN";
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(1, 5); // covers "ACGT"
+        let observed_interval = window.interval;
 
-        compute_window_acgt(
+        set_window_acgt_in_observed_interval(
             &mut window,
             &prefixes,
+            observed_interval,
             Interval::new(0, seq.len() as u64).expect("test sequence interval should be valid"),
         )
         .unwrap();
@@ -137,10 +166,12 @@ mod tests_compute_window_acgt {
         let seq = b"AANGTN";
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(1, 5); // covers "ANGT"
+        let observed_interval = window.interval;
 
-        compute_window_acgt(
+        set_window_acgt_in_observed_interval(
             &mut window,
             &prefixes,
+            observed_interval,
             Interval::new(0, seq.len() as u64).expect("test sequence interval should be valid"),
         )
         .unwrap();
@@ -158,10 +189,12 @@ mod tests_compute_window_acgt {
         let seq = b"ACGT";
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(10, 12);
+        let observed_interval = window.interval;
 
-        let err = compute_window_acgt(
+        let err = set_window_acgt_in_observed_interval(
             &mut window,
             &prefixes,
+            observed_interval,
             Interval::new(0, seq.len() as u64).expect("test sequence interval should be valid"),
         )
         .expect_err("expected an overlap error");
@@ -179,10 +212,12 @@ mod tests_compute_window_acgt {
         let seq = b"ACGT";
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(0, 6);
+        let observed_interval = window.interval;
 
-        let err = compute_window_acgt(
+        let err = set_window_acgt_in_observed_interval(
             &mut window,
             &prefixes,
+            observed_interval,
             Interval::new(0, 6).expect("test sequence interval should be valid"),
         )
         .expect_err("expected a prefix bounds error");

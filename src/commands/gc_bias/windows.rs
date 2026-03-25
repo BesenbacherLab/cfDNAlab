@@ -280,41 +280,48 @@ pub(crate) fn advance_fixed_size_streaming_buffers(
 /// - `gc_prefixes`:
 ///     Prefix sums where each entry stores total ACGT up to that index.
 ///
+/// - `observed_interval`:
+///     Genomic interval whose support should be measured for this window.
+///
 /// - `sequence_interval`:
 ///     Genomic interval associated with the prefix sums.
 ///
 /// Returns
 /// -------
 /// - Updates `buf.counts.num_acgt_out_of` with `(acgt_in_window, length_used)`.
-/// - Returns an error when the window does not overlap the available sequence.
-pub fn compute_window_acgt(
+/// - Returns an error when the observed interval does not overlap the available sequence.
+pub fn set_window_acgt_in_observed_interval(
     buf: &mut WindowState,
     gc_prefixes: &GCPrefixes,
+    observed_interval: Interval<u64>,
     sequence_interval: Interval<u64>,
 ) -> Result<()> {
     let (seq_start, seq_end) = sequence_interval.as_tuple();
-    let observed_start = buf.start().max(seq_start).min(seq_end);
-    let observed_end = buf.end().min(seq_end);
-    ensure!(
-        observed_end > observed_start,
-        "Window [{}, {}) does not overlap sequence [{}, {})",
-        buf.start(),
-        buf.end(),
-        seq_start,
-        seq_end
-    );
-    let start_local = (observed_start - seq_start) as usize;
-    let end_local = (observed_end - seq_start) as usize;
+    let observed_interval = observed_interval
+        .clip_to(sequence_interval)
+        .ok_or_else(|| {
+            anyhow!(
+                "Observed interval [{}, {}) for window [{}, {}) does not overlap sequence [{}, {})",
+                observed_interval.start(),
+                observed_interval.end(),
+                buf.start(),
+                buf.end(),
+                seq_start,
+                seq_end
+            )
+        })?;
+    let observed_local = observed_interval.shift_left(seq_start)?.try_to_usize()?;
     // Prefix arrays are sized to the loaded sequence range. A failure here means the
     // window's overlap extends beyond the available prefix data, which is a data error.
     ensure!(
-        end_local < gc_prefixes.acgt.len(),
+        observed_local.end() < gc_prefixes.acgt.len(),
         "Window end index {} exceeds prefix length {}",
-        end_local,
+        observed_local.end(),
         gc_prefixes.acgt.len().saturating_sub(1)
     );
-    let acgt_count = gc_prefixes.acgt[end_local] - gc_prefixes.acgt[start_local];
-    let observed_len = (end_local - start_local) as u64;
+    let acgt_count =
+        gc_prefixes.acgt[observed_local.end()] - gc_prefixes.acgt[observed_local.start()];
+    let observed_len = observed_local.len() as u64;
     buf.counts.num_acgt_out_of = (acgt_count as u64, observed_len);
     Ok(())
 }

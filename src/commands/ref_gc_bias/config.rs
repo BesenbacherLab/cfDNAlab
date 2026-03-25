@@ -1,8 +1,6 @@
 use crate::commands::cli_common::*;
 use std::path::PathBuf;
 
-// TODO: Do we need to add end-offset here, if users use it when calculating gc bias in cfDNA?
-
 /// Build a reference GC bias table for cfDNA correction.
 ///
 /// Samples `n_positions` across all chromosomes and counts GC for every fragment length in range

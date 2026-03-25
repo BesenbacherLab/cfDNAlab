@@ -22,8 +22,9 @@ use cfdnalab::shared::fragment::minimal_fragment::collect_fragment_from_records;
 use cfdnalab::shared::read::default_include_read_paired_end;
 use fixtures::{
     BamFixture, FragmentSpec, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, ReadSpec,
-    bam_from_specs, build_real_neutral_gc_package, build_real_non_neutral_gc_package,
-    long_fragment_bam, paired_fragment, read_zst_to_string, simple_inward_bam,
+    bam_from_specs, bam_from_specs_strict_identity, build_real_neutral_gc_package,
+    build_real_non_neutral_gc_package, long_fragment_bam, paired_fragment, read_zst_to_string,
+    simple_inward_bam,
     simple_reference_twobit, write_bed, write_scaling_factors,
 };
 use ndarray::array;
@@ -262,10 +263,7 @@ fn per_position_outputs_basic_fragment() -> Result<()> {
         .join("testcov.fcoverage.per_position.bedgraph.zst");
     assert!(bedgraph.exists(), "expected positional bedgraph output");
     let text = read_zst_to_string(&bedgraph)?;
-    assert!(
-        text.contains("chr1\t20\t80\t1"),
-        "expected contiguous coverage run, got: {text}"
-    );
+    assert_eq!(text, "chr1\t20\t80\t1\n");
 
     Ok(())
 }
@@ -516,6 +514,17 @@ fn unpaired_single_read_matches_paired_fragment_output_for_same_span() -> Result
 #[test]
 fn unpaired_mode_rejects_ignore_gap() -> Result<()> {
     let bam = single_read_fragment_bam("fcoverage_unpaired_ignore_gap")?;
+    let baseline_out_dir = TempDir::new()?;
+    let mut baseline_cfg = base_config(&bam.bam, baseline_out_dir.path());
+    baseline_cfg.unpaired.reads_are_fragments = true;
+    run(&baseline_cfg)?;
+    let baseline_text = read_zst_to_string(
+        &baseline_out_dir
+            .path()
+            .join("testcov.fcoverage.per_position.bedgraph.zst"),
+    )?;
+    assert_eq!(baseline_text, "chr1\t20\t80\t1\n");
+
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -535,6 +544,17 @@ fn unpaired_mode_rejects_ignore_gap() -> Result<()> {
 #[test]
 fn unpaired_mode_rejects_require_proper_pair() -> Result<()> {
     let bam = single_read_fragment_bam("fcoverage_unpaired_require_pp")?;
+    let baseline_out_dir = TempDir::new()?;
+    let mut baseline_cfg = base_config(&bam.bam, baseline_out_dir.path());
+    baseline_cfg.unpaired.reads_are_fragments = true;
+    run(&baseline_cfg)?;
+    let baseline_text = read_zst_to_string(
+        &baseline_out_dir
+            .path()
+            .join("testcov.fcoverage.per_position.bedgraph.zst"),
+    )?;
+    assert_eq!(baseline_text, "chr1\t20\t80\t1\n");
+
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -653,7 +673,7 @@ fn blacklist_reduces_by_size_totals_and_reports_blacklisted_positions() -> Resul
 }
 
 #[test]
-fn default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
+fn fcoverage_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
     // Arrange:
     // Build three 60 bp fragments on a single 200 bp chromosome:
     // - fragment A: [20, 80), min MAPQ 60
@@ -1807,6 +1827,84 @@ fn real_coverage_weights_tsv_changes_fcoverage_per_base_not_by_fragment_average(
     Ok(())
 }
 
+#[test]
+fn near_zero_scaling_tsv_stays_finite_and_correct_in_fcoverage() -> Result<()> {
+    // Arrange:
+    // `normalize_avg_overlap_keeps_sparse_non_zero_scaling_finite` already pins the helper-level
+    // normalization result for the near-zero regime:
+    // - sparse bin factor   = 5000.5
+    // - ordinary covered bin factor = 0.50005
+    //
+    // This test carries that artifact contract through a real downstream consumer.
+    //
+    // Use the standard single fragment [20, 80), so only positions inside that span are covered.
+    // Feed `fcoverage` a contiguous scaling TSV with:
+    //   [0,20):   0
+    //   [20,40):  5000.5
+    //   [40,60):  0.50005
+    //   [60,80):  0.50005
+    //   [80,200): 0
+    //
+    // `fcoverage` applies scaling per covered base, so the exact bedGraph must be:
+    //   chr1 20 40 5000.5
+    //   chr1 40 80 0.50005
+    //
+    // The important downstream contract is that the huge factor remains finite and is emitted as a
+    // normal numeric run rather than collapsing to zero, NaN, or inf during counting/output.
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let scaling_path = out_dir.path().join("near_zero_scaling.tsv");
+    write_scaling_factors(
+        &scaling_path,
+        &[
+            ("chr1", 0, 20, 0.0_f32),
+            ("chr1", 20, 40, 5000.5_f32),
+            ("chr1", 40, 60, 0.50005_f32),
+            ("chr1", 60, 80, 0.50005_f32),
+            ("chr1", 80, 200, 0.0_f32),
+        ],
+    )?;
+
+    let mut scale_genome = ScaleGenomeArgs::default();
+    scale_genome.scaling_factors = Some(scaling_path);
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_keep_zero_runs(false);
+    cfg.set_scale_genome(scale_genome);
+
+    // Act
+    run(&cfg)?;
+
+    // Assert
+    let output_path = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(lines.len(), 2, "expected two finite scaled bedGraph runs");
+
+    let expected = [
+        (20_u64, 40_u64, 5000.5_f64),
+        (40_u64, 80_u64, 0.50005_f64),
+    ];
+    for (line, (expected_start, expected_end, expected_value)) in lines.iter().zip(expected) {
+        let parts: Vec<_> = line.split('\t').collect();
+        assert_eq!(parts.len(), 4, "unexpected bedGraph row: {line}");
+        assert_eq!(parts[0], "chr1");
+        assert_eq!(parts[1].parse::<u64>()?, expected_start);
+        assert_eq!(parts[2].parse::<u64>()?, expected_end);
+        let value = parts[3].parse::<f64>()?;
+        assert!(value.is_finite(), "expected finite scaled coverage, got {value}");
+        assert!(
+            (value - expected_value).abs() <= 1e-6,
+            "expected value {expected_value} for row {line}, got {value}"
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(feature = "cmd_coverage_weights")]
 #[test]
 fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_fcoverage()
@@ -1853,7 +1951,9 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_fcove
     // - chr1  [80,81): 183/8
     // - chr2  [20,80): 183/320
     // - chr2  [80,81): 183/16
-    let producer_bam = bam_from_specs(
+    // chr2 deliberately stacks two identical fragments at one start. Use strict identity so the
+    // producer really contains three molecules and the derived scaling TSV is correct.
+    let producer_bam = bam_from_specs_strict_identity(
         vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
         vec![
             paired_fragment_on_tid(0, 20, 61, 20),
@@ -2430,8 +2530,9 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_fcoverage_in_expected_direction
     //
     // `ref-gc-bias` is run for length 10 with:
     // - all 191 valid starts sampled
-    // - BED windows [0,91) and [100,191), so only pure-A and pure-C starts are counted
-    // - that yields balanced reference support: 91 pure-A starts and 91 pure-C starts
+    // - BED windows [0,91) and [100,191)
+    // - under the `ref-gc-bias` fit rule they count starts 0..=81 and 100..=181, yielding
+    //   balanced reference support: 82 pure-A starts and 82 pure-C starts
     //
     // `gc-bias` is then run on a sample BAM with:
     // - one A-only fragment [10,20)   -> GC%=0
@@ -2470,8 +2571,9 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_fcoverage_in_expected_direction
     let out_dir = TempDir::new()?;
     // Reference is 200 bp and fragment length is 10, so there are exactly:
     //   200 - 10 + 1 = 191 valid starts.
-    // Sampling all valid starts plus BED windows `[0,91)` and `[100,191)` makes the
-    // reference-side masses exactly balanced between the pure-A and pure-C bins.
+    // Sampling all valid starts plus BED windows `[0,91)` and `[100,191)` still makes the
+    // reference-side masses exactly balanced between the pure-A and pure-C bins under the
+    // `ref-gc-bias` fit rule.
     let gc_path = build_real_non_neutral_gc_package(
         &bam.bam,
         &reference.path,

@@ -367,7 +367,14 @@ fn process_tile(
         None
     };
 
-    // Replace scaling factor with unused index for overlap finder
+    // The overlap finder only needs checked BED-like intervals here.
+    //
+    // In BED mode, `find_overlapping_windows(...)` stores the scan position in the supplied slice
+    // as `OverlappingWindow.idx`; it does not read `IndexedInterval.idx`. Because this temporary
+    // list is built in the same order as `scaling_chr`, those scan positions already line up with
+    // the chromosome-local indices used later to index back into `scaling_chr`.
+    //
+    // So the carried `IndexedInterval.idx` value is intentionally a placeholder.
     let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
         .iter()
         .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
@@ -577,6 +584,7 @@ fn process_tile(
 
             // Calculate the weight per overlapping count-window
             let overlap_weights = compute_window_scaling_over_fragment(
+                fragment.interval.try_to_u64()?,
                 &overlapping_windows,
                 &overlapping_scaling_bin_indices,
                 scaling_chr,

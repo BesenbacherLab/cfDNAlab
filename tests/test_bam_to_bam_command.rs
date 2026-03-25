@@ -141,6 +141,66 @@ fn blacklisting_removes_fragment_when_gap_is_blacklisted() -> Result<()> {
 }
 
 #[test]
+fn by_bed_excludes_chromosomes_without_any_windows() -> Result<()> {
+    // Arrange:
+    // Build one fragment on each chromosome:
+    // - chr1: qname `frag0_20`, span [20, 80)
+    // - chr2: qname `frag1_120`, span [120, 180)
+    //
+    // Then provide a BED file that only contains chr1 [0, 100).
+    // In `bam-to-bam`, `--by-bed` is an inclusion filter on fragments overlapping declared BED
+    // windows, so chr2 must emit no reads at all.
+    let chr1_fragment = paired_fragment(20, 60, 30);
+    let chr2_fragment = fragment_on_tid(paired_fragment(120, 60, 30), 1);
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 300), ("chr2".to_string(), 300)],
+        vec![chr1_fragment, chr2_fragment],
+        Vec::new(),
+        "bam_to_bam_missing_chr_bed_windows",
+    )?;
+
+    let work = tempdir()?;
+    let global_out_bam = work.path().join("global.bam");
+    let out_bam = work.path().join("bed_only_chr1.bam");
+    let bed = work.path().join("chr1_only.bed");
+    fs::write(&bed, "chr1\t0\t100\n")?;
+
+    let chrom_args = ChromosomeArgs {
+        chromosomes: Some(vec!["chr1".to_string(), "chr2".to_string()]),
+        chromosomes_file: None,
+    };
+    let mut global_cfg = BamToBamConfig::new(bam.bam.clone(), global_out_bam.clone(), chrom_args.clone());
+    global_cfg.skip_chromosome_sort = true;
+    global_cfg.min_mapq = 0;
+
+    let mut cfg = BamToBamConfig::new(bam.bam.clone(), out_bam.clone(), chrom_args);
+    cfg.skip_chromosome_sort = true;
+    cfg.min_mapq = 0;
+    cfg.by_bed = Some(bed);
+
+    // Act
+    run_inner(&global_cfg)?;
+    run_inner(&cfg)?;
+
+    // Assert:
+    // First prove the fixture and output path really preserve both chromosomes in global mode.
+    // Then show that `--by-bed` removes only the chromosome with no BED rows.
+    let global_counts = read_qname_counts(&global_out_bam)?;
+    assert_eq!(
+        global_counts,
+        HashMap::from([
+            ("frag0_20".to_string(), 2usize),
+            ("frag1_120".to_string(), 2usize),
+        ])
+    );
+
+    let counts = read_qname_counts(&out_bam)?;
+    assert_eq!(counts, HashMap::from([("frag0_20".to_string(), 2usize)]));
+
+    Ok(())
+}
+
+#[test]
 fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_thirty() -> Result<()> {
     // Arrange:
     // Build one inward fragment where both mates have MAPQ 20.
@@ -775,8 +835,9 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_bam_to_bam_in_expected_directio
     // Arrange:
     // Use the same real non-neutral producer workflow as the corresponding `gc-bias` test:
     // - reference: chr1[0,100) all A, chr1[100,200) all C
-    // - reference-side windows: [0,91) and [100,191), so only pure-A and pure-C starts are
-    //   counted
+    // - reference-side windows: [0,91) and [100,191)
+    // - with the `ref-gc-bias` fit rule those count starts 0..=81 and 100..=181 only, so the
+    //   written reference support is still balanced between pure-A and pure-C starts
     // - sample BAM: one A-only 10 bp fragment and nine C-only 10 bp fragments
     //
     // The resulting real package is hand-derived as:

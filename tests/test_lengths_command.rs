@@ -147,8 +147,15 @@ mod tests_lengths_command {
         let arr: Array2<f64> = read_npy(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 191]);
         let len60_idx = 60 - 10; // min_fragment_length
-        assert!((arr[(0, len60_idx)] - 1.0).abs() < 1e-6);
-        assert_eq!(arr[(0, len60_idx - 1)], 0.0);
+        let row = arr.row(0);
+        for (length_index, &value) in row.iter().enumerate() {
+            let expected_value = if length_index == len60_idx { 1.0 } else { 0.0 };
+            assert!(
+                (value - expected_value).abs() < 1e-6,
+                "expected value {expected_value} at length index {length_index}, got {value}"
+            );
+        }
+        assert!((row.sum() - 1.0).abs() < 1e-6);
 
         Ok(())
     }
@@ -192,8 +199,15 @@ mod tests_lengths_command {
         // Chromosome length 200, window size 500 -> one window
         assert_eq!(arr.shape(), &[1, 191]);
         let len60_idx = 60 - 10;
-        assert!((arr[(0, len60_idx)] - 1.0).abs() < 1e-6);
-        assert!((arr.sum() - 1.0).abs() < 1e-6);
+        let row = arr.row(0);
+        for (length_index, &value) in row.iter().enumerate() {
+            let expected_value = if length_index == len60_idx { 1.0 } else { 0.0 };
+            assert!(
+                (value - expected_value).abs() < 1e-6,
+                "expected value {expected_value} at length index {length_index}, got {value}"
+            );
+        }
+        assert!((row.sum() - 1.0).abs() < 1e-6);
         Ok(())
     }
 
@@ -296,8 +310,15 @@ mod tests_lengths_command {
         let arr: Array2<f64> = read_npy(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 191]);
         let len60_idx = 60 - 10;
-        assert!((arr[(0, len60_idx)] - 1.0).abs() < 1e-6);
-        assert!((arr.sum() - 1.0).abs() < 1e-6);
+        let row = arr.row(0);
+        for (length_index, &value) in row.iter().enumerate() {
+            let expected_value = if length_index == len60_idx { 1.0 } else { 0.0 };
+            assert!(
+                (value - expected_value).abs() < 1e-6,
+                "expected value {expected_value} at length index {length_index}, got {value}"
+            );
+        }
+        assert!((row.sum() - 1.0).abs() < 1e-6);
         Ok(())
     }
 
@@ -391,7 +412,7 @@ mod tests_lengths_command {
     }
 
     #[test]
-    fn default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
+    fn lengths_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
         // Arrange:
         // Use three fragments with distinct lengths and MAPQ:
         // - [20, 80): length 60, MAPQ 60
@@ -522,10 +543,20 @@ mod tests_lengths_command {
         // This fixture contributes one fragment of lengths 60, 80, and 100 across the three
         // chromosomes, so the single output row should contain all three counts.
         assert_eq!(arr.shape(), &[1, 111]);
-        assert!((arr[(0, 60 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr[(0, 80 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr[(0, 100 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr.sum() - 3.0).abs() < 1e-6);
+        let row = arr.row(0);
+        let occupied_indices = [60 - 10, 80 - 10, 100 - 10];
+        for (length_index, &value) in row.iter().enumerate() {
+            let expected_value = if occupied_indices.contains(&length_index) {
+                1.0
+            } else {
+                0.0
+            };
+            assert!(
+                (value - expected_value).abs() < 1e-6,
+                "expected value {expected_value} at length index {length_index}, got {value}"
+            );
+        }
+        assert!((row.sum() - 3.0).abs() < 1e-6);
 
         Ok(())
     }
@@ -632,9 +663,21 @@ mod tests_lengths_command {
         let arr: Array2<f64> = read_npy(&npy_path)?;
 
         assert_eq!(arr.shape(), &[3, 111]);
-        assert!((arr[(0, 60 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr[(1, 80 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr[(2, 100 - 10)] - 1.0).abs() < 1e-6);
+        let expected_rows = [60 - 10, 80 - 10, 100 - 10];
+        for (row_index, row) in arr.outer_iter().enumerate() {
+            for (length_index, &value) in row.iter().enumerate() {
+                let expected_value = if length_index == expected_rows[row_index] {
+                    1.0
+                } else {
+                    0.0
+                };
+                assert!(
+                    (value - expected_value).abs() < 1e-6,
+                    "row {row_index}: expected value {expected_value} at length index {length_index}, got {value}"
+                );
+            }
+            assert!((row.sum() - 1.0).abs() < 1e-6);
+        }
         assert!((arr.sum() - 3.0).abs() < 1e-6);
 
         Ok(())
@@ -685,9 +728,21 @@ mod tests_lengths_command {
         let arr: Array2<f64> = read_npy(&npy_path)?;
 
         assert_eq!(arr.shape(), &[3, 111]);
-        assert!((arr[(0, 60 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr[(1, 80 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr[(2, 100 - 10)] - 1.0).abs() < 1e-6);
+        let expected_rows = [60 - 10, 80 - 10, 100 - 10];
+        for (row_index, row) in arr.outer_iter().enumerate() {
+            for (length_index, &value) in row.iter().enumerate() {
+                let expected_value = if length_index == expected_rows[row_index] {
+                    1.0
+                } else {
+                    0.0
+                };
+                assert!(
+                    (value - expected_value).abs() < 1e-6,
+                    "row {row_index}: expected value {expected_value} at length index {length_index}, got {value}"
+                );
+            }
+            assert!((row.sum() - 1.0).abs() < 1e-6);
+        }
         assert!((arr.sum() - 3.0).abs() < 1e-6);
 
         Ok(())
@@ -906,28 +961,18 @@ mod tests_lengths_command {
         // - `gc-bias` on `simple_inward_bam` also places all cfDNA mass in that same single cell.
         // - A 1x1 normalized cfDNA count divided by a 1x1 normalized reference count gives 1.0,
         //   so the produced correction package is neutral.
-        // - `lengths` therefore receives GC weight 1.0 for the only fragment and must match the
-        //   uncorrected global result: one count at fragment length 60 and zero elsewhere.
+        // - `lengths` therefore receives GC weight 1.0 for the only fragment.
+        // - This test also constrains the counted length range to exactly 60 bp, so the output has
+        //   one row and one column, with the single cell equal to 1.0.
         run(&cfg)?;
 
         let npy_path = out_dir
             .path()
             .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
         let arr: Array2<f64> = read_npy(&npy_path)?;
-        assert_eq!(arr.dim(), (1, 91));
-
-        let len60_idx = 60 - 10;
-        assert!((arr[(0, len60_idx)] - 1.0).abs() < 1e-12);
-        for idx in 0..arr.ncols() {
-            if idx == len60_idx {
-                continue;
-            }
-            assert!(
-                arr[(0, idx)].abs() < 1e-12,
-                "expected only length 60 to be occupied, but column {idx} had {}",
-                arr[(0, idx)]
-            );
-        }
+        assert_eq!(arr.dim(), (1, 1));
+        assert!((arr[(0, 0)] - 1.0).abs() < 1e-12);
+        assert!((arr.sum() - 1.0).abs() < 1e-12);
 
         Ok(())
     }
@@ -971,8 +1016,9 @@ mod tests_lengths_command {
             out_dir.path(),
             10,
             "chr1\t0\t91\nchr1\t100\t191\n",
-            // Chromosome length 200 and fragment length 10 give:
-            //   200 - 10 + 1 = 191 valid starts.
+            // Chromosome length 200 and fragment length 10 give 191 valid starts in total. Under
+            // the `ref-gc-bias` fit rule these BED rows still contribute balanced pure-A and
+            // pure-C support, so the expected downstream weights remain 5.0 and 5/9.
             191,
         )?;
 
@@ -1014,6 +1060,120 @@ mod tests_lengths_command {
             (arr[(0, 0)] - 10.0).abs() < 1e-12,
             "expected total weighted length-10 count 10.0, got {}",
             arr[(0, 0)]
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "cmd_coverage_weights")]
+    #[test]
+    fn gc_file_and_scaling_tsv_weights_multiply_in_lengths() -> Result<()> {
+        // Arrange:
+        // Producer BAM:
+        // - `simple_inward_bam()` contains one fragment [20, 80) on chr1.
+        // - With `coverage-weights` run at `bin_size = stride = 20`, the written scaling profile
+        //   is the identity over the covered stride bins:
+        //     [20,40): 1
+        //     [40,60): 1
+        //     [60,80): 1
+        //     everything else: 0
+        //
+        // Consumer BAM:
+        // - One 61 bp fragment [20, 81), so the only occupied length bin is 61.
+        //
+        // Scaling derivation in global `lengths` mode:
+        // - Global mode has exactly one count-window, so the count weight is 1.0.
+        // - For non-`count-overlap` assignment, `lengths` averages scaling over the full fragment:
+        //     [20,40): 20 bp at factor 1
+        //     [40,60): 20 bp at factor 1
+        //     [60,80): 20 bp at factor 1
+        //     [80,81):  1 bp at factor 0
+        // - Average scaling over the fragment is therefore:
+        //     (20 + 20 + 20 + 0) / 61 = 60 / 61.
+        //
+        // GC derivation:
+        // - Use the smallest valid GC package for the only supported fragment length 61:
+        //     length_edges = [61, 62]
+        //     gc_edges     = [0, 101]
+        //     correction_matrix = [[3.0]]
+        // - Every accepted fragment therefore gets GC weight 3.0.
+        //
+        // Final contract:
+        // - `lengths` multiplies scaling and GC correction for the fragment before incrementing the
+        //   length bin.
+        // - The only occupied cell must therefore be:
+        //     3.0 * (60 / 61) = 180 / 61.
+        let producer_bam = simple_inward_bam()?;
+        let consumer_bam = bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            vec![fragment_on_tid(0, 20, 61, 20)],
+            Vec::new(),
+            "lengths_gc_and_scaling_consumer",
+        )?;
+        let ref_twobit = simple_reference_twobit()?;
+        let out_dir = TempDir::new()?;
+        let weights_out_dir = out_dir.path().join("coverage_weights");
+        std::fs::create_dir_all(&weights_out_dir)?;
+        let scaling_cfg = make_simple_coverage_weights_config(&weights_out_dir, &producer_bam.bam);
+        let gc_path = out_dir.path().join("constant_gc_pkg.npz");
+        let package = GCCorrectionPackage {
+            version: GC_CORRECTION_SCHEMA_VERSION,
+            end_offset: 0,
+            length_edges: vec![61, 62],
+            gc_edges: vec![0, 101],
+            length_bin_frequencies: array![1.0_f64],
+            correction_matrix: array![[3.0_f64]],
+        };
+        package.write_npz(&gc_path)?;
+
+        // Act
+        run_coverage_weights(&scaling_cfg)?;
+        let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: consumer_bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_scaling_factors(Some(scaling_path));
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            drop_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 61;
+            frag.max_fragment_length = 61;
+        }
+
+        run(&cfg)?;
+
+        // Assert
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.shape(), &[1, 1]);
+
+        let expected = 180.0_f64 / 61.0_f64;
+        assert!(
+            (arr[(0, 0)] - expected).abs() <= 1e-9,
+            "expected weighted length count {expected}, got {}",
+            arr[(0, 0)]
+        );
+        assert!(
+            (arr.sum() - expected).abs() <= 1e-9,
+            "expected total mass {expected}, got {}",
+            arr.sum()
         );
 
         Ok(())
@@ -1833,14 +1993,17 @@ mod tests_lengths_command {
         let arr: Array2<f64> = read_npy(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 1]);
 
-        let expected = 11.0_f64 / 61.0_f64;
+        // `count-overlap` stores overlap fractions as `f32` before they are promoted back to
+        // `f64` in the lengths accumulator, so the stable contract here is the rounded `f32`
+        // value rather than ideal `f64` arithmetic on 11 / 61.
+        let expected = (11.0_f32 / 61.0_f32) as f64;
         assert!(
-            (arr[(0, 0)] - expected).abs() <= 1e-9,
+            (arr[(0, 0)] - expected).abs() <= 1e-12,
             "expected weighted count {expected}, got {}",
             arr[(0, 0)]
         );
         assert!(
-            (arr.sum() - expected).abs() <= 1e-9,
+            (arr.sum() - expected).abs() <= 1e-12,
             "expected total mass {expected}, got {}",
             arr.sum()
         );
@@ -2132,7 +2295,7 @@ mod tests_lengths_tiling_helpers {
         // Tile: core 50-150, fetch 30-200 (halo 20 left, 50 right), chrom len 180
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 50, 150, 30, 200)
             .expect("test tile should be valid");
-        let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(100), 180)
+        let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(100), 180, 0)
             .expect("span expected")
             .expect("fetch span expected");
         // Window span touching core: 0..200, after halo clamp -> 30..180
@@ -2176,7 +2339,7 @@ mod tests_lengths_tiling_helpers {
     fn fetch_span_for_tile_global_clamps_to_chrom() {
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 0, 50, 0, 200)
             .expect("test tile should be valid");
-        let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Global, 120)
+        let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Global, 120, 0)
             .expect("span")
             .expect("fetch span expected");
         assert_eq!(span.start(), 0);
@@ -2198,6 +2361,7 @@ mod tests_lengths_tiling_helpers {
             Some(&windows),
             &WindowSpec::Bed(PathBuf::from("dummy")),
             500,
+            0,
         )
         .expect("span")
         .expect("fetch span expected");
@@ -2222,6 +2386,7 @@ mod tests_lengths_tiling_helpers {
             Some(&windows),
             &WindowSpec::Bed(PathBuf::from("dummy")),
             200,
+            0,
         )
         .expect("fetch span computation should succeed");
         assert!(res.is_none());
@@ -2231,7 +2396,7 @@ mod tests_lengths_tiling_helpers {
     fn fetch_span_size_mode_none_when_tile_right_of_chromosome() {
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 250, 260, 230, 270)
             .expect("test tile should be valid");
-        let res = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(50), 200)
+        let res = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(50), 200, 0)
             .expect("fetch span computation should succeed");
         assert!(res.is_none());
     }

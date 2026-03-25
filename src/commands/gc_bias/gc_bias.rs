@@ -19,14 +19,14 @@ use crate::{
                 build_extreme_bins_support_mask, set_masked_entries_to_value, stats_by_support_mask,
             },
             windows::{
-                WindowState, advance_fixed_size_streaming_buffers, compute_window_acgt,
-                compute_window_stats, overlap_length, prepare_tile_windows,
+                WindowState, advance_fixed_size_streaming_buffers, compute_window_stats,
+                overlap_length, prepare_tile_windows, set_window_acgt_in_observed_interval,
             },
         },
     },
     shared::{
         bam::create_chromosome_reader,
-        bed::{Windows, load_windows_from_bed},
+        bed::load_windows_from_bed,
         blacklist::apply_blacklist_mask_to_seq,
         fragment::minimal_fragment::Fragment,
         fragment_iterator::fragments_from_bam,
@@ -43,7 +43,6 @@ use crate::{
     },
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use fxhash::FxHashMap;
 use ndarray::{Array1, Array2, ArrayBase, Axis, Data, DataMut, Ix2, Zip};
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
@@ -115,10 +114,8 @@ fn fragment_assignment_interval(
 pub fn finalize_window_buffer(
     buf: &mut WindowState,
     gc_prefixes: &GCPrefixes,
-    seq_start: u64,
-    seq_end: u64,
-    tile_core_start: u64,
-    tile_core_end: u64,
+    sequence_interval: Interval<u64>,
+    tile_core_interval: Interval<u64>,
     windows_aligned_to_tiles: bool,
     apply_window_scaling: bool,
     opt: &GCConfig,
@@ -129,32 +126,56 @@ pub fn finalize_window_buffer(
     tile_output: &mut WindowState,
     crossing_parts: &mut Vec<CrossingPart>,
 ) -> Result<()> {
-    if !buf.has_counts {
+    let crosses_tile = !tile_core_interval.contains_interval(buf.interval);
+    // For a window that crosses tile boundaries, this is the part of the window owned by the
+    // current tile. Support must be counted from the tile core, not from the full fetched span,
+    // otherwise neighbouring tiles' fetch halos would double count the same bases.
+    let tile_owned_interval = if crosses_tile {
+        buf.interval.intersection(tile_core_interval)
+    } else {
+        None
+    };
+    let should_spill_crossing = apply_window_scaling
+        && !windows_aligned_to_tiles
+        && crosses_tile
+        && (buf.has_counts || tile_owned_interval.is_some());
+
+    if !buf.has_counts && !should_spill_crossing {
         buf.counts.clear();
         return Ok(());
     }
-
-    compute_window_acgt(buf, gc_prefixes, Interval::new(seq_start, seq_end)?)?;
 
     if !apply_window_scaling {
         tile_output.counts.merge_from(&buf.counts)?;
         tile_output.weight += 1;
-        buf.counts.clear();
-        buf.has_counts = false;
-        return Ok(());
-    }
-
-    let crosses_tile = buf.start() < tile_core_start || buf.end() > tile_core_end;
-    if !windows_aligned_to_tiles && crosses_tile {
+    } else if should_spill_crossing {
+        // Fixed-size streaming can finalize a synthetic "next" window that lies wholly outside
+        // the current tile core. Fragments starting in this tile may still contribute counts to
+        // that window, but this tile owns none of the window's support span. In that case we must
+        // spill the counts with zero observed support here and let the owning tile contribute the
+        // support bases later. Empty placeholders with neither counts nor owned support are
+        // filtered out by the `should_spill_crossing` guard above.
+        if let Some(tile_owned_interval) = tile_owned_interval {
+            set_window_acgt_in_observed_interval(
+                buf,
+                gc_prefixes,
+                tile_owned_interval,
+                sequence_interval,
+            )?;
+        } else {
+            buf.counts.num_acgt_out_of = (0, 0);
+        }
         crossing_parts.push(CrossingPart {
             idx: buf.idx as usize,
             counts: buf.counts.clone(),
         });
-    } else if process_window_in_place(&mut buf.counts, opt, avg_window_span)? {
-        tile_output.counts.merge_from(&buf.counts)?;
-        tile_output.weight += 1;
+    } else {
+        set_window_acgt_in_observed_interval(buf, gc_prefixes, buf.interval, sequence_interval)?;
+        if process_window_in_place(&mut buf.counts, opt, avg_window_span)? {
+            tile_output.counts.merge_from(&buf.counts)?;
+            tile_output.weight += 1;
+        }
     }
-
     buf.counts.clear();
     buf.has_counts = false;
     Ok(())
@@ -242,20 +263,12 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             println!("Start: Loading window coordinates");
-            let mut wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
-            println!("Start: Merging overlapping/touching windows");
-            let mut merged: FxHashMap<String, Windows> =
-                FxHashMap::with_capacity_and_hasher(wds.len(), Default::default());
-            let mut next_idx = 0u64;
-            for chr in &chromosomes {
-                if let Some(ws) = wds.remove(chr) {
-                    // Flatten in-place
-                    let (flat, next) = ws.into_flattened_reindexed(next_idx);
-                    next_idx = next;
-                    merged.insert(chr.clone(), flat);
-                }
-            }
-            Some(merged)
+            Some(load_windows_from_bed(
+                bed,
+                Some(chromosomes.as_slice()),
+                None,
+                None,
+            )?)
         }
         _ => None,
     };
@@ -899,10 +912,8 @@ fn process_tile(
                 finalize_window_buffer(
                     &mut current,
                     &gc_prefixes,
-                    seq_start,
-                    seq_end,
-                    tile.core_start() as u64,
-                    tile.core_end() as u64,
+                    sequence_interval,
+                    tile_core_interval,
                     windows_aligned_to_tiles,
                     apply_window_scaling,
                     opt,
@@ -1006,10 +1017,8 @@ fn process_tile(
         finalize_window_buffer(
             &mut current,
             &gc_prefixes,
-            seq_start,
-            seq_end,
-            tile.core_start() as u64,
-            tile.core_end() as u64,
+            sequence_interval,
+            tile_core_interval,
             windows_aligned_to_tiles,
             apply_window_scaling,
             opt,
@@ -1021,10 +1030,8 @@ fn process_tile(
             finalize_window_buffer(
                 next_window,
                 &gc_prefixes,
-                seq_start,
-                seq_end,
-                tile.core_start() as u64,
-                tile.core_end() as u64,
+                sequence_interval,
+                tile_core_interval,
                 windows_aligned_to_tiles,
                 apply_window_scaling,
                 opt,
@@ -1109,10 +1116,8 @@ fn process_tile(
             finalize_window_buffer(
                 &mut w,
                 &gc_prefixes,
-                seq_start,
-                seq_end,
-                tile.core_start() as u64,
-                tile.core_end() as u64,
+                sequence_interval,
+                tile_core_interval,
                 windows_aligned_to_tiles,
                 apply_window_scaling,
                 opt,

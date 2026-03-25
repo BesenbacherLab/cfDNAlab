@@ -283,8 +283,10 @@ pub fn build_real_non_neutral_gc_package(
         output_dir: ref_gc_dir.path().to_path_buf(),
         n_threads: 1,
         // Callers pass the exact number of sampled starts because the non-neutral tests rely on
-        // fully hand-derived reference-side counts. Keeping that arithmetic at the call site makes
-        // the expected consumer weights easy to audit next to each test.
+        // fully hand-derived reference-side counts. `ref-gc-bias` only counts sampled starts that
+        // both lie inside the BED interval and leave enough room for the full fragment before that
+        // interval's right edge, so keeping the arithmetic at the call site makes the expected
+        // producer/consumer weights easy to audit next to each test.
         n_positions,
         seed: Some(23),
         windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
@@ -577,6 +579,56 @@ fn write_bam(
     Ok(())
 }
 
+fn write_bam_with_strict_identity(
+    chroms: &[(String, u32)],
+    fragments: &[FragmentSpec],
+    singles: &[ReadSpec],
+    out_bam: &Path,
+) -> Result<()> {
+    let mut header = bam::Header::new();
+    header.push_record(
+        HeaderRecord::new(b"HD")
+            .push_tag(b"VN", &"1.6")
+            .push_tag(b"SO", &"coordinate"),
+    );
+    for (name, len) in chroms {
+        header.push_record(
+            HeaderRecord::new(b"SQ")
+                .push_tag(b"SN", name)
+                .push_tag(b"LN", len),
+        );
+    }
+
+    let mut writer = bam::Writer::from_path(out_bam, &header, bam::Format::Bam)
+        .with_context(|| format!("create bam at {}", out_bam.display()))?;
+
+    let mut records: Vec<bam::Record> = Vec::new();
+
+    // Give each synthetic fragment a unique qname so stacked fragments at the same genomic start
+    // still represent distinct molecules to paired-end consumers.
+    for (fragment_idx, fragment) in fragments.iter().enumerate() {
+        let qname = format!(
+            "frag{}_tid{}_pos{}",
+            fragment_idx, fragment.forward.tid, fragment.forward.pos
+        );
+        records.push(fragment.forward.to_record(qname.as_bytes()));
+        records.push(fragment.reverse.to_record(qname.as_bytes()));
+    }
+
+    // Singles need the same treatment for consistency if a test ever stacks reads at one start.
+    for (single_idx, single) in singles.iter().enumerate() {
+        let qname = format!("single{}_tid{}_pos{}", single_idx, single.tid, single.pos);
+        records.push(single.to_record(qname.as_bytes()));
+    }
+
+    records.sort_by_key(|rec| (rec.tid(), rec.pos()));
+
+    for rec in records {
+        writer.write(&rec)?;
+    }
+    Ok(())
+}
+
 fn build_index(bam_path: &Path) -> Result<PathBuf> {
     let bai_path = bam_path.with_extension("bam.bai");
     bam::index::build(bam_path, None, bam::index::Type::Bai, 1)
@@ -602,6 +654,20 @@ pub fn bam_from_specs(
     let bam_path = tempdir.path().join(format!("{name}.bam"));
 
     write_bam(&chroms, &fragments, &singles, &bam_path)?;
+    let bai = build_index(&bam_path)?;
+    Ok(BamFixture::new(tempdir, bam_path, bai))
+}
+
+pub fn bam_from_specs_strict_identity(
+    chroms: Vec<(String, u32)>,
+    fragments: Vec<FragmentSpec>,
+    singles: Vec<ReadSpec>,
+    name: &str,
+) -> Result<BamFixture> {
+    let tempdir = TempDir::new()?;
+    let bam_path = tempdir.path().join(format!("{name}.bam"));
+
+    write_bam_with_strict_identity(&chroms, &fragments, &singles, &bam_path)?;
     let bai = build_index(&bam_path)?;
     Ok(BamFixture::new(tempdir, bam_path, bai))
 }

@@ -8,10 +8,11 @@ mod tests {
             IndelReadInfo, InsertionAnchor, collect_fragment_with_indel_counts,
         },
         interval::{IndexedInterval, Interval},
-        midpoint::midpoint_random_even_with_thread_rng,
+        midpoint::{midpoint_random_even, midpoint_random_even_with_thread_rng},
         overlaps::find_overlapping_windows,
         scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
     };
+    use rand::RngCore;
 
     // ------- helpers -------
 
@@ -106,8 +107,9 @@ mod tests {
 
     #[test]
     fn full_window_two_bins_averages_by_length() -> Result<()> {
-        // Window [0,10), scaling bins: [0,5)->2.0, [5,10)->1.0, fragment [0,10)
-        // Expected average over overlap: (5*2 + 5*1) / 10 = 1.5
+        // Window [0,10), scaling bins: [0,2)->2.0, [2,10)->1.0, fragment [0,10)
+        // Expected average over overlap: (2*2 + 8*1) / 10 = 1.2
+        // A wrong simple average over the two bins would give (2 + 1) / 2 = 1.5 instead.
         let chrom_len = 100;
         let count_wins = bed_windows(&[(0, 10)]);
         let mut wd_ptr = 0usize;
@@ -125,12 +127,12 @@ mod tests {
         )?
         .context("count overlaps")?;
 
-        let scaling_chr = vec![(0, 5, 2.0), (5, 10, 1.0)];
+        let scaling_chr = vec![(0, 2, 2.0), (2, 10, 1.0)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
         let w = compute_window_scaling_over_overlap(&overlaps, &sf_idx, &scaling_chr)?;
         assert_eq!(w.len(), 1);
-        approx_eq(w[0].1, 1.5, 1e-6); // average scaling
+        approx_eq(w[0].1, 1.2, 1e-6); // length-weighted average scaling
         approx_eq(w[0].2, 1.0, 1e-6); // full overlap of fragment with window
         Ok(())
     }
@@ -239,6 +241,12 @@ mod tests {
         .expect("count overlaps must be Some");
 
         let scaling_chr = vec![(0, 10, 1.0)];
+        let valid_sf_idx = vec![0usize];
+        let ok_rows = compute_window_scaling_over_overlap(&overlaps, &valid_sf_idx, &scaling_chr)?;
+        assert_eq!(ok_rows.len(), 1);
+        approx_eq(ok_rows[0].1, 1.0, 1e-6);
+        approx_eq(ok_rows[0].2, 1.0, 1e-6);
+
         let sf_idx: Vec<usize> = Vec::new();
 
         let err =
@@ -254,8 +262,9 @@ mod tests {
     #[test]
     fn no_scaling_single_window_uses_overlap_fraction_full_overlap() -> Result<()> {
         // One count window fully covering the fragment -> overlap_fraction == 1.0
+        // The fragment is strictly inside the window, so this is not an equality-at-boundary case.
         let chrom_len = 100;
-        let count_wins = bed_windows(&[(0, 100)]);
+        let count_wins = bed_windows(&[(10, 90)]);
         let mut wd_ptr = 0usize;
 
         let frag_start = 20;
@@ -272,6 +281,37 @@ mod tests {
         .context("count overlaps")?;
 
         assert_eq!(overlaps.windows.len(), 1);
+        assert_eq!(overlaps.windows[0].idx, 0);
+        assert_eq!(overlaps.windows[0].start(), 10);
+        assert_eq!(overlaps.windows[0].end(), 90);
+        approx_eq(overlaps.windows[0].overlap_fraction as f64, 1.0, 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn no_scaling_global_window_uses_overlap_fraction_full_overlap() -> Result<()> {
+        // In global mode `find_overlapping_windows` synthesizes one chromosome-wide window.
+        // That path should also report a full overlap fraction for any non-empty fragment.
+        let chrom_len = 100;
+        let mut wd_ptr = 0usize;
+
+        let frag_start = 20;
+        let frag_end = 80; // len = 60
+        let overlaps = find_overlapping_windows(
+            chrom_len,
+            &mut wd_ptr,
+            None,
+            None,
+            query_interval(frag_start, frag_end),
+            0.0,
+            1000,
+        )?
+        .context("global overlap")?;
+
+        assert_eq!(overlaps.windows.len(), 1);
+        assert_eq!(overlaps.windows[0].idx, 0);
+        assert_eq!(overlaps.windows[0].start(), 0);
+        assert_eq!(overlaps.windows[0].end(), chrom_len);
         approx_eq(overlaps.windows[0].overlap_fraction as f64, 1.0, 1e-6);
         Ok(())
     }
@@ -337,7 +377,12 @@ mod tests {
         let scaling_chr = vec![(0, 4, 2.0), (4, 7, 1.0), (7, 10, 3.0)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
-        let rows = compute_window_scaling_over_fragment(&overlaps, &sf_idx, &scaling_chr)?;
+        let rows = compute_window_scaling_over_fragment(
+            query_interval(frag_start, frag_end),
+            &overlaps,
+            &sf_idx,
+            &scaling_chr,
+        )?;
         assert_eq!(rows.len(), 2);
         for (_idx, avg, overlap_fraction) in rows {
             approx_eq(avg, 13.0 / 7.0, 1e-6);
@@ -483,6 +528,41 @@ mod tests {
         assert!(m == start + len / 2, "midpoint {m} not the center element");
     }
 
+    struct FixedU64Rng {
+        value: u64,
+    }
+
+    impl RngCore for FixedU64Rng {
+        fn next_u32(&mut self) -> u32 {
+            self.value as u32
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            self.value
+        }
+
+        fn fill_bytes(&mut self, dst: &mut [u8]) {
+            let bytes = self.value.to_le_bytes();
+            for (byte_index, dst_byte) in dst.iter_mut().enumerate() {
+                *dst_byte = bytes[byte_index % bytes.len()];
+            }
+        }
+    }
+
+    #[test]
+    fn midpoint_random_even_can_choose_both_even_centers_with_controlled_rng() {
+        let start = 1000u32;
+        let len = 6u32;
+
+        let mut left_rng = FixedU64Rng { value: 0 };
+        let left_midpoint = midpoint_random_even(start, len, &mut left_rng);
+        assert_eq!(left_midpoint, start + len / 2 - 1);
+
+        let mut right_rng = FixedU64Rng { value: u64::MAX };
+        let right_midpoint = midpoint_random_even(start, len, &mut right_rng);
+        assert_eq!(right_midpoint, start + len / 2);
+    }
+
     #[test]
     fn indel_fragment_builder_fast_paths_and_counts() {
         // Forward and reverse on same tid, inward.
@@ -582,7 +662,12 @@ mod tests {
         let scaling_chr = vec![(0, 10, 1.0), (10, 20, 2.0), (20, 30, 3.0)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
-        let rows = compute_window_scaling_over_fragment(&overlaps, &sf_idx, &scaling_chr)?;
+        let rows = compute_window_scaling_over_fragment(
+            query_interval(frag_start, frag_end),
+            &overlaps,
+            &sf_idx,
+            &scaling_chr,
+        )?;
         assert_eq!(rows.len(), 3);
         for (_idx, avg, overlap_fraction) in rows {
             approx_eq(avg, 2.0, 1e-6);

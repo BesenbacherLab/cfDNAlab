@@ -435,6 +435,31 @@ impl Interval<u64> {
         };
         Interval::new(start, end)
     }
+
+    /// Convert a checked `u64` interval into a checked `usize` interval.
+    pub fn try_to_usize(self) -> Result<Interval<usize>> {
+        let start = match usize::try_from(self.start) {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(Error::InvalidIntervalConversion {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    target_type: "usize",
+                });
+            }
+        };
+        let end = match usize::try_from(self.end) {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(Error::InvalidIntervalConversion {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    target_type: "usize",
+                });
+            }
+        };
+        Interval::new(start, end)
+    }
 }
 
 impl Interval<u32> {
@@ -446,6 +471,11 @@ impl Interval<u32> {
     /// Convert a checked `u32` interval into a checked `u64` interval.
     pub fn try_to_u64(self) -> Result<Interval<u64>> {
         Interval::new(self.start as u64, self.end as u64)
+    }
+
+    /// Convert a checked `u32` interval into a checked `usize` interval.
+    pub fn try_to_usize(self) -> Result<Interval<usize>> {
+        Interval::new(self.start as usize, self.end as usize)
     }
 }
 
@@ -497,6 +527,31 @@ impl Interval<i64> {
                     start: self.start.to_string(),
                     end: self.end.to_string(),
                     target_type: "u32",
+                });
+            }
+        };
+        Interval::new(start, end)
+    }
+
+    /// Convert a checked signed interval into a checked `usize` interval.
+    pub fn try_to_usize(self) -> Result<Interval<usize>> {
+        let start = match usize::try_from(self.start) {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(Error::InvalidIntervalConversion {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    target_type: "usize",
+                });
+            }
+        };
+        let end = match usize::try_from(self.end) {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(Error::InvalidIntervalConversion {
+                    start: self.start.to_string(),
+                    end: self.end.to_string(),
+                    target_type: "usize",
                 });
             }
         };

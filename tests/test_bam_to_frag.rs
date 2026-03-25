@@ -239,6 +239,88 @@ mod tests_bam_to_frag {
     }
 
     #[test]
+    fn by_bed_excludes_chromosomes_without_any_windows() -> Result<()> {
+        // Arrange:
+        // Build one fragment on each of two chromosomes:
+        // - chr1: [20, 80)
+        // - chr2: [120, 180)
+        //
+        // Then provide a BED file with a single chr1 window [0, 100).
+        // In `bam-to-frag`, `--by-bed` is an inclusion filter, so chr1 should be kept and
+        // chr2 should contribute nothing at all because that chromosome has no BED rows.
+        let chr1_fragment = paired_fragment(20, 60, 30);
+        let mut chr2_fragment = paired_fragment(120, 60, 30);
+        chr2_fragment.forward.tid = 1;
+        chr2_fragment.reverse.tid = 1;
+        chr2_fragment.forward.mate_tid = Some(1);
+        chr2_fragment.reverse.mate_tid = Some(1);
+        let bam = bam_from_specs(
+            vec![("chr1".to_string(), 300), ("chr2".to_string(), 300)],
+            vec![chr1_fragment, chr2_fragment],
+            Vec::new(),
+            "bam_to_frag_missing_chr_bed_windows",
+        )?;
+
+        let work = tempdir().context("tempdir")?;
+        let global_out_dir = work.path().join("out_global");
+        let bed_out_dir = work.path().join("out_bed");
+        fs::create_dir_all(&global_out_dir)?;
+        fs::create_dir_all(&bed_out_dir)?;
+        let bed_path = work.path().join("chr1_only.bed");
+        fs::write(&bed_path, "chr1\t0\t100\n")?;
+
+        let chromosomes = ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string(), "chr2".to_string()]),
+            chromosomes_file: None,
+        };
+        let mut global_cfg = BamToFragConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: global_out_dir.clone(),
+                n_threads: 1,
+            },
+            chromosomes.clone(),
+        );
+        global_cfg.set_output_prefix("global");
+        global_cfg.set_min_mapq(0);
+        global_cfg.set_require_proper_pair(false);
+
+        let mut cfg = BamToFragConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: bed_out_dir.clone(),
+                n_threads: 1,
+            },
+            chromosomes,
+        );
+        cfg.set_output_prefix("bed_only_chr1");
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_by_bed(Some(bed_path));
+
+        // Act
+        run_inner(&global_cfg)?;
+        run_inner(&cfg)?;
+
+        // Assert:
+        // First prove the fixture and output path preserve both chromosomes in global mode.
+        // Then show that `--by-bed` removes only the chromosome with no BED rows.
+        let global_rows = read_frag_gz(&global_out_dir.join("global.frag.tsv.gz"))?;
+        assert_eq!(
+            global_rows,
+            vec![
+                "chr1\t20\t80\t60\t+".to_string(),
+                "chr2\t120\t180\t60\t+".to_string(),
+            ]
+        );
+
+        let bed_rows = read_frag_gz(&bed_out_dir.join("bed_only_chr1.frag.tsv.gz"))?;
+        assert_eq!(bed_rows, vec!["chr1\t20\t80\t60\t+".to_string()]);
+
+        Ok(())
+    }
+
+    #[test]
     fn chromosomes_all_follows_bam_header_order_not_lexicographic_order() -> Result<()> {
         // Arrange:
         // Build a BAM whose header order is intentionally non-lexicographic:
@@ -1459,8 +1541,9 @@ mod tests_bam_to_frag {
         // Arrange:
         // Use the same real non-neutral producer workflow as the corresponding `gc-bias` test:
         // - Reference: chr1[0,100) all A, chr1[100,200) all C
-        // - Reference windows: [0,91) and [100,191), so only pure-A and pure-C starts are
-        //   counted on the reference side
+        // - Reference windows: [0,91) and [100,191)
+        // - with the `ref-gc-bias` fit rule those count starts 0..=81 and 100..=181 only, so the
+        //   reference-side support is still balanced between pure-A and pure-C starts
         // - Sample BAM: one A-only 10 bp fragment and nine C-only 10 bp fragments
         //
         // The real produced GC package is hand-derived as:

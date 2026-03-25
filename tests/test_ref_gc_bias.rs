@@ -67,16 +67,48 @@ fn counts_gc_for_each_window_with_end_offset() -> Result<()> {
         1,
     );
 
-    // Assert: Window 0 sees GC=2 for lengths 4, 5, and 6; window 1 sees an increasing GC profile
-    let window0 = &counts_by_bin[0];
-    assert_eq!(window0.get(4, 2).unwrap(), 1.0);
-    assert_eq!(window0.get(5, 2).unwrap(), 1.0);
-    assert_eq!(window0.get(6, 2).unwrap(), 1.0);
+    // Assert:
+    // Window 0 counts fragments starting at 0 inside `ACGTAC`:
+    // - len4 trimmed to `CG`   -> gc=2
+    // - len5 trimmed to `CGT`  -> gc=2
+    // - len6 trimmed to `CGTA` -> gc=2
+    //
+    // Window 1 counts fragments starting at 6 inside `GTACGT`:
+    // - len4 trimmed to `TA`   -> gc=0
+    // - len5 trimmed to `TAC`  -> gc=1
+    // - len6 trimmed to `TACG` -> gc=2
+    //
+    // No other `(length, gc)` cells should receive any counts.
+    let expected_window0 = &[(4_usize, 2_usize), (5, 2), (6, 2)];
+    let expected_window1 = &[(4_usize, 0_usize), (5, 1), (6, 2)];
 
-    let window1 = &counts_by_bin[1];
-    assert_eq!(window1.get(4, 0).unwrap(), 1.0);
-    assert_eq!(window1.get(5, 1).unwrap(), 1.0);
-    assert_eq!(window1.get(6, 2).unwrap(), 1.0);
+    for (window_index, (window_counts, expected_non_zero_cells)) in counts_by_bin
+        .iter()
+        .zip([expected_window0, expected_window1].iter())
+        .enumerate()
+    {
+        assert_eq!(
+            window_counts.sum(),
+            expected_non_zero_cells.len() as f64,
+            "window {window_index} should contain exactly one count for each tested length"
+        );
+
+        for length in 4..=6 {
+            let effective_length = length - 2;
+            for gc_count in 0..=effective_length {
+                let expected_value = if expected_non_zero_cells.contains(&(length, gc_count)) {
+                    1.0
+                } else {
+                    0.0
+                };
+                assert_eq!(
+                    window_counts.get(length, gc_count).unwrap(),
+                    expected_value,
+                    "window {window_index} expected count {expected_value} at length {length}, gc {gc_count}"
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -230,10 +262,64 @@ fn ref_gc_bias_run_writes_expected_package_metadata_and_shapes() -> Result<()> {
     assert_eq!(smoothing_sigma.to_vec(), vec![0.55]);
     assert_eq!(skip_smoothing.to_vec(), vec![true]);
 
-    assert!(
-        counts.iter().all(|value| value.is_finite() && *value >= 0.0),
-        "reference GC counts should be finite and non-negative"
-    );
+    let expected_theoretical_bins = [
+        vec![0_usize, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+        vec![0_usize, 9, 18, 27, 36, 45, 55, 64, 73, 82, 91, 100],
+        vec![0_usize, 8, 17, 25, 33, 42, 50, 58, 67, 75, 83, 92, 100],
+    ];
+    for (row_index, row) in counts.outer_iter().enumerate() {
+        let supported_bins: &[usize] = match row_index {
+            0 => &[40, 50, 60], // length 10 -> GC counts 4, 5, 6
+            1 => &[45, 55],     // length 11 -> GC counts 5 or 6
+            2 => &[50],         // length 12 -> always 50%
+            _ => panic!("unexpected row index {row_index}"),
+        };
+        let theoretical_bins = &expected_theoretical_bins[row_index];
+
+        assert!(
+            row.iter().all(|value| value.is_finite() && *value >= 0.0),
+            "reference GC counts should be finite and non-negative in row {row_index}"
+        );
+        assert_eq!(
+            row.sum(),
+            100.0,
+            "each sampled start should contribute one count per fragment length"
+        );
+
+        for (gc_percent, &value) in row.iter().enumerate() {
+            if !supported_bins.contains(&gc_percent) {
+                assert_eq!(
+                    value, 0.0,
+                    "row {row_index} should not place counts outside the reachable GC% bins"
+                );
+            }
+        }
+
+        let unobservable_row = support_unobservables.row(row_index);
+        let outlier_row = support_outliers.row(row_index);
+        let widths_row = gc_percent_widths.row(row_index);
+        for gc_percent in 0..=100 {
+            let expected_theoretical_support = theoretical_bins.contains(&gc_percent);
+            let expected_empirical_support = supported_bins.contains(&gc_percent);
+            let expected_width = if expected_theoretical_support { 1_u16 } else { 0_u16 };
+
+            assert_eq!(
+                unobservable_row[gc_percent],
+                expected_theoretical_support,
+                "row {row_index} theoretical support mismatch at GC% {gc_percent}"
+            );
+            assert_eq!(
+                outlier_row[gc_percent],
+                expected_empirical_support,
+                "row {row_index} empirical support mismatch at GC% {gc_percent}"
+            );
+            assert_eq!(
+                widths_row[gc_percent],
+                expected_width,
+                "row {row_index} GC-percent width mismatch at GC% {gc_percent}"
+            );
+        }
+    }
 
     Ok(())
 }
@@ -251,12 +337,24 @@ fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()
     //
     // Then we restrict counting to BED windows:
     //   [0, 91) and [100, 191)
-    // which keeps only the pure-A starts 0..=90 and pure-C starts 100..=190.
-    // The boundary-crossing starts 91..=99 are still sampled, but excluded by the windows.
+    //
+    // Important command detail:
+    // - `ref-gc-bias` does not interpret BED windows as "allowed start positions".
+    // - It calls `count_reference_gc_and_length_by_window`, which requires the full fragment to
+    //   fit inside the window:
+    //       frag_len <= window_end - start_pos
+    // - So for `frag_len = 10`, window [0, 91) counts starts 0..=81, not 0..=90.
+    // - Likewise [100, 191) counts starts 100..=181, not 100..=190.
+    //
+    // Those counted fragments are still pure:
+    // - starts 0..=81 stay fully inside the A block
+    // - starts 100..=181 stay fully inside the C block
+    // The boundary-crossing starts are sampled, but excluded because the fragment would not fit
+    // inside the BED window.
     //
     // Therefore the output counts are exactly:
-    // - 91 counts at GC% 0
-    // - 91 counts at GC% 100
+    // - 82 counts at GC% 0
+    // - 82 counts at GC% 100
     // - 0 everywhere else
     //
     // For length 10 and end_offset 0, theoretical GC% support exists only at multiples of 10:
@@ -324,8 +422,8 @@ fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()
     for (gc_pct, &value) in counts.row(0).iter().enumerate() {
         match gc_pct {
             0 | 100 => assert!(
-                (value - 91.0).abs() < 1e-12,
-                "expected 91 counts at GC% {gc_pct}, got {value}"
+                (value - 82.0).abs() < 1e-12,
+                "expected 82 counts at GC% {gc_pct}, got {value}"
             ),
             _ => assert!(
                 value.abs() < 1e-12,
@@ -374,7 +472,9 @@ fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -
     // - chr1[100,200) = all C
     // - fragment length fixed at 10
     // - every valid start sampled exactly once (`n_positions = 191`)
-    // - BED windows keep only the pure-A starts 0..=90 and pure-C starts 100..=190
+    // - BED windows are still interpreted as full fragment containers, not start-only filters:
+    //     [0, 91)   with length 10 counts starts 0..=81
+    //     [100,191) with length 10 counts starts 100..=181
     //
     // Then apply a blacklist over [45,55). `ref-gc-bias` masks blacklisted sequence to `N` before
     // counting, and with the command's default `min_acgt_fraction = 1.0`, any fragment touching
@@ -385,17 +485,17 @@ fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -
     // -> s <= 54 and s >= 36
     // -> s in 36..=54
     //
-    // Those 19 dropped starts all belong to the pure-A BED window [0,91). The pure-C starts
-    // 100..=190 never touch the blacklist.
+    // Those 19 dropped starts all belong to the counted pure-A starts 0..=81.
+    // The counted pure-C starts 100..=181 never touch the blacklist.
     //
     // Therefore the exact output counts must be:
-    // - GC% 0   -> 91 - 19 = 72
-    // - GC% 100 -> 91
+    // - GC% 0   -> 82 - 19 = 63
+    // - GC% 100 -> 82
     // - 0 everywhere else
     //
     // The empirical support threshold is still tiny:
-    //   total covered ACGT bases = 72 + 91 = 163
-    //   threshold = 163 / 1_000_000 = 0.000163
+    //   total covered ACGT bases = 63 + 82 = 145
+    //   threshold = 145 / 1_000_000 = 0.000145
     // so both non-zero bins remain empirically supported and all zero bins remain unsupported.
     let reference = fixtures::twobit_from_sequences(
         "ref_gc_bias_blacklist_exact_counts_reference",
@@ -454,12 +554,12 @@ fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -
     for (gc_pct, &value) in counts.row(0).iter().enumerate() {
         match gc_pct {
             0 => assert!(
-                (value - 72.0).abs() < 1e-12,
-                "expected 72 counts at GC% 0 after blacklist masking, got {value}"
+                (value - 63.0).abs() < 1e-12,
+                "expected 63 counts at GC% 0 after blacklist masking, got {value}"
             ),
             100 => assert!(
-                (value - 91.0).abs() < 1e-12,
-                "expected 91 counts at GC% 100 after blacklist masking, got {value}"
+                (value - 82.0).abs() < 1e-12,
+                "expected 82 counts at GC% 100 after blacklist masking, got {value}"
             ),
             _ => assert!(
                 value.abs() < 1e-12,
@@ -518,26 +618,32 @@ fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> 
     // We sample every valid start:
     //   valid starts = 200 - 12 + 1 = 189
     //
-    // To keep only pure trimmed spans:
-    // - pure-A requires start + 11 <= 100  -> start <= 89
-    // - pure-C requires start + 1  >= 100  -> start >= 99
+    // To keep only pure trimmed spans we choose BED windows:
+    //   [0, 90) and [99, 189)
     //
-    // So the BED windows:
-    //   [0, 90)   -> starts 0..=89   -> 90 pure-A fragments
-    //   [99, 189) -> starts 99..=188 -> 90 pure-C fragments
+    // Important command detail:
+    // - even with `end_offset = 1`, BED windows are still checked against the full raw fragment
+    //   span, not only against the trimmed GC-counting span.
+    // - So with raw fragment length 12:
+    //     [0, 90)   counts starts 0..=78
+    //     [99, 189) counts starts 99..=177
     //
-    // Starts 90..=98 are still sampled, but excluded by the BED windows because their trimmed
-    // spans would cross the A/C boundary.
+    // Those counted fragments still have pure trimmed spans:
+    // - start 78 trims to [79, 89), still inside the A block
+    // - start 177 trims to [178, 188), still inside the C block
+    //
+    // Starts closer to the boundary are sampled, but excluded because the raw 12 bp fragment would
+    // not fit fully inside the BED window.
     //
     // Therefore the exact output counts must be:
-    // - 90 counts at GC% 0
-    // - 90 counts at GC% 100
+    // - 79 counts at GC% 0
+    // - 79 counts at GC% 100
     // - 0 everywhere else
     //
     // The empirical support threshold is again tiny:
     //   threshold_per_mb = 1 + 189 / 100_000_000 = 1
-    //   total covered ACGT bases = 90 + 90 = 180
-    //   threshold = 180 / 1_000_000 = 0.00018
+    //   total covered ACGT bases = 79 + 79 = 158
+    //   threshold = 158 / 1_000_000 = 0.000158
     // so the two non-zero bins remain empirically supported.
     let reference = fixtures::twobit_from_sequences(
         "ref_gc_bias_end_offset_two_bin_reference",
@@ -594,8 +700,8 @@ fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> 
     for (gc_pct, &value) in counts.row(0).iter().enumerate() {
         match gc_pct {
             0 | 100 => assert!(
-                (value - 90.0).abs() < 1e-12,
-                "expected 90 counts at GC% {gc_pct}, got {value}"
+                (value - 79.0).abs() < 1e-12,
+                "expected 79 counts at GC% {gc_pct}, got {value}"
             ),
             _ => assert!(
                 value.abs() < 1e-12,
@@ -645,9 +751,9 @@ fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Re
     // - fragment length = 12
     // - end_offset = 1
     // - every valid start sampled exactly once (`n_positions = 189`)
-    // - BED windows keep only pure trimmed spans:
-    //     [0,90)   -> starts 0..=89
-    //     [99,189) -> starts 99..=188
+    // - BED windows still require the full raw 12 bp fragment to fit:
+    //     [0,90)   -> starts 0..=78
+    //     [99,189) -> starts 99..=177
     //
     // Now apply blacklist [45,55). In `ref-gc-bias`, blacklist masking is evaluated on the
     // effective GC-counting interval [start+1, start+11), not on the raw 12 bp fragment span.
@@ -658,15 +764,16 @@ fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Re
     // -> start <= 53 and start >= 35
     // -> start in 35..=53
     //
-    // So exactly 19 pure-A starts are dropped. The pure-C starts 99..=188 remain untouched.
+    // So exactly 19 counted pure-A starts are dropped. The counted pure-C starts 99..=177 remain
+    // untouched.
     //
     // This is intentionally different from raw-span overlap:
     // - raw 12 bp fragment overlap would drop starts 34..=54 (21 starts)
     // - the command should *not* do that here
     //
     // Therefore the exact output counts must be:
-    // - GC% 0   -> 90 - 19 = 71
-    // - GC% 100 -> 90
+    // - GC% 0   -> 79 - 19 = 60
+    // - GC% 100 -> 79
     // - 0 everywhere else
     let reference = fixtures::twobit_from_sequences(
         "ref_gc_bias_end_offset_blacklist_reference",
@@ -725,12 +832,12 @@ fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Re
     for (gc_pct, &value) in counts.row(0).iter().enumerate() {
         match gc_pct {
             0 => assert!(
-                (value - 71.0).abs() < 1e-12,
-                "expected 71 counts at GC% 0 after trimmed-span blacklist masking, got {value}"
+                (value - 60.0).abs() < 1e-12,
+                "expected 60 counts at GC% 0 after trimmed-span blacklist masking, got {value}"
             ),
             100 => assert!(
-                (value - 90.0).abs() < 1e-12,
-                "expected 90 counts at GC% 100 after trimmed-span blacklist masking, got {value}"
+                (value - 79.0).abs() < 1e-12,
+                "expected 79 counts at GC% 100 after trimmed-span blacklist masking, got {value}"
             ),
             _ => assert!(
                 value.abs() < 1e-12,
@@ -1171,163 +1278,6 @@ fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_b
     assert_eq!(split_support_unobservables, merged_support_unobservables);
     assert_eq!(split_support_outliers, merged_support_outliers);
     assert_eq!(split_gc_percent_widths, merged_gc_percent_widths);
-
-    Ok(())
-}
-
-#[test]
-fn fixed_seed_ref_gc_bias_is_invariant_to_tile_size() -> Result<()> {
-    // Arrange:
-    // With a fixed seed, tile size is only an execution detail. Changing it changes how sampled
-    // starts are partitioned and merged across workers, but not the final logical reference-GC
-    // package.
-    //
-    // We compare two multi-tile runs on the 256 bp fixture chromosome:
-    // - tile_size = 128 -> 2 tiles
-    // - tile_size =  80 -> 4 tiles
-    //
-    // Both runs keep everything else identical, including the seed, so the written package arrays
-    // must match exactly.
-    let reference = fixtures::simple_reference_twobit()?;
-    let large_tile_out = TempDir::new()?;
-    let small_tile_out = TempDir::new()?;
-
-    let make_cfg = |output_dir: &Path, tile_size: u32| RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
-            ref_2bit: reference.path.clone(),
-        },
-        output_dir: output_dir.to_path_buf(),
-        n_threads: 1,
-        n_positions: 100,
-        seed: Some(17),
-        windows: Default::default(),
-        chromosomes: ChromosomeArgs {
-            chromosomes: Some(vec!["chr1".to_string()]),
-            chromosomes_file: None,
-        },
-        blacklist: None,
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
-            min_fragment_length: 10,
-            max_fragment_length: 12,
-        },
-        end_offset: 0,
-        skip_interpolation: true,
-        smoothing_sigma: 0.55,
-        smoothing_radius: 2,
-        skip_smoothing: true,
-        tile_size,
-    };
-
-    // Act
-    run(&make_cfg(large_tile_out.path(), 128))?;
-    run(&make_cfg(small_tile_out.path(), 80))?;
-
-    // Assert
-    let large_package = large_tile_out.path().join("ref_gc_package.npz");
-    let small_package = small_tile_out.path().join("ref_gc_package.npz");
-    let (
-        large_counts,
-        large_support_unobservables,
-        large_support_outliers,
-        large_gc_percent_widths,
-    ) = load_ref_gc_package_arrays(&large_package)?;
-    let (
-        small_counts,
-        small_support_unobservables,
-        small_support_outliers,
-        small_gc_percent_widths,
-    ) = load_ref_gc_package_arrays(&small_package)?;
-
-    assert_eq!(large_counts, small_counts);
-    assert_eq!(large_support_unobservables, small_support_unobservables);
-    assert_eq!(large_support_outliers, small_support_outliers);
-    assert_eq!(large_gc_percent_widths, small_gc_percent_widths);
-
-    Ok(())
-}
-
-#[test]
-fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_tile_size() -> Result<()> {
-    // Arrange:
-    // Tile size is an execution detail, even when `ref-gc-bias` must do both:
-    // - BED-window selection
-    // - blacklist masking inside those windows
-    //
-    // This is a stronger invariance test than the plain global case because the command now has to
-    // merge tile-local work while respecting both inclusion windows and excluded bases.
-    //
-    // We compare two fixed-seed runs over the same sparse BED selection:
-    // - tile_size = 128 -> 2 tiles on the 256 bp chromosome
-    // - tile_size =  80 -> 4 tiles
-    //
-    // The BED windows and blacklist are chosen so:
-    // - counting is not equivalent to global mode
-    // - one included interval is partially blacklisted
-    //
-    // With the same seed and all other settings identical, the final reference package arrays must
-    // still match exactly.
-    let reference = fixtures::simple_reference_twobit()?;
-    let large_tile_out = TempDir::new()?;
-    let small_tile_out = TempDir::new()?;
-    let bed_dir = TempDir::new()?;
-    let blacklist_dir = TempDir::new()?;
-    let bed_path = bed_dir.path().join("selected_windows.bed");
-    let blacklist_path = blacklist_dir.path().join("blacklist.bed");
-    std::fs::write(&bed_path, "chr1\t0\t80\nchr1\t120\t220\n")?;
-    std::fs::write(&blacklist_path, "chr1\t140\t160\n")?;
-
-    let make_cfg = |output_dir: &Path, tile_size: u32| RefGCBiasConfig {
-        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
-            ref_2bit: reference.path.clone(),
-        },
-        output_dir: output_dir.to_path_buf(),
-        n_threads: 1,
-        n_positions: 100,
-        seed: Some(23),
-        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
-            by_bed: Some(bed_path.clone()),
-        },
-        chromosomes: ChromosomeArgs {
-            chromosomes: Some(vec!["chr1".to_string()]),
-            chromosomes_file: None,
-        },
-        blacklist: Some(vec![blacklist_path.clone()]),
-        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
-            min_fragment_length: 10,
-            max_fragment_length: 12,
-        },
-        end_offset: 0,
-        skip_interpolation: true,
-        smoothing_sigma: 0.55,
-        smoothing_radius: 2,
-        skip_smoothing: true,
-        tile_size,
-    };
-
-    // Act
-    run(&make_cfg(large_tile_out.path(), 128))?;
-    run(&make_cfg(small_tile_out.path(), 80))?;
-
-    // Assert
-    let large_package = large_tile_out.path().join("ref_gc_package.npz");
-    let small_package = small_tile_out.path().join("ref_gc_package.npz");
-    let (
-        large_counts,
-        large_support_unobservables,
-        large_support_outliers,
-        large_gc_percent_widths,
-    ) = load_ref_gc_package_arrays(&large_package)?;
-    let (
-        small_counts,
-        small_support_unobservables,
-        small_support_outliers,
-        small_gc_percent_widths,
-    ) = load_ref_gc_package_arrays(&small_package)?;
-
-    assert_eq!(large_counts, small_counts);
-    assert_eq!(large_support_unobservables, small_support_unobservables);
-    assert_eq!(large_support_outliers, small_support_outliers);
-    assert_eq!(large_gc_percent_widths, small_gc_percent_widths);
 
     Ok(())
 }

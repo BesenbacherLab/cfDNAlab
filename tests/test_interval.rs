@@ -328,6 +328,50 @@ fn converts_u32_interval_to_u64_interval() -> anyhow::Result<()> {
 }
 
 #[test]
+fn converts_u64_interval_to_usize_interval() -> anyhow::Result<()> {
+    // Arrange: both bounds fit in usize, so the checked conversion should preserve them exactly.
+    let interval = Interval::new(25_u64, 40_u64)?;
+
+    // Act
+    let usize_interval = interval.try_to_usize()?;
+
+    // Assert
+    assert_eq!(usize_interval, Interval::new(25_usize, 40_usize)?);
+    Ok(())
+}
+
+#[test]
+fn converts_i64_interval_to_usize_interval() -> anyhow::Result<()> {
+    // Arrange: a non-negative signed interval should convert cleanly to usize.
+    let interval = Interval::new(7_i64, 19_i64)?;
+
+    // Act
+    let usize_interval = interval.try_to_usize()?;
+
+    // Assert
+    assert_eq!(usize_interval, Interval::new(7_usize, 19_usize)?);
+    Ok(())
+}
+
+#[test]
+fn rejects_signed_interval_that_does_not_fit_in_usize() -> anyhow::Result<()> {
+    // Arrange: negative bounds are invalid for usize conversion.
+    let interval = Interval::new(-2_i64, -1_i64)?;
+
+    // Act
+    let error = interval
+        .try_to_usize()
+        .expect_err("expected negative interval conversion to fail");
+
+    // Assert
+    assert_eq!(
+        error.to_string(),
+        "converting interval [-2, -1) to usize failed"
+    );
+    Ok(())
+}
+
+#[test]
 fn rejects_unsigned_interval_that_does_not_fit_in_i64() -> anyhow::Result<()> {
     // Arrange: both bounds exceed i64::MAX, so the checked conversion must fail instead of
     // silently wrapping or truncating.

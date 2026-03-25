@@ -73,10 +73,8 @@ mod tests_stream_helpers_and_finalizer {
         finalize_window_buffer(
             &mut buf,
             &prefixes,
-            0,
-            2,
-            0,
-            2,
+            Interval::new(0, 2)?,
+            Interval::new(0, 2)?,
             true,
             true,
             &cfg,
@@ -89,6 +87,190 @@ mod tests_stream_helpers_and_finalizer {
         let val = out.counts.get(1, 0).unwrap();
         assert!((val - 2.0).abs() < 1e-6);
         assert!(crossing_parts.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn finalize_window_buffer_ignores_empty_placeholder_window_outside_loaded_sequence(
+    ) -> Result<()> {
+        // Arrange:
+        // Model the fixed-size streaming "next" placeholder that can exist beyond the loaded
+        // sequence span for the current tile:
+        // - tile core interval:       [0, 95)
+        // - loaded sequence interval: [0, 99)
+        //   (the fetch band extends 4 bp beyond the core)
+        // - placeholder window:       [100, 200)
+        //
+        // The buffer is empty (`has_counts = false`), so finalization should no-op instead of
+        // trying to compute ACGT support for a window that does not overlap the loaded sequence.
+        let tmp = tempdir()?;
+        let cfg = make_config(&tmp);
+
+        let template = GCCounts::new(1, 1, 0, (0, 0))?;
+        let mut out = WindowState::new(0, Interval::new(0, 1)?, true, &template)?;
+        let mut crossing_parts = Vec::new();
+
+        let seq = vec![b'A'; 99];
+        let prefixes = build_gc_prefixes(&seq);
+
+        let mut buf = WindowState::new(1, Interval::new(100, 200)?, false, &template)?;
+        buf.has_counts = false;
+
+        // Act
+        finalize_window_buffer(
+            &mut buf,
+            &prefixes,
+            Interval::new(0, 99)?,
+            Interval::new(0, 95)?,
+            false,
+            true,
+            &cfg,
+            100.0,
+            &mut out,
+            &mut crossing_parts,
+        )?;
+
+        // Assert
+        assert_eq!(out.weight, 0);
+        assert_eq!(out.counts.sum(), 0.0);
+        assert!(crossing_parts.is_empty());
+        assert_eq!(buf.counts.sum(), 0.0);
+        assert!(!buf.has_counts);
+
+        Ok(())
+    }
+
+    #[test]
+    fn finalize_window_buffer_spills_crossing_support_without_double_counting_fetch_halo(
+    ) -> Result<()> {
+        // Arrange:
+        // Model one fixed window [0,100) that crosses a tile boundary at 60, with a 10 bp fetch
+        // halo on each tile:
+        // - left  tile core  [0,60),  loaded sequence [0,70)
+        // - right tile core [60,100), loaded sequence [50,100)
+        //
+        // The two loaded sequence intervals overlap on [50,70), so computing support from the
+        // fetch spans would double count 20 bp when the crossing parts are merged:
+        //   wrong support = 70 + 50 = 120
+        //
+        // The correct support must be counted from the tile-owned segments only:
+        //   left  contribution = [0,60)   -> 60 bp
+        //   right contribution = [60,100) -> 40 bp
+        //   merged support      = 100 bp
+        //
+        // The right tile is empty (`has_counts = false`), so the merged window still depends on
+        // support contributed by an otherwise empty neighboring tile.
+        let tmp = tempdir()?;
+        let cfg = make_config(&tmp);
+
+        let template = GCCounts::new(1, 1, 0, (0, 0))?;
+        let mut out = WindowState::new(999, Interval::new(0, 1)?, true, &template)?;
+        let mut crossing_parts = Vec::new();
+
+        let mut left_buf = WindowState::new(0, Interval::new(0, 100)?, false, &template)?;
+        left_buf.counts.set(1, 0, 1.0);
+        left_buf.has_counts = true;
+
+        let mut right_buf = WindowState::new(0, Interval::new(0, 100)?, false, &template)?;
+        right_buf.has_counts = false;
+
+        let left_seq = vec![b'A'; 70];
+        let right_seq = vec![b'A'; 50];
+        let left_prefixes = build_gc_prefixes(&left_seq);
+        let right_prefixes = build_gc_prefixes(&right_seq);
+
+        // Act
+        finalize_window_buffer(
+            &mut left_buf,
+            &left_prefixes,
+            Interval::new(0, 70)?,
+            Interval::new(0, 60)?,
+            false,
+            true,
+            &cfg,
+            100.0,
+            &mut out,
+            &mut crossing_parts,
+        )?;
+        finalize_window_buffer(
+            &mut right_buf,
+            &right_prefixes,
+            Interval::new(50, 100)?,
+            Interval::new(60, 100)?,
+            false,
+            true,
+            &cfg,
+            100.0,
+            &mut out,
+            &mut crossing_parts,
+        )?;
+
+        // Assert
+        assert_eq!(crossing_parts.len(), 2);
+        assert_eq!(crossing_parts[0].idx, 0);
+        assert_eq!(crossing_parts[1].idx, 0);
+        assert_eq!(crossing_parts[0].counts.num_acgt_out_of, (60, 60));
+        assert_eq!(crossing_parts[1].counts.num_acgt_out_of, (40, 40));
+
+        let merged_acgt: (u64, u64) = crossing_parts.iter().fold((0, 0), |acc, part| {
+            (
+                acc.0 + part.counts.num_acgt_out_of.0,
+                acc.1 + part.counts.num_acgt_out_of.1,
+            )
+        });
+        assert_eq!(
+            merged_acgt,
+            (100, 100),
+            "crossing support must sum to the true window span, not double count overlapping fetch halos"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn finalize_window_buffer_spills_counted_next_window_with_zero_owned_support() -> Result<()> {
+        // Arrange:
+        // Model the fixed-size streaming "next" window [100,200) while the current tile core is
+        // still [0,95) and the fetched sequence extends only to 99. Fragments starting in the
+        // current tile can still contribute counts to the next window, but this tile owns none of
+        // that window's support span.
+        let tmp = tempdir()?;
+        let cfg = make_config(&tmp);
+
+        let template = GCCounts::new(1, 1, 0, (0, 0))?;
+        let mut out = WindowState::new(0, Interval::new(0, 1)?, true, &template)?;
+        let mut crossing_parts = Vec::new();
+
+        let seq = vec![b'A'; 99];
+        let prefixes = build_gc_prefixes(&seq);
+
+        let mut buf = WindowState::new(1, Interval::new(100, 200)?, false, &template)?;
+        buf.counts.set(1, 0, 2.0);
+        buf.has_counts = true;
+
+        // Act
+        finalize_window_buffer(
+            &mut buf,
+            &prefixes,
+            Interval::new(0, 99)?,
+            Interval::new(0, 95)?,
+            false,
+            true,
+            &cfg,
+            100.0,
+            &mut out,
+            &mut crossing_parts,
+        )?;
+
+        // Assert
+        assert_eq!(out.weight, 0);
+        assert_eq!(crossing_parts.len(), 1);
+        assert_eq!(crossing_parts[0].idx, 1);
+        assert_eq!(crossing_parts[0].counts.get(1, 0).unwrap(), 2.0);
+        assert_eq!(crossing_parts[0].counts.num_acgt_out_of, (0, 0));
+        assert_eq!(buf.counts.sum(), 0.0);
+        assert!(!buf.has_counts);
+
         Ok(())
     }
 }
