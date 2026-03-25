@@ -441,4 +441,53 @@ mod tests_streaming_parts {
         );
         Ok(())
     }
+
+    #[test]
+    fn merges_zero_support_counted_part_with_later_owned_support() -> Result<()> {
+        let tmp = tempdir()?;
+        let cfg = make_config(&tmp);
+        let template = make_template();
+        let temp_dir = tmp.path().to_path_buf();
+
+        // Tile 0 is the synthetic "next window" case: counts are present, but this tile owns no
+        // support for the window, so it spills with num_acgt_out_of = (0,0).
+        let file_a = write_crossing_parts(
+            &temp_dir,
+            0,
+            &template,
+            &[CrossingPart {
+                idx: 7,
+                counts: counts_from([2.0, 0.0], (0, 0)),
+            }],
+        )?
+        .expect("first file missing");
+
+        // Tile 1 owns the support span for the same window and contributes it through the crossing
+        // reducer path. After merging:
+        // - counts = [2,0]
+        // - num_acgt = 100
+        // - mean count = (2+0)/2 = 1
+        // - scale = (1/1) * (100/100) = 1
+        // - final scaled gc0 contribution = 2
+        let file_b = write_crossing_parts(
+            &temp_dir,
+            1,
+            &template,
+            &[CrossingPart {
+                idx: 7,
+                counts: counts_from([0.0, 0.0], (100, 100)),
+            }],
+        )?
+        .expect("second file missing");
+
+        let (sum, weight) = stream_crossing_files(vec![file_a, file_b], &template, &cfg, 100.0)?;
+
+        assert_eq!(weight, 1, "merged crossing window should survive reduction");
+        let gc0 = sum.get(1, 0).unwrap();
+        assert!(
+            (gc0 - 2.0).abs() < 1e-9,
+            "expected zero-support counts to reunite with later support and scale to 2.0, got {gc0}"
+        );
+        Ok(())
+    }
 }
