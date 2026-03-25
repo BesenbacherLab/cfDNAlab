@@ -217,6 +217,7 @@ fn paired_fragment_on_tid(
 
 #[test]
 fn per_position_outputs_basic_fragment() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
 
@@ -270,6 +271,7 @@ fn per_position_outputs_basic_fragment() -> Result<()> {
 
 #[test]
 fn per_position_keep_zero_runs_toggles_zero_segments() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
 
     let out_dir_without_zeros = TempDir::new()?;
@@ -315,6 +317,7 @@ fn per_position_keep_zero_runs_toggles_zero_segments() -> Result<()> {
 
 #[test]
 fn ignore_gap_removes_inter_mate_gap_from_positional_output() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
 
@@ -342,6 +345,7 @@ fn ignore_gap_removes_inter_mate_gap_from_positional_output() -> Result<()> {
 
 #[test]
 fn ignore_gap_keeps_scaling_and_blacklist_on_genomic_coordinates() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let blacklist_path = out_dir.path().join("ignore_gap_blacklist.bed");
@@ -399,6 +403,7 @@ fn ignore_gap_keeps_scaling_and_blacklist_on_genomic_coordinates() -> Result<()>
 
 #[test]
 fn blacklist_inside_inter_mate_gap_only_matters_without_ignore_gap() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let blacklist_rows = [("chr1", 45, 55, "gap_mask")];
 
@@ -444,6 +449,7 @@ fn blacklist_inside_inter_mate_gap_only_matters_without_ignore_gap() -> Result<(
 
 #[test]
 fn unpaired_single_read_matches_fragment_span_output() -> Result<()> {
+    // Human verification status: unverified
     let bam = single_read_fragment_bam("fcoverage_unpaired_single_read")?;
     let out_dir = TempDir::new()?;
 
@@ -469,6 +475,7 @@ fn unpaired_single_read_matches_fragment_span_output() -> Result<()> {
 
 #[test]
 fn unpaired_single_read_matches_paired_fragment_output_for_same_span() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // Compare two representations of the same physical fragment span [20, 80):
     // - paired-end fixture `simple_inward_bam()`
@@ -513,6 +520,7 @@ fn unpaired_single_read_matches_paired_fragment_output_for_same_span() -> Result
 
 #[test]
 fn unpaired_mode_rejects_ignore_gap() -> Result<()> {
+    // Human verification status: unverified
     let bam = single_read_fragment_bam("fcoverage_unpaired_ignore_gap")?;
     let baseline_out_dir = TempDir::new()?;
     let mut baseline_cfg = base_config(&bam.bam, baseline_out_dir.path());
@@ -543,6 +551,7 @@ fn unpaired_mode_rejects_ignore_gap() -> Result<()> {
 
 #[test]
 fn unpaired_mode_rejects_require_proper_pair() -> Result<()> {
+    // Human verification status: unverified
     let bam = single_read_fragment_bam("fcoverage_unpaired_require_pp")?;
     let baseline_out_dir = TempDir::new()?;
     let mut baseline_cfg = base_config(&bam.bam, baseline_out_dir.path());
@@ -573,6 +582,7 @@ fn unpaired_mode_rejects_require_proper_pair() -> Result<()> {
 
 #[test]
 fn blacklist_masks_positions_in_positional_output() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let blacklist_path = out_dir.path().join("blacklist.bed");
@@ -599,6 +609,7 @@ fn blacklist_masks_positions_in_positional_output() -> Result<()> {
 
 #[test]
 fn blacklist_masks_positions_in_positional_output_across_tile_boundary() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let blacklist_path = out_dir.path().join("blacklist_cross_tile_positional.bed");
@@ -633,6 +644,7 @@ fn blacklist_masks_positions_in_positional_output_across_tile_boundary() -> Resu
 
 #[test]
 fn blacklist_reduces_by_size_totals_and_reports_blacklisted_positions() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let blacklist_path = out_dir.path().join("blacklist.bed");
@@ -674,6 +686,7 @@ fn blacklist_reduces_by_size_totals_and_reports_blacklisted_positions() -> Resul
 
 #[test]
 fn fcoverage_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // Build three 60 bp fragments on a single 200 bp chromosome:
     // - fragment A: [20, 80), min MAPQ 60
@@ -767,6 +780,7 @@ fn fcoverage_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_
 
 #[test]
 fn blacklist_crossing_tile_boundary_keeps_same_by_size_output() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let tile_sizes = [33_u32, 1_000_u32];
     let mut outputs = Vec::new();
@@ -816,6 +830,7 @@ fn blacklist_crossing_tile_boundary_keeps_same_by_size_output() -> Result<()> {
 
 #[test]
 fn blacklist_average_uses_only_unmasked_positions_in_denominator() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let blacklist_path = out_dir.path().join("blacklist_average.bed");
@@ -859,6 +874,7 @@ fn blacklist_average_uses_only_unmasked_positions_in_denominator() -> Result<()>
 
 #[test]
 fn per_position_and_by_size_totals_conserve_total_covered_bases() -> Result<()> {
+    // Human verification status: unverified
     let bam = long_fragment_bam("fcoverage_conservation_fixture")?;
     let expected_total_coverage =
         (LONG_FRAGMENT_STARTS.len() as u64) * (LONG_FRAGMENT_LENGTH as u64);
@@ -962,6 +978,7 @@ fn per_position_and_by_size_totals_conserve_total_covered_bases() -> Result<()> 
 
 #[test]
 fn global_positional_output_matches_single_full_chromosome_window_totals() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam()` contains one fragment spanning [20, 80) on a 200 bp chromosome.
     //
@@ -1043,6 +1060,7 @@ fn global_positional_output_matches_single_full_chromosome_window_totals() -> Re
 
 #[test]
 fn by_bed_total_is_invariant_when_windows_cross_tile_boundaries() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let tile_sizes = [33_u32, 1_000_u32];
     let mut outputs = Vec::new();
@@ -1096,6 +1114,7 @@ fn by_bed_total_is_invariant_when_windows_cross_tile_boundaries() -> Result<()> 
 
 #[test]
 fn by_bed_total_handles_window_spanning_more_than_two_tiles() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let tile_sizes = [30_u32, 1_000_u32];
     let mut outputs = Vec::new();
@@ -1139,6 +1158,7 @@ fn by_bed_total_handles_window_spanning_more_than_two_tiles() -> Result<()> {
 
 #[test]
 fn by_size_total_counts_covered_bases_per_window() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
 
@@ -1176,6 +1196,7 @@ fn by_size_total_counts_covered_bases_per_window() -> Result<()> {
 
 #[test]
 fn by_size_average_reduces_across_non_aligned_tiles() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
 
@@ -1216,6 +1237,7 @@ fn by_size_average_reduces_across_non_aligned_tiles() -> Result<()> {
 
 #[test]
 fn by_size_total_aligned_fast_path_matches_general_path_with_blacklist_scaling_and_gc() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let ref_twobit = simple_reference_twobit()?;
     let tile_sizes = [40_u32, 55_u32];
@@ -1290,6 +1312,7 @@ fn by_size_total_aligned_fast_path_matches_general_path_with_blacklist_scaling_a
 
 #[test]
 fn by_bed_average_matches_manual_window_means() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("aggregate_windows.bed");
@@ -1335,6 +1358,7 @@ fn by_bed_average_matches_manual_window_means() -> Result<()> {
 
 #[test]
 fn by_bed_average_handles_three_chromosomes_with_global_window_indices() -> Result<()> {
+    // Human verification status: unverified
     let bam = bam_from_specs(
         vec![
             ("chr1".to_string(), 200),
@@ -1397,6 +1421,7 @@ fn by_bed_average_handles_three_chromosomes_with_global_window_indices() -> Resu
 
 #[test]
 fn by_bed_average_skips_chromosomes_without_windows_and_keeps_later_chromosomes() -> Result<()> {
+    // Human verification status: unverified
     let bam = bam_from_specs(
         vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
         vec![
@@ -1441,6 +1466,7 @@ fn by_bed_average_skips_chromosomes_without_windows_and_keeps_later_chromosomes(
 
 #[test]
 fn per_position_handles_three_chromosomes_in_global_mode() -> Result<()> {
+    // Human verification status: unverified
     let bam = bam_from_specs(
         vec![
             ("chr1".to_string(), 200),
@@ -1479,6 +1505,7 @@ fn per_position_handles_three_chromosomes_in_global_mode() -> Result<()> {
 
 #[test]
 fn by_size_total_handles_three_chromosomes() -> Result<()> {
+    // Human verification status: unverified
     let bam = bam_from_specs(
         vec![
             ("chr1".to_string(), 200),
@@ -1524,6 +1551,7 @@ fn by_size_total_handles_three_chromosomes() -> Result<()> {
 
 #[test]
 fn by_bed_total_matches_manual_window_sums() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("aggregate_windows_total.bed");
@@ -1569,6 +1597,7 @@ fn by_bed_total_matches_manual_window_sums() -> Result<()> {
 
 #[test]
 fn by_bed_unique_positions_merge_overlapping_windows() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("windows.bed");
@@ -1610,6 +1639,7 @@ fn by_bed_unique_positions_merge_overlapping_windows() -> Result<()> {
 
 #[test]
 fn by_bed_indexed_positions_keep_window_indices_and_overlap_duplicates() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("windows.bed");
@@ -1659,6 +1689,7 @@ fn by_bed_indexed_positions_keep_window_indices_and_overlap_duplicates() -> Resu
 
 #[test]
 fn by_size_rejects_positional_per_window_modes() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
 
@@ -1686,6 +1717,7 @@ fn by_size_rejects_positional_per_window_modes() -> Result<()> {
 
 #[test]
 fn scaling_keeps_fractional_outputs_and_applies_rounding() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let scaling_path = out_dir.path().join("scaling.tsv");
@@ -1722,6 +1754,7 @@ fn scaling_keeps_fractional_outputs_and_applies_rounding() -> Result<()> {
 
 #[test]
 fn scaling_tsv_must_cover_requested_chromosome_end_in_fcoverage() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam()` uses chr1 length 200.
     // A valid scaling TSV must cover the chromosome contiguously from 0 up to that exact length.
@@ -1759,6 +1792,7 @@ fn scaling_tsv_must_cover_requested_chromosome_end_in_fcoverage() -> Result<()> 
 #[cfg(feature = "cmd_coverage_weights")]
 #[test]
 fn real_coverage_weights_tsv_changes_fcoverage_per_base_not_by_fragment_average() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let weights_out_dir = out_dir.path().join("weights_out");
@@ -1829,6 +1863,7 @@ fn real_coverage_weights_tsv_changes_fcoverage_per_base_not_by_fragment_average(
 
 #[test]
 fn near_zero_scaling_tsv_stays_finite_and_correct_in_fcoverage() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // `normalize_avg_overlap_keeps_sparse_non_zero_scaling_finite` already pins the helper-level
     // normalization result for the near-zero regime:
@@ -1909,6 +1944,7 @@ fn near_zero_scaling_tsv_stays_finite_and_correct_in_fcoverage() -> Result<()> {
 #[test]
 fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_fcoverage()
 -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // Build a real multi-chromosome scaling TSV and consume it through per-position coverage.
     //
@@ -2057,6 +2093,7 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_fcove
 
 #[test]
 fn gc_tag_weights_unpaired_positional_output() -> Result<()> {
+    // Human verification status: unverified
     let base_bam = single_read_fragment_bam("fcoverage_gc_tag_base")?;
     let tagged_bam = bam_with_gc_tags(&base_bam.bam, "fcoverage_gc_tag_valid", &[Some(2.5)])?;
     let out_dir = TempDir::new()?;
@@ -2089,6 +2126,7 @@ fn gc_tag_weights_unpaired_positional_output() -> Result<()> {
 
 #[test]
 fn gc_tag_averages_valid_mate_weights_in_paired_mode() -> Result<()> {
+    // Human verification status: unverified
     let base_bam = simple_inward_bam()?;
     let tagged_bam = bam_with_gc_tags(
         &base_bam.bam,
@@ -2126,6 +2164,7 @@ fn gc_tag_averages_valid_mate_weights_in_paired_mode() -> Result<()> {
 #[cfg(feature = "cmd_bam_to_bam")]
 #[test]
 fn bam_to_bam_gc_file_output_drives_fcoverage_gc_tag_same_as_original_gc_file() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam()` contains one paired fragment spanning [20, 80), length 60.
     // We build the smallest GC package that assigns a constant weight 3.0 to every 60 bp
@@ -2226,6 +2265,7 @@ fn bam_to_bam_gc_file_output_drives_fcoverage_gc_tag_same_as_original_gc_file() 
 
 #[test]
 fn gc_tag_paired_edge_cases_follow_fragment_combination_rules() -> Result<()> {
+    // Human verification status: unverified
     let scenarios = [
         (
             "invalid_mate_falls_back",
@@ -2281,6 +2321,7 @@ fn gc_tag_paired_edge_cases_follow_fragment_combination_rules() -> Result<()> {
 
 #[test]
 fn gc_tag_missing_or_invalid_values_fall_back_or_drop() -> Result<()> {
+    // Human verification status: unverified
     let scenarios = [
         ("missing", None, false, vec!["chr1\t20\t80\t1"]),
         ("missing_drop", None, true, Vec::<&str>::new()),
@@ -2333,6 +2374,7 @@ fn gc_tag_missing_or_invalid_values_fall_back_or_drop() -> Result<()> {
 
 #[test]
 fn gc_file_requires_ref_2bit() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let gc_path = out_dir.path().join("gc_pkg.npz");
@@ -2354,6 +2396,7 @@ fn gc_file_requires_ref_2bit() -> Result<()> {
 
 #[test]
 fn gc_file_weights_positional_output_from_reference_package() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let ref_twobit = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
@@ -2387,6 +2430,7 @@ fn gc_file_weights_positional_output_from_reference_package() -> Result<()> {
 
 #[test]
 fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam()` contains one fragment of length 60.
     // Give `fcoverage` a GC package that only covers fragment lengths 10..=59:
@@ -2435,6 +2479,7 @@ fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range
 
 #[test]
 fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // Build the smallest possible syntactically valid GC correction package, but make the schema
     // version intentionally incompatible. The command should fail while loading the package, before
@@ -2476,6 +2521,7 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
 
 #[test]
 fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_fcoverage() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let ref_twobit = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
@@ -2521,6 +2567,7 @@ fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_fcove
 
 #[test]
 fn real_ref_gc_bias_then_gc_bias_package_changes_fcoverage_in_expected_direction() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // Use the same real two-bin producer logic as the non-neutral `gc-bias` command test:
     //
@@ -2632,6 +2679,7 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_fcoverage_in_expected_direction
 
 #[test]
 fn gc_file_drop_invalid_controls_short_effective_length_fragments() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let ref_twobit = simple_reference_twobit()?;
     let scenarios = [
@@ -2682,6 +2730,7 @@ fn gc_file_drop_invalid_controls_short_effective_length_fragments() -> Result<()
 
 #[test]
 fn unique_positions_split_one_merged_window_into_multiple_runs() -> Result<()> {
+    // Human verification status: unverified
     let bam = overlapping_fragment_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("windows_multi_run.bed");
@@ -2725,6 +2774,7 @@ fn unique_positions_split_one_merged_window_into_multiple_runs() -> Result<()> {
 
 #[test]
 fn indexed_positions_repeat_window_index_for_each_run_and_duplicate_overlap() -> Result<()> {
+    // Human verification status: unverified
     let bam = overlapping_fragment_bam()?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("windows_multi_run_indexed.bed");

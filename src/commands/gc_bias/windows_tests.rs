@@ -7,6 +7,7 @@ fn make_template() -> GCCounts {
 
 #[test]
 fn prepares_fixed_size_streaming_buffers_for_last_partial_window() -> Result<()> {
+    // Human verification status: unverified
     // Chromosome length leaves a final partial 100 kb window
     // [114300000,114364328). The tile core lies in that last window, so there is no
     // valid window after it.
@@ -45,6 +46,7 @@ fn prepares_fixed_size_streaming_buffers_for_last_partial_window() -> Result<()>
 
 #[test]
 fn advances_fixed_size_streaming_buffers_into_last_partial_window() -> Result<()> {
+    // Human verification status: unverified
     // Current window is the second-to-last 100 kb bin, next is the last partial bin,
     // and advancing once more must not try to build [114400000,114364328).
     let template = make_template();
@@ -80,6 +82,7 @@ fn advances_fixed_size_streaming_buffers_into_last_partial_window() -> Result<()
 
 #[test]
 fn rejects_fixed_size_window_index_past_chromosome_end() -> Result<()> {
+    // Human verification status: unverified
     let err = fixed_size_window_interval(1144, 100_000, 114_364_328)
         .expect_err("out-of-range fixed window index should fail");
 

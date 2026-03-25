@@ -78,6 +78,7 @@ mod test_minimal_fragment {
 
     #[test]
     fn test_collect_fragment_basic() {
+        // Human verification status: unverified
         // forward: 100..150 (50M), reverse: 120..170 (50M) => fragment 100..170 (len=70)
         let (f, r) = mk_pair_basic(
             0,
@@ -97,6 +98,7 @@ mod test_minimal_fragment {
 
     #[test]
     fn test_collect_fragment_uses_directional_pair_span_not_interval_union() {
+        // Human verification status: unverified
         // Forward 100..200 and reverse 150..180 are still an inward-oriented pair because the
         // forward start is left of the reverse start. Our fragment definition is directional:
         // [forward.start(), reverse.end()), so the fragment must end at 180 rather than taking
@@ -118,6 +120,7 @@ mod test_minimal_fragment {
 
     #[test]
     fn test_collect_fragment_invalid_orientation() {
+        // Human verification status: unverified
         // Both on same strand -> None
         let f = mk_rec(0, 100, false, cigar(&[('M', 30)]), &vec![b'A'; 30], b"1");
         let r = mk_rec(0, 140, false, cigar(&[('M', 30)]), &vec![b'A'; 30], b"1");
@@ -384,6 +387,7 @@ mod test_segmented_fragments {
 
     #[test]
     fn oriented_pair_generic_orders_fw_rev() {
+        // Human verification status: unverified
         let fwd = sri(0, 10, 20, false, false, 0, &[]);
         let rev = sri(0, 40, 50, true, false, 0, &[]);
 
@@ -398,6 +402,7 @@ mod test_segmented_fragments {
 
     #[test]
     fn collect_no_gaps_exclude_inter_mate_gap_segments_present() {
+        // Human verification status: unverified
         // forward 10..20, reverse 40..50, no ref gaps, do NOT include the inter-mate gap
         let fwd = sri(0, 10, 20, false, false, 0, &[]);
         let rev = sri(0, 40, 50, true, false, 0, &[]);
@@ -413,6 +418,7 @@ mod test_segmented_fragments {
 
     #[test]
     fn collect_no_gaps_include_inter_mate_gap_plain_span() {
+        // Human verification status: unverified
         // forward 10..20, reverse 40..50, include inter-mate gap -> whole span
         let fwd = sri(0, 10, 20, false, false, 0, &[]);
         let rev = sri(0, 40, 50, true, false, 0, &[]);
@@ -425,6 +431,7 @@ mod test_segmented_fragments {
 
     #[test]
     fn collect_with_ref_gap_include_inter_mate_gap_merges_right() {
+        // Human verification status: unverified
         // forward has a deletion making two ref-mapped blocks: [10..20], [25..30]
         // reverse is [40..50], include inter-mate gap (30..40)
         let fwd = sri(0, 10, 30, false, true, 5, &[(0, 10), (15, 5)]);
@@ -441,6 +448,7 @@ mod test_segmented_fragments {
 
     #[test]
     fn collect_with_ref_gap_exclude_inter_mate_gap_three_blocks() {
+        // Human verification status: unverified
         // Same as above but exclude the inter-mate gap
         let fwd = sri(0, 10, 30, false, true, 5, &[(0, 10), (15, 5)]);
         let rev = sri(0, 40, 50, true, false, 0, &[]);
@@ -457,6 +465,7 @@ mod test_segmented_fragments {
 
     #[test]
     fn collect_segments_uses_directional_fragment_span_not_interval_union() {
+        // Human verification status: unverified
         // Forward 100..200 and reverse 150..180 define a fragment span of [100,180) by project
         // convention, even though the aligned-interval union would extend to 200.
         let fwd = sri(0, 100, 200, false, false, 0, &[]);
@@ -478,6 +487,7 @@ mod test_frag_file_fragment {
 
     #[test]
     fn collect_frag_file_fragment_uses_directional_pair_span_not_interval_union() {
+        // Human verification status: unverified
         // Forward 100..200 and reverse 150..180 form an inward pair. The fragment written to the
         // frag file must follow the cfDNA definition [forward.start(), reverse.end()) rather than
         // the aligned-interval union.
@@ -560,6 +570,7 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn indelreadinfo_parses_deletions_and_insertions() {
+        // Human verification status: unverified
         // Forward read: start 100, cigar M50 D5 M45 => deletions at [150,155)
         let r = make_rec(0, 100, false, m_del_m(50, 5, 45));
         let info = IndelReadInfo::try_from(&r).expect("test indel read should be valid");
@@ -586,6 +597,7 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn orientation_and_inward_check() {
+        // Human verification status: unverified
         // Forward at 100..160, Reverse at 150..210 (inward: forward.pos <= reverse.pos)
         let f = IndelReadInfo::try_from(&make_rec(0, 100, false, m(60)))
             .expect("test indel read should be valid");
@@ -597,6 +609,7 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn collect_no_indels_fast_path() {
+        // Human verification status: unverified
         // No indels; expect zero adjustments.
         let f = make_rec(0, 100, false, m(60));
         let r = make_rec(0, 180, true, m(40));
@@ -614,6 +627,7 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn collect_skip_indels_filters_out() {
+        // Human verification status: unverified
         // Has insertion; skip_indels=true => None.
         let f = make_rec(0, 100, false, m_ins_m(20, 3, 20));
         let r = make_rec(0, 140, true, m(40));
@@ -622,6 +636,7 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn collect_count_indels_disabled_returns_zeroed() {
+        // Human verification status: unverified
         // Indels present but count_indels=false => fragment with zero adjustments.
         let f = make_rec(0, 100, false, m_ins_m(20, 3, 20));
         let r = make_rec(0, 140, true, m_del_m(10, 4, 30));
@@ -634,6 +649,7 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn nonoverlap_indels_counted_fully() {
+        // Human verification status: unverified
         // Non-overlapping mates: forward 100..120, reverse 140..160.
         // Forward has D3 at [110,113), Reverse has I4 at ref pos 150.
         let f = make_rec(0, 100, false, m_del_m(10, 3, 7)); // 100..120
@@ -651,6 +667,7 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn overlap_deletion_counts_intersection_only() {
+        // Human verification status: unverified
         // Overlapping mates: forward 100..180, reverse 160..220 -> overlap [160,180)
         // Forward deletion [170,175); Reverse deletion [172,178) -> intersection [172,175) len 3.
         let f = make_rec(0, 100, false, m_del_m(70, 5, 5)); // del at [170,175)
@@ -666,6 +683,7 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn deletion_crossing_overlap_start_splits_into_left_nonoverlap_and_supported_overlap() {
+        // Human verification status: unverified
         // Forward 100..180 and reverse 160..180 give aligned overlap [160,180).
         //
         // Forward deletion [150,170) crosses the overlap start:
@@ -700,6 +718,7 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn deletion_crossing_overlap_end_splits_into_right_nonoverlap_and_supported_overlap() {
+        // Human verification status: unverified
         // Forward 100..180 and reverse 160..220 give aligned overlap [160,180).
         //
         // Reverse deletion [170,190) crosses the overlap end:
@@ -734,6 +753,7 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn overlap_insertions_require_both_mates_same_ref_pos() {
+        // Human verification status: unverified
         // Overlap [160,180).
         // Forward insertion at ref 165 len 5; Reverse insertion at ref 165 len 3 -> min = 3 counted.
         // Forward insertion at ref 170 len 2; Reverse none at 170 -> 0 counted in overlap.
@@ -750,6 +770,7 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn duplicate_insertions_at_same_pos_per_read_take_max_then_min_across_mates() {
+        // Human verification status: unverified
         // Overlap [160,200).
         // Forward has two insertions at ref 170: lengths 2 and 5 (separated by soft-clip); keep max=5.
         // Reverse has insertion at ref 170 length 3 -> min(5,3) = 3 counted.
@@ -818,6 +839,7 @@ mod test_kmer_segments {
     }
     #[test]
     fn ignore_mode_without_gap_tracks_per_read_spans() {
+        // Human verification status: unverified
         let forward = make_record(0, 100, false, &[Cigar::Match(30)]);
         let reverse = make_record(0, 140, true, &[Cigar::Match(30)]);
         let frag = collect_pair(&forward, &reverse, IndelMode::Ignore, false, 0).expect("fragment");
@@ -827,6 +849,7 @@ mod test_kmer_segments {
     }
     #[test]
     fn ignore_mode_includes_gap_when_requested() {
+        // Human verification status: unverified
         let forward = make_record(0, 100, false, &[Cigar::Match(30)]);
         let reverse = make_record(0, 140, true, &[Cigar::Match(30)]);
         let frag = collect_pair(&forward, &reverse, IndelMode::Ignore, true, 0).expect("fragment");
@@ -836,6 +859,7 @@ mod test_kmer_segments {
     }
     #[test]
     fn skip_mode_filters_pairs_with_indels() {
+        // Human verification status: unverified
         let forward = make_record(
             0,
             100,
@@ -847,6 +871,7 @@ mod test_kmer_segments {
     }
     #[test]
     fn adjust_mode_preserves_touching_segments_from_insertions() {
+        // Human verification status: unverified
         let forward = make_record(
             0,
             100,
@@ -861,6 +886,7 @@ mod test_kmer_segments {
     }
     #[test]
     fn inter_mate_gap_not_merged_when_border_has_insertion() {
+        // Human verification status: unverified
         let forward = make_record(0, 100, false, &[Cigar::Match(20), Cigar::Ins(2)]);
         let reverse = make_record(0, 130, true, &[Cigar::Match(20)]);
         let frag = collect_pair(&forward, &reverse, IndelMode::Adjust, true, 0).expect("fragment");
@@ -871,6 +897,7 @@ mod test_kmer_segments {
     }
     #[test]
     fn end_offset_trims_segments_but_preserves_span() {
+        // Human verification status: unverified
         let forward = make_record(0, 100, false, &[Cigar::Match(40)]);
         let reverse = make_record(0, 120, true, &[Cigar::Match(40)]);
         let frag = collect_pair(&forward, &reverse, IndelMode::Ignore, true, 5).expect("fragment");
@@ -881,6 +908,7 @@ mod test_kmer_segments {
 
     #[test]
     fn adjust_mode_handles_mixed_insertions_and_deletions() {
+        // Human verification status: unverified
         let forward = make_record(
             0,
             100,
@@ -931,6 +959,7 @@ mod test_kmer_segments {
 
     #[test]
     fn gap_kept_separate_when_both_mates_have_boundary_insertions() {
+        // Human verification status: unverified
         let forward = make_record(0, 100, false, &[Cigar::Match(15), Cigar::Ins(2)]);
         let reverse = make_record(0, 140, true, &[Cigar::Ins(3), Cigar::Match(18)]);
 
@@ -943,6 +972,7 @@ mod test_kmer_segments {
 
     #[test]
     fn returns_none_for_non_inward_orientation() {
+        // Human verification status: unverified
         let forward = make_record(0, 100, false, &[Cigar::Match(20)]);
         let reverse_same_strand = make_record(0, 140, false, &[Cigar::Match(20)]);
         assert!(collect_pair(&forward, &reverse_same_strand, IndelMode::Ignore, true, 0).is_none());
@@ -962,6 +992,7 @@ mod test_kmer_segments {
 
     #[test]
     fn end_offset_removing_all_sequence_returns_none() {
+        // Human verification status: unverified
         let forward = make_record(0, 100, false, &[Cigar::Match(20)]);
         let reverse = make_record(0, 120, true, &[Cigar::Match(20)]);
 
@@ -970,6 +1001,7 @@ mod test_kmer_segments {
 
     #[test]
     fn overlap_consensus_indel_behaviour() {
+        // Human verification status: unverified
         let forward = make_record(
             0,
             100,

@@ -42,6 +42,7 @@ mod tests_gc_bias {
 
     #[test]
     fn masks_extreme_gc_bins_per_side_in_square_matrix() {
+        // Human verification status: unverified
         // Arrange: 6x6 matrix with two extreme GC bins on each side.
         let expected = array![
             [false, false, true, true, false, false],
@@ -61,6 +62,7 @@ mod tests_gc_bias {
 
     #[test]
     fn masks_shortest_length_bins_in_matrix() {
+        // Human verification status: unverified
         // Arrange: 5x4 matrix with one shortest length bin masked.
         let expected = array![
             [false, false, false, false],
@@ -79,6 +81,7 @@ mod tests_gc_bias {
 
     #[test]
     fn interpolates_masked_short_length_row() -> Result<()> {
+        // Human verification status: unverified
         // Arrange: first length row is masked; other rows are supported.
         let mut matrix = array![
             [0.0_f64, 0.0_f64],
@@ -106,6 +109,7 @@ mod tests_gc_bias {
 
     #[test]
     fn round_trips_bins_to_edges_and_back() {
+        // Human verification status: unverified
         // Arrange: build a simple BinnedAxis where bins group indices as [0-1], [2-4], and [5-7].
         let mut index_to_bin = FxHashMap::default();
         let mut bin_to_indices = FxHashMap::default();
@@ -136,6 +140,7 @@ mod tests_gc_bias {
 
     #[test]
     fn provides_expected_weights_after_roundtrip() -> Result<()> {
+        // Human verification status: unverified
         // Arrange: a package whose edges start at non-zero values so offset logic is exercised.
         let length_edges = vec![30, 34, 40];
         let gc_edges = vec![10, 60, 90];
@@ -198,6 +203,7 @@ mod tests_gc_bias {
 
     #[test]
     fn length_agnostic_equal_weighting_means_rows() -> Result<()> {
+        // Human verification status: unverified
         let package = make_length_agnostic_package();
         let corrector = GCCorrector::from_package(&package)?;
         let agnostic = LengthAgnosticGCCorrector::from_gc_corrector(
@@ -222,6 +228,7 @@ mod tests_gc_bias {
 
     #[test]
     fn length_agnostic_coverage_weighting_uses_frequencies() -> Result<()> {
+        // Human verification status: unverified
         let package = make_length_agnostic_package();
         let corrector = GCCorrector::from_package(&package)?;
         let agnostic = LengthAgnosticGCCorrector::from_gc_corrector(
@@ -247,6 +254,7 @@ mod tests_gc_bias {
 
     #[test]
     fn length_agnostic_max_coverage_picks_most_frequent_row() -> Result<()> {
+        // Human verification status: unverified
         let package = make_length_agnostic_package();
         let corrector = GCCorrector::from_package(&package)?;
         let agnostic = LengthAgnosticGCCorrector::from_gc_corrector(
@@ -344,6 +352,7 @@ mod tests_gc_bias {
 
     #[test]
     fn gc_bias_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Use the repeated 256 bp ACGT reference from `simple_reference_twobit()`.
         // For fragment length 60, every 60 bp fragment contains exactly 30 GC bases because:
@@ -449,6 +458,7 @@ mod tests_gc_bias {
 
     #[test]
     fn default_windows_match_explicit_by_size_and_differ_from_global() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Build a two-window genome with the command's default GC window size.
         // - chr1[0,100000) is all A, so any 10 bp fragment there has GC=0 -> GC%=0.
@@ -601,6 +611,7 @@ mod tests_gc_bias {
 
     #[test]
     fn errors_when_blacklist_removes_all_usable_gc_support() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // The blacklist masks the entire chromosome to N for gc-bias counting.
         // The command then cannot compute GC for any fragment, so no window contributes counts.
@@ -650,6 +661,7 @@ mod tests_gc_bias {
 
     #[test]
     fn correction_package_propagates_reference_end_offset_for_single_length() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Use a reference package and cfDNA run that both allow exactly one fragment length (60 bp)
         // and trim 2 bp from each end when computing GC.
@@ -699,6 +711,7 @@ mod tests_gc_bias {
 
     #[test]
     fn overlapping_and_touching_bed_windows_does_not_match_explicitly_merged_gc_bias_run() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Build one chromosome with a sharp A->C transition:
         // - chr1[0,100000)   = all A
@@ -860,6 +873,7 @@ mod tests_gc_bias {
 
     #[test]
     fn by_size_gc_bias_is_invariant_to_aligned_vs_misaligned_tile_sizes() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Build a 2 Mb two-state genome in 100 kb windows:
         // - windows with even index are all A  -> GC%=0 for 10 bp fragments
@@ -977,6 +991,7 @@ mod tests_gc_bias {
 
     #[test]
     fn multi_chromosome_by_size_gc_bias_accumulates_windows_across_chromosomes() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Build two 100 bp chromosomes and count one 10 bp fragment in one fixed-size window on
         // each chromosome:
@@ -1119,6 +1134,7 @@ mod tests_gc_bias {
 
     #[test]
     fn empty_middle_tile_matches_single_tile_gc_bias_run() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Use three logical 100 bp windows on one chromosome:
         // - [0,100)   = all A, contains one 10 bp fragment -> GC% 0
@@ -1243,6 +1259,7 @@ mod tests_gc_bias {
     #[test]
     fn touching_bed_windows_match_by_size_counts_and_default_single_length_packages()
     -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Use the same two-window A/C genome as the default-window test, but compare two
         // different *window representations* of the same logical partition:
@@ -1365,6 +1382,7 @@ mod tests_gc_bias {
 
     #[test]
     fn real_ref_gc_bias_then_gc_bias_package_is_non_neutral_in_two_bin_case() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Build a reference and cfDNA sample where the real producer->consumer workflow must
         // create a non-neutral correction package with exactly two GC bins.
@@ -1526,6 +1544,7 @@ mod tests_gc_bias {
 
     #[test]
     fn save_intermediates_writes_expected_sequence_and_mean_scaled_average_counts() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Use a single global window and a reference package that already disables smoothing and
         // interpolation. In that configuration `gc-bias` should save exactly six intermediate
@@ -1623,6 +1642,7 @@ mod tests_gc_bias {
 
     #[test]
     fn min_window_acgt_pct_excludes_mostly_blacklisted_window_but_keeps_clean_window() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Two explicit 100 bp windows on a 200 bp chromosome:
         // - left  window [0,100)   is all A
@@ -1767,6 +1787,7 @@ mod tests_gc_bias {
     #[test]
     fn multiple_blacklist_files_with_touching_intervals_match_single_merged_gc_bias_run()
     -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // `gc-bias` uses the shared blacklist loader with:
         // - `min_size = 1`
@@ -1869,6 +1890,7 @@ mod tests_gc_bias {
 
     #[test]
     fn gc_bias_run_rejects_reference_package_with_non_scalar_metadata_array() -> Result<()> {
+        // Human verification status: unverified
         let bam = fixtures::simple_inward_bam()?;
         let reference = fixtures::simple_reference_twobit()?;
         let ref_gc_dir = TempDir::new()?;
@@ -1900,6 +1922,7 @@ mod tests_gc_bias {
 
     #[test]
     fn gc_bias_run_rejects_reference_package_with_schema_version_mismatch() -> Result<()> {
+        // Human verification status: unverified
         let bam = fixtures::simple_inward_bam()?;
         let reference = fixtures::simple_reference_twobit()?;
         let ref_gc_dir = TempDir::new()?;
@@ -1930,6 +1953,7 @@ mod tests_gc_bias {
 
     #[test]
     fn apply_outliers_per_length_winsorizes_rows() {
+        // Human verification status: unverified
         let mut matrix = array![[1.0_f64, 2.0_f64, 100.0_f64], [1.0_f64, 5.0_f64, 6.0_f64]];
         let mask = array![[true, true, true], [true, true, true]];
 
@@ -1964,6 +1988,7 @@ mod tests_gc_bias {
 
     #[test]
     fn quantile_outliers_symmetry_clamps_extremes() {
+        // Human verification status: unverified
         let mut matrix = array![[1.0_f64, 1.0_f64, 100.0_f64]];
 
         apply_outliers_to_matrix(
@@ -1984,6 +2009,7 @@ mod tests_gc_bias {
 
     #[test]
     fn masked_cells_are_clamped_but_not_counted() {
+        // Human verification status: unverified
         let mut matrix = array![[1.0_f64, 2.0_f64, 100.0_f64]];
         let mask = array![[true, true, false]];
 
@@ -2012,6 +2038,7 @@ mod tests_gc_bias {
 
     #[test]
     fn interpolated_quantile_weights_neighbors_by_offset() {
+        // Human verification status: unverified
         // Arrange
         let values = vec![0.0_f32, 10.0_f32, 20.0_f32, 30.0_f32, 40.0_f32];
 
@@ -2032,6 +2059,7 @@ mod tests_gc_bias {
 
     #[test]
     fn quantile_bounds_interpolate_between_indices() {
+        // Human verification status: unverified
         // Arrange: Percentiles fall between indices, so bounds should blend neighbors
         let values = vec![0.0_f32, 10.0_f32, 20.0_f32, 30.0_f32, 40.0_f32];
 
@@ -2052,6 +2080,7 @@ mod tests_gc_bias {
 
     #[test]
     fn iqr_outliers_per_length_clamps_high_values() {
+        // Human verification status: unverified
         let mut matrix = array![[1.0_f64, 2.0_f64, 8.0_f64]];
 
         apply_outliers_to_matrix(
@@ -2069,6 +2098,7 @@ mod tests_gc_bias {
 
     #[test]
     fn stddev_outliers_global_clamps_tail() {
+        // Human verification status: unverified
         let mut matrix = array![[1.0_f64, 1.0_f64, 10.0_f64]];
 
         apply_outliers_to_matrix(
@@ -2084,6 +2114,7 @@ mod tests_gc_bias {
 
     #[test]
     fn mad_outliers_symmetrically_clamp() {
+        // Human verification status: unverified
         let mut matrix = array![[1.0_f64, 2.0_f64, 3.0_f64, 9.0_f64]];
 
         apply_outliers_to_matrix(
@@ -2102,6 +2133,7 @@ mod tests_gc_bias {
 
     #[test]
     fn per_length_scope_differs_from_global() {
+        // Human verification status: unverified
         let mut matrix = array![[1.0_f64, 100.0_f64], [1.0_f64, 1.0_f64]];
 
         apply_outliers_to_matrix(
@@ -2472,6 +2504,7 @@ mod tests_gc_bias {
 
     #[test]
     fn loads_versioned_reference_gc_package() -> Result<()> {
+        // Human verification status: unverified
         // Arrange: write a minimal reference package with the current schema version and scalar
         // metadata fields.
         let tmp = tempdir()?;
@@ -2516,6 +2549,7 @@ mod tests_gc_bias {
 
     #[test]
     fn rejects_reference_gc_package_with_non_scalar_metadata_array() -> Result<()> {
+        // Human verification status: unverified
         // Arrange: `skip_smoothing` is written with two values. This should fail cleanly instead of
         // indexing `[0]` and panicking.
         let tmp = tempdir()?;
@@ -2542,6 +2576,7 @@ mod tests_gc_bias {
 
     #[test]
     fn rejects_reference_gc_package_with_schema_version_mismatch() -> Result<()> {
+        // Human verification status: unverified
         // Arrange: same package shape, but an incompatible version number.
         let tmp = tempdir()?;
         write_reference_gc_package_fixture(
@@ -2568,6 +2603,7 @@ mod tests_gc_bias {
 
     #[test]
     fn gc_bias_run_rejects_reference_package_with_incompatible_support_mask_shape() -> Result<()> {
+        // Human verification status: unverified
         let bam = fixtures::simple_inward_bam()?;
         let reference = fixtures::simple_reference_twobit()?;
         let ref_gc_dir = TempDir::new()?;
@@ -2595,6 +2631,7 @@ mod tests_gc_bias {
 
     #[test]
     fn quantile_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Use the synthetic two-length reference package and BAM fixture defined above.
         //
@@ -2712,6 +2749,7 @@ mod tests_gc_bias {
 
     #[test]
     fn quantile_outlier_scope_global_differs_from_per_length_in_real_command() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Reuse the same raw correction matrix derivation as the previous test:
         //   [[0.2, 1.8],
@@ -2810,6 +2848,7 @@ mod tests_gc_bias {
 
     #[test]
     fn iqr_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Reuse the same raw correction matrix as the quantile tests:
         //   [[0.2, 1.8],
@@ -2872,6 +2911,7 @@ mod tests_gc_bias {
 
     #[test]
     fn stddev_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Reuse the same raw correction matrix as the other run-level outlier tests:
         //   [[0.2, 1.8],
@@ -2941,6 +2981,7 @@ mod tests_gc_bias {
 
     #[test]
     fn mad_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Reuse the same raw correction matrix as the other run-level outlier tests:
         //   [[0.2, 1.8],
@@ -3012,6 +3053,7 @@ mod tests_gc_bias {
 
     #[test]
     fn hard_clamp_changes_real_command_correction_matrix_in_expected_way() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Use a hand-built reference package that supports only GC% 0 and GC% 100 for length 10.
         // That keeps the mean-scaling denominator restricted to the two relevant cells.
@@ -3104,6 +3146,7 @@ mod tests_gc_bias {
 
     #[test]
     fn min_length_bin_width_merges_two_lengths_into_one_binned_correction_row() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Reuse the same two-length fixture as the run-level outlier tests. Before any length
         // binning, the normalized cfDNA rows are exactly:
@@ -3164,6 +3207,7 @@ mod tests_gc_bias {
 
     #[test]
     fn num_short_length_bins_neutralizes_the_shortest_length_row_in_real_command() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Reuse the same two-length fixture as the other run-level `gc-bias` tests.
         //
@@ -3254,6 +3298,7 @@ mod tests_gc_bias {
 
     #[test]
     fn num_extreme_gc_bins_neutralizes_a_two_bin_gc_axis_in_real_command() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Reuse the same two-length fixture again. With `min_gc_bin_mass = 1.0`, the sparse
         // counts collapse to exactly two GC bins:
@@ -3343,6 +3388,7 @@ mod tests_gc_bias {
 
     #[test]
     fn min_length_bin_mass_merges_a_sparse_tail_length_into_the_previous_bin() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Use a two-length fixture where the shorter length has mass 10 and the longer tail length
         // has mass 2.
@@ -3448,6 +3494,7 @@ mod tests_gc_bias {
 
     #[test]
     fn min_gc_bin_mass_greedily_merges_sparse_gc_tail_bins_in_real_command() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Use a one-length fixture with exact GC-class masses:
         //   GC%=0   -> 1
@@ -3555,6 +3602,7 @@ mod tests_counts_end_offset {
 
     #[test]
     fn should_use_effective_length_when_binning_to_gc_percent_with_end_offset() {
+        // Human verification status: unverified
         // Arrange: one 30bp fragment with 20 GC bases after trimming 5bp from each end
         let mut counts = GCCounts::new(30, 30, 5, (0, 0)).expect("counts init");
         counts.incr(30, 20);
@@ -3569,6 +3617,7 @@ mod tests_counts_end_offset {
 
     #[test]
     fn should_not_smooth_into_gc_counts_beyond_effective_length() {
+        // Human verification status: unverified
         // Arrange: length=6, end_offset=2 -> effective length is 2bp, so gc>2 is unreachable.
         let mut counts = GCCounts::new(6, 6, 2, (0, 0)).expect("counts init");
         counts.set(6, 2, 10.0);
@@ -3588,6 +3637,7 @@ mod tests_gc_percent_grid {
 
     #[test]
     fn should_place_gc_counts_in_matching_percent_bins() {
+        // Human verification status: unverified
         // Arrange: one length row with distinct weights per GC count.
         let mut counts = GCCounts::new(10, 10, 0, (0, 0)).expect("counts init");
         for gc in 0..=10 {
@@ -3613,6 +3663,7 @@ mod tests_gc_percent_grid {
 
     #[test]
     fn should_round_half_up_for_fractional_percentages() {
+        // Human verification status: unverified
         // Arrange: length=3 has fractional percentages for gc=1 and gc=2.
         let mut counts = GCCounts::new(3, 3, 0, (0, 0)).expect("counts init");
         counts.set(3, 1, 2.0); // 33.3...% -> 33 via half-up
@@ -3647,6 +3698,7 @@ mod tests_gc_percent_grid {
 
     #[test]
     fn should_propagate_acgt_totals_and_length_metadata() {
+        // Human verification status: unverified
         // Arrange
         let mut counts = GCCounts::new(5, 6, 1, (8, 12)).expect("counts init");
         counts.set(5, 2, 1.0);
@@ -3677,6 +3729,7 @@ mod tests_length_bounds {
 
     #[test]
     fn reports_offsets_based_on_effective_length() {
+        // Human verification status: unverified
         // length_min=3, length_max=5, end_offset=1 -> effective lengths: 1,2,3
         let counts = GCCounts::new(3, 5, 1, (0, 0)).expect("init counts");
 
@@ -3696,6 +3749,7 @@ mod tests_length_bounds {
 
     #[test]
     fn row_bounds_errors_outside_length_range() {
+        // Human verification status: unverified
         let counts = GCCounts::new(10, 12, 0, (0, 0)).expect("init counts");
         assert!(counts.length_bounds(9).is_err());
         assert!(counts.length_bounds(13).is_err());
@@ -3711,6 +3765,7 @@ mod tests_helpers {
 
         #[test]
         fn leaves_zero_rows_untouched_in_mean_scaling() {
+            // Human verification status: unverified
             // Arrange: first length row has no mass; second has values that should be mean-scaled.
             let counts = array![[0.0, 0.0], [2.0, 4.0]];
             let mask = array![[true, true], [true, true]];

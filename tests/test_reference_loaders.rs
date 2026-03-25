@@ -21,6 +21,7 @@ fn write_twobit(fasta: &str) -> Result<NamedTempFile> {
 
 #[test]
 fn read_seq_reads_full_chromosome() -> Result<()> {
+    // Human verification status: unverified
     let twobit = write_twobit(SAMPLE_FASTA)?;
     let seq = read_seq(twobit.path(), "chr1")?;
     assert_eq!(seq, b"ACGTACGTNN");
@@ -29,6 +30,7 @@ fn read_seq_reads_full_chromosome() -> Result<()> {
 
 #[test]
 fn read_seq_in_range_reads_slice() -> Result<()> {
+    // Human verification status: unverified
     let twobit = write_twobit(SAMPLE_FASTA)?;
     let seq = read_seq_in_range(twobit.path(), "chr1", 2..8)?;
     assert_eq!(seq, b"GTACGT");
@@ -37,6 +39,7 @@ fn read_seq_in_range_reads_slice() -> Result<()> {
 
 #[test]
 fn twobit_contig_lengths_filters_requested_contigs() -> Result<()> {
+    // Human verification status: unverified
     let twobit = write_twobit(SAMPLE_FASTA)?;
     let lengths = twobit_contig_lengths(twobit.path(), &["chr1".to_string(), "chr3".to_string()])?;
     assert_eq!(lengths.len(), 1);
@@ -48,6 +51,7 @@ fn twobit_contig_lengths_filters_requested_contigs() -> Result<()> {
 
 #[test]
 fn load_chrom_sizes_valid_file() -> Result<()> {
+    // Human verification status: unverified
     let mut file = NamedTempFile::new()?;
     writeln!(
         file,
@@ -65,6 +69,7 @@ fn load_chrom_sizes_valid_file() -> Result<()> {
 
 #[test]
 fn load_chrom_sizes_invalid_file() -> Result<()> {
+    // Human verification status: unverified
     let mut file = NamedTempFile::new()?;
     writeln!(file, "chr1\tnot_a_number")?;
 

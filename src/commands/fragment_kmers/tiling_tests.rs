@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 #[test]
 fn determine_fetch_span_keeps_fragment_halo_for_bed_windows_at_chromosome_start() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // Use a chromosome-start tile whose core is [0, 100) and whose fetch band was built with a
     // 60 bp fragment halo, truncated on the left chromosome edge:

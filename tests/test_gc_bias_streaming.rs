@@ -31,6 +31,7 @@ mod tests_stream_helpers_and_finalizer {
 
     #[test]
     fn window_bounds_caps_at_chrom_len() {
+        // Human verification status: unverified
         let interval = fixed_size_window_interval(8, 100, 850).expect("interval should be valid");
         assert_eq!(interval.start(), 800);
         assert_eq!(interval.end(), 850);
@@ -38,6 +39,7 @@ mod tests_stream_helpers_and_finalizer {
 
     #[test]
     fn overlap_length_returns_expected_span() {
+        // Human verification status: unverified
         assert_eq!(
             overlap_length(
                 Interval::new(0, 10).expect("test interval should be valid"),
@@ -56,6 +58,7 @@ mod tests_stream_helpers_and_finalizer {
 
     #[test]
     fn finalize_window_buffer_scales_and_merges() -> Result<()> {
+        // Human verification status: unverified
         let tmp = tempdir()?;
         let cfg = make_config(&tmp);
 
@@ -93,6 +96,7 @@ mod tests_stream_helpers_and_finalizer {
     #[test]
     fn finalize_window_buffer_ignores_empty_placeholder_window_outside_loaded_sequence(
     ) -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Model the fixed-size streaming "next" placeholder that can exist beyond the loaded
         // sequence span for the current tile:
@@ -143,6 +147,7 @@ mod tests_stream_helpers_and_finalizer {
     #[test]
     fn finalize_window_buffer_spills_crossing_support_without_double_counting_fetch_halo(
     ) -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Model one fixed window [0,100) that crosses a tile boundary at 60, with a 10 bp fetch
         // halo on each tile:
@@ -229,6 +234,7 @@ mod tests_stream_helpers_and_finalizer {
 
     #[test]
     fn finalize_window_buffer_spills_counted_next_window_with_zero_owned_support() -> Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Model the fixed-size streaming "next" window [100,200) while the current tile core is
         // still [0,95) and the fetched sequence extends only to 99. Fragments starting in the
@@ -314,6 +320,7 @@ mod tests_streaming_parts {
 
     #[test]
     fn finalizes_windows_missing_from_next_tile() -> Result<()> {
+        // Human verification status: unverified
         let tmp = tempdir()?;
         let cfg = make_config(&tmp);
         let template = make_template();
@@ -367,6 +374,7 @@ mod tests_streaming_parts {
 
     #[test]
     fn merges_parts_seen_in_every_file() -> Result<()> {
+        // Human verification status: unverified
         let tmp = tempdir()?;
         let cfg = make_config(&tmp);
         let template = make_template();
@@ -410,6 +418,7 @@ mod tests_streaming_parts {
 
     #[test]
     fn scales_window_when_mean_exceeds_one() -> Result<()> {
+        // Human verification status: unverified
         let tmp = tempdir()?;
         let cfg = make_config(&tmp);
         let template = make_template();
@@ -444,6 +453,7 @@ mod tests_streaming_parts {
 
     #[test]
     fn merges_zero_support_counted_part_with_later_owned_support() -> Result<()> {
+        // Human verification status: unverified
         let tmp = tempdir()?;
         let cfg = make_config(&tmp);
         let template = make_template();

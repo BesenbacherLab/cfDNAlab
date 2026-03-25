@@ -68,6 +68,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn doc_example_pipeline() -> Result<()> {
+        // Human verification status: unverified
         let length: u32 = 300;
         let mut cp = Coverage::new(length);
 
@@ -141,6 +142,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn add_fragment_after_finalize_requires_refinalize() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(100);
         cp.add_fragment(frag(0, 10, 20))?;
         cp.finalize_coverage(false);
@@ -164,6 +166,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn drop_deltas_blocks_additions() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(50);
         cp.drop_deltas();
         let err = cp.add_fragment(frag(0, 0, 1)).unwrap_err();
@@ -173,6 +176,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn bulk_queries_parallel_and_serial_match() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(1000);
         // Create a few simple fragments
         cp.add_fragment(frag(0, 10, 110))?;
@@ -203,6 +207,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn coverage_at_positions_and_mask() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(60);
         cp.add_fragment(frag(0, 10, 20))?;
         cp.finalize_coverage(true);
@@ -225,6 +230,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn invalid_inputs_are_rejected() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(50);
 
         // Negative weight
@@ -251,6 +257,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn empty_sequence_finalize_and_query() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(0);
         // Finalize and build indexes on empty sequence
         let cov = cp.finalize_coverage(true);
@@ -267,6 +274,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn single_base_coverage_and_queries() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(1);
         cp.add_fragment(frag(0, 0, 1))?;
         let cov = cp.finalize_coverage(true);
@@ -280,6 +288,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn exclude_without_blacklist_equals_include() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(200);
         cp.add_fragment(frag(0, 10, 20))?;
         cp.finalize_coverage(true);
@@ -298,6 +307,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn idempotent_build_indexes() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(50);
         cp.add_fragment(frag(0, 5, 15))?;
         cp.finalize_coverage(true);
@@ -316,6 +326,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn bulk_empty_intervals() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(10);
         cp.add_fragment(frag(0, 2, 5))?;
         cp.finalize_coverage(true);
@@ -330,6 +341,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn position_bounds_and_errors() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(5);
         cp.add_fragment(frag(0, 1, 4))?;
         cp.finalize_coverage(true);
@@ -344,6 +356,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn blacklist_affects_queries_as_expected() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(100);
         // Coverage segments: [10,30)=1.0 and [40,90)=0.5
         cp.add_fragment(frag(0, 10, 30))?;
@@ -376,6 +389,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn finalize_twice_is_stable() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(30);
         cp.add_fragment(frag(0, 10, 20))?;
         // Assumes delta is NOT dropped!
@@ -387,6 +401,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn bulk_parallel_vs_serial_equivalence_with_mask() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(1000);
         cp.add_fragment(frag(0, 0, 500))?;
         cp.add_fragment_weighted(frag(0, 250, 750), 0.5)?;
@@ -420,6 +435,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn finalize_after_drop_deltas_panics() {
+        // Human verification status: unverified
         let mut cp = Coverage::new(10);
         cp.drop_deltas();
         // finalize_coverage currently assumes the prefix exists and will panic
@@ -432,6 +448,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn queries_cover_edges_exactly() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(10);
         cp.add_fragment(frag(0, 0, 10))?;
         cp.finalize_coverage(true);
@@ -448,6 +465,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn manual_vs_indexed_sum_consistency() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(200);
         // Coverage 1.0 on [20,60) and 0.5 on [100,150)
         cp.add_fragment(frag(0, 20, 60))?;
@@ -467,6 +485,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn mask_positions_nan_semantics() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(30);
         cp.add_fragment(frag(0, 10, 20))?;
         cp.finalize_coverage(true);
@@ -491,6 +510,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn add_fragment_after_indexes_invalidates_and_requires_refinalize() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(100);
         cp.add_fragment(frag(0, 10, 20))?;
         cp.finalize_coverage(false); // Cannot refinalize if delta is dropped
@@ -517,6 +537,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn coverage_no_gaps_exclude_inter_mate_gap() -> Result<()> {
+        // Human verification status: unverified
         // Two non-overlapping mates; exclude inter-mate gap
         let fwd = sri(0, 10, 20, false, false, 0, &[]);
         let rev = sri(0, 40, 50, true, false, 0, &[]);
@@ -540,6 +561,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn coverage_no_gaps_include_inter_mate_gap() -> Result<()> {
+        // Human verification status: unverified
         // Include the inter-mate gap -> full fragment 10..50 (40 bp)
         let fwd = sri(0, 10, 20, false, false, 0, &[]);
         let rev = sri(0, 40, 50, true, false, 0, &[]);
@@ -558,6 +580,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn coverage_with_ref_gap_include_inter_mate_gap() -> Result<()> {
+        // Human verification status: unverified
         // forward with internal deletion: [10..20], [25..30]
         // reverse [40..50]; include inter-mate gap -> becomes [10..20], [25..50]
         let fwd = sri(0, 10, 30, false, true, 5, &[(0, 10), (15, 5)]);
@@ -582,6 +605,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn coverage_with_ref_gap_exclude_inter_mate_gap() -> Result<()> {
+        // Human verification status: unverified
         let fwd = sri(0, 10, 30, false, true, 5, &[(0, 10), (15, 5)]);
         let rev = sri(0, 40, 50, true, false, 0, &[]);
 
@@ -600,6 +624,7 @@ mod tests_coverage_prefix {
 
     #[test]
     fn has_blacklist_false_when_no_blacklist() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(100);
 
         // Add a simple fragment so we can finalize coverage
@@ -660,6 +685,7 @@ mod tests_window_results {
 
     #[test]
     fn compute_windows_average() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = make_cp_with_simple_fragments(100)?;
 
         // Average across [10,20) and [30,40) should both be 1.0
@@ -695,6 +721,7 @@ mod tests_window_results {
 
     #[test]
     fn compute_windows_total() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = make_cp_with_simple_fragments(100)?;
 
         // Totals should be window length since coverage is 1.0 in-block
@@ -723,6 +750,7 @@ mod tests_window_results {
 
     #[test]
     fn compute_windows_positions_with_nan_blacklist() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(60);
         // One fragment spanning [5, 15)
         cp.add_fragment(frag(0, 5, 15))?;
@@ -768,6 +796,7 @@ mod tests_window_results {
 
     #[test]
     fn compute_windows_whole_positional_when_none() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = make_cp_with_simple_fragments(50)?;
         let out = compute_window_outputs(
             &mut cp,
@@ -795,6 +824,7 @@ mod tests_window_results {
 
     #[test]
     fn compute_windows_errors_if_coverage_not_finalized() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = Coverage::new(30);
         // Do not finalize_coverage here
         let windows = indexed_windows(&[(0_u64, 10_u64, 0_u64)]);
@@ -806,6 +836,7 @@ mod tests_window_results {
 
     #[test]
     fn compute_windows_errors_on_out_of_bounds() -> Result<()> {
+        // Human verification status: unverified
         let mut cp = make_cp_with_simple_fragments(50)?;
         let windows = indexed_windows(&[(0_u64, 51_u64, 0_u64)]); // end > length
         let res =

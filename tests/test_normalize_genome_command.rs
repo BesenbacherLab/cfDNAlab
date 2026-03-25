@@ -152,6 +152,7 @@ fn fragment_on_tid(mut fragment: FragmentSpec, tid: usize) -> FragmentSpec {
 
 #[test]
 fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
+    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
 
@@ -200,6 +201,7 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
 #[test]
 fn given_simple_fragment_when_coverage_weights_run_then_output_bins_cover_chromosome_without_gaps()
 -> Result<()> {
+    // Human verification status: unverified
     // Arrange
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
@@ -249,6 +251,7 @@ fn given_simple_fragment_when_coverage_weights_run_then_output_bins_cover_chromo
 #[test]
 fn given_simple_fragment_when_coverage_weights_run_then_scaling_values_match_hand_derivation()
 -> Result<()> {
+    // Human verification status: unverified
     // Arrange
     //
     // Fixture:
@@ -329,6 +332,7 @@ fn given_simple_fragment_when_coverage_weights_run_then_scaling_values_match_han
 #[test]
 fn given_unpaired_read_fragment_when_coverage_weights_run_then_scaling_matches_same_fragment_span()
 -> Result<()> {
+    // Human verification status: unverified
     // Arrange
     //
     // Hand derivation:
@@ -404,6 +408,7 @@ fn given_unpaired_read_fragment_when_coverage_weights_run_then_scaling_matches_s
 
 #[test]
 fn check_bin_sizes_rejects_invalid_stride() {
+    // Human verification status: unverified
     let mut cfg = CoverageWeightsConfig::new(
         IOCArgs {
             bam: std::path::PathBuf::new(),
@@ -420,6 +425,7 @@ fn check_bin_sizes_rejects_invalid_stride() {
 
 #[test]
 fn check_bin_sizes_accepts_valid_stride_values() {
+    // Human verification status: unverified
     let mut divisible_cfg = CoverageWeightsConfig::new(
         IOCArgs {
             bam: std::path::PathBuf::new(),
@@ -451,6 +457,7 @@ fn check_bin_sizes_accepts_valid_stride_values() {
 
 #[test]
 fn normalize_avg_overlap_keeps_sparse_non_zero_scaling_finite() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // Use three stride bins with unequal lengths on one chromosome:
     // - a very sparse but non-zero bin with avg-overlap coverage 0.0001
@@ -527,6 +534,7 @@ fn normalize_avg_overlap_keeps_sparse_non_zero_scaling_finite() -> Result<()> {
 
 #[test]
 fn normalize_avg_overlap_overflow_boundary_promotes_tiny_non_zero_bin_to_infinity() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // Use three bins with unequal lengths on one chromosome:
     // - one extremely tiny but still non-zero bin with avg-overlap coverage 1e-40
@@ -610,6 +618,7 @@ fn normalize_avg_overlap_overflow_boundary_promotes_tiny_non_zero_bin_to_infinit
 
 #[test]
 fn normalize_avg_overlap_weights_short_final_bin_in_global_mean() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // Use two bins on one chromosome, where the final bin is half as long:
     // - [0, 20): avg-overlap coverage 1.0
@@ -667,6 +676,7 @@ fn normalize_avg_overlap_weights_short_final_bin_in_global_mean() -> Result<()> 
 
 #[test]
 fn multi_chromosome_scaling_uses_one_shared_global_mean() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // Build two chromosomes with different local overlap profiles under the same stride/bin settings.
     //
@@ -807,6 +817,7 @@ fn multi_chromosome_scaling_uses_one_shared_global_mean() -> Result<()> {
 
 #[test]
 fn coverage_weights_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // Build two otherwise identical inward fragments on the same span [20,80):
     // - one with MAPQ 60
@@ -1005,6 +1016,7 @@ fn coverage_weights_default_min_mapq_matches_explicit_thirty_and_differs_from_ex
 
 #[test]
 fn explicit_chromosome_order_controls_scaling_tsv_row_order() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // The command writes rows by iterating the resolved chromosome list.
     // For explicit `--chromosomes`, `ChromosomeArgs::resolve_chromosomes` returns the user-supplied
@@ -1055,6 +1067,7 @@ fn explicit_chromosome_order_controls_scaling_tsv_row_order() -> Result<()> {
 
 #[test]
 fn chromosomes_all_uses_bam_header_order_for_scaling_tsv_rows() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // `ChromosomeArgs::resolve_chromosomes` documents that `--chromosomes all` uses BAM header
     // order for BAM-backed commands.
@@ -1107,6 +1120,7 @@ fn chromosomes_all_uses_bam_header_order_for_scaling_tsv_rows() -> Result<()> {
 #[test]
 fn blacklist_masking_changes_scaling_profile_and_excludes_zeroed_bins_from_global_mean()
 -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // Start from the same simple fixture with one fragment [20,80), then blacklist [20,40).
     //

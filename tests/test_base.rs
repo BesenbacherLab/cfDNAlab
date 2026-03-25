@@ -16,6 +16,7 @@ mod tests {
 
     #[test]
     fn lut_equals_match_for_all_bytes() {
+        // Human verification status: unverified
         for byte in 0u8..=255 {
             let from_match = encode_base_match(byte);
             let from_lut = encode_base(byte);

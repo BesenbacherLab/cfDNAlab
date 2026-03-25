@@ -26,6 +26,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_mixed_bins_partial_overlap() {
+        // Human verification status: unverified
         // Tile core [105, 125), len 20
         // Bins: [90,110) sf=2.0, [110,120) sf=0.0, [120,140) sf=0.5
         // Expected (multiply-by-sf):
@@ -50,6 +51,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_starts_exactly_at_bin_boundary() {
+        // Human verification status: unverified
         // Tile core starts exactly at previous bin end
         // Bins: [0,100) sf=2.0, [100,200) sf=4.0
         // Tile: core_start=100, len=10 so all in second bin
@@ -64,6 +66,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_zero_bin_covers_entire_tile() {
+        // Human verification status: unverified
         // Entire tile lies in a zero-scaled bin
         let core_start = 60u32;
         let bins = vec![(50u64, 150u64, 0.0f32)];
@@ -76,6 +79,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_noop_on_empty_inputs() {
+        // Human verification status: unverified
         // No bins or empty coverage should be a no-op
         let core_start = 100u32;
 
@@ -98,6 +102,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_non_overlapping_bins_on_both_sides_leave_varied_tile_unchanged() {
+        // Human verification status: unverified
         // Tile [500, 510), with one scaling bin entirely left and one entirely right.
         // This is the real no-op case with non-empty scaling input: the function must not touch
         // any element just because unrelated bins exist elsewhere on the chromosome.
@@ -113,6 +118,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_multiple_bins_exact_edges() {
+        // Human verification status: unverified
         // Tile aligns exactly to bin edges
         // Bins: [1000,1010) sf=2, [1010,1020) sf=0, [1020,1030) sf=0.5
         let core_start = 1000u32;
@@ -139,6 +145,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_bins_entirely_left_of_tile_noop() {
+        // Human verification status: unverified
         // All bins end before the tile starts -> no effect.
         // Include one bin that touches the tile boundary exactly at `core_start` to prove the
         // implementation treats the bins as half-open and does not scale index 0 by mistake.
@@ -153,6 +160,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_bins_entirely_right_of_tile_noop() {
+        // Human verification status: unverified
         // All bins start after the tile ends -> no effect.
         // Include one bin that starts exactly at the tile end to prove the half-open convention at
         // the right boundary.
@@ -167,6 +175,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_partial_left_overlap_only() {
+        // Human verification status: unverified
         // Bin overlaps only the left edge of the tile
         // Tile: [200, 210), Bin: [195, 205) sf=3.0 -> indices 0..5 scaled by 3
         let core_start = 200u32;
@@ -183,6 +192,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_partial_right_overlap_only() {
+        // Human verification status: unverified
         // Bin overlaps only the right edge of the tile
         // Tile: [300, 312), Bin: [308, 400) sf=0.25 -> indices 8..12 scaled by 0.25
         let core_start = 300u32;
@@ -199,6 +209,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_many_small_bins_inside_tile() {
+        // Human verification status: unverified
         // Tile: [1000, 1010). Bins: per-base alternating 2.0 and 0.5.
         let core_start = 1000u32;
         let bins = (1000u64..1010u64)
@@ -264,6 +275,7 @@ mod tests_compute_window_scaling {
     #[test]
     fn compute_window_scaling_over_fragment_uses_explicit_full_fragment_span_for_every_overlapping_window()
     -> anyhow::Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Use one fragment/query interval [20,81) and two overlapping count windows:
         // - [0,50)
@@ -314,6 +326,7 @@ mod tests_compute_window_scaling {
 
     #[test]
     fn compute_window_scaling_over_overlap_uses_each_window_overlap_span() -> anyhow::Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Reuse the same fragment/query interval [20,81), count windows, and scaling bins as the
         // previous test.
@@ -370,6 +383,7 @@ mod tests_compute_window_scaling {
     #[test]
     fn scaling_bin_overlap_pipeline_recovers_chrom_local_indices_and_correct_fragment_weight()
     -> anyhow::Result<()> {
+        // Human verification status: unverified
         // Arrange:
         // Exercise the intended scaling pipeline directly, independent of any command:
         //

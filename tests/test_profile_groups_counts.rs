@@ -21,6 +21,7 @@ mod tests {
 
     #[test]
     fn new_and_shape() {
+        // Human verification status: unverified
         let c = make_counts();
         assert_eq!(c.n_positions(), 5);
         assert_eq!(c.n_groups(), 3);
@@ -32,6 +33,7 @@ mod tests {
 
     #[test]
     fn index_of_valid_and_bounds() -> Result<()> {
+        // Human verification status: unverified
         let c = make_counts();
         // group=1, pos=3, len=20 -> bin 0
         let idx = c.index_of(3, 1, 20)?;
@@ -54,6 +56,7 @@ mod tests {
 
     #[test]
     fn incr_and_get() -> Result<()> {
+        // Human verification status: unverified
         let mut c = make_counts();
         // Start zero
         assert_eq!(c.get(0, 0, 20)?, 0.0);
@@ -70,6 +73,7 @@ mod tests {
 
     #[test]
     fn incr_errors_on_oob() {
+        // Human verification status: unverified
         let mut c = make_counts();
         // Length out of bounds
         assert!(c.incr(0, 0, 19).is_err());
@@ -81,6 +85,7 @@ mod tests {
 
     #[test]
     fn zeroed_like_copies_shape_and_zeros() -> Result<()> {
+        // Human verification status: unverified
         let mut c = make_counts();
         c.incr(1, 2, 55)?; // bin 1
         let z = c.zeroed_like();
@@ -94,6 +99,7 @@ mod tests {
 
     #[test]
     fn merge_from_adds_elementwise() -> Result<()> {
+        // Human verification status: unverified
         let mut a = make_counts();
         let mut b = make_counts();
         a.incr(2, 1, 49)?; // bin 0
@@ -109,6 +115,7 @@ mod tests {
 
     #[test]
     fn merge_incompatible_fails() {
+        // Human verification status: unverified
         let a = make_counts();
         // Different window size
         let b = ProfileGroupsCounts::new(6, 3, vec![20, 50, 100]);
@@ -123,6 +130,7 @@ mod tests {
 
     #[test]
     fn collapse_sums_many() -> Result<()> {
+        // Human verification status: unverified
         let mut a = make_counts();
         let mut b = make_counts();
         let mut c = make_counts();
@@ -136,6 +144,7 @@ mod tests {
 
     #[test]
     fn reshape_to_3d_group_len_pos() -> Result<()> {
+        // Human verification status: unverified
         let mut c = make_counts(); // G=3, P=5, L=2
 
         // Fill a few distinct cells we can verify after reshape.
@@ -164,6 +173,7 @@ mod tests {
 
     #[test]
     fn ndarray3_view_matches_allocating_copy_for_all_cells() -> Result<()> {
+        // Human verification status: unverified
         let mut c = make_counts(); // G=3, P=5, L=2 => flat layout has 30 cells
 
         // Fill every flat cell with a unique value so any stride mistake shows up immediately.
@@ -203,6 +213,7 @@ mod tests {
 
     #[test]
     fn display_has_shape_info() {
+        // Human verification status: unverified
         let c = make_counts();
         let s = format!("{}", c);
         // Basic shape strings are present

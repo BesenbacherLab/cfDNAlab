@@ -101,6 +101,7 @@ fn path_text(path: &Path) -> String {
 
 #[test]
 fn help_text_is_available_for_all_enabled_release_commands() -> Result<()> {
+    // Human verification status: unverified
     let mut release_commands = Vec::new();
     #[cfg(feature = "cmd_gc_bias")]
     release_commands.push("gc-bias");
@@ -151,6 +152,7 @@ fn help_text_is_available_for_all_enabled_release_commands() -> Result<()> {
 #[cfg(feature = "cmd_lengths")]
 #[test]
 fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // The command contract says lengths writes:
     // - <prefix>.length_counts.npy
@@ -221,6 +223,7 @@ fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> 
 #[cfg(feature = "cmd_coverage_weights")]
 #[test]
 fn coverage_weights_cli_minimal_invocation_writes_scaling_tsv() -> Result<()> {
+    // Human verification status: unverified
     // Arrange: simple_inward_bam has chr1 length 200 and one fragment spanning [20,80).
     // With stride 20 this yields exactly 10 stride bins -> 11 TSV lines including header.
     let bam_fixture = fixtures::simple_inward_bam()?;
@@ -281,6 +284,7 @@ fn coverage_weights_cli_minimal_invocation_writes_scaling_tsv() -> Result<()> {
 #[cfg(feature = "cmd_fcoverage")]
 #[test]
 fn fcoverage_cli_minimal_invocation_writes_expected_positional_run() -> Result<()> {
+    // Human verification status: unverified
     // Arrange: simple_inward_bam has one fragment spanning [20,80) on chr1.
     // In plain positional mode without correction, expected run is coverage 1 on [20,80).
     let bam_fixture = fixtures::simple_inward_bam()?;
@@ -335,6 +339,7 @@ fn fcoverage_cli_minimal_invocation_writes_expected_positional_run() -> Result<(
 #[cfg(feature = "cmd_midpoints")]
 #[test]
 fn midpoints_cli_minimal_invocation_writes_profiles_and_group_index() -> Result<()> {
+    // Human verification status: unverified
     // Arrange: one window in one group with one fragment-length bin.
     let bam_fixture = fixtures::simple_inward_bam()?;
     let out_dir = TempDir::new()?;
@@ -396,6 +401,7 @@ fn midpoints_cli_minimal_invocation_writes_profiles_and_group_index() -> Result<
 #[cfg(feature = "cmd_bam_to_bam")]
 #[test]
 fn bam_to_bam_cli_minimal_invocation_writes_output_bam() -> Result<()> {
+    // Human verification status: unverified
     // Arrange
     let bam_fixture = fixtures::simple_inward_bam()?;
     let out_dir = TempDir::new()?;
@@ -434,6 +440,7 @@ fn bam_to_bam_cli_minimal_invocation_writes_output_bam() -> Result<()> {
 #[cfg(feature = "cmd_bam_to_frag")]
 #[test]
 fn bam_to_frag_cli_minimal_invocation_writes_frag_and_header_files() -> Result<()> {
+    // Human verification status: unverified
     // Arrange
     let bam_fixture = fixtures::simple_inward_bam()?;
     let out_dir = TempDir::new()?;
@@ -479,6 +486,7 @@ fn bam_to_frag_cli_minimal_invocation_writes_frag_and_header_files() -> Result<(
 #[cfg(feature = "cmd_frag_to_bam")]
 #[test]
 fn frag_to_bam_cli_minimal_invocation_writes_output_bam() -> Result<()> {
+    // Human verification status: unverified
     // Arrange: one valid frag row and one matching chrom.sizes entry.
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
@@ -525,6 +533,7 @@ fn frag_to_bam_cli_minimal_invocation_writes_output_bam() -> Result<()> {
 #[cfg(feature = "cmd_ref_gc_bias")]
 #[test]
 fn ref_gc_bias_cli_minimal_invocation_writes_reference_package() -> Result<()> {
+    // Human verification status: unverified
     // Arrange: Use tiny deterministic reference and conservative settings.
     let reference = fixtures::simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
@@ -567,6 +576,7 @@ fn ref_gc_bias_cli_minimal_invocation_writes_reference_package() -> Result<()> {
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 #[test]
 fn gc_bias_cli_minimal_invocation_writes_correction_package() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // 1) Build reference package from tiny deterministic reference.
     // 2) Run gc-bias on tiny deterministic BAM against that reference package.
