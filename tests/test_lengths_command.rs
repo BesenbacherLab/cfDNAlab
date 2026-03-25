@@ -1885,6 +1885,79 @@ mod tests_lengths_command {
     }
 
     #[test]
+    fn midpoint_assignment_on_even_length_boundary_counts_exactly_one_adjacent_window() -> Result<()> {
+        // Arrange:
+        // One even-length fragment spans [40,50), so midpoint assignment randomizes between:
+        //   44 and 45
+        //
+        // Put the window boundary exactly between those two central bases:
+        //   window 0 -> [0,45)
+        //   window 1 -> [45,90)
+        //
+        // With `assign_by=midpoint`, exactly one of those windows must receive the fragment. This
+        // locks in the released contract near the midpoint seam without pretending the random tie
+        // chooses one side deterministically.
+        let bam = bam_from_specs(
+            vec![("chr1".to_string(), 100)],
+            vec![fixtures::paired_fragment(40, 10, 5)],
+            Vec::new(),
+            "lengths_even_midpoint_boundary",
+        )?;
+        let out_dir = TempDir::new()?;
+        let bed_path = out_dir.path().join("windows.bed");
+        write_bed(
+            &bed_path,
+            &[("chr1", 0, 45, "window0"), ("chr1", 45, 90, "window1")],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Midpoint,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+
+        // Assert
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.shape(), &[2, 1]);
+        assert!((arr.sum() - 1.0).abs() < 1e-6);
+        let first_window = arr[(0, 0)];
+        let second_window = arr[(1, 0)];
+        let is_valid_one_hot =
+            (first_window - 1.0).abs() < 1e-6 && second_window.abs() < 1e-6
+                || first_window.abs() < 1e-6 && (second_window - 1.0).abs() < 1e-6;
+        assert!(
+            is_valid_one_hot,
+            "midpoint tie at the window edge must count exactly one adjacent window, got [{first_window}, {second_window}]"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn scaling_tsv_must_cover_requested_chromosome_end_in_lengths() -> Result<()> {
         // Human verification status: unverified
         // Arrange:

@@ -35,3 +35,5 @@ website/docs/generated/
 __pycache__/
 
 test_scores.md
+
+add_verification_comment.py

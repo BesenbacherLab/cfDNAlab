@@ -1543,6 +1543,259 @@ mod tests_gc_bias {
     }
 
     #[test]
+    fn real_ref_gc_bias_smoothing_metadata_drives_gc_bias_smoothed_avg_counts() -> Result<()> {
+        // Arrange:
+        // Reuse the three isolated 10 bp windows from the ref-gc-bias smoothing test:
+        // - one A-only fragment start  -> GC%=0
+        // - one mixed 5C/5A start      -> GC%=50
+        // - one C-only fragment start  -> GC%=100
+        //
+        // The sample BAM contains exactly those same three 10 bp fragments, so the pre-smoothing
+        // cfDNA counts row is also:
+        //   gc_count 0  -> 1
+        //   gc_count 5  -> 1
+        //   gc_count 10 -> 1
+        //
+        // The real reference package is produced with:
+        //   sigma = sqrt(1 / (2 ln 2)), radius = 1
+        // so the 1D smoothing kernel is exactly [1/4, 1/2, 1/4].
+        //
+        // `gc-bias` must respect the written metadata and smooth its own cfDNA counts in the same
+        // way before converting to GC percentages. Therefore the saved `avg_cfdna_counts` matrix
+        // must be:
+        //   GC% 0   -> 1/2
+        //   GC% 10  -> 1/4
+        //   GC% 40  -> 1/4
+        //   GC% 50  -> 1/2
+        //   GC% 60  -> 1/4
+        //   GC% 90  -> 1/4
+        //   GC% 100 -> 1/2
+        // and zero elsewhere.
+        let sigma = (1.0_f64 / (2.0 * std::f64::consts::LN_2)).sqrt();
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_real_smoothed_reference",
+            vec![(
+                "chr1".to_string(),
+                format!(
+                    "{}{}{}{}{}",
+                    "A".repeat(10),
+                    "T".repeat(10),
+                    "C".repeat(5) + &"A".repeat(5),
+                    "T".repeat(10),
+                    "C".repeat(10)
+                ),
+            )],
+        )?;
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 50)],
+            vec![
+                fixtures::paired_fragment(0, 10, 5),
+                fixtures::paired_fragment(20, 10, 5),
+                fixtures::paired_fragment(40, 10, 5),
+            ],
+            Vec::new(),
+            "gc_bias_real_smoothed_bam",
+        )?;
+
+        let ref_gc_dir = TempDir::new()?;
+        let bed_path = ref_gc_dir.path().join("windows.bed");
+        std::fs::write(&bed_path, "chr1\t0\t10\nchr1\t20\t30\nchr1\t40\t50\n")?;
+        let ref_cfg = RefGCBiasConfig {
+            ref_genome: Ref2BitRequiredArgs {
+                ref_2bit: reference.path.clone(),
+            },
+            output_dir: ref_gc_dir.path().to_path_buf(),
+            n_threads: 1,
+            n_positions: 41,
+            seed: Some(11),
+            windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+                by_bed: Some(bed_path),
+            },
+            chromosomes: ChromosomeArgs {
+                chromosomes: Some(vec!["chr1".to_string()]),
+                chromosomes_file: None,
+            },
+            blacklist: None,
+            fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+                min_fragment_length: 10,
+                max_fragment_length: 10,
+            },
+            end_offset: 0,
+            skip_interpolation: true,
+            smoothing_sigma: sigma,
+            smoothing_radius: 1,
+            skip_smoothing: false,
+            tile_size: 1_000_000,
+        };
+
+        let out_dir = TempDir::new()?;
+        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        cfg.set_num_extreme_gc_bins(0);
+        cfg.set_num_short_length_bins(0);
+        cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        // Act
+        run_ref_gc_bias(&ref_cfg)?;
+        run_gc_bias(&cfg)?;
+
+        // Assert
+        let avg_counts: ndarray::Array2<f64> =
+            read_npy(out_dir.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        let expected_non_zero = [
+            (0_usize, 0.5_f64),
+            (10, 0.25),
+            (40, 0.25),
+            (50, 0.5),
+            (60, 0.25),
+            (90, 0.25),
+            (100, 0.5),
+        ];
+        assert_eq!(avg_counts.dim(), (1, 101));
+        for (gc_pct, &value) in avg_counts.row(0).iter().enumerate() {
+            let expected_value = expected_non_zero
+                .iter()
+                .find_map(|(expected_gc_pct, expected_value)| {
+                    (*expected_gc_pct == gc_pct).then_some(*expected_value)
+                })
+                .unwrap_or(0.0);
+            assert_gc_command_close(
+                value,
+                expected_value,
+                &format!("smoothed avg counts at GC% {gc_pct}"),
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn real_ref_gc_bias_interpolation_metadata_drives_gc_bias_interpolated_counts() -> Result<()> {
+        // Arrange:
+        // Use the same three 10 bp starts as above, but produce the reference package with
+        // interpolation enabled and smoothing disabled.
+        //
+        // The cfDNA sample again has raw global counts:
+        //   GC% 0   -> 1
+        //   GC% 50  -> 1
+        //   GC% 100 -> 1
+        //
+        // The real reference package writes `skip_interpolation = false` and an empirical support
+        // mask that is true only at GC% 0, 50, and 100. `gc-bias` first mean-scales over those
+        // supported cells, so `normalized_avg_cfdna_counts` still has:
+        //   1 at GC% 0, 50, 100
+        //   0 elsewhere
+        //
+        // Interpolation then sees three equal anchors and must fill every unsupported GC% bin with
+        // the constant value 1.0. The saved `interpolated_cfdna_counts` matrix should therefore be
+        // exactly all ones.
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_real_interpolated_reference",
+            vec![(
+                "chr1".to_string(),
+                format!(
+                    "{}{}{}{}{}",
+                    "A".repeat(10),
+                    "T".repeat(10),
+                    "C".repeat(5) + &"A".repeat(5),
+                    "T".repeat(10),
+                    "C".repeat(10)
+                ),
+            )],
+        )?;
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 50)],
+            vec![
+                fixtures::paired_fragment(0, 10, 5),
+                fixtures::paired_fragment(20, 10, 5),
+                fixtures::paired_fragment(40, 10, 5),
+            ],
+            Vec::new(),
+            "gc_bias_real_interpolated_bam",
+        )?;
+
+        let ref_gc_dir = TempDir::new()?;
+        let bed_path = ref_gc_dir.path().join("windows.bed");
+        std::fs::write(&bed_path, "chr1\t0\t10\nchr1\t20\t30\nchr1\t40\t50\n")?;
+        let ref_cfg = RefGCBiasConfig {
+            ref_genome: Ref2BitRequiredArgs {
+                ref_2bit: reference.path.clone(),
+            },
+            output_dir: ref_gc_dir.path().to_path_buf(),
+            n_threads: 1,
+            n_positions: 41,
+            seed: Some(11),
+            windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+                by_bed: Some(bed_path),
+            },
+            chromosomes: ChromosomeArgs {
+                chromosomes: Some(vec!["chr1".to_string()]),
+                chromosomes_file: None,
+            },
+            blacklist: None,
+            fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+                min_fragment_length: 10,
+                max_fragment_length: 10,
+            },
+            end_offset: 0,
+            skip_interpolation: false,
+            smoothing_sigma: 0.55,
+            smoothing_radius: 2,
+            skip_smoothing: true,
+            tile_size: 1_000_000,
+        };
+
+        let out_dir = TempDir::new()?;
+        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        cfg.set_num_extreme_gc_bins(0);
+        cfg.set_num_short_length_bins(0);
+        cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        // Act
+        run_ref_gc_bias(&ref_cfg)?;
+        run_gc_bias(&cfg)?;
+
+        // Assert
+        let normalized_counts: ndarray::Array2<f64> =
+            read_npy(out_dir.path().join("gc_bias.normalized_avg_cfdna_counts.1.npy"))?;
+        assert_eq!(normalized_counts.dim(), (1, 101));
+        for (gc_pct, &value) in normalized_counts.row(0).iter().enumerate() {
+            let expected_value = if matches!(gc_pct, 0 | 50 | 100) {
+                1.0
+            } else {
+                0.0
+            };
+            assert_gc_command_close(
+                value,
+                expected_value,
+                &format!("normalized avg counts at GC% {gc_pct}"),
+            );
+        }
+
+        let interpolated_counts: ndarray::Array2<f64> =
+            read_npy(out_dir.path().join("gc_bias.interpolated_cfdna_counts.2.npy"))?;
+        assert_eq!(interpolated_counts.dim(), (1, 101));
+        for (gc_pct, &value) in interpolated_counts.row(0).iter().enumerate() {
+            assert_gc_command_close(
+                value,
+                1.0,
+                &format!("interpolated counts at GC% {gc_pct}"),
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn save_intermediates_writes_expected_sequence_and_mean_scaled_average_counts() -> Result<()> {
         // Human verification status: unverified
         // Arrange:

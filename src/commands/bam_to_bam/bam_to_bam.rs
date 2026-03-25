@@ -353,7 +353,11 @@ fn process_chrom(
             (Some(w), true) => Some(w),
             (None, true) => {
                 counter.gc_failed_fragments += 1;
-                Some(1.0)
+                if opt.gc.drop_invalid_gc {
+                    continue;
+                } else {
+                    Some(1.0)
+                }
             }
             (None, false) => None,
             (Some(_), false) => bail!("unexpected GC weight when GC correction is disabled"),

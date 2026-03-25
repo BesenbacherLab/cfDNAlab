@@ -8,7 +8,7 @@ use cfdnalab::commands::bam_to_bam::{
     bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
 };
 use cfdnalab::commands::cli_common::{
-    ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs, WindowsArgs,
+    ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs, WindowsArgs,
 };
 #[cfg(feature = "cmd_coverage_weights")]
 use cfdnalab::commands::coverage_weights::{
@@ -18,7 +18,10 @@ use cfdnalab::commands::fcoverage::config::FCoverageConfig;
 use cfdnalab::commands::fcoverage::fcoverage::run;
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
 use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
+use cfdnalab::commands::lengths::{config::LengthsConfig, lengths::run as run_lengths};
 use cfdnalab::shared::fragment::minimal_fragment::collect_fragment_from_records;
+use cfdnalab::shared::indel_mode::IndelMode;
+use cfdnalab::shared::io::dot_join;
 use cfdnalab::shared::read::default_include_read_paired_end;
 use fixtures::{
     BamFixture, FragmentSpec, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, ReadSpec,
@@ -28,10 +31,12 @@ use fixtures::{
     simple_reference_twobit, write_bed, write_scaling_factors,
 };
 use ndarray::array;
+use ndarray::Array2;
 use rust_htslib::bam::record::Aux;
 use rust_htslib::bam::{self, Read, Reader};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
+use ndarray_npy::read_npy;
 
 #[derive(Debug)]
 struct TaggedBamFixture {
@@ -774,6 +779,80 @@ fn fcoverage_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_
     assert_eq!(default_text, expected_filtered);
     assert_eq!(explicit_thirty_text, expected_filtered);
     assert_eq!(explicit_zero_text, expected_unfiltered);
+
+    Ok(())
+}
+
+#[test]
+fn fcoverage_and_lengths_agree_on_the_single_fragment_that_survives_mapq_filtering() -> Result<()> {
+    // Arrange:
+    // Build two 60 bp fragments on one chromosome:
+    // - fragment A: [20,80), MAPQ 60 -> kept by both commands
+    // - fragment B: [100,160), MAPQ 0 -> removed by both commands at `min_mapq = 30`
+    //
+    // These commands report different quantities, so the parity check is about *which fragment
+    // survives*, not about identical output formats:
+    // - `lengths` should count exactly one fragment in the 60 bp bin
+    // - `fcoverage` should write exactly one coverage run [20,80) with value 1
+    let fragment_with_mapq = |start: i64, mapq: u8| -> FragmentSpec {
+        let mut fragment = fixtures::paired_fragment(start, 60, 20);
+        fragment.forward.mapq = mapq;
+        fragment.reverse.mapq = mapq;
+        fragment
+    };
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        vec![fragment_with_mapq(20, 60), fragment_with_mapq(100, 0)],
+        Vec::new(),
+        "fcoverage_lengths_mapq_parity",
+    )?;
+
+    let lengths_out = TempDir::new()?;
+    let mut lengths_cfg = LengthsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: lengths_out.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+    );
+    lengths_cfg.set_indel_mode(IndelMode::Ignore);
+    lengths_cfg.set_windows(WindowsArgs::default());
+    lengths_cfg.set_window_assignment(AssignToWindowArgs::default());
+    lengths_cfg.set_min_mapq(30);
+    lengths_cfg.set_require_proper_pair(false);
+    {
+        let frag = lengths_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 200;
+    }
+
+    let fcoverage_out = TempDir::new()?;
+    let mut fcoverage_cfg = base_config(&bam.bam, fcoverage_out.path());
+    fcoverage_cfg.set_decimals(0);
+    fcoverage_cfg.set_min_mapq(30);
+
+    // Act
+    run_lengths(&lengths_cfg)?;
+    run(&fcoverage_cfg)?;
+
+    // Assert
+    let lengths_path = lengths_out
+        .path()
+        .join(dot_join(&[lengths_cfg.output_prefix.trim(), "length_counts.npy"]));
+    let lengths_arr: Array2<f64> = read_npy(&lengths_path)?;
+    assert_eq!(lengths_arr.shape(), &[1, 191]);
+    let len60_idx = 60 - 10;
+    assert!((lengths_arr[(0, len60_idx)] - 1.0).abs() < 1e-6);
+    assert!((lengths_arr.sum() - 1.0).abs() < 1e-6);
+
+    let fcoverage_text = read_zst_to_string(
+        &fcoverage_out
+            .path()
+            .join("testcov.fcoverage.per_position.bedgraph.zst"),
+    )?;
+    let fcoverage_lines: Vec<_> = fcoverage_text.lines().collect();
+    assert_eq!(fcoverage_lines, vec!["chr1\t20\t80\t1"]);
 
     Ok(())
 }
@@ -1845,6 +1924,86 @@ fn real_coverage_weights_tsv_changes_fcoverage_per_base_not_by_fragment_average(
         (60_u64, 80_u64, 37.0_f64 / 45.0_f64),
     ];
 
+    for (line, (expected_start, expected_end, expected_value)) in lines.iter().zip(expected) {
+        let parts: Vec<_> = line.split('\t').collect();
+        assert_eq!(parts.len(), 4, "unexpected bedGraph row: {line}");
+        assert_eq!(parts[0], "chr1");
+        assert_eq!(parts[1].parse::<u64>()?, expected_start);
+        assert_eq!(parts[2].parse::<u64>()?, expected_end);
+        let value = parts[3].parse::<f64>()?;
+        assert!(
+            (value - expected_value).abs() <= 1e-6,
+            "expected value {expected_value} for row {line}, got {value}"
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "cmd_coverage_weights")]
+#[test]
+fn real_ref_gc_bias_gc_bias_and_coverage_weights_chain_is_coherent_in_fcoverage() -> Result<()> {
+    // Arrange:
+    // Build the smallest real artifact chain that reaches a released downstream consumer:
+    //   ref-gc-bias -> gc-bias -> coverage-weights -> fcoverage
+    //
+    // Use the standard repeated-ACGT reference and the standard single fragment [20,80):
+    // - the real GC producer chain for this fixture is neutral, because every 60 bp fragment has
+    //   GC%=50 in both the reference package and the sample BAM
+    // - the real coverage-weights TSV is non-trivial and already hand-derived elsewhere:
+    //     [20,40): 37/45
+    //     [40,60): 37/60
+    //     [60,80): 37/45
+    //
+    // Because the GC package is neutral, the final `fcoverage` output must match the
+    // scaling-only expectation exactly. This makes the chain a strong release-spine check:
+    // if any producer writes incompatible semantics, the downstream bedGraph changes.
+    let bam = simple_inward_bam()?;
+    let ref_twobit = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let weights_out_dir = out_dir.path().join("weights_out");
+    std::fs::create_dir_all(&weights_out_dir)?;
+    let weights_cfg = make_simple_coverage_weights_config(&weights_out_dir, &bam.bam);
+    let gc_path = build_real_neutral_gc_package(&bam.bam, &ref_twobit.path, out_dir.path(), 60)?;
+
+    run_coverage_weights(&weights_cfg)?;
+    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+
+    let mut scale_genome = ScaleGenomeArgs::default();
+    scale_genome.scaling_factors = Some(scaling_path);
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_keep_zero_runs(false);
+    cfg.set_scale_genome(scale_genome);
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        drop_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+    {
+        let fragment_lengths = cfg.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 60;
+        fragment_lengths.max_fragment_length = 60;
+    }
+
+    // Act
+    run(&cfg)?;
+
+    // Assert
+    let output_path = out_dir
+        .path()
+        .join("testcov.fcoverage.per_position.bedgraph.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    let expected = [
+        (20_u64, 40_u64, 37.0_f64 / 45.0_f64),
+        (40_u64, 60_u64, 37.0_f64 / 60.0_f64),
+        (60_u64, 80_u64, 37.0_f64 / 45.0_f64),
+    ];
+
+    assert_eq!(lines.len(), expected.len());
     for (line, (expected_start, expected_end, expected_value)) in lines.iter().zip(expected) {
         let parts: Vec<_> = line.split('\t').collect();
         assert_eq!(parts.len(), 4, "unexpected bedGraph row: {line}");

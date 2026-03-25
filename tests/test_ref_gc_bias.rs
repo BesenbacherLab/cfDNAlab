@@ -885,7 +885,229 @@ fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Re
 }
 
 #[test]
+fn ref_gc_bias_run_smoothing_enabled_spreads_three_gc_anchors_by_known_kernel() -> Result<()> {
+    // Arrange:
+    // Build three isolated 10 bp windows that each admit exactly one fragment start:
+    // - [0,10)   = AAAAAAAAAA -> GC%=0
+    // - [20,30)  = CCCCCAAAAA -> GC%=50
+    // - [40,50)  = CCCCCCCCCC -> GC%=100
+    //
+    // The 10 bp filler blocks between them are all T so no extra counted starts can leak in.
+    // With fragment length 10 and BED rows of width 10, each row contributes exactly one start,
+    // so the raw GC-count row before smoothing is:
+    //   gc_count 0  -> 1
+    //   gc_count 5  -> 1
+    //   gc_count 10 -> 1
+    //
+    // Choose `sigma = sqrt(1 / (2 ln 2))` and `radius = 1`.
+    // Then the unnormalized Gaussian weights are:
+    //   exp(-1 / (2 sigma^2)) = 1/2
+    // so the normalized 3-tap kernel is exactly:
+    //   [1/4, 1/2, 1/4]
+    //
+    // Smoothing that sparse row gives:
+    //   gc_count 0  -> 1/2
+    //   gc_count 1  -> 1/4
+    //   gc_count 4  -> 1/4
+    //   gc_count 5  -> 1/2
+    //   gc_count 6  -> 1/4
+    //   gc_count 9  -> 1/4
+    //   gc_count 10 -> 1/2
+    //
+    // For effective length 10, GC counts map exactly to GC percentages in steps of 10, and the
+    // width correction is 1 for every reachable GC% bin. So the written counts row must carry the
+    // same values at GC% 0,10,40,50,60,90,100 and zero elsewhere.
+    let sigma = (1.0_f64 / (2.0 * std::f64::consts::LN_2)).sqrt();
+    let reference = fixtures::twobit_from_sequences(
+        "ref_gc_bias_smoothing_three_anchor_reference",
+        vec![(
+            "chr1".to_string(),
+            format!(
+                "{}{}{}{}{}",
+                "A".repeat(10),
+                "T".repeat(10),
+                "C".repeat(5) + &"A".repeat(5),
+                "T".repeat(10),
+                "C".repeat(10)
+            ),
+        )],
+    )?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("windows.bed");
+    std::fs::write(&bed_path, "chr1\t0\t10\nchr1\t20\t30\nchr1\t40\t50\n")?;
+
+    let cfg = RefGCBiasConfig {
+        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+            ref_2bit: reference.path.clone(),
+        },
+        output_dir: out_dir.path().to_path_buf(),
+        n_threads: 1,
+        n_positions: 41,
+        seed: Some(11),
+        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+            by_bed: Some(bed_path),
+        },
+        chromosomes: ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes_file: None,
+        },
+        blacklist: None,
+        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+            min_fragment_length: 10,
+            max_fragment_length: 10,
+        },
+        end_offset: 0,
+        skip_interpolation: true,
+        smoothing_sigma: sigma,
+        smoothing_radius: 1,
+        skip_smoothing: false,
+        tile_size: 1_000_000,
+    };
+
+    // Act
+    run(&cfg)?;
+
+    // Assert
+    let package_path = out_dir.path().join("ref_gc_package.npz");
+    let (counts, support_unobservables, support_outliers, gc_percent_widths) =
+        load_ref_gc_package_arrays(&package_path)?;
+
+    assert_eq!(counts.dim(), (1, 101));
+    assert_eq!(support_unobservables.dim(), (1, 101));
+    assert_eq!(support_outliers.dim(), (1, 101));
+    assert_eq!(gc_percent_widths.dim(), (1, 101));
+
+    let expected_non_zero = [
+        (0_usize, 0.5_f64),
+        (10, 0.25),
+        (40, 0.25),
+        (50, 0.5),
+        (60, 0.25),
+        (90, 0.25),
+        (100, 0.5),
+    ];
+    for (gc_pct, &value) in counts.row(0).iter().enumerate() {
+        let expected_value = expected_non_zero
+            .iter()
+            .find_map(|(expected_gc_pct, expected_value)| {
+                (*expected_gc_pct == gc_pct).then_some(*expected_value)
+            })
+            .unwrap_or(0.0);
+        assert!(
+            (value - expected_value).abs() <= 1e-6,
+            "expected smoothed count {expected_value} at GC% {gc_pct}, got {value}"
+        );
+    }
+
+    for gc_pct in 0..=100 {
+        let expected_empirical = matches!(gc_pct, 0 | 10 | 40 | 50 | 60 | 90 | 100);
+        assert_eq!(
+            support_outliers[(0, gc_pct)],
+            expected_empirical,
+            "unexpected empirical support at GC% {gc_pct}"
+        );
+        let expected_width = if gc_pct % 10 == 0 { 1 } else { 0 };
+        assert_eq!(
+            gc_percent_widths[(0, gc_pct)],
+            expected_width,
+            "unexpected GC-percent width at GC% {gc_pct}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors() -> Result<()> {
+    // Arrange:
+    // Reuse the same three isolated starts as above, but now disable smoothing and enable
+    // interpolation. The pre-interpolation row is therefore exactly:
+    //   GC% 0   -> 1
+    //   GC% 50  -> 1
+    //   GC% 100 -> 1
+    // and zero elsewhere.
+    //
+    // The empirical support mask is true only at those three anchor bins. With three equal anchors,
+    // the fitted quadratic is the constant function 1.0, so interpolation must fill every
+    // unsupported GC% bin with 1.0 while leaving the support mask unchanged.
+    let reference = fixtures::twobit_from_sequences(
+        "ref_gc_bias_interpolation_three_anchor_reference",
+        vec![(
+            "chr1".to_string(),
+            format!(
+                "{}{}{}{}{}",
+                "A".repeat(10),
+                "T".repeat(10),
+                "C".repeat(5) + &"A".repeat(5),
+                "T".repeat(10),
+                "C".repeat(10)
+            ),
+        )],
+    )?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("windows.bed");
+    std::fs::write(&bed_path, "chr1\t0\t10\nchr1\t20\t30\nchr1\t40\t50\n")?;
+
+    let cfg = RefGCBiasConfig {
+        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+            ref_2bit: reference.path.clone(),
+        },
+        output_dir: out_dir.path().to_path_buf(),
+        n_threads: 1,
+        n_positions: 41,
+        seed: Some(11),
+        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+            by_bed: Some(bed_path),
+        },
+        chromosomes: ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes_file: None,
+        },
+        blacklist: None,
+        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+            min_fragment_length: 10,
+            max_fragment_length: 10,
+        },
+        end_offset: 0,
+        skip_interpolation: false,
+        smoothing_sigma: 0.55,
+        smoothing_radius: 2,
+        skip_smoothing: true,
+        tile_size: 1_000_000,
+    };
+
+    // Act
+    run(&cfg)?;
+
+    // Assert
+    let package_path = out_dir.path().join("ref_gc_package.npz");
+    let (counts, support_unobservables, support_outliers, gc_percent_widths) =
+        load_ref_gc_package_arrays(&package_path)?;
+
+    assert_eq!(counts.dim(), (1, 101));
+    assert_eq!(support_unobservables.dim(), (1, 101));
+    assert_eq!(support_outliers.dim(), (1, 101));
+    assert_eq!(gc_percent_widths.dim(), (1, 101));
+
+    for (gc_pct, &value) in counts.row(0).iter().enumerate() {
+        assert!(
+            (value - 1.0).abs() <= 1e-6,
+            "interpolation should fill GC% {gc_pct} to 1.0, got {value}"
+        );
+        let expected_empirical = matches!(gc_pct, 0 | 50 | 100);
+        assert_eq!(
+            support_outliers[(0, gc_pct)],
+            expected_empirical,
+            "interpolation must not rewrite the empirical support mask at GC% {gc_pct}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run() -> Result<()> {
+    // Human verification status: unverified
     let reference = fixtures::simple_reference_twobit()?;
     let split_out_dir = TempDir::new()?;
     let merged_out_dir = TempDir::new()?;
@@ -1481,6 +1703,71 @@ fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() 
     assert_eq!(single_support_unobservables, two_support_unobservables);
     assert_eq!(single_support_outliers, two_support_outliers);
     assert_eq!(single_gc_percent_widths, two_gc_percent_widths);
+
+    Ok(())
+}
+
+#[test]
+fn fixed_seed_ref_gc_bias_is_invariant_to_tile_size() -> Result<()> {
+    let reference = fixtures::simple_reference_twobit()?;
+    let single_tile_out = TempDir::new()?;
+    let multi_tile_out = TempDir::new()?;
+
+    let make_cfg = |output_dir: &Path, tile_size: u32| RefGCBiasConfig {
+        ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+            ref_2bit: reference.path.clone(),
+        },
+        output_dir: output_dir.to_path_buf(),
+        n_threads: 1,
+        n_positions: 100,
+        seed: Some(41),
+        windows: Default::default(),
+        chromosomes: ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes_file: None,
+        },
+        blacklist: None,
+        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+            min_fragment_length: 10,
+            max_fragment_length: 12,
+        },
+        end_offset: 0,
+        skip_interpolation: true,
+        smoothing_sigma: 0.55,
+        smoothing_radius: 2,
+        skip_smoothing: true,
+        tile_size,
+    };
+
+    // Manual expectations:
+    // - A fixed top-level seed should make the sampled start positions independent of how the
+    //   chromosome is chunked into tiles.
+    // - The large-tile run keeps the whole chromosome together.
+    // - The 80 bp run forces multiple tiles on the 256 bp fixture chromosome.
+    // - If tile chunking changes science rather than only runtime, the written package arrays will
+    //   differ.
+    run(&make_cfg(single_tile_out.path(), 1_000_000))?;
+    run(&make_cfg(multi_tile_out.path(), 80))?;
+
+    let single_package = single_tile_out.path().join("ref_gc_package.npz");
+    let multi_package = multi_tile_out.path().join("ref_gc_package.npz");
+    let (
+        single_counts,
+        single_support_unobservables,
+        single_support_outliers,
+        single_gc_percent_widths,
+    ) = load_ref_gc_package_arrays(&single_package)?;
+    let (
+        multi_counts,
+        multi_support_unobservables,
+        multi_support_outliers,
+        multi_gc_percent_widths,
+    ) = load_ref_gc_package_arrays(&multi_package)?;
+
+    assert_eq!(single_counts, multi_counts);
+    assert_eq!(single_support_unobservables, multi_support_unobservables);
+    assert_eq!(single_support_outliers, multi_support_outliers);
+    assert_eq!(single_gc_percent_widths, multi_gc_percent_widths);
 
     Ok(())
 }

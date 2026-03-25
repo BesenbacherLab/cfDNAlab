@@ -431,6 +431,144 @@ fn unpaired_single_read_matches_paired_midpoint_profile_for_same_span() -> Resul
 }
 
 #[test]
+fn even_length_midpoint_tie_counts_exactly_one_of_two_adjacent_edge_windows() -> Result<()> {
+    // Arrange:
+    // One even-length fragment spans [40,50), so `midpoints` randomizes the tie and places the
+    // midpoint at either 44 or 45.
+    //
+    // Put two 1 bp windows exactly on those two candidate midpoint bases:
+    //   groupA -> [44,45)
+    //   groupB -> [45,46)
+    //
+    // Exactly one of them must receive the count, never both and never neither.
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 100)],
+        vec![paired_fragment_on_tid(0, 40, 10, 5)],
+        Vec::new(),
+        "midpoints_even_tie_two_edge_windows",
+    )?;
+    let temp = TempDir::new()?;
+    let bed_path = temp.path().join("windows.bed");
+    write_bed(&bed_path, &[("chr1", 44, 45, "groupA"), ("chr1", 45, 46, "groupB")])?;
+
+    let mut cfg = MidpointsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: temp.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+        bed_path,
+    );
+    cfg.set_output_prefix("sites");
+    cfg.set_length_bins(vec![10, 11]);
+    cfg.set_tile_size(1_000);
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    cfg.set_scale_genome(ScaleGenomeArgs::default());
+
+    // Act
+    run(&cfg)?;
+
+    // Assert
+    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+    let group_to_idx = read_group_index_map(&temp.path().join("sites.group_index.tsv"))?;
+    assert_eq!(arr.shape(), &[2, 1, 1]);
+    assert_eq!(arr.sum(), 1.0);
+
+    let group_a = arr[[group_to_idx["groupA"], 0, 0]];
+    let group_b = arr[[group_to_idx["groupB"], 0, 0]];
+    let is_valid_one_hot =
+        (group_a == 1.0 && group_b == 0.0) || (group_a == 0.0 && group_b == 1.0);
+    assert!(
+        is_valid_one_hot,
+        "even-length midpoint tie must count exactly one adjacent edge window, got groupA={group_a}, groupB={group_b}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn blacklist_midpoint_filtering_uses_floor_midpoint_even_when_profile_placement_randomizes() -> Result<()> {
+    // Arrange:
+    // Use the same even-length fragment [40,50), whose placement midpoint is randomized between
+    // 44 and 45. Count it against one 2 bp window [44,46), so without blacklist the profile row
+    // must be one-hot:
+    //   [1,0] if midpoint=44
+    //   [0,1] if midpoint=45
+    //
+    // Now add blacklist interval [45,46) and choose blacklist strategy `Midpoint`.
+    // The shared blacklist helper does not use the random tie rule. It uses:
+    //   start + (end - start) / 2 = 45
+    // for [40,50). So the fragment must always be blacklisted, even though profile placement
+    // would otherwise be allowed to land at either 44 or 45.
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 100)],
+        vec![paired_fragment_on_tid(0, 40, 10, 5)],
+        Vec::new(),
+        "midpoints_blacklist_midpoint_floor_contract",
+    )?;
+    let temp = TempDir::new()?;
+    let bed_path = temp.path().join("windows.bed");
+    let blacklist_path = temp.path().join("blacklist.bed");
+    write_bed(&bed_path, &[("chr1", 44, 46, "groupA")])?;
+    std::fs::write(&blacklist_path, "chr1\t45\t46\n")?;
+
+    let make_cfg = |output_dir: &std::path::Path, blacklist: Option<Vec<PathBuf>>| {
+        let mut cfg = MidpointsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: output_dir.to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+            bed_path.clone(),
+        );
+        cfg.set_output_prefix("sites");
+        cfg.set_length_bins(vec![10, 11]);
+        cfg.set_tile_size(1_000);
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_scale_genome(ScaleGenomeArgs::default());
+        cfg.blacklist = blacklist;
+        cfg.blacklist_strategy = cfdnalab::shared::blacklist::BlacklistStrategy::Midpoint;
+        cfg
+    };
+
+    let baseline_out = temp.path().join("baseline");
+    let blacklisted_out = temp.path().join("blacklisted");
+    std::fs::create_dir_all(&baseline_out)?;
+    std::fs::create_dir_all(&blacklisted_out)?;
+
+    // Act
+    run(&make_cfg(&baseline_out, None))?;
+    run(&make_cfg(&blacklisted_out, Some(vec![blacklist_path])))?;
+
+    // Assert
+    let baseline_arr: Array3<f32> = read_npy(baseline_out.join("sites.midpoint_profiles.npy"))?;
+    assert_eq!(baseline_arr.shape(), &[1, 1, 2]);
+    let baseline_row = baseline_arr.slice(ndarray::s![0, 0, ..]).to_vec();
+    let baseline_is_valid_one_hot =
+        baseline_row == vec![1.0, 0.0] || baseline_row == vec![0.0, 1.0];
+    assert!(
+        baseline_is_valid_one_hot,
+        "without blacklist the even-length midpoint must land at exactly one central base, got {:?}",
+        baseline_row
+    );
+
+    let blacklisted_arr: Array3<f32> =
+        read_npy(blacklisted_out.join("sites.midpoint_profiles.npy"))?;
+    assert_eq!(blacklisted_arr.shape(), &[1, 1, 2]);
+    assert_eq!(
+        blacklisted_arr.sum(),
+        0.0,
+        "midpoint blacklist filtering should deterministically remove the fragment via floor midpoint 45"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn length_bin_start_end_list_format_is_rejected() {
     // Human verification status: unverified
     // Arrange: This format was intentionally removed.

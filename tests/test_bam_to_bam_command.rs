@@ -798,7 +798,109 @@ fn gc_file_fallback_writes_gc_tag_one_on_both_mates() -> Result<()> {
 }
 
 #[test]
+fn gc_file_drop_invalid_skips_fragment_entirely() -> Result<()> {
+    // Human verification status: unverified
+    let bam = simple_inward_bam()?;
+    let ref_twobit = simple_reference_twobit()?;
+    let work = tempdir()?;
+    let out_bam = work.path().join("gc_drop_invalid.bam");
+    let gc_path = work.path().join("gc_pkg.npz");
+    build_gc_package(&gc_path, 26)?;
+
+    let mut cfg = base_config(&bam.bam, &out_bam);
+    cfg.set_gc(ApplyGCArgFileOnly {
+        gc_file: Some(gc_path),
+        drop_invalid_gc: true,
+    });
+    cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+    {
+        let frag = cfg.fragment_lengths_mut();
+        // The only fixture fragment is length 60, so with end_offset=26 the corrected span is
+        // only 8 bp. That is below the corrector's minimum 10 A/C/G/T requirement, so the GC
+        // lookup fails for the one logical fragment in this BAM.
+        frag.min_fragment_length = 53;
+        frag.max_fragment_length = 200;
+    }
+
+    // Manual expectations:
+    // - one fragment is encountered
+    // - GC lookup fails once for that fragment
+    // - with `drop_invalid_gc=true`, the command must skip the fragment instead of silently
+    //   falling back to weight 1.0
+    // - therefore the output BAM must contain no records and no AUX tags at all
+    let counters = run_inner(&cfg)?;
+
+    assert_eq!(counters.gc_failed_fragments, 1);
+    assert_eq!(counters.base.counted_fragments, 0);
+    assert!(
+        read_qname_counts(&out_bam)?.is_empty(),
+        "dropping the only invalid-GC fragment should leave an empty BAM"
+    );
+    assert!(
+        read_tag_values(&out_bam, b"GC")?.is_empty(),
+        "no GC tags should be written when every fragment is skipped"
+    );
+    assert!(
+        read_fragment_lengths(&out_bam)?.is_empty(),
+        "no FLEN tags should be written when every fragment is skipped"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn gc_file_and_scaling_factors_write_identical_gc_cov_and_flen_tags_on_both_mates() -> Result<()> {
+    // Human verification status: unverified
+    let bam = simple_inward_bam()?;
+    let ref_twobit = simple_reference_twobit()?;
+    let work = tempdir()?;
+    let out_bam = work.path().join("gc_and_cov.bam");
+    let gc_path = work.path().join("gc_pkg.npz");
+    let scaling_path = work.path().join("scaling.tsv");
+    build_gc_package(&gc_path, 0)?;
+    write_scaling_file(&scaling_path, "chr1", 200, 4.0_f32 / 3.0_f32)?;
+
+    let mut cfg = base_config(&bam.bam, &out_bam);
+    cfg.scale_genome.scaling_factors = Some(scaling_path);
+    cfg.set_gc(ApplyGCArgFileOnly {
+        gc_file: Some(gc_path),
+        drop_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 60;
+        frag.max_fragment_length = 60;
+    }
+
+    // Manual expectations:
+    // - `simple_inward_bam()` contains one fragment spanning [20,80), so FLEN must be 60
+    // - the whole-chrom scaling TSV sets factor 4/3 everywhere, so both mates must receive
+    //   identical `COV = 4/3`
+    // - the helper GC package has:
+    //     length bins [10,60) and [60,200]
+    //     GC bins     [0,50) and [50,101]
+    //     correction matrix row for length 60 = [2, 10]
+    // - the repeated ACGT reference gives GC%=50 for any 60 bp fragment, so the fragment lands in
+    //   the second GC bin and both mates must receive `GC = 10`
+    // - because `bam-to-bam` tags per fragment, both output records must carry the same
+    //   `GC`, `COV`, and `FLEN` values
+    let counters = run_inner(&cfg)?;
+
+    assert_eq!(counters.base.counted_fragments, 1);
+    assert_eq!(read_tag_values(&out_bam, b"GC")?, vec![10.0_f32, 10.0_f32]);
+    assert_eq!(
+        read_tag_values(&out_bam, b"COV")?,
+        vec![4.0_f32 / 3.0_f32, 4.0_f32 / 3.0_f32]
+    );
+    assert_eq!(read_fragment_lengths(&out_bam)?, vec![60_u32, 60_u32]);
+
+    Ok(())
+}
+
+#[test]
 fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range() -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // The fixture contributes one fragment of length 60. We configure the converter to accept
     // exactly that length, then write the smallest valid GC package that only covers 10..=59.
@@ -927,10 +1029,80 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_bam_to_bam_in_expected_directio
     Ok(())
 }
 
+#[test]
+fn bed_blacklist_scaling_and_gc_together_keep_only_the_expected_tagged_fragment() -> Result<()> {
+    // Human verification status: unverified
+    let reference = twobit_from_sequences(
+        "bam_to_bam_combined_filters_reference",
+        vec![("chr1".to_string(), "ACGT".repeat(75))],
+    )?;
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 300)],
+        vec![
+            paired_fragment(20, 60, 20),
+            paired_fragment(100, 60, 20),
+            paired_fragment(220, 60, 20),
+        ],
+        Vec::new(),
+        "bam_to_bam_combined_filters_bam",
+    )?;
+    let work = tempdir()?;
+    let out_bam = work.path().join("combined_filters.bam");
+    let gc_path = work.path().join("gc_pkg.npz");
+    let scaling_path = work.path().join("scaling.tsv");
+    let bed_path = work.path().join("windows.bed");
+    let blacklist_path = work.path().join("blacklist.bed");
+    build_gc_package(&gc_path, 0)?;
+    write_scaling_file(&scaling_path, "chr1", 300, 4.0_f32 / 3.0_f32)?;
+    write_bed(&bed_path, &[(0, 180)])?;
+    fs::write(&blacklist_path, "chr1\t120\t130\n")?;
+
+    let mut cfg = base_config(&bam.bam, &out_bam);
+    cfg.scale_genome.scaling_factors = Some(scaling_path);
+    cfg.set_gc(ApplyGCArgFileOnly {
+        gc_file: Some(gc_path),
+        drop_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.by_bed = Some(bed_path);
+    cfg.blacklist = Some(vec![blacklist_path]);
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 60;
+        frag.max_fragment_length = 60;
+    }
+
+    // Manual expectations:
+    // - fragment A spans [20,80): inside BED, outside blacklist -> kept
+    // - fragment B spans [100,160): inside BED, but overlaps blacklist [120,130) -> removed
+    // - fragment C spans [220,280): outside BED -> removed before tagging
+    // - the kept fragment still sees the same repeated-ACGT reference semantics as above:
+    //     GC%=50 -> `GC = 10`
+    //     scaling factor is uniform -> `COV = 4/3`
+    //     fragment length -> `FLEN = 60`
+    let counters = run_inner(&cfg)?;
+
+    assert_eq!(counters.base.counted_fragments, 1);
+    assert_eq!(counters.blacklisted_fragments, 1);
+    assert_eq!(
+        read_qname_counts(&out_bam)?,
+        HashMap::from([(String::from("frag0_20"), 2_usize)])
+    );
+    assert_eq!(read_tag_values(&out_bam, b"GC")?, vec![10.0_f32, 10.0_f32]);
+    assert_eq!(
+        read_tag_values(&out_bam, b"COV")?,
+        vec![4.0_f32 / 3.0_f32, 4.0_f32 / 3.0_f32]
+    );
+    assert_eq!(read_fragment_lengths(&out_bam)?, vec![60_u32, 60_u32]);
+
+    Ok(())
+}
+
 #[cfg(feature = "cmd_coverage_weights")]
 #[test]
 fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_to_bam()
 -> Result<()> {
+    // Human verification status: unverified
     // Arrange:
     // Reuse the same two-chromosome fixture and hand derivation as the matching `bam-to-frag`
     // workflow and the command-level `coverage-weights` shared-global-mean test.
