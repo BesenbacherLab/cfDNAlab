@@ -1549,6 +1549,8 @@ mod tests_gc_bias {
         // - one A-only fragment start  -> GC%=0
         // - one mixed 5C/5A start      -> GC%=50
         // - one C-only fragment start  -> GC%=100
+        // - plus two unused trailing A bases so the chromosome length is 52 bp instead of 50,
+        //   avoiding the upstream `.2bit` partial-byte tail bug while keeping `[40,50)` intact
         //
         // The sample BAM contains exactly those same three 10 bp fragments, so the pre-smoothing
         // cfDNA counts row is also:
@@ -1577,17 +1579,18 @@ mod tests_gc_bias {
             vec![(
                 "chr1".to_string(),
                 format!(
-                    "{}{}{}{}{}",
+                    "{}{}{}{}{}{}",
                     "A".repeat(10),
                     "T".repeat(10),
                     "C".repeat(5) + &"A".repeat(5),
                     "T".repeat(10),
-                    "C".repeat(10)
+                    "C".repeat(10),
+                    "A".repeat(2)
                 ),
             )],
         )?;
         let bam = fixtures::bam_from_specs(
-            vec![("chr1".to_string(), 50)],
+            vec![("chr1".to_string(), 52)],
             vec![
                 fixtures::paired_fragment(0, 10, 5),
                 fixtures::paired_fragment(20, 10, 5),
@@ -1678,6 +1681,8 @@ mod tests_gc_bias {
         // Arrange:
         // Use the same three 10 bp starts as above, but produce the reference package with
         // interpolation enabled and smoothing disabled.
+        // The chromosome again has two unused trailing A bases so the critical `[40,50)` interval
+        // is preserved without relying on the upstream `.2bit` partial-byte tail behavior.
         //
         // The cfDNA sample again has raw global counts:
         //   GC% 0   -> 1
@@ -1698,17 +1703,18 @@ mod tests_gc_bias {
             vec![(
                 "chr1".to_string(),
                 format!(
-                    "{}{}{}{}{}",
+                    "{}{}{}{}{}{}",
                     "A".repeat(10),
                     "T".repeat(10),
                     "C".repeat(5) + &"A".repeat(5),
                     "T".repeat(10),
-                    "C".repeat(10)
+                    "C".repeat(10),
+                    "A".repeat(2)
                 ),
             )],
         )?;
         let bam = fixtures::bam_from_specs(
-            vec![("chr1".to_string(), 50)],
+            vec![("chr1".to_string(), 52)],
             vec![
                 fixtures::paired_fragment(0, 10, 5),
                 fixtures::paired_fragment(20, 10, 5),

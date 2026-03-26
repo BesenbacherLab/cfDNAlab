@@ -38,6 +38,77 @@ fn read_seq_in_range_reads_slice() -> Result<()> {
 }
 
 #[test]
+#[ignore = "Upstream twobit writer bug for sequence lengths not divisible by 4"]
+fn read_seq_roundtrips_full_50bp_sequence_with_terminal_partial_byte() -> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // This sequence is 50 bp long, so the final .2bit packed byte stores only two real bases.
+    // That exact tail shape is what the failing `gc-bias` fixture depends on:
+    //   chr1[35..50] = TTTTTCCCCCCCCCC
+    // If the writer/reader corrupts the last partial byte, the terminal pure-C 10 bp interval
+    // `[40,50)` stops being `CCCCCCCCCC`, and downstream GC tests will observe GC%=90 instead of
+    // GC%=100. So this test checks the direct I/O contract with no other command logic involved.
+    let expected = format!(
+        "{}{}{}{}{}",
+        "A".repeat(10),
+        "T".repeat(10),
+        "C".repeat(5) + &"A".repeat(5),
+        "T".repeat(10),
+        "C".repeat(10)
+    );
+    let fasta = format!(">chr1\n{expected}\n");
+    let twobit = write_twobit(&fasta)?;
+
+    // Act:
+    // Read both the full chromosome and the exact half-open range used by the failing fixture.
+    let full = read_seq(twobit.path(), "chr1")?;
+    let range = read_seq_in_range(twobit.path(), "chr1", 0..50)?;
+
+    // Assert:
+    // Both loader entry points must reproduce the original bytes exactly. We also pin the final
+    // 15 bp tail so any future failure immediately shows whether the last packed .2bit byte is
+    // being decoded incorrectly.
+    assert_eq!(full, expected.as_bytes());
+    assert_eq!(range, expected.as_bytes());
+    assert_eq!(&full[35..50], b"TTTTTCCCCCCCCCC");
+    assert_eq!(&range[35..50], b"TTTTTCCCCCCCCCC");
+    Ok(())
+}
+
+#[test]
+fn read_seq_roundtrips_full_52bp_sequence_when_tail_byte_is_not_partial() -> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // This is the same logical fixture as the 50 bp regression above, but with two unused padding
+    // bases appended so the chromosome length becomes divisible by 4. That keeps the important
+    // `[40,50)` pure-C interval unchanged while avoiding the known upstream partial-byte bug.
+    let expected = format!(
+        "{}{}{}{}{}{}",
+        "A".repeat(10),
+        "T".repeat(10),
+        "C".repeat(5) + &"A".repeat(5),
+        "T".repeat(10),
+        "C".repeat(10),
+        "A".repeat(2)
+    );
+    let fasta = format!(">chr1\n{expected}\n");
+    let twobit = write_twobit(&fasta)?;
+
+    // Act
+    let full = read_seq(twobit.path(), "chr1")?;
+    let range = read_seq_in_range(twobit.path(), "chr1", 0..52)?;
+
+    // Assert
+    assert_eq!(full, expected.as_bytes());
+    assert_eq!(range, expected.as_bytes());
+    assert_eq!(&full[35..50], b"TTTTTCCCCCCCCCC");
+    assert_eq!(&range[35..50], b"TTTTTCCCCCCCCCC");
+    assert_eq!(&full[50..52], b"AA");
+    assert_eq!(&range[50..52], b"AA");
+    Ok(())
+}
+
+#[test]
 fn twobit_contig_lengths_filters_requested_contigs() -> Result<()> {
     // Human verification status: unverified
     let twobit = write_twobit(SAMPLE_FASTA)?;

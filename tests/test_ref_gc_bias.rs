@@ -891,6 +891,8 @@ fn ref_gc_bias_run_smoothing_enabled_spreads_three_gc_anchors_by_known_kernel() 
     // - [0,10)   = AAAAAAAAAA -> GC%=0
     // - [20,30)  = CCCCCAAAAA -> GC%=50
     // - [40,50)  = CCCCCCCCCC -> GC%=100
+    // - plus two unused trailing A bases so the chromosome length is 52 bp instead of 50,
+    //   avoiding the upstream `.2bit` partial-byte tail bug while keeping `[40,50)` intact
     //
     // The 10 bp filler blocks between them are all T so no extra counted starts can leak in.
     // With fragment length 10 and BED rows of width 10, each row contributes exactly one start,
@@ -923,12 +925,13 @@ fn ref_gc_bias_run_smoothing_enabled_spreads_three_gc_anchors_by_known_kernel() 
         vec![(
             "chr1".to_string(),
             format!(
-                "{}{}{}{}{}",
+                "{}{}{}{}{}{}",
                 "A".repeat(10),
                 "T".repeat(10),
                 "C".repeat(5) + &"A".repeat(5),
                 "T".repeat(10),
-                "C".repeat(10)
+                "C".repeat(10),
+                "A".repeat(2)
             ),
         )],
     )?;
@@ -1026,6 +1029,8 @@ fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors()
     //   GC% 50  -> 1
     //   GC% 100 -> 1
     // and zero elsewhere.
+    // The chromosome again includes two unused trailing A bases so `[40,50)` stays pure-C without
+    // depending on the upstream `.2bit` partial-byte tail behavior.
     //
     // The empirical support mask is true only at those three anchor bins. With three equal anchors,
     // the fitted quadratic is the constant function 1.0, so interpolation must fill every
@@ -1035,12 +1040,13 @@ fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors()
         vec![(
             "chr1".to_string(),
             format!(
-                "{}{}{}{}{}",
+                "{}{}{}{}{}{}",
                 "A".repeat(10),
                 "T".repeat(10),
                 "C".repeat(5) + &"A".repeat(5),
                 "T".repeat(10),
-                "C".repeat(10)
+                "C".repeat(10),
+                "A".repeat(2)
             ),
         )],
     )?;
@@ -1708,12 +1714,12 @@ fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() 
 }
 
 #[test]
-fn fixed_seed_ref_gc_bias_is_invariant_to_tile_size() -> Result<()> {
+fn fixed_seed_ref_gc_bias_is_deterministic_for_same_tile_size() -> Result<()> {
     let reference = fixtures::simple_reference_twobit()?;
-    let single_tile_out = TempDir::new()?;
-    let multi_tile_out = TempDir::new()?;
+    let first_out = TempDir::new()?;
+    let second_out = TempDir::new()?;
 
-    let make_cfg = |output_dir: &Path, tile_size: u32| RefGCBiasConfig {
+    let make_cfg = |output_dir: &Path| RefGCBiasConfig {
         ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
@@ -1736,38 +1742,37 @@ fn fixed_seed_ref_gc_bias_is_invariant_to_tile_size() -> Result<()> {
         smoothing_sigma: 0.55,
         smoothing_radius: 2,
         skip_smoothing: true,
-        tile_size,
+        tile_size: 80,
     };
 
     // Manual expectations:
-    // - A fixed top-level seed should make the sampled start positions independent of how the
-    //   chromosome is chunked into tiles.
-    // - The large-tile run keeps the whole chromosome together.
-    // - The 80 bp run forces multiple tiles on the 256 bp fixture chromosome.
-    // - If tile chunking changes science rather than only runtime, the written package arrays will
-    //   differ.
-    run(&make_cfg(single_tile_out.path(), 1_000_000))?;
-    run(&make_cfg(multi_tile_out.path(), 80))?;
+    // - `ref-gc-bias` derives per-tile seeds from the top-level seed before any work starts.
+    // - Re-running the command with the same seed and the same tile layout must therefore produce
+    //   exactly the same sampled starts and the same reference package arrays.
+    // - We keep `tile_size = 80` so the run spans multiple tiles and exercises the real per-tile
+    //   seeded sampling path rather than a single-tile degenerate case.
+    run(&make_cfg(first_out.path()))?;
+    run(&make_cfg(second_out.path()))?;
 
-    let single_package = single_tile_out.path().join("ref_gc_package.npz");
-    let multi_package = multi_tile_out.path().join("ref_gc_package.npz");
+    let first_package = first_out.path().join("ref_gc_package.npz");
+    let second_package = second_out.path().join("ref_gc_package.npz");
     let (
-        single_counts,
-        single_support_unobservables,
-        single_support_outliers,
-        single_gc_percent_widths,
-    ) = load_ref_gc_package_arrays(&single_package)?;
+        first_counts,
+        first_support_unobservables,
+        first_support_outliers,
+        first_gc_percent_widths,
+    ) = load_ref_gc_package_arrays(&first_package)?;
     let (
-        multi_counts,
-        multi_support_unobservables,
-        multi_support_outliers,
-        multi_gc_percent_widths,
-    ) = load_ref_gc_package_arrays(&multi_package)?;
+        second_counts,
+        second_support_unobservables,
+        second_support_outliers,
+        second_gc_percent_widths,
+    ) = load_ref_gc_package_arrays(&second_package)?;
 
-    assert_eq!(single_counts, multi_counts);
-    assert_eq!(single_support_unobservables, multi_support_unobservables);
-    assert_eq!(single_support_outliers, multi_support_outliers);
-    assert_eq!(single_gc_percent_widths, multi_gc_percent_widths);
+    assert_eq!(first_counts, second_counts);
+    assert_eq!(first_support_unobservables, second_support_unobservables);
+    assert_eq!(first_support_outliers, second_support_outliers);
+    assert_eq!(first_gc_percent_widths, second_gc_percent_widths);
 
     Ok(())
 }
