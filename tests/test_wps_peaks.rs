@@ -58,7 +58,14 @@ mod tests_wps_normalization {
         let baseline = numerator.clone();
         let mask = vec![0u8; numerator.len()];
 
-        let normalized = normalize_wps(&numerator, &baseline, Some(&mask), 5, 1, 3);
+        let normalized = normalize_wps(
+            &numerator,
+            &baseline,
+            Some(&mask),
+            5, // window_size
+            1, // stride
+            3, // min_unmasked
+        );
 
         let expected: Vec<f32> = vec![-1.0, -1.0, 46.0, -1.0, -0.5, 1.0];
         for (idx, (observed, exp)) in normalized.iter().zip(expected.iter()).enumerate() {
@@ -81,11 +88,25 @@ mod tests_wps_normalization {
         let mut mask = vec![0u8; numerator.len()];
         mask[1] = 1;
 
-        let normalized_loose = normalize_wps(&numerator, &baseline, Some(&mask), 5, 1, 2);
+        let normalized_loose = normalize_wps(
+            &numerator,
+            &baseline,
+            Some(&mask),
+            5, // window_size
+            1, // stride
+            2, // min_unmasked
+        );
         assert!(normalized_loose[1].is_nan());
         assert!(approx_eq(normalized_loose[2], 3.0 - 3.5, 1e-4));
 
-        let normalized_strict = normalize_wps(&numerator, &baseline, Some(&mask), 5, 1, 5);
+        let normalized_strict = normalize_wps(
+            &numerator,
+            &baseline,
+            Some(&mask),
+            5, // window_size
+            1, // stride
+            5, // min_unmasked
+        );
         assert!(normalized_strict[2].is_nan());
     }
 }

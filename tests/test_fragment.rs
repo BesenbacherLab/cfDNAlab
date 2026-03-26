@@ -131,225 +131,6 @@ mod test_minimal_fragment {
         let r2 = mk_rec(0, 150, true, cigar(&[('M', 10)]), &vec![b'A'; 10], b"2");
         assert!(collect_fragment_from_records(&f, &r2).is_none());
     }
-
-    // Tests for `FragmentOverlapMM` (Match/Mismatch-only)
-
-    // #[test]
-    // fn test_overlap_mm_basic_match() {
-    //     // Forward: 100..160 (60M); reverse: 140..200 (60M)
-    //     // Overlap window: 140..160 (20 bp), all 'A'
-    //     let (f, r) = mk_pair_basic(
-    //         0,
-    //         100,
-    //         cigar(&[('M', 60)]),
-    //         &vec![b'C'; 60], // Only positions 40..60 will contribute to overlap
-    //         140,
-    //         cigar(&[('M', 60)]),
-    //         &vec![b'A'; 60], // Positions 0..20 -> overlap
-    //     );
-
-    //     let ov = FragmentOverlapMM::from_pair(&f, &r).expect("overlap mm");
-    //     assert_eq!(ov.overlap.start(), 140);
-    //     assert_eq!(ov.overlap.end(), 160);
-    //     assert_eq!(ov.ref_coords.len(), 20);
-    //     assert_eq!(ov.left_bases.len(), 20);
-    //     assert_eq!(ov.right_bases.len(), 20);
-
-    //     // Coordinates should be contiguous 140..160
-    //     for (i, &coord) in ov.ref_coords.iter().enumerate() {
-    //         assert_eq!(coord, 140 + i as u32);
-    //     }
-    //     // Compare that we pulled aligned columns; we didn't set exact sequences for left overlapping
-    //     // region; set them now to 'A' to ensure a match:
-    //     // Forward read bases 40..60 must be 'A' for equality; rebuild with that:
-    //     let (f2, r2) = mk_pair_basic(
-    //         0,
-    //         100,
-    //         cigar(&[('M', 40), ('M', 20)]),
-    //         &[vec![b'C'; 40], vec![b'A'; 20]].concat(),
-    //         140,
-    //         cigar(&[('M', 60)]),
-    //         &vec![b'A'; 60],
-    //     );
-    //     let ov2 = FragmentOverlapMM::from_pair(&f2, &r2).unwrap();
-    //     assert!(
-    //         ov2.left_bases
-    //             .iter()
-    //             .zip(&ov2.right_bases)
-    //             .all(|(l, r)| l == r)
-    //     );
-    //     assert!(ov2.left_bases.iter().all(|&b| b == b'A'));
-    // }
-
-    // #[test]
-    // fn test_overlap_mm_drops_insertions() {
-    //     // Forward: 100..120 on ref with an insertion at 110: 10M 2I 10M
-    //     // Reverse: 100..122 on ref: 22M (covers entire region)
-    //     // MM extractor should DROP the insertion bases and align by ref coords (20 positions).
-    //     let (f, r) = mk_pair_basic(
-    //         0,
-    //         100,
-    //         cigar(&[('M', 10), ('I', 2), ('M', 10)]),
-    //         // Seq length = 10 + 2 + 10 = 22
-    //         &[vec![b'G'; 10], vec![b'T'; 2], vec![b'G'; 10]].concat(),
-    //         100,
-    //         cigar(&[('M', 22)]),
-    //         &vec![b'G'; 22],
-    //     );
-    //     let ov = FragmentOverlapMM::from_pair(&f, &r).expect("overlap mm");
-    //     assert_eq!(ov.overlap.start(), 100);
-    //     assert_eq!(ov.overlap.end(), 120);
-    //     assert_eq!(ov.ref_coords.len(), 20); // Insertion dropped (no ref coord)
-    //     // Check exact reference coordinates are 100..120 (no duplicates at the insertion boundary)
-    //     let expected: Vec<u32> = (100..120).collect();
-    //     assert_eq!(ov.ref_coords, expected);
-    //     assert!(ov.left_bases.iter().all(|&b| b == b'G'));
-    //     assert!(ov.right_bases.iter().all(|&b| b == b'G'));
-    // }
-
-    // #[test]
-    // fn test_overlap_mm_none_when_no_overlap() {
-    //     // Forward: 100..120; reverse: 130..150 => no overlap
-    //     let (f, r) = mk_pair_basic(
-    //         0,
-    //         100,
-    //         cigar(&[('M', 20)]),
-    //         &vec![b'A'; 20],
-    //         130,
-    //         cigar(&[('M', 20)]),
-    //         &vec![b'A'; 20],
-    //     );
-    //     assert!(FragmentOverlapMM::from_pair(&f, &r).is_none());
-    // }
-
-    // #[test]
-    // fn test_overlap_mm_skips_deletion_positions() {
-    //     // Forward: 100..122 on ref with a deletion at 110..112: 10M 2D 10M
-    //     // Reverse: 100..122 on ref: 22M
-    //     // MM extractor should DROP the deletion columns (no read base) and keep only aligned coords.
-    //     let (f, r) = mk_pair_basic(
-    //         0,
-    //         100,
-    //         cigar(&[('M', 10), ('D', 2), ('M', 10)]),
-    //         // seq length = 10 + 10 = 20 (D consumes reference only)
-    //         &[vec![b'G'; 10], vec![b'G'; 10]].concat(),
-    //         100,
-    //         cigar(&[('M', 22)]),
-    //         &[vec![b'G'; 10], vec![b'A'; 2], vec![b'G'; 10]].concat(),
-    //     );
-    //     let ov = FragmentOverlapMM::from_pair(&f, &r).expect("overlap mm");
-    //     assert_eq!(ov.overlap.start(), 100);
-    //     assert_eq!(ov.overlap.end(), 122);
-
-    //     // Expect reference coords 100..110 and 112..122 (skip 110,111 where the deletion is)
-    //     let mut expected: Vec<u32> = (100..110).collect();
-    //     expected.extend(112..122);
-    //     assert_eq!(ov.ref_coords, expected);
-
-    //     // Bases should align and match
-    //     assert_eq!(ov.left_bases.len(), expected.len());
-    //     assert_eq!(ov.right_bases.len(), expected.len());
-    //     assert!(ov.left_bases.iter().all(|&b| b == b'G'));
-    //     assert!(ov.right_bases.iter().all(|&b| b == b'G'));
-    // }
-
-    // // Tests for `FragmentWithSequences` (within-fragment sequences)
-
-    // #[test]
-    // fn test_fragment_with_sequences_includes_insertions_and_flags() {
-    //     // Fragment: forward 100..120 (20M), reverse 105..130 (25M) => fragment 100..130
-    //     // Forward read contains insertion at ref 110: 10M 2I 10M
-    //     // Reverse is plain 25M
-    //     let (f, r) = mk_pair_basic(
-    //         0,
-    //         100,
-    //         cigar(&[('M', 10), ('I', 2), ('M', 10)]),
-    //         &[vec![b'A'; 10], vec![b'G'; 2], vec![b'A'; 10]].concat(),
-    //         105,
-    //         cigar(&[('M', 25)]),
-    //         &vec![b'C'; 25],
-    //     );
-    //     let frag_seq = FragmentWithSequences::from_pair(&f, &r).expect("frag seq");
-    //     // Left sequence should include the insertion (2 bases)
-    //     assert_eq!(frag_seq.left_seq.len(), 22);
-    //     assert!(frag_seq.left_info.has_insertion);
-    //     assert!(!frag_seq.left_info.has_deletion);
-    //     assert!(!frag_seq.left_info.has_refskip);
-    // }
-
-    // #[test]
-    // fn test_fragment_with_sequences_flags_deletion() {
-    //     // Forward has a deletion inside the fragment: 10M 2D 10M
-    //     // Reverse covers the same span with 22M
-    //     let (f, r) = mk_pair_basic(
-    //         0,
-    //         100,
-    //         cigar(&[('M', 10), ('D', 2), ('M', 10)]),
-    //         &[vec![b'A'; 10], vec![b'A'; 10]].concat(),
-    //         100,
-    //         cigar(&[('M', 22)]),
-    //         &vec![b'C'; 22],
-    //     );
-    //     let frag_seq = FragmentWithSequences::from_pair(&f, &r).expect("frag seq");
-
-    //     // Fragment spans full reference window
-    //     assert_eq!(frag_seq.frag.start(), 100);
-    //     assert_eq!(frag_seq.frag.end(), 122);
-
-    //     // Left sequence length excludes deleted reference columns (still 20 bases emitted)
-    //     assert_eq!(frag_seq.left_seq.len(), 20);
-    //     assert_eq!(frag_seq.right_seq.len(), 22);
-    //     // Flags: deletion seen on left; no insertion/softclip
-    //     assert!(frag_seq.left_info.has_deletion);
-    //     assert!(!frag_seq.left_info.has_insertion);
-    //     assert!(!frag_seq.left_info.has_softclip);
-    //     // Right read has no deletion
-    //     assert!(!frag_seq.right_info.has_deletion);
-    // }
-
-    // #[test]
-    // fn test_fragment_with_sequences_softclips_excluded_but_flagged() {
-    //     // Forward: 5S 20M at pos=100 -> mapped span 100..120; soft clip before POS
-    //     // Reverse: 120..145 (25M) => fragment 100..145
-    //     let (f, r) = mk_pair_basic(
-    //         0,
-    //         100,
-    //         cigar(&[('S', 5), ('M', 20)]),
-    //         // seq length 25; first 5 are soft-clipped and must NOT appear in left_seq
-    //         &[vec![b'T'; 5], vec![b'A'; 20]].concat(),
-    //         120,
-    //         cigar(&[('M', 25)]),
-    //         &vec![b'C'; 25],
-    //     );
-    //     let frag_seq = FragmentWithSequences::from_pair(&f, &r).expect("frag seq");
-    //     // The left read slice inside the fragment should have only the 20 aligned A's.
-    //     assert_eq!(frag_seq.left_seq, vec![b'A'; 20]);
-    //     assert!(frag_seq.left_info.has_softclip);
-    //     // Right has no soft clips
-    //     assert!(!frag_seq.right_info.has_softclip);
-    // }
-
-    // #[test]
-    // fn test_within_fragment_trimming_to_bounds() {
-    //     // Forward: 100..115 (15M)
-    //     // Reverse: 110..130 (20M)
-    //     // Fragment: 100..130
-    //     // Left slice = 100..115 (15 bases), right slice = 110..130 (20 bases)
-    //     let (f, r) = mk_pair_basic(
-    //         0,
-    //         100,
-    //         cigar(&[('M', 15)]),
-    //         &vec![b'A'; 15],
-    //         110,
-    //         cigar(&[('M', 20)]),
-    //         &vec![b'G'; 20],
-    //     );
-    //     let frag_seq = FragmentWithSequences::from_pair(&f, &r).expect("frag seq");
-    //     assert_eq!(frag_seq.left_seq.len() as u32, 15);
-    //     assert_eq!(frag_seq.right_seq.len() as u32, 20);
-    //     assert_eq!(frag_seq.frag.start(), 100);
-    //     assert_eq!(frag_seq.frag.end(), 130);
-    // }
 }
 
 #[cfg(test)]
@@ -756,7 +537,9 @@ mod tests_fragment_with_indel_counts {
         // Human verification status: unverified
         // Overlap [160,180).
         // Forward insertion at ref 165 len 5; Reverse insertion at ref 165 len 3 -> min = 3 counted.
-        // Forward insertion at ref 170 len 2; Reverse none at 170 -> 0 counted in overlap.
+        // Forward insertion at ref 170 len 2; Reverse none at 170 -> discarded because overlap
+        // insertions only count when both mates report an insertion at the same reference
+        // position. It does not fall back into the non-overlap counter.
         let f = make_rec(0, 100, false, {
             let mut v = m_ins_m(65, 5, 4); // ins at 165
             v.extend(m_ins_m(1, 2, 10)); // then ins at 170 (since 100 + 65 + [I] + 4 + 1 + [I] + 10)
@@ -764,7 +547,7 @@ mod tests_fragment_with_indel_counts {
         });
         let r = make_rec(0, 160, true, m_ins_m(5, 3, 15)); // ins at 165
         let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
-        assert_eq!(frag.insertions_nonoverlap, 0); // Second insert is in the overlap but not in both reads
+        assert_eq!(frag.insertions_nonoverlap, 0); // Unpaired overlap insertions are discarded rather than counted elsewhere
         assert_eq!(frag.insertions_overlap_supported, 3); // min(5,3)
     }
 
@@ -909,6 +692,25 @@ mod test_kmer_segments {
     #[test]
     fn adjust_mode_handles_mixed_insertions_and_deletions() {
         // Human verification status: unverified
+        // Segment derivation under `IndelMode::Adjust`:
+        // 1. Insertions terminate the current reference segment without advancing the reference.
+        // 2. Deletions terminate the current segment and then advance the reference by the deleted span.
+        // 3. With `include_inter_mate_gap = false`, we keep only the per-read mapped segments.
+        //
+        // Forward read starts at 100 with `8M 2I 5M 3D 4M 1I 3M`:
+        // 1. `8M` covers [100,108), then `2I` closes that segment -> (100,108)
+        // 2. `5M` resumes at 108 and covers [108,113), then `3D` closes it and skips [113,116) -> (108,113)
+        // 3. `4M` resumes at 116 and covers [116,120), then `1I` closes it -> (116,120)
+        // 4. `3M` resumes at 120 and reaches read end -> (120,123)
+        //
+        // Reverse read starts at 130 with `6M 2D 4M 2I 5M 1D 3M`:
+        // 5. `6M` covers [130,136), then `2D` closes it and skips [136,138) -> (130,136)
+        // 6. `4M` resumes at 138 and covers [138,142), then `2I` closes it -> (138,142)
+        // 7. `5M` resumes at 142 and covers [142,147), then `1D` closes it and skips [147,148) -> (142,147)
+        // 8. `3M` resumes at 148 and reaches read end -> (148,151)
+        //
+        // No segments overlap or even touch across the mate boundary, so the final fragment keeps
+        // these eight segment boundaries verbatim.
         let forward = make_record(
             0,
             100,
@@ -1002,6 +804,47 @@ mod test_kmer_segments {
     #[test]
     fn overlap_consensus_indel_behaviour() {
         // Human verification status: unverified
+        // Segment derivation under `IndelMode::Adjust`:
+        // 1. Each insertion closes the current segment but does not advance the reference.
+        // 2. Each deletion closes the current segment and removes the deleted bases from the safe
+        //    reference coverage.
+        // 3. After clipping each read into segments, we take the union of both mates' segments and
+        //    merge only genuinely overlapping spans. Touching spans stay separate.
+        //
+        // Forward read at 100:
+        // 1. `10M` -> (100,110)
+        // 2. `1I` closes the first segment.
+        // 3. `8M 7M` are contiguous on the reference, so they stay one segment -> (110,125)
+        // 4. `1I` closes that segment.
+        // 5. `5M` -> (125,130)
+        // 6. `2D` skips [130,132)
+        // 7. `3M` -> (132,135)
+        // 8. `1I` closes that segment.
+        // 9. `3M` -> (135,138)
+        // 10. `1D` skips [138,139)
+        // 11. trailing `1M` -> (139,140)
+        //
+        // Reverse read at 120:
+        // 12. `5M` -> (120,125)
+        // 13. `1I` closes the first segment.
+        // 14. `5M` -> (125,130)
+        // 15. `2D` skips [130,132)
+        // 16. `8M 5M` are contiguous on the reference, so they stay one segment -> (132,145)
+        // 17. `1I` closes that segment.
+        // 18. trailing `15M` -> (145,160)
+        //
+        // Merging both mates' segments gives:
+        // - (100,110) by itself
+        // - forward (110,125) overlaps reverse (120,125) -> merged to (110,125)
+        // - forward (125,130) overlaps reverse (125,130) -> merged to (125,130)
+        // - reverse (132,145) covers forward (132,135), (135,138), and (139,140), so they merge
+        //   into one span while still leaving the deleted gap [130,132) absent -> (132,145)
+        // - (145,160) only touches the previous span at 145, so it stays separate
+        //
+        // Because the mates already overlap (`forward.end() = 140`, `reverse.start() = 120`),
+        // `include_inter_mate_gap = true` cannot introduce any extra gap segment. Trimming by
+        // `end_offset = 12` then clips the final union [100,160) to [112,148), removing the first
+        // segment entirely and shortening the last one to (145,148).
         let forward = make_record(
             0,
             100,

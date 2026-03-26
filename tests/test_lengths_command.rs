@@ -261,7 +261,10 @@ mod tests_lengths_command {
         // 10/40 to 110-120
         // 10/40 to 120-130
         //  5/40 to 130-140
-        // The three middle bins sit fully inside tile 1, but tile 0 still reaches them.
+        // Tile 0's fetch halo still sees the fragment start at 95, so tile 0 processes the
+        // fragment and assigns overlap mass into windows [100,110), [110,120), and [120,130)
+        // even though those windows begin in tile 1. The test verifies that the tile-1 pass
+        // does not double-count those middle windows.
         let len40_idx = 40 - 10;
         assert_eq!(arr.shape(), &[20, 41]);
         assert!((arr[(9, len40_idx)] - 0.125).abs() < 1e-6);

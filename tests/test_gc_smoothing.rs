@@ -380,9 +380,9 @@ mod binning_tests {
     fn merges_partial_tail_into_previous_bin_when_threshold_not_met() {
         // Human verification status: unverified
         // First three rows contribute 30 units of mass (out of 71 total ≈42%),
-        // so a new bin befins for the fourht element, which is big enough
-        // to make it's own bin. BUT the last bin is too small so it gets
-        // merged into the second bin instead of being alone.
+        // so a new bin begins at row 3 because that row is already large enough
+        // to stand on its own. The trailing row is too small to satisfy the
+        // threshold by itself, so the partial tail is merged back into bin 1.
         let counts = array![
             [10.0, 0.0],
             [0.0, 10.0],
@@ -400,7 +400,7 @@ mod binning_tests {
         assert_eq!(
             bins.bin_to_indices.get(&1),
             Some(&vec![3, 4]),
-            "window idx=3 is big enough on its own but idx=4 is too small to be alone so it merged into this window"
+            "row 3 starts the second bin, and the undersized tail row 4 is merged into that bin"
         );
     }
 

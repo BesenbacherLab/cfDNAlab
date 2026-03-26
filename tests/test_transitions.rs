@@ -159,7 +159,7 @@ mod transitions_command_tests {
         // Reference repeats "AACGAGTTACGA" so the motifs at successive offsets are predictable
         // Reference is a repetition of "AACGAGTTACGA". Motifs encountered by the fragments:
         // Fragment A offsets 0,1,2 -> "AA", "AC", "CG"
-        // Fragment B offsets 0,1,2 -> (shifted by four bases) -> "GA", "GT", "TT"
+        // Fragment B offsets 0,1,2 -> (shifted by four bases) -> "AG", "GT", "TT"
         // These expectations underpin the assertions later in the test.
         let reference_seq = "AACGAGTTACGAACGAGTTACGAACGAGTTACGA";
         let reference = twobit_from_sequences(
@@ -298,11 +298,11 @@ mod transitions_command_tests {
         ] {
             let idx = *motif_idx
                 .get(motif)
-                .with_context(|| format!("missing motif {motif} at offset 1"))?;
+                .with_context(|| format!("missing motif {motif} at offset 0"))?;
             let observed = slice_offset0[idx];
             assert!(
                 (observed - expected).abs() < 1e-9,
-                "offset 1 motif {motif} expected {expected} observed {observed}"
+                "offset 0 motif {motif} expected {expected} observed {observed}"
             );
         }
         for (&motif, &idx) in &motif_idx {
@@ -327,11 +327,11 @@ mod transitions_command_tests {
         ] {
             let idx = *motif_idx
                 .get(motif)
-                .with_context(|| format!("missing motif {motif} at offset 2"))?;
+                .with_context(|| format!("missing motif {motif} at offset 1"))?;
             let observed = slice_offset1[idx];
             assert!(
                 (observed - expected).abs() < 1e-9,
-                "offset 2 motif {motif} expected {expected} observed {observed}"
+                "offset 1 motif {motif} expected {expected} observed {observed}"
             );
         }
         for (&motif, &idx) in &motif_idx {
@@ -355,11 +355,11 @@ mod transitions_command_tests {
         ] {
             let idx = *motif_idx
                 .get(motif)
-                .with_context(|| format!("missing motif {motif} at offset 3"))?;
+                .with_context(|| format!("missing motif {motif} at offset 2"))?;
             let observed = slice_offset2[idx];
             assert!(
                 (observed - expected).abs() < 1e-9,
-                "offset 3 motif {motif} expected {expected} observed {observed}"
+                "offset 2 motif {motif} expected {expected} observed {observed}"
             );
         }
         for (&motif, &idx) in &motif_idx {
