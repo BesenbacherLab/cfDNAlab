@@ -78,7 +78,7 @@ pub enum OutlierScopeArg {
 ///
 ///   --ref-2bit {PATH}/hg38.2bit \ # Or some other assembly
 ///
-///   --ref-gc-dir {REFERENCE_GC_DIRECTORY} \
+///   --ref-gc-file {REFERENCE_GC_FILE} \
 ///
 ///   --min-fragment-length 30 --max-fragment-length 1000 \
 ///
@@ -111,15 +111,15 @@ pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ref_genome: Ref2BitRequiredArgs,
 
-    /// Path to directory with reference GC bias files to correct against `[path]`
-    ///
-    /// Precompute with `cfdna ref-gc-bias`. The directory must include all files
-    /// created by `cfdna ref-gc-bias`.
+    /// Path to file with reference GC bias to correct against `[path]`
+    /// 
+    /// Precompute with `cfdna ref-gc-bias`. The file is either named 
+    /// `ref_gc_package.npz` or `<prefix>.ref_gc_package.npz`.
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser, required = true, help_heading = "Core")
     )]
-    pub ref_gc_dir: PathBuf,
+    pub ref_gc_file: PathBuf,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub windows: GCWindowsArgs,
@@ -334,7 +334,7 @@ impl GCConfig {
     pub fn new(
         ioc: IOCArgs,
         ref_2bit: PathBuf,
-        ref_gc_dir: PathBuf,
+        ref_gc_file: PathBuf,
         chromosomes: ChromosomeArgs,
     ) -> Self {
         Self {
@@ -343,7 +343,7 @@ impl GCConfig {
                 reads_are_fragments: false,
             },
             ref_genome: Ref2BitRequiredArgs { ref_2bit },
-            ref_gc_dir,
+            ref_gc_file,
             windows: GCWindowsArgs::default(),
             window_assignment: AssignToWindowArgs::default(),
             chromosomes,
@@ -369,8 +369,8 @@ impl GCConfig {
         self.ioc = ioc;
     }
 
-    pub fn set_ref_gc_dir(&mut self, ref_gc_dir: PathBuf) {
-        self.ref_gc_dir = ref_gc_dir;
+    pub fn set_ref_gc_file(&mut self, ref_gc_file: PathBuf) {
+        self.ref_gc_file = ref_gc_file;
     }
 
     pub fn set_windows(&mut self, windows: GCWindowsArgs) {

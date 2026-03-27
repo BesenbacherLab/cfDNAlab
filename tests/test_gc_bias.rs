@@ -289,6 +289,7 @@ mod tests_gc_bias {
                 ref_2bit: reference_path.to_path_buf(),
             },
             output_dir: out_dir.path().to_path_buf(),
+            output_prefix: String::new(),
             n_threads: 1,
             // These tests use small synthetic references, for example:
             // - `simple_reference_twobit()` is 256 bp
@@ -337,7 +338,7 @@ mod tests_gc_bias {
         let mut cfg = GCConfig::new(
             ioc,
             reference_path.to_path_buf(),
-            ref_gc_dir.to_path_buf(),
+            ref_gc_dir.join("ref_gc_package.npz"),
             ChromosomeArgs {
                 chromosomes: Some(vec!["chr1".to_string()]),
                 chromosomes_file: None,
@@ -405,7 +406,7 @@ mod tests_gc_bias {
             let mut cfg = GCConfig::new(
                 ioc,
                 reference.path.clone(),
-                ref_gc_dir.path().to_path_buf(),
+                ref_gc_dir.path().join("ref_gc_package.npz"),
                 ChromosomeArgs {
                     chromosomes: Some(vec!["chr1".to_string()]),
                     chromosomes_file: None,
@@ -1067,6 +1068,7 @@ mod tests_gc_bias {
                 ref_2bit: reference.path.clone(),
             },
             output_dir: ref_gc_dir.path().to_path_buf(),
+            output_prefix: String::new(),
             n_threads: 1,
             // Two chromosomes of length 100 with fragment length 10 give:
             //   (100 - 10 + 1) * 2 = 91 * 2 = 182 valid starts.
@@ -1101,7 +1103,7 @@ mod tests_gc_bias {
         let mut cfg = GCConfig::new(
             ioc,
             reference.path.clone(),
-            ref_gc_dir.path().to_path_buf(),
+            ref_gc_dir.path().join("ref_gc_package.npz"),
             ChromosomeArgs {
                 chromosomes: Some(vec!["chr1".to_string(), "chr2".to_string()]),
                 chromosomes_file: None,
@@ -1501,6 +1503,7 @@ mod tests_gc_bias {
                 ref_2bit: reference.path.clone(),
             },
             output_dir: ref_gc_dir.path().to_path_buf(),
+            output_prefix: String::new(),
             n_threads: 1,
             n_positions: 191,
             seed: Some(23),
@@ -1643,6 +1646,7 @@ mod tests_gc_bias {
                 ref_2bit: reference.path.clone(),
             },
             output_dir: ref_gc_dir.path().to_path_buf(),
+            output_prefix: String::new(),
             n_threads: 1,
             n_positions: 41,
             seed: Some(11),
@@ -1768,6 +1772,7 @@ mod tests_gc_bias {
                 ref_2bit: reference.path.clone(),
             },
             output_dir: ref_gc_dir.path().to_path_buf(),
+            output_prefix: String::new(),
             n_threads: 1,
             n_positions: 41,
             seed: Some(11),
@@ -1909,7 +1914,8 @@ mod tests_gc_bias {
                 .path()
                 .join("gc_bias.normalized_avg_cfdna_counts.1.npy"),
         )?;
-        let reference_data = load_reference_gc_data(ref_gc_dir.path())?;
+        let reference_data =
+            load_reference_gc_data(&ref_gc_dir.path().join("ref_gc_package.npz"))?;
 
         // The support mask defines exactly which cells contribute to the mean-scaling denominator.
         let mut supported_sum = 0.0_f64;
@@ -2831,7 +2837,7 @@ mod tests_gc_bias {
         )?;
 
         // Act
-        let loaded = load_reference_gc_data(tmp.path())?;
+        let loaded = load_reference_gc_data(&tmp.path().join("ref_gc_package.npz"))?;
 
         // Assert: arrays and scalar metadata survive round-trip exactly.
         assert_eq!(
@@ -2876,7 +2882,8 @@ mod tests_gc_bias {
         )?;
 
         // Act
-        let error = load_reference_gc_data(tmp.path()).expect_err("expected scalar-length error");
+        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.npz"))
+            .expect_err("expected scalar-length error");
 
         // Assert
         assert!(
@@ -2902,8 +2909,8 @@ mod tests_gc_bias {
         )?;
 
         // Act
-        let error =
-            load_reference_gc_data(tmp.path()).expect_err("expected schema version mismatch");
+        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.npz"))
+            .expect_err("expected schema version mismatch");
 
         // Assert
         assert!(

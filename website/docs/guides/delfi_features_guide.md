@@ -43,6 +43,7 @@ The first computational step is to calculate the GC-bias correction matrix for o
 cfdna ref-gc-bias \
   --ref-2bit "$REF_2BIT" \
   --output-dir "$REF_GC_DIR" \
+  --output-prefix hg38 \
   --n-threads $N_CORES \
   --blacklist "$BLACKLIST"
 ```
@@ -57,7 +58,7 @@ cfdna gc-bias \
   --output-dir "$GC_DIR" \
   --n-threads $N_CORES \
   --ref-2bit "$REF_2BIT" \
-  --ref-gc-dir "$REF_GC_DIR" \
+  --ref-gc-file "$REF_GC_DIR/hg38.ref_gc_package.npz" \
   --blacklist "$BLACKLIST"
 ```
 

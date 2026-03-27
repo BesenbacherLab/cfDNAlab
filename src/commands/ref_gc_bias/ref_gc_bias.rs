@@ -18,6 +18,7 @@ use crate::{
         bam::Contigs,
         bed::{Windows, load_windows_from_bed},
         blacklist::apply_blacklist_mask_to_seq,
+        io::dot_join,
         interval::{IndexedInterval, Interval},
         progress::ProgressFactory,
         reference::{read_seq_in_range, twobit_contig_lengths},
@@ -39,6 +40,7 @@ use std::{sync::Arc, time::Instant};
 
 pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     let start_time = Instant::now();
+    let prefix = opt.output_prefix.trim();
     let chromosomes = opt.chromosomes.resolve_chromosomes(None)?;
     let window_opt = opt.windows.resolve_windows();
     opt.check_smoothing_settings()?;
@@ -287,7 +289,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     );
 
     write_reference_gc_package(
-        &opt.output_dir.join("ref_gc_package.npz"),
+        &opt.output_dir.join(dot_join(&[prefix, "ref_gc_package.npz"])),
         &global_grid,
         &unobservable_support_mask,
         &outlier_support_mask,

@@ -266,16 +266,18 @@ fn support_threshold_per_mb_steps_at_hundred_million_positions() -> Result<()> {
 }
 
 #[test]
-fn ref_gc_bias_run_writes_expected_package_metadata_and_shapes() -> Result<()> {
+fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Result<()> {
     // Human verification status: unverified
     let reference = fixtures::simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
+    let output_prefix = "unit_ref_gc";
 
     let cfg = RefGCBiasConfig {
         ref_genome: cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
+        output_prefix: output_prefix.to_string(),
         n_threads: 1,
         n_positions: 100,
         seed: Some(7),
@@ -304,10 +306,17 @@ fn ref_gc_bias_run_writes_expected_package_metadata_and_shapes() -> Result<()> {
     //   must have 101 columns.
     // - We explicitly disable smoothing and interpolation, so the written scalar metadata must
     //   reflect those choices exactly.
+    // - With `output_prefix`, the command should write only the prefixed package path.
     // - This is a command-level test of the written artifact contract, not of the exact sampled counts.
     run(&cfg)?;
 
-    let package_path = out_dir.path().join("ref_gc_package.npz");
+    let package_path = out_dir
+        .path()
+        .join(format!("{output_prefix}.ref_gc_package.npz"));
+    assert!(
+        !out_dir.path().join("ref_gc_package.npz").exists(),
+        "Did not expect unprefixed package when output_prefix is set"
+    );
     let file = std::fs::File::open(&package_path)?;
     let mut npz = NpzReader::new(file)?;
 
@@ -462,6 +471,7 @@ fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
+        output_prefix: String::new(),
         n_threads: 1,
         n_positions: 191,
         seed: Some(23),
@@ -595,6 +605,7 @@ fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
+        output_prefix: String::new(),
         n_threads: 1,
         n_positions: 191,
         seed: Some(23),
@@ -742,6 +753,7 @@ fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> 
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
+        output_prefix: String::new(),
         n_threads: 1,
         n_positions: 189,
         seed: Some(37),
@@ -875,6 +887,7 @@ fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Re
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
+        output_prefix: String::new(),
         n_threads: 1,
         n_positions: 189,
         seed: Some(37),
@@ -1018,6 +1031,7 @@ fn ref_gc_bias_run_smoothing_enabled_spreads_three_gc_anchors_by_known_kernel() 
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
+        output_prefix: String::new(),
         n_threads: 1,
         n_positions: 41,
         seed: Some(11),
@@ -1133,6 +1147,7 @@ fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors()
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
+        output_prefix: String::new(),
         n_threads: 1,
         n_positions: 41,
         seed: Some(11),
@@ -1202,6 +1217,7 @@ fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run(
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
+        output_prefix: String::new(),
         n_threads: 1,
         n_positions: 100,
         seed: Some(11),
@@ -1295,6 +1311,7 @@ fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_r
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
+        output_prefix: String::new(),
         n_threads: 1,
         n_positions: 100,
         seed: Some(11),
@@ -1368,6 +1385,7 @@ fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
+        output_prefix: String::new(),
         n_threads: 1,
         n_positions: 100,
         seed: Some(13),
@@ -1450,6 +1468,7 @@ fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() ->
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
+        output_prefix: String::new(),
         n_threads: 1,
         n_positions: 100,
         seed: Some(19),
@@ -1536,6 +1555,7 @@ fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_b
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
+        output_prefix: String::new(),
         n_threads: 1,
         n_positions: 100,
         seed: Some(31),
@@ -1599,6 +1619,7 @@ fn rejects_n_positions_when_sampling_density_would_exceed_one() -> Result<()> {
             ref_2bit: reference.path.clone(),
         },
         output_dir: out_dir.path().to_path_buf(),
+        output_prefix: String::new(),
         n_threads: 1,
         // `simple_reference_twobit()` uses chr1 length 256.
         // With max fragment length 60, the number of valid starts is:
@@ -1648,6 +1669,7 @@ fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
+        output_prefix: String::new(),
         n_threads,
         n_positions: 100,
         seed: Some(7),
@@ -1724,6 +1746,7 @@ fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() 
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
+        output_prefix: String::new(),
         n_threads,
         n_positions: 100,
         seed: Some(29),
@@ -1782,6 +1805,7 @@ fn fixed_seed_ref_gc_bias_is_deterministic_for_same_tile_size() -> Result<()> {
             ref_2bit: reference.path.clone(),
         },
         output_dir: output_dir.to_path_buf(),
+        output_prefix: String::new(),
         n_threads: 1,
         n_positions: 100,
         seed: Some(41),

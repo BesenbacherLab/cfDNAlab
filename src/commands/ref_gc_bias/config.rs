@@ -31,13 +31,26 @@ pub struct RefGCBiasConfig {
     )]
     pub output_dir: PathBuf,
 
-    /// Number of threads to use (increases RAM usage) [integer]
+    /// Optional prefix for the output file (e.g., a reference genome name) `[string]`
     ///
-    /// Defaults to the minimum of 22 (one thread per chromosome) and
-    /// the number of available CPU cores (-1).
+    /// Leave empty to write the filename without a leading prefix.
+    ///
+    /// E.g., to allow storing packages for multiple reference genomes in the same directory.
+    ///
+    /// Produces the file as:
+    ///   `<prefix>.ref_gc_package.npz`
     #[cfg_attr(
         feature = "cli",
-        clap(short = 't', long, default_value_t = (num_cpus::get()-1).max(1).min(22), help_heading = "Core")
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
+    )]
+    pub output_prefix: String,
+
+    /// Number of threads to use (increases RAM usage) [integer]
+    ///
+    /// Defaults to the number of available CPU cores (-1).
+    #[cfg_attr(
+        feature = "cli",
+        clap(short = 't', long, default_value_t = (num_cpus::get()-1).max(1), help_heading = "Core")
     )]
     pub n_threads: usize,
 

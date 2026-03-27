@@ -233,6 +233,7 @@ pub fn build_real_neutral_gc_package(
             ref_2bit: reference_path.to_path_buf(),
         },
         output_dir: ref_gc_dir.path().to_path_buf(),
+        output_prefix: String::new(),
         n_threads: 1,
         // `simple_reference_twobit()` is 256 bp long. For the current neutral-package tests we
         // only need a deterministic but valid sample of start positions, so 100 stays safely below
@@ -266,7 +267,7 @@ pub fn build_real_neutral_gc_package(
             n_threads: 1,
         },
         reference_path.to_path_buf(),
-        ref_gc_dir.path().to_path_buf(),
+        ref_gc_dir.path().join("ref_gc_package.npz"),
         base_chromosomes(&["chr1"]),
     );
     configure_gc_bias_common(&mut gc_cfg);
@@ -304,6 +305,7 @@ pub fn build_real_non_neutral_gc_package(
             ref_2bit: reference_path.to_path_buf(),
         },
         output_dir: ref_gc_dir.path().to_path_buf(),
+        output_prefix: String::new(),
         n_threads: 1,
         // Callers pass the exact number of sampled starts because the non-neutral tests rely on
         // fully hand-derived reference-side counts. `ref-gc-bias` only counts sampled starts that
@@ -339,7 +341,7 @@ pub fn build_real_non_neutral_gc_package(
             n_threads: 1,
         },
         reference_path.to_path_buf(),
-        ref_gc_dir.path().to_path_buf(),
+        ref_gc_dir.path().join("ref_gc_package.npz"),
         base_chromosomes(&["chr1"]),
     );
     configure_gc_bias_common(&mut gc_cfg);
