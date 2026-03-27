@@ -24,10 +24,9 @@ pub struct ReferenceGCMetadata {
     pub skip_smoothing: bool,
 }
 
-pub fn load_reference_gc_data(ref_dir: &Path) -> Result<ReferenceGCData> {
-    let package_path = ref_dir.join("ref_gc_package.npz");
+pub fn load_reference_gc_data(ref_file: &Path) -> Result<ReferenceGCData> {
     let (counts, unobservables_support_mask, outliers_support_mask, gc_percent_widths, metadata) =
-        read_reference_gc_package(&package_path)?;
+        read_reference_gc_package(&ref_file)?;
 
     Ok(ReferenceGCData {
         counts,

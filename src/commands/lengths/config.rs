@@ -35,7 +35,7 @@ use std::path::PathBuf;
 ///
 /// ## Genomic smoothing (--scaling-factors)
 ///
-/// Weight how genomic regions contribute to the length distribution, e.g. to reduce the
+/// Weight how genomic regions contribute to the length distribution(s), e.g., to reduce the
 /// influence of copy number alterations. This weights the contribution of each fragment
 /// by region-wise precomputed scaling factors.
 ///
@@ -83,7 +83,7 @@ pub struct LengthsConfig {
 
     /// Optional prefix for output files (e.g., a sample name) `[string]`
     ///
-    /// Leave empty to write file names without a leading prefix.
+    /// Leave empty to write filenames without a leading prefix.
     ///
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///

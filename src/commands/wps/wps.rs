@@ -299,7 +299,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             {
                 FCoverageCounters::default()
             } else {
-                // Decide tile mode and file name
+                // Decide tile mode and filename
                 let (action_prefix, extensions) = if windowed {
                     let action = per_window_action
                         .context("windowed WPS runs require a per-window action")?;

@@ -707,7 +707,7 @@ fn given_no_header_and_extra_columns_when_run_then_extra_columns_are_ignored_and
     // Human verification status: unverified
     // Arrange:
     // No inline header is present, no explicit header is configured, and no companion
-    // header file exists for this file name. The parser therefore uses fixed 5-column
+    // header file exists for this filename. The parser therefore uses fixed 5-column
     // layout and ignores trailing columns.
     //
     // Hand-derived expectation:

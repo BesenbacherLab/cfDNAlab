@@ -14,13 +14,13 @@ The following external files are used by the main commands (some are optional):
 
 In general, we recommend reusing the same blacklists across all steps in the analyses. Exceptions can be sample-specific blacklists that are only relevant for the last feature extraction steps.
 
-The following files are made with cfDNAlab and passed to the main feature extraction commands (except the `Reference GC directory` which is necessary for calculating the GC-bias):
+The following files are made with cfDNAlab and passed to the main feature extraction commands (except the `Reference GC file` which is necessary for calculating the GC-bias):
 
 | File                      | Format                                    | Argument            | How to make it                                                                      |
 | ------------------------- | ----------------------------------------- | ------------------- | ----------------------------------------------------------------------------------- |
 | Sample scaling factors    | `.scaling_factors.tsv`                    | `--scaling-factors` | Create with `cfdna coverage-weights` per sample                                     |
 | Sample GC correction file | `gc_bias_correction.npz`                  | `--gc-file`         | Create with `cfdna gc-bias` per sample                                              |
-| Reference GC directory    | Directory produced by `cfdna ref-gc-bias` | `--ref-gc-dir`      | Create once per assembly, then reuse it across samples when calling `cfdna gc-bias` |
+| Reference GC file    | Package produced by `cfdna ref-gc-bias` | `--ref-gc-file`      | Create once per assembly, then reuse it across samples when calling `cfdna gc-bias` |
 
 ## Quick explanation
 
@@ -45,7 +45,7 @@ Tip: Use quotes around variable values and around variable expansions in command
 # Project / assembly level
 PROJECT_DIR="$HOME/cfdna_project"
 REF_2BIT="$PROJECT_DIR/refs/hg38.2bit"
-REF_GC_DIR="$PROJECT_DIR/refs/ref_gc"
+REF_GC_FILE="$PROJECT_DIR/refs/ref_gc/hg38.ref_gc_package.npz"
 WINDOWS="$PROJECT_DIR/regions/windows.bed"
 INTERVALS="$PROJECT_DIR/regions/intervals.bed"
 
@@ -80,7 +80,7 @@ cfdna gc-bias \
   --bam "$BAM" \
   --output-dir "$PROJECT_DIR/outputs/$SAMPLE_ID/gc_bias" \
   --ref-2bit "$REF_2BIT" \
-  --ref-gc-dir "$REF_GC_DIR" \
+  --ref-gc-file "$REF_GC_FILE" \
   "${BLACKLIST_ARGS[@]}"
 ```
 

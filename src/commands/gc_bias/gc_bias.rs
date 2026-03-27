@@ -243,7 +243,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         outliers_support_mask: mut reference_outliers_support_mask,
         gc_percent_widths: reference_gc_percent_widths,
         metadata: reference_metadata,
-    } = load_reference_gc_data(&opt.ref_gc_dir)?;
+    } = load_reference_gc_data(&opt.ref_gc_file)?;
     let avg_norm_ref_counts = mean_scale_per_length_array(
         &reference_counts,
         0.,

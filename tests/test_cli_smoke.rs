@@ -535,8 +535,11 @@ fn frag_to_bam_cli_minimal_invocation_writes_output_bam() -> Result<()> {
 fn ref_gc_bias_cli_minimal_invocation_writes_reference_package() -> Result<()> {
     // Human verification status: unverified
     // Arrange: Use tiny deterministic reference and conservative settings.
+    // With `--output-prefix`, the command contract says the package should be written as
+    // `<prefix>.ref_gc_package.npz`.
     let reference = fixtures::simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
+    let output_prefix = "cli_smoke_ref_gc";
     let ref_path = path_text(&reference.path);
     let out_path = path_text(out_dir.path());
 
@@ -548,6 +551,8 @@ fn ref_gc_bias_cli_minimal_invocation_writes_reference_package() -> Result<()> {
             ref_path.as_str(),
             "--output-dir",
             out_path.as_str(),
+            "--output-prefix",
+            output_prefix,
             "--chromosomes",
             "chr1",
             "--n-threads",
@@ -567,8 +572,14 @@ fn ref_gc_bias_cli_minimal_invocation_writes_reference_package() -> Result<()> {
     assert_success_with_logs(&output, "cfdna ref-gc-bias minimal invocation");
 
     // Assert
-    let package_path = out_dir.path().join("ref_gc_package.npz");
+    let package_path = out_dir
+        .path()
+        .join(format!("{output_prefix}.ref_gc_package.npz"));
     assert!(package_path.exists(), "Expected {}", package_path.display());
+    assert!(
+        !out_dir.path().join("ref_gc_package.npz").exists(),
+        "Did not expect unprefixed package when --output-prefix is supplied"
+    );
 
     Ok(())
 }
@@ -584,9 +595,15 @@ fn gc_bias_cli_minimal_invocation_writes_correction_package() -> Result<()> {
     let reference = fixtures::simple_reference_twobit()?;
     let ref_gc_dir = TempDir::new()?;
     let gc_out_dir = TempDir::new()?;
+    let ref_gc_prefix = "cli_smoke_ref_gc";
 
     let ref_path = path_text(&reference.path);
     let ref_gc_out = path_text(ref_gc_dir.path());
+    let ref_gc_file = path_text(
+        &ref_gc_dir
+            .path()
+            .join(format!("{ref_gc_prefix}.ref_gc_package.npz")),
+    );
     let ref_gc_output = command_output(
         "ref-gc-bias",
         &[
@@ -594,6 +611,8 @@ fn gc_bias_cli_minimal_invocation_writes_correction_package() -> Result<()> {
             ref_path.as_str(),
             "--output-dir",
             ref_gc_out.as_str(),
+            "--output-prefix",
+            ref_gc_prefix,
             "--chromosomes",
             "chr1",
             "--n-threads",
@@ -615,7 +634,10 @@ fn gc_bias_cli_minimal_invocation_writes_correction_package() -> Result<()> {
         "cfdna ref-gc-bias pre-step for gc-bias smoke test",
     );
     assert!(
-        ref_gc_dir.path().join("ref_gc_package.npz").exists(),
+        ref_gc_dir
+            .path()
+            .join(format!("{ref_gc_prefix}.ref_gc_package.npz"))
+            .exists(),
         "Expected reference package before running gc-bias"
     );
 
@@ -635,8 +657,8 @@ fn gc_bias_cli_minimal_invocation_writes_correction_package() -> Result<()> {
             "1",
             "--ref-2bit",
             ref_path.as_str(),
-            "--ref-gc-dir",
-            ref_gc_out.as_str(),
+            "--ref-gc-file",
+            ref_gc_file.as_str(),
             "--global",
             "--min-mapq",
             "0",

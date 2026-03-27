@@ -104,7 +104,7 @@ pub fn ensure_temp_writer_for_chrom<'a>(
 ) -> Result<&'a mut ChromTempWriter> {
     if !temp_writers.contains_key(chrom) {
         let sanitized = chrom.replace('/', "_");
-        // Temp file name is "chrom.<sanitized>.bed.tmp", for example "chrom.chr1.bed.tmp" or "chrom.chr1_KI270706v1_random.bed.tmp"
+        // Temp filename is "chrom.<sanitized>.bed.tmp", for example "chrom.chr1.bed.tmp" or "chrom.chr1_KI270706v1_random.bed.tmp"
         let path = temp_dir.join(format!("chrom.{sanitized}.bed.tmp"));
         let file = File::create(&path)
             .with_context(|| format!("creating temp file for chromosome {}", chrom))?;

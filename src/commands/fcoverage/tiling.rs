@@ -21,8 +21,8 @@ use crate::{
 /// - `temp_dir`: Directory containing the per-tile files.
 /// - `out_dir`: Directory where the merged file should be written.
 /// - `chromosomes`: Chromosome names that determine merge order.
-/// - `per_tile_prefix`: Prefix used in the per-tile file names.
-/// - `final_name`: File name for the merged output.
+/// - `per_tile_prefix`: Prefix used in the per-tile filenames.
+/// - `final_name`: Filename for the merged output.
 ///
 /// # Returns
 /// Path to the merged file on success.
@@ -90,7 +90,7 @@ pub fn merge_positional_tiles(
 /// - `out_dir`: Directory where the merged file will be placed.
 /// - `chromosomes`: Chromosome names that dictate processing order.
 /// - `per_tile_prefix`: Prefix shared by the per-tile files.
-/// - `final_name`: File name of the merged artifact.
+/// - `final_name`: Filename of the merged artifact.
 /// - `header_line`: Plain-text header to encode as its own compressed frame.
 ///
 /// # Returns

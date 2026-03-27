@@ -15,6 +15,7 @@ cfdna ref-gc-bias --help
 cfdna ref-gc-bias \
   --ref-2bit <path>/hg38.2bit \
   --output-dir <ref_gc_directory> \
+  --output-prefix hg38 \
   --n-threads 12 \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed
@@ -30,7 +31,7 @@ cfdna gc-bias \
   --output-dir <sample_directory>/gc_bias \
   --n-threads 12 \
   --ref-2bit <path>/hg38.2bit \
-  --ref-gc-dir <ref_gc_directory> \
+  --ref-gc-file <ref_gc_directory>/hg38.ref_gc_package.npz \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed
 ```
