@@ -517,13 +517,13 @@ pub fn windows_overlapping_core(
         .filter(move |window| window.end() > core_start_abs && window.start() < core_end_abs)
 }
 
-/// Extracts the tile index suffix from a coverage file name.
+/// Extracts the tile index suffix from a coverage filename.
 ///
 /// The search proceeds right-to-left and returns the first segment that contains only ASCII digits,
 /// making it tolerant to multi-part extensions such as `.tsv.zst`.
 ///
 /// # Parameters
-/// - `file_name`: File name to inspect.
+/// - `file_name`: Filename to inspect.
 ///
 /// # Returns
 /// `Some(index)` when a numeric segment is found; otherwise `None`.

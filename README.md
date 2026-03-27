@@ -101,7 +101,7 @@ We aim for high flexibility to make the commands useful for both established and
 
 The final example is a full pipeline for running everything (but without the explanations from the separate examples).
 
-**Assembly**: The below examples use file names specific to the hg38 assembly, but any assembly (hg19 etc.) should work. Just be consistent, of course. Note that most commands use only the autosomes (`chr1-chr22`) by default (see `--chromosomes` in help files).
+**Assembly**: The below examples use filenames specific to the hg38 assembly, but any assembly (hg19 etc.) should work. Just be consistent, of course. Note that most commands use only the autosomes (`chr1-chr22`) by default (see `--chromosomes` in help files).
 
 **Fragment length range**: The min/max fragment length range defaults to `30-1000bp`. This can be specified via `--min-fragment-length` and `--max-fragment-length`. We suggest keeping this range for the `ref-gc-bias`, `gc-bias`, and `coverage-weights` commands (unless you want to support longer fragments than 1000bp). In the downstream feature extraction commands you can then narrow the range, if you want.
 

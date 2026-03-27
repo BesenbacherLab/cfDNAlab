@@ -269,7 +269,7 @@ Run these as a fixed gate before release tagging:
 
 4. Manual gate
 - Run one small manual invocation per command with fixed tiny fixtures.
-- Verify output file names, schema columns, and at least one numeric invariant per command.
+- Verify output filenames, schema columns, and at least one numeric invariant per command.
 
 ## Suggested execution phases
 

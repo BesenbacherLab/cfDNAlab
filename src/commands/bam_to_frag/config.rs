@@ -53,7 +53,7 @@ pub struct BamToFragConfig {
 
     /// Optional prefix for output file (e.g., a sample name) `[string]`
     ///
-    /// Leave empty to write file names without a leading prefix.
+    /// Leave empty to write filenames without a leading prefix.
     ///
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///

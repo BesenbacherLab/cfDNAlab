@@ -58,14 +58,14 @@ pub struct FragToBamConfig {
 
     /// Optional prefix for output file (e.g., a sample name) `[string]`
     ///
-    /// Leave empty to write file names without a leading prefix.
+    /// Leave empty to write filenames without a leading prefix.
     ///
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
     /// Examples produce files like:
     ///   `<prefix>.fragments.bam`
     ///
-    /// With an empty prefix, the output file name is `fragments.bam`.
+    /// With an empty prefix, the output filename is `fragments.bam`.
     #[cfg_attr(
         feature = "cli",
         clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")

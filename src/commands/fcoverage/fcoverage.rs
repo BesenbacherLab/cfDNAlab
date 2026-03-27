@@ -256,7 +256,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
             {
                 FCoverageCounters::default()
             } else {
-                // Decide tile mode and file name
+                // Decide tile mode and filename
                 let (action_prefix, extensions) = if windowed {
                     match opt.per_window {
                         CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
