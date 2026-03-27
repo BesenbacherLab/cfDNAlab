@@ -33,3 +33,7 @@ src/commands/prepare_windows/test_to_make.md
 website/docs/generated/
 
 __pycache__/
+
+test_scores.md
+
+add_verification_comment.py

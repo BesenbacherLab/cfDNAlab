@@ -6,6 +6,7 @@ use fxhash::FxHashMap;
 
 #[test]
 fn partition_deletion_helper_splits_left_overlap_and_right_parts() {
+    // Human verification status: unverified
     // Fragment [100,220), aligned overlap [160,180), deletion [150,190):
     // - left non-overlap [150,160) => 10 bp
     // - overlap piece [160,180)
@@ -35,6 +36,7 @@ fn partition_deletion_helper_splits_left_overlap_and_right_parts() {
 
 #[test]
 fn partition_insertion_helper_splits_nonoverlap_and_keeps_overlap_max() {
+    // Human verification status: unverified
     // Fragment [100,220), aligned overlap [160,180):
     // - insertion at 120 is inside the fragment but outside the overlap => non-overlap +3
     // - insertions at 170 inside the overlap keep the maximum per read anchor => 5

@@ -1,7 +1,7 @@
 use cfdnalab::commands::cli_common::WindowSpec;
 use cfdnalab::commands::gc_bias::counting::{GCCounts, build_gc_prefixes};
 use cfdnalab::commands::gc_bias::windows::{
-    WindowState, compute_window_acgt, compute_window_stats,
+    WindowState, compute_window_stats, set_window_acgt_in_observed_interval,
 };
 use cfdnalab::shared::bam::Contigs;
 use cfdnalab::shared::bed::Windows;
@@ -42,6 +42,7 @@ mod test_compute_window_stats {
 
     #[test]
     fn returns_average_span_and_total_for_bed_windows() {
+        // Human verification status: unverified
         // Three windows across two chromosomes: lengths 100, 60, 50
         let window_spec = WindowSpec::Bed("dummy.bed".into());
         let mut map = FxHashMap::default();
@@ -68,6 +69,7 @@ mod test_compute_window_stats {
 
     #[test]
     fn returns_genome_span_and_count_for_global_windows() {
+        // Human verification status: unverified
         // Global mode should sum chromosome lengths regardless of window data
         let window_spec = WindowSpec::Global;
         let contigs = build_contigs(&[("chr1", 1000), ("chr2", 1500)]);
@@ -88,6 +90,7 @@ mod test_compute_window_stats {
 
     #[test]
     fn averages_and_counts_fixed_size_windows() {
+        // Human verification status: unverified
         // Fixed windows create ceil(len/size) windows per contig: chr1 -> 4, chr2 -> 2
         let window_spec = WindowSpec::Size(300);
         let contigs = build_contigs(&[("chr1", 1000), ("chr2", 500)]);
@@ -107,19 +110,50 @@ mod test_compute_window_stats {
     }
 }
 
-mod tests_compute_window_acgt {
+mod tests_set_window_acgt_in_observed_interval {
     use super::*;
 
     #[test]
+    fn counts_only_the_supplied_observed_subinterval() {
+        // Human verification status: unverified
+        // The window spans 0-6, but we only observe the middle 2-5 segment.
+        // Sequence A C N G T A
+        //               ^^^^^
+        // observed 2-5 = N G T -> 2 ACGT bases over length 3
+        let seq = b"ACNGTA";
+        let prefixes = build_gc_prefixes(seq);
+        let mut window = make_window_state(0, 6);
+        let observed_interval =
+            Interval::new(2, 5).expect("test observed interval should be valid");
+
+        set_window_acgt_in_observed_interval(
+            &mut window,
+            &prefixes,
+            observed_interval,
+            Interval::new(0, seq.len() as u64).expect("test sequence interval should be valid"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            window.counts.num_acgt_out_of,
+            (2, 3),
+            "expected support to be counted from the observed subinterval, not the full window"
+        );
+    }
+
+    #[test]
     fn counts_acgt_when_window_overlaps_sequence() {
+        // Human verification status: unverified
         // Sequence AACGTN has four ACGT bases inside window 1-5 (ACGT)
         let seq = b"AACGTN";
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(1, 5); // covers "ACGT"
+        let observed_interval = window.interval;
 
-        compute_window_acgt(
+        set_window_acgt_in_observed_interval(
             &mut window,
             &prefixes,
+            observed_interval,
             Interval::new(0, seq.len() as u64).expect("test sequence interval should be valid"),
         )
         .unwrap();
@@ -133,14 +167,17 @@ mod tests_compute_window_acgt {
 
     #[test]
     fn counts_acgt_detect_n() {
+        // Human verification status: unverified
         // Sequence AANGTN has three ACGT bases inside window 1-5 (ANGT)
         let seq = b"AANGTN";
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(1, 5); // covers "ANGT"
+        let observed_interval = window.interval;
 
-        compute_window_acgt(
+        set_window_acgt_in_observed_interval(
             &mut window,
             &prefixes,
+            observed_interval,
             Interval::new(0, seq.len() as u64).expect("test sequence interval should be valid"),
         )
         .unwrap();
@@ -154,14 +191,17 @@ mod tests_compute_window_acgt {
 
     #[test]
     fn errors_when_window_has_no_overlap() {
+        // Human verification status: unverified
         // Window 10-12 sits entirely outside the available sequence 0-4 so should error
         let seq = b"ACGT";
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(10, 12);
+        let observed_interval = window.interval;
 
-        let err = compute_window_acgt(
+        let err = set_window_acgt_in_observed_interval(
             &mut window,
             &prefixes,
+            observed_interval,
             Interval::new(0, seq.len() as u64).expect("test sequence interval should be valid"),
         )
         .expect_err("expected an overlap error");
@@ -175,22 +215,30 @@ mod tests_compute_window_acgt {
 
     #[test]
     fn errors_when_window_exceeds_prefix_bounds() {
+        // Human verification status: unverified
         // Window 0-6 extends past the computed prefix bounds of a 0-6 sequence slice, expect bounds error
         let seq = b"ACGT";
         let prefixes = build_gc_prefixes(seq);
         let mut window = make_window_state(0, 6);
+        let observed_interval = window.interval;
 
-        let err = compute_window_acgt(
+        let err = set_window_acgt_in_observed_interval(
             &mut window,
             &prefixes,
+            observed_interval,
             Interval::new(0, 6).expect("test sequence interval should be valid"),
         )
         .expect_err("expected a prefix bounds error");
 
         let msg = format!("{err}");
+        let chain: Vec<String> = err.chain().map(|cause| cause.to_string()).collect();
         assert!(
-            msg.contains("exceeds prefix length"),
-            "unexpected error message: {msg}"
+            msg.contains("counting ACGT support for observed interval [0, 6)"),
+            "expected high-level window context, got: {msg}"
+        );
+        assert!(
+            chain.iter().any(|cause| cause.contains("ACGT interval [0, 6) out of bounds")),
+            "expected low-level prefix-bounds cause in error chain, got: {chain:?}"
         );
     }
 }
@@ -230,6 +278,7 @@ mod tests_prepare_tile_windows {
 
     #[test]
     fn builds_bed_windows_for_tile_core() -> Result<()> {
+        // Human verification status: unverified
         let template = make_template();
         let tile = make_tile();
         // Span covers three windows, and the last ends after the core and must be filtered out
@@ -260,6 +309,7 @@ mod tests_prepare_tile_windows {
 
     #[test]
     fn skips_tile_when_no_bed_windows_available() -> Result<()> {
+        // Human verification status: unverified
         let template = make_template();
         let tile = make_tile();
         // Empty BED slice should return skip=true so caller can bail out early
@@ -282,6 +332,7 @@ mod tests_prepare_tile_windows {
 
     #[test]
     fn prepares_streaming_buffers_for_fixed_windows() -> Result<()> {
+        // Human verification status: unverified
         let template = make_template();
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 250, 450, 230, 470)
             .expect("test tile should be valid");
@@ -314,6 +365,7 @@ mod tests_prepare_tile_windows {
 
     #[test]
     fn builds_global_window_for_tile_core() -> Result<()> {
+        // Human verification status: unverified
         let template = make_template();
         let tile = make_tile();
 
@@ -363,6 +415,7 @@ mod tests_gc_bias_window_logic {
 
     #[test]
     fn scales_window_by_mean_and_acgt_coverage() -> Result<()> {
+        // Human verification status: unverified
         // Arrange: One length row (effective length 10 -> 11 GC bins). Only two bins set (2 and 4),
         // so mean = (2+4) / 11 = 0.54545...
         // Scale factor = (1/mean) * (num_acgt/avg_span) = (1/0.54545) * (40/100) = 0.73333...
@@ -385,6 +438,7 @@ mod tests_gc_bias_window_logic {
 
     #[test]
     fn drops_window_when_acgt_fraction_below_threshold() -> Result<()> {
+        // Human verification status: unverified
         // Arrange: Only 25% of the positions are ACGT, below the 50% threshold
         let tmp = tempdir()?;
         let mut cfg = make_config(&tmp);
@@ -407,6 +461,7 @@ mod tests_gc_bias_window_logic {
     // TODO: Validate this
     #[test]
     fn merges_crossing_files_and_scales_once_per_window() -> Result<()> {
+        // Human verification status: unverified
         // Arrange: two crossing chunks for the same window idx=3, counts 2 and 3, acgt 20 and 30.
         // Merged counts=5, num_acgt=50 -> mean=5/11=0.45454..., scale=(1/0.45454)*(50/20)=5.5, final count=27.5.
         let tmp = tempdir()?;

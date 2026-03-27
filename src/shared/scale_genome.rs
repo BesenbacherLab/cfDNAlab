@@ -1,4 +1,4 @@
-use crate::shared::{bam::Contigs, overlaps::OverlappingWindows};
+use crate::shared::{bam::Contigs, interval::Interval, overlaps::OverlappingWindows};
 use anyhow::{Context, Result, bail};
 use fxhash::{FxHashMap, FxHashSet};
 use std::io::{BufRead, BufReader};
@@ -114,12 +114,13 @@ pub fn compute_window_scaling_over_overlap(
 /// `full_overlap_fraction` is always `1.0`.
 #[inline]
 pub fn compute_window_scaling_over_fragment(
+    fragment_interval: Interval<u64>,
     count_overlaps: &OverlappingWindows,
     scaling_bin_indices: &[usize],
     scaling_chr: &[(u64, u64, f32)],
 ) -> Result<Vec<(usize, f64, f64)>> {
-    let fragment_start_bp = count_overlaps.query_start();
-    let fragment_end_bp = count_overlaps.query_end();
+    let fragment_start_bp = fragment_interval.start();
+    let fragment_end_bp = fragment_interval.end();
     if scaling_bin_indices.is_empty() {
         bail!("scaling_bin_indices is empty but scaling was requested");
     }

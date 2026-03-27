@@ -24,6 +24,8 @@ See the below testing best-behaviors and try to follow them. Without proper test
 
 IMPORTANT!: If you cannot make tests succeed, it indicates errors in the code or a misunderstanding of what's expected. Break the generation and check with me instead of spending a long time on redoing tests again and again.
 
+Whenever you add a new test, you need to finish with an extra thinking pass about whether it can become even stronger. Don't settle on "good enough" for tests.
+
 ### Philosophy
 
 Test all important behavior and logic.

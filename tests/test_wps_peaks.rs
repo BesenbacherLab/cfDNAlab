@@ -9,6 +9,7 @@ mod tests_wps_normalization {
 
     #[test]
     fn smoothe_preserves_quadratic_signal() {
+        // Human verification status: unverified
         let values: Vec<f32> = (0..64)
             .map(|i| {
                 let x = i as f32;
@@ -24,6 +25,7 @@ mod tests_wps_normalization {
 
     #[test]
     fn smoothe_respects_mask_boundaries() {
+        // Human verification status: unverified
         let mut values = vec![0.0f32; 60];
         for (idx, val) in values.iter_mut().enumerate() {
             let angle = idx as f32 / 5.0;
@@ -51,11 +53,19 @@ mod tests_wps_normalization {
 
     #[test]
     fn normalize_subtracts_sliding_median() {
+        // Human verification status: unverified
         let numerator = vec![1.0, 2.0, 50.0, 4.0, 5.0, 6.0];
         let baseline = numerator.clone();
         let mask = vec![0u8; numerator.len()];
 
-        let normalized = normalize_wps(&numerator, &baseline, Some(&mask), 5, 1, 3);
+        let normalized = normalize_wps(
+            &numerator,
+            &baseline,
+            Some(&mask),
+            5, // window_size
+            1, // stride
+            3, // min_unmasked
+        );
 
         let expected: Vec<f32> = vec![-1.0, -1.0, 46.0, -1.0, -0.5, 1.0];
         for (idx, (observed, exp)) in normalized.iter().zip(expected.iter()).enumerate() {
@@ -72,16 +82,31 @@ mod tests_wps_normalization {
 
     #[test]
     fn normalize_respects_mask_and_threshold() {
+        // Human verification status: unverified
         let numerator = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let baseline = numerator.clone();
         let mut mask = vec![0u8; numerator.len()];
         mask[1] = 1;
 
-        let normalized_loose = normalize_wps(&numerator, &baseline, Some(&mask), 5, 1, 2);
+        let normalized_loose = normalize_wps(
+            &numerator,
+            &baseline,
+            Some(&mask),
+            5, // window_size
+            1, // stride
+            2, // min_unmasked
+        );
         assert!(normalized_loose[1].is_nan());
         assert!(approx_eq(normalized_loose[2], 3.0 - 3.5, 1e-4));
 
-        let normalized_strict = normalize_wps(&numerator, &baseline, Some(&mask), 5, 1, 5);
+        let normalized_strict = normalize_wps(
+            &numerator,
+            &baseline,
+            Some(&mask),
+            5, // window_size
+            1, // stride
+            5, // min_unmasked
+        );
         assert!(normalized_strict[2].is_nan());
     }
 }
@@ -100,6 +125,7 @@ mod tests_normalization_helpers {
 
     #[test]
     fn build_left_edge_window_reflects_prefix() {
+        // Human verification status: unverified
         let edge_slice = vec![3.0_f32, 4.0_f32, 5.0_f32];
         let window = build_left_edge_window(&edge_slice);
         assert_eq!(window.len(), SG_WINDOW_SIZE);
@@ -114,6 +140,7 @@ mod tests_normalization_helpers {
 
     #[test]
     fn build_right_edge_window_reflects_suffix() {
+        // Human verification status: unverified
         let edge_slice = vec![1.0_f32, 2.0_f32, 3.0_f32];
         let window = build_right_edge_window(&edge_slice);
         assert_eq!(window.len(), SG_WINDOW_SIZE);
@@ -125,6 +152,7 @@ mod tests_normalization_helpers {
 
     #[test]
     fn sliding_median_tracks_window() {
+        // Human verification status: unverified
         let mut median = SlidingMedian::new(5);
         median.insert(0, 1.0);
         assert!(approx_eq(median.median().unwrap(), 1.0));
@@ -164,6 +192,7 @@ mod tests_wps_peaks_helpers {
 
     #[test]
     fn compute_stats_contributions_extracts_metrics() {
+        // Human verification status: unverified
         let windows = indexed_windows(&[(0, 100, 0), (100, 200, 1)]);
         let peaks = vec![
             make_peak("chr1", 10, 1.0),
@@ -191,6 +220,7 @@ mod tests_wps_peaks_helpers {
 
     #[test]
     fn histogram_median_handles_even_counts() {
+        // Human verification status: unverified
         let mut hist = BTreeMap::new();
         hist.insert(10, 1);
         hist.insert(20, 1);
@@ -200,6 +230,7 @@ mod tests_wps_peaks_helpers {
 
     #[test]
     fn stats_distance_summary_returns_nan_without_distances() {
+        // Human verification status: unverified
         let hist = BTreeMap::new();
         let (avg, median) = stats_distance_summary(0.0, &hist);
         assert!(avg.is_nan());
@@ -208,6 +239,7 @@ mod tests_wps_peaks_helpers {
 
     #[test]
     fn stats_distance_summary_reports_average_and_median() {
+        // Human verification status: unverified
         let mut hist = BTreeMap::new();
         hist.insert(25, 2);
         hist.insert(50, 1);
@@ -222,6 +254,7 @@ mod tests_wps_peaks_helpers {
 
     #[test]
     fn stats_contributions_merge_across_tiles() {
+        // Human verification status: unverified
         let mut acc = WindowAccumulator::new(PeaksWindowAction::Stats, 2);
         acc.reset_for_chromosome("chr1".to_string());
         let windows = indexed_windows(&[(0, 100, 0)]);
@@ -265,6 +298,7 @@ mod tests_wps_peaks_helpers {
 
     #[test]
     fn window_accumulator_unique_writes_sorted_positions() {
+        // Human verification status: unverified
         let mut acc = WindowAccumulator::new(PeaksWindowAction::OnlyIncludeThesePositionsUnique, 2);
         acc.reset_for_chromosome("chr1".to_string());
 
@@ -294,6 +328,7 @@ mod tests_wps_peaks_helpers {
 
     #[test]
     fn window_accumulator_stats_counts_across_tiles() {
+        // Human verification status: unverified
         let mut acc = WindowAccumulator::new(PeaksWindowAction::Stats, 2);
         acc.reset_for_chromosome("chr2".to_string());
 
@@ -329,6 +364,7 @@ mod tests_wps_peaks_helpers {
 
     #[test]
     fn stats_contributions_skip_blacklisted_gap_distances() {
+        // Human verification status: unverified
         // Window spans 0-200 and collects stats via contributions instead of streaming peaks.
         // First contribution represents a peak before the blacklist, second one after it. Their
         // segment markers differ, so merging must not invent a 100bp gap between them.
@@ -372,6 +408,7 @@ mod tests_wps_peaks_helpers {
 
     #[test]
     fn aligned_and_buffered_unique_outputs_match() {
+        // Human verification status: unverified
         let data = fixed_size_test_data();
         let peak_file = write_peaks_file(&data.peaks);
 
@@ -388,6 +425,7 @@ mod tests_wps_peaks_helpers {
 
     #[test]
     fn aligned_and_buffered_stats_outputs_match() {
+        // Human verification status: unverified
         let data = fixed_size_test_data();
         let peak_file = write_peaks_file(&data.peaks);
         let contributions =
@@ -411,6 +449,7 @@ mod tests_wps_peaks_helpers {
 
     #[test]
     fn aligned_and_buffered_unique_outputs_match_across_tiles() {
+        // Human verification status: unverified
         let data = two_tile_test_data();
         let peak_files = write_peak_files(&data.peaks_by_tile);
         let paths: Vec<PathBuf> = peak_files
@@ -431,6 +470,7 @@ mod tests_wps_peaks_helpers {
 
     #[test]
     fn aligned_and_buffered_stats_outputs_match_across_tiles() {
+        // Human verification status: unverified
         let data = two_tile_test_data();
         let peak_files = write_peak_files(&data.peaks_by_tile);
         let paths: Vec<PathBuf> = peak_files
@@ -879,6 +919,7 @@ mod tests_peak_signal_processing {
 
     #[test]
     fn peaks_from_signal_detects_single_long_run() -> anyhow::Result<()> {
+        // Human verification status: unverified
         // Residual WPS has a 55bp plateau starting at index 10, exceeding Snyder's 50bp minimum,
         // so the run should be kept as a single peak once the helper converts residuals into peaks.
         let mut residual = vec![0.0f32; 80];
@@ -901,6 +942,7 @@ mod tests_peak_signal_processing {
 
     #[test]
     fn peaks_from_signal_breaks_runs_on_masked_segments() -> anyhow::Result<()> {
+        // Human verification status: unverified
         // Same plateau shape, but we mask a 10bp band (indices 90-99). Snyder requires >=50bp runs,
         // so we extend the positive segments to 10..89 and 100..169 (80bp and 70bp respectively)
         // to stay above the cutoff after the mask splits the trace. Each unmasked run therefore
@@ -927,6 +969,7 @@ mod tests_peak_signal_processing {
 
     #[test]
     fn peaks_from_signal_supports_normalization() -> anyhow::Result<()> {
+        // Human verification status: unverified
         // Raw WPS has a 100bp plateau at +5 surrounded by zeros. A 200bp rolling median stays at 0,
         // so residuals remain >0 and the helper should recover one peak covering the plateau.
         let mut wps = vec![0.0f32; 400];
@@ -951,6 +994,7 @@ mod tests_peak_signal_processing {
 
     #[test]
     fn stats_ignore_distances_across_masked_regions() -> anyhow::Result<()> {
+        // Human verification status: unverified
         // Two positive plateaus separated by a masked band emulate two segments inside one window.
         // The stats helper must not report the cross-gap distance because the segment markers differ.
         let mut residual = vec![0.0f32; 200];
@@ -994,6 +1038,7 @@ mod tests_peak_signal_processing {
 
     #[test]
     fn peak_call_requires_peak_position_inside_half_open_interval() {
+        // Human verification status: unverified
         // Half-open interval semantics are [start, end):
         // - a peak at 99 is before [100,110) and must fail
         // - a peak at 110 lands exactly on the exclusive end and must also fail
@@ -1014,6 +1059,7 @@ mod tests_peak_signal_processing {
 
     #[test]
     fn stats_remove_single_cross_tile_distance_when_blacklist_hits_boundary() {
+        // Human verification status: unverified
         // Tile boundary sits at 2,000bp. First scenario: blacklist begins far upstream so the halo
         // never crosses it, meaning both tiles reuse the same segment marker and the histogram keeps
         // the cross-tile distance 400bp (between the last peak of tile A and first peak of tile B).
@@ -1102,6 +1148,7 @@ mod tests_wps_peaks_command {
 
     #[test]
     fn run_emits_expected_peaks_and_stats_for_fixed_size_windows() -> Result<()> {
+        // Human verification status: unverified
         let bam = long_fragment_bam("wps_peaks_600bp_fragments")?;
 
         // Per-window unique output captures the expected peak coordinates.
@@ -1240,6 +1287,7 @@ mod tests_wps_peaks_command {
 
     #[test]
     fn global_mode_handles_three_chromosomes() -> Result<()> {
+        // Human verification status: unverified
         let bam = empty_three_chrom_bam("wps_peaks_three_chr_global")?;
         let out_dir = tempdir()?;
         let ioc = IOCArgs {
@@ -1284,6 +1332,7 @@ mod tests_wps_peaks_command {
 
     #[test]
     fn by_size_stats_handles_three_chromosomes() -> Result<()> {
+        // Human verification status: unverified
         let bam = empty_three_chrom_bam("wps_peaks_three_chr_by_size")?;
         let out_dir = tempdir()?;
         let ioc = IOCArgs {
@@ -1339,6 +1388,7 @@ mod tests_wps_peaks_command {
 
     #[test]
     fn by_bed_stats_handles_three_chromosomes() -> Result<()> {
+        // Human verification status: unverified
         let bam = empty_three_chrom_bam("wps_peaks_three_chr_by_bed")?;
         let out_dir = tempdir()?;
         let bed_path = out_dir.path().join("three_chr_windows.bed");
@@ -1404,6 +1454,7 @@ mod tests_wps_peaks_command {
 
     #[test]
     fn blacklist_near_boundary_removes_cross_tile_distance() -> Result<()> {
+        // Human verification status: unverified
         let bam = long_fragment_bam("wps_peaks_boundary_blacklist")?;
         let bed_dir = tempdir()?;
         let far_blacklist = write_blacklist_file(bed_dir.path(), "far", &[(1_000, 1_200)])?;

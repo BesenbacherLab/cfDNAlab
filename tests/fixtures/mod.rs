@@ -2,7 +2,15 @@
 
 use anyhow::{Context, Result, anyhow};
 use cfdnalab::commands::cli_common::{BaseSelectionArgs, FragmentPositionSelectionArgs};
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+use cfdnalab::commands::cli_common::{ChromosomeArgs, GCWindowsArgs, IOCArgs, Ref2BitRequiredArgs};
 use cfdnalab::commands::fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+use cfdnalab::commands::gc_bias::{config::GCConfig, gc_bias::run as run_gc_bias};
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+use cfdnalab::commands::ref_gc_bias::{
+    config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias,
+};
 use rust_htslib::bam::{self, header::HeaderRecord, record::Cigar, record::CigarString};
 use std::{
     fs::{File, OpenOptions},
@@ -171,6 +179,176 @@ fn write_fasta<P: AsRef<Path>>(path: P, sequences: &[(String, String)]) -> Resul
 pub fn simple_reference_twobit() -> Result<TwoBitFixture> {
     let chr1 = ("chr1".to_string(), "ACGT".repeat(64));
     twobit_from_sequences("simple_reference", vec![chr1])
+}
+
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+fn base_chromosomes(chromosome_names: &[&str]) -> ChromosomeArgs {
+    ChromosomeArgs {
+        chromosomes: Some(
+            chromosome_names
+                .iter()
+                .map(|name| name.to_string())
+                .collect(),
+        ),
+        chromosomes_file: None,
+    }
+}
+
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+fn configure_gc_bias_common(gc_cfg: &mut GCConfig) {
+    gc_cfg.set_min_mapq(0);
+    gc_cfg.set_tile_size(1_000_000);
+    gc_cfg.set_min_window_acgt_pct(0);
+    gc_cfg.set_num_extreme_gc_bins(0);
+    gc_cfg.set_num_short_length_bins(0);
+    gc_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+    gc_cfg.set_windows(GCWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        global: true,
+    });
+}
+
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+/// Build a "neutral" real GC-correction package from the full chromosome.
+///
+/// This helper runs the actual `ref-gc-bias` -> `gc-bias` producer chain, but keeps the reference
+/// side intentionally broad and well-mixed:
+/// - reference windows are global rather than BED-restricted
+/// - `n_positions` is fixed to a moderate deterministic sample
+/// - the resulting package is used in tests that want a valid end-to-end artifact without
+///   depending on strong hand-derived GC skew
+///
+/// In other words, "neutral" here means "safe default real artifact for downstream consumers",
+/// not "mathematically forced to exactly weight 1.0 everywhere".
+pub fn build_real_neutral_gc_package(
+    bam_path: &Path,
+    reference_path: &Path,
+    out_dir: &Path,
+    fragment_length: u32,
+) -> Result<PathBuf> {
+    let ref_gc_dir = TempDir::new()?;
+    let ref_cfg = RefGCBiasConfig {
+        ref_genome: Ref2BitRequiredArgs {
+            ref_2bit: reference_path.to_path_buf(),
+        },
+        output_dir: ref_gc_dir.path().to_path_buf(),
+        n_threads: 1,
+        // `simple_reference_twobit()` is 256 bp long. For the current neutral-package tests we
+        // only need a deterministic but valid sample of start positions, so 100 stays safely below
+        // both:
+        //   length 60 -> 256 - 60 + 1 = 197 valid starts
+        //   length 61 -> 256 - 61 + 1 = 196 valid starts
+        n_positions: 100,
+        seed: Some(7),
+        windows: Default::default(),
+        chromosomes: base_chromosomes(&["chr1"]),
+        blacklist: None,
+        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+            min_fragment_length: fragment_length,
+            max_fragment_length: fragment_length,
+        },
+        end_offset: 0,
+        skip_interpolation: true,
+        smoothing_sigma: 0.55,
+        smoothing_radius: 2,
+        skip_smoothing: true,
+        tile_size: 1_000_000,
+    };
+    run_ref_gc_bias(&ref_cfg)?;
+
+    let gc_out_dir = out_dir.join(format!("real_gc_bias_neutral_len_{fragment_length}"));
+    std::fs::create_dir_all(&gc_out_dir)?;
+    let mut gc_cfg = GCConfig::new(
+        IOCArgs {
+            bam: bam_path.to_path_buf(),
+            output_dir: gc_out_dir.clone(),
+            n_threads: 1,
+        },
+        reference_path.to_path_buf(),
+        ref_gc_dir.path().to_path_buf(),
+        base_chromosomes(&["chr1"]),
+    );
+    configure_gc_bias_common(&mut gc_cfg);
+    run_gc_bias(&gc_cfg)?;
+
+    Ok(gc_out_dir.join("gc_bias_correction.npz"))
+}
+
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+/// Build a deliberately non-neutral real GC-correction package from caller-supplied BED windows.
+///
+/// Unlike `build_real_neutral_gc_package`, this helper is for tests that need the producer side to
+/// create a specific, auditable GC bias profile:
+/// - the reference support is restricted to the provided BED intervals
+/// - callers choose `n_positions` explicitly so the sampled-start arithmetic stays derivable at the
+///   test site
+/// - `gc-bias` is configured with permissive bin-mass thresholds so sparse but intentionally skewed
+///   fixture counts survive into the saved package
+///
+/// Use this when the test needs a real package whose non-unit weights can be reasoned about from
+/// first principles, rather than just "some valid package".
+pub fn build_real_non_neutral_gc_package(
+    bam_path: &Path,
+    reference_path: &Path,
+    out_dir: &Path,
+    fragment_length: u32,
+    reference_windows_bed: &str,
+    n_positions: usize,
+) -> Result<PathBuf> {
+    let ref_gc_dir = TempDir::new()?;
+    let bed_path = ref_gc_dir.path().join("pure_windows.bed");
+    std::fs::write(&bed_path, reference_windows_bed)?;
+    let ref_cfg = RefGCBiasConfig {
+        ref_genome: Ref2BitRequiredArgs {
+            ref_2bit: reference_path.to_path_buf(),
+        },
+        output_dir: ref_gc_dir.path().to_path_buf(),
+        n_threads: 1,
+        // Callers pass the exact number of sampled starts because the non-neutral tests rely on
+        // fully hand-derived reference-side counts. `ref-gc-bias` only counts sampled starts that
+        // both lie inside the BED interval and leave enough room for the full fragment before that
+        // interval's right edge, so keeping the arithmetic at the call site makes the expected
+        // producer/consumer weights easy to audit next to each test.
+        n_positions,
+        seed: Some(23),
+        windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+            by_bed: Some(bed_path),
+        },
+        chromosomes: base_chromosomes(&["chr1"]),
+        blacklist: None,
+        fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+            min_fragment_length: fragment_length,
+            max_fragment_length: fragment_length,
+        },
+        end_offset: 0,
+        skip_interpolation: true,
+        smoothing_sigma: 0.55,
+        smoothing_radius: 2,
+        skip_smoothing: true,
+        tile_size: 1_000_000,
+    };
+    run_ref_gc_bias(&ref_cfg)?;
+
+    let gc_out_dir = out_dir.join(format!("real_gc_bias_non_neutral_len_{fragment_length}"));
+    std::fs::create_dir_all(&gc_out_dir)?;
+    let mut gc_cfg = GCConfig::new(
+        IOCArgs {
+            bam: bam_path.to_path_buf(),
+            output_dir: gc_out_dir.clone(),
+            n_threads: 1,
+        },
+        reference_path.to_path_buf(),
+        ref_gc_dir.path().to_path_buf(),
+        base_chromosomes(&["chr1"]),
+    );
+    configure_gc_bias_common(&mut gc_cfg);
+    gc_cfg.set_min_gc_bin_mass(1.0);
+    gc_cfg.set_min_length_bin_mass(0.0);
+    gc_cfg.set_min_length_bin_width(1);
+    run_gc_bias(&gc_cfg)?;
+
+    Ok(gc_out_dir.join("gc_bias_correction.npz"))
 }
 
 pub fn single_position_selection(
@@ -424,6 +602,56 @@ fn write_bam(
     Ok(())
 }
 
+fn write_bam_with_strict_identity(
+    chroms: &[(String, u32)],
+    fragments: &[FragmentSpec],
+    singles: &[ReadSpec],
+    out_bam: &Path,
+) -> Result<()> {
+    let mut header = bam::Header::new();
+    header.push_record(
+        HeaderRecord::new(b"HD")
+            .push_tag(b"VN", &"1.6")
+            .push_tag(b"SO", &"coordinate"),
+    );
+    for (name, len) in chroms {
+        header.push_record(
+            HeaderRecord::new(b"SQ")
+                .push_tag(b"SN", name)
+                .push_tag(b"LN", len),
+        );
+    }
+
+    let mut writer = bam::Writer::from_path(out_bam, &header, bam::Format::Bam)
+        .with_context(|| format!("create bam at {}", out_bam.display()))?;
+
+    let mut records: Vec<bam::Record> = Vec::new();
+
+    // Give each synthetic fragment a unique qname so stacked fragments at the same genomic start
+    // still represent distinct molecules to paired-end consumers.
+    for (fragment_idx, fragment) in fragments.iter().enumerate() {
+        let qname = format!(
+            "frag{}_tid{}_pos{}",
+            fragment_idx, fragment.forward.tid, fragment.forward.pos
+        );
+        records.push(fragment.forward.to_record(qname.as_bytes()));
+        records.push(fragment.reverse.to_record(qname.as_bytes()));
+    }
+
+    // Singles need the same treatment for consistency if a test ever stacks reads at one start.
+    for (single_idx, single) in singles.iter().enumerate() {
+        let qname = format!("single{}_tid{}_pos{}", single_idx, single.tid, single.pos);
+        records.push(single.to_record(qname.as_bytes()));
+    }
+
+    records.sort_by_key(|rec| (rec.tid(), rec.pos()));
+
+    for rec in records {
+        writer.write(&rec)?;
+    }
+    Ok(())
+}
+
 fn build_index(bam_path: &Path) -> Result<PathBuf> {
     let bai_path = bam_path.with_extension("bam.bai");
     bam::index::build(bam_path, None, bam::index::Type::Bai, 1)
@@ -449,6 +677,20 @@ pub fn bam_from_specs(
     let bam_path = tempdir.path().join(format!("{name}.bam"));
 
     write_bam(&chroms, &fragments, &singles, &bam_path)?;
+    let bai = build_index(&bam_path)?;
+    Ok(BamFixture::new(tempdir, bam_path, bai))
+}
+
+pub fn bam_from_specs_strict_identity(
+    chroms: Vec<(String, u32)>,
+    fragments: Vec<FragmentSpec>,
+    singles: Vec<ReadSpec>,
+    name: &str,
+) -> Result<BamFixture> {
+    let tempdir = TempDir::new()?;
+    let bam_path = tempdir.path().join(format!("{name}.bam"));
+
+    write_bam_with_strict_identity(&chroms, &fragments, &singles, &bam_path)?;
     let bai = build_index(&bam_path)?;
     Ok(BamFixture::new(tempdir, bam_path, bai))
 }

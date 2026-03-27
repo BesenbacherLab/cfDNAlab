@@ -8,6 +8,7 @@ mod tests_transitions_frequency_calculations {
 
     #[test]
     fn computes_first_order_frequencies() -> Result<()> {
+        // Human verification status: unverified
         // Arrange
         let counts = array![[[2.0, 1.0, 4.0, 3.0]]];
         let motifs = vec![
@@ -30,6 +31,7 @@ mod tests_transitions_frequency_calculations {
 
     #[test]
     fn computes_second_order_frequencies_with_multiple_positions() -> Result<()> {
+        // Human verification status: unverified
         // Arrange
         let counts = array![
             [[4.0, 6.0, 2.0, 0.0], [0.0, 0.0, 5.0, 5.0],],
@@ -65,6 +67,7 @@ mod tests_transitions_frequency_calculations {
 
     #[test]
     fn errors_when_motif_axis_mismatches_counts() {
+        // Human verification status: unverified
         // Arrange
         let counts = array![[[1.0, 2.0]]];
         let motifs = vec!["AA".to_string()];
@@ -152,10 +155,11 @@ mod transitions_command_tests {
 
     #[test]
     fn run_transitions_produces_expected_frequencies() -> Result<()> {
+        // Human verification status: unverified
         // Reference repeats "AACGAGTTACGA" so the motifs at successive offsets are predictable
         // Reference is a repetition of "AACGAGTTACGA". Motifs encountered by the fragments:
         // Fragment A offsets 0,1,2 -> "AA", "AC", "CG"
-        // Fragment B offsets 0,1,2 -> (shifted by four bases) -> "GA", "GT", "TT"
+        // Fragment B offsets 0,1,2 -> (shifted by four bases) -> "AG", "GT", "TT"
         // These expectations underpin the assertions later in the test.
         let reference_seq = "AACGAGTTACGAACGAGTTACGAACGAGTTACGA";
         let reference = twobit_from_sequences(
@@ -294,11 +298,11 @@ mod transitions_command_tests {
         ] {
             let idx = *motif_idx
                 .get(motif)
-                .with_context(|| format!("missing motif {motif} at offset 1"))?;
+                .with_context(|| format!("missing motif {motif} at offset 0"))?;
             let observed = slice_offset0[idx];
             assert!(
                 (observed - expected).abs() < 1e-9,
-                "offset 1 motif {motif} expected {expected} observed {observed}"
+                "offset 0 motif {motif} expected {expected} observed {observed}"
             );
         }
         for (&motif, &idx) in &motif_idx {
@@ -323,11 +327,11 @@ mod transitions_command_tests {
         ] {
             let idx = *motif_idx
                 .get(motif)
-                .with_context(|| format!("missing motif {motif} at offset 2"))?;
+                .with_context(|| format!("missing motif {motif} at offset 1"))?;
             let observed = slice_offset1[idx];
             assert!(
                 (observed - expected).abs() < 1e-9,
-                "offset 2 motif {motif} expected {expected} observed {observed}"
+                "offset 1 motif {motif} expected {expected} observed {observed}"
             );
         }
         for (&motif, &idx) in &motif_idx {
@@ -351,11 +355,11 @@ mod transitions_command_tests {
         ] {
             let idx = *motif_idx
                 .get(motif)
-                .with_context(|| format!("missing motif {motif} at offset 3"))?;
+                .with_context(|| format!("missing motif {motif} at offset 2"))?;
             let observed = slice_offset2[idx];
             assert!(
                 (observed - expected).abs() < 1e-9,
-                "offset 3 motif {motif} expected {expected} observed {observed}"
+                "offset 2 motif {motif} expected {expected} observed {observed}"
             );
         }
         for (&motif, &idx) in &motif_idx {

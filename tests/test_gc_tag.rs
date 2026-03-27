@@ -5,6 +5,7 @@ mod test_gc_tag_values {
 
     #[test]
     fn should_reject_extreme_or_invalid_gc_weights() {
+        // Human verification status: unverified
         // Arrange: start with a sane weight
         let mut rec_ok = Record::new();
         rec_ok.push_aux(b"GC", Aux::Float(2.5)).expect("set GC tag");
@@ -52,6 +53,7 @@ mod test_gc_tag_values {
 
     #[test]
     fn combining_valid_weights_remains_in_range() {
+        // Human verification status: unverified
         let mut rec_a = Record::new();
         rec_a.push_aux(b"GC", Aux::Float(2.0)).expect("set GC tag");
         let mut rec_b = Record::new();

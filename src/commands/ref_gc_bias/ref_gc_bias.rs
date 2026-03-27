@@ -465,7 +465,7 @@ fn process_tile(
         1.0,
         1u32,
         opt.end_offset as usize,
-    );
+    )?;
 
     // Release per-tile start positions after counting
     drop(tile_starts);

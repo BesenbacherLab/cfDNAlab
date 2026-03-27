@@ -482,7 +482,13 @@ fn process_tile(
         None
     };
 
-    let Some(fetch_span) = determine_fetch_span(tile, window_ctx, tile_window_span, chrom_len)?
+    let Some(fetch_span) = determine_fetch_span(
+        tile,
+        window_ctx,
+        tile_window_span,
+        chrom_len,
+        opt.shared_args.fragment_lengths.max_fragment_length as u64,
+    )?
     else {
         return Ok(TileResult {
             chr: tile.chr.clone(),

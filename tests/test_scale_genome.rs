@@ -26,6 +26,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_mixed_bins_partial_overlap() {
+        // Human verification status: unverified
         // Tile core [105, 125), len 20
         // Bins: [90,110) sf=2.0, [110,120) sf=0.0, [120,140) sf=0.5
         // Expected (multiply-by-sf):
@@ -50,6 +51,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_starts_exactly_at_bin_boundary() {
+        // Human verification status: unverified
         // Tile core starts exactly at previous bin end
         // Bins: [0,100) sf=2.0, [100,200) sf=4.0
         // Tile: core_start=100, len=10 so all in second bin
@@ -64,6 +66,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_zero_bin_covers_entire_tile() {
+        // Human verification status: unverified
         // Entire tile lies in a zero-scaled bin
         let core_start = 60u32;
         let bins = vec![(50u64, 150u64, 0.0f32)];
@@ -76,6 +79,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_noop_on_empty_inputs() {
+        // Human verification status: unverified
         // No bins or empty coverage should be a no-op
         let core_start = 100u32;
 
@@ -83,13 +87,38 @@ mod tests_apply_scaling {
         apply_scaling_to_coverage_in_place(&mut cov1, core_start, &[]);
         assert!(cov1.is_empty());
 
+        let mut cov_with_bins = vec![] as Vec<f32>;
+        apply_scaling_to_coverage_in_place(
+            &mut cov_with_bins,
+            core_start,
+            &[(90u64, 110u64, 2.0f32)],
+        );
+        assert!(cov_with_bins.is_empty());
+
         let mut cov2 = vec![1.0f32, 2.0, 3.0];
         apply_scaling_to_coverage_in_place(&mut cov2, core_start, &[]);
         assert_slice_eq_eps(&cov2, &[1.0, 2.0, 3.0], 1e-6);
     }
 
     #[test]
+    fn scaling_non_overlapping_bins_on_both_sides_leave_varied_tile_unchanged() {
+        // Human verification status: unverified
+        // Tile [500, 510), with one scaling bin entirely left and one entirely right.
+        // This is the real no-op case with non-empty scaling input: the function must not touch
+        // any element just because unrelated bins exist elsewhere on the chromosome.
+        let core_start = 500u32;
+        let bins = vec![(100u64, 200u64, 2.0f32), (520u64, 600u64, 0.25f32)];
+        let mut cov = vec![1.0f32, 3.5, 2.0, 7.0, 0.5, 9.0, 4.0, 8.0, 6.0, 5.5];
+        let expected = cov.clone();
+
+        apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
+
+        assert_slice_eq_eps(&cov, &expected, 1e-6);
+    }
+
+    #[test]
     fn scaling_multiple_bins_exact_edges() {
+        // Human verification status: unverified
         // Tile aligns exactly to bin edges
         // Bins: [1000,1010) sf=2, [1010,1020) sf=0, [1020,1030) sf=0.5
         let core_start = 1000u32;
@@ -116,28 +145,37 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_bins_entirely_left_of_tile_noop() {
-        // All bins end before the tile starts -> no effect
+        // Human verification status: unverified
+        // All bins end before the tile starts -> no effect.
+        // Include one bin that touches the tile boundary exactly at `core_start` to prove the
+        // implementation treats the bins as half-open and does not scale index 0 by mistake.
         let core_start = 500u32;
-        let bins = vec![(100u64, 200u64, 2.0f32), (200, 250, 0.5)];
-        let mut cov = vec![7.0f32; 10];
+        let bins = vec![(100u64, 200u64, 2.0f32), (490, 500, 0.5)];
+        let mut cov = vec![7.0f32, 1.0, 9.0, 3.5, 2.25, 4.0, 8.0, 6.5, 5.0, 10.0];
+        let expected = cov.clone();
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
 
-        assert_slice_eq_eps(&cov, &vec![7.0f32; 10], 1e-6);
+        assert_slice_eq_eps(&cov, &expected, 1e-6);
     }
 
     #[test]
     fn scaling_bins_entirely_right_of_tile_noop() {
-        // All bins start after the tile ends -> no effect
+        // Human verification status: unverified
+        // All bins start after the tile ends -> no effect.
+        // Include one bin that starts exactly at the tile end to prove the half-open convention at
+        // the right boundary.
         let core_start = 100u32;
-        let bins = vec![(1000u64, 2000u64, 2.0f32)];
-        let mut cov = vec![4.0f32; 8];
+        let bins = vec![(108u64, 200u64, 2.0f32), (1000, 2000, 0.5)];
+        let mut cov = vec![4.0f32, 1.5, 7.0, 2.0, 9.0, 3.0, 8.5, 6.0];
+        let expected = cov.clone();
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
 
-        assert_slice_eq_eps(&cov, &vec![4.0f32; 8], 1e-6);
+        assert_slice_eq_eps(&cov, &expected, 1e-6);
     }
 
     #[test]
     fn scaling_partial_left_overlap_only() {
+        // Human verification status: unverified
         // Bin overlaps only the left edge of the tile
         // Tile: [200, 210), Bin: [195, 205) sf=3.0 -> indices 0..5 scaled by 3
         let core_start = 200u32;
@@ -154,6 +192,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_partial_right_overlap_only() {
+        // Human verification status: unverified
         // Bin overlaps only the right edge of the tile
         // Tile: [300, 312), Bin: [308, 400) sf=0.25 -> indices 8..12 scaled by 0.25
         let core_start = 300u32;
@@ -170,6 +209,7 @@ mod tests_apply_scaling {
 
     #[test]
     fn scaling_many_small_bins_inside_tile() {
+        // Human verification status: unverified
         // Tile: [1000, 1010). Bins: per-base alternating 2.0 and 0.5.
         let core_start = 1000u32;
         let bins = (1000u64..1010u64)
@@ -186,5 +226,300 @@ mod tests_apply_scaling {
             .map(|i| if i % 2 == 0 { 20.0 } else { 5.0 })
             .collect();
         assert_slice_eq_eps(&cov, &expected, 1e-6);
+    }
+}
+
+#[cfg(test)]
+mod tests_compute_window_scaling {
+    use cfdnalab::shared::{
+        interval::{IndexedInterval, Interval},
+        overlaps::{OverlappingWindow, OverlappingWindows, find_overlapping_windows},
+        scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
+    };
+
+    fn assert_f64_close(actual: f64, expected: f64, eps: f64, context: &str) {
+        let diff = (actual - expected).abs();
+        assert!(
+            diff <= eps,
+            "{context}: got {actual}, expected {expected}, |diff|={diff}"
+        );
+    }
+
+    fn make_two_window_fragment_overlaps() -> anyhow::Result<OverlappingWindows> {
+        // Query/fragment interval is [20,81), length 61.
+        //
+        // Count windows:
+        // - left  window [0,50)   -> overlap [20,50) = 30 bp
+        // - right window [50,100) -> overlap [50,81) = 31 bp
+        //
+        // So the overlap fractions relative to the fragment are:
+        // - left  = 30 / 61
+        // - right = 31 / 61
+        let fragment = Interval::new(20, 81)?;
+        let mut overlaps = OverlappingWindows::new(fragment);
+        overlaps.windows.push(OverlappingWindow::new(
+            0,
+            Interval::new(0, 50)?,
+            30.0_f32 / 61.0_f32,
+        )?);
+        overlaps.windows.push(OverlappingWindow::new(
+            1,
+            Interval::new(50, 100)?,
+            31.0_f32 / 61.0_f32,
+        )?);
+        Ok(overlaps)
+    }
+
+    #[test]
+    fn compute_window_scaling_over_fragment_uses_explicit_full_fragment_span_for_every_overlapping_window()
+    -> anyhow::Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // Use one fragment/query interval [20,81) and two overlapping count windows:
+        // - [0,50)
+        // - [50,100)
+        //
+        // Scaling bins cover the chromosome with:
+        // - [0,20):   0
+        // - [20,40):  1
+        // - [40,60):  1
+        // - [60,80):  1
+        // - [80,200): 0
+        //
+        // Full-fragment averaging over [20,81) is therefore:
+        //   (20*1 + 20*1 + 20*1 + 1*0) / 61 = 60/61.
+        //
+        // The helper contract says this same full-fragment average is returned for every count
+        // window that overlaps the fragment, and the reported overlap fraction is always 1.0.
+        let count_overlaps = make_two_window_fragment_overlaps()?;
+        let scaling_chr = vec![
+            (0_u64, 20_u64, 0.0_f32),
+            (20, 40, 1.0),
+            (40, 60, 1.0),
+            (60, 80, 1.0),
+            (80, 200, 0.0),
+        ];
+        let scaling_bin_indices = vec![0_usize, 1, 2, 3, 4];
+
+        // Act
+        let out = compute_window_scaling_over_fragment(
+            Interval::new(20, 81)?,
+            &count_overlaps,
+            &scaling_bin_indices,
+            &scaling_chr,
+        )?;
+
+        // Assert
+        assert_eq!(out.len(), 2);
+        let expected_weight = 60.0_f64 / 61.0_f64;
+        assert_eq!(out[0].0, 0);
+        assert_f64_close(
+            out[0].1,
+            expected_weight,
+            1e-12,
+            "left full-fragment weight",
+        );
+        assert_f64_close(out[0].2, 1.0, 1e-12, "left full-fragment overlap fraction");
+        assert_eq!(out[1].0, 1);
+        assert_f64_close(
+            out[1].1,
+            expected_weight,
+            1e-12,
+            "right full-fragment weight",
+        );
+        assert_f64_close(out[1].2, 1.0, 1e-12, "right full-fragment overlap fraction");
+
+        Ok(())
+    }
+
+    #[test]
+    fn compute_window_scaling_over_overlap_uses_each_window_overlap_span() -> anyhow::Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // Reuse the same fragment/query interval [20,81), count windows, and scaling bins as the
+        // previous test.
+        //
+        // But now the helper should average only over each window/fragment overlap:
+        // - left window overlap [20,50):
+        //     all 30 bp lie in scaling-factor-1 bins
+        //     -> average = 1
+        // - right window overlap [50,81):
+        //     [50,60): 10 bp at 1
+        //     [60,80): 20 bp at 1
+        //     [80,81):  1 bp at 0
+        //     -> average = (10 + 20 + 0) / 31 = 30/31
+        //
+        // The overlap fractions are still measured relative to the full fragment:
+        // - left  = 30/61
+        // - right = 31/61
+        let count_overlaps = make_two_window_fragment_overlaps()?;
+        let scaling_chr = vec![
+            (0_u64, 20_u64, 0.0_f32),
+            (20, 40, 1.0),
+            (40, 60, 1.0),
+            (60, 80, 1.0),
+            (80, 200, 0.0),
+        ];
+        let scaling_bin_indices = vec![0_usize, 1, 2, 3, 4];
+
+        // Act
+        let out = compute_window_scaling_over_overlap(
+            &count_overlaps,
+            &scaling_bin_indices,
+            &scaling_chr,
+        )?;
+
+        // Assert
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].0, 0);
+        assert_f64_close(out[0].1, 1.0, 1e-12, "left overlap-only weight");
+        assert_f64_close(
+            out[0].2,
+            (30.0_f32 / 61.0_f32) as f64,
+            1e-7,
+            "left overlap fraction",
+        );
+        assert_eq!(out[1].0, 1);
+        assert_f64_close(
+            out[1].1,
+            30.0_f64 / 31.0_f64,
+            1e-12,
+            "right overlap-only weight",
+        );
+        assert_f64_close(
+            out[1].2,
+            (31.0_f32 / 61.0_f32) as f64,
+            1e-7,
+            "right overlap fraction",
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn scaling_bin_overlap_pipeline_recovers_chrom_local_indices_and_correct_fragment_weight()
+    -> anyhow::Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // Exercise the intended scaling pipeline directly, independent of any command:
+        //
+        // 1. Start from one chromosome-local scaling table:
+        //      [0,20):   0
+        //      [20,40):  1
+        //      [40,60):  2
+        //      [60,80):  4
+        //      [80,200): 8
+        // 2. Build an ordered BED-mode window list from that table.
+        // 3. Ask the overlap finder which scaling bins touch fragment [20,81).
+        // 4. Recover the overlap finder scan indices from the result.
+        // 5. Feed those indices into `compute_window_scaling_over_fragment(...)`.
+        //
+        // In BED mode, `find_overlapping_windows(...)` returns the scan position inside the
+        // supplied ordered window list, not `IndexedInterval.idx`. This still gives the correct
+        // lookup key here because the window list is built in the same order as `scaling_chr`, so
+        // scan positions and chromosome-local `scaling_chr` row indices are identical.
+        //
+        // The fragment covers:
+        //   [20,40): 20 bp at weight 1
+        //   [40,60): 20 bp at weight 2
+        //   [60,80): 20 bp at weight 4
+        //   [80,81):  1 bp at weight 8
+        //
+        // Therefore the full-fragment average scaling is:
+        //   (20*1 + 20*2 + 20*4 + 1*8) / 61 = 148/61.
+        //
+        // The count windows are [0,50) and [50,100), so both overlap the fragment and must both
+        // receive that same full-fragment weight.
+        let fragment = Interval::new(20_u64, 81_u64)?;
+        let count_overlaps = make_two_window_fragment_overlaps()?;
+        let scaling_chr = vec![
+            (0_u64, 20_u64, 0.0_f32),
+            (20, 40, 1.0),
+            (40, 60, 2.0),
+            (60, 80, 4.0),
+            (80, 200, 8.0),
+        ];
+        let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
+            .iter()
+            .enumerate()
+            .map(|(idx, (start, end, _))| IndexedInterval::new(*start, *end, idx as u64))
+            .collect::<cfdnalab::Result<_>>()?;
+
+        // Act:
+        // Recover the overlapping scaling-bin indices through the same BED-mode overlap-finder
+        // path used by the commands.
+        let mut scaling_ptr = 0_usize;
+        let overlapping_scaling_bins = find_overlapping_windows(
+            200,
+            &mut scaling_ptr,
+            Some(&scaling_with_bin_idx),
+            None,
+            fragment,
+            1.0 / 100.0, // Any positive overlap; the exact denominator is not important here.
+            100,
+        )?
+        .expect("fragment should overlap scaling bins");
+        let overlapping_scaling_bin_indices: Vec<usize> = overlapping_scaling_bins
+            .windows
+            .iter()
+            .map(|window| window.idx)
+            .collect();
+
+        let per_window_scaling = compute_window_scaling_over_fragment(
+            fragment,
+            &count_overlaps,
+            &overlapping_scaling_bin_indices,
+            &scaling_chr,
+        )?;
+
+        // Assert:
+        // The overlap finder must recover the touched scan positions in the ordered scaling-bin
+        // list. Because that list is built in the same order as `scaling_chr`, these are also the
+        // correct chromosome-local indices for indexing back into `scaling_chr`.
+        assert_eq!(
+            overlapping_scaling_bin_indices,
+            vec![1, 2, 3, 4],
+            "fragment [20,81) should touch the 2nd through 5th scaling rows in scan order"
+        );
+
+        assert_eq!(
+            per_window_scaling.len(),
+            2,
+            "both count windows should receive the fragment-level scaling weight"
+        );
+        assert_eq!(
+            per_window_scaling[0].0, 0,
+            "left count window should retain its original window index"
+        );
+        assert_eq!(
+            per_window_scaling[1].0, 1,
+            "right count window should retain its original window index"
+        );
+        assert_f64_close(
+            per_window_scaling[0].1,
+            148.0 / 61.0,
+            1e-12,
+            "left window fragment-average scaling",
+        );
+        assert_f64_close(
+            per_window_scaling[1].1,
+            148.0 / 61.0,
+            1e-12,
+            "right window fragment-average scaling",
+        );
+        assert_f64_close(
+            per_window_scaling[0].2,
+            1.0,
+            1e-12,
+            "left window full-fragment overlap fraction",
+        );
+        assert_f64_close(
+            per_window_scaling[1].2,
+            1.0,
+            1e-12,
+            "right window full-fragment overlap fraction",
+        );
+
+        Ok(())
     }
 }

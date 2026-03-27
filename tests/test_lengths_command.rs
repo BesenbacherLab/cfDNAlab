@@ -10,6 +10,10 @@ mod tests_lengths_command {
     use cfdnalab::commands::cli_common::{
         AssignToWindowArgs, ChromosomeArgs, IOCArgs, WindowAssigner, WindowsArgs,
     };
+    #[cfg(feature = "cmd_coverage_weights")]
+    use cfdnalab::commands::coverage_weights::{
+        config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
+    };
     use cfdnalab::commands::gc_bias::{
         GC_CORRECTION_SCHEMA_VERSION, correct::MarginalizeLengthsWeightingScheme,
         package::GCCorrectionPackage,
@@ -20,8 +24,9 @@ mod tests_lengths_command {
     use cfdnalab::shared::indel_mode::IndelMode;
     use cfdnalab::shared::io::dot_join;
     use fixtures::{
-        BamFixture, FragmentSpec, ReadSpec, bam_from_specs, simple_inward_bam,
-        simple_reference_twobit, write_scaling_factors,
+        BamFixture, FragmentSpec, ReadSpec, bam_from_specs, build_real_neutral_gc_package,
+        build_real_non_neutral_gc_package, simple_inward_bam, simple_reference_twobit, write_bed,
+        write_scaling_factors,
     };
     use ndarray::Array2;
     use ndarray::array;
@@ -44,6 +49,31 @@ mod tests_lengths_command {
         fragment
     }
 
+    fn single_read_fragment_bam(
+        name: &str,
+        fragment_start: i64,
+        fragment_len: u32,
+    ) -> Result<BamFixture> {
+        bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            Vec::new(),
+            vec![ReadSpec {
+                tid: 0,
+                pos: fragment_start,
+                cigar: vec![('M', fragment_len)],
+                seq: vec![b'A'; fragment_len as usize],
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: 0,
+                mate_tid: None,
+                mate_pos: None,
+                insert_size: 0,
+            }],
+            name,
+        )
+    }
+
     fn three_chrom_length_fixture(name: &str) -> Result<BamFixture> {
         bam_from_specs(
             vec![
@@ -61,8 +91,35 @@ mod tests_lengths_command {
         )
     }
 
+    #[cfg(feature = "cmd_coverage_weights")]
+    fn make_simple_coverage_weights_config(
+        out_dir: &std::path::Path,
+        bam: &std::path::Path,
+    ) -> CoverageWeightsConfig {
+        let mut cfg = CoverageWeightsConfig::new(
+            IOCArgs {
+                bam: bam.to_path_buf(),
+                output_dir: out_dir.to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_bin_size(20);
+        cfg.set_stride(20);
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_output_prefix("coverage".to_string());
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 200;
+        }
+        cfg
+    }
+
     #[test]
     fn counts_reference_lengths_global_window() -> Result<()> {
+        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -95,14 +152,22 @@ mod tests_lengths_command {
         let arr: Array2<f64> = read_npy(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 191]);
         let len60_idx = 60 - 10; // min_fragment_length
-        assert!((arr[(0, len60_idx)] - 1.0).abs() < 1e-6);
-        assert_eq!(arr[(0, len60_idx - 1)], 0.0);
+        let row = arr.row(0);
+        for (length_index, &value) in row.iter().enumerate() {
+            let expected_value = if length_index == len60_idx { 1.0 } else { 0.0 };
+            assert!(
+                (value - expected_value).abs() < 1e-6,
+                "expected value {expected_value} at length index {length_index}, got {value}"
+            );
+        }
+        assert!((row.sum() - 1.0).abs() < 1e-6);
 
         Ok(())
     }
 
     #[test]
     fn counts_reference_lengths_size_single_window_misaligned_tiles() -> Result<()> {
+        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -140,13 +205,21 @@ mod tests_lengths_command {
         // Chromosome length 200, window size 500 -> one window
         assert_eq!(arr.shape(), &[1, 191]);
         let len60_idx = 60 - 10;
-        assert!((arr[(0, len60_idx)] - 1.0).abs() < 1e-6);
-        assert!((arr.sum() - 1.0).abs() < 1e-6);
+        let row = arr.row(0);
+        for (length_index, &value) in row.iter().enumerate() {
+            let expected_value = if length_index == len60_idx { 1.0 } else { 0.0 };
+            assert!(
+                (value - expected_value).abs() < 1e-6,
+                "expected value {expected_value} at length index {length_index}, got {value}"
+            );
+        }
+        assert!((row.sum() - 1.0).abs() < 1e-6);
         Ok(())
     }
 
     #[test]
     fn counts_reference_lengths_size_aligned_tiles_reduce_cross_tile_bins() -> Result<()> {
+        // Human verification status: unverified
         let bam = bam_from_specs(
             vec![("chr1".to_string(), 200)],
             vec![fixtures::paired_fragment(95, 40, 20)],
@@ -192,7 +265,10 @@ mod tests_lengths_command {
         // 10/40 to 110-120
         // 10/40 to 120-130
         //  5/40 to 130-140
-        // The three middle bins sit fully inside tile 1, but tile 0 still reaches them.
+        // Tile 0's fetch halo still sees the fragment start at 95, so tile 0 processes the
+        // fragment and assigns overlap mass into windows [100,110), [110,120), and [120,130)
+        // even though those windows begin in tile 1. The test verifies that the tile-1 pass
+        // does not double-count those middle windows.
         let len40_idx = 40 - 10;
         assert_eq!(arr.shape(), &[20, 41]);
         assert!((arr[(9, len40_idx)] - 0.125).abs() < 1e-6);
@@ -206,6 +282,7 @@ mod tests_lengths_command {
 
     #[test]
     fn counts_reference_lengths_bed_single_window() -> Result<()> {
+        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -244,13 +321,209 @@ mod tests_lengths_command {
         let arr: Array2<f64> = read_npy(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 191]);
         let len60_idx = 60 - 10;
-        assert!((arr[(0, len60_idx)] - 1.0).abs() < 1e-6);
-        assert!((arr.sum() - 1.0).abs() < 1e-6);
+        let row = arr.row(0);
+        for (length_index, &value) in row.iter().enumerate() {
+            let expected_value = if length_index == len60_idx { 1.0 } else { 0.0 };
+            assert!(
+                (value - expected_value).abs() < 1e-6,
+                "expected value {expected_value} at length index {length_index}, got {value}"
+            );
+        }
+        assert!((row.sum() - 1.0).abs() < 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn global_by_size_and_bed_full_chromosome_windows_match_exactly() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // `simple_inward_bam()` contains one fragment spanning [20, 80), length 60, on a single
+        // 200 bp chromosome.
+        //
+        // Compare three logically equivalent window specifications:
+        // - global mode
+        // - one by-size window [0, 200)
+        // - one BED window [0, 200)
+        //
+        // In all three cases there is only one logical window covering the full chromosome, so the
+        // fragment is fully assigned to that window. The expected output matrix is therefore:
+        // - shape [1, 191] for lengths 10..=200
+        // - one count in length bin 60
+        // - zero elsewhere
+        //
+        // The stronger contract is exact equality of the full arrays, not just equality of the
+        // occupied bin.
+        let bam = simple_inward_bam()?;
+        let global_out = TempDir::new()?;
+        let by_size_out = TempDir::new()?;
+        let by_bed_out = TempDir::new()?;
+        let bed_path = by_bed_out.path().join("whole_chr_window.bed");
+        fixtures::write_bed(&bed_path, &[("chr1", 0, 200, "whole_chr")])?;
+
+        let make_cfg = |out_dir: &std::path::Path, windows: WindowsArgs| {
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: out_dir.to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.set_windows(windows);
+            cfg.set_window_assignment(AssignToWindowArgs::default());
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            {
+                let frag = cfg.fragment_lengths_mut();
+                frag.min_fragment_length = 10;
+                frag.max_fragment_length = 200;
+            }
+            cfg
+        };
+
+        let global_cfg = make_cfg(global_out.path(), WindowsArgs::default());
+        let by_size_cfg = make_cfg(
+            by_size_out.path(),
+            WindowsArgs {
+                by_size: Some(200),
+                by_bed: None,
+            },
+        );
+        let by_bed_cfg = make_cfg(
+            by_bed_out.path(),
+            WindowsArgs {
+                by_size: None,
+                by_bed: Some(bed_path),
+            },
+        );
+
+        // Act
+        run(&global_cfg)?;
+        run(&by_size_cfg)?;
+        run(&by_bed_cfg)?;
+
+        // Assert
+        let read_counts = |dir: &TempDir| -> Result<Array2<f64>> {
+            let npy_path = dir.path().join(dot_join(&["", "length_counts.npy"]));
+            read_npy(&npy_path).map_err(Into::into)
+        };
+
+        let global_arr = read_counts(&global_out)?;
+        let by_size_arr = read_counts(&by_size_out)?;
+        let by_bed_arr = read_counts(&by_bed_out)?;
+
+        let len60_idx = 60 - 10;
+        assert_eq!(global_arr.shape(), &[1, 191]);
+        assert_eq!(global_arr, by_size_arr);
+        assert_eq!(global_arr, by_bed_arr);
+        assert!((global_arr[(0, len60_idx)] - 1.0).abs() < 1e-12);
+        assert!((global_arr.sum() - 1.0).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn lengths_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero()
+    -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // Use three fragments with distinct lengths and MAPQ:
+        // - [20, 80): length 60, MAPQ 60
+        // - [100, 170): length 70, MAPQ 0
+        // - [180, 260): length 80, MAPQ 30
+        //
+        // In global mode the output is one row of length counts, so the expected
+        // distributions are:
+        // - default `min_mapq = 30`: lengths 60 and 80 count once each
+        // - explicit `min_mapq = 30`: identical to default
+        // - explicit `min_mapq = 0`: lengths 60, 70, and 80 count once each
+        let fragment_with_mapq =
+            |start: i64, fragment_len: i64, mapq: u8| -> fixtures::FragmentSpec {
+                let mut fragment = fixtures::paired_fragment(start, fragment_len, 20);
+                fragment.forward.mapq = mapq;
+                fragment.reverse.mapq = mapq;
+                fragment
+            };
+        let bam = bam_from_specs(
+            vec![("chr1".to_string(), 300)],
+            vec![
+                fragment_with_mapq(20, 60, 60),
+                fragment_with_mapq(100, 70, 0),
+                fragment_with_mapq(180, 80, 30),
+            ],
+            Vec::new(),
+            "lengths_default_min_mapq",
+        )?;
+        let out_default = TempDir::new()?;
+        let out_thirty = TempDir::new()?;
+        let out_zero = TempDir::new()?;
+
+        let make_cfg = |out_dir: &std::path::Path, prefix: &str| {
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: out_dir.to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.output_prefix = prefix.to_string();
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.set_windows(WindowsArgs::default());
+            cfg.set_window_assignment(AssignToWindowArgs::default());
+            cfg.set_require_proper_pair(false);
+            {
+                let frag = cfg.fragment_lengths_mut();
+                frag.min_fragment_length = 50;
+                frag.max_fragment_length = 120;
+            }
+            cfg
+        };
+
+        let default_cfg = make_cfg(out_default.path(), "default");
+        let mut explicit_thirty_cfg = make_cfg(out_thirty.path(), "explicit_thirty");
+        explicit_thirty_cfg.set_min_mapq(30);
+        let mut explicit_zero_cfg = make_cfg(out_zero.path(), "explicit_zero");
+        explicit_zero_cfg.set_min_mapq(0);
+
+        // Act
+        run(&default_cfg)?;
+        run(&explicit_thirty_cfg)?;
+        run(&explicit_zero_cfg)?;
+
+        // Assert
+        let read_counts = |dir: &TempDir, prefix: &str| -> Result<Array2<f64>> {
+            let npy_path = dir.path().join(dot_join(&[prefix, "length_counts.npy"]));
+            read_npy(&npy_path).map_err(Into::into)
+        };
+
+        let default_arr = read_counts(&out_default, "default")?;
+        let explicit_thirty_arr = read_counts(&out_thirty, "explicit_thirty")?;
+        let explicit_zero_arr = read_counts(&out_zero, "explicit_zero")?;
+
+        let len60_idx = 60 - 50;
+        let len70_idx = 70 - 50;
+        let len80_idx = 80 - 50;
+
+        assert_eq!(default_arr.shape(), &[1, 71]);
+        assert_eq!(default_arr, explicit_thirty_arr);
+        assert!((default_arr[(0, len60_idx)] - 1.0).abs() < 1e-6);
+        assert_eq!(default_arr[(0, len70_idx)], 0.0);
+        assert!((default_arr[(0, len80_idx)] - 1.0).abs() < 1e-6);
+        assert!((default_arr.sum() - 2.0).abs() < 1e-6);
+
+        assert!((explicit_zero_arr[(0, len60_idx)] - 1.0).abs() < 1e-6);
+        assert!((explicit_zero_arr[(0, len70_idx)] - 1.0).abs() < 1e-6);
+        assert!((explicit_zero_arr[(0, len80_idx)] - 1.0).abs() < 1e-6);
+        assert!((explicit_zero_arr.sum() - 3.0).abs() < 1e-6);
+
         Ok(())
     }
 
     #[test]
     fn counts_reference_lengths_global_window_across_three_chromosomes() -> Result<()> {
+        // Human verification status: unverified
         let bam = three_chrom_length_fixture("lengths_three_chr_global")?;
         let out_dir = TempDir::new()?;
 
@@ -285,16 +558,96 @@ mod tests_lengths_command {
         // This fixture contributes one fragment of lengths 60, 80, and 100 across the three
         // chromosomes, so the single output row should contain all three counts.
         assert_eq!(arr.shape(), &[1, 111]);
-        assert!((arr[(0, 60 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr[(0, 80 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr[(0, 100 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr.sum() - 3.0).abs() < 1e-6);
+        let row = arr.row(0);
+        let occupied_indices = [60 - 10, 80 - 10, 100 - 10];
+        for (length_index, &value) in row.iter().enumerate() {
+            let expected_value = if occupied_indices.contains(&length_index) {
+                1.0
+            } else {
+                0.0
+            };
+            assert!(
+                (value - expected_value).abs() < 1e-6,
+                "expected value {expected_value} at length index {length_index}, got {value}"
+            );
+        }
+        assert!((row.sum() - 3.0).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
+    fn unpaired_single_read_matches_paired_fragment_length_count_for_same_span() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // Compare two representations of the same physical fragment span [20, 80):
+        // - paired-end fixture `simple_inward_bam()`
+        // - one unpaired read with aligned span [20, 80)
+        //
+        // In both commands:
+        // - paired mode defines fragment span as [forward.pos, reverse.end)
+        // - unpaired `reads_are_fragments` mode defines fragment span as [read.pos, read.end)
+        //
+        // So both inputs represent one fragment of length 60 and must produce the same global
+        // length distribution: one count in length bin 60, zero elsewhere.
+        let paired_bam = simple_inward_bam()?;
+        let unpaired_bam = single_read_fragment_bam("lengths_unpaired_single_read", 20, 60)?;
+        let paired_out = TempDir::new()?;
+        let unpaired_out = TempDir::new()?;
+
+        let make_cfg = |bam_path: &std::path::Path, out_dir: &std::path::Path, unpaired: bool| {
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam_path.to_path_buf(),
+                    output_dir: out_dir.to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.set_windows(WindowsArgs::default());
+            cfg.set_window_assignment(AssignToWindowArgs::default());
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            cfg.set_unpaired(cfdnalab::commands::cli_common::UnpairedArgs {
+                reads_are_fragments: unpaired,
+            });
+            {
+                let frag = cfg.fragment_lengths_mut();
+                frag.min_fragment_length = 10;
+                frag.max_fragment_length = 200;
+            }
+            cfg
+        };
+
+        let paired_cfg = make_cfg(&paired_bam.bam, paired_out.path(), false);
+        let unpaired_cfg = make_cfg(&unpaired_bam.bam, unpaired_out.path(), true);
+
+        // Act
+        run(&paired_cfg)?;
+        run(&unpaired_cfg)?;
+
+        // Assert
+        let paired_arr: Array2<f64> =
+            read_npy(paired_out.path().join(dot_join(&["", "length_counts.npy"])))?;
+        let unpaired_arr: Array2<f64> = read_npy(
+            unpaired_out
+                .path()
+                .join(dot_join(&["", "length_counts.npy"])),
+        )?;
+
+        let len60_idx = 60 - 10;
+        assert_eq!(paired_arr, unpaired_arr);
+        assert_eq!(paired_arr.shape(), &[1, 191]);
+        assert!((paired_arr[(0, len60_idx)] - 1.0).abs() < 1e-12);
+        assert!((paired_arr.sum() - 1.0).abs() < 1e-12);
 
         Ok(())
     }
 
     #[test]
     fn counts_reference_lengths_size_single_window_across_three_chromosomes() -> Result<()> {
+        // Human verification status: unverified
         let bam = three_chrom_length_fixture("lengths_three_chr_size")?;
         let out_dir = TempDir::new()?;
 
@@ -330,9 +683,21 @@ mod tests_lengths_command {
         let arr: Array2<f64> = read_npy(&npy_path)?;
 
         assert_eq!(arr.shape(), &[3, 111]);
-        assert!((arr[(0, 60 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr[(1, 80 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr[(2, 100 - 10)] - 1.0).abs() < 1e-6);
+        let expected_rows = [60 - 10, 80 - 10, 100 - 10];
+        for (row_index, row) in arr.outer_iter().enumerate() {
+            for (length_index, &value) in row.iter().enumerate() {
+                let expected_value = if length_index == expected_rows[row_index] {
+                    1.0
+                } else {
+                    0.0
+                };
+                assert!(
+                    (value - expected_value).abs() < 1e-6,
+                    "row {row_index}: expected value {expected_value} at length index {length_index}, got {value}"
+                );
+            }
+            assert!((row.sum() - 1.0).abs() < 1e-6);
+        }
         assert!((arr.sum() - 3.0).abs() < 1e-6);
 
         Ok(())
@@ -340,6 +705,7 @@ mod tests_lengths_command {
 
     #[test]
     fn counts_reference_lengths_bed_single_window_across_three_chromosomes() -> Result<()> {
+        // Human verification status: unverified
         let bam = three_chrom_length_fixture("lengths_three_chr_bed")?;
         let out_dir = TempDir::new()?;
         let bed_path = out_dir.path().join("windows_three_chr.bed");
@@ -383,9 +749,21 @@ mod tests_lengths_command {
         let arr: Array2<f64> = read_npy(&npy_path)?;
 
         assert_eq!(arr.shape(), &[3, 111]);
-        assert!((arr[(0, 60 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr[(1, 80 - 10)] - 1.0).abs() < 1e-6);
-        assert!((arr[(2, 100 - 10)] - 1.0).abs() < 1e-6);
+        let expected_rows = [60 - 10, 80 - 10, 100 - 10];
+        for (row_index, row) in arr.outer_iter().enumerate() {
+            for (length_index, &value) in row.iter().enumerate() {
+                let expected_value = if length_index == expected_rows[row_index] {
+                    1.0
+                } else {
+                    0.0
+                };
+                assert!(
+                    (value - expected_value).abs() < 1e-6,
+                    "row {row_index}: expected value {expected_value} at length index {length_index}, got {value}"
+                );
+            }
+            assert!((row.sum() - 1.0).abs() < 1e-6);
+        }
         assert!((arr.sum() - 3.0).abs() < 1e-6);
 
         Ok(())
@@ -393,6 +771,7 @@ mod tests_lengths_command {
 
     #[test]
     fn counts_apply_scaling_factors() -> Result<()> {
+        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -436,6 +815,7 @@ mod tests_lengths_command {
 
     #[test]
     fn counts_are_zero_when_blacklisted() -> Result<()> {
+        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -492,6 +872,7 @@ mod tests_lengths_command {
 
     #[test]
     fn applies_gc_correction_weighting_modes() -> Result<()> {
+        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let gc_dir = TempDir::new()?;
@@ -564,7 +945,384 @@ mod tests_lengths_command {
     }
 
     #[test]
+    fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_lengths()
+    -> Result<()> {
+        // Human verification status: unverified
+        let bam = simple_inward_bam()?;
+        let ref_twobit = simple_reference_twobit()?;
+        let out_dir = TempDir::new()?;
+        let gc_path =
+            build_real_neutral_gc_package(&bam.bam, &ref_twobit.path, out_dir.path(), 60)?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            drop_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+        cfg.set_gc_length_weighting(MarginalizeLengthsWeightingScheme::Equal);
+        {
+            let fragment_lengths = cfg.fragment_lengths_mut();
+            fragment_lengths.min_fragment_length = 60;
+            fragment_lengths.max_fragment_length = 60;
+        }
+
+        // Manual expectations:
+        // - `ref-gc-bias` is run for exactly one fragment length: 60 bp.
+        // - On the simple reference ("ACGT" repeated), every 60 bp fragment has GC%=50,
+        //   so the reference package has exactly one populated GC-by-length cell.
+        // - `gc-bias` on `simple_inward_bam` also places all cfDNA mass in that same single cell.
+        // - A 1x1 normalized cfDNA count divided by a 1x1 normalized reference count gives 1.0,
+        //   so the produced correction package is neutral.
+        // - `lengths` therefore receives GC weight 1.0 for the only fragment.
+        // - This test also constrains the counted length range to exactly 60 bp, so the output has
+        //   one row and one column, with the single cell equal to 1.0.
+        run(&cfg)?;
+
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.dim(), (1, 1));
+        assert!((arr[(0, 0)] - 1.0).abs() < 1e-12);
+        assert!((arr.sum() - 1.0).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
+    fn real_ref_gc_bias_then_gc_bias_package_changes_lengths_in_expected_direction() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // Use the same real non-neutral producer setup as the corresponding `gc-bias` test:
+        // - A/C split reference with pure-start BED windows on the reference side
+        // - one A-only sample fragment and nine C-only sample fragments, all length 10
+        //
+        // The resulting real correction package is hand-derived as:
+        // - weight 5.0   for the GC%=0 bin
+        // - weight 5/9   for the GC%=100 bin
+        //
+        // `lengths` counts fragment mass by length after applying GC weight. All ten fragments
+        // have the same length 10, so the only occupied output cell must be:
+        //   1 * 5.0 + 9 * (5/9) = 10.0
+        let reference = fixtures::twobit_from_sequences(
+            "lengths_real_non_neutral_reference",
+            vec![(
+                "chr1".to_string(),
+                format!("{}{}", "A".repeat(100), "C".repeat(100)),
+            )],
+        )?;
+        let starts = [10_i64, 110, 120, 130, 140, 150, 160, 170, 180, 190];
+        let fragments = starts
+            .into_iter()
+            .map(|start| fixtures::paired_fragment(start, 10, 5))
+            .collect();
+        let bam = bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            fragments,
+            Vec::new(),
+            "lengths_real_non_neutral_bam",
+        )?;
+        let out_dir = TempDir::new()?;
+        let gc_path = build_real_non_neutral_gc_package(
+            &bam.bam,
+            &reference.path,
+            out_dir.path(),
+            10,
+            "chr1\t0\t91\nchr1\t100\t191\n",
+            // Chromosome length 200 and fragment length 10 give 191 valid starts in total. Under
+            // the `ref-gc-bias` fit rule these BED rows still contribute balanced pure-A and
+            // pure-C support, so the expected downstream weights remain 5.0 and 5/9.
+            191,
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            drop_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(reference.path.clone()));
+        cfg.set_gc_length_weighting(MarginalizeLengthsWeightingScheme::Equal);
+        {
+            let fragment_lengths = cfg.fragment_lengths_mut();
+            fragment_lengths.min_fragment_length = 10;
+            fragment_lengths.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+
+        // Assert
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.dim(), (1, 1));
+        assert!(
+            (arr[(0, 0)] - 10.0).abs() < 1e-12,
+            "expected total weighted length-10 count 10.0, got {}",
+            arr[(0, 0)]
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "cmd_coverage_weights")]
+    #[test]
+    fn gc_file_and_scaling_tsv_weights_multiply_in_lengths() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // Producer BAM:
+        // - `simple_inward_bam()` contains one fragment [20, 80) on chr1.
+        // - With `coverage-weights` run at `bin_size = stride = 20`, the written scaling profile
+        //   is the identity over the covered stride bins:
+        //     [20,40): 1
+        //     [40,60): 1
+        //     [60,80): 1
+        //     everything else: 0
+        //
+        // Consumer BAM:
+        // - One 61 bp fragment [20, 81), so the only occupied length bin is 61.
+        //
+        // Scaling derivation in global `lengths` mode:
+        // - Global mode has exactly one count-window, so the count weight is 1.0.
+        // - For non-`count-overlap` assignment, `lengths` averages scaling over the full fragment:
+        //     [20,40): 20 bp at factor 1
+        //     [40,60): 20 bp at factor 1
+        //     [60,80): 20 bp at factor 1
+        //     [80,81):  1 bp at factor 0
+        // - Average scaling over the fragment is therefore:
+        //     (20 + 20 + 20 + 0) / 61 = 60 / 61.
+        //
+        // GC derivation:
+        // - Use the smallest valid GC package for the only supported fragment length 61:
+        //     length_edges = [61, 62]
+        //     gc_edges     = [0, 101]
+        //     correction_matrix = [[3.0]]
+        // - Every accepted fragment therefore gets GC weight 3.0.
+        //
+        // Final contract:
+        // - `lengths` multiplies scaling and GC correction for the fragment before incrementing the
+        //   length bin.
+        // - The only occupied cell must therefore be:
+        //     3.0 * (60 / 61) = 180 / 61.
+        let producer_bam = simple_inward_bam()?;
+        let consumer_bam = bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            vec![fragment_on_tid(0, 20, 61, 20)],
+            Vec::new(),
+            "lengths_gc_and_scaling_consumer",
+        )?;
+        let ref_twobit = simple_reference_twobit()?;
+        let out_dir = TempDir::new()?;
+        let weights_out_dir = out_dir.path().join("coverage_weights");
+        std::fs::create_dir_all(&weights_out_dir)?;
+        let scaling_cfg = make_simple_coverage_weights_config(&weights_out_dir, &producer_bam.bam);
+        let gc_path = out_dir.path().join("constant_gc_pkg.npz");
+        let package = GCCorrectionPackage {
+            version: GC_CORRECTION_SCHEMA_VERSION,
+            end_offset: 0,
+            length_edges: vec![61, 62],
+            gc_edges: vec![0, 101],
+            length_bin_frequencies: array![1.0_f64],
+            correction_matrix: array![[3.0_f64]],
+        };
+        package.write_npz(&gc_path)?;
+
+        // Act
+        run_coverage_weights(&scaling_cfg)?;
+        let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: consumer_bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_scaling_factors(Some(scaling_path));
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            drop_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 61;
+            frag.max_fragment_length = 61;
+        }
+
+        run(&cfg)?;
+
+        // Assert
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.shape(), &[1, 1]);
+
+        let expected = 180.0_f64 / 61.0_f64;
+        assert!(
+            (arr[(0, 0)] - expected).abs() <= 1e-9,
+            "expected weighted length count {expected}, got {}",
+            arr[(0, 0)]
+        );
+        assert!(
+            (arr.sum() - expected).abs() <= 1e-9,
+            "expected total mass {expected}, got {}",
+            arr.sum()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range() -> Result<()>
+    {
+        // Human verification status: unverified
+        // Arrange:
+        // `simple_inward_bam()` contains one fragment of length 60.
+        // Give `lengths` a GC package that only covers fragment lengths 10..=59:
+        //   length_edges = [10, 59]
+        // Restrict the command to [60, 60] so the shared GC loader must reject the package before
+        // any reference lookup or length counting begins.
+        let bam = simple_inward_bam()?;
+        let ref_twobit = simple_reference_twobit()?;
+        let out_dir = TempDir::new()?;
+        let gc_path = out_dir.path().join("gc_pkg_short.npz");
+        let package = GCCorrectionPackage {
+            version: GC_CORRECTION_SCHEMA_VERSION,
+            end_offset: 0,
+            length_edges: vec![10, 59],
+            gc_edges: vec![0, 101],
+            length_bin_frequencies: array![1.0_f64],
+            correction_matrix: array![[1.0_f64]],
+        };
+        package.write_npz(&gc_path)?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            drop_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 60;
+            frag.max_fragment_length = 60;
+        }
+
+        // Act
+        let err = run(&cfg).expect_err("out-of-range GC package should fail");
+
+        // Assert
+        let msg = err.to_string();
+        assert!(
+            msg.contains("fragment length range [60-60] is outside the range covered by the correction package [10-59]"),
+            "unexpected error message: {msg}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // Build a minimal GC correction package with an intentionally incompatible schema version.
+        // `lengths` should fail while loading the package, before any reference lookup or length
+        // counting begins.
+        let bam = simple_inward_bam()?;
+        let ref_twobit = simple_reference_twobit()?;
+        let out_dir = TempDir::new()?;
+        let gc_path = out_dir.path().join("gc_pkg_bad_version.npz");
+        let package = GCCorrectionPackage {
+            version: GC_CORRECTION_SCHEMA_VERSION + 1,
+            end_offset: 0,
+            length_edges: vec![10, 200],
+            gc_edges: vec![0, 101],
+            length_bin_frequencies: array![1.0_f64],
+            correction_matrix: array![[1.0_f64]],
+        };
+        package.write_npz(&gc_path)?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            drop_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+
+        // Act
+        let err = run(&cfg).expect_err("schema version mismatch should fail");
+
+        // Assert
+        let msg = err.to_string();
+        assert!(
+            msg.contains("GC correction package schema version mismatch"),
+            "unexpected error message: {msg}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn gc_requires_ref_2bit_errors() -> Result<()> {
+        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let gc_dir = TempDir::new()?;
         let gc_path = gc_dir.path().join("gc_pkg.npz");
@@ -605,6 +1363,7 @@ mod tests_lengths_command {
 
     #[test]
     fn gc_drop_invalid_reports_end_offset_validation_error() -> Result<()> {
+        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let gc_dir = TempDir::new()?;
@@ -652,6 +1411,7 @@ mod tests_lengths_command {
 
     #[test]
     fn indel_adjust_counts_adjusted_length_and_skip_drops() -> Result<()> {
+        // Human verification status: unverified
         let bam = indel_bam_fixture()?;
         let out_dir = TempDir::new()?;
 
@@ -713,6 +1473,7 @@ mod tests_lengths_command {
 
     #[test]
     fn indel_adjust_bins_by_adjusted_length_but_scales_over_reference_span() -> Result<()> {
+        // Human verification status: unverified
         let bam = indel_bam_fixture()?;
         let out_dir = TempDir::new()?;
         let scaling_path = out_dir.path().join("indel_adjust_scaling.tsv");
@@ -764,6 +1525,7 @@ mod tests_lengths_command {
 
     #[test]
     fn indel_adjust_blacklist_uses_full_reference_span_not_only_adjusted_length() -> Result<()> {
+        // Human verification status: unverified
         let bam = indel_bam_fixture()?;
         let out_dir = TempDir::new()?;
         let blacklist_path = out_dir.path().join("indel_adjust_blacklist.bed");
@@ -809,6 +1571,7 @@ mod tests_lengths_command {
 
     #[test]
     fn indel_adjust_blacklist_proportion_uses_reference_span_denominator() -> Result<()> {
+        // Human verification status: unverified
         let bam = indel_bam_fixture()?;
         let out_dir = TempDir::new()?;
         let blacklist_path = out_dir.path().join("indel_adjust_blacklist_proportion.bed");
@@ -878,6 +1641,7 @@ mod tests_lengths_command {
 
     #[test]
     fn scaling_overlapping_bins_error() -> Result<()> {
+        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -917,6 +1681,7 @@ mod tests_lengths_command {
 
     #[test]
     fn custom_output_prefix_is_used() -> Result<()> {
+        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -1019,6 +1784,7 @@ mod tests_lengths_command {
 
     #[test]
     fn multi_chrom_size_counts_mass_conserved() -> Result<()> {
+        // Human verification status: unverified
         let bam = multi_chrom_simple_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -1067,6 +1833,7 @@ mod tests_lengths_command {
 
     #[test]
     fn assignment_modes_produce_distinct_counts() -> Result<()> {
+        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let window_bp = 40u64;
         let len_idx = 60 - 10;
@@ -1128,6 +1895,235 @@ mod tests_lengths_command {
         assert!((arr_prop.sum() - 2.0).abs() < 1e-6);
         Ok(())
     }
+
+    #[test]
+    fn midpoint_assignment_on_even_length_boundary_counts_exactly_one_adjacent_window() -> Result<()>
+    {
+        // Arrange:
+        // One even-length fragment spans [40,50), so midpoint assignment randomizes between:
+        //   44 and 45
+        //
+        // Put the window boundary exactly between those two central bases:
+        //   window 0 -> [0,45)
+        //   window 1 -> [45,90)
+        //
+        // With `assign_by=midpoint`, exactly one of those windows must receive the fragment. This
+        // locks in the released contract near the midpoint seam without pretending the random tie
+        // chooses one side deterministically.
+        let bam = bam_from_specs(
+            vec![("chr1".to_string(), 100)],
+            vec![fixtures::paired_fragment(40, 10, 5)],
+            Vec::new(),
+            "lengths_even_midpoint_boundary",
+        )?;
+        let out_dir = TempDir::new()?;
+        let bed_path = out_dir.path().join("windows.bed");
+        write_bed(
+            &bed_path,
+            &[("chr1", 0, 45, "window0"), ("chr1", 45, 90, "window1")],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Midpoint,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+
+        // Assert
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.shape(), &[2, 1]);
+        assert!((arr.sum() - 1.0).abs() < 1e-6);
+        let first_window = arr[(0, 0)];
+        let second_window = arr[(1, 0)];
+        let is_valid_one_hot = (first_window - 1.0).abs() < 1e-6 && second_window.abs() < 1e-6
+            || first_window.abs() < 1e-6 && (second_window - 1.0).abs() < 1e-6;
+        assert!(
+            is_valid_one_hot,
+            "midpoint tie at the window edge must count exactly one adjacent window, got [{first_window}, {second_window}]"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn scaling_tsv_must_cover_requested_chromosome_end_in_lengths() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // `simple_inward_bam()` uses chr1 length 200.
+        // A valid scaling TSV must cover every requested chromosome contiguously from 0 up to
+        // the exact chromosome length. Here we intentionally stop at 100:
+        //   [0,100) factor 2.0
+        //
+        // The fragment itself lies inside that span, but the artifact is still malformed for the
+        // requested chromosome and should be rejected before any counting starts.
+        let bam = simple_inward_bam()?;
+        let out_dir = TempDir::new()?;
+        let scaling_path = out_dir.path().join("truncated_scaling.tsv");
+        write_scaling_factors(&scaling_path, &[("chr1", 0, 100, 2.0_f32)])?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_scaling_factors(Some(scaling_path));
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 200;
+        }
+
+        // Act
+        let err = run(&cfg).expect_err("truncated scaling TSV should fail");
+
+        // Assert:
+        // `lengths` wraps the shared loader with `load scaling factors`, so inspect the full
+        // error chain rather than only the top-level context string.
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("scaling TSV: bins on 'chr1' must end at chrom_len=200 (got end=100)"),
+            "unexpected error message: {msg}"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "cmd_coverage_weights")]
+    #[test]
+    fn coverage_weights_tsv_in_count_overlap_mode_uses_overlap_span_scaling() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // Producer BAM:
+        // - `simple_inward_bam()` has one fragment [20, 80).
+        // - Run `coverage-weights` with `bin_size = stride = 20`, so the overlap kernel is the
+        //   identity and the written scaling factors are:
+        //     [0,20):  0
+        //     [20,40): 1
+        //     [40,60): 1
+        //     [60,80): 1
+        //     [80,200): 0
+        //
+        // Consumer BAM:
+        // - One odd-length fragment [20, 81), length 61.
+        //
+        // Count window:
+        // - BED window [45, 56), length 11.
+        // - The fragment fully covers this window, so in `count-overlap` mode:
+        //     overlap fraction = 11 / 61.
+        //
+        // Crucial scaling derivation for `lengths` in `count-overlap` mode:
+        // - This mode averages scaling only over the fragment/window overlap span, not the full
+        //   fragment.
+        // - The overlap span is exactly [45, 56), which lies entirely inside scaling bin [40, 60)
+        //   with factor 1.
+        // - The scaling multiplier is therefore exactly 1.0.
+        // - Final contribution to length 61 is:
+        //     (overlap fraction) * (overlap-span scaling) = (11 / 61) * 1 = 11 / 61.
+        //
+        // If the implementation incorrectly averaged scaling over the full fragment, this test
+        // would instead observe:
+        //     (11 / 61) * (60 / 61),
+        // because the fragment spends 60 bp in factor-1 bins and 1 bp in a factor-0 bin.
+        let producer_bam = simple_inward_bam()?;
+        let consumer_bam = bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            vec![fragment_on_tid(0, 20, 61, 20)],
+            Vec::new(),
+            "lengths_scaling_consumer",
+        )?;
+        let out_dir = TempDir::new()?;
+        let weights_out_dir = out_dir.path().join("coverage_weights");
+        std::fs::create_dir_all(&weights_out_dir)?;
+        let scaling_cfg = make_simple_coverage_weights_config(&weights_out_dir, &producer_bam.bam);
+        let bed_path = out_dir.path().join("windows.bed");
+        write_bed(&bed_path, &[("chr1", 45, 56, "w0")])?;
+
+        // Act
+        run_coverage_weights(&scaling_cfg)?;
+        let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: consumer_bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::CountOverlap,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_scaling_factors(Some(scaling_path));
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 61;
+            frag.max_fragment_length = 61;
+        }
+
+        run(&cfg)?;
+
+        // Assert
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.shape(), &[1, 1]);
+
+        // `count-overlap` stores overlap fractions as `f32` before they are promoted back to
+        // `f64` in the lengths accumulator, so the stable contract here is the rounded `f32`
+        // value rather than ideal `f64` arithmetic on 11 / 61.
+        let expected = (11.0_f32 / 61.0_f32) as f64;
+        assert!(
+            (arr[(0, 0)] - expected).abs() <= 1e-12,
+            "expected weighted count {expected}, got {}",
+            arr[(0, 0)]
+        );
+        assert!(
+            (arr.sum() - expected).abs() <= 1e-12,
+            "expected total mass {expected}, got {}",
+            arr.sum()
+        );
+        Ok(())
+    }
 }
 
 mod tests_lengths_tiling_reducer {
@@ -1157,6 +2153,7 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_accepts_contained_only() -> Result<()> {
+        // Human verification status: unverified
         let tmp = TempDir::new()?;
         let dir = tmp.path();
         let template = template_counts();
@@ -1174,6 +2171,7 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_counts_multiple_crossing_tiles() -> Result<()> {
+        // Human verification status: unverified
         let tmp = TempDir::new()?;
         let dir = tmp.path();
         let template = template_counts();
@@ -1194,6 +2192,7 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_combines_contained_and_cross() -> Result<()> {
+        // Human verification status: unverified
         let tmp = TempDir::new()?;
         let dir = tmp.path();
         let template = template_counts();
@@ -1213,6 +2212,7 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_errors_when_contribution_missing() {
+        // Human verification status: unverified
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
         let template = template_counts();
@@ -1225,6 +2225,7 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_errors_on_mismatched_counts() {
+        // Human verification status: unverified
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
         let template = template_counts();
@@ -1239,6 +2240,7 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_errors_on_counts_width_mismatch() {
+        // Human verification status: unverified
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
         let template = template_counts(); // width 1
@@ -1261,6 +2263,7 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_errors_on_non_contiguous_counts_rows() {
+        // Human verification status: unverified
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
         let template = LengthCounts::new(10, 11); // two-length template
@@ -1285,6 +2288,7 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_ignores_files_from_other_chromosomes() -> Result<()> {
+        // Human verification status: unverified
         let tmp = TempDir::new()?;
         let dir = tmp.path();
         let template = template_counts();
@@ -1305,6 +2309,7 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn write_partials_rejects_mismatched_contained() {
+        // Human verification status: unverified
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
         let template = template_counts();
@@ -1318,6 +2323,7 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_errors_on_out_of_bounds_partial_idx() {
+        // Human verification status: unverified
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
         let template = template_counts();
@@ -1334,6 +2340,7 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_errors_on_out_of_bounds_cross_idx() {
+        // Human verification status: unverified
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
         let template = template_counts();
@@ -1346,6 +2353,7 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_separates_windows() -> Result<()> {
+        // Human verification status: unverified
         let tmp = TempDir::new()?;
         let dir = tmp.path();
         let template = template_counts();
@@ -1367,6 +2375,7 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn write_partials_skips_empty() -> Result<()> {
+        // Human verification status: unverified
         let tmp = TempDir::new()?;
         let dir = tmp.path();
         let template = template_counts();
@@ -1381,6 +2390,7 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn write_cross_skips_empty() -> Result<()> {
+        // Human verification status: unverified
         let tmp = TempDir::new()?;
         let dir = tmp.path();
         let res = write_cross_npy(dir, "cross", "chr1", 0, &[])?;
@@ -1411,10 +2421,11 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_size_mode_clamps_to_halo_and_chrom() {
+        // Human verification status: unverified
         // Tile: core 50-150, fetch 30-200 (halo 20 left, 50 right), chrom len 180
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 50, 150, 30, 200)
             .expect("test tile should be valid");
-        let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(100), 180)
+        let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(100), 180, 0)
             .expect("span expected")
             .expect("fetch span expected");
         // Window span touching core: 0..200, after halo clamp -> 30..180
@@ -1424,6 +2435,7 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn build_tiles_aligns_to_bin_when_divisible() {
+        // Human verification status: unverified
         let mut contigs = FxHashMap::default();
         contigs.insert("chr1".to_string(), (0, 100u32));
         let contigs = Contigs { contigs };
@@ -1443,6 +2455,7 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn build_tiles_not_aligned_when_too_few_bins() {
+        // Human verification status: unverified
         let mut contigs = FxHashMap::default();
         contigs.insert("chr1".to_string(), (0, 50u32));
         let contigs = Contigs { contigs };
@@ -1456,9 +2469,10 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_for_tile_global_clamps_to_chrom() {
+        // Human verification status: unverified
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 0, 50, 0, 200)
             .expect("test tile should be valid");
-        let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Global, 120)
+        let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Global, 120, 0)
             .expect("span")
             .expect("fetch span expected");
         assert_eq!(span.start(), 0);
@@ -1467,6 +2481,7 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_for_tile_bed_with_overlap() {
+        // Human verification status: unverified
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 100, 160, 80, 200)
             .expect("test tile should be valid");
         let windows = indexed_windows(&[(90, 110, 0), (150, 170, 1), (250, 300, 2)]);
@@ -1480,6 +2495,7 @@ mod tests_lengths_tiling_helpers {
             Some(&windows),
             &WindowSpec::Bed(PathBuf::from("dummy")),
             500,
+            0,
         )
         .expect("span")
         .expect("fetch span expected");
@@ -1490,6 +2506,7 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_bed_none_when_no_overlap() {
+        // Human verification status: unverified
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 100, 150, 80, 170)
             .expect("test tile should be valid");
         // No windows overlap tile
@@ -1504,6 +2521,7 @@ mod tests_lengths_tiling_helpers {
             Some(&windows),
             &WindowSpec::Bed(PathBuf::from("dummy")),
             200,
+            0,
         )
         .expect("fetch span computation should succeed");
         assert!(res.is_none());
@@ -1511,15 +2529,17 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_size_mode_none_when_tile_right_of_chromosome() {
+        // Human verification status: unverified
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 250, 260, 230, 270)
             .expect("test tile should be valid");
-        let res = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(50), 200)
+        let res = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(50), 200, 0)
             .expect("fetch span computation should succeed");
         assert!(res.is_none());
     }
 
     #[test]
     fn tile_constructor_rejects_empty_core() {
+        // Human verification status: unverified
         let err = Tile::from_coords("chr1".to_string(), 0, 0, 100, 100, 80, 120).unwrap_err();
         assert!(format!("{err}").contains("interval end (100) must be greater than start (100)"));
     }

@@ -7,6 +7,7 @@ use tempfile::TempDir;
 
 #[test]
 fn renders_constant_heatmap_when_values_are_flat() -> Result<()> {
+    // Human verification status: unverified
     // Arrange: create a flat matrix and matching edges
     let values = Array2::from_elem((2, 3), 0.0);
     let x_edges: Vec<f64> = (0..=3).map(|idx| idx as f64).collect();
