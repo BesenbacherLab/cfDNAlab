@@ -1,8 +1,8 @@
 mod fixtures;
 
 mod tests_gc_bias {
-    use anyhow::Result;
     use crate::fixtures;
+    use anyhow::Result;
     use fxhash::FxHashMap;
     use ndarray::array;
     use ndarray_npy::{NpzWriter, read_npy};
@@ -13,14 +13,14 @@ mod tests_gc_bias {
         gc_bias::{
             GC_CORRECTION_SCHEMA_VERSION,
             binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
-            counting::gc_percent_widths,
             config::GCConfig,
             correct::{GCCorrector, LengthAgnosticGCCorrector, MarginalizeLengthsWeightingScheme},
+            counting::gc_percent_widths,
             gc_bias::{interpolate_masked_corrections, run as run_gc_bias},
             load_reference_bias::load_reference_gc_data,
             outliers::{
-                OutlierAction, OutlierRule, OutlierScope, OutlierStats,
-                apply_outliers_to_matrix, interpolated_quantile, outlier_bounds,
+                OutlierAction, OutlierRule, OutlierScope, OutlierStats, apply_outliers_to_matrix,
+                interpolated_quantile, outlier_bounds,
             },
             package::GCCorrectionPackage,
             support_masking::build_extreme_bins_support_mask,
@@ -351,7 +351,8 @@ mod tests_gc_bias {
     }
 
     #[test]
-    fn gc_bias_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
+    fn gc_bias_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero()
+    -> Result<()> {
         // Human verification status: unverified
         // Arrange:
         // Use the repeated 256 bp ACGT reference from `simple_reference_twobit()`.
@@ -630,9 +631,8 @@ mod tests_gc_bias {
             baseline_out_dir.path(),
         );
         run_gc_bias(&baseline_cfg)?;
-        let baseline_package = GCCorrectionPackage::from_file(
-            baseline_out_dir.path().join("gc_bias_correction.npz"),
-        )?;
+        let baseline_package =
+            GCCorrectionPackage::from_file(baseline_out_dir.path().join("gc_bias_correction.npz"))?;
         assert_eq!(baseline_package.correction_matrix.dim(), (1, 1));
         assert!((baseline_package.correction_matrix[(0, 0)] - 1.0).abs() < 1e-12);
 
@@ -677,7 +677,8 @@ mod tests_gc_bias {
         write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 2)?;
 
         let out_dir = TempDir::new()?;
-        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        let mut cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
         cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,
@@ -686,7 +687,8 @@ mod tests_gc_bias {
 
         // Act
         run_gc_bias(&cfg)?;
-        let package = GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+        let package =
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
 
         // Assert:
         // The reference is `ACGT` repeated and the only cfDNA fragment spans [20,80). With
@@ -710,7 +712,8 @@ mod tests_gc_bias {
     }
 
     #[test]
-    fn overlapping_and_touching_bed_windows_does_not_match_explicitly_merged_gc_bias_run() -> Result<()> {
+    fn overlapping_and_touching_bed_windows_does_not_match_explicitly_merged_gc_bias_run()
+    -> Result<()> {
         // Human verification status: unverified
         // Arrange:
         // Build one chromosome with a sharp A->C transition:
@@ -782,8 +785,12 @@ mod tests_gc_bias {
         )?;
         std::fs::write(&merged_bed, "chr1\t0\t250000\n")?;
 
-        let mut split_cfg =
-            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), split_out.path());
+        let mut split_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            split_out.path(),
+        );
         split_cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: Some(split_bed),
@@ -797,8 +804,12 @@ mod tests_gc_bias {
         split_cfg.set_num_extreme_gc_bins(0);
         split_cfg.set_num_short_length_bins(0);
 
-        let mut merged_cfg =
-            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), merged_out.path());
+        let mut merged_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            merged_out.path(),
+        );
         merged_cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: Some(merged_bed),
@@ -855,17 +866,18 @@ mod tests_gc_bias {
             }
         }
 
-        let split_pkg = GCCorrectionPackage::from_file(
-            split_out.path().join("gc_bias_correction.npz"),
-        )?;
-        let merged_pkg = GCCorrectionPackage::from_file(
-            merged_out.path().join("gc_bias_correction.npz"),
-        )?;
+        let split_pkg =
+            GCCorrectionPackage::from_file(split_out.path().join("gc_bias_correction.npz"))?;
+        let merged_pkg =
+            GCCorrectionPackage::from_file(merged_out.path().join("gc_bias_correction.npz"))?;
         assert_eq!(split_pkg.version, merged_pkg.version);
         assert_eq!(split_pkg.end_offset, merged_pkg.end_offset);
         assert_eq!(split_pkg.length_edges, merged_pkg.length_edges);
         assert_eq!(split_pkg.gc_edges, merged_pkg.gc_edges);
-        assert_eq!(split_pkg.length_bin_frequencies, merged_pkg.length_bin_frequencies);
+        assert_eq!(
+            split_pkg.length_bin_frequencies,
+            merged_pkg.length_bin_frequencies
+        );
         assert_ne!(split_pkg.correction_matrix, merged_pkg.correction_matrix);
 
         Ok(())
@@ -921,8 +933,12 @@ mod tests_gc_bias {
         let aligned_out = TempDir::new()?;
         let misaligned_out = TempDir::new()?;
 
-        let mut aligned_cfg =
-            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), aligned_out.path());
+        let mut aligned_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            aligned_out.path(),
+        );
         aligned_cfg.set_windows(GCWindowsArgs {
             by_size: Some(100_000),
             by_bed: None,
@@ -930,8 +946,12 @@ mod tests_gc_bias {
         });
         aligned_cfg.set_tile_size(1_000_000);
 
-        let mut misaligned_cfg =
-            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), misaligned_out.path());
+        let mut misaligned_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            misaligned_out.path(),
+        );
         misaligned_cfg.set_windows(GCWindowsArgs {
             by_size: Some(100_000),
             by_bed: None,
@@ -975,7 +995,10 @@ mod tests_gc_bias {
             aligned_pkg.length_bin_frequencies,
             misaligned_pkg.length_bin_frequencies
         );
-        assert_eq!(aligned_pkg.correction_matrix, misaligned_pkg.correction_matrix);
+        assert_eq!(
+            aligned_pkg.correction_matrix,
+            misaligned_pkg.correction_matrix
+        );
         assert_eq!(aligned_pkg.version, GC_CORRECTION_SCHEMA_VERSION);
         assert_eq!(aligned_pkg.end_offset, 0);
         assert_eq!(aligned_pkg.length_edges, vec![10, 10]);
@@ -1027,17 +1050,14 @@ mod tests_gc_bias {
         )?;
         let bam = fixtures::bam_from_specs(
             vec![("chr1".to_string(), 100), ("chr2".to_string(), 100)],
-            vec![
-                fixtures::paired_fragment(10, 10, 5),
-                {
-                    let mut fragment = fixtures::paired_fragment(10, 10, 5);
-                    fragment.forward.tid = 1;
-                    fragment.reverse.tid = 1;
-                    fragment.forward.mate_tid = Some(1);
-                    fragment.reverse.mate_tid = Some(1);
-                    fragment
-                },
-            ],
+            vec![fixtures::paired_fragment(10, 10, 5), {
+                let mut fragment = fixtures::paired_fragment(10, 10, 5);
+                fragment.forward.tid = 1;
+                fragment.reverse.tid = 1;
+                fragment.forward.mate_tid = Some(1);
+                fragment.reverse.mate_tid = Some(1);
+                fragment
+            }],
             Vec::new(),
             "gc_bias_multi_chr_bam",
         )?;
@@ -1212,8 +1232,11 @@ mod tests_gc_bias {
         // Assert
         let multi_tile_avg: ndarray::Array2<f64> =
             read_npy(multi_tile_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
-        let single_tile_avg: ndarray::Array2<f64> =
-            read_npy(single_tile_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        let single_tile_avg: ndarray::Array2<f64> = read_npy(
+            single_tile_out
+                .path()
+                .join("gc_bias.avg_cfdna_counts.0.npy"),
+        )?;
         assert_eq!(multi_tile_avg, single_tile_avg);
         assert_eq!(multi_tile_avg.dim(), (1, 101));
         for (gc_pct, &value) in multi_tile_avg.row(0).iter().enumerate() {
@@ -1231,9 +1254,8 @@ mod tests_gc_bias {
 
         let multi_tile_pkg =
             GCCorrectionPackage::from_file(multi_tile_out.path().join("gc_bias_correction.npz"))?;
-        let single_tile_pkg = GCCorrectionPackage::from_file(
-            single_tile_out.path().join("gc_bias_correction.npz"),
-        )?;
+        let single_tile_pkg =
+            GCCorrectionPackage::from_file(single_tile_out.path().join("gc_bias_correction.npz"))?;
         assert_eq!(multi_tile_pkg.version, single_tile_pkg.version);
         assert_eq!(multi_tile_pkg.end_offset, single_tile_pkg.end_offset);
         assert_eq!(multi_tile_pkg.length_edges, single_tile_pkg.length_edges);
@@ -1242,7 +1264,10 @@ mod tests_gc_bias {
             multi_tile_pkg.length_bin_frequencies,
             single_tile_pkg.length_bin_frequencies
         );
-        assert_eq!(multi_tile_pkg.correction_matrix, single_tile_pkg.correction_matrix);
+        assert_eq!(
+            multi_tile_pkg.correction_matrix,
+            single_tile_pkg.correction_matrix
+        );
         assert_eq!(multi_tile_pkg.version, GC_CORRECTION_SCHEMA_VERSION);
         assert_eq!(multi_tile_pkg.end_offset, 0);
         assert_eq!(multi_tile_pkg.length_edges, vec![10, 10]);
@@ -1257,8 +1282,8 @@ mod tests_gc_bias {
     }
 
     #[test]
-    fn touching_bed_windows_match_by_size_counts_and_default_single_length_packages()
-    -> Result<()> {
+    fn touching_bed_windows_match_by_size_counts_and_default_single_length_packages() -> Result<()>
+    {
         // Human verification status: unverified
         // Arrange:
         // Use the same two-window A/C genome as the default-window test, but compare two
@@ -1309,8 +1334,12 @@ mod tests_gc_bias {
         let bed_path = by_bed_out.path().join("windows.bed");
         std::fs::write(&bed_path, "chr1\t0\t100000\nchr1\t100000\t200000\n")?;
 
-        let mut by_size_cfg =
-            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), by_size_out.path());
+        let mut by_size_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            by_size_out.path(),
+        );
         by_size_cfg.set_windows(GCWindowsArgs {
             by_size: Some(100_000),
             by_bed: None,
@@ -1318,8 +1347,12 @@ mod tests_gc_bias {
         });
         by_size_cfg.set_tile_size(95_000);
 
-        let mut by_bed_cfg =
-            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), by_bed_out.path());
+        let mut by_bed_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            by_bed_out.path(),
+        );
         by_bed_cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: Some(bed_path),
@@ -1492,7 +1525,8 @@ mod tests_gc_bias {
         };
 
         let out_dir = TempDir::new()?;
-        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        let mut cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
         cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,
@@ -1530,7 +1564,8 @@ mod tests_gc_bias {
             }
         }
 
-        let package = GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+        let package =
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
         assert_eq!(package.length_edges, vec![10, 10]);
         assert_eq!(package.gc_edges, vec![0, 1, 100]);
         assert_eq!(package.correction_matrix.dim(), (1, 2));
@@ -1632,7 +1667,8 @@ mod tests_gc_bias {
         };
 
         let out_dir = TempDir::new()?;
-        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        let mut cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
         cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,
@@ -1756,7 +1792,8 @@ mod tests_gc_bias {
         };
 
         let out_dir = TempDir::new()?;
-        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        let mut cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
         cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,
@@ -1771,8 +1808,11 @@ mod tests_gc_bias {
         run_gc_bias(&cfg)?;
 
         // Assert
-        let normalized_counts: ndarray::Array2<f64> =
-            read_npy(out_dir.path().join("gc_bias.normalized_avg_cfdna_counts.1.npy"))?;
+        let normalized_counts: ndarray::Array2<f64> = read_npy(
+            out_dir
+                .path()
+                .join("gc_bias.normalized_avg_cfdna_counts.1.npy"),
+        )?;
         assert_eq!(normalized_counts.dim(), (1, 101));
         for (gc_pct, &value) in normalized_counts.row(0).iter().enumerate() {
             let expected_value = if matches!(gc_pct, 0 | 50 | 100) {
@@ -1787,15 +1827,14 @@ mod tests_gc_bias {
             );
         }
 
-        let interpolated_counts: ndarray::Array2<f64> =
-            read_npy(out_dir.path().join("gc_bias.interpolated_cfdna_counts.2.npy"))?;
+        let interpolated_counts: ndarray::Array2<f64> = read_npy(
+            out_dir
+                .path()
+                .join("gc_bias.interpolated_cfdna_counts.2.npy"),
+        )?;
         assert_eq!(interpolated_counts.dim(), (1, 101));
         for (gc_pct, &value) in interpolated_counts.row(0).iter().enumerate() {
-            assert_gc_command_close(
-                value,
-                1.0,
-                &format!("interpolated counts at GC% {gc_pct}"),
-            );
+            assert_gc_command_close(value, 1.0, &format!("interpolated counts at GC% {gc_pct}"));
         }
 
         Ok(())
@@ -1824,7 +1863,8 @@ mod tests_gc_bias {
         write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
 
         let out_dir = TempDir::new()?;
-        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        let mut cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
         cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,
@@ -1864,8 +1904,11 @@ mod tests_gc_bias {
 
         let avg_counts: ndarray::Array2<f64> =
             read_npy(out_dir.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
-        let normalized_avg: ndarray::Array2<f64> =
-            read_npy(out_dir.path().join("gc_bias.normalized_avg_cfdna_counts.1.npy"))?;
+        let normalized_avg: ndarray::Array2<f64> = read_npy(
+            out_dir
+                .path()
+                .join("gc_bias.normalized_avg_cfdna_counts.1.npy"),
+        )?;
         let reference_data = load_reference_gc_data(ref_gc_dir.path())?;
 
         // The support mask defines exactly which cells contribute to the mean-scaling denominator.
@@ -1880,7 +1923,10 @@ mod tests_gc_bias {
                 supported_count += 1;
             }
         }
-        assert!(supported_count > 0, "fixture must have supported reference bins");
+        assert!(
+            supported_count > 0,
+            "fixture must have supported reference bins"
+        );
         let supported_mean = supported_sum / supported_count as f64;
         assert!(
             supported_mean > 0.0,
@@ -1900,7 +1946,8 @@ mod tests_gc_bias {
     }
 
     #[test]
-    fn min_window_acgt_pct_excludes_mostly_blacklisted_window_but_keeps_clean_window() -> Result<()> {
+    fn min_window_acgt_pct_excludes_mostly_blacklisted_window_but_keeps_clean_window() -> Result<()>
+    {
         // Human verification status: unverified
         // Arrange:
         // Two explicit 100 bp windows on a 200 bp chromosome:
@@ -2005,8 +2052,11 @@ mod tests_gc_bias {
         // Assert
         let threshold0_counts: ndarray::Array2<f64> =
             read_npy(threshold0_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
-        let threshold20_counts: ndarray::Array2<f64> =
-            read_npy(threshold20_out.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        let threshold20_counts: ndarray::Array2<f64> = read_npy(
+            threshold20_out
+                .path()
+                .join("gc_bias.avg_cfdna_counts.0.npy"),
+        )?;
         assert_eq!(threshold0_counts.dim(), (1, 101));
         assert_eq!(threshold20_counts.dim(), (1, 101));
 
@@ -2081,19 +2131,18 @@ mod tests_gc_bias {
         std::fs::write(&split_b, "chr1\t140\t160\n")?;
         std::fs::write(&merged, "chr1\t120\t160\n")?;
 
-        let make_cfg = |output_dir: &std::path::Path,
-                        blacklist: Vec<std::path::PathBuf>|
-         -> GCConfig {
-            let mut cfg =
-                make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), output_dir);
-            cfg.set_windows(GCWindowsArgs {
-                by_size: None,
-                by_bed: None,
-                global: true,
-            });
-            cfg.set_blacklist(Some(blacklist));
-            cfg
-        };
+        let make_cfg =
+            |output_dir: &std::path::Path, blacklist: Vec<std::path::PathBuf>| -> GCConfig {
+                let mut cfg =
+                    make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), output_dir);
+                cfg.set_windows(GCWindowsArgs {
+                    by_size: None,
+                    by_bed: None,
+                    global: true,
+                });
+                cfg.set_blacklist(Some(blacklist));
+                cfg
+            };
 
         // Act
         run_gc_bias(&make_cfg(
@@ -2134,7 +2183,10 @@ mod tests_gc_bias {
             split_package.length_bin_frequencies,
             merged_package.length_bin_frequencies
         );
-        assert_eq!(split_package.correction_matrix, merged_package.correction_matrix);
+        assert_eq!(
+            split_package.correction_matrix,
+            merged_package.correction_matrix
+        );
         assert_eq!(split_package.version, GC_CORRECTION_SCHEMA_VERSION);
         assert_eq!(split_package.end_offset, 0);
         assert_eq!(split_package.length_edges, vec![60, 60]);
@@ -2626,7 +2678,8 @@ mod tests_gc_bias {
         Ok(())
     }
 
-    fn make_two_length_outlier_fixture() -> Result<(fixtures::TwoBitFixture, fixtures::BamFixture)> {
+    fn make_two_length_outlier_fixture() -> Result<(fixtures::TwoBitFixture, fixtures::BamFixture)>
+    {
         let reference = fixtures::twobit_from_sequences(
             "gc_bias_two_length_outlier_reference",
             vec![(
@@ -2670,7 +2723,8 @@ mod tests_gc_bias {
         Ok((reference, bam))
     }
 
-    fn make_two_length_low_mass_tail_fixture() -> Result<(fixtures::TwoBitFixture, fixtures::BamFixture)> {
+    fn make_two_length_low_mass_tail_fixture()
+    -> Result<(fixtures::TwoBitFixture, fixtures::BamFixture)> {
         let reference = fixtures::twobit_from_sequences(
             "gc_bias_two_length_low_mass_tail_reference",
             vec![(
@@ -2889,7 +2943,8 @@ mod tests_gc_bias {
     }
 
     #[test]
-    fn quantile_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()> {
+    fn quantile_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()>
+    {
         // Human verification status: unverified
         // Arrange:
         // Use the synthetic two-length reference package and BAM fixture defined above.
@@ -2932,8 +2987,12 @@ mod tests_gc_bias {
         let out_none = TempDir::new()?;
         let out_quantile = TempDir::new()?;
 
-        let mut none_cfg =
-            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_none.path());
+        let mut none_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            out_none.path(),
+        );
         none_cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,
@@ -2946,8 +3005,12 @@ mod tests_gc_bias {
         none_cfg.set_num_short_length_bins(0);
         none_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
 
-        let mut quantile_cfg =
-            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_quantile.path());
+        let mut quantile_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            out_quantile.path(),
+        );
         quantile_cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,
@@ -3000,8 +3063,16 @@ mod tests_gc_bias {
             5.0 / 7.0,
             "quantile row0 col1",
         );
-        assert_gc_command_close(package_quantile.correction_matrix[(1, 0)], 1.0, "quantile row1 col0");
-        assert_gc_command_close(package_quantile.correction_matrix[(1, 1)], 1.0, "quantile row1 col1");
+        assert_gc_command_close(
+            package_quantile.correction_matrix[(1, 0)],
+            1.0,
+            "quantile row1 col0",
+        );
+        assert_gc_command_close(
+            package_quantile.correction_matrix[(1, 1)],
+            1.0,
+            "quantile row1 col1",
+        );
 
         Ok(())
     }
@@ -3054,8 +3125,7 @@ mod tests_gc_bias {
             cfg.set_min_gc_bin_mass(1.0);
             cfg.set_num_extreme_gc_bins(0);
             cfg.set_num_short_length_bins(0);
-            cfg.outlier_method =
-                cfdnalab::commands::gc_bias::config::OutlierMethodArg::Quantile;
+            cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::Quantile;
             cfg.outlier_quantiles = vec![0.25, 0.75];
             cfg
         };
@@ -3090,17 +3160,37 @@ mod tests_gc_bias {
             5.0 / 7.0,
             "per-length quantile row0 col1",
         );
-        assert_gc_command_close(package_per_length.correction_matrix[(1, 0)], 1.0, "per-length quantile row1 col0");
-        assert_gc_command_close(package_per_length.correction_matrix[(1, 1)], 1.0, "per-length quantile row1 col1");
+        assert_gc_command_close(
+            package_per_length.correction_matrix[(1, 0)],
+            1.0,
+            "per-length quantile row1 col0",
+        );
+        assert_gc_command_close(
+            package_per_length.correction_matrix[(1, 1)],
+            1.0,
+            "per-length quantile row1 col1",
+        );
 
-        assert_gc_command_close(package_global.correction_matrix[(0, 0)], 1.25, "global quantile row0 col0");
+        assert_gc_command_close(
+            package_global.correction_matrix[(0, 0)],
+            1.25,
+            "global quantile row0 col0",
+        );
         assert_gc_command_close(
             package_global.correction_matrix[(0, 1)],
             5.0 / 6.0,
             "global quantile row0 col1",
         );
-        assert_gc_command_close(package_global.correction_matrix[(1, 0)], 1.0, "global quantile row1 col0");
-        assert_gc_command_close(package_global.correction_matrix[(1, 1)], 1.0, "global quantile row1 col1");
+        assert_gc_command_close(
+            package_global.correction_matrix[(1, 0)],
+            1.0,
+            "global quantile row1 col0",
+        );
+        assert_gc_command_close(
+            package_global.correction_matrix[(1, 1)],
+            1.0,
+            "global quantile row1 col1",
+        );
 
         Ok(())
     }
@@ -3137,7 +3227,8 @@ mod tests_gc_bias {
         write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
 
         let out_dir = TempDir::new()?;
-        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        let mut cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
         cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,
@@ -3156,7 +3247,8 @@ mod tests_gc_bias {
         run_gc_bias(&cfg)?;
 
         // Assert
-        let package = GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+        let package =
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
         assert_eq!(package.correction_matrix.dim(), (2, 2));
         assert_eq!(package.gc_edges, vec![0, 1, 100]);
 
@@ -3169,7 +3261,8 @@ mod tests_gc_bias {
     }
 
     #[test]
-    fn stddev_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()> {
+    fn stddev_outlier_method_changes_real_command_correction_matrix_in_expected_way() -> Result<()>
+    {
         // Human verification status: unverified
         // Arrange:
         // Reuse the same raw correction matrix as the other run-level outlier tests:
@@ -3199,7 +3292,8 @@ mod tests_gc_bias {
         write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
 
         let out_dir = TempDir::new()?;
-        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        let mut cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
         cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,
@@ -3218,7 +3312,8 @@ mod tests_gc_bias {
         run_gc_bias(&cfg)?;
 
         // Assert
-        let package = GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+        let package =
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
         assert_eq!(package.correction_matrix.dim(), (2, 2));
         assert_eq!(package.gc_edges, vec![0, 1, 100]);
 
@@ -3271,7 +3366,8 @@ mod tests_gc_bias {
         write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
 
         let out_dir = TempDir::new()?;
-        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        let mut cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
         cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,
@@ -3290,7 +3386,8 @@ mod tests_gc_bias {
         run_gc_bias(&cfg)?;
 
         // Assert
-        let package = GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+        let package =
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
         assert_eq!(package.correction_matrix.dim(), (2, 2));
         assert_eq!(package.gc_edges, vec![0, 1, 100]);
 
@@ -3375,7 +3472,8 @@ mod tests_gc_bias {
         write_two_bin_reference_gc_package(ref_gc_dir.path(), (10, 10))?;
 
         let out_dir = TempDir::new()?;
-        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        let mut cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
         cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,
@@ -3394,7 +3492,8 @@ mod tests_gc_bias {
         run_gc_bias(&cfg)?;
 
         // Assert
-        let package = GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+        let package =
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
         assert_eq!(package.correction_matrix.dim(), (1, 2));
         assert_eq!(package.gc_edges, vec![0, 1, 100]);
         assert!((package.correction_matrix[(0, 0)] - 10.49).abs() < 1e-12);
@@ -3435,7 +3534,8 @@ mod tests_gc_bias {
         write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
 
         let out_dir = TempDir::new()?;
-        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        let mut cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
         cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,
@@ -3452,7 +3552,8 @@ mod tests_gc_bias {
         run_gc_bias(&cfg)?;
 
         // Assert
-        let package = GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+        let package =
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
         assert_eq!(package.correction_matrix.dim(), (1, 2));
         assert_eq!(package.length_edges, vec![10, 11]);
         assert_eq!(package.gc_edges, vec![0, 1, 100]);
@@ -3513,8 +3614,12 @@ mod tests_gc_bias {
         baseline_cfg.set_num_short_length_bins(0);
         baseline_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
 
-        let mut masked_cfg =
-            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), masked_out.path());
+        let mut masked_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            masked_out.path(),
+        );
         masked_cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,
@@ -3604,8 +3709,12 @@ mod tests_gc_bias {
         baseline_cfg.set_num_short_length_bins(0);
         baseline_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
 
-        let mut masked_cfg =
-            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), masked_out.path());
+        let mut masked_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            masked_out.path(),
+        );
         masked_cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,
@@ -3709,8 +3818,12 @@ mod tests_gc_bias {
         baseline_cfg.set_num_short_length_bins(0);
         baseline_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
 
-        let mut merged_cfg =
-            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), merged_out.path());
+        let mut merged_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            merged_out.path(),
+        );
         merged_cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,
@@ -3817,8 +3930,12 @@ mod tests_gc_bias {
         baseline_cfg.set_num_short_length_bins(0);
         baseline_cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
 
-        let mut merged_cfg =
-            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), merged_out.path());
+        let mut merged_cfg = make_gc_bias_cfg(
+            &bam.bam,
+            &reference.path,
+            ref_gc_dir.path(),
+            merged_out.path(),
+        );
         merged_cfg.set_windows(GCWindowsArgs {
             by_size: None,
             by_bed: None,

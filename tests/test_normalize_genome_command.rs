@@ -10,11 +10,11 @@ use cfdnalab::commands::coverage_weights::striding::{
     StrideBin, normalize_avg_overlap_by_global_mean,
 };
 use cfdnalab::shared::interval::Interval;
-use fxhash::FxHashMap;
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity, paired_fragment,
     simple_inward_bam,
 };
+use fxhash::FxHashMap;
 use tempfile::TempDir;
 
 fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
@@ -167,7 +167,11 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
         true, true, true, true, true, false, false, false, false, false,
     ];
 
-    assert_eq!(rows.len(), 10, "expected one stride bin per 20 bp across chr1");
+    assert_eq!(
+        rows.len(),
+        10,
+        "expected one stride bin per 20 bp across chr1"
+    );
     for (row_index, row) in rows.iter().enumerate() {
         assert_eq!(row.chromosome, "chr1");
         assert_eq!(row.start, (row_index as u64) * 20);
@@ -507,7 +511,9 @@ fn normalize_avg_overlap_keeps_sparse_non_zero_scaling_finite() -> Result<()> {
 
     // Assert
     assert_approx(mean as f64, 0.80002, 1e-7, "global mean before inversion");
-    let bins = bins_by_chr.get("chr1").expect("chr1 bins should remain present");
+    let bins = bins_by_chr
+        .get("chr1")
+        .expect("chr1 bins should remain present");
     assert!(
         bins[0].scaling_factor.is_finite(),
         "sparse non-zero bin should produce a large but finite scaling factor"
@@ -596,7 +602,9 @@ fn normalize_avg_overlap_overflow_boundary_promotes_tiny_non_zero_bin_to_infinit
         1e-6,
         "length-weighted global mean near overflow boundary",
     );
-    let bins = bins_by_chr.get("chr1").expect("chr1 bins should remain present");
+    let bins = bins_by_chr
+        .get("chr1")
+        .expect("chr1 bins should remain present");
     assert!(
         bins[0].scaling_factor.is_infinite() && bins[0].scaling_factor.is_sign_positive(),
         "extremely tiny non-zero bin should overflow to +inf, got {}",
@@ -657,7 +665,9 @@ fn normalize_avg_overlap_weights_short_final_bin_in_global_mean() -> Result<()> 
 
     // Assert
     assert_approx(mean as f64, 5.0 / 3.0, 1e-6, "length-weighted global mean");
-    let bins = bins_by_chr.get("chr1").expect("chr1 bins should remain present");
+    let bins = bins_by_chr
+        .get("chr1")
+        .expect("chr1 bins should remain present");
     assert_approx(
         bins[0].scaling_factor as f64,
         5.0 / 3.0,
@@ -764,7 +774,18 @@ fn multi_chromosome_scaling_uses_one_shared_global_mean() -> Result<()> {
         0.0,
         0.0,
     ];
-    let expected_chr2_overlap = [1.0 / 3.0, 1.0 / 2.0, 1.0 / 4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let expected_chr2_overlap = [
+        1.0 / 3.0,
+        1.0 / 2.0,
+        1.0 / 4.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    ];
     let expected_chr2_scaling = [
         25.0 / 16.0,
         25.0 / 24.0,
@@ -816,7 +837,8 @@ fn multi_chromosome_scaling_uses_one_shared_global_mean() -> Result<()> {
 }
 
 #[test]
-fn coverage_weights_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
+fn coverage_weights_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero()
+-> Result<()> {
     // Human verification status: unverified
     // Arrange:
     // Build two otherwise identical inward fragments on the same span [20,80):
@@ -915,8 +937,11 @@ fn coverage_weights_default_min_mapq_matches_explicit_thirty_and_differs_from_ex
 
     // Assert
     let default_rows = parse_scaling_rows(&default_out.path().join("default.scaling_factors.tsv"))?;
-    let explicit_thirty_rows =
-        parse_scaling_rows(&explicit_thirty_out.path().join("thirty.scaling_factors.tsv"))?;
+    let explicit_thirty_rows = parse_scaling_rows(
+        &explicit_thirty_out
+            .path()
+            .join("thirty.scaling_factors.tsv"),
+    )?;
     let explicit_zero_rows =
         parse_scaling_rows(&explicit_zero_out.path().join("zero.scaling_factors.tsv"))?;
 
@@ -928,7 +953,12 @@ fn coverage_weights_default_min_mapq_matches_explicit_thirty_and_differs_from_ex
         assert_eq!(default_row.chromosome, explicit_row.chromosome);
         assert_eq!(default_row.start, explicit_row.start);
         assert_eq!(default_row.end, explicit_row.end);
-        assert_approx(default_row.avg_pos_cov, explicit_row.avg_pos_cov, 1e-12, "default vs explicit-30 avg_pos_cov");
+        assert_approx(
+            default_row.avg_pos_cov,
+            explicit_row.avg_pos_cov,
+            1e-12,
+            "default vs explicit-30 avg_pos_cov",
+        );
         assert_approx(
             default_row.avg_overlapping_pos_cov,
             explicit_row.avg_overlapping_pos_cov,
@@ -1107,11 +1137,7 @@ fn chromosomes_all_uses_bam_header_order_for_scaling_tsv_rows() -> Result<()> {
     // Assert
     assert_eq!(
         scaling_row_chromosomes(&rows),
-        vec![
-            "chr2".to_string(),
-            "chr10".to_string(),
-            "chr1".to_string()
-        ]
+        vec!["chr2".to_string(), "chr10".to_string(), "chr1".to_string()]
     );
 
     Ok(())
@@ -1173,18 +1199,7 @@ fn blacklist_masking_changes_scaling_profile_and_excludes_zeroed_bins_from_globa
         0.0,
         0.0,
     ];
-    let expected_scaling = [
-        0.0,
-        2.0,
-        2.0 / 3.0,
-        2.0 / 3.0,
-        2.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-    ];
+    let expected_scaling = [0.0, 2.0, 2.0 / 3.0, 2.0 / 3.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0];
 
     assert_eq!(rows.len(), 10);
     for row_index in 0..rows.len() {

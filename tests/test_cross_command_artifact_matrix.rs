@@ -17,7 +17,9 @@ use cfdnalab::commands::{
         ApplyGCArgFileOnly, ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs, IOCArgs,
         ScaleGenomeArgs, WindowsArgs,
     },
-    coverage_weights::{config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights},
+    coverage_weights::{
+        config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
+    },
     fcoverage::{config::FCoverageConfig, fcoverage::run as run_fcoverage},
     lengths::{config::LengthsConfig, lengths::run as run_lengths},
     midpoints::{config::MidpointsConfig, midpoints::run as run_midpoints},
@@ -254,7 +256,11 @@ fn lengths_consumes_shared_real_artifacts_with_expected_weighted_count() -> Resu
     let counts_path = out_dir.join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
     let arr: Array2<f64> = read_npy(&counts_path)?;
     assert_eq!(arr.dim(), (1, 1));
-    assert_close_f64(arr[(0, 0)], EXPECTED_FRAGMENT_AVERAGE, "lengths weighted count");
+    assert_close_f64(
+        arr[(0, 0)],
+        EXPECTED_FRAGMENT_AVERAGE,
+        "lengths weighted count",
+    );
 
     Ok(())
 }
@@ -386,7 +392,11 @@ fn fcoverage_consumes_shared_real_artifacts_with_expected_per_base_profile() -> 
         lines.iter().zip(expected).enumerate()
     {
         let fields: Vec<_> = line.split('\t').collect();
-        assert_eq!(fields.len(), 4, "unexpected bedGraph row {line_index}: {line}");
+        assert_eq!(
+            fields.len(),
+            4,
+            "unexpected bedGraph row {line_index}: {line}"
+        );
         assert_eq!(fields[0], "chr1");
         assert_eq!(fields[1].parse::<u64>()?, expected_start);
         assert_eq!(fields[2].parse::<u64>()?, expected_end);

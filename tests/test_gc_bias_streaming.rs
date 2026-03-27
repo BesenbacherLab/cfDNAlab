@@ -94,8 +94,8 @@ mod tests_stream_helpers_and_finalizer {
     }
 
     #[test]
-    fn finalize_window_buffer_ignores_empty_placeholder_window_outside_loaded_sequence(
-    ) -> Result<()> {
+    fn finalize_window_buffer_ignores_empty_placeholder_window_outside_loaded_sequence()
+    -> Result<()> {
         // Human verification status: unverified
         // Arrange:
         // Model the fixed-size streaming "next" placeholder that can exist beyond the loaded
@@ -145,8 +145,8 @@ mod tests_stream_helpers_and_finalizer {
     }
 
     #[test]
-    fn finalize_window_buffer_spills_crossing_support_without_double_counting_fetch_halo(
-    ) -> Result<()> {
+    fn finalize_window_buffer_spills_crossing_support_without_double_counting_fetch_halo()
+    -> Result<()> {
         // Human verification status: unverified
         // Arrange:
         // Model one fixed window [0,100) that crosses a tile boundary at 60, with a 10 bp fetch

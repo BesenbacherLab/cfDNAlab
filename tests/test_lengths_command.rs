@@ -49,7 +49,11 @@ mod tests_lengths_command {
         fragment
     }
 
-    fn single_read_fragment_bam(name: &str, fragment_start: i64, fragment_len: u32) -> Result<BamFixture> {
+    fn single_read_fragment_bam(
+        name: &str,
+        fragment_start: i64,
+        fragment_len: u32,
+    ) -> Result<BamFixture> {
         bam_from_specs(
             vec![("chr1".to_string(), 200)],
             Vec::new(),
@@ -420,7 +424,8 @@ mod tests_lengths_command {
     }
 
     #[test]
-    fn lengths_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
+    fn lengths_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero()
+    -> Result<()> {
         // Human verification status: unverified
         // Arrange:
         // Use three fragments with distinct lengths and MAPQ:
@@ -625,8 +630,11 @@ mod tests_lengths_command {
         // Assert
         let paired_arr: Array2<f64> =
             read_npy(paired_out.path().join(dot_join(&["", "length_counts.npy"])))?;
-        let unpaired_arr: Array2<f64> =
-            read_npy(unpaired_out.path().join(dot_join(&["", "length_counts.npy"])))?;
+        let unpaired_arr: Array2<f64> = read_npy(
+            unpaired_out
+                .path()
+                .join(dot_join(&["", "length_counts.npy"])),
+        )?;
 
         let len60_idx = 60 - 10;
         assert_eq!(paired_arr, unpaired_arr);
@@ -937,8 +945,8 @@ mod tests_lengths_command {
     }
 
     #[test]
-    fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_lengths() -> Result<()>
-    {
+    fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_lengths()
+    -> Result<()> {
         // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
@@ -1199,7 +1207,8 @@ mod tests_lengths_command {
     }
 
     #[test]
-    fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range() -> Result<()> {
+    fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range() -> Result<()>
+    {
         // Human verification status: unverified
         // Arrange:
         // `simple_inward_bam()` contains one fragment of length 60.
@@ -1888,7 +1897,8 @@ mod tests_lengths_command {
     }
 
     #[test]
-    fn midpoint_assignment_on_even_length_boundary_counts_exactly_one_adjacent_window() -> Result<()> {
+    fn midpoint_assignment_on_even_length_boundary_counts_exactly_one_adjacent_window() -> Result<()>
+    {
         // Arrange:
         // One even-length fragment spans [40,50), so midpoint assignment randomizes between:
         //   44 and 45
@@ -1949,9 +1959,8 @@ mod tests_lengths_command {
         assert!((arr.sum() - 1.0).abs() < 1e-6);
         let first_window = arr[(0, 0)];
         let second_window = arr[(1, 0)];
-        let is_valid_one_hot =
-            (first_window - 1.0).abs() < 1e-6 && second_window.abs() < 1e-6
-                || first_window.abs() < 1e-6 && (second_window - 1.0).abs() < 1e-6;
+        let is_valid_one_hot = (first_window - 1.0).abs() < 1e-6 && second_window.abs() < 1e-6
+            || first_window.abs() < 1e-6 && (second_window - 1.0).abs() < 1e-6;
         assert!(
             is_valid_one_hot,
             "midpoint tie at the window edge must count exactly one adjacent window, got [{first_window}, {second_window}]"

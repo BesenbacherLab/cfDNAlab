@@ -6,7 +6,7 @@ use crate::shared::{
     interval::{IndexedInterval, Interval},
     tiled_run::{Tile, TileWindowSpan, overlapping_windows_for_tile},
 };
-use anyhow::{Result, anyhow, bail, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use fxhash::FxHashMap;
 use std::path::PathBuf;
 
@@ -311,16 +311,21 @@ pub fn set_window_acgt_in_observed_interval(
             )
         })?;
     let observed_local = observed_interval.shift_left(seq_start)?.try_to_usize()?;
-    // Prefix arrays are sized to the loaded sequence range. A failure here means the
-    // window's overlap extends beyond the available prefix data, which is a data error.
-    ensure!(
-        observed_local.end() < gc_prefixes.acgt.len(),
-        "Window end index {} exceeds prefix length {}",
-        observed_local.end(),
-        gc_prefixes.acgt.len().saturating_sub(1)
-    );
-    let acgt_count =
-        gc_prefixes.acgt[observed_local.end()] - gc_prefixes.acgt[observed_local.start()];
+    let acgt_count = gc_prefixes.acgt_count(observed_local).with_context(|| {
+        format!(
+            "counting ACGT support for observed interval [{}, {}) within window [{}, {}): \
+                 sequence interval [{}, {}), local interval [{}, {}), prefix length {}",
+            observed_interval.start(),
+            observed_interval.end(),
+            buf.start(),
+            buf.end(),
+            seq_start,
+            seq_end,
+            observed_local.start(),
+            observed_local.end(),
+            gc_prefixes.acgt.len().saturating_sub(1)
+        )
+    })?;
     let observed_len = observed_local.len() as u64;
     buf.counts.num_acgt_out_of = (acgt_count as u64, observed_len);
     Ok(())

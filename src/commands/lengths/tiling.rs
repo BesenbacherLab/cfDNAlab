@@ -288,7 +288,10 @@ pub fn fetch_span_for_tile(
             let window_end = ((window_idx_end + 1) * window_bp).min(chrom_len);
             let window_span = Interval::new(window_start, window_end)?;
             Ok(clamp_fetch_to_window_span(
-                tile, chrom_len, window_span, halo_bp,
+                tile,
+                chrom_len,
+                window_span,
+                halo_bp,
             )?)
         }
         WindowSpec::Bed(_) => {
@@ -299,7 +302,10 @@ pub fn fetch_span_for_tile(
                 return Ok(None);
             };
             Ok(clamp_fetch_to_window_span(
-                tile, chrom_len, window_span, halo_bp,
+                tile,
+                chrom_len,
+                window_span,
+                halo_bp,
             )?)
         }
     }

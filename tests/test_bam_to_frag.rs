@@ -6,8 +6,8 @@ mod tests_bam_to_frag {
     // tests/bam_to_frag_integration.rs
 
     use anyhow::{Context, Result};
-    use ndarray::array;
     use flate2::read::GzDecoder;
+    use ndarray::array;
     use rust_htslib::bam::index;
     use rust_htslib::bam::{
         self, Format, HeaderView, Read, Writer,
@@ -22,17 +22,19 @@ mod tests_bam_to_frag {
     use tempfile::tempdir;
 
     // Bring your crate items into scope.
-    use cfdnalab::commands::bam_to_bam::{bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig};
-    use cfdnalab::commands::bam_to_frag::{bam_to_frag::run_inner, config::BamToFragConfig};
-    use cfdnalab::commands::cli_common::{
-        ApplyGCArgFileOnly, ChromosomeArgs, IOCArgs,
-    };
-    use cfdnalab::commands::coverage_weights::{config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights};
-    use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
     use super::fixtures::{
         bam_from_specs, build_real_neutral_gc_package, build_real_non_neutral_gc_package,
         paired_fragment, simple_inward_bam, simple_reference_twobit,
     };
+    use cfdnalab::commands::bam_to_bam::{
+        bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
+    };
+    use cfdnalab::commands::bam_to_frag::{bam_to_frag::run_inner, config::BamToFragConfig};
+    use cfdnalab::commands::cli_common::{ApplyGCArgFileOnly, ChromosomeArgs, IOCArgs};
+    use cfdnalab::commands::coverage_weights::{
+        config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
+    };
+    use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
     use rust_htslib::bam::record::Aux;
 
     #[test]
@@ -735,8 +737,7 @@ mod tests_bam_to_frag {
         // Assert
         let default_rows = read_frag_gz(&out_default.join("default.frag.tsv.gz"))?;
         let explicit_zero_rows = read_frag_gz(&out_zero.join("explicit_zero.frag.tsv.gz"))?;
-        let explicit_thirty_rows =
-            read_frag_gz(&out_thirty.join("explicit_thirty.frag.tsv.gz"))?;
+        let explicit_thirty_rows = read_frag_gz(&out_thirty.join("explicit_thirty.frag.tsv.gz"))?;
 
         let default_parsed = parse_frag_rows(&default_rows);
         let explicit_zero_parsed = parse_frag_rows(&explicit_zero_rows);
@@ -863,8 +864,8 @@ mod tests_bam_to_frag {
     }
 
     #[test]
-    fn bam_to_frag_gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range(
-    ) -> Result<()> {
+    fn bam_to_frag_gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range()
+    -> Result<()> {
         // Human verification status: unverified
         // Arrange:
         // The fixture contributes one fragment of length 60. We keep the accepted fragment-length
@@ -1450,14 +1451,13 @@ mod tests_bam_to_frag {
     }
 
     #[test]
-    fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_bam_to_frag_and_bam_to_bam()
-    -> Result<()> {
+    fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_bam_to_frag_and_bam_to_bam() -> Result<()>
+    {
         // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let reference = simple_reference_twobit()?;
         let work = tempdir().context("tempdir")?;
-        let gc_path =
-            build_real_neutral_gc_package(&bam.bam, &reference.path, work.path(), 60)?;
+        let gc_path = build_real_neutral_gc_package(&bam.bam, &reference.path, work.path(), 60)?;
 
         // Manual expectations:
         // - `simple_inward_bam` contains one fragment [20, 80), length 60.

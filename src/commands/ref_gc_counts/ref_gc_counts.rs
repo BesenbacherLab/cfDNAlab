@@ -411,7 +411,7 @@ fn process_chrom(
         1.0,
         MIN_ACGT_BASES_FOR_GC_FRACTION,
         opt.end_offset as usize,
-    );
+    )?;
 
     // Calculate total number of ACGT positions covered
     // NOTE: This does not deduplicate positions, so overlaps

@@ -2,7 +2,7 @@ use anyhow::{Result, ensure};
 use ndarray::{Array2, Array3, ArrayBase, Axis, Data, DataMut, Ix2, s};
 
 use crate::commands::gc_bias::smoothing::smooth_length_row_in_place;
-use crate::shared::interval::IndexedInterval;
+use crate::shared::interval::{IndexedInterval, Interval};
 
 /// Prefix sums (cumsum) to compute GC and AT fractions while excluding Ns.
 /// `gc[i]`   = # of G/C in seq[0..i)
@@ -10,6 +10,34 @@ use crate::shared::interval::IndexedInterval;
 pub struct GCPrefixes {
     pub gc: Vec<u32>,
     pub acgt: Vec<u32>,
+}
+
+impl GCPrefixes {
+    /// Return the GC count in a checked half-open interval.
+    #[inline]
+    pub fn gc_count(&self, interval: Interval<usize>) -> Result<u32> {
+        ensure!(
+            interval.end() < self.gc.len(),
+            "GC interval [{}, {}) out of bounds for prefix length {}",
+            interval.start(),
+            interval.end(),
+            self.gc.len().saturating_sub(1)
+        );
+        Ok(self.gc[interval.end()] - self.gc[interval.start()])
+    }
+
+    /// Return the A/C/G/T count in a checked half-open interval.
+    #[inline]
+    pub fn acgt_count(&self, interval: Interval<usize>) -> Result<u32> {
+        ensure!(
+            interval.end() < self.acgt.len(),
+            "ACGT interval [{}, {}) out of bounds for prefix length {}",
+            interval.start(),
+            interval.end(),
+            self.acgt.len().saturating_sub(1)
+        );
+        Ok(self.acgt[interval.end()] - self.acgt[interval.start()])
+    }
 }
 
 /// Build prefix-sums (cumsum) for GC and ACGT (non-N) counts over a byte slice.
@@ -42,30 +70,21 @@ pub fn build_gc_prefixes(seq: &[u8]) -> GCPrefixes {
 #[inline]
 pub fn get_gc_integer_percentage_for_window(
     prefixes: &GCPrefixes,
-    start: usize,
-    end: usize,
+    window: Interval<usize>,
     min_acgt_fraction: f32,
     min_acgt_count: u32,
-) -> Option<usize> {
-    debug_assert!(
-        start < end && end <= prefixes.gc.len() - 1,
-        "GC window [{}, {}) out of bounds (len={})",
-        start,
-        end,
-        prefixes.gc.len() - 1
-    );
+) -> Result<Option<usize>> {
+    let gc = prefixes.gc_count(window)?;
+    let acgt = prefixes.acgt_count(window)?;
 
-    let gc = prefixes.gc[end] - prefixes.gc[start];
-    let acgt = prefixes.acgt[end] - prefixes.acgt[start];
-    let length = end - start;
-
-    if acgt == 0 || acgt < min_acgt_count || (acgt as f32 / length as f32) < min_acgt_fraction {
-        return None;
+    if acgt == 0 || acgt < min_acgt_count || (acgt as f32 / window.len() as f32) < min_acgt_fraction
+    {
+        return Ok(None);
     }
 
     // Use the same integer rounding as the ref-gc-bias tool!
     let gc_percent_bin = calculate_gc_bin(gc as u64, acgt as u64);
-    Some(gc_percent_bin)
+    Ok(Some(gc_percent_bin))
 }
 
 /// Count matrix for fragment coverage across GC fraction bins and fragment lengths.
@@ -632,12 +651,15 @@ pub fn count_reference_gc_and_length_by_window(
     min_acgt_fraction: f32, // E.g., 0.8
     min_acgt_count: u32,
     end_offset: usize,
-) {
-    let gc_prefix = &gc_prefixes.gc; // Prefix sums of GC counts
-    let acgt_prefix = &gc_prefixes.acgt; // Prefix sums of A/C/G/T (non-N/non-blacklist)
-    debug_assert_eq!(gc_prefix.len(), acgt_prefix.len());
-    debug_assert!(
-        gc_prefix.len() >= chrom_len as usize + 1,
+) -> Result<()> {
+    ensure!(
+        gc_prefixes.gc.len() == gc_prefixes.acgt.len(),
+        "GC and ACGT prefix lengths differed: {} vs {}",
+        gc_prefixes.gc.len(),
+        gc_prefixes.acgt.len()
+    );
+    ensure!(
+        gc_prefixes.gc.len() >= chrom_len as usize + 1,
         "prefix arrays should be chrom_len+1"
     );
 
@@ -692,16 +714,24 @@ pub fn count_reference_gc_and_length_by_window(
                     if frag_len <= 2 * end_offset {
                         continue;
                     }
-                    let gc_start = start_pos + end_offset;
-                    let gc_end = start_pos + frag_len - end_offset;
+                    let fragment_interval = Interval::new(
+                        start_pos,
+                        start_pos
+                            .checked_add(frag_len)
+                            .expect("fragment interval end should not overflow usize"),
+                    )
+                    .expect("fragment interval should stay non-empty");
+                    let gc_interval = fragment_interval
+                        .contract(end_offset)
+                        .expect("GC interval should stay non-empty after end offsets");
 
                     // Prefix lookups
-                    let acgt_count = acgt_prefix[gc_end] - acgt_prefix[gc_start];
+                    let acgt_count = gc_prefixes.acgt_count(gc_interval)?;
                     if acgt_count < required_acgt_per_len[frag_len] {
                         continue;
                     }
 
-                    let gc_count = gc_prefix[gc_end] - gc_prefix[gc_start];
+                    let gc_count = gc_prefixes.gc_count(gc_interval)?;
 
                     counts_by_bin[win_idx].incr(frag_len, gc_count as usize);
                 }
@@ -710,6 +740,7 @@ pub fn count_reference_gc_and_length_by_window(
             j += 1;
         }
     }
+    Ok(())
 }
 
 /// Round to the nearest percent (**half-up**) using integer math.

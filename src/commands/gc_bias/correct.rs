@@ -65,18 +65,18 @@ impl GCCorrector {
         fragment_interval: Interval<u64>,
         gc_prefixes: &GCPrefixes,
     ) -> Result<Option<f64>> {
-        let start = fragment_interval.start();
-        let end = fragment_interval.end();
         let fragment_length = fragment_interval.len() as usize;
-        let offset_start = start.saturating_add(self.end_offset) as usize;
-        let offset_end = end.saturating_sub(self.end_offset) as usize;
-        ensure!(
-            offset_end > offset_start,
-            "GC correction: After applying end-offsets the fragment has no bases left to count GCs at.\
-            Does the minimum fragment length match the one in the reference bias?"
-        );
+        let gc_window = fragment_interval
+            .contract(self.end_offset)
+            .ok_or_else(|| {
+                anyhow!(
+                    "GC correction: After applying end-offsets the fragment has no bases left to count GCs at.\
+                    Does the minimum fragment length match the one in the reference bias?"
+                )
+            })?
+            .try_to_usize()?;
         let gc_bin = if let Some(gc_pct) =
-            get_gc_integer_percentage_for_window(gc_prefixes, offset_start, offset_end, 0.0, 10)
+            get_gc_integer_percentage_for_window(gc_prefixes, gc_window, 0.0, 10)?
         {
             gc_pct
         } else {
@@ -201,17 +201,17 @@ impl LengthAgnosticGCCorrector {
         fragment_interval: Interval<u64>,
         gc_prefixes: &GCPrefixes,
     ) -> Result<Option<f64>> {
-        let start = fragment_interval.start();
-        let end = fragment_interval.end();
-        let offset_start = start.saturating_add(self.end_offset) as usize;
-        let offset_end = end.saturating_sub(self.end_offset) as usize;
-        ensure!(
-            offset_end > offset_start,
-            "GC correction: After applying end-offsets the fragment has no bases left to count GCs at.\
-            Does the minimum fragment length match the one in the reference bias?"
-        );
+        let gc_window = fragment_interval
+            .contract(self.end_offset)
+            .ok_or_else(|| {
+                anyhow!(
+                    "GC correction: After applying end-offsets the fragment has no bases left to count GCs at.\
+                    Does the minimum fragment length match the one in the reference bias?"
+                )
+            })?
+            .try_to_usize()?;
         let gc_bin = if let Some(gc_pct) =
-            get_gc_integer_percentage_for_window(gc_prefixes, offset_start, offset_end, 0.0, 10)
+            get_gc_integer_percentage_for_window(gc_prefixes, gc_window, 0.0, 10)?
         {
             gc_pct
         } else {

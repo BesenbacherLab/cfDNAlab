@@ -231,9 +231,14 @@ mod tests_set_window_acgt_in_observed_interval {
         .expect_err("expected a prefix bounds error");
 
         let msg = format!("{err}");
+        let chain: Vec<String> = err.chain().map(|cause| cause.to_string()).collect();
         assert!(
-            msg.contains("exceeds prefix length"),
-            "unexpected error message: {msg}"
+            msg.contains("counting ACGT support for observed interval [0, 6)"),
+            "expected high-level window context, got: {msg}"
+        );
+        assert!(
+            chain.iter().any(|cause| cause.contains("ACGT interval [0, 6) out of bounds")),
+            "expected low-level prefix-bounds cause in error chain, got: {chain:?}"
         );
     }
 }

@@ -24,19 +24,18 @@ use cfdnalab::shared::indel_mode::IndelMode;
 use cfdnalab::shared::io::dot_join;
 use cfdnalab::shared::read::default_include_read_paired_end;
 use fixtures::{
-    BamFixture, FragmentSpec, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, ReadSpec,
-    bam_from_specs, bam_from_specs_strict_identity, build_real_neutral_gc_package,
+    BamFixture, FragmentSpec, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, ReadSpec, bam_from_specs,
+    bam_from_specs_strict_identity, build_real_neutral_gc_package,
     build_real_non_neutral_gc_package, long_fragment_bam, paired_fragment, read_zst_to_string,
-    simple_inward_bam,
-    simple_reference_twobit, write_bed, write_scaling_factors,
+    simple_inward_bam, simple_reference_twobit, write_bed, write_scaling_factors,
 };
-use ndarray::array;
 use ndarray::Array2;
+use ndarray::array;
+use ndarray_npy::read_npy;
 use rust_htslib::bam::record::Aux;
 use rust_htslib::bam::{self, Read, Reader};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
-use ndarray_npy::read_npy;
 
 #[derive(Debug)]
 struct TaggedBamFixture {
@@ -414,7 +413,9 @@ fn blacklist_inside_inter_mate_gap_only_matters_without_ignore_gap() -> Result<(
 
     let run_with_ignore_gap = |ignore_gap: bool| -> Result<Vec<String>> {
         let out_dir = TempDir::new()?;
-        let blacklist_path = out_dir.path().join(format!("gap_blacklist_{ignore_gap}.bed"));
+        let blacklist_path = out_dir
+            .path()
+            .join(format!("gap_blacklist_{ignore_gap}.bed"));
         write_bed(&blacklist_path, &blacklist_rows)?;
 
         let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -509,8 +510,11 @@ fn unpaired_single_read_matches_paired_fragment_output_for_same_span() -> Result
     run(&unpaired_cfg)?;
 
     // Assert
-    let paired_text =
-        read_zst_to_string(&paired_out.path().join("paired.fcoverage.per_position.bedgraph.zst"))?;
+    let paired_text = read_zst_to_string(
+        &paired_out
+            .path()
+            .join("paired.fcoverage.per_position.bedgraph.zst"),
+    )?;
     let unpaired_text = read_zst_to_string(
         &unpaired_out
             .path()
@@ -690,7 +694,8 @@ fn blacklist_reduces_by_size_totals_and_reports_blacklisted_positions() -> Resul
 }
 
 #[test]
-fn fcoverage_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
+fn fcoverage_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()>
+{
     // Human verification status: unverified
     // Arrange:
     // Build three 60 bp fragments on a single 200 bp chromosome:
@@ -762,10 +767,16 @@ fn fcoverage_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_
     // Assert
     let default_text =
         read_zst_to_string(&out_default.path().join("default.fcoverage.total.tsv.zst"))?;
-    let explicit_thirty_text =
-        read_zst_to_string(&out_thirty.path().join("explicit_thirty.fcoverage.total.tsv.zst"))?;
-    let explicit_zero_text =
-        read_zst_to_string(&out_zero.path().join("explicit_zero.fcoverage.total.tsv.zst"))?;
+    let explicit_thirty_text = read_zst_to_string(
+        &out_thirty
+            .path()
+            .join("explicit_thirty.fcoverage.total.tsv.zst"),
+    )?;
+    let explicit_zero_text = read_zst_to_string(
+        &out_zero
+            .path()
+            .join("explicit_zero.fcoverage.total.tsv.zst"),
+    )?;
 
     let expected_filtered = concat!(
         "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions\n",
@@ -837,9 +848,10 @@ fn fcoverage_and_lengths_agree_on_the_single_fragment_that_survives_mapq_filteri
     run(&fcoverage_cfg)?;
 
     // Assert
-    let lengths_path = lengths_out
-        .path()
-        .join(dot_join(&[lengths_cfg.output_prefix.trim(), "length_counts.npy"]));
+    let lengths_path = lengths_out.path().join(dot_join(&[
+        lengths_cfg.output_prefix.trim(),
+        "length_counts.npy",
+    ]));
     let lengths_arr: Array2<f64> = read_npy(&lengths_path)?;
     assert_eq!(lengths_arr.shape(), &[1, 191]);
     let len60_idx = 60 - 10;
@@ -1105,8 +1117,11 @@ fn global_positional_output_matches_single_full_chromosome_window_totals() -> Re
     run(&by_bed_cfg)?;
 
     // Assert
-    let global_text =
-        read_zst_to_string(&global_out.path().join("testcov.fcoverage.per_position.bedgraph.zst"))?;
+    let global_text = read_zst_to_string(
+        &global_out
+            .path()
+            .join("testcov.fcoverage.per_position.bedgraph.zst"),
+    )?;
     let global_lines: Vec<_> = global_text.lines().collect();
     assert_eq!(global_lines, vec!["chr1\t20\t80\t1"]);
 
@@ -1315,7 +1330,8 @@ fn by_size_average_reduces_across_non_aligned_tiles() -> Result<()> {
 }
 
 #[test]
-fn by_size_total_aligned_fast_path_matches_general_path_with_blacklist_scaling_and_gc() -> Result<()> {
+fn by_size_total_aligned_fast_path_matches_general_path_with_blacklist_scaling_and_gc() -> Result<()>
+{
     // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let ref_twobit = simple_reference_twobit()?;
@@ -1324,8 +1340,12 @@ fn by_size_total_aligned_fast_path_matches_general_path_with_blacklist_scaling_a
 
     for tile_size in tile_sizes {
         let out_dir = TempDir::new()?;
-        let blacklist_path = out_dir.path().join(format!("fast_path_blacklist_{tile_size}.bed"));
-        let scaling_path = out_dir.path().join(format!("fast_path_scaling_{tile_size}.tsv"));
+        let blacklist_path = out_dir
+            .path()
+            .join(format!("fast_path_blacklist_{tile_size}.bed"));
+        let scaling_path = out_dir
+            .path()
+            .join(format!("fast_path_scaling_{tile_size}.tsv"));
         let gc_path = out_dir.path().join(format!("fast_path_gc_{tile_size}.npz"));
         write_bed(&blacklist_path, &[("chr1", 30, 35, "masked")])?;
         write_scaling_factors(
@@ -2078,10 +2098,7 @@ fn near_zero_scaling_tsv_stays_finite_and_correct_in_fcoverage() -> Result<()> {
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(lines.len(), 2, "expected two finite scaled bedGraph runs");
 
-    let expected = [
-        (20_u64, 40_u64, 5000.5_f64),
-        (40_u64, 80_u64, 0.50005_f64),
-    ];
+    let expected = [(20_u64, 40_u64, 5000.5_f64), (40_u64, 80_u64, 0.50005_f64)];
     for (line, (expected_start, expected_end, expected_value)) in lines.iter().zip(expected) {
         let parts: Vec<_> = line.split('\t').collect();
         assert_eq!(parts.len(), 4, "unexpected bedGraph row: {line}");
@@ -2089,7 +2106,10 @@ fn near_zero_scaling_tsv_stays_finite_and_correct_in_fcoverage() -> Result<()> {
         assert_eq!(parts[1].parse::<u64>()?, expected_start);
         assert_eq!(parts[2].parse::<u64>()?, expected_end);
         let value = parts[3].parse::<f64>()?;
-        assert!(value.is_finite(), "expected finite scaled coverage, got {value}");
+        assert!(
+            value.is_finite(),
+            "expected finite scaled coverage, got {value}"
+        );
         assert!(
             (value - expected_value).abs() <= 1e-6,
             "expected value {expected_value} for row {line}, got {value}"
@@ -2101,8 +2121,8 @@ fn near_zero_scaling_tsv_stays_finite_and_correct_in_fcoverage() -> Result<()> {
 
 #[cfg(feature = "cmd_coverage_weights")]
 #[test]
-fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_fcoverage()
--> Result<()> {
+fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_fcoverage() -> Result<()>
+{
     // Human verification status: unverified
     // Arrange:
     // Build a real multi-chromosome scaling TSV and consume it through per-position coverage.
@@ -2412,10 +2432,16 @@ fn bam_to_bam_gc_file_output_drives_fcoverage_gc_tag_same_as_original_gc_file() 
     run(&tagged_cfg)?;
 
     // Assert
-    let original_text =
-        read_zst_to_string(&original_out.path().join("testcov.fcoverage.per_position.bedgraph.zst"))?;
-    let tagged_text =
-        read_zst_to_string(&tagged_out.path().join("testcov.fcoverage.per_position.bedgraph.zst"))?;
+    let original_text = read_zst_to_string(
+        &original_out
+            .path()
+            .join("testcov.fcoverage.per_position.bedgraph.zst"),
+    )?;
+    let tagged_text = read_zst_to_string(
+        &tagged_out
+            .path()
+            .join("testcov.fcoverage.per_position.bedgraph.zst"),
+    )?;
     assert_eq!(original_text, tagged_text);
     assert_eq!(original_text.trim(), "chr1\t20\t80\t3");
 
@@ -2679,7 +2705,8 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
 }
 
 #[test]
-fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_fcoverage() -> Result<()> {
+fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_fcoverage() -> Result<()>
+{
     // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let ref_twobit = simple_reference_twobit()?;

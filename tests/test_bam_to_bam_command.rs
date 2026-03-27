@@ -5,14 +5,14 @@ mod fixtures;
 use std::{collections::HashMap, fs, path::Path};
 
 use anyhow::Result;
+#[cfg(feature = "cmd_coverage_weights")]
+use cfdnalab::commands::coverage_weights::{
+    config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
+};
 use cfdnalab::commands::{
     bam_to_bam::{bam_to_bam::run_inner, config::BamToBamConfig},
     cli_common::{ApplyGCArgFileOnly, ChromosomeArgs},
     gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage},
-};
-#[cfg(feature = "cmd_coverage_weights")]
-use cfdnalab::commands::coverage_weights::{
-    config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
 };
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, build_real_non_neutral_gc_package, paired_fragment,
@@ -173,7 +173,8 @@ fn by_bed_excludes_chromosomes_without_any_windows() -> Result<()> {
         chromosomes: Some(vec!["chr1".to_string(), "chr2".to_string()]),
         chromosomes_file: None,
     };
-    let mut global_cfg = BamToBamConfig::new(bam.bam.clone(), global_out_bam.clone(), chrom_args.clone());
+    let mut global_cfg =
+        BamToBamConfig::new(bam.bam.clone(), global_out_bam.clone(), chrom_args.clone());
     global_cfg.skip_chromosome_sort = true;
     global_cfg.min_mapq = 0;
 
@@ -252,7 +253,10 @@ fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_thirty() -> 
     let explicit_thirty_counts = read_qname_counts(&explicit_thirty_out)?;
 
     assert_eq!(default_counts, explicit_zero_counts);
-    assert_eq!(default_counts, HashMap::from([("frag0_20".to_string(), 2usize)]));
+    assert_eq!(
+        default_counts,
+        HashMap::from([("frag0_20".to_string(), 2usize)])
+    );
     assert!(
         explicit_thirty_counts.is_empty(),
         "raising min_mapq to 30 should remove the MAPQ-20 fragment"
@@ -642,8 +646,8 @@ fn writes_coverage_weight_when_scaling_factors_provided() -> Result<()> {
 }
 
 #[test]
-fn paired_and_unpaired_fragment_modes_apply_same_full_fragment_scaling_for_same_span()
--> Result<()> {
+fn paired_and_unpaired_fragment_modes_apply_same_full_fragment_scaling_for_same_span() -> Result<()>
+{
     // Human verification status: unverified
     // Arrange:
     // We represent the same physical fragment span [20, 80) in two different supported input
@@ -1100,8 +1104,8 @@ fn bed_blacklist_scaling_and_gc_together_keep_only_the_expected_tagged_fragment(
 
 #[cfg(feature = "cmd_coverage_weights")]
 #[test]
-fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_to_bam()
--> Result<()> {
+fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_to_bam() -> Result<()>
+{
     // Human verification status: unverified
     // Arrange:
     // Reuse the same two-chromosome fixture and hand derivation as the matching `bam-to-frag`

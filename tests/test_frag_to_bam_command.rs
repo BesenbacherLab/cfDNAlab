@@ -11,34 +11,34 @@ use cfdnalab::commands::bam_to_bam::{
 use cfdnalab::commands::bam_to_frag::{
     bam_to_frag::run_inner as run_bam_to_frag, config::BamToFragConfig,
 };
-use cfdnalab::commands::cli_common::ChromosomeArgs;
-#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use cfdnalab::commands::cli_common::{ApplyGCArgFileOnly, ApplyGCArgs};
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
 use cfdnalab::commands::cli_common::AssignToWindowArgs;
+use cfdnalab::commands::cli_common::ChromosomeArgs;
 #[cfg(feature = "cmd_bam_to_frag")]
 use cfdnalab::commands::cli_common::IOCArgs;
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
+use cfdnalab::commands::cli_common::{ApplyGCArgFileOnly, ApplyGCArgs};
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
 use cfdnalab::commands::fcoverage::{config::FCoverageConfig, fcoverage::run as run_fcoverage};
 use cfdnalab::commands::frag_to_bam::{
     config::FragToBamConfig, frag_to_bam::run as run_frag_to_bam,
 };
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
+use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
 use cfdnalab::commands::lengths::{config::LengthsConfig, lengths::run as run_lengths};
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
 use cfdnalab::commands::midpoints::{config::MidpointsConfig, midpoints::run as run_midpoints};
-#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
 use cfdnalab::shared::blacklist::BlacklistStrategy;
 use cfdnalab::shared::io::dot_join;
 #[cfg(feature = "cmd_bam_to_frag")]
 use flate2::read::MultiGzDecoder;
-#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
-use ndarray_npy::read_npy;
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
+use ndarray::Array3;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
 use ndarray::array;
-#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use ndarray::{Array3};
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
+use ndarray_npy::read_npy;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
 use ndarray_npy::read_npy as read_npy_midpoints;
 use rust_htslib::bam::ext::BamRecordExtensions;
@@ -50,14 +50,14 @@ use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
+use fixtures::read_zst_to_string;
 #[cfg(feature = "cmd_bam_to_frag")]
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity,
     build_real_non_neutral_gc_package, paired_fragment, simple_reference_twobit,
     twobit_from_sequences,
 };
-#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_fcoverage"))]
-use fixtures::read_zst_to_string;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BamRow {
@@ -1696,24 +1696,8 @@ fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_twenty() -> 
 
     assert_eq!(default_rows, explicit_zero_rows);
     assert_eq!(default_rows.len(), 2);
-    assert_unpaired_full_match_record(
-        &default_rows[0],
-        "chr1",
-        10,
-        20,
-        10,
-        '+',
-        "fragment_1",
-    );
-    assert_unpaired_full_match_record(
-        &default_rows[1],
-        "chr1",
-        30,
-        45,
-        30,
-        '-',
-        "fragment_2",
-    );
+    assert_unpaired_full_match_record(&default_rows[0], "chr1", 10, 20, 10, '+', "fragment_1");
+    assert_unpaired_full_match_record(&default_rows[1], "chr1", 30, 45, 30, '-', "fragment_2");
 
     assert_eq!(explicit_twenty_rows.len(), 1);
     assert_unpaired_full_match_record(
@@ -2144,16 +2128,14 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_then_roundtrip_match
     run_lengths(&original_cfg)?;
     run_lengths(&restored_cfg)?;
 
-    let original_counts: ndarray::Array2<f64> = read_npy(
-        original_out
-            .path()
-            .join(dot_join(&[original_cfg.output_prefix.trim(), "length_counts.npy"])),
-    )?;
-    let restored_counts: ndarray::Array2<f64> = read_npy(
-        restored_out
-            .path()
-            .join(dot_join(&[restored_cfg.output_prefix.trim(), "length_counts.npy"])),
-    )?;
+    let original_counts: ndarray::Array2<f64> = read_npy(original_out.path().join(dot_join(&[
+        original_cfg.output_prefix.trim(),
+        "length_counts.npy",
+    ])))?;
+    let restored_counts: ndarray::Array2<f64> = read_npy(restored_out.path().join(dot_join(&[
+        restored_cfg.output_prefix.trim(),
+        "length_counts.npy",
+    ])))?;
 
     // Assert:
     // One global window and lengths 10..=100 give shape (1, 91).
@@ -2244,16 +2226,14 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_with_blacklist_then_
     run_lengths(&restored_cfg)?;
 
     // Assert
-    let original_counts: ndarray::Array2<f64> = read_npy(
-        original_out
-            .path()
-            .join(dot_join(&[original_cfg.output_prefix.trim(), "length_counts.npy"])),
-    )?;
-    let restored_counts: ndarray::Array2<f64> = read_npy(
-        restored_out
-            .path()
-            .join(dot_join(&[restored_cfg.output_prefix.trim(), "length_counts.npy"])),
-    )?;
+    let original_counts: ndarray::Array2<f64> = read_npy(original_out.path().join(dot_join(&[
+        original_cfg.output_prefix.trim(),
+        "length_counts.npy",
+    ])))?;
+    let restored_counts: ndarray::Array2<f64> = read_npy(restored_out.path().join(dot_join(&[
+        restored_cfg.output_prefix.trim(),
+        "length_counts.npy",
+    ])))?;
 
     assert_eq!(original_counts.dim(), (1, 91));
     assert_eq!(restored_counts.dim(), (1, 91));
@@ -2327,8 +2307,11 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_coverage_then_roundtrip_matc
     run_fcoverage(&original_cfg)?;
     run_fcoverage(&restored_cfg)?;
 
-    let original_text =
-        read_zst_to_string(&original_out.path().join("origcov.fcoverage.per_position.bedgraph.zst"))?;
+    let original_text = read_zst_to_string(
+        &original_out
+            .path()
+            .join("origcov.fcoverage.per_position.bedgraph.zst"),
+    )?;
     let restored_text = read_zst_to_string(
         &restored_out
             .path()
@@ -2408,8 +2391,11 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_coverage_with_blacklist_then
     run_fcoverage(&original_cfg)?;
     run_fcoverage(&restored_cfg)?;
 
-    let original_text =
-        read_zst_to_string(&original_out.path().join("origcov.fcoverage.per_position.bedgraph.zst"))?;
+    let original_text = read_zst_to_string(
+        &original_out
+            .path()
+            .join("origcov.fcoverage.per_position.bedgraph.zst"),
+    )?;
     let restored_text = read_zst_to_string(
         &restored_out
             .path()
@@ -2507,7 +2493,11 @@ fn given_bam_to_frag_then_frag_to_bam_when_running_bam_to_bam_then_roundtrip_pre
         assert_optional_f32_eq(tags.gc_weight, None, "paired GC");
         assert_eq!(tags.fragment_length, Some(60));
     }
-    assert_optional_f32_eq(restored_tags[0].scaling_weight, expected_cov, "restored COV");
+    assert_optional_f32_eq(
+        restored_tags[0].scaling_weight,
+        expected_cov,
+        "restored COV",
+    );
     assert_optional_f32_eq(restored_tags[0].gc_weight, None, "restored GC");
     assert_eq!(restored_tags[0].fragment_length, Some(60));
 
@@ -2575,8 +2565,11 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_midpoints_then_roundtrip_mat
     // Assert
     let original_arr: Array3<f32> =
         read_npy_midpoints(original_out.path().join("origmid.midpoint_profiles.npy"))?;
-    let restored_arr: Array3<f32> =
-        read_npy_midpoints(restored_out.path().join("restoredmid.midpoint_profiles.npy"))?;
+    let restored_arr: Array3<f32> = read_npy_midpoints(
+        restored_out
+            .path()
+            .join("restoredmid.midpoint_profiles.npy"),
+    )?;
     let original_groups = fs::read_to_string(original_out.path().join("origmid.group_index.tsv"))?;
     let restored_groups =
         fs::read_to_string(restored_out.path().join("restoredmid.group_index.tsv"))?;
@@ -2735,8 +2728,11 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
     run_midpoints(&restored_midpoints_cfg)?;
 
     // Assert
-    let original_arr: Array3<f32> =
-        read_npy_midpoints(original_midpoints_out.path().join("origsites.midpoint_profiles.npy"))?;
+    let original_arr: Array3<f32> = read_npy_midpoints(
+        original_midpoints_out
+            .path()
+            .join("origsites.midpoint_profiles.npy"),
+    )?;
     let restored_arr: Array3<f32> = read_npy_midpoints(
         restored_midpoints_out
             .path()
@@ -2928,8 +2924,11 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
     run_midpoints(&restored_midpoints_cfg)?;
 
     // Assert
-    let original_arr: Array3<f32> =
-        read_npy_midpoints(original_midpoints_out.path().join("origsites.midpoint_profiles.npy"))?;
+    let original_arr: Array3<f32> = read_npy_midpoints(
+        original_midpoints_out
+            .path()
+            .join("origsites.midpoint_profiles.npy"),
+    )?;
     let restored_arr: Array3<f32> = read_npy_midpoints(
         restored_midpoints_out
             .path()
@@ -2946,8 +2945,11 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
     );
     assert_eq!(original_arr, restored_arr);
     assert_eq!(original_arr.shape(), &[2, 1, 11]);
-    let group_to_idx =
-        read_group_index_map(&original_midpoints_out.path().join("origsites.group_index.tsv"))?;
+    let group_to_idx = read_group_index_map(
+        &original_midpoints_out
+            .path()
+            .join("origsites.group_index.tsv"),
+    )?;
     let group_a_idx = group_to_idx["groupA"];
     let group_c_idx = group_to_idx["groupC"];
     assert!((original_arr[[group_a_idx, 0, 5]] - 5.0).abs() <= 1e-6);

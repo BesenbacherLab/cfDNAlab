@@ -8,6 +8,7 @@ use cfdnalab::{
     commands::cli_common::ChromosomeArgs,
     commands::gc_bias::counting::{
         GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window,
+        get_gc_integer_percentage_for_window,
     },
     commands::gc_bias::support_masking::create_support_mask_threshold_per_mb,
     commands::ref_gc_bias::{config::RefGCBiasConfig, ref_gc_bias::run},
@@ -29,8 +30,7 @@ fn load_ref_gc_package_arrays(
     let file = std::fs::File::open(package_path)?;
     let mut npz = NpzReader::new(file)?;
     let counts: ndarray::Array2<f64> = npz.by_name("counts")?;
-    let support_unobservables: ndarray::Array2<bool> =
-        npz.by_name("support_mask_unobservables")?;
+    let support_unobservables: ndarray::Array2<bool> = npz.by_name("support_mask_unobservables")?;
     let support_outliers: ndarray::Array2<bool> = npz.by_name("support_mask_outliers")?;
     let gc_percent_widths: ndarray::Array2<u16> = npz.by_name("gc_percent_widths")?;
     Ok((
@@ -39,6 +39,89 @@ fn load_ref_gc_package_arrays(
         support_outliers,
         gc_percent_widths,
     ))
+}
+
+#[test]
+fn gc_prefix_helpers_return_prefix_differences_for_checked_intervals() -> Result<()> {
+    // Human verification status: unverified
+    // Sequence A C N G T A:
+    // - [1,5) = C N G T -> GC=2, ACGT=3
+    // - [2,4) = N G     -> GC=1, ACGT=1
+    let seq = b"ACNGTA".to_vec();
+    let prefixes = build_gc_prefixes(&seq);
+    let full_interval = Interval::new(1usize, 5usize)?;
+    let inner_interval = Interval::new(2usize, 4usize)?;
+
+    assert_eq!(prefixes.gc_count(full_interval)?, 2);
+    assert_eq!(prefixes.acgt_count(full_interval)?, 3);
+
+    assert_eq!(prefixes.gc_count(inner_interval)?, 1);
+    assert_eq!(prefixes.acgt_count(inner_interval)?, 1);
+    Ok(())
+}
+
+#[test]
+fn gc_prefix_helpers_error_when_interval_exceeds_prefix_bounds() -> Result<()> {
+    // Human verification status: unverified
+    // Sequence A C G T has prefix length 5, so the largest valid half-open interval end is 4.
+    // Asking for [1,5) should therefore fail before any subtraction is attempted.
+    let seq = b"ACGT".to_vec();
+    let prefixes = build_gc_prefixes(&seq);
+    let invalid_interval = Interval::new(1usize, 5usize)?;
+
+    let gc_err = prefixes
+        .gc_count(invalid_interval)
+        .expect_err("expected GC prefix bounds error");
+    let acgt_err = prefixes
+        .acgt_count(invalid_interval)
+        .expect_err("expected ACGT prefix bounds error");
+
+    assert!(
+        gc_err
+            .to_string()
+            .contains("GC interval [1, 5) out of bounds"),
+        "unexpected GC error: {gc_err}"
+    );
+    assert!(
+        acgt_err
+            .to_string()
+            .contains("ACGT interval [1, 5) out of bounds"),
+        "unexpected ACGT error: {acgt_err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn gc_integer_percentage_window_returns_some_none_and_error() -> Result<()> {
+    // Human verification status: unverified
+    // Sequence A C N G T:
+    // - [0,5) = A C N G T -> GC=2, ACGT=4, so GC% = round(200/4) = 50
+    // - [1,4) = C N G     -> GC=2, ACGT=2, so this stays valid when min_acgt_count=2
+    // - [2,4) = N G       -> GC=1, ACGT=1, so min_acgt_count=2 should return Ok(None)
+    // - [3,6) extends past the prefix arrays for a 5 bp sequence, so it should error
+    let seq = b"ACNGT".to_vec();
+    let prefixes = build_gc_prefixes(&seq);
+
+    let full_window = Interval::new(0usize, 5usize)?;
+    let low_support_window = Interval::new(2usize, 4usize)?;
+    let invalid_window = Interval::new(3usize, 6usize)?;
+
+    assert_eq!(
+        get_gc_integer_percentage_for_window(&prefixes, full_window, 0.0, 1)?,
+        Some(50)
+    );
+    assert_eq!(
+        get_gc_integer_percentage_for_window(&prefixes, low_support_window, 0.0, 2)?,
+        None
+    );
+
+    let err = get_gc_integer_percentage_for_window(&prefixes, invalid_window, 0.0, 1)
+        .expect_err("expected out-of-bounds GC window error");
+    assert!(
+        err.to_string().contains("GC interval [3, 6) out of bounds"),
+        "unexpected GC window error: {err}"
+    );
+    Ok(())
 }
 
 #[test]
@@ -66,7 +149,7 @@ fn counts_gc_for_each_window_with_end_offset() -> Result<()> {
         1.0,
         1,
         1,
-    );
+    )?;
 
     // Assert:
     // Window 0 counts fragments starting at 0 inside `ACGTAC`:
@@ -136,7 +219,7 @@ fn skips_counts_after_blacklist_removes_acgt_support() -> Result<()> {
         1.0,
         1,
         0,
-    );
+    )?;
 
     // Assert: Masking drops the ACGT fraction below 1.0 so no counts are emitted
     assert_eq!(counts_by_bin[0].sum(), 0.0);
@@ -153,21 +236,9 @@ fn support_threshold_per_mb_steps_at_hundred_million_positions() -> Result<()> {
     let num_acgt_positions = 1_000_000_u64;
 
     let scenarios = [
-        (
-            99_999_999_usize,
-            1_usize,
-            vec![false, true, true, true],
-        ),
-        (
-            100_000_000_usize,
-            2_usize,
-            vec![false, false, true, true],
-        ),
-        (
-            200_000_000_usize,
-            3_usize,
-            vec![false, false, false, true],
-        ),
+        (99_999_999_usize, 1_usize, vec![false, true, true, true]),
+        (100_000_000_usize, 2_usize, vec![false, false, true, true]),
+        (200_000_000_usize, 3_usize, vec![false, false, false, true]),
     ];
 
     for (n_positions, expected_threshold_per_mb, expected_mask_row) in scenarios {
@@ -241,8 +312,7 @@ fn ref_gc_bias_run_writes_expected_package_metadata_and_shapes() -> Result<()> {
     let mut npz = NpzReader::new(file)?;
 
     let counts: ndarray::Array2<f64> = npz.by_name("counts")?;
-    let support_unobservables: ndarray::Array2<bool> =
-        npz.by_name("support_mask_unobservables")?;
+    let support_unobservables: ndarray::Array2<bool> = npz.by_name("support_mask_unobservables")?;
     let support_outliers: ndarray::Array2<bool> = npz.by_name("support_mask_outliers")?;
     let gc_percent_widths: ndarray::Array2<u16> = npz.by_name("gc_percent_widths")?;
     let version: ndarray::Array1<u32> = npz.by_name("version")?;
@@ -258,7 +328,10 @@ fn ref_gc_bias_run_writes_expected_package_metadata_and_shapes() -> Result<()> {
     assert_eq!(support_outliers.dim(), (3, 101));
     assert_eq!(gc_percent_widths.dim(), (3, 101));
 
-    assert_eq!(version.to_vec(), vec![cfdnalab::commands::gc_bias::GC_CORRECTION_SCHEMA_VERSION]);
+    assert_eq!(
+        version.to_vec(),
+        vec![cfdnalab::commands::gc_bias::GC_CORRECTION_SCHEMA_VERSION]
+    );
     assert_eq!(length_range.to_vec(), vec![10, 12]);
     assert_eq!(end_offset.to_vec(), vec![0]);
     assert_eq!(skip_interpolation.to_vec(), vec![true]);
@@ -305,21 +378,22 @@ fn ref_gc_bias_run_writes_expected_package_metadata_and_shapes() -> Result<()> {
         for gc_percent in 0..=100 {
             let expected_theoretical_support = theoretical_bins.contains(&gc_percent);
             let expected_empirical_support = supported_bins.contains(&gc_percent);
-            let expected_width = if expected_theoretical_support { 1_u16 } else { 0_u16 };
+            let expected_width = if expected_theoretical_support {
+                1_u16
+            } else {
+                0_u16
+            };
 
             assert_eq!(
-                unobservable_row[gc_percent],
-                expected_theoretical_support,
+                unobservable_row[gc_percent], expected_theoretical_support,
                 "row {row_index} theoretical support mismatch at GC% {gc_percent}"
             );
             assert_eq!(
-                outlier_row[gc_percent],
-                expected_empirical_support,
+                outlier_row[gc_percent], expected_empirical_support,
                 "row {row_index} empirical support mismatch at GC% {gc_percent}"
             );
             assert_eq!(
-                widths_row[gc_percent],
-                expected_width,
+                widths_row[gc_percent], expected_width,
                 "row {row_index} GC-percent width mismatch at GC% {gc_percent}"
             );
         }
@@ -1334,12 +1408,8 @@ fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
         global_support_outliers,
         global_gc_percent_widths,
     ) = load_ref_gc_package_arrays(&global_package)?;
-    let (
-        bed_counts,
-        bed_support_unobservables,
-        bed_support_outliers,
-        bed_gc_percent_widths,
-    ) = load_ref_gc_package_arrays(&bed_package)?;
+    let (bed_counts, bed_support_unobservables, bed_support_outliers, bed_gc_percent_widths) =
+        load_ref_gc_package_arrays(&bed_package)?;
 
     assert_eq!(global_counts, bed_counts);
     assert_eq!(global_support_unobservables, bed_support_unobservables);
@@ -1420,12 +1490,8 @@ fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() ->
         global_support_outliers,
         global_gc_percent_widths,
     ) = load_ref_gc_package_arrays(&global_package)?;
-    let (
-        bed_counts,
-        bed_support_unobservables,
-        bed_support_outliers,
-        bed_gc_percent_widths,
-    ) = load_ref_gc_package_arrays(&bed_package)?;
+    let (bed_counts, bed_support_unobservables, bed_support_outliers, bed_gc_percent_widths) =
+        load_ref_gc_package_arrays(&bed_package)?;
 
     assert_eq!(global_counts, bed_counts);
     assert_eq!(global_support_unobservables, bed_support_unobservables);
@@ -1621,12 +1687,8 @@ fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
         single_support_outliers,
         single_gc_percent_widths,
     ) = load_ref_gc_package_arrays(&single_package)?;
-    let (
-        two_counts,
-        two_support_unobservables,
-        two_support_outliers,
-        two_gc_percent_widths,
-    ) = load_ref_gc_package_arrays(&two_package)?;
+    let (two_counts, two_support_unobservables, two_support_outliers, two_gc_percent_widths) =
+        load_ref_gc_package_arrays(&two_package)?;
 
     assert_eq!(single_counts, two_counts);
     assert_eq!(single_support_unobservables, two_support_unobservables);
@@ -1698,12 +1760,8 @@ fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() 
         single_support_outliers,
         single_gc_percent_widths,
     ) = load_ref_gc_package_arrays(&single_package)?;
-    let (
-        two_counts,
-        two_support_unobservables,
-        two_support_outliers,
-        two_gc_percent_widths,
-    ) = load_ref_gc_package_arrays(&two_package)?;
+    let (two_counts, two_support_unobservables, two_support_outliers, two_gc_percent_widths) =
+        load_ref_gc_package_arrays(&two_package)?;
 
     assert_eq!(single_counts, two_counts);
     assert_eq!(single_support_unobservables, two_support_unobservables);

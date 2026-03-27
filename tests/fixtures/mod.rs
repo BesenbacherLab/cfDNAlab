@@ -1,16 +1,16 @@
 #![allow(dead_code)]
 
 use anyhow::{Context, Result, anyhow};
-#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
-use cfdnalab::commands::cli_common::{
-    ChromosomeArgs, GCWindowsArgs, IOCArgs, Ref2BitRequiredArgs,
-};
 use cfdnalab::commands::cli_common::{BaseSelectionArgs, FragmentPositionSelectionArgs};
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+use cfdnalab::commands::cli_common::{ChromosomeArgs, GCWindowsArgs, IOCArgs, Ref2BitRequiredArgs};
+use cfdnalab::commands::fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 use cfdnalab::commands::gc_bias::{config::GCConfig, gc_bias::run as run_gc_bias};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
-use cfdnalab::commands::ref_gc_bias::{config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias};
-use cfdnalab::commands::fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
+use cfdnalab::commands::ref_gc_bias::{
+    config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias,
+};
 use rust_htslib::bam::{self, header::HeaderRecord, record::Cigar, record::CigarString};
 use std::{
     fs::{File, OpenOptions},
@@ -210,6 +210,17 @@ fn configure_gc_bias_common(gc_cfg: &mut GCConfig) {
 }
 
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+/// Build a "neutral" real GC-correction package from the full chromosome.
+///
+/// This helper runs the actual `ref-gc-bias` -> `gc-bias` producer chain, but keeps the reference
+/// side intentionally broad and well-mixed:
+/// - reference windows are global rather than BED-restricted
+/// - `n_positions` is fixed to a moderate deterministic sample
+/// - the resulting package is used in tests that want a valid end-to-end artifact without
+///   depending on strong hand-derived GC skew
+///
+/// In other words, "neutral" here means "safe default real artifact for downstream consumers",
+/// not "mathematically forced to exactly weight 1.0 everywhere".
 pub fn build_real_neutral_gc_package(
     bam_path: &Path,
     reference_path: &Path,
@@ -265,6 +276,18 @@ pub fn build_real_neutral_gc_package(
 }
 
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+/// Build a deliberately non-neutral real GC-correction package from caller-supplied BED windows.
+///
+/// Unlike `build_real_neutral_gc_package`, this helper is for tests that need the producer side to
+/// create a specific, auditable GC bias profile:
+/// - the reference support is restricted to the provided BED intervals
+/// - callers choose `n_positions` explicitly so the sampled-start arithmetic stays derivable at the
+///   test site
+/// - `gc-bias` is configured with permissive bin-mass thresholds so sparse but intentionally skewed
+///   fixture counts survive into the saved package
+///
+/// Use this when the test needs a real package whose non-unit weights can be reasoned about from
+/// first principles, rather than just "some valid package".
 pub fn build_real_non_neutral_gc_package(
     bam_path: &Path,
     reference_path: &Path,

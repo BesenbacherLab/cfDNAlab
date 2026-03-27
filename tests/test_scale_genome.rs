@@ -234,9 +234,7 @@ mod tests_compute_window_scaling {
     use cfdnalab::shared::{
         interval::{IndexedInterval, Interval},
         overlaps::{OverlappingWindow, OverlappingWindows, find_overlapping_windows},
-        scale_genome::{
-            compute_window_scaling_over_fragment, compute_window_scaling_over_overlap,
-        },
+        scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
     };
 
     fn assert_f64_close(actual: f64, expected: f64, eps: f64, context: &str) {
@@ -315,10 +313,20 @@ mod tests_compute_window_scaling {
         assert_eq!(out.len(), 2);
         let expected_weight = 60.0_f64 / 61.0_f64;
         assert_eq!(out[0].0, 0);
-        assert_f64_close(out[0].1, expected_weight, 1e-12, "left full-fragment weight");
+        assert_f64_close(
+            out[0].1,
+            expected_weight,
+            1e-12,
+            "left full-fragment weight",
+        );
         assert_f64_close(out[0].2, 1.0, 1e-12, "left full-fragment overlap fraction");
         assert_eq!(out[1].0, 1);
-        assert_f64_close(out[1].1, expected_weight, 1e-12, "right full-fragment weight");
+        assert_f64_close(
+            out[1].1,
+            expected_weight,
+            1e-12,
+            "right full-fragment weight",
+        );
         assert_f64_close(out[1].2, 1.0, 1e-12, "right full-fragment overlap fraction");
 
         Ok(())
@@ -355,8 +363,11 @@ mod tests_compute_window_scaling {
         let scaling_bin_indices = vec![0_usize, 1, 2, 3, 4];
 
         // Act
-        let out =
-            compute_window_scaling_over_overlap(&count_overlaps, &scaling_bin_indices, &scaling_chr)?;
+        let out = compute_window_scaling_over_overlap(
+            &count_overlaps,
+            &scaling_bin_indices,
+            &scaling_chr,
+        )?;
 
         // Assert
         assert_eq!(out.len(), 2);
@@ -369,7 +380,12 @@ mod tests_compute_window_scaling {
             "left overlap fraction",
         );
         assert_eq!(out[1].0, 1);
-        assert_f64_close(out[1].1, 30.0_f64 / 31.0_f64, 1e-12, "right overlap-only weight");
+        assert_f64_close(
+            out[1].1,
+            30.0_f64 / 31.0_f64,
+            1e-12,
+            "right overlap-only weight",
+        );
         assert_f64_close(
             out[1].2,
             (31.0_f32 / 61.0_f32) as f64,

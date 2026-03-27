@@ -68,19 +68,17 @@ pub fn get_fragment_gc(
     if !sequence_interval.contains_interval(gc_window) {
         return Ok(None);
     }
-    let seq_start = sequence_interval.start();
-    let (gc_window_start, gc_window_end) = gc_window.as_tuple();
-
-    let acgt = gc_prefixes.acgt[(gc_window_end - seq_start) as usize]
-        - gc_prefixes.acgt[(gc_window_start - seq_start) as usize];
+    let gc_window_local = gc_window
+        .shift_left(sequence_interval.start())?
+        .try_to_usize()?;
+    let acgt = gc_prefixes.acgt_count(gc_window_local)?;
     if acgt < MIN_ACGT_BASES_FOR_GC_FRACTION
         || (acgt as f32 / gc_window.len() as f32) < min_acgt_fraction
     {
         return Ok(None);
     }
 
-    let gc = gc_prefixes.gc[(gc_window_end - seq_start) as usize]
-        - gc_prefixes.gc[(gc_window_start - seq_start) as usize];
+    let gc = gc_prefixes.gc_count(gc_window_local)?;
     ensure!(
         gc <= gc_window.len() as u32,
         "GC count exceeded interval length: {} > {}",

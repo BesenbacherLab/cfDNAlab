@@ -7,9 +7,7 @@ use anyhow::Result;
 use cfdnalab::commands::bam_to_bam::{
     bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
 };
-use cfdnalab::commands::cli_common::{
-    ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs,
-};
+use cfdnalab::commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs};
 #[cfg(feature = "cmd_coverage_weights")]
 use cfdnalab::commands::coverage_weights::{
     config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
@@ -18,13 +16,12 @@ use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorre
 use cfdnalab::commands::midpoints::config::MidpointsConfig;
 use cfdnalab::commands::midpoints::midpoints::run;
 use fixtures::{
-    FragmentSpec, ReadSpec, bam_from_specs, build_real_neutral_gc_package,
-    bam_from_specs_strict_identity, build_real_non_neutral_gc_package, complex_bam_fixture,
-    simple_reference_twobit,
-    twobit_from_sequences, write_bed,
+    FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity,
+    build_real_neutral_gc_package, build_real_non_neutral_gc_package, complex_bam_fixture,
+    simple_reference_twobit, twobit_from_sequences, write_bed,
 };
-use ndarray::array;
 use ndarray::Array3;
+use ndarray::array;
 use ndarray_npy::read_npy;
 use rust_htslib::bam::record::Aux;
 use rust_htslib::bam::{self, Read, Reader};
@@ -121,11 +118,7 @@ fn single_read_fragment_bam(
     )
 }
 
-fn assert_midpoint_profile_row_matches(
-    row: &[f32],
-    expected_weight_at_pos5: f32,
-    context: &str,
-) {
+fn assert_midpoint_profile_row_matches(row: &[f32], expected_weight_at_pos5: f32, context: &str) {
     // `midpoints` accumulates profile mass in `Vec<f32>` and writes the final NPY as `f32`.
     // So the scientifically correct contract here is the stored `f32` value, not ideal `f64`
     // arithmetic carried all the way through the test expectation.
@@ -272,7 +265,8 @@ fn length_bin_range_spec_matches_brace_expansion_edges() -> Result<()> {
 }
 
 #[test]
-fn midpoints_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()> {
+fn midpoints_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()>
+{
     // Human verification status: unverified
     // Arrange:
     // Count one group over one 11 bp window [45, 56). Use three identical 61 bp fragments
@@ -342,9 +336,7 @@ fn midpoints_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_
 
     // Assert
     let read_profiles = |dir: &TempDir, prefix: &str| -> Result<Array3<f32>> {
-        let counts_path = dir
-            .path()
-            .join(format!("{prefix}.midpoint_profiles.npy"));
+        let counts_path = dir.path().join(format!("{prefix}.midpoint_profiles.npy"));
         read_npy(&counts_path).map_err(Into::into)
     };
 
@@ -449,7 +441,10 @@ fn even_length_midpoint_tie_counts_exactly_one_of_two_adjacent_edge_windows() ->
     )?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
-    write_bed(&bed_path, &[("chr1", 44, 45, "groupA"), ("chr1", 45, 46, "groupB")])?;
+    write_bed(
+        &bed_path,
+        &[("chr1", 44, 45, "groupA"), ("chr1", 45, 46, "groupB")],
+    )?;
 
     let mut cfg = MidpointsConfig::new(
         IOCArgs {
@@ -478,8 +473,7 @@ fn even_length_midpoint_tie_counts_exactly_one_of_two_adjacent_edge_windows() ->
 
     let group_a = arr[[group_to_idx["groupA"], 0, 0]];
     let group_b = arr[[group_to_idx["groupB"], 0, 0]];
-    let is_valid_one_hot =
-        (group_a == 1.0 && group_b == 0.0) || (group_a == 0.0 && group_b == 1.0);
+    let is_valid_one_hot = (group_a == 1.0 && group_b == 0.0) || (group_a == 0.0 && group_b == 1.0);
     assert!(
         is_valid_one_hot,
         "even-length midpoint tie must count exactly one adjacent edge window, got groupA={group_a}, groupB={group_b}"
@@ -489,7 +483,8 @@ fn even_length_midpoint_tie_counts_exactly_one_of_two_adjacent_edge_windows() ->
 }
 
 #[test]
-fn blacklist_midpoint_filtering_uses_floor_midpoint_even_when_profile_placement_randomizes() -> Result<()> {
+fn blacklist_midpoint_filtering_uses_floor_midpoint_even_when_profile_placement_randomizes()
+-> Result<()> {
     // Arrange:
     // Use the same even-length fragment [40,50), whose placement midpoint is randomized between
     // 44 and 45. Count it against one 2 bp window [44,46), so without blacklist the profile row
@@ -715,9 +710,18 @@ fn group_index_axis_matches_first_group_encounter_order_and_collapsed_counts() -
     );
 
     let expected_rows = [
-        ("groupB", vec![0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-        ("groupC", vec![0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-        ("groupA", vec![0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        (
+            "groupB",
+            vec![0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        ),
+        (
+            "groupC",
+            vec![0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        ),
+        (
+            "groupA",
+            vec![0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        ),
     ];
     for (group_name, expected_row) in expected_rows {
         let group_idx = group_to_idx[group_name];
@@ -733,8 +737,8 @@ fn group_index_axis_matches_first_group_encounter_order_and_collapsed_counts() -
 }
 
 #[test]
-fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_midpoints()
--> Result<()> {
+fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_midpoints() -> Result<()>
+{
     // Human verification status: unverified
     // Arrange:
     // Use one odd-length fragment so midpoint placement is deterministic rather than randomly
@@ -797,11 +801,17 @@ fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_midpo
     let arr: Array3<f32> = read_npy(&counts_path)?;
     assert_eq!(arr.shape(), &[1, 1, 11]);
     assert_eq!(arr.sum(), 1.0);
-    assert_eq!(arr.slice(ndarray::s![0, 0, ..]).to_vec(), vec![0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    assert_eq!(
+        arr.slice(ndarray::s![0, 0, ..]).to_vec(),
+        vec![0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    );
 
     let map_path = temp.path().join("sites.group_index.tsv");
     let group_to_idx = read_group_index_map(&map_path)?;
-    assert_eq!(group_to_idx, HashMap::from([("groupA".to_string(), 0usize)]));
+    assert_eq!(
+        group_to_idx,
+        HashMap::from([("groupA".to_string(), 0usize)])
+    );
 
     Ok(())
 }
@@ -1065,8 +1075,8 @@ fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
 
 #[cfg(feature = "cmd_coverage_weights")]
 #[test]
-fn coverage_weights_tsv_changes_midpoints_by_full_fragment_average_not_window_overlap()
--> Result<()> {
+fn coverage_weights_tsv_changes_midpoints_by_full_fragment_average_not_window_overlap() -> Result<()>
+{
     // Human verification status: unverified
     // Arrange:
     // Producer BAM:
@@ -1157,8 +1167,8 @@ fn coverage_weights_tsv_changes_midpoints_by_full_fragment_average_not_window_ov
 
 #[cfg(feature = "cmd_coverage_weights")]
 #[test]
-fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_midpoints()
--> Result<()> {
+fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_midpoints() -> Result<()>
+{
     // Human verification status: unverified
     // Arrange:
     // Build a real multi-chromosome scaling artifact, then consume it through `midpoints`.
@@ -1333,7 +1343,11 @@ fn gc_tag_pair_average_sets_midpoint_profile_weight() -> Result<()> {
         Vec::new(),
         "midpoints_gc_tag_base",
     )?;
-    let tagged_bam = bam_with_gc_tags(&base_bam.bam, "midpoints_gc_tag_paired_avg", &[Some(2.0), Some(4.0)])?;
+    let tagged_bam = bam_with_gc_tags(
+        &base_bam.bam,
+        "midpoints_gc_tag_paired_avg",
+        &[Some(2.0), Some(4.0)],
+    )?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
     write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
@@ -1610,8 +1624,11 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
     // Assert
     let original_arr: Array3<f32> =
         read_npy(&temp.path().join("orig_out/origsites.midpoint_profiles.npy"))?;
-    let tagged_arr: Array3<f32> =
-        read_npy(&temp.path().join("tagged_out/taggedsites.midpoint_profiles.npy"))?;
+    let tagged_arr: Array3<f32> = read_npy(
+        &temp
+            .path()
+            .join("tagged_out/taggedsites.midpoint_profiles.npy"),
+    )?;
 
     assert_eq!(original_arr, tagged_arr);
     assert_eq!(original_arr.shape(), &[1, 1, 11]);
