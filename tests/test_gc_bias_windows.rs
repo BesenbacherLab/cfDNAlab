@@ -237,7 +237,9 @@ mod tests_set_window_acgt_in_observed_interval {
             "expected high-level window context, got: {msg}"
         );
         assert!(
-            chain.iter().any(|cause| cause.contains("ACGT interval [0, 6) out of bounds")),
+            chain
+                .iter()
+                .any(|cause| cause.contains("ACGT interval [0, 6) out of bounds")),
             "expected low-level prefix-bounds cause in error chain, got: {chain:?}"
         );
     }

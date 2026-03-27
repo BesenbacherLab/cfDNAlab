@@ -1,18 +1,16 @@
 use crate::{
     commands::{
         cli_common::{
-            ApplyGCArgFileOnly, ApplyGCArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs,
-            ScaleGenomeArgs, UnpairedArgs, WindowsArgs,
+            ApplyGCArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs, ScaleGenomeArgs,
+            UnpairedArgs, WindowsArgs,
         },
         ends::config_structs::*,
-        gc_bias::correct::MarginalizeLengthsWeightingScheme,
     },
-    shared::{
-        blacklist::BlacklistStrategy,
-        indel_mode::{IndelMode, IndelMotifFilterPolicy},
-    },
+    shared::{blacklist::BlacklistStrategy, indel_mode::IndelMotifFilterPolicy},
 };
 use std::path::PathBuf;
+
+// TODO: save_sparse was not kept, but we should save as sparse when sum(k_*) is big
 
 /// Count fragment end motifs in a BAM-file.
 ///
@@ -71,7 +69,7 @@ pub struct EndsConfig {
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
     /// Examples produce files like:
-    ///   `<prefix>.length_counts.npy`
+    ///   `<prefix>.end_motifs.npy`
     #[cfg_attr(
         feature = "cli",
         clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
@@ -96,23 +94,27 @@ pub struct EndsConfig {
     pub ref_2bit: Option<PathBuf>,
 
     /// Number of bases to use from within the fragment `[integer]`
-    #[cfg_attr(feature = "cli", clap(long, required = true, help_heading = "Core"))]
+    #[cfg_attr(feature = "cli", clap(long, required = true, help_heading = "Motifs"))]
     pub k_within: usize,
 
     /// Number of bases to use from outside the fragment `[integer]`
-    #[cfg_attr(feature = "cli", clap(long, required = true, help_heading = "Core"))]
+    #[cfg_attr(feature = "cli", clap(long, required = true, help_heading = "Motifs"))]
     pub k_outside: usize,
 
     /// Whether to get the within-fragment bases from the read or the reference `[string]`
-    #[clap(
-        long,
-        value_enum,
-        default_value = "read",
-        requires_if("reference", "ref_2bit")
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_enum,
+            default_value = "read",
+            requires_if("reference", "ref_2bit"),
+            help_heading = "Motifs"
+        )
     )]
     source_within: KmerSource,
 
-    #[clap(flatten)]
+    #[cfg_attr(feature = "cli", clap(flatten))]
     clip: ClippingArgs,
 
     /// When to filter motifs due to indels.
@@ -139,7 +141,7 @@ pub struct EndsConfig {
             long,
             default_value = "auto",
             ignore_case = true,
-            help_heading = "Core"
+            help_heading = "Filtering"
         )
     )]
     pub indel_filter: IndelMotifFilterPolicy,
@@ -163,6 +165,20 @@ pub struct EndsConfig {
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub scale_genome: ScaleGenomeArgs,
+
+    /// Collapse each motif with its reverse-complement [flag]
+    ///
+    /// How:
+    ///
+    /// - (Always) Motifs are oriented so they run from the fragment end inward in 5'->3' direction.
+    ///
+    /// - Motifs are collapsed with their complement, using the lexicographically smaller motif representation.
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Motifs"))]
+    collapse_complement: bool,
+
+    /// Include every possible motif in the output, even if its count is zero  [flag]
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Motifs"))]
+    all_motifs: bool,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
@@ -236,7 +252,13 @@ impl EndsConfig {
             k_within,
             k_outside,
             source_within: KmerSource::Read,
+            clip: ClippingArgs {
+                clip_strategy: ClipStrategy::Raw,
+                max_clips: None,
+            },
             indel_filter: IndelMotifFilterPolicy::Auto,
+            all_motifs: false,
+            collapse_complement: false,
             windows: WindowsArgs::default(),
             window_assignment: AssignMotifToWindowArgs::default(),
             chromosomes,
@@ -259,8 +281,8 @@ impl EndsConfig {
         }
     }
 
-    pub fn set_indel_mode(&mut self, mode: IndelMode) {
-        self.indel_mode = mode;
+    pub fn set_indel_filter(&mut self, filter: IndelMotifFilterPolicy) {
+        self.indel_filter = filter;
     }
 
     pub fn set_windows(&mut self, windows: WindowsArgs) {
@@ -295,15 +317,8 @@ impl EndsConfig {
         self.require_proper_pair = require;
     }
 
-    pub fn set_gc(&mut self, gc: ApplyGCArgFileOnly) {
+    pub fn set_gc(&mut self, gc: ApplyGCArgs) {
         self.gc = gc;
-    }
-
-    pub fn set_gc_length_weighting(
-        &mut self,
-        gc_length_weighting: MarginalizeLengthsWeightingScheme,
-    ) {
-        self.gc_length_weighting = gc_length_weighting;
     }
 
     pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {

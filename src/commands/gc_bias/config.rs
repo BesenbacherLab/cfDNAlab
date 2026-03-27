@@ -112,8 +112,8 @@ pub struct GCConfig {
     pub ref_genome: Ref2BitRequiredArgs,
 
     /// Path to file with reference GC bias to correct against `[path]`
-    /// 
-    /// Precompute with `cfdna ref-gc-bias`. The file is either named 
+    ///
+    /// Precompute with `cfdna ref-gc-bias`. The file is either named
     /// `ref_gc_package.npz` or `<prefix>.ref_gc_package.npz`.
     #[cfg_attr(
         feature = "cli",

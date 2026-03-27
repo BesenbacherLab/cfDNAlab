@@ -1914,8 +1914,7 @@ mod tests_gc_bias {
                 .path()
                 .join("gc_bias.normalized_avg_cfdna_counts.1.npy"),
         )?;
-        let reference_data =
-            load_reference_gc_data(&ref_gc_dir.path().join("ref_gc_package.npz"))?;
+        let reference_data = load_reference_gc_data(&ref_gc_dir.path().join("ref_gc_package.npz"))?;
 
         // The support mask defines exactly which cells contribute to the mean-scaling denominator.
         let mut supported_sum = 0.0_f64;

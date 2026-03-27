@@ -18,8 +18,8 @@ use crate::{
         bam::Contigs,
         bed::{Windows, load_windows_from_bed},
         blacklist::apply_blacklist_mask_to_seq,
-        io::dot_join,
         interval::{IndexedInterval, Interval},
+        io::dot_join,
         progress::ProgressFactory,
         reference::{read_seq_in_range, twobit_contig_lengths},
         sampling::{sample_starts_in_core, sampling_density},
@@ -289,7 +289,8 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     );
 
     write_reference_gc_package(
-        &opt.output_dir.join(dot_join(&[prefix, "ref_gc_package.npz"])),
+        &opt.output_dir
+            .join(dot_join(&[prefix, "ref_gc_package.npz"])),
         &global_grid,
         &unobservable_support_mask,
         &outlier_support_mask,
