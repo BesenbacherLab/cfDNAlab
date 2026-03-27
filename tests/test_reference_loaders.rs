@@ -38,12 +38,11 @@ fn read_seq_in_range_reads_slice() -> Result<()> {
 }
 
 #[test]
-#[ignore = "Upstream twobit writer bug for sequence lengths not divisible by 4"]
 fn read_seq_roundtrips_full_50bp_sequence_with_terminal_partial_byte() -> Result<()> {
     // Human verification status: unverified
     // Arrange:
     // This sequence is 50 bp long, so the final .2bit packed byte stores only two real bases.
-    // That exact tail shape is what the failing `gc-bias` fixture depends on:
+    // twobit previously had a bug that wrote the final base wrongly, so we keep a check of this going forward:
     //   chr1[35..50] = TTTTTCCCCCCCCCC
     // If the writer/reader corrupts the last partial byte, the terminal pure-C 10 bp interval
     // `[40,50)` stops being `CCCCCCCCCC`, and downstream GC tests will observe GC%=90 instead of
