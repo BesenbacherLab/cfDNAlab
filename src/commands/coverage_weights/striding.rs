@@ -84,12 +84,12 @@ fn triangular_weights(half_window: usize) -> Vec<usize> {
 /// - Near the left edge, there are fewer neighbors to the left of `i`. We *truncate*
 ///   the kernel on the left and start using it from some offset `w_start`.
 /// - Near the right edge, we similarly truncate on the right.
-/// - In both cases we still align the kernel’s center to the current `i`.
+/// - In both cases we still align the kernel's center to the current `i`.
 ///
 /// Implementation outline per `i`:
 /// 1) Pick the slice of bins we can actually use: `[start_i .. end_i)`
 /// 2) Compute `w_start`, the index into `weights` that aligns the first usable bin with
-///    the correct kernel position (so the kernel’s center still targets `i`).
+///    the correct kernel position (so the kernel's center still targets `i`).
 /// 3) Accumulate `sum( avg_coverage[j] * weight[j] )` and `sum(weights)`
 /// 4) Normalize: `avg_overlap_coverage[i] = weighted_sum / sum_weights`.
 ///
@@ -106,7 +106,7 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
     // If radius is 0, no neighbors -> identity
     let half_window = (bin_size / stride).saturating_sub(1) as usize;
     if half_window == 0 {
-        // No overlap region: each bin’s average = its coverage
+        // No overlap region: each bin's average = its coverage
         for b in bins.iter_mut() {
             b.avg_overlap_coverage = b.avg_coverage;
         }
@@ -214,7 +214,7 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
 /// across all chromosomes.
 ///
 /// Computes a global mean of `avg_overlap_coverage` across all non-zero bins in `bins_by_chr`
-/// and divides every bin’s `avg_overlap_coverage` by that mean so the new global mean is ~1.0.
+/// and divides every bin's `avg_overlap_coverage` by that mean so the new global mean is ~1.0.
 /// Optionally weight the mean by bin length to better approximate a base-weighted genome mean.
 ///
 /// Parameters

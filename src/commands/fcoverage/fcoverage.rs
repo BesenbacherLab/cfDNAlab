@@ -929,11 +929,11 @@ fn process_tile(
                 );
 
                 // Always write a partial row; reducer will emit in orig_idx order
-                // Internal windows won’t appear in the cross-index -> reducer expects 1 contribution
-                // Boundary windows will appear in each crossed tile’s cross-index -> reducer expects N
+                // Internal windows won't appear in the cross-index -> reducer expects 1 contribution
+                // Boundary windows will appear in each crossed tile's cross-index -> reducer expects N
                 writeln!(w_part, "{}\t{}\t{}\t{}", idx, sum, allowed, blacklisted)?;
                 if crosses_boundary {
-                    // Cross-index lists the window’s orig_idx for the reducer
+                    // Cross-index lists the window's orig_idx for the reducer
                     writeln!(w_cross, "{}", idx)?;
                 }
             }

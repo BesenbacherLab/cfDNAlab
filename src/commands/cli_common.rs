@@ -461,7 +461,7 @@ pub struct ScaleGenomeArgs {
     ///
     ///   - be perfectly contiguous (no gaps, no overlaps)
     ///
-    ///   - end exactly at that chromosome’s length
+    ///   - end exactly at that chromosome's length
     #[cfg_attr(
         feature = "cli",
         clap(long, value_parser, help_heading = "Normalization")

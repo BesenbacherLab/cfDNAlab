@@ -169,7 +169,7 @@ struct WindowAccum {
 ///    buffering all windows or scanning every window
 ///
 /// How ordering is guaranteed
-///  * Each tile’s partials are sorted by `orig_idx`
+///  * Each tile's partials are sorted by `orig_idx`
 ///  * We open all tile streams and perform a **K-way merge** on `orig_idx`
 ///
 /// What is a K-way merge and why use `BinaryHeap<Reverse<...>>`
@@ -181,8 +181,8 @@ struct WindowAccum {
 /// Cross-index logic
 ///  * For windows fully contained in a single tile core: they appear in exactly one partials file
 ///    and are absent from all cross-index files -> expected contributions = 1
-///  * For windows that cross tile core boundaries: the window appears in each overlapped tile’s
-///    partials file and is listed in each of those tiles’ cross-index files -> expected contributions
+///  * For windows that cross tile core boundaries: the window appears in each overlapped tile's
+///    partials file and is listed in each of those tiles' cross-index files -> expected contributions
 ///    equals the total number of tiles it overlaps
 ///
 /// Requirements

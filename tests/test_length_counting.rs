@@ -894,8 +894,8 @@ mod tests {
     #[test]
     fn streaming_pointer_advances_past_lookback() -> Result<()> {
         // Human verification status: unverified
-        // Two windows: [0,100), [100,200). We’ll feed two fragments in ascending order and
-        // ensure wd_ptr advances so the second call doesn’t re-check the first window.
+        // Two windows: [0,100), [100,200). We'll feed two fragments in ascending order and
+        // ensure wd_ptr advances so the second call doesn't re-check the first window.
         let chrom_len = 10_000;
         let wins = bed_windows(&[(0, 100), (100, 200)]);
         let mut wd_ptr = 0usize;
@@ -912,7 +912,7 @@ mod tests {
             look_back,
         )?
         .context("first call should overlap [0,100)")?;
-        // wd_ptr may still be 0 here (we didn’t push beyond), so drive it with a distant fragment
+        // wd_ptr may still be 0 here (we didn't push beyond), so drive it with a distant fragment
 
         // Now a fragment that only hits the second window; with look_back=0 we
         // should skip the first quickly (pointer should not regress)

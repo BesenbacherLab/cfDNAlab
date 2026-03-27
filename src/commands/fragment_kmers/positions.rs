@@ -322,7 +322,7 @@ impl PositionSelectionCache {
                     offset_sets.push(set_start_values);
                 }
 
-                // Intersect offsets and keep first spec’s PositionSelection for survivors
+                // Intersect offsets and keep first spec's PositionSelection for survivors
                 let surviving_offsets: FxHashSet<u32> = intersect_all(&offset_sets);
 
                 let mut intersected_values: Vec<PositionSelection> = first_pairs

@@ -126,7 +126,7 @@ fn collect_motifs(
     v
 }
 
-/// Use the first window’s keys, sort them, and return the order.
+/// Use the first window's keys, sort them, and return the order.
 /// Panics only if `bins` is empty.
 pub fn motif_order(bins: &[FxHashMap<String, impl Copy>]) -> Vec<String> {
     assert!(

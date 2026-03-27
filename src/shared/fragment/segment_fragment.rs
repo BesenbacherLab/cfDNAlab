@@ -53,13 +53,13 @@ impl From<Fragment> for FragmentWithSegments {
 /// Compact per-read metadata plus optional mapped-reference segments
 ///
 /// Stores only what we need to assemble a fragment without keeping whole BAM records.
-/// If the read’s CIGAR contains reference gaps (`D` or `N`), we also store the
-/// read’s **mapped reference segments** as relative pairs `[offset_from_pos, len]`
+/// If the read's CIGAR contains reference gaps (`D` or `N`), we also store the
+/// read's **mapped reference segments** as relative pairs `[offset_from_pos, len]`
 /// for ref+query consuming ops (`M`, `=`, `X`). Otherwise `ref_mapped_segments` is empty.
 ///
 /// Notes
 /// -----
-/// - `interval` is the read’s aligned reference span
+/// - `interval` is the read's aligned reference span
 /// - `ref_mapped_segments` elements are relative to `interval.start()`
 /// - Adjacent segments separated only by non-reference ops are merged
 #[derive(Debug, Clone)]

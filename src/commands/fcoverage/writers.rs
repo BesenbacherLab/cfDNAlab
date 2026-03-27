@@ -109,7 +109,7 @@ pub fn emit_windowed_runs<W: Write>(
     local_start_idx: usize, // Local start (inclusive)
     local_end_idx: usize,   // Local end (exclusive)
     tile_abs_start: u64,    // Absolute position of index 0 in `cov` (tile.core_start)
-    orig_idx: Option<u64>,  // Window’s original index
+    orig_idx: Option<u64>,  // Window's original index
     decimals: i32,          // Decimals to round coverage
     keep_zero_runs: bool,   // Whether to write zero-runs
     out: &mut W,

@@ -204,7 +204,7 @@ fn avg_scaling_over_span(
 /// - For every chromosome in `chromosomes`, bins must:
 ///   * start at 0,
 ///   * be perfectly contiguous (no gaps, no overlaps),
-///   * end exactly at that chromosome’s length (from `contigs`).
+///   * end exactly at that chromosome's length (from `contigs`).
 ///
 /// Returns
 /// -------
@@ -329,7 +329,7 @@ pub fn load_scaling_factors_tsv(
             );
         }
 
-        // Stash; we’ll sort and validate contiguity/full coverage per chromosome below
+        // Stash; we'll sort and validate contiguity/full coverage per chromosome below
         map.entry(chr.to_string())
             .or_default()
             .push((start, end, sf));
@@ -383,7 +383,7 @@ pub fn load_scaling_factors_tsv(
             prev_end = e;
         }
 
-        // Require exact coverage up to the chromosome’s length
+        // Require exact coverage up to the chromosome's length
         if prev_end != chrom_len {
             anyhow::bail!(
                 "scaling TSV: bins on '{}' must end at chrom_len={} (got end={})",

@@ -260,7 +260,7 @@ fn overlapping_fragments_stack_scores() -> Result<()> {
     //     * [2, 3) at +1 from the long fragment.
     //     * [6, 11) at +2 where both fragments span the window.
     //     * [13, 19) at +1 once only the long fragment remains.
-    //     * [19, 21) at -1 from the long fragment’s right endpoint.
+    //     * [19, 21) at -1 from the long fragment's right endpoint.
     let expected = vec![
         wps_run("chr1", 2, 3, 1.0),
         wps_run("chr1", 6, 11, 2.0),

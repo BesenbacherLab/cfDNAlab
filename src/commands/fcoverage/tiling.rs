@@ -179,7 +179,7 @@ pub fn adapt_fetch_to_extreme_windows(
     // Decide the fetch interval based on mode/windows.
     // For whole-genome positional: use the full tile fetch band.
     // For windowed runs: restrict to the overlapping window span widened by a fragment-sized halo,
-    // then intersect it with the tile’s existing fetch band.
+    // then intersect it with the tile's existing fetch band.
     match mode {
         TileMode::Positional { windows: None, .. } => Ok(Some(Interval::new(
             tile.fetch_start() as u64,

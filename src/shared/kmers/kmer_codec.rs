@@ -89,7 +89,7 @@ pub struct KmerSpec {
     width: Width,
     /// Code used when no full k‑mer is available (chromosome ends)
     sentinel_none: u64,
-    /// Code used when the window contains any ‘N’ base
+    /// Code used when the window contains any 'N' base
     sentinel_n: u64,
 }
 
@@ -99,7 +99,7 @@ impl KmerSpec {
         build_left_aligned_codes(seq, self.k, self.sentinel_none, self.sentinel_n)
     }
 
-    /// Decode a single code back to its k‑mer string, returning all‑‘N’ if the
+    /// Decode a single code back to its k‑mer string, returning all‑'N' if the
     /// code is one of the sentinels.
     pub fn decode_kmer(&self, code: u64) -> String {
         decode_kmer(code, self.k, self.sentinel_none, self.sentinel_n)
@@ -220,7 +220,7 @@ pub fn choose_width(k: usize) -> Result<(Width, u64, u64)> {
 
 /// Build radix-5 codes for every **left-aligned** k-mer in `seq`.
 /// * `sentinel_none` – code for positions where **no** complete k-mer exists
-/// * `sentinel_n`   – code for any window that contains an ‘N’
+/// * `sentinel_n`   – code for any window that contains an 'N'
 ///
 /// The result length always equals `seq.len()`.
 fn build_left_aligned_codes(seq: &[u8], k: usize, sentinel_none: u64, sentinel_n: u64) -> Vec<u64> {
@@ -237,7 +237,7 @@ fn build_left_aligned_codes(seq: &[u8], k: usize, sentinel_none: u64, sentinel_n
     // Rolling-hash helpers
     let highest_place = 5u64.pow((k - 1) as u32); // weight of the left-most digit
     let mut code: u64 = 0; // radix-5 value of current window
-    let mut n_in_window: u32 = 0; // ‘N’ counter in current window
+    let mut n_in_window: u32 = 0; // 'N' counter in current window
 
     // First full k-mer window
     for i in 0..k {
@@ -279,7 +279,7 @@ fn build_left_aligned_codes(seq: &[u8], k: usize, sentinel_none: u64, sentinel_n
     out
 }
 
-/// Decode a code to its k‑mer string, returning ‘N’×k for sentinels.
+/// Decode a code to its k‑mer string, returning 'N'×k for sentinels.
 fn decode_kmer(code: u64, k: usize, sentinel_none: u64, sentinel_n: u64) -> String {
     if code == sentinel_none || code == sentinel_n {
         return "N".repeat(k);

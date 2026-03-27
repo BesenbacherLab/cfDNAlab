@@ -16,7 +16,7 @@ This document captures the working plan for our GC-bias correction pass. It mirr
 ## 3. Derive per-window correction matrices
 
 - Fetch the matching reference matrix and compute `window_weight = observed / reference` element-wise.
-- Use the window’s mean observed count as a weight when combining windows later; this lets high-coverage regions drive the final correction without ever resorting to unbounded ratios.
+- Use the window's mean observed count as a weight when combining windows later; this lets high-coverage regions drive the final correction without ever resorting to unbounded ratios.
 - If a window fails QC (missing reference bases, too many Ns, no fragments), drop it and optionally log it for diagnostics.
 - Keep a per-window mask of fragment-length/GC bins with at least `min_frag_occurs` observations on both the observed and reference sides. Bins that miss this threshold stay at the neutral weight (set them back to 1.0 after computing the window-level mean-scaled correction, then apply the mean coverage weight) so sparse regions cannot explode.
 - Discard windows that fall below a minimum usable-fragment threshold (e.g., <5k fragments after masking). This protects against windows where blacklisting removed nearly everything.
@@ -31,7 +31,7 @@ This document captures the working plan for our GC-bias correction pass. It mirr
 ## 5. Post-processing (borrowed from GCparagon defaults)
 
 - **Outlier trimming:** run a configurable pass (e.g., IQR-based) that clips extreme cells to within `(10 - stringency)` standard deviations of the median. This prevents bins with very low coverage from exploding.
-- **Smoothing:** apply a Gaussian blur across fragment length and GC axes. Intensity defaults to 5 (same as GCparagon’s preset) but remains user-configurable. Cells that were exactly 1.0 remain untouched so unknown bins stay neutral.
+- **Smoothing:** apply a Gaussian blur across fragment length and GC axes. Intensity defaults to 5 (same as GCparagon's preset) but remains user-configurable. Cells that were exactly 1.0 remain untouched so unknown bins stay neutral.
 - After each transformation, re-center by dividing through the matrix mean. This keeps the global correction neutral even if smoothing or clipping shifts the average.
 
 ## 6. Output and tagging
