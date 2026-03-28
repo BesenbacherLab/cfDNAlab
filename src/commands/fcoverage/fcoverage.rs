@@ -17,7 +17,7 @@ use crate::shared::coverage::Coverage;
 use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment::segment_fragment::FragmentWithSegments;
-use crate::shared::fragment_iterator::fragments_with_segments_from_bam;
+use crate::shared::fragment_iterators::fragments_with_segments_from_bam;
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::dot_join;
 use crate::shared::progress::ProgressFactory;

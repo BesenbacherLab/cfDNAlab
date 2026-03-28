@@ -19,7 +19,7 @@ use crate::{
         bed::{load_grouped_windows_from_bed, write_group_idx_to_name_tsv},
         blacklist::is_blacklisted,
         fragment::minimal_fragment::Fragment,
-        fragment_iterator::fragments_from_bam,
+        fragment_iterators::fragments_from_bam,
         interval::{IndexedInterval, Interval},
         io::dot_join,
         midpoint::midpoint_random_even_with_thread_rng,

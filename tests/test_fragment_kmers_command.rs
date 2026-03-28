@@ -1410,7 +1410,7 @@
 //     use cfdnalab::commands::fragment_kmers::fragment_kmers::{run, run_inner};
 //     use cfdnalab::commands::visualize_positions::ReferenceFrame;
 //     use cfdnalab::shared::fragment::segment_kmer_fragment::FragmentWithKmerSegments;
-//     use cfdnalab::shared::fragment_iterator::fragments_with_kmer_segments_from_bam;
+//     use cfdnalab::shared::fragment_iterators::fragments_with_kmer_segments_from_bam;
 //     use cfdnalab::shared::read::default_include_read_paired_end;
 //     use tempfile::TempDir;
 

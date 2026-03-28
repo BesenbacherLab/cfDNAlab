@@ -22,7 +22,7 @@ use crate::{
         bed::load_windows_from_bed,
         blacklist::{compute_blacklist_overlap, is_blacklisted},
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
-        fragment_iterator::fragments_with_indel_counts_from_bam,
+        fragment_iterators::fragments_with_indel_counts_from_bam,
         interval::{IndexedInterval, Interval},
         io::{create_text_writer, dot_join},
         midpoint::midpoint_random_even_with_thread_rng,

@@ -24,7 +24,7 @@ use crate::{
         bed::load_windows_from_bed,
         blacklist::is_blacklisted,
         fragment::with_records_fragment::WithRecordsFragment,
-        fragment_iterator::fragments_with_records_from_bam,
+        fragment_iterators::fragments_with_records_from_bam,
         interval::{IndexedInterval, Interval},
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,

@@ -30,7 +30,7 @@ use crate::{
         bed::load_windows_from_bed,
         blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE, is_blacklisted},
         fragment::segment_kmer_fragment::FragmentWithKmerSegments,
-        fragment_iterator::fragments_with_kmer_segments_from_bam,
+        fragment_iterators::fragments_with_kmer_segments_from_bam,
         interval::Interval,
         io::create_text_writer,
         kmers::{

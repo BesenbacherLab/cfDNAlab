@@ -1,5 +1,5 @@
 use cfdnalab::shared::fragment::indel_counting_fragment::FragmentWithIndelCounts;
-use cfdnalab::shared::fragment_iterator::fragments_with_indel_counts_from_bam;
+use cfdnalab::shared::fragment_iterators::fragments_with_indel_counts_from_bam;
 use rust_htslib::bam;
 use rust_htslib::bam::record::Cigar;
 

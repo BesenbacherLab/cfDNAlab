@@ -20,7 +20,7 @@ use crate::{
         bed::load_windows_from_bed,
         blacklist::is_blacklisted,
         fragment::frag_file_fragment::FragFileFragment,
-        fragment_iterator::fragments_with_frag_file_info_from_bam,
+        fragment_iterators::fragments_with_frag_file_info_from_bam,
         interval::{IndexedInterval, Interval},
         io::dot_join,
         overlaps::find_overlapping_windows,

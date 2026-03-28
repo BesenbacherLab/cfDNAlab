@@ -79,7 +79,7 @@ mod test_fragment_iterator_gc_tags {
                 segment_fragment::FragmentWithSegments,
                 segment_kmer_fragment::FragmentWithKmerSegments,
             },
-            fragment_iterator::{
+            fragment_iterators::{
                 fragments_from_bam, fragments_with_ends_from_bam, fragments_with_kmer_segments_from_bam,
                 fragments_with_segments_from_bam,
             },

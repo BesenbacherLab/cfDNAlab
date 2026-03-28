@@ -14,7 +14,7 @@ use crate::commands::gc_bias::counting::build_gc_prefixes;
 use crate::commands::wps::config::{WPSConfig, WPSSharedConfig};
 use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
-use crate::shared::fragment_iterator::fragments_from_bam;
+use crate::shared::fragment_iterators::fragments_from_bam;
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::dot_join;
 use crate::shared::progress::ProgressFactory;

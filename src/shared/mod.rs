@@ -6,7 +6,7 @@ pub mod coverage;
 pub mod formatters;
 pub mod frag_file;
 pub mod fragment;
-pub mod fragment_iterator;
+pub mod fragment_iterators;
 pub mod gc_tag;
 pub mod indel_mode;
 pub mod interval;

@@ -11,7 +11,7 @@ use crate::{
         bam::create_chromosome_reader,
         coverage::Coverage,
         fragment::minimal_fragment::Fragment,
-        fragment_iterator::fragments_from_bam,
+        fragment_iterators::fragments_from_bam,
         interval::Interval,
         io::dot_join,
         progress::ProgressFactory,

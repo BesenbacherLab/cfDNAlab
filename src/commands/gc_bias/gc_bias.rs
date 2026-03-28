@@ -29,7 +29,7 @@ use crate::{
         bed::load_windows_from_bed,
         blacklist::apply_blacklist_mask_to_seq,
         fragment::minimal_fragment::Fragment,
-        fragment_iterator::fragments_from_bam,
+        fragment_iterators::fragments_from_bam,
         interval::{IndexedInterval, Interval},
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
