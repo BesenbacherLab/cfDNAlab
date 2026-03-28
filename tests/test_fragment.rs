@@ -74,6 +74,13 @@ mod test_minimal_fragment {
         (f, r)
     }
 
+    fn collect_fragment_from_records_for_test(a: &Record, b: &Record) -> Option<Fragment> {
+        collect_fragment(
+            &MinimalReadInfo::from_record_with_gc_tag(a, None).ok()?,
+            &MinimalReadInfo::from_record_with_gc_tag(b, None).ok()?,
+        )
+    }
+
     // Tests for `Fragment` (simple)
 
     #[test]
@@ -89,7 +96,7 @@ mod test_minimal_fragment {
             cigar(&[('M', 50)]),
             &vec![b'A'; 50],
         );
-        let frag = collect_fragment_from_records(&f, &r).expect("fragment");
+        let frag = collect_fragment_from_records_for_test(&f, &r).expect("fragment");
         assert_eq!(frag.tid, 0);
         assert_eq!(frag.start(), 100);
         assert_eq!(frag.end(), 170);
@@ -112,7 +119,7 @@ mod test_minimal_fragment {
             cigar(&[('M', 30)]),
             &vec![b'A'; 30],
         );
-        let frag = collect_fragment_from_records(&f, &r).expect("fragment");
+        let frag = collect_fragment_from_records_for_test(&f, &r).expect("fragment");
         assert_eq!(frag.start(), 100);
         assert_eq!(frag.end(), 180);
         assert_eq!(frag.len(), 80);
@@ -124,12 +131,12 @@ mod test_minimal_fragment {
         // Both on same strand -> None
         let f = mk_rec(0, 100, false, cigar(&[('M', 30)]), &vec![b'A'; 30], b"1");
         let r = mk_rec(0, 140, false, cigar(&[('M', 30)]), &vec![b'A'; 30], b"1");
-        assert!(collect_fragment_from_records(&f, &r).is_none());
+        assert!(collect_fragment_from_records_for_test(&f, &r).is_none());
 
         // End <= start -> None
         let f = mk_rec(0, 200, false, cigar(&[('M', 10)]), &vec![b'A'; 10], b"2");
         let r2 = mk_rec(0, 150, true, cigar(&[('M', 10)]), &vec![b'A'; 10], b"2");
-        assert!(collect_fragment_from_records(&f, &r2).is_none());
+        assert!(collect_fragment_from_records_for_test(&f, &r2).is_none());
     }
 }
 
@@ -349,6 +356,17 @@ mod tests_fragment_with_indel_counts {
         ]
     }
 
+    fn collect_fragment_with_indel_counts_from_records_for_test(
+        a: &Record,
+        b: &Record,
+        skip_indels: bool,
+        count_indels: bool,
+    ) -> Option<FragmentWithIndelCounts> {
+        let a_info = IndelReadInfo::try_from(a).ok()?;
+        let b_info = IndelReadInfo::try_from(b).ok()?;
+        collect_fragment_with_indel_counts(&a_info, &b_info, skip_indels, count_indels)
+    }
+
     #[test]
     fn indelreadinfo_parses_deletions_and_insertions() {
         // Human verification status: unverified
@@ -394,7 +412,9 @@ mod tests_fragment_with_indel_counts {
         // No indels; expect zero adjustments.
         let f = make_rec(0, 100, false, m(60));
         let r = make_rec(0, 180, true, m(40));
-        let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
+        let frag =
+            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, true)
+                .unwrap();
         assert_eq!(frag.tid, 0);
         assert_eq!(frag.start(), 100);
         assert_eq!(frag.end(), 220);
@@ -412,7 +432,9 @@ mod tests_fragment_with_indel_counts {
         // Has insertion; skip_indels=true => None.
         let f = make_rec(0, 100, false, m_ins_m(20, 3, 20));
         let r = make_rec(0, 140, true, m(40));
-        assert!(collect_fragment_with_indel_counts_from_records(&f, &r, true, true).is_none());
+        assert!(
+            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, true, true).is_none()
+        );
     }
 
     #[test]
@@ -421,7 +443,9 @@ mod tests_fragment_with_indel_counts {
         // Indels present but count_indels=false => fragment with zero adjustments.
         let f = make_rec(0, 100, false, m_ins_m(20, 3, 20));
         let r = make_rec(0, 140, true, m_del_m(10, 4, 30));
-        let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, false).unwrap();
+        let frag =
+            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, false)
+                .unwrap();
         assert_eq!(frag.deletions_nonoverlap, 0);
         assert_eq!(frag.insertions_nonoverlap, 0);
         assert_eq!(frag.deletions_overlap_supported, 0);
@@ -435,7 +459,9 @@ mod tests_fragment_with_indel_counts {
         // Forward has D3 at [110,113), Reverse has I4 at ref pos 150.
         let f = make_rec(0, 100, false, m_del_m(10, 3, 7)); // 100..120
         let r = make_rec(0, 140, true, m_ins_m(10, 4, 10)); // 140..160
-        let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
+        let frag =
+            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, true)
+                .unwrap();
         // No aligned overlap -> both indels are non-overlap
         assert_eq!(frag.deletions_nonoverlap, 3);
         assert_eq!(frag.insertions_nonoverlap, 4);
@@ -453,7 +479,9 @@ mod tests_fragment_with_indel_counts {
         // Forward deletion [170,175); Reverse deletion [172,178) -> intersection [172,175) len 3.
         let f = make_rec(0, 100, false, m_del_m(70, 5, 5)); // del at [170,175)
         let r = make_rec(0, 160, true, m_del_m(12, 6, 42)); // del at [172,178)
-        let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
+        let frag =
+            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, true)
+                .unwrap();
         assert_eq!(frag.deletions_nonoverlap, 0);
         assert_eq!(frag.deletions_overlap_supported, 3);
         assert_eq!(frag.insertions_nonoverlap, 0);
@@ -546,7 +574,9 @@ mod tests_fragment_with_indel_counts {
             v
         });
         let r = make_rec(0, 160, true, m_ins_m(5, 3, 15)); // ins at 165
-        let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
+        let frag =
+            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, true)
+                .unwrap();
         assert_eq!(frag.insertions_nonoverlap, 0); // Unpaired overlap insertions are discarded rather than counted elsewhere
         assert_eq!(frag.insertions_overlap_supported, 3); // min(5,3)
     }
@@ -559,9 +589,1113 @@ mod tests_fragment_with_indel_counts {
         // Reverse has insertion at ref 170 length 3 -> min(5,3) = 3 counted.
         let f = make_rec(0, 150, false, m_ins_s_ins_m(20, 2, 4, 5, 26)); // two I at ref 170
         let r = make_rec(0, 160, true, m_ins_m(10, 3, 30)); // I at ref 170
-        let frag = collect_fragment_with_indel_counts_from_records(&f, &r, false, true).unwrap();
+        let frag =
+            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, true)
+                .unwrap();
         assert_eq!(frag.insertions_overlap_supported, 3);
         assert_eq!(frag.insertions_nonoverlap, 0);
+    }
+}
+
+#[cfg(test)]
+mod test_fragment_with_ends {
+    use cfdnalab::commands::ends::config_structs::{ClipStrategy, KmerSource};
+    use cfdnalab::shared::fragment::ends_fragment::{
+        EndReadInfo, FragmentWithEnds, collect_fragment_with_ends,
+        collect_fragment_with_ends_from_single_read,
+    };
+    use cfdnalab::shared::indel_mode::IndelMotifFilterPolicy;
+    use rust_htslib::bam::Record;
+    use rust_htslib::bam::record::{Aux, Cigar, CigarString};
+
+    fn cigar(ops: &[(char, u32)]) -> CigarString {
+        let mut v = Vec::with_capacity(ops.len());
+        for (op, len) in ops {
+            v.push(match *op {
+                'M' => Cigar::Match(*len),
+                '=' => Cigar::Equal(*len),
+                'X' => Cigar::Diff(*len),
+                'I' => Cigar::Ins(*len),
+                'D' => Cigar::Del(*len),
+                'N' => Cigar::RefSkip(*len),
+                'S' => Cigar::SoftClip(*len),
+                'H' => Cigar::HardClip(*len),
+                'P' => Cigar::Pad(*len),
+                _ => panic!("unsupported CIGAR op {}", op),
+            });
+        }
+        CigarString(v)
+    }
+
+    fn make_record(
+        qname: &[u8],
+        tid: i32,
+        pos: i64,
+        is_reverse: bool,
+        cig: CigarString,
+        seq_bytes: &[u8],
+        gc_weight: Option<f32>,
+    ) -> Record {
+        let mut r = Record::new();
+        r.set_tid(tid);
+        r.set_pos(pos);
+        let mut flags: u16 = 0x1;
+        if is_reverse {
+            flags |= 0x10;
+        }
+        r.set_flags(flags);
+        r.set_mapq(60);
+        r.set(qname, Some(&cig), seq_bytes, &vec![30u8; seq_bytes.len()]);
+        if let Some(weight) = gc_weight {
+            r.push_aux(b"GC", Aux::Float(weight)).expect("set GC tag");
+        }
+        r
+    }
+
+    fn end_info(
+        record: &Record,
+        clip_strategy: ClipStrategy,
+        k_within: usize,
+        gc_tag: Option<&[u8]>,
+    ) -> EndReadInfo {
+        EndReadInfo::from_record_with_gc_tag(record, gc_tag, clip_strategy, k_within)
+            .expect("end read info")
+    }
+
+    fn collect_pair(
+        a: &Record,
+        b: &Record,
+        clip_strategy: ClipStrategy,
+        source_within: KmerSource,
+        indel_filter: IndelMotifFilterPolicy,
+        k_within: usize,
+        max_soft_clips: Option<u32>,
+        gc_tag: Option<&[u8]>,
+    ) -> Option<FragmentWithEnds> {
+        let a_info = end_info(a, clip_strategy, k_within, gc_tag);
+        let b_info = end_info(b, clip_strategy, k_within, gc_tag);
+        collect_fragment_with_ends(
+            &a_info,
+            &b_info,
+            clip_strategy,
+            source_within,
+            indel_filter,
+            k_within,
+            max_soft_clips,
+        )
+    }
+
+    fn collect_single(
+        record: &Record,
+        clip_strategy: ClipStrategy,
+        source_within: KmerSource,
+        indel_filter: IndelMotifFilterPolicy,
+        k_within: usize,
+        max_soft_clips: Option<u32>,
+        gc_tag: Option<&[u8]>,
+    ) -> Option<FragmentWithEnds> {
+        let read = end_info(record, clip_strategy, k_within, gc_tag);
+        collect_fragment_with_ends_from_single_read(
+            &read,
+            clip_strategy,
+            source_within,
+            indel_filter,
+            k_within,
+            max_soft_clips,
+        )
+    }
+
+    #[test]
+    fn endreadinfo_reads_edge_clipping_hard_clips_and_gc_tag() {
+        // Human verification status: unverified
+        let record = make_record(
+            b"edge",
+            0,
+            100,
+            false,
+            cigar(&[('H', 5), ('S', 3), ('M', 8), ('S', 2), ('H', 4)]),
+            b"TTTACGTACGGGT",
+            Some(2.5),
+        );
+
+        let info = end_info(&record, ClipStrategy::Aligned, 4, Some(b"GC"));
+        assert_eq!(info.left_soft_clip_bp, 3);
+        assert_eq!(info.right_soft_clip_bp, 2);
+        assert!(info.has_hard_clip);
+        assert_eq!(info.gc_tag.weight, Some(2.5));
+    }
+
+    #[test]
+    fn aligned_paired_keeps_aligned_geometry_and_excludes_soft_clips_from_sequences() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"pair_aligned",
+            0,
+            100,
+            false,
+            cigar(&[('S', 2), ('M', 6)]),
+            b"TTACGTAC",
+            None,
+        );
+        let reverse = make_record(
+            b"pair_aligned",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6), ('S', 2)]),
+            b"CGTACGTT",
+            None,
+        );
+
+        let fragment = collect_pair(
+            &forward,
+            &reverse,
+            ClipStrategy::Aligned,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            None,
+            None,
+        )
+        .expect("fragment");
+
+        assert_eq!(fragment.start(), 100);
+        assert_eq!(fragment.end(), 116);
+        assert_eq!(fragment.assignment_start(), 100);
+        assert_eq!(fragment.assignment_end(), 116);
+        assert_eq!(
+            fragment.left_end.as_ref().expect("left end").within_bases,
+            b"ACGT".to_vec()
+        );
+        assert_eq!(
+            fragment.right_end.as_ref().expect("right end").within_bases,
+            b"TACG".to_vec()
+        );
+    }
+
+    #[test]
+    fn raw_paired_expands_assignment_interval_and_uses_soft_clipped_bases() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"pair_raw",
+            0,
+            100,
+            false,
+            cigar(&[('S', 2), ('M', 6)]),
+            b"TTACGTAC",
+            None,
+        );
+        let reverse = make_record(
+            b"pair_raw",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6), ('S', 2)]),
+            b"CGTACGTT",
+            None,
+        );
+
+        let fragment = collect_pair(
+            &forward,
+            &reverse,
+            ClipStrategy::Raw,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            None,
+            None,
+        )
+        .expect("fragment");
+
+        assert_eq!(fragment.start(), 100);
+        assert_eq!(fragment.end(), 116);
+        assert_eq!(fragment.assignment_start(), 98);
+        assert_eq!(fragment.assignment_end(), 118);
+        assert_eq!(
+            fragment.left_end.as_ref().expect("left end").within_bases,
+            b"TTAC".to_vec()
+        );
+        assert_eq!(
+            fragment.right_end.as_ref().expect("right end").within_bases,
+            b"CGTT".to_vec()
+        );
+    }
+
+    #[test]
+    fn aligned_kept_ends_store_aligned_boundary_positions() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"pair_aligned_boundary",
+            0,
+            100,
+            false,
+            cigar(&[('S', 2), ('M', 6)]),
+            b"TTACGTAC",
+            None,
+        );
+        let reverse = make_record(
+            b"pair_aligned_boundary",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6), ('S', 2)]),
+            b"CGTACGTT",
+            None,
+        );
+
+        let fragment = collect_pair(
+            &forward,
+            &reverse,
+            ClipStrategy::Aligned,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            None,
+            None,
+        )
+        .expect("fragment");
+
+        assert_eq!(
+            fragment.left_end.as_ref().expect("left end").boundary_pos,
+            100
+        );
+        assert_eq!(
+            fragment.right_end.as_ref().expect("right end").boundary_pos,
+            116
+        );
+    }
+
+    #[test]
+    fn raw_kept_ends_store_raw_shifted_boundary_positions() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"pair_raw_boundary",
+            0,
+            100,
+            false,
+            cigar(&[('S', 2), ('M', 6)]),
+            b"TTACGTAC",
+            None,
+        );
+        let reverse = make_record(
+            b"pair_raw_boundary",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6), ('S', 2)]),
+            b"CGTACGTT",
+            None,
+        );
+
+        let fragment = collect_pair(
+            &forward,
+            &reverse,
+            ClipStrategy::Raw,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            None,
+            None,
+        )
+        .expect("fragment");
+
+        assert_eq!(
+            fragment.left_end.as_ref().expect("left end").boundary_pos,
+            98
+        );
+        assert_eq!(
+            fragment.right_end.as_ref().expect("right end").boundary_pos,
+            118
+        );
+    }
+
+    #[test]
+    fn drop_paired_drops_one_clipped_end_but_keeps_other_end() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"pair_drop_one",
+            0,
+            100,
+            false,
+            cigar(&[('S', 2), ('M', 6)]),
+            b"TTACGTAC",
+            None,
+        );
+        let reverse = make_record(
+            b"pair_drop_one",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6)]),
+            b"AACCGG",
+            None,
+        );
+
+        let fragment = collect_pair(
+            &forward,
+            &reverse,
+            ClipStrategy::Drop,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            None,
+            None,
+        )
+        .expect("fragment");
+
+        assert!(fragment.left_end.is_none());
+        assert!(fragment.right_end.is_some());
+        assert_eq!(fragment.assignment_start(), 100);
+        assert_eq!(fragment.assignment_end(), 116);
+    }
+
+    #[test]
+    fn drop_paired_returns_none_when_both_ends_are_skipped() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"pair_drop_both",
+            0,
+            100,
+            false,
+            cigar(&[('S', 2), ('M', 6)]),
+            b"TTACGTAC",
+            None,
+        );
+        let reverse = make_record(
+            b"pair_drop_both",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6), ('S', 2)]),
+            b"CGTACGTT",
+            None,
+        );
+
+        assert!(
+            collect_pair(
+                &forward,
+                &reverse,
+                ClipStrategy::Drop,
+                KmerSource::Read,
+                IndelMotifFilterPolicy::Auto,
+                4,
+                None,
+                None,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn max_soft_clips_skips_end_and_drops_boundary_adjustment() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"pair_max_clip",
+            0,
+            100,
+            false,
+            cigar(&[('S', 3), ('M', 6)]),
+            b"TTTACGTAC",
+            None,
+        );
+        let reverse = make_record(
+            b"pair_max_clip",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6)]),
+            b"AACCGG",
+            None,
+        );
+
+        let fragment = collect_pair(
+            &forward,
+            &reverse,
+            ClipStrategy::Raw,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            Some(2),
+            None,
+        )
+        .expect("fragment");
+
+        assert!(fragment.left_end.is_none());
+        assert_eq!(fragment.assignment_start(), 100);
+        assert_eq!(fragment.assignment_end(), 116);
+    }
+
+    #[test]
+    fn hard_clipped_pair_is_discarded() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"pair_hard_clip",
+            0,
+            100,
+            false,
+            cigar(&[('H', 3), ('M', 6)]),
+            b"ACGTAC",
+            None,
+        );
+        let reverse = make_record(
+            b"pair_hard_clip",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6)]),
+            b"AACCGG",
+            None,
+        );
+
+        assert!(
+            collect_pair(
+                &forward,
+                &reverse,
+                ClipStrategy::Aligned,
+                KmerSource::Read,
+                IndelMotifFilterPolicy::Auto,
+                4,
+                None,
+                None,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn left_indel_is_detected_inside_aligned_footprint() {
+        // Human verification status: unverified
+        let record = make_record(
+            b"left_indel",
+            0,
+            100,
+            false,
+            cigar(&[('M', 2), ('I', 1), ('M', 5)]),
+            b"ACGTACGT",
+            None,
+        );
+
+        let info = end_info(&record, ClipStrategy::Aligned, 4, None);
+        assert!(info.left_motif_has_indels);
+        assert!(!info.right_motif_has_indels);
+    }
+
+    #[test]
+    fn right_indel_is_detected_inside_aligned_footprint() {
+        // Human verification status: unverified
+        let record = make_record(
+            b"right_indel",
+            0,
+            100,
+            false,
+            cigar(&[('M', 5), ('D', 1), ('M', 2)]),
+            b"ACGTACG",
+            None,
+        );
+
+        let info = end_info(&record, ClipStrategy::Aligned, 3, None);
+        assert!(!info.left_motif_has_indels);
+        assert!(info.right_motif_has_indels);
+    }
+
+    #[test]
+    fn refskip_is_treated_as_indel_inside_the_motif_footprint() {
+        // Human verification status: unverified
+        // Left motif sees M2 then N3 before reaching 4 aligned bases, so it is indel-affected.
+        // Right motif takes its first 4 aligned bases from the terminal M5 block and never reaches
+        // the ref-skip.
+        let record = make_record(
+            b"refskip_left",
+            0,
+            100,
+            false,
+            cigar(&[('M', 2), ('N', 3), ('M', 5)]),
+            b"ACGTACG",
+            None,
+        );
+
+        let info = end_info(&record, ClipStrategy::Aligned, 4, None);
+        assert!(info.left_motif_has_indels);
+        assert!(!info.right_motif_has_indels);
+    }
+
+    #[test]
+    fn pad_is_ignored_when_scanning_for_indels() {
+        // Human verification status: unverified
+        // Padding does not consume aligned motif bases and should not count as an indel.
+        let record = make_record(
+            b"pad_ignored",
+            0,
+            100,
+            false,
+            cigar(&[('M', 2), ('P', 3), ('M', 5)]),
+            b"ACGTACG",
+            None,
+        );
+
+        let info = end_info(&record, ClipStrategy::Aligned, 4, None);
+        assert!(!info.left_motif_has_indels);
+        assert!(!info.right_motif_has_indels);
+    }
+
+    #[test]
+    fn indel_outside_aligned_footprint_is_ignored() {
+        // Human verification status: unverified
+        let record = make_record(
+            b"indel_far",
+            0,
+            100,
+            false,
+            cigar(&[('M', 5), ('I', 1), ('M', 5)]),
+            b"ACGTACGTACG",
+            None,
+        );
+
+        let info = end_info(&record, ClipStrategy::Aligned, 4, None);
+        assert!(!info.left_motif_has_indels);
+    }
+
+    #[test]
+    fn raw_reduces_indel_footprint_after_soft_clipping() {
+        // Human verification status: unverified
+        let record = make_record(
+            b"raw_reduces_indel",
+            0,
+            100,
+            false,
+            cigar(&[('S', 3), ('M', 2), ('I', 1), ('M', 5)]),
+            b"TTTACGTACGT",
+            None,
+        );
+
+        let aligned_info = end_info(&record, ClipStrategy::Aligned, 4, None);
+        let raw_info = end_info(&record, ClipStrategy::Raw, 4, None);
+
+        assert!(aligned_info.left_motif_has_indels);
+        assert!(!raw_info.left_motif_has_indels);
+    }
+
+    #[test]
+    fn auto_read_source_keeps_indel_affected_end() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"auto_read",
+            0,
+            100,
+            false,
+            cigar(&[('M', 2), ('I', 1), ('M', 5)]),
+            b"ACGTACGT",
+            None,
+        );
+        let reverse = make_record(
+            b"auto_read",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6)]),
+            b"AACCGG",
+            None,
+        );
+
+        let fragment = collect_pair(
+            &forward,
+            &reverse,
+            ClipStrategy::Aligned,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            None,
+            None,
+        )
+        .expect("fragment");
+
+        assert!(fragment.left_end.is_some());
+        assert_eq!(fragment.assignment_start(), 100);
+    }
+
+    #[test]
+    fn auto_reference_source_skips_indel_affected_end_and_keeps_aligned_boundary() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"auto_ref",
+            0,
+            100,
+            false,
+            cigar(&[('M', 2), ('I', 1), ('M', 5)]),
+            b"ACGTACGT",
+            None,
+        );
+        let reverse = make_record(
+            b"auto_ref",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6)]),
+            b"AACCGG",
+            None,
+        );
+
+        let fragment = collect_pair(
+            &forward,
+            &reverse,
+            ClipStrategy::Aligned,
+            KmerSource::Reference,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            None,
+            None,
+        )
+        .expect("fragment");
+
+        assert!(fragment.left_end.is_none());
+        assert_eq!(fragment.assignment_start(), 100);
+    }
+
+    #[test]
+    fn skip_affected_end_in_raw_keeps_raw_assignment_boundary() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"raw_indel_skip",
+            0,
+            100,
+            false,
+            cigar(&[('S', 2), ('M', 1), ('I', 1), ('M', 5)]),
+            b"TTACGTACG",
+            None,
+        );
+        let reverse = make_record(
+            b"raw_indel_skip",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6)]),
+            b"AACCGG",
+            None,
+        );
+
+        let fragment = collect_pair(
+            &forward,
+            &reverse,
+            ClipStrategy::Raw,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::SkipAffectedEnd,
+            4,
+            None,
+            None,
+        )
+        .expect("fragment");
+
+        assert!(fragment.left_end.is_none());
+        assert_eq!(fragment.assignment_start(), 98);
+    }
+
+    #[test]
+    fn auto_reference_source_in_raw_keeps_raw_assignment_boundary_when_skipping_end() {
+        // Human verification status: unverified
+        // Raw uses the soft-clipped bases in the motif but still skips this end in Auto mode when
+        // the within source is reference and the aligned part of the motif crosses an insertion.
+        let forward = make_record(
+            b"raw_auto_ref",
+            0,
+            100,
+            false,
+            cigar(&[('S', 2), ('M', 1), ('I', 1), ('M', 5)]),
+            b"TTACGTACG",
+            None,
+        );
+        let reverse = make_record(
+            b"raw_auto_ref",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6)]),
+            b"AACCGG",
+            None,
+        );
+
+        let fragment = collect_pair(
+            &forward,
+            &reverse,
+            ClipStrategy::Raw,
+            KmerSource::Reference,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            None,
+            None,
+        )
+        .expect("fragment");
+
+        assert!(fragment.left_end.is_none());
+        assert_eq!(fragment.assignment_start(), 98);
+    }
+
+    #[test]
+    fn skip_affected_fragment_drops_whole_fragment() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"skip_fragment",
+            0,
+            100,
+            false,
+            cigar(&[('M', 2), ('I', 1), ('M', 5)]),
+            b"ACGTACGT",
+            None,
+        );
+        let reverse = make_record(
+            b"skip_fragment",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6)]),
+            b"AACCGG",
+            None,
+        );
+
+        assert!(
+            collect_pair(
+                &forward,
+                &reverse,
+                ClipStrategy::Aligned,
+                KmerSource::Read,
+                IndelMotifFilterPolicy::SkipAffectedFragment,
+                4,
+                None,
+                None,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn drop_clipping_outranks_indel_skip() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"drop_beats_indel",
+            0,
+            100,
+            false,
+            cigar(&[('S', 2), ('M', 1), ('I', 1), ('M', 5)]),
+            b"TTACGTACG",
+            None,
+        );
+        let reverse = make_record(
+            b"drop_beats_indel",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6)]),
+            b"AACCGG",
+            None,
+        );
+
+        let fragment = collect_pair(
+            &forward,
+            &reverse,
+            ClipStrategy::Drop,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::SkipAffectedEnd,
+            4,
+            None,
+            None,
+        )
+        .expect("fragment");
+
+        assert!(fragment.left_end.is_none());
+        assert_eq!(fragment.assignment_start(), 100);
+    }
+
+    #[test]
+    fn max_soft_clips_outranks_indel_skip_and_drops_raw_assignment_boundary() {
+        // Human verification status: unverified
+        // The left end is both over the soft-clip threshold and indel-affected.
+        // Max-soft-clips wins first, so assignment falls back to the aligned boundary rather than
+        // keeping the raw outward shift.
+        let forward = make_record(
+            b"max_clip_beats_indel",
+            0,
+            100,
+            false,
+            cigar(&[('S', 2), ('M', 1), ('I', 1), ('M', 5)]),
+            b"TTACGTACG",
+            None,
+        );
+        let reverse = make_record(
+            b"max_clip_beats_indel",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6)]),
+            b"AACCGG",
+            None,
+        );
+
+        let fragment = collect_pair(
+            &forward,
+            &reverse,
+            ClipStrategy::Raw,
+            KmerSource::Reference,
+            IndelMotifFilterPolicy::SkipAffectedEnd,
+            4,
+            Some(1),
+            None,
+        )
+        .expect("fragment");
+
+        assert!(fragment.left_end.is_none());
+        assert_eq!(fragment.assignment_start(), 100);
+    }
+
+    #[test]
+    fn unpaired_aligned_exposes_both_ends() {
+        // Human verification status: unverified
+        let record = make_record(
+            b"single_aligned",
+            0,
+            100,
+            false,
+            cigar(&[('S', 2), ('M', 6), ('S', 2)]),
+            b"TTACGTACGG",
+            None,
+        );
+
+        let fragment = collect_single(
+            &record,
+            ClipStrategy::Aligned,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            None,
+            None,
+        )
+        .expect("fragment");
+
+        assert_eq!(fragment.start(), 100);
+        assert_eq!(fragment.end(), 106);
+        assert_eq!(fragment.assignment_start(), 100);
+        assert_eq!(fragment.assignment_end(), 106);
+        assert_eq!(
+            fragment.left_end.as_ref().expect("left end").within_bases,
+            b"ACGT".to_vec()
+        );
+        assert_eq!(
+            fragment.right_end.as_ref().expect("right end").within_bases,
+            b"GTAC".to_vec()
+        );
+    }
+
+    #[test]
+    fn unpaired_raw_expands_assignment_interval_on_both_sides() {
+        // Human verification status: unverified
+        let record = make_record(
+            b"single_raw",
+            0,
+            100,
+            false,
+            cigar(&[('S', 2), ('M', 6), ('S', 2)]),
+            b"TTACGTACGG",
+            None,
+        );
+
+        let fragment = collect_single(
+            &record,
+            ClipStrategy::Raw,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            None,
+            None,
+        )
+        .expect("fragment");
+
+        assert_eq!(fragment.start(), 100);
+        assert_eq!(fragment.end(), 106);
+        assert_eq!(fragment.assignment_start(), 98);
+        assert_eq!(fragment.assignment_end(), 108);
+        assert_eq!(
+            fragment.left_end.as_ref().expect("left end").within_bases,
+            b"TTAC".to_vec()
+        );
+        assert_eq!(
+            fragment.right_end.as_ref().expect("right end").within_bases,
+            b"ACGG".to_vec()
+        );
+    }
+
+    #[test]
+    fn hard_clipped_single_read_is_discarded() {
+        // Human verification status: unverified
+        let record = make_record(
+            b"single_hard_clip",
+            0,
+            100,
+            false,
+            cigar(&[('H', 2), ('M', 6)]),
+            b"ACGTAC",
+            None,
+        );
+
+        assert!(
+            collect_single(
+                &record,
+                ClipStrategy::Aligned,
+                KmerSource::Read,
+                IndelMotifFilterPolicy::Auto,
+                4,
+                None,
+                None,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn paired_gc_tag_combines_to_fragment_average() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"pair_gc",
+            0,
+            100,
+            false,
+            cigar(&[('M', 6)]),
+            b"ACGTAC",
+            Some(2.0),
+        );
+        let reverse = make_record(
+            b"pair_gc",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6)]),
+            b"AACCGG",
+            Some(4.0),
+        );
+
+        let fragment = collect_pair(
+            &forward,
+            &reverse,
+            ClipStrategy::Aligned,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            None,
+            Some(b"GC"),
+        )
+        .expect("fragment");
+
+        assert_eq!(fragment.gc_tag.weight, Some(3.0));
+    }
+
+    #[test]
+    fn unpaired_gc_tag_is_preserved() {
+        // Human verification status: unverified
+        let record = make_record(
+            b"single_gc",
+            0,
+            100,
+            false,
+            cigar(&[('M', 6)]),
+            b"ACGTAC",
+            Some(2.5),
+        );
+
+        let fragment = collect_single(
+            &record,
+            ClipStrategy::Aligned,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            None,
+            Some(b"GC"),
+        )
+        .expect("fragment");
+
+        assert_eq!(fragment.gc_tag.weight, Some(2.5));
+    }
+
+    #[test]
+    fn outwards_or_same_strand_pairs_are_rejected() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"bad_pair",
+            0,
+            120,
+            false,
+            cigar(&[('M', 6)]),
+            b"ACGTAC",
+            None,
+        );
+        let reverse = make_record(
+            b"bad_pair",
+            0,
+            100,
+            true,
+            cigar(&[('M', 6)]),
+            b"AACCGG",
+            None,
+        );
+        assert!(
+            collect_pair(
+                &forward,
+                &reverse,
+                ClipStrategy::Aligned,
+                KmerSource::Read,
+                IndelMotifFilterPolicy::Auto,
+                4,
+                None,
+                None,
+            )
+            .is_none()
+        );
+
+        let same_strand = make_record(
+            b"bad_pair",
+            0,
+            130,
+            false,
+            cigar(&[('M', 6)]),
+            b"TTTTTT",
+            None,
+        );
+        assert!(
+            collect_pair(
+                &forward,
+                &same_strand,
+                ClipStrategy::Aligned,
+                KmerSource::Read,
+                IndelMotifFilterPolicy::Auto,
+                4,
+                None,
+                None,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn insufficient_sequence_skips_end_and_returns_none_if_both_ends_fail() {
+        // Human verification status: unverified
+        let record = make_record(
+            b"too_short",
+            0,
+            100,
+            false,
+            cigar(&[('M', 3)]),
+            b"ACG",
+            None,
+        );
+
+        assert!(
+            collect_single(
+                &record,
+                ClipStrategy::Aligned,
+                KmerSource::Read,
+                IndelMotifFilterPolicy::Auto,
+                4,
+                None,
+                None,
+            )
+            .is_none()
+        );
     }
 }
 

@@ -19,7 +19,7 @@ use cfdnalab::commands::fcoverage::fcoverage::run;
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
 use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
 use cfdnalab::commands::lengths::{config::LengthsConfig, lengths::run as run_lengths};
-use cfdnalab::shared::fragment::minimal_fragment::collect_fragment_from_records;
+use cfdnalab::shared::fragment::minimal_fragment::{MinimalReadInfo, collect_fragment};
 use cfdnalab::shared::indel_mode::IndelMode;
 use cfdnalab::shared::io::dot_join;
 use cfdnalab::shared::read::default_include_read_paired_end;
@@ -36,6 +36,16 @@ use rust_htslib::bam::record::Aux;
 use rust_htslib::bam::{self, Read, Reader};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
+
+fn collect_fragment_from_records_for_test(
+    a: &rust_htslib::bam::Record,
+    b: &rust_htslib::bam::Record,
+) -> Option<cfdnalab::shared::fragment::minimal_fragment::Fragment> {
+    collect_fragment(
+        &MinimalReadInfo::from_record_with_gc_tag(a, None).ok()?,
+        &MinimalReadInfo::from_record_with_gc_tag(b, None).ok()?,
+    )
+}
 
 #[derive(Debug)]
 struct TaggedBamFixture {
@@ -258,7 +268,7 @@ fn per_position_outputs_basic_fragment() -> Result<()> {
         "expected both mates accepted, got {accepted:?}"
     );
     assert_eq!(pair_store.len(), 2);
-    let frag = collect_fragment_from_records(&pair_store[0], &pair_store[1]);
+    let frag = collect_fragment_from_records_for_test(&pair_store[0], &pair_store[1]);
     assert!(frag.is_some(), "expected fragment collection to succeed");
 
     run(&cfg)?;

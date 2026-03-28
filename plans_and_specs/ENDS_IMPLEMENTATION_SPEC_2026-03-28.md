@@ -100,14 +100,16 @@ pub struct FragmentWithEnds {
     pub tid: i32,
     pub interval: Interval<u32>,
     pub gc_tag: GcTagValue,
-    pub ends: SmallVec<[ResolvedFragmentEnd; 2]>,
+    pub left_end: Option<ResolvedFragmentEnd>,
+    pub right_end: Option<ResolvedFragmentEnd>,
 }
 ```
 
-The exact storage container can change, but the important property is:
+This shape is preferred over a small vector because:
 
-- paired fragments can expose two ends
-- unpaired fragments can also expose two ends, because `--reads-are-fragments` means one read spans the whole fragment
+- left and right end identity stays explicit
+- paired and unpaired input use the same downstream representation
+- later orientation handling does not need an extra per-end role tag
 
 ### `ResolvedFragmentEnd`
 
@@ -118,18 +120,16 @@ Working shape:
 ```rust
 pub struct ResolvedFragmentEnd {
     pub boundary_pos: u32,
-    pub aligned_boundary_pos: u32,
     pub within_bases: Vec<u8>,
 }
 ```
 
 Notes:
 
-- `boundary_pos` is the fragment boundary used by the current clip strategy
-- `aligned_boundary_pos` is the aligned boundary after terminal clipping is excluded
-- for `aligned`, `boundary_pos == aligned_boundary_pos`
-- for `raw`, `boundary_pos` and `aligned_boundary_pos` may differ while the counted `within_bases` still come from the raw terminal sequence
-- for `drop`, the end is omitted entirely from `ends`
+- `boundary_pos` is the assignment boundary used by the kept end
+- for `aligned`, `boundary_pos` is the aligned boundary after terminal clipping is excluded
+- for `raw`, `boundary_pos` may move outward beyond the aligned span while the counted `within_bases` still come from the raw terminal sequence
+- if an end is skipped, no `ResolvedFragmentEnd` exists for it
 
 This shape is intentionally minimal. If later implementation shows that another small field is needed for counters or validation, it can be added.
 
@@ -249,9 +249,117 @@ This spec does not redefine those semantics. It assumes the current API directio
   - motif-level invalidation always on
 - indel handling for motifs is controlled by `IndelMotifFilterPolicy`
 
-The collector should therefore only resolve clipping.
+The collector should therefore resolve the end-level filtering outcomes directly.
 
-Indel and blacklist filtering of motifs can still happen after collection if they depend on motif footprint validity rather than read-end sequence shaping.
+For indels, the collector only needs motif-level booleans:
+
+- `left_motif_has_indels`
+- `right_motif_has_indels`
+
+These are derived from the first `k_within` aligned bases used by the selected clip strategy. The collector does not need to store indel offsets or other intermediate state.
+
+## Assignment boundary rules
+
+The command now has two distinct geometries:
+
+- aligned fragment interval geometry
+  - used for fragment length and GC correction
+  - always stays on the original aligned interval
+
+- assignment boundary geometry
+  - used for end-based placement when an end is actually kept for assignment
+  - may differ from the aligned boundary under `raw`
+
+This distinction is important and must stay explicit in the collector.
+
+### End-resolution outcomes
+
+One resolved end should return one of these semantic outcomes:
+
+- `DropFragment`
+  - abort the whole fragment
+  - used for policies such as `skip-affected-fragment`
+
+- `SkipEndKeepAssignmentBoundary { assignment_boundary_pos }`
+  - skip the motif for this end
+  - still let this end contribute a clip-adjusted or otherwise meaningful assignment boundary
+
+- `SkipEndDropAssignmentBoundary`
+  - skip the motif for this end
+  - do not let this end redefine assignment geometry
+  - callers should fall back to the aligned boundary
+
+- `KeepEnd { assignment_boundary_pos, end }`
+  - keep both the motif and the assignment boundary
+
+### Current rules for choosing the outcome
+
+- `aligned`
+  - if the end can be built, return `KeepEnd` with aligned assignment boundary
+  - if too few sequence bases remain, return `SkipEndDropAssignmentBoundary`
+
+- `raw`
+  - if the end can be built, return `KeepEnd` with outward-shifted assignment boundary
+  - if too few sequence bases remain after using raw sequence, return `SkipEndDropAssignmentBoundary`
+
+- `drop`
+  - if the end is soft-clipped, return `SkipEndDropAssignmentBoundary`
+  - otherwise behave like `aligned`
+
+- `max_soft_clips`
+  - when exceeded, return `SkipEndDropAssignmentBoundary`
+
+- `IndelMotifFilterPolicy::SkipAffectedEnd`
+  - if the end motif has indels in its aligned `k_within` footprint, return
+    `SkipEndKeepAssignmentBoundary`
+
+- `IndelMotifFilterPolicy::Auto`
+  - in `Reference` source mode, treat indel-affected motifs the same as `SkipAffectedEnd`
+  - in `Read` source mode, keep the end
+
+- `IndelMotifFilterPolicy::SkipAffectedFragment`
+  - if either end motif has indels in its aligned `k_within` footprint, return `DropFragment`
+
+## Required tests
+
+These tests are required before calling the collector stable enough.
+
+### Edge clipping parsing
+
+- left soft clip only, e.g. `10S90M`
+- right soft clip only, e.g. `90M10S`
+- hard clip only at left, e.g. `5H95M`
+- hard clip only at right, e.g. `95M5H`
+- combined hard+soft edge patterns, e.g. `5H10S90M` and `90M10S5H`
+
+### Clip strategy behavior
+
+- `aligned` excludes terminal soft-clipped bases from `within_bases`
+- `raw` includes terminal soft-clipped bases in `within_bases`
+- `raw` moves the assignment boundary outward by the soft-clipped length
+- `drop` skips a soft-clipped end
+- hard-clipped reads are always discarded
+
+### Boundary semantics
+
+- fragment `interval` stays on aligned boundaries for length and GC purposes
+- kept `raw` ends use shifted assignment boundaries
+- skipped ends from `drop` or `max_soft_clips` fall back to aligned assignment boundaries
+- skipped ends from indel filtering keep assignment boundaries when policy says to keep them
+
+### Indel filtering
+
+- `Auto` + `Read` source keeps indel-affected ends
+- `Auto` + `Reference` source skips indel-affected ends but keeps assignment boundaries
+- `SkipAffectedEnd` skips only the affected end
+- `SkipAffectedFragment` drops the whole fragment
+- indels outside the aligned `k_within` footprint do not trigger skipping
+
+### Paired vs unpaired consistency
+
+- paired fragments expose left and right ends from `forward.pos -> reverse.reference_end`
+- unpaired fragments expose left and right ends from `pos -> reference_end`
+- equivalent clipped layouts in paired and unpaired input produce the same end-level outcomes
 
 ## Reference context encoding
 

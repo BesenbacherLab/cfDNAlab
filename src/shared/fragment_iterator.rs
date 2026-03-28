@@ -69,6 +69,10 @@ use rust_htslib::bam::Record;
 
 use crate::shared::{
     fragment::{
+        ends_fragment::{
+            EndReadInfo, FragmentWithEnds, collect_fragment_with_ends,
+            collect_fragment_with_ends_from_single_read,
+        },
         frag_file_fragment::{
             FragFileFragment, FragReadInfo, collect_fragment_with_frag_file_info,
             collect_fragment_with_frag_file_info_from_single_read,
@@ -93,7 +97,7 @@ use crate::shared::{
             collect_fragment_with_records_from_single_read,
         },
     },
-    indel_mode::IndelMode,
+    indel_mode::{IndelMode, IndelMotifFilterPolicy},
     iterator_counter::{
         FragmentCounterSnapshot, FragmentCounters, LocalCounters, NoopCounters, SharedCounters,
     },
@@ -329,6 +333,99 @@ where
 
 /* WithSegments pairing */
 
+#[derive(Clone, Copy)]
+pub struct WithEndsPairer {
+    pub clip_strategy: crate::commands::ends::config_structs::ClipStrategy,
+    pub source_within: crate::commands::ends::config_structs::KmerSource,
+    pub indel_filter: IndelMotifFilterPolicy,
+    pub k_within: usize,
+    pub max_soft_clips: Option<u32>,
+}
+
+impl Pairer for WithEndsPairer {
+    type Read = EndReadInfo;
+    type Output = FragmentWithEnds;
+
+    fn pair(&self, a: &Self::Read, b: &Self::Read) -> Option<Self::Output> {
+        collect_fragment_with_ends(
+            a,
+            b,
+            self.clip_strategy,
+            self.source_within,
+            self.indel_filter,
+            self.k_within,
+            self.max_soft_clips,
+        )
+    }
+}
+
+/// From BAM: pair reads into `FragmentWithEnds`.
+pub fn fragments_with_ends_from_bam<RIter, PF>(
+    records: RIter,
+    include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
+    clip_strategy: crate::commands::ends::config_structs::ClipStrategy,
+    source_within: crate::commands::ends::config_structs::KmerSource,
+    indel_filter: IndelMotifFilterPolicy,
+    k_within: usize,
+    max_soft_clips: Option<u32>,
+    gc_tag: Option<&[u8]>,
+    fragment_filter: PF,
+    unpaired: bool,
+) -> PairingAdapter<
+    impl Iterator<Item = Result<InputItem<FragmentWithEnds>>>,
+    WithEndsPairer,
+    EndReadInfo,
+    FragmentWithEnds,
+>
+where
+    RIter: Iterator<Item = Result<Record>>,
+    PF: Fn(&FragmentWithEnds) -> bool + Send + Sync + 'static,
+{
+    let pairer = WithEndsPairer {
+        clip_strategy,
+        source_within,
+        indel_filter,
+        k_within,
+        max_soft_clips,
+    };
+    let gc_tag_bytes = gc_tag.map(|tag| tag.to_vec());
+    let mapped = records.map(|res| res.context("reading BAM record").map(InputItem::BamRecord));
+
+    let mut adapter = PairingAdapter::new(
+        mapped,
+        if unpaired {
+            None::<WithEndsPairer>
+        } else {
+            Some(pairer)
+        },
+    )
+    .with_bam_filter_and_mapper(include_read, move |rec| {
+        EndReadInfo::from_record_with_gc_tag(
+            rec,
+            gc_tag_bytes.as_deref(),
+            clip_strategy,
+            k_within,
+        )
+            .map_err(anyhow::Error::from)
+    })
+    .with_fragment_filter(fragment_filter);
+
+    if unpaired {
+        adapter = adapter.with_bam_single_fragment_from_read(move |read| {
+            collect_fragment_with_ends_from_single_read(
+                read,
+                clip_strategy,
+                source_within,
+                indel_filter,
+                k_within,
+                max_soft_clips,
+            )
+        });
+    }
+
+    adapter
+}
+
 pub struct WithSegmentsPairer {
     pub trigger_min_gap_bp: u32,
     pub include_inter_mate_gap: bool,
@@ -536,11 +633,8 @@ where
         },
     )
     .with_bam_filter_and_mapper(include_read, move |rec| {
-        let mut info = MinimalReadInfo::try_from(rec).map_err(anyhow::Error::from)?;
-        if let Some(tag) = gc_tag_bytes.as_deref() {
-            info.gc_tag = crate::shared::gc_tag::read_gc_tag_from_record(rec, tag);
-        }
-        Ok(info)
+        MinimalReadInfo::from_record_with_gc_tag(rec, gc_tag_bytes.as_deref())
+            .map_err(anyhow::Error::from)
     })
     .with_fragment_filter(fragment_filter);
 

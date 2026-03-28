@@ -44,22 +44,21 @@ pub struct MinimalReadInfo {
     pub gc_tag: crate::shared::gc_tag::GcTagValue,
 }
 
-impl TryFrom<&Record> for MinimalReadInfo {
-    type Error = crate::Error;
-
+impl MinimalReadInfo {
     #[inline]
-    fn try_from(r: &Record) -> Result<Self> {
+    pub fn from_record_with_gc_tag(r: &Record, gc_tag: Option<&[u8]>) -> Result<Self> {
+        let gc_tag_value = gc_tag
+            .map(|tag| crate::shared::gc_tag::read_gc_tag_from_record(r, tag))
+            .unwrap_or_default();
+
         Ok(MinimalReadInfo {
             tid: r.tid(),
             interval: Interval::new(r.pos() as u32, r.reference_end() as u32)?,
             is_reverse: r.is_reverse(),
-            // Default tag value so tag reads are opt-in at iterator level
-            gc_tag: GcTagValue::default(),
+            gc_tag: gc_tag_value,
         })
     }
-}
 
-impl MinimalReadInfo {
     /// Return the read's inclusive start on the reference.
     #[inline]
     pub fn start(&self) -> u32 {
@@ -92,27 +91,6 @@ impl PairOrientable for MinimalReadInfo {
     fn pos(&self) -> u32 {
         self.start()
     }
-}
-
-/// Compute the cfDNA fragment coordinates (forward.left -> reverse.right).
-///
-/// Parameters
-/// ----------
-/// a: &Record
-///     One read of the pair (mapped).
-/// b: &Record
-///     The mate read (mapped).
-///
-/// Returns
-/// -------
-/// frag: Option<Fragment>
-///     The fragment if both reads are mapped to the same contig, on opposite strands,
-///     and inward-facing; otherwise `None`.
-pub fn collect_fragment_from_records(a: &Record, b: &Record) -> Option<Fragment> {
-    collect_fragment(
-        &MinimalReadInfo::try_from(a).ok()?,
-        &MinimalReadInfo::try_from(b).ok()?,
-    )
 }
 
 /// Build a Fragment from two `MinimalReadInfo`s (no full BAM records needed).

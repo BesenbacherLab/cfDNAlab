@@ -180,15 +180,6 @@ impl SegmentedReadInfo {
     }
 }
 
-impl TryFrom<&Record> for SegmentedReadInfo {
-    type Error = crate::Error;
-
-    #[inline]
-    fn try_from(r: &Record) -> Result<Self> {
-        SegmentedReadInfo::from_record_with_gc_tag(r, None)
-    }
-}
-
 impl PairOrientable for SegmentedReadInfo {
     #[inline]
     fn tid(&self) -> i32 {

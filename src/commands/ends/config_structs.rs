@@ -46,7 +46,7 @@ pub struct ClippingArgs {
     ///
     /// Use `--clip-strategy drop` to discard all soft-clipped motifs.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Clipping"))]
-    pub max_clips: Option<usize>,
+    pub max_soft_clips: Option<usize>,
 }
 
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]

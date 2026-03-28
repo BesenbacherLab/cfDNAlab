@@ -1,3 +1,4 @@
+pub mod ends_fragment;
 pub mod frag_file_fragment;
 pub mod indel_counting_fragment;
 pub mod minimal_fragment;

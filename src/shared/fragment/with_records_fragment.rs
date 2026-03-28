@@ -87,19 +87,6 @@ impl WithRecordsFragment {
     }
 }
 
-/// Build a `WithRecordsFragment` from two `Record`s.
-///
-/// NOTE: Consumes the records.
-#[inline]
-pub fn collect_fragment_with_records_from_records(
-    a: &Record,
-    b: &Record,
-) -> Option<WithRecordsFragment> {
-    let ai = WithRecordReadInfo::try_from(a).ok()?;
-    let bi = WithRecordReadInfo::try_from(b).ok()?;
-    collect_fragment_with_records(&ai, &bi)
-}
-
 /// Build a `WithRecordsFragment` from two reads.
 ///
 /// NOTE: Consumes the records.

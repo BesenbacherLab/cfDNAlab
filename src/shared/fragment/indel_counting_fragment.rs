@@ -240,19 +240,6 @@ fn partition_insertion_by_aligned_overlap(
     }
 }
 
-/// Build a `FragmentWithIndelCounts` from two `Record`s.
-#[inline]
-pub fn collect_fragment_with_indel_counts_from_records(
-    a: &Record,
-    b: &Record,
-    skip_indels: bool,
-    count_indels: bool,
-) -> Option<FragmentWithIndelCounts> {
-    let ai = IndelReadInfo::try_from(a).ok()?;
-    let bi = IndelReadInfo::try_from(b).ok()?;
-    collect_fragment_with_indel_counts(&ai, &bi, skip_indels, count_indels)
-}
-
 /// Build a `FragmentWithIndelCounts` from a single read.
 ///
 /// The fragment span is the aligned reference span of the read `[pos, reference_end)`.

@@ -92,17 +92,6 @@ impl FragFileFragment {
     }
 }
 
-/// Build a `FragFileFragment` from two `Record`s.
-#[inline]
-pub fn collect_fragment_with_frag_file_info_from_records(
-    a: &Record,
-    b: &Record,
-) -> Option<FragFileFragment> {
-    let ai = FragReadInfo::try_from(a).ok()?;
-    let bi = FragReadInfo::try_from(b).ok()?;
-    collect_fragment_with_frag_file_info(&ai, &bi)
-}
-
 /// Build a `FragFileFragment` from two reads.
 pub fn collect_fragment_with_frag_file_info(
     a: &FragReadInfo,
