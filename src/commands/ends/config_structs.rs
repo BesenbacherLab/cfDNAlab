@@ -11,7 +11,6 @@ pub enum KmerSource {
     Reference,
 }
 
-// TODO: for align-start, ensure 2xk_within is left after shifting - so (fragment length - total clipping) > 2xk_within
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Copy, Clone)]
 pub struct ClippingArgs {
@@ -20,72 +19,48 @@ pub struct ClippingArgs {
     /// Clipping means the read contains terminal bases that the aligner did not align normally.
     /// The choice here is thus what sequence object to count when that happens.
     ///
-    /// We recommend either `"raw"` or `"drop"` unless you have a good reason for the other options.
+    /// **NOTE**: Fragments with **hard**-clipping are always discarded.
     ///
     /// Possible values:
     ///
+    /// - `"aligned"`:
+    ///   Use the aligned start and end positions (the usual cfDNAlab fragment definition).
+    ///   This trusts the aligner's choice and ignores clipped bases in the read sequences.
+    ///
     /// - `"raw"`:
-    ///   Use the raw read bases, clipped or not.
+    ///   Use the raw read bases, including soft-clipped bases.
     ///
-    ///   This treats the sequenced end as the object of interest.
-    ///
-    ///   Most faithful to the observed molecule end, but clipped technical sequence is kept.
+    ///   When soft-clipping is present, this moves the counted fragment end
+    ///   outside the aligned span by the clipped length. This also happens when using
+    ///   the reference genome as source or only counting `--k-outside` bases.
     ///
     /// - `"drop"`:
-    ///   Skip motifs where the end is clipped.
-    ///
-    ///   Use this when you only want ends the aligner fully trusted.
-    ///
-    ///   Conservative and simple, but discards potentially real biology at clipped ends.
-    ///
-    /// - `"align-start"`:
-    ///   Skip clipped bases and take the first aligned bases instead.
-    ///
-    ///   This is useful when clipping mostly reflects adapters or technical junk,
-    ///   but it changes the object from the terminal read bases to an interior aligned motif.
-    ///
-    ///   Can recover motifs when clipping is mostly technical, but the motif is shifted inward.
-    ///
-    /// - `"fill-with-ref"`:
-    ///   Use read bases where aligned, and fill the clipped part from the reference.
-    ///
-    ///   This gives a hybrid observed/imputed motif. It assumes the clipped terminal bases
-    ///   are better approximated by the reference than by the clipped read sequence.
-    ///
-    ///   Retains more motifs under clipping, but mixes observed read bases with imputed reference bases.
+    ///   Skip motifs when their fragment end is soft-clipped. Hard-clipping always discards the full fragment.
     #[cfg_attr(
         feature = "cli",
-        clap(
-            long,
-            value_enum,
-            default_value = "raw",
-            requires_if("fill-with-ref", "ref_2bit"),
-            help_heading = "Clipping"
-        )
+        clap(long, value_enum, default_value = "aligned", help_heading = "Clipping")
     )]
     pub clip_strategy: ClipStrategy,
 
-    /// Skip motifs with a higher number of (S+H) clipped bases than this.
+    /// Skip motifs with a higher number of soft-clipped bases than this.
     ///
-    /// Use `--clip-strategy drop` to discard all clipped motifs.
+    /// Use `--clip-strategy drop` to discard all soft-clipped motifs.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Clipping"))]
     pub max_clips: Option<usize>,
 }
 
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub enum ClipStrategy {
-    /// Use the raw read bases, clipped or not.
+    /// Use the aligned fragment ends.
+    #[default]
+    Aligned,
+
+    /// Use the raw read bases, including soft-clipped bases.
     Raw,
 
     /// Drop the motif if its end is clipped.
     Drop,
-
-    /// Skip clipped bases and take the first aligned bases instead.
-    AlignStart,
-
-    /// Use read bases where aligned, and fill the clipped part from the reference.
-    FillWithRef,
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]

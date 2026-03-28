@@ -54,6 +54,7 @@ pub struct FragmentKmersSharedArgs {
         clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
     pub tile_size: u32,
 
+    // TODO: Align with `cfdna ends` ("adjust" makes no sense here)
     // TODO: Is it still correct that scaling weights use the full reference span? 5th last line
     /// How to handle insertions and deletions in fragments `[string]`
     ///
