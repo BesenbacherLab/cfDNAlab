@@ -4,13 +4,13 @@ use anyhow::{Context, Result, anyhow};
 use cfdnalab::commands::cli_common::{BaseSelectionArgs, FragmentPositionSelectionArgs};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 use cfdnalab::commands::cli_common::{ChromosomeArgs, GCWindowsArgs, IOCArgs, Ref2BitRequiredArgs};
-use cfdnalab::commands::fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 use cfdnalab::commands::gc_bias::{config::GCConfig, gc_bias::run as run_gc_bias};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 use cfdnalab::commands::ref_gc_bias::{
     config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias,
 };
+use cfdnalab::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 use rust_htslib::bam::{self, header::HeaderRecord, record::Cigar, record::CigarString};
 use std::{
     fs::{File, OpenOptions},

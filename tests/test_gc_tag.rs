@@ -69,6 +69,7 @@ mod test_gc_tag_values {
     }
 }
 
+#[cfg(feature = "cmd_ends")]
 mod test_fragment_iterator_gc_tags {
     use anyhow::Result;
     use cfdnalab::{

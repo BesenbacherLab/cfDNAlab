@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_gc_bias")]
+
 mod tests_stream_helpers_and_finalizer {
     use anyhow::Result;
     use tempfile::tempdir;

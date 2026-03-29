@@ -1,8 +1,8 @@
-use crate::commands::fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 use crate::shared::bam::bam_header_contigs;
 use crate::shared::bam::{Contigs, bam_contigs_info};
 use crate::shared::blacklist::load_blacklists;
 use crate::shared::interval::Interval;
+use crate::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 use crate::shared::scale_genome::load_scaling_factors_tsv;
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;

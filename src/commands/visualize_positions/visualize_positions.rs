@@ -3,14 +3,13 @@ use crate::commands::cli_common::{
 };
 use crate::commands::fragment_kmers::config::FragmentKmersConfig;
 use crate::commands::fragment_kmers::fragment_kmers::run_inner;
-use crate::commands::fragment_kmers::positions::{BasesFrom, PositionGroup, ReferenceFrame};
 use crate::commands::visualize_positions::config::VisualizePositionsConfig;
-use crate::commands::visualize_positions::model::{
-    AxisBounds, LengthVisualization, Style, Track, VizConfig,
-};
+use crate::commands::visualize_positions::model::{LengthVisualization, Style, VizConfig};
 use crate::commands::visualize_positions::select::ReadClamp;
 use crate::commands::visualize_positions::{render_ascii, render_svg};
 use crate::shared::interval::Interval;
+use crate::shared::positioning::{BasesFrom, PositionGroup, ReferenceFrame};
+use crate::shared::visualization::{AxisBounds, Track};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use ndarray::Array3;
 use ndarray_npy::read_npy;

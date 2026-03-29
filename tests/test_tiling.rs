@@ -1,3 +1,5 @@
+#![cfg(all(feature = "cmd_fcoverage", feature = "cmd_midpoints"))]
+
 mod tests {
     use cfdnalab::Error;
     use cfdnalab::commands::fcoverage::tiling::adapt_fetch_to_extreme_windows;

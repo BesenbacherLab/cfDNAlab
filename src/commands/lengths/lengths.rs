@@ -12,9 +12,7 @@ use crate::{
         lengths::{
             config::LengthsConfig,
             counting::{LengthCounts, stack_length_counts},
-            tiling::{
-                fetch_span_for_tile, reduce_partials_for_chr, write_cross_npy, write_partials_npz,
-            },
+            tiling::{reduce_partials_for_chr, write_cross_npy, write_partials_npz},
         },
     },
     shared::{
@@ -35,6 +33,7 @@ use crate::{
         tiled_run::{
             Tile, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
         },
+        window_fetch::fetch_span_for_tile,
     },
 };
 use anyhow::{Context, Result, bail, ensure};

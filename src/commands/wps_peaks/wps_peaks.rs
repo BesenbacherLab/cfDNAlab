@@ -6,7 +6,7 @@ use crate::commands::cli_common::{
     WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
     resolve_chromosomes_and_contigs,
 };
-use crate::commands::counters::FCoverageCounters;
+use crate::commands::counters::WPSPeaksCounters;
 use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
 use crate::commands::wps::wps::wps_for_tile;
 use crate::commands::wps_peaks::call_peaks::{PeakCall, call_peaks};
@@ -293,7 +293,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
 
     pb.finish_with_message("| Finished peak calling");
 
-    let mut total_counter = FCoverageCounters::default();
+    let mut total_counter = WPSPeaksCounters::default();
     match opt.per_window {
         None => {
             let mut writer = GlobalWriter::new(
@@ -433,7 +433,7 @@ impl GlobalWriter {
 }
 
 pub struct TileResult {
-    pub counter: FCoverageCounters,
+    pub counter: WPSPeaksCounters,
     pub peak_file_path: PathBuf,
     pub stats: Option<Vec<WindowStatsContribution>>,
 }
@@ -911,7 +911,7 @@ pub fn peaks_for_tile(
     gc_corrector_opt: Option<GCCorrector>,
     extra_halo: u32,
     min_peak_height: f32,
-) -> Result<(FCoverageCounters, Vec<PeakCall>)> {
+) -> Result<(WPSPeaksCounters, Vec<PeakCall>)> {
     let dummy_path = PathBuf::new();
     let tile_mode = TileMode::Positional {
         windows,
@@ -933,6 +933,7 @@ pub fn peaks_for_tile(
         extra_halo,
         true,
     )?;
+    let counter: WPSPeaksCounters = counter.into();
 
     let wps_values = match wps_opt {
         Some(v) => v,

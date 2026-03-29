@@ -13,7 +13,7 @@ use crate::{
             WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
             resolve_chromosomes_and_contigs,
         },
-        counters::BamToFragCounters,
+        counters::BamToBamCounters,
         gc_bias::{
             correct::{GCCorrector, load_gc_corrector},
             counting::build_gc_prefixes,
@@ -93,7 +93,7 @@ pub fn run(opt: &BamToBamConfig) -> Result<()> {
     Ok(())
 }
 
-pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
+pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
@@ -172,7 +172,7 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
     let mut writer = bam::Writer::from_path(&opt.out_bam, &header, Format::Bam)
         .context("creating BAM writer")?;
 
-    let results: Vec<BamToFragCounters> = chromosomes
+    let results: Vec<BamToBamCounters> = chromosomes
         .iter()
         .map(|chr| -> Result<_> {
             let out = process_chrom(
@@ -193,7 +193,7 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToFragCounters> {
 
     pb.finish_with_message("| Finished conversion");
 
-    let mut global_counter = BamToFragCounters::default();
+    let mut global_counter = BamToBamCounters::default();
 
     // Collect counters
     for counter in results {
@@ -211,18 +211,18 @@ fn process_chrom(
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
     writer: &mut bam::Writer,
-) -> anyhow::Result<BamToFragCounters> {
+) -> anyhow::Result<BamToBamCounters> {
     if matches!(opt.resolve_windows(), WindowSpec::Bed(_))
         && windows.is_none_or(|window_slice| window_slice.is_empty())
     {
-        return Ok(BamToFragCounters::default());
+        return Ok(BamToBamCounters::default());
     }
 
     // Open a fresh BAM reader for this thread
     let (mut reader, tid, chrom_len) = create_chromosome_reader(&opt.in_bam, chr)?;
 
     // Initialize counters (default -> 0s)
-    let mut counter = BamToFragCounters::default();
+    let mut counter = BamToBamCounters::default();
 
     let gc_prefixes_opt = if gc_corrector_opt.is_some() {
         let ref_2bit = match opt.ref_2bit.as_ref() {

@@ -7,9 +7,12 @@ use crate::{
             FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
             UnpairedArgs, WindowsArgs,
         },
-        fragment_kmers::positions::{BasesFrom, MismatchBasesFrom, ReferenceFrame},
     },
-    shared::{blacklist::BlacklistStrategy, indel_mode::IndelMode},
+    shared::{
+        blacklist::BlacklistStrategy,
+        indel_mode::IndelMode,
+        positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame},
+    },
 };
 
 /// Commands that are shared with `transitions``

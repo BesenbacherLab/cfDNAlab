@@ -1,14 +1,44 @@
 use std::str::FromStr;
 
+#[cfg(feature = "cli")]
+use clap::ValueEnum;
+
 // TODO these structs should use the format used by other cfDNAlab commands instead
 
-#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
-#[derive(Copy, Clone, Debug)]
+/// Select where the within-fragment bases come from for end motifs.
+///
+/// The `ends` pipeline can either trust the read sequence itself or reconstruct
+/// the within-fragment half from the reference genome. The read-backed mode is
+/// the default because it reflects what was actually sequenced, while the
+/// reference-backed mode is useful when you want alignment-consistent sequence
+/// context and are willing to skip indel-affected motifs.
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum KmerSource {
-    /// Extract k-mer from the sequenced read
+    /// Extract the within-fragment bases from the sequenced read.
     Read,
-    /// Extract k-mer from the reference genome
+    /// Extract the within-fragment bases from the reference genome.
     Reference,
+}
+
+/// Select how clipped fragment ends should be interpreted.
+///
+/// End motifs can either follow the aligned fragment span, expand outward to
+/// include soft-clipped bases, or be skipped when clipping is present. The
+/// `Drop` option is stricter than the aligned mode because even soft-clipped
+/// ends are ignored rather than interpreted.
+#[cfg_attr(feature = "cli", derive(ValueEnum))]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum ClipStrategy {
+    /// Use the aligned fragment ends.
+    #[default]
+    Aligned,
+
+    /// Use the raw read bases, including soft-clipped bases.
+    Raw,
+
+    /// Skip motifs whose end is soft-clipped.
+    Drop,
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
@@ -49,19 +79,6 @@ pub struct ClippingArgs {
     pub max_soft_clips: Option<usize>,
 }
 
-#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
-#[derive(Copy, Clone, Debug, Default)]
-pub enum ClipStrategy {
-    /// Use the aligned fragment ends.
-    #[default]
-    Aligned,
-
-    /// Use the raw read bases, including soft-clipped bases.
-    Raw,
-
-    /// Drop the motif if its end is clipped.
-    Drop,
-}
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]

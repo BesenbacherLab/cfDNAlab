@@ -1,3 +1,5 @@
+#![cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+
 mod fixtures;
 
 mod tests_gc_bias {

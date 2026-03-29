@@ -1,7 +1,11 @@
+#[cfg(feature = "cmd_ends")]
 pub mod ends_fragment;
+#[cfg(feature = "cmd_bam_to_frag")]
 pub mod frag_file_fragment;
+#[cfg(feature = "cmd_lengths")]
 pub mod indel_counting_fragment;
 pub mod minimal_fragment;
 pub mod segment_fragment;
 pub mod segment_kmer_fragment;
+#[cfg(feature = "cmd_bam_to_bam")]
 pub mod with_records_fragment;

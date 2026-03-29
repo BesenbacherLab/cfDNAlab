@@ -84,32 +84,61 @@ macro_rules! counter_struct {
 
 // Declarations
 
+#[cfg(feature = "cmd_gc_bias")]
 counter_struct!(GCCounters;);
+
+#[cfg(feature = "cmd_fragment_kmers")]
 counter_struct!(FragmentKmersCounters;
     blacklisted_fragments: u64,
     gc_failed_fragments: u64,
     gc_out_of_range_tags: u64
 );
-counter_struct!(CoverageWeightsCounters;);
-counter_struct!(FCoverageCounters; gc_failed_fragments: u64, gc_out_of_range_tags: u64);
-// If FCoverage's counted_fragments should come from yielded in the snapshot,
-// add a custom method/override below as needed.
 
+#[cfg(feature = "cmd_coverage_weights")]
+counter_struct!(CoverageWeightsCounters;);
+
+#[cfg(feature = "cmd_fcoverage")]
+counter_struct!(FCoverageCounters; gc_failed_fragments: u64, gc_out_of_range_tags: u64);
+
+#[cfg(feature = "cmd_wps")]
+counter_struct!(WPSCounters; gc_failed_fragments: u64, gc_out_of_range_tags: u64);
+
+#[cfg(feature = "cmd_wps_peaks")]
+counter_struct!(WPSPeaksCounters; gc_failed_fragments: u64, gc_out_of_range_tags: u64);
+
+#[cfg(feature = "cmd_wps_peaks")]
+impl From<WPSCounters> for WPSPeaksCounters {
+    fn from(other: WPSCounters) -> Self {
+        Self {
+            base: other.base,
+            gc_failed_fragments: other.gc_failed_fragments,
+            gc_out_of_range_tags: other.gc_out_of_range_tags,
+        }
+    }
+}
+
+#[cfg(feature = "cmd_lengths")]
 counter_struct!(LengthsCounters;
     blacklisted_fragments: u64,
     gc_failed_fragments: u64
 );
 
+#[cfg(feature = "cmd_ends")]
 counter_struct!(EndsCounters;
     blacklisted_fragments: u64,
     gc_failed_fragments: u64,
     gc_out_of_range_tags: u64
 );
 
+#[cfg(feature = "cmd_midpoints")]
 counter_struct!(ProfileGroupsCounters;
     blacklisted_fragments: u64,
     gc_failed_fragments: u64,
     gc_out_of_range_tags: u64,
 );
 
+#[cfg(feature = "cmd_bam_to_bam")]
+counter_struct!(BamToBamCounters; blacklisted_fragments: u64, gc_failed_fragments: u64);
+
+#[cfg(feature = "cmd_bam_to_frag")]
 counter_struct!(BamToFragCounters; blacklisted_fragments: u64, gc_failed_fragments: u64);

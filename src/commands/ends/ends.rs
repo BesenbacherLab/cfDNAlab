@@ -26,7 +26,6 @@ use crate::{
             correct::{GCCorrector, load_gc_corrector},
             counting::build_gc_prefixes,
         },
-        lengths::tiling::fetch_span_for_tile,
     },
     shared::{
         bam::create_chromosome_reader,
@@ -46,6 +45,7 @@ use crate::{
         tiled_run::{
             Tile, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
         },
+        window_fetch::fetch_span_for_tile,
         windowing::{WindowContext, build_bin_info, compute_window_offsets},
     },
 };

@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_ends")]
+
 mod fixtures;
 
 use anyhow::{Context, Result};

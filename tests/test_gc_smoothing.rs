@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_gc_bias")]
+
 use fxhash::FxHashMap;
 use ndarray::{Array2, array};
 

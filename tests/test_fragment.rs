@@ -266,7 +266,7 @@ mod test_segmented_fragments {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "cmd_bam_to_frag"))]
 mod test_frag_file_fragment {
     use cfdnalab::shared::fragment::frag_file_fragment::{
         FragReadInfo, collect_fragment_with_frag_file_info,
@@ -305,7 +305,7 @@ mod test_frag_file_fragment {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "cmd_lengths"))]
 mod tests_fragment_with_indel_counts {
     use cfdnalab::shared::fragment::indel_counting_fragment::*;
     use cfdnalab::shared::fragment::minimal_fragment::{
@@ -591,7 +591,7 @@ mod tests_fragment_with_indel_counts {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "cmd_ends"))]
 mod test_fragment_with_ends {
     use cfdnalab::commands::ends::config_structs::{ClipStrategy, KmerSource};
     use cfdnalab::shared::fragment::ends_fragment::{

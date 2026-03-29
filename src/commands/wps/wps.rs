@@ -31,7 +31,7 @@ use crate::{
         WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
         resolve_chromosomes_and_contigs,
     },
-    commands::counters::FCoverageCounters,
+    commands::counters::WPSCounters,
     shared::{
         bam::create_chromosome_reader, bed::load_windows_from_bed, thread_pool::init_global_pool,
     },
@@ -269,17 +269,17 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     // Configure global thread‐pool size
     init_global_pool(opt.shared_args.ioc.n_threads as usize)?;
 
-    let mut global_counter = FCoverageCounters::default();
+    let mut global_counter = WPSCounters::default();
 
     println!("Start: Calculating WPS per tile");
     pb.set_position(0);
 
     let tile_window_spans_for_threads = tile_window_spans.clone();
 
-    let tile_results: Vec<FCoverageCounters> = tiles
+    let tile_results: Vec<WPSCounters> = tiles
         .par_iter()
         .enumerate()
-        .map(|(tile_idx, tile)| -> Result<FCoverageCounters> {
+        .map(|(tile_idx, tile)| -> Result<WPSCounters> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
             // Per-chrom projections
             let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
@@ -297,7 +297,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             let counter = if matches!(window_opt, WindowSpec::Bed(_))
                 && windows_chr.map_or(true, |windows| windows.is_empty())
             {
-                FCoverageCounters::default()
+                WPSCounters::default()
             } else {
                 // Decide tile mode and filename
                 let (action_prefix, extensions) = if windowed {
@@ -650,12 +650,12 @@ pub fn wps_for_tile(
     decimals: i32,
     extra_halo_bp: u32,
     return_wps_instead: bool, // Don't save and aggregate, just return the WPS values
-) -> Result<(FCoverageCounters, Option<Vec<f32>>, Option<Vec<u8>>)> {
+) -> Result<(WPSCounters, Option<Vec<f32>>, Option<Vec<u8>>)> {
     // Open a fresh BAM reader for this thread
     let (mut reader, tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
     debug_assert!(tid_check == tile.tid as u32);
 
-    let mut counter = FCoverageCounters::default();
+    let mut counter = WPSCounters::default();
 
     let gc_prefixes_opt = if gc_corrector_opt.is_some() {
         let ref_2bit = match opt.ref_2bit.as_ref() {

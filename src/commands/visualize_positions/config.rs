@@ -1,11 +1,9 @@
 use crate::commands::{
     cli_common::{BaseSelectionArgs, FragmentPositionSelectionArgs},
-    fragment_kmers::{
-        parse::parse_positions,
-        positions::{BasesFrom, ReferenceFrame},
-    },
+    fragment_kmers::parse::parse_positions,
     visualize_positions::{Style, VizConfig, parse::parse_lengths},
 };
+use crate::shared::positioning::{BasesFrom, ReferenceFrame};
 use anyhow::{Context, Result, anyhow};
 #[cfg(feature = "cli")]
 use clap::Parser;

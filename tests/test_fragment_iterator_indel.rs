@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_lengths")]
+
 use cfdnalab::shared::fragment::indel_counting_fragment::FragmentWithIndelCounts;
 use cfdnalab::shared::fragment_iterators::fragments_with_indel_counts_from_bam;
 use rust_htslib::bam;

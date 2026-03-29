@@ -1,6 +1,6 @@
-use crate::{
-    commands::fragment_kmers::positions::PositionGroup,
-    shared::base::{BASES, encode_base, rev_complement},
+use crate::shared::{
+    base::{BASES, encode_base, rev_complement},
+    positioning::PositionGroup,
 };
 use anyhow::{Context, Result, bail};
 use fxhash::{FxHashMap, FxHashSet};

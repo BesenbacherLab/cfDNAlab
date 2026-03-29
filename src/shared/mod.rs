@@ -15,6 +15,7 @@ pub mod iterator_counter;
 pub mod kmers;
 pub mod midpoint;
 pub mod overlaps;
+pub mod positioning;
 pub mod progress;
 pub mod read;
 pub mod reference;
@@ -22,6 +23,8 @@ pub mod sampling;
 pub mod scale_genome;
 pub mod thread_pool;
 pub mod tiled_run;
+pub mod visualization;
+pub mod window_fetch;
 pub mod windowing;
 pub mod writers;
 // Plotting helpers gated behind the plotters feature

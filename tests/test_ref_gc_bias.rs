@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_ref_gc_bias")]
+
 use anyhow::Result;
 use ndarray::array;
 use ndarray_npy::NpzReader;

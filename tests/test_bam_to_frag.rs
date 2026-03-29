@@ -10,7 +10,7 @@ mod tests_bam_to_frag {
     use ndarray::array;
     use rust_htslib::bam::index;
     use rust_htslib::bam::{
-        self, Format, HeaderView, Read, Writer,
+        self, Format, HeaderView, Writer,
         header::Header,
         record::{Cigar, CigarString, Record},
     };
@@ -23,18 +23,22 @@ mod tests_bam_to_frag {
 
     // Bring your crate items into scope.
     use super::fixtures::{
-        bam_from_specs, build_real_neutral_gc_package, build_real_non_neutral_gc_package,
-        paired_fragment, simple_inward_bam, simple_reference_twobit,
-    };
-    use cfdnalab::commands::bam_to_bam::{
-        bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
+        bam_from_specs, paired_fragment, simple_inward_bam, simple_reference_twobit,
     };
     use cfdnalab::commands::bam_to_frag::{bam_to_frag::run_inner, config::BamToFragConfig};
     use cfdnalab::commands::cli_common::{ApplyGCArgFileOnly, ChromosomeArgs, IOCArgs};
+    use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
+    #[cfg(feature = "cmd_bam_to_bam")]
+    use cfdnalab::commands::bam_to_bam::{
+        bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
+    };
+    #[cfg(feature = "cmd_coverage_weights")]
     use cfdnalab::commands::coverage_weights::{
         config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
     };
-    use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
+    #[cfg(feature = "cmd_bam_to_bam")]
+    use super::fixtures::{build_real_neutral_gc_package, build_real_non_neutral_gc_package};
+    #[cfg(feature = "cmd_bam_to_bam")]
     use rust_htslib::bam::record::Aux;
 
     #[test]
@@ -983,6 +987,7 @@ mod tests_bam_to_frag {
         Ok(())
     }
 
+    #[cfg(feature = "cmd_bam_to_bam")]
     #[test]
     fn bam_to_frag_and_bam_to_bam_encode_same_scaling_weight() -> Result<()> {
         // Human verification status: unverified
@@ -1048,6 +1053,7 @@ mod tests_bam_to_frag {
         Ok(())
     }
 
+    #[cfg(feature = "cmd_bam_to_bam")]
     #[test]
     fn bam_to_frag_and_bam_to_bam_emit_combined_gc_scaling_and_length_metadata() -> Result<()> {
         // Human verification status: unverified
@@ -1183,6 +1189,7 @@ mod tests_bam_to_frag {
         Ok(())
     }
 
+    #[cfg(all(feature = "cmd_bam_to_bam", feature = "cmd_coverage_weights"))]
     #[test]
     fn real_coverage_weights_tsv_has_same_effect_in_bam_to_frag_and_bam_to_bam() -> Result<()> {
         // Human verification status: unverified
@@ -1293,6 +1300,7 @@ mod tests_bam_to_frag {
         Ok(())
     }
 
+    #[cfg(feature = "cmd_coverage_weights")]
     #[test]
     fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_to_frag()
     -> Result<()> {
@@ -1450,6 +1458,7 @@ mod tests_bam_to_frag {
         Ok(())
     }
 
+    #[cfg(feature = "cmd_bam_to_bam")]
     #[test]
     fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_bam_to_frag_and_bam_to_bam() -> Result<()>
     {
@@ -1551,6 +1560,7 @@ mod tests_bam_to_frag {
         Ok(())
     }
 
+    #[cfg(feature = "cmd_bam_to_bam")]
     #[test]
     fn real_ref_gc_bias_then_gc_bias_package_changes_bam_to_frag_and_bam_to_bam_in_expected_direction()
     -> Result<()> {

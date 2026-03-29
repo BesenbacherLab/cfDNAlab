@@ -22,6 +22,8 @@ use crate::commands::midpoints::config::MidpointsConfig;
 use crate::commands::prepare_windows::config::PrepareConfig;
 #[cfg(feature = "cmd_ref_gc_bias")]
 use crate::commands::ref_gc_bias::config::RefGCBiasConfig;
+#[cfg(feature = "cmd_transitions")]
+use crate::commands::transitions::config::TransitionsConfig;
 #[cfg(feature = "cmd_visualize_positions")]
 use crate::commands::visualize_positions::config::VisualizePositionsConfig;
 #[cfg(feature = "cmd_wps")]
@@ -46,6 +48,7 @@ use clap::builder::styling::{AnsiColor, Style, Styles};
         feature = "cmd_prepare_windows",
         feature = "cmd_midpoints",
         feature = "cmd_ref_gc_bias",
+        feature = "cmd_transitions",
         feature = "cmd_visualize_positions",
         feature = "cmd_wps",
         feature = "cmd_wps_peaks"
@@ -66,6 +69,8 @@ pub enum Cmd {
     GCBias(GCConfig),
     #[cfg(feature = "cmd_ref_gc_bias")]
     RefGcBias(RefGCBiasConfig),
+    #[cfg(feature = "cmd_transitions")]
+    Transitions(TransitionsConfig),
     #[cfg(feature = "cmd_coverage_weights")]
     CoverageWeights(CoverageWeightsConfig),
     #[cfg(feature = "cmd_ends")]

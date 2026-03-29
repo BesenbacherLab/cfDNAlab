@@ -12,6 +12,7 @@ pub mod ends;
 pub mod fcoverage;
 #[cfg(feature = "cmd_frag_to_bam")]
 pub mod frag_to_bam;
+#[cfg(feature = "cmd_fragment_kmers")]
 pub mod fragment_kmers;
 #[cfg(feature = "cmd_gc_bias")]
 pub mod gc_bias;
@@ -25,7 +26,9 @@ pub mod prepare_windows;
 pub mod ref_gc_bias;
 #[cfg(feature = "cmd_ref_gc_counts")]
 pub mod ref_gc_counts;
+#[cfg(feature = "cmd_transitions")]
 pub mod transitions;
+#[cfg(feature = "cmd_visualize_positions")]
 pub mod visualize_positions;
 #[cfg(feature = "cmd_wps")]
 pub mod wps;

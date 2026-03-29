@@ -38,6 +38,7 @@ use crate::{
             write::write_decoded_counts_matrix,
         },
         overlaps::find_overlapping_windows,
+        positioning::{BasesFrom, ReferenceFrame},
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,

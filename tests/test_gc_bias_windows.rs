@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_gc_bias")]
+
 use cfdnalab::commands::cli_common::WindowSpec;
 use cfdnalab::commands::gc_bias::counting::{GCCounts, build_gc_prefixes};
 use cfdnalab::commands::gc_bias::windows::{

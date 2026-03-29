@@ -19,6 +19,8 @@ fn main() {
         Cmd::GCBias(config) => cfdnalab::commands::gc_bias::gc_bias::run(&config),
         #[cfg(feature = "cmd_ref_gc_bias")]
         Cmd::RefGcBias(config) => cfdnalab::commands::ref_gc_bias::ref_gc_bias::run(&config),
+        #[cfg(feature = "cmd_transitions")]
+        Cmd::Transitions(config) => cfdnalab::commands::transitions::transitions::run(&config),
         #[cfg(feature = "cmd_coverage_weights")]
         Cmd::CoverageWeights(config) => {
             cfdnalab::commands::coverage_weights::coverage_weights::run(&config)

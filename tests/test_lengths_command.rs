@@ -2402,10 +2402,10 @@ mod tests_lengths_tiling_reducer {
 mod tests_lengths_tiling_helpers {
 
     use cfdnalab::commands::cli_common::WindowSpec;
-    use cfdnalab::commands::lengths::tiling::fetch_span_for_tile;
     use cfdnalab::shared::bam::Contigs;
     use cfdnalab::shared::interval::IndexedInterval;
     use cfdnalab::shared::tiled_run::{Tile, TileWindowSpan, build_tiles};
+    use cfdnalab::shared::window_fetch::fetch_span_for_tile;
     use fxhash::FxHashMap;
     use std::path::PathBuf;
 

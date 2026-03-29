@@ -1,3 +1,5 @@
+#![cfg(feature = "cmd_lengths")]
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
