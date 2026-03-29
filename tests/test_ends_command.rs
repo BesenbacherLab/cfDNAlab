@@ -4,7 +4,7 @@ mod fixtures;
 
 use anyhow::{Context, Result};
 use cfdnalab::commands::{
-    cli_common::{ChromosomeArgs, IOCArgs, UnpairedArgs, WindowsArgs},
+    cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, UnpairedArgs, WindowsArgs},
     ends::{
         config::EndsConfig,
         config_structs::{AssignMotifToWindowArgs, ClipStrategy, KmerSource, WindowMotifAssigner},
@@ -12,9 +12,14 @@ use cfdnalab::commands::{
     },
 };
 use fixtures::{
-    BamFixture, ReadSpec, bam_from_specs, paired_fragment, simple_reference_twobit,
-    write_bed,
+    BamFixture, FragmentSpec, ReadSpec, bam_from_specs, paired_fragment, simple_reference_twobit,
+    twobit_from_sequences, write_bed,
 };
+#[cfg(feature = "cmd_gc_bias")]
+use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
+use cfdnalab::shared::{blacklist::BlacklistStrategy, indel_mode::IndelMotifFilterPolicy};
+#[cfg(feature = "cmd_gc_bias")]
+use ndarray::array;
 use ndarray::{Array1, Array2};
 use ndarray_npy::{NpzReader, read_npy};
 use std::{
@@ -95,6 +100,15 @@ fn single_read_bam(
     )
 }
 
+fn custom_paired_fragment_bam(name: &str, forward: ReadSpec, reverse: ReadSpec) -> Result<BamFixture> {
+    bam_from_specs(
+        vec![("chr1".to_string(), 256)],
+        vec![FragmentSpec { forward, reverse }],
+        Vec::new(),
+        name,
+    )
+}
+
 fn dense_output_paths(out_dir: &Path) -> (PathBuf, PathBuf) {
     (
         out_dir.join("ends.end_motifs.npy"),
@@ -160,6 +174,457 @@ fn read_text_file(path: &Path) -> Result<String> {
     let mut buf = String::new();
     File::open(path)?.read_to_string(&mut buf)?;
     Ok(buf)
+}
+
+#[test]
+fn blacklist_any_skips_a_fragment_before_any_end_motifs_are_counted() -> Result<()> {
+    // Arrange: fragment [10,20) overlaps the blacklist at [15,16), so blacklist_strategy=Any
+    // should exclude the fragment before either end motif is counted.
+    let bam = simple_paired_fragment_bam("ends_blacklist_fragment", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let blacklist_bed = out_dir.path().join("blacklist.bed");
+    write_bed(&blacklist_bed, &[("chr1", 15, 16, "blk")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_within = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.blacklist = Some(vec![blacklist_bed]);
+    cfg.blacklist_strategy = BlacklistStrategy::Any;
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[1, 4]);
+    assert_eq!(matrix.sum(), 0.0);
+    Ok(())
+}
+
+#[test]
+fn blacklist_masking_skips_only_the_reference_backed_end_motif_that_overlaps_a_blacklisted_base()
+-> Result<()> {
+    // Arrange: fragment [10,20) has left terminal base at 10 and right terminal base at 19.
+    // Blacklisting [10,11) masks only the left within base. Using blacklist_strategy=All keeps
+    // the fragment itself, so only the left endpoint motif should disappear.
+    let bam = simple_paired_fragment_bam("ends_blacklist_reference_end", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let blacklist_bed = out_dir.path().join("blacklist.bed");
+    write_bed(&blacklist_bed, &[("chr1", 10, 11, "blk")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_within = KmerSource::Reference;
+    cfg.all_motifs = false;
+    cfg.blacklist = Some(vec![blacklist_bed]);
+    cfg.blacklist_strategy = BlacklistStrategy::All;
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_sparse_output(out_dir.path())?;
+
+    // Assert: right terminal base at 19 is T, which orients to "_A". The left "_G" is masked.
+    assert_eq!(motifs, vec!["_A"]);
+    assert_eq!(matrix.shape(), &[1, 1]);
+    assert_eq!(matrix[(0, 0)], 1.0);
+    Ok(())
+}
+
+#[test]
+fn blacklist_masking_still_skips_read_backed_within_motifs_using_genomic_reference_coordinates()
+-> Result<()> {
+    // Arrange: unpaired read-fragment [10,14) with read sequence A C G A.
+    // - left read-backed motif = "_A"
+    // - right read-backed motif = reverse-complement("A") = "_T"
+    // Blacklisting [10,11) should drop only the left motif even though within bases come from
+    // the read, because blacklist validation is still genomic.
+    let bam = single_read_bam("ends_blacklist_read_end", 10, vec![('M', 4)], b"ACGA")?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let blacklist_bed = out_dir.path().join("blacklist.bed");
+    write_bed(&blacklist_bed, &[("chr1", 10, 11, "blk")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_within = KmerSource::Read;
+    cfg.all_motifs = false;
+    cfg.blacklist = Some(vec![blacklist_bed]);
+    cfg.blacklist_strategy = BlacklistStrategy::All;
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 4;
+        lengths.max_fragment_length = 4;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_sparse_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(motifs, vec!["_T"]);
+    assert_eq!(matrix.shape(), &[1, 1]);
+    assert_eq!(matrix[(0, 0)], 1.0);
+    Ok(())
+}
+
+#[test]
+fn scaling_factors_weight_each_counted_end_motif() -> Result<()> {
+    // Arrange: one chromosome-wide scaling factor of 2.0 should double both endpoint counts for
+    // fragment [10,20), whose reference-backed motifs are "_G" on the left and "_A" on the right.
+    let bam = simple_paired_fragment_bam("ends_scaling", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let scaling_path = out_dir.path().join("scaling.tsv");
+    std::fs::write(
+        &scaling_path,
+        "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t256\t2\n",
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_within = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_scaling_factors(Some(scaling_path));
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 2.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 2.0);
+    assert_eq!(matrix.sum(), 4.0);
+    Ok(())
+}
+
+#[cfg(feature = "cmd_gc_bias")]
+#[test]
+fn gc_file_weights_each_counted_end_motif_by_the_fragment_gc_correction() -> Result<()> {
+    // Arrange: fragment [10,20) on the ACGT-repeat reference has GC%=50 over 10 bp.
+    // The package below assigns weight 3.0 to length bin [10,11) and GC bin [0,51), so both
+    // endpoint motifs should each be counted with weight 3.0.
+    let bam = simple_paired_fragment_bam("ends_gc_weight", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let gc_path = out_dir.path().join("gc_package.npz");
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 0,
+        length_edges: vec![10, 11, 20],
+        gc_edges: vec![0, 51, 100],
+        length_bin_frequencies: array![1.0_f64, 1.0_f64],
+        correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
+    };
+    package.write_npz(&gc_path)?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_within = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        drop_invalid_gc: false,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 3.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 3.0);
+    assert_eq!(matrix.sum(), 6.0);
+    Ok(())
+}
+
+#[cfg(feature = "cmd_gc_bias")]
+#[test]
+fn drop_invalid_gc_skips_fragments_when_gc_correction_cannot_be_computed() -> Result<()> {
+    // Arrange: use a reference where the fragment GC window contains only `N`, so GC fraction
+    // cannot be computed even though the correction package covers the fragment length. With
+    // drop_invalid_gc=true the fragment should be skipped instead of falling back to weight 1.0.
+    let bam = simple_paired_fragment_bam("ends_drop_invalid_gc", 10, 10, 4)?;
+    let reference = twobit_from_sequences(
+        "ends_drop_invalid_gc_reference",
+        vec![("chr1".to_string(), format!("{}{}{}", "A".repeat(10), "N".repeat(10), "A".repeat(236)))],
+    )?;
+    let out_dir = TempDir::new()?;
+    let gc_path = out_dir.path().join("invalid_gc_package.npz");
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 0,
+        length_edges: vec![10, 11, 20],
+        gc_edges: vec![0, 51, 100],
+        length_bin_frequencies: array![1.0_f64, 1.0_f64],
+        correction_matrix: array![[2.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
+    };
+    package.write_npz(&gc_path)?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_within = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        drop_invalid_gc: true,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.sum(), 0.0);
+    Ok(())
+}
+
+#[test]
+fn auto_indel_filter_keeps_indel_affected_read_backed_end_motifs() -> Result<()> {
+    // Arrange: the forward read has an insertion inside the left aligned 4-base footprint.
+    // In auto mode with read-backed within bases, that end should still be kept.
+    let forward = ReadSpec {
+        tid: 0,
+        pos: 100,
+        cigar: vec![('M', 2), ('I', 1), ('M', 5)],
+        seq: b"ACGTACGT".to_vec(),
+        qual: 40,
+        is_reverse: false,
+        mapq: 60,
+        flags: 0x40 | 0x20 | 0x2,
+        mate_tid: Some(0),
+        mate_pos: Some(110),
+        insert_size: 16,
+    };
+    let reverse = ReadSpec {
+        tid: 0,
+        pos: 110,
+        cigar: vec![('M', 6)],
+        seq: b"AACCGG".to_vec(),
+        qual: 40,
+        is_reverse: true,
+        mapq: 60,
+        flags: 0x80 | 0x2,
+        mate_tid: Some(0),
+        mate_pos: Some(100),
+        insert_size: -16,
+    };
+    let bam = custom_paired_fragment_bam("ends_auto_indel_read", forward, reverse)?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 4, 0);
+    cfg.source_within = KmerSource::Read;
+    cfg.all_motifs = false;
+    cfg.set_indel_filter(IndelMotifFilterPolicy::Auto);
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 16;
+        lengths.max_fragment_length = 16;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_sparse_output(out_dir.path())?;
+
+    // Assert: both ends survive, so one global row should contain two observed motifs.
+    assert_eq!(matrix.shape(), &[1, 2]);
+    assert_eq!(motifs.len(), 2);
+    assert_eq!(matrix.sum(), 2.0);
+    Ok(())
+}
+
+#[test]
+fn auto_indel_filter_skips_indel_affected_reference_backed_end_motifs() -> Result<()> {
+    // Arrange: the same pair as above, but now auto mode uses reference-backed within bases and
+    // should therefore skip the indel-affected left end while keeping the right end.
+    let forward = ReadSpec {
+        tid: 0,
+        pos: 100,
+        cigar: vec![('M', 2), ('I', 1), ('M', 5)],
+        seq: b"ACGTACGT".to_vec(),
+        qual: 40,
+        is_reverse: false,
+        mapq: 60,
+        flags: 0x40 | 0x20 | 0x2,
+        mate_tid: Some(0),
+        mate_pos: Some(110),
+        insert_size: 16,
+    };
+    let reverse = ReadSpec {
+        tid: 0,
+        pos: 110,
+        cigar: vec![('M', 6)],
+        seq: b"AACCGG".to_vec(),
+        qual: 40,
+        is_reverse: true,
+        mapq: 60,
+        flags: 0x80 | 0x2,
+        mate_tid: Some(0),
+        mate_pos: Some(100),
+        insert_size: -16,
+    };
+    let bam = custom_paired_fragment_bam("ends_auto_indel_reference", forward, reverse)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 4, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_within = KmerSource::Reference;
+    cfg.all_motifs = false;
+    cfg.set_indel_filter(IndelMotifFilterPolicy::Auto);
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 16;
+        lengths.max_fragment_length = 16;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_sparse_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[1, 1]);
+    assert_eq!(motifs.len(), 1);
+    assert_eq!(matrix.sum(), 1.0);
+    Ok(())
+}
+
+#[test]
+fn skip_affected_fragment_drops_the_whole_fragment_when_any_end_motif_is_indel_affected()
+-> Result<()> {
+    // Arrange: the same pair as above has an indel in the left end motif footprint, so
+    // skip-affected-fragment must suppress all counting.
+    let forward = ReadSpec {
+        tid: 0,
+        pos: 100,
+        cigar: vec![('M', 2), ('I', 1), ('M', 5)],
+        seq: b"ACGTACGT".to_vec(),
+        qual: 40,
+        is_reverse: false,
+        mapq: 60,
+        flags: 0x40 | 0x20 | 0x2,
+        mate_tid: Some(0),
+        mate_pos: Some(110),
+        insert_size: 16,
+    };
+    let reverse = ReadSpec {
+        tid: 0,
+        pos: 110,
+        cigar: vec![('M', 6)],
+        seq: b"AACCGG".to_vec(),
+        qual: 40,
+        is_reverse: true,
+        mapq: 60,
+        flags: 0x80 | 0x2,
+        mate_tid: Some(0),
+        mate_pos: Some(100),
+        insert_size: -16,
+    };
+    let bam = custom_paired_fragment_bam("ends_skip_affected_fragment", forward, reverse)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 4, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_within = KmerSource::Reference;
+    cfg.all_motifs = false;
+    cfg.set_indel_filter(IndelMotifFilterPolicy::SkipAffectedFragment);
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 16;
+        lengths.max_fragment_length = 16;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (_motifs, matrix) = read_sparse_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.sum(), 0.0);
+    Ok(())
+}
+
+#[test]
+fn outside_reference_lookup_falls_back_to_exact_reference_fetch_when_the_motif_crosses_the_tile_slice()
+-> Result<()> {
+    // Arrange: by-BED window [10,11) with max_fragment_length=4 gives a tile-local fetch halo of
+    // 4 bp, so the loaded slice starts at 6. Asking for k_outside=5 on the left endpoint at 10
+    // needs reference bases [5,10), which crosses one base outside the preloaded tile slice and
+    // must therefore use the exact fallback path. On the ACGT-repeat reference, seq[5..10) is
+    // C G T A C, so the outside-only label is "CGTAC_".
+    let bam = single_read_bam("ends_exact_reference_fallback", 10, vec![('M', 4)], b"ACGT")?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(&windows_bed, &[("chr1", 10, 11, "left")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 0, 5);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_within = KmerSource::Read;
+    cfg.all_motifs = false;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 4;
+        lengths.max_fragment_length = 4;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_sparse_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(motifs, vec!["CGTAC_"]);
+    assert_eq!(matrix.shape(), &[1, 1]);
+    assert_eq!(matrix[(0, 0)], 1.0);
+    Ok(())
 }
 
 #[test]
