@@ -1,5 +1,8 @@
 use super::*;
-use crate::shared::fragment::ends_fragment::{FragmentWithEnds, ResolvedFragmentEnd};
+use crate::shared::{
+    blacklist::apply_blacklist_mask_to_seq,
+    fragment::ends_fragment::{FragmentWithEnds, ResolvedFragmentEnd},
+};
 use std::sync::Arc;
 
 fn spec_for_k(k: u8) -> KmerSpec {
@@ -79,7 +82,14 @@ fn fragment_with_two_ends(
 
 #[test]
 fn count_fragment_in_window_endpoint_counts_only_left_end_when_window_hits_left_terminal_base() {
-    // Arrange
+    // Arrange: left boundary is at genomic position 10 and right boundary is at 20 for the
+    // half-open fragment interval [10, 20).
+    //
+    // Mental derivation:
+    // - endpoint mode counts an end only if its own terminal base lies in the current window
+    // - window [10, 12) contains the left terminal base at 10
+    // - the right terminal base is `20 - 1 = 19`, which is outside [10, 12)
+    // So only the left key should appear, with the provided weight 2.0.
     let fragment = fragment_with_two_ends(10, b"AC", 20, b"GT");
     let motif_context = read_only_motif_context(2);
     let mut counts_by_window = EndCountsByWindow::default();
@@ -103,7 +113,7 @@ fn count_fragment_in_window_endpoint_counts_only_left_end_when_window_hits_left_
     };
 
     // Act
-    count_fragment_in_window(
+    let counted = count_fragment_in_window(
         &mut counts_by_window,
         3,
         Interval::new(10_u64, 12_u64).expect("valid window"),
@@ -116,6 +126,13 @@ fn count_fragment_in_window_endpoint_counts_only_left_end_when_window_hits_left_
     .expect("counting should work");
 
     // Assert
+    assert_eq!(
+        counted,
+        CountedEndFlags {
+            left_counted: true,
+            right_counted: false,
+        }
+    );
     let counts = counts_by_window.get(&3).expect("window should be present");
     assert_eq!(counts.counts.get(&left_key), Some(&2.0));
     assert_eq!(counts.counts.get(&right_key), None);
@@ -123,7 +140,9 @@ fn count_fragment_in_window_endpoint_counts_only_left_end_when_window_hits_left_
 
 #[test]
 fn count_fragment_in_window_endpoint_counts_only_right_end_when_window_hits_right_terminal_base() {
-    // Arrange
+    // Arrange:
+    // - right boundary is 20, so the right terminal base is `20 - 1 = 19`
+    // - endpoint mode should therefore count the right motif in [19, 20), but not the left motif
     let fragment = fragment_with_two_ends(10, b"AC", 20, b"GT");
     let motif_context = read_only_motif_context(2);
     let mut counts_by_window = EndCountsByWindow::default();
@@ -138,7 +157,7 @@ fn count_fragment_in_window_endpoint_counts_only_right_end_when_window_hits_righ
     };
 
     // Act
-    count_fragment_in_window(
+    let counted = count_fragment_in_window(
         &mut counts_by_window,
         4,
         Interval::new(19_u64, 20_u64).expect("valid window"),
@@ -151,6 +170,13 @@ fn count_fragment_in_window_endpoint_counts_only_right_end_when_window_hits_righ
     .expect("counting should work");
 
     // Assert
+    assert_eq!(
+        counted,
+        CountedEndFlags {
+            left_counted: false,
+            right_counted: true,
+        }
+    );
     let counts = counts_by_window.get(&4).expect("window should be present");
     assert_eq!(counts.counts.len(), 1);
     assert_eq!(counts.counts.get(&right_key), Some(&1.25));
@@ -158,13 +184,36 @@ fn count_fragment_in_window_endpoint_counts_only_right_end_when_window_hits_righ
 
 #[test]
 fn count_fragment_in_window_any_counts_both_ends_in_same_window() {
-    // Arrange
+    // Arrange: `Any` is fragment-centric rather than endpoint-specific.
+    //
+    // Mental derivation:
+    // - once the outer overlap logic has decided this fragment belongs in the window,
+    //   `count_fragment_in_window(..., Any)` should count every kept end in that same window
+    // - both the left and right motif keys should therefore be present with weight 1.0
     let fragment = fragment_with_two_ends(10, b"AC", 20, b"GT");
     let motif_context = read_only_motif_context(2);
     let mut counts_by_window = EndCountsByWindow::default();
+    let left_key = EncodedEndMotifKey {
+        within_code: motif_context
+            .within_spec
+            .as_ref()
+            .expect("within spec")
+            .encode_kmer_bytes(b"AC"),
+        outside_code: 0,
+        reverse_on_decode: false,
+    };
+    let right_key = EncodedEndMotifKey {
+        within_code: motif_context
+            .within_spec
+            .as_ref()
+            .expect("within spec")
+            .encode_kmer_bytes(b"GT"),
+        outside_code: 0,
+        reverse_on_decode: true,
+    };
 
     // Act
-    count_fragment_in_window(
+    let counted = count_fragment_in_window(
         &mut counts_by_window,
         8,
         Interval::new(10_u64, 20_u64).expect("valid window"),
@@ -177,8 +226,83 @@ fn count_fragment_in_window_any_counts_both_ends_in_same_window() {
     .expect("counting should work");
 
     // Assert
+    assert_eq!(
+        counted,
+        CountedEndFlags {
+            left_counted: true,
+            right_counted: true,
+        }
+    );
     let counts = counts_by_window.get(&8).expect("window should be present");
     assert_eq!(counts.counts.len(), 2);
+    assert_eq!(counts.counts.get(&left_key), Some(&1.0));
+    assert_eq!(counts.counts.get(&right_key), Some(&1.0));
+}
+
+#[test]
+fn encode_within_code_read_uses_the_resolved_read_bases_directly() {
+    // Arrange: in read-backed mode, the within code should come directly from `within_bases`
+    // rather than from genomic coordinates. So the expected answer is just the codec applied
+    // to the literal bytes `AC`.
+    let motif_context = read_only_motif_context(2);
+    let left_end = ResolvedFragmentEnd {
+        boundary_pos: 10,
+        within_bases: b"AC".to_vec(),
+    };
+
+    // Act
+    let code =
+        encode_within_code(&left_end, EndSide::Left, &motif_context, KmerSource::Read)
+            .expect("read-backed within code should work");
+
+    // Assert
+    let spec = motif_context.within_spec.as_ref().expect("within spec");
+    assert_eq!(code, spec.encode_kmer_bytes(b"AC"));
+}
+
+#[test]
+fn encode_blacklist_validation_within_code_returns_masked_reference_code_for_read_source() {
+    // Arrange: the blacklist masks the first within base at genomic position 2, so the
+    // validation code should become the `N` sentinel even though the actual motif would come
+    // from the read.
+    //
+    // Mental derivation:
+    // - left within with `k=2` at boundary 2 reads genomic bases [2, 4)
+    // - after masking [2, 3), that span starts with `N`
+    // - any k-mer containing `N` must encode as `sentinel_n`
+    let within_spec = spec_for_k(2);
+    let mut reference_bases = b"ACGTAC".to_vec();
+    let blacklist = [Interval::new(2_u64, 3_u64).expect("valid blacklist")];
+    apply_blacklist_mask_to_seq(&mut reference_bases, &blacklist, 0);
+    let within_codes = build_precomputed_reference_codes(Some(&within_spec), &reference_bases);
+    let motif_context = TileMotifContext {
+        chrom: "chr1".to_string(),
+        ref_2bit: None,
+        fetch_start: 0,
+        reference_bases: Some(reference_bases),
+        within_spec: Some(within_spec.clone()),
+        outside_spec: None,
+        within_codes,
+        outside_codes: None,
+        blacklist_intervals: &blacklist,
+        chrom_len: 6,
+    };
+    let left_end = ResolvedFragmentEnd {
+        boundary_pos: 2,
+        within_bases: b"GT".to_vec(),
+    };
+
+    // Act
+    let code = encode_blacklist_validation_within_code(
+        &left_end,
+        EndSide::Left,
+        &within_spec,
+        &motif_context,
+    )
+    .expect("blacklist validation should work");
+
+    // Assert
+    assert_eq!(code, Some(within_spec.sentinel_n()));
 }
 
 #[test]

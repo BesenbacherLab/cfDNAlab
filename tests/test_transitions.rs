@@ -90,12 +90,12 @@ mod transitions_command_tests {
     use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, Ref2BitRequiredArgs};
     use cfdnalab::commands::transitions::config::TransitionsConfig;
     use cfdnalab::commands::transitions::transitions::run as run_transitions;
+    use cfdnalab::shared::positioning::ReferenceFrame;
     use ndarray::{Array3, s};
     use ndarray_npy::read_npy;
     use std::collections::HashMap;
     use std::fs;
     use tempfile::TempDir;
-    use cfdnalab::shared::positioning::ReferenceFrame;
 
     fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
         ChromosomeArgs {

@@ -3,9 +3,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use std::num::NonZeroUsize;
 
 use crate::commands::fragment_kmers::parse::PositionalSelectionSpec;
-use crate::shared::positioning::{
-    PositionGroup, PositionOrientation, ReferenceFrame,
-};
+use crate::shared::positioning::{PositionGroup, PositionOrientation, ReferenceFrame};
 use crate::shared::visualization::{AxisBounds, Track};
 
 /// The position specification tagged to allow frame-specific dispatch.

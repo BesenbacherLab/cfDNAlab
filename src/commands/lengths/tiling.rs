@@ -4,10 +4,7 @@ use anyhow::{Context, Result, ensure};
 use ndarray::{Array1, Array2, ArrayView1};
 use ndarray_npy::{NpzReader, NpzWriter, ReadNpyExt};
 
-use crate::{
-    commands::lengths::counting::LengthCounts,
-    shared::tiled_run::parse_tile_index,
-};
+use crate::{commands::lengths::counting::LengthCounts, shared::tiled_run::parse_tile_index};
 
 /// Write per-tile partial length counts as an NPZ archive.
 ///

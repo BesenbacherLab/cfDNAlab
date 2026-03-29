@@ -25,19 +25,19 @@ mod tests_bam_to_frag {
     use super::fixtures::{
         bam_from_specs, paired_fragment, simple_inward_bam, simple_reference_twobit,
     };
-    use cfdnalab::commands::bam_to_frag::{bam_to_frag::run_inner, config::BamToFragConfig};
-    use cfdnalab::commands::cli_common::{ApplyGCArgFileOnly, ChromosomeArgs, IOCArgs};
-    use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
+    #[cfg(feature = "cmd_bam_to_bam")]
+    use super::fixtures::{build_real_neutral_gc_package, build_real_non_neutral_gc_package};
     #[cfg(feature = "cmd_bam_to_bam")]
     use cfdnalab::commands::bam_to_bam::{
         bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
     };
+    use cfdnalab::commands::bam_to_frag::{bam_to_frag::run_inner, config::BamToFragConfig};
+    use cfdnalab::commands::cli_common::{ApplyGCArgFileOnly, ChromosomeArgs, IOCArgs};
     #[cfg(feature = "cmd_coverage_weights")]
     use cfdnalab::commands::coverage_weights::{
         config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
     };
-    #[cfg(feature = "cmd_bam_to_bam")]
-    use super::fixtures::{build_real_neutral_gc_package, build_real_non_neutral_gc_package};
+    use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
     #[cfg(feature = "cmd_bam_to_bam")]
     use rust_htslib::bam::Read;
     #[cfg(feature = "cmd_bam_to_bam")]

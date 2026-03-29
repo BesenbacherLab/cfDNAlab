@@ -3,6 +3,8 @@
 mod fixtures;
 
 use anyhow::{Context, Result};
+#[cfg(feature = "cmd_gc_bias")]
+use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
 use cfdnalab::commands::{
     cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, UnpairedArgs, WindowsArgs},
     ends::{
@@ -11,17 +13,17 @@ use cfdnalab::commands::{
         ends::run,
     },
 };
+use cfdnalab::shared::{blacklist::BlacklistStrategy, indel_mode::IndelMotifFilterPolicy};
 use fixtures::{
     BamFixture, FragmentSpec, ReadSpec, bam_from_specs, paired_fragment, simple_reference_twobit,
     twobit_from_sequences, write_bed,
 };
 #[cfg(feature = "cmd_gc_bias")]
-use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
-use cfdnalab::shared::{blacklist::BlacklistStrategy, indel_mode::IndelMotifFilterPolicy};
-#[cfg(feature = "cmd_gc_bias")]
 use ndarray::array;
 use ndarray::{Array1, Array2};
 use ndarray_npy::{NpzReader, read_npy};
+#[cfg(feature = "cli")]
+use std::process::Command;
 use std::{
     fs::File,
     io::{BufRead, BufReader, Read},
@@ -100,7 +102,11 @@ fn single_read_bam(
     )
 }
 
-fn custom_paired_fragment_bam(name: &str, forward: ReadSpec, reverse: ReadSpec) -> Result<BamFixture> {
+fn custom_paired_fragment_bam(
+    name: &str,
+    forward: ReadSpec,
+    reverse: ReadSpec,
+) -> Result<BamFixture> {
     bam_from_specs(
         vec![("chr1".to_string(), 256)],
         vec![FragmentSpec { forward, reverse }],
@@ -176,6 +182,12 @@ fn read_text_file(path: &Path) -> Result<String> {
     Ok(buf)
 }
 
+#[cfg(feature = "cli")]
+fn cfdna_binary_path() -> Result<String> {
+    std::env::var("CARGO_BIN_EXE_cfdna")
+        .context("CARGO_BIN_EXE_cfdna is not set for this CLI integration test")
+}
+
 #[test]
 fn blacklist_any_skips_a_fragment_before_any_end_motifs_are_counted() -> Result<()> {
     // Arrange: fragment [10,20) overlaps the blacklist at [15,16), so blacklist_strategy=Any
@@ -243,6 +255,88 @@ fn blacklist_masking_skips_only_the_reference_backed_end_motif_that_overlaps_a_b
     assert_eq!(motifs, vec!["_A"]);
     assert_eq!(matrix.shape(), &[1, 1]);
     assert_eq!(matrix[(0, 0)], 1.0);
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn cli_statistics_count_one_fragment_and_one_motif_when_only_one_end_survives() -> Result<()> {
+    // Arrange: the fragment survives fragment-level filtering, but the blacklist masks only
+    // the left terminal base. The right end motif still counts, so the public statistics should
+    // report one counted fragment and one counted end motif.
+    //
+    // Mental derivation:
+    // - the fragment itself is kept because `blacklist-strategy=all` and only one base is blacklisted
+    // - the left endpoint motif is skipped because its terminal base overlaps the masked base
+    // - the right endpoint motif still counts
+    // - therefore the public stats must say:
+    //   * 1 fragment with one or more counted motifs
+    //   * 1 distinct counted end motif across those fragments
+    let bam = simple_paired_fragment_bam("ends_cli_stats_one_end", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let blacklist_bed = out_dir.path().join("blacklist.bed");
+    write_bed(&blacklist_bed, &[("chr1", 10, 11, "blk")])?;
+    let binary = cfdna_binary_path()?;
+
+    // Act
+    let output = Command::new(binary)
+        .args([
+            "ends",
+            "--bam",
+            bam.bam.to_str().context("bam path is not valid UTF-8")?,
+            "--output-dir",
+            out_dir
+                .path()
+                .to_str()
+                .context("output dir is not valid UTF-8")?,
+            "--chromosomes",
+            "chr1",
+            "--k-within",
+            "1",
+            "--k-outside",
+            "0",
+            "--ref-2bit",
+            reference
+                .path
+                .to_str()
+                .context("reference path is not valid UTF-8")?,
+            "--source-within",
+            "reference",
+            "--blacklist",
+            blacklist_bed
+                .to_str()
+                .context("blacklist path is not valid UTF-8")?,
+            "--blacklist-strategy",
+            "all",
+            "--assign-by",
+            "endpoint",
+            "--min-fragment-length",
+            "10",
+            "--max-fragment-length",
+            "10",
+            "--min-mapq",
+            "0",
+            "--tile-size",
+            "100",
+            "--output-prefix",
+            "ends",
+            "--n-threads",
+            "1",
+        ])
+        .output()
+        .context("running cfdna ends CLI")?;
+
+    // Assert
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\n\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).context("stdout is not valid UTF-8")?;
+    assert!(stdout.contains("Fragments with one or more counted motifs: 1"));
+    assert!(stdout.contains("Distinct counted end motifs across those fragments: 1"));
     Ok(())
 }
 
@@ -379,7 +473,10 @@ fn drop_invalid_gc_skips_fragments_when_gc_correction_cannot_be_computed() -> Re
     let bam = simple_paired_fragment_bam("ends_drop_invalid_gc", 10, 10, 4)?;
     let reference = twobit_from_sequences(
         "ends_drop_invalid_gc_reference",
-        vec![("chr1".to_string(), format!("{}{}{}", "A".repeat(10), "N".repeat(10), "A".repeat(236)))],
+        vec![(
+            "chr1".to_string(),
+            format!("{}{}{}", "A".repeat(10), "N".repeat(10), "A".repeat(236)),
+        )],
     )?;
     let out_dir = TempDir::new()?;
     let gc_path = out_dir.path().join("invalid_gc_package.npz");

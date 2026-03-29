@@ -4,9 +4,7 @@ use crate::{
     commands::cli_common::WindowSpec,
     shared::{
         interval::{IndexedInterval, Interval},
-        tiled_run::{
-            Tile, TileWindowSpan, clamp_fetch_to_window_span, tile_window_min_max,
-        },
+        tiled_run::{Tile, TileWindowSpan, clamp_fetch_to_window_span, tile_window_min_max},
     },
 };
 
@@ -76,7 +74,8 @@ pub fn fetch_span_for_tile(
             let Some(windows_chr) = windows_chr else {
                 return Ok(None);
             };
-            let Some(window_span) = tile_window_min_max(windows_chr, tile, tile_window_span)? else {
+            let Some(window_span) = tile_window_min_max(windows_chr, tile, tile_window_span)?
+            else {
                 return Ok(None);
             };
             Ok(clamp_fetch_to_window_span(

@@ -79,7 +79,6 @@ pub struct ClippingArgs {
     pub max_soft_clips: Option<usize>,
 }
 
-
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
 pub struct AssignMotifToWindowArgs {

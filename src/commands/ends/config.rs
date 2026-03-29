@@ -257,7 +257,7 @@ impl EndsConfig {
             k_outside,
             source_within: KmerSource::Read,
             clip: ClippingArgs {
-                clip_strategy: ClipStrategy::Raw,
+                clip_strategy: ClipStrategy::Aligned,
                 max_soft_clips: None,
             },
             indel_filter: IndelMotifFilterPolicy::Auto,

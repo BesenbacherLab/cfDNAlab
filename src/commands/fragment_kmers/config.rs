@@ -1,12 +1,10 @@
 use std::path::PathBuf;
 
 use crate::{
-    commands::{
-        cli_common::{
-            ApplyGCArgs, BaseSelectionArgs, ChromosomeArgs, FragmentLengthArgs,
-            FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
-            UnpairedArgs, WindowsArgs,
-        },
+    commands::cli_common::{
+        ApplyGCArgs, BaseSelectionArgs, ChromosomeArgs, FragmentLengthArgs,
+        FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs, UnpairedArgs,
+        WindowsArgs,
     },
     shared::{
         blacklist::BlacklistStrategy,

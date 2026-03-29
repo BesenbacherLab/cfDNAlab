@@ -10,7 +10,8 @@ use crate::{
             config_structs::WindowMotifAssigner,
             counting::{EndCountsByWindow, decode_end_motif_counts},
             motifs::{
-                build_optional_kmer_spec, build_tile_motif_context, count_fragment_in_window,
+                CountedEndFlags, build_optional_kmer_spec, build_tile_motif_context,
+                count_fragment_in_window,
             },
             output::{
                 build_all_end_motif_order, collect_end_motif_order,
@@ -159,6 +160,8 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
 
     let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
     let counts_prefix = &dot_join(&[prefix, "counts"]);
+    let within_spec = build_optional_kmer_spec(opt.k_within, "within")?;
+    let outside_spec = build_optional_kmer_spec(opt.k_outside, "outside")?;
 
     println!("Start: Counting per tile");
 
@@ -199,6 +202,8 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                 gc_corrector.clone(),
                 &temp_dir,
                 counts_prefix,
+                within_spec.as_ref(),
+                outside_spec.as_ref(),
             )?;
             pb.inc(1);
             Ok(tile_result)
@@ -226,8 +231,6 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
 
     println!("Start: Reducing temporary tile files");
 
-    let within_spec = build_optional_kmer_spec(opt.k_within, "within")?;
-    let outside_spec = build_optional_kmer_spec(opt.k_outside, "outside")?;
     // Start from an all-empty output matrix shape, then fill only the windows that were actually
     // observed in the reduced sparse payloads.
     let mut all_bins = vec![FxHashMap::default(); total_windows as usize];
@@ -338,16 +341,25 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     println!();
     println!("Statistics");
     println!("----------");
+    println!("  Note: counts below cover only tiles with relevant output windows");
 
     // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
-    println!("  Total reads: {}", global_counter.base.total_reads);
     println!(
-        "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
-        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
-            / global_counter.base.total_reads as f64
-            * 100.0,
+        "  Observed reads in processed tiles: {}",
+        global_counter.base.total_reads
+    );
+    let accepted_reads =
+        global_counter.base.accepted_forward + global_counter.base.accepted_reverse;
+    let accepted_pct = if global_counter.base.total_reads == 0 {
+        0.0
+    } else {
+        accepted_reads as f64 / global_counter.base.total_reads as f64 * 100.0
+    };
+    println!(
+        "  Initially accepted observed reads: {} ({:.2}%, forward: {}, reverse: {})",
+        accepted_reads,
+        accepted_pct,
         global_counter.base.accepted_forward,
         global_counter.base.accepted_reverse
     );
@@ -367,12 +379,35 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         );
     }
     println!(
-        "  Fragments counted one or more times: {}",
+        "  Fragments with one or more counted motifs: {}",
         global_counter.base.counted_fragments
+    );
+    println!(
+        "  Distinct counted end motifs across those fragments: {}",
+        global_counter.counted_motifs
     );
     println!("----------");
     println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
+}
+
+/// Update the `ends` statistics for one fully processed fragment.
+///
+/// Fragment-level statistics should reflect emitted motif counts, not just
+/// fragments that survived earlier filters. This helper applies the final
+/// per-fragment flags after all candidate windows have been processed.
+///
+/// Parameters
+/// ----------
+/// - `counter`:
+///   Tile-local counters updated in place
+/// - `counted_end_flags`:
+///   Which distinct end motifs were actually counted for the fragment
+fn record_counted_fragment_stats(counter: &mut EndsCounters, counted_end_flags: CountedEndFlags) {
+    if counted_end_flags.any_counted() {
+        counter.base.counted_fragments += 1;
+        counter.counted_motifs += counted_end_flags.counted_motif_total();
+    }
 }
 
 /// Count all end motifs owned by one tile and write its sparse payload to disk.
@@ -406,6 +441,10 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
 ///   Temporary directory for tile payloads
 /// - `counts_prefix`:
 ///   Prefix used when naming serialized tile payloads
+/// - `within_spec`:
+///   Shared codec spec for the within half, or `None` when `k_within = 0`
+/// - `outside_spec`:
+///   Shared codec spec for the outside half, or `None` when `k_outside = 0`
 ///
 /// Returns
 /// -------
@@ -423,6 +462,8 @@ fn process_tile(
     gc_corrector_opt: Option<GCCorrector>,
     temp_dir: &Path,
     counts_prefix: &str,
+    within_spec: Option<&crate::shared::kmers::kmer_codec::KmerSpec>,
+    outside_spec: Option<&crate::shared::kmers::kmer_codec::KmerSpec>,
 ) -> Result<Option<TileResult>> {
     // One BAM reader per tile
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
@@ -470,8 +511,15 @@ fn process_tile(
         return Ok(None);
     };
     let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
-    let motif_context =
-        build_tile_motif_context(opt, tile, fetch_span, chrom_len, blacklist_intervals)?;
+    let motif_context = build_tile_motif_context(
+        opt,
+        tile,
+        fetch_span,
+        chrom_len,
+        blacklist_intervals,
+        within_spec,
+        outside_spec,
+    )?;
     let window_context = WindowContext {
         spec: window_opt,
         windows: windows_chr,
@@ -583,7 +631,6 @@ fn process_tile(
     // Iterate fragments and add coverage
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
-        let fragment_assignment_length = fragment.assignment_len();
 
         // Only count fragments whose start is inside the core to prevent double counting across tiles
         if fragment.start() < tile.core_start() || fragment.start() >= tile.core_end() {
@@ -608,6 +655,7 @@ fn process_tile(
         // receive counts.
         let query_interval = match opt.window_assignment.assign_by {
             WindowMotifAssigner::Midpoint => {
+                let fragment_assignment_length = fragment.assignment_len();
                 let midpoint = midpoint_random_even_with_thread_rng(
                     fragment.assignment_start(),
                     fragment_assignment_length,
@@ -657,8 +705,7 @@ fn process_tile(
             (None, false) => 1.0, // No correction
             (Some(_), false) => bail!("unexpected GC weight when GC correction is disabled"),
         };
-
-        counter.base.counted_fragments += 1;
+        let mut counted_end_flags = CountedEndFlags::default();
 
         if !scaling_chr.is_empty() {
             // Find overlapping scaling-bins
@@ -672,7 +719,14 @@ fn process_tile(
                 opt.fragment_lengths.max_fragment_length.into(),
             )
             .with_context(|| format!("finding overlapping scaling bins on chr {}", tile.chr))?
-            .context("no overlapping scaling bins found")?; // Should always find >= 1 bin
+            .with_context(|| {
+                format!(
+                    "no overlapping scaling bins found for fragment {}:{}-{}. Scaling factors must cover every counted base on every counted chromosome",
+                    tile.chr,
+                    fragment.start(),
+                    fragment.end()
+                )
+            })?;
 
             // Extract the indices of the overlapping bins
             let overlapping_scaling_bin_indices: Vec<usize> = overlapping_scaling_bins
@@ -713,7 +767,7 @@ fn process_tile(
                     .get(&overlapped_window_idx)
                     .expect("missing overlap interval for scaled count window");
                 let count_weight = overlap_fraction_to_count * scaling_weight * gc_weight;
-                count_fragment_in_window(
+                counted_end_flags.merge(count_fragment_in_window(
                     &mut counts_by_window,
                     original_idx,
                     window_interval,
@@ -722,7 +776,7 @@ fn process_tile(
                     &motif_context,
                     opt.source_within,
                     opt.window_assignment.assign_by,
-                )?;
+                )?);
             }
         } else {
             // Without genomic scaling, each candidate window gets either weight 1.0 or the raw
@@ -733,7 +787,7 @@ fn process_tile(
                     WindowMotifAssigner::CountOverlap => overlapped_window.overlap_fraction as f64,
                     _ => 1.0f64,
                 } * gc_weight;
-                count_fragment_in_window(
+                counted_end_flags.merge(count_fragment_in_window(
                     &mut counts_by_window,
                     original_idx,
                     overlapped_window.interval,
@@ -742,9 +796,11 @@ fn process_tile(
                     &motif_context,
                     opt.source_within,
                     opt.window_assignment.assign_by,
-                )?;
+                )?);
             }
         }
+
+        record_counted_fragment_stats(&mut counter, counted_end_flags);
     }
 
     // Get counters from iterator
@@ -758,4 +814,9 @@ fn process_tile(
         counts_path,
         counter,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    include!("ends_tests.rs");
 }

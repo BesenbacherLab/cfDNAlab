@@ -46,7 +46,7 @@ pub fn write_end_motif_outputs(
     let motifs_path = output_dir.join(dot_join(&[prefix, "end_motifs.txt"]));
     if write_dense_output {
         let counts_path = output_dir.join(dot_join(&[prefix, "end_motifs.npy"]));
-        write_npy(&counts_path, &stack_end_motif_counts(bins, motifs))
+        write_npy(&counts_path, &stack_end_motif_counts(bins, motifs)?)
             .with_context(|| format!("writing {}", counts_path.display()))?;
 
         let mut motifs_writer = create_text_writer(&motifs_path)
@@ -170,9 +170,12 @@ pub fn write_end_settings_json(output_dir: &Path, prefix: &str, opt: &EndsConfig
 ///
 /// Returns
 /// -------
-/// - `Array2<f64>`:
+/// - `Result<Array2<f64>>`:
 ///   Dense matrix with one row per window and one column per motif
-fn stack_end_motif_counts(bins: &[FxHashMap<String, f64>], motifs: &[String]) -> Array2<f64> {
+fn stack_end_motif_counts(
+    bins: &[FxHashMap<String, f64>],
+    motifs: &[String],
+) -> Result<Array2<f64>> {
     let n_rows = bins.len();
     let n_cols = motifs.len();
     let mut mat = Array2::<f64>::zeros((n_rows, n_cols));
@@ -184,13 +187,14 @@ fn stack_end_motif_counts(bins: &[FxHashMap<String, f64>], motifs: &[String]) ->
 
     for (row, bin) in bins.iter().enumerate() {
         for (motif, &count) in bin {
-            if let Some(&col) = motif_columns.get(motif) {
-                mat[(row, col)] = count;
-            }
+            let col = motif_columns.get(motif).copied().with_context(|| {
+                format!("missing dense output column for motif label '{motif}'")
+            })?;
+            mat[(row, col)] = count;
         }
     }
 
-    mat
+    Ok(mat)
 }
 
 /// Convert the within-source enum to its JSON-sidecar string form.
@@ -269,6 +273,38 @@ fn window_assigner_name(assigner: WindowMotifAssigner) -> String {
         WindowMotifAssigner::Any => "any".to_string(),
         WindowMotifAssigner::All => "all".to_string(),
         WindowMotifAssigner::Midpoint => "midpoint".to_string(),
-        WindowMotifAssigner::Proportion(value) => format!("proportion={value}"),
+        WindowMotifAssigner::Proportion(value) => {
+            format!("proportion={}", format_proportion_threshold(value))
+        }
     }
+}
+
+/// Format a proportion threshold in a stable human-readable form.
+///
+/// This avoids scientific notation and trims noisy trailing zeros so the
+/// settings sidecar stays easy to read and stable across runs.
+///
+/// Parameters
+/// ----------
+/// - `value`:
+///   Proportion threshold between 0.0 and 1.0
+///
+/// Returns
+/// -------
+/// - `String`:
+///   Stable decimal representation for JSON-sidecar output
+fn format_proportion_threshold(value: f64) -> String {
+    let mut formatted = format!("{value:.15}");
+    while formatted.contains('.') && formatted.ends_with('0') {
+        formatted.pop();
+    }
+    if formatted.ends_with('.') {
+        formatted.push('0');
+    }
+    formatted
+}
+
+#[cfg(test)]
+mod tests {
+    include!("write_tests.rs");
 }

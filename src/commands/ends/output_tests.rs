@@ -1,4 +1,5 @@
 use super::*;
+use fxhash::FxHashMap;
 use crate::shared::kmers::kmer_codec::{KmerSpec, build_kmer_specs};
 
 fn spec_for_k(k: u8) -> KmerSpec {
@@ -65,4 +66,31 @@ fn build_all_end_motif_order_collapses_single_base_reverse_complements() {
 
     // Assert
     assert_eq!(motifs, vec!["_A", "_C"]);
+}
+
+#[test]
+fn collect_end_motif_order_returns_sorted_union_of_observed_sparse_motifs() {
+    // Arrange: the sparse path should keep only observed motifs, but it must still produce one
+    // stable global order across all windows.
+    //
+    // Mental derivation:
+    // - observed union = {"_G", "AT_C", "_A"}
+    // - the implementation uses a `BTreeSet`, so the final order is plain lexicographic order
+    let bins = vec![
+        FxHashMap::from_iter([
+            ("_G".to_string(), 1.0),
+            ("AT_C".to_string(), 2.0),
+        ]),
+        FxHashMap::from_iter([
+            ("_A".to_string(), 3.0),
+            ("AT_C".to_string(), 4.0),
+        ]),
+    ];
+
+    // Act
+    let motifs = collect_end_motif_order(&bins);
+
+    // Assert: `collect_end_motif_order` uses a `BTreeSet`, so labels are sorted
+    // lexicographically in plain string order.
+    assert_eq!(motifs, vec!["AT_C", "_A", "_G"]);
 }

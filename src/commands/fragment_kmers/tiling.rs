@@ -1,7 +1,5 @@
 use crate::{
-    commands::{
-        cli_common::WindowSpec, counters::FragmentKmersCounters,
-    },
+    commands::{cli_common::WindowSpec, counters::FragmentKmersCounters},
     shared::{
         interval::Interval,
         kmers::{

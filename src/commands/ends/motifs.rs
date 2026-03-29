@@ -64,6 +64,50 @@ pub(crate) enum EndSide {
     Right,
 }
 
+/// Track which fragment ends produced at least one motif count.
+///
+/// The same end can be counted into multiple windows, but the statistics for
+/// `ends` should still count that end only once per fragment. This struct keeps
+/// that per-fragment bookkeeping separate from the per-window accumulation map.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CountedEndFlags {
+    pub left_counted: bool,
+    pub right_counted: bool,
+}
+
+impl CountedEndFlags {
+    /// Merge count flags from another window of the same fragment.
+    ///
+    /// Parameters
+    /// ----------
+    /// - `other`:
+    ///   Count flags collected from another candidate window for the same fragment
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.left_counted |= other.left_counted;
+        self.right_counted |= other.right_counted;
+    }
+
+    /// Return whether at least one end motif was counted for the fragment.
+    ///
+    /// Returns
+    /// -------
+    /// - `bool`:
+    ///   `true` when either fragment end contributed at least one motif count
+    pub(crate) fn any_counted(self) -> bool {
+        self.left_counted || self.right_counted
+    }
+
+    /// Return how many distinct end motifs were counted for the fragment.
+    ///
+    /// Returns
+    /// -------
+    /// - `u64`:
+    ///   Number of fragment ends that contributed at least one motif count
+    pub(crate) fn counted_motif_total(self) -> u64 {
+        self.left_counted as u64 + self.right_counted as u64
+    }
+}
+
 /// Build an optional k-mer spec, treating `k=0` as an empty motif half.
 ///
 /// Parameters
@@ -109,6 +153,10 @@ pub(crate) fn build_optional_kmer_spec(k: usize, label: &str) -> Result<Option<K
 ///   Full chromosome length
 /// - `blacklist_intervals`:
 ///   Merged blacklist intervals for this chromosome
+/// - `within_spec`:
+///   Shared codec spec for the within half, or `None` when `k_within = 0`
+/// - `outside_spec`:
+///   Shared codec spec for the outside half, or `None` when `k_outside = 0`
 ///
 /// Returns
 /// -------
@@ -120,9 +168,11 @@ pub(crate) fn build_tile_motif_context<'a>(
     fetch_span: Interval<u64>,
     chrom_len: u64,
     blacklist_intervals: &'a [Interval<u64>],
+    within_spec: Option<&KmerSpec>,
+    outside_spec: Option<&KmerSpec>,
 ) -> Result<TileMotifContext<'a>> {
-    let within_spec = build_optional_kmer_spec(opt.k_within, "within")?;
-    let outside_spec = build_optional_kmer_spec(opt.k_outside, "outside")?;
+    let within_spec = within_spec.cloned();
+    let outside_spec = outside_spec.cloned();
 
     let needs_reference_bases = outside_spec.is_some()
         || (within_spec.is_some()
@@ -241,8 +291,8 @@ fn build_precomputed_reference_codes(
 ///
 /// Returns
 /// -------
-/// - `Result<()>`:
-///   `Ok(())` after any relevant end motifs have been added
+/// - `Result<CountedEndFlags>`:
+///   Which fragment ends contributed at least one motif count in this window
 pub(crate) fn count_fragment_in_window(
     counts_by_window: &mut EndCountsByWindow,
     original_idx: u64,
@@ -252,7 +302,9 @@ pub(crate) fn count_fragment_in_window(
     motif_context: &TileMotifContext<'_>,
     source_within: KmerSource,
     assign_by: WindowMotifAssigner,
-) -> Result<()> {
+) -> Result<CountedEndFlags> {
+    let mut counted_end_flags = CountedEndFlags::default();
+
     if let Some(left_end) = fragment.left_end.as_ref() {
         let count_left_end = match assign_by {
             WindowMotifAssigner::Endpoint => {
@@ -268,6 +320,7 @@ pub(crate) fn count_fragment_in_window(
                     .entry(original_idx)
                     .or_default()
                     .incr_weighted(key, weight);
+                counted_end_flags.left_counted = true;
             }
         }
     }
@@ -291,11 +344,12 @@ pub(crate) fn count_fragment_in_window(
                     .entry(original_idx)
                     .or_default()
                     .incr_weighted(key, weight);
+                counted_end_flags.right_counted = true;
             }
         }
     }
 
-    Ok(())
+    Ok(counted_end_flags)
 }
 
 /// Encode one end motif if both halves are valid.
