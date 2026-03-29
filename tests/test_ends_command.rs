@@ -318,7 +318,7 @@ fn cli_statistics_count_one_fragment_and_one_motif_when_only_one_end_survives() 
             "--min-mapq",
             "0",
             "--tile-size",
-            "100",
+            "1000000",
             "--output-prefix",
             "ends",
             "--n-threads",
@@ -337,6 +337,89 @@ fn cli_statistics_count_one_fragment_and_one_motif_when_only_one_end_survives() 
     let stdout = String::from_utf8(output.stdout).context("stdout is not valid UTF-8")?;
     assert!(stdout.contains("Fragments with one or more counted motifs: 1"));
     assert!(stdout.contains("Distinct counted end motifs across those fragments: 1"));
+    Ok(())
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn cli_statistics_only_count_reads_from_tiles_with_relevant_windows() -> Result<()> {
+    // Arrange: two paired fragments on a 2 Mb chromosome with a 1 Mb tile size.
+    //
+    // Mental derivation:
+    // - fragment A starts at 10, so it belongs to tile 0
+    // - fragment B starts at 1_500_000, so it belongs to tile 1
+    // - the BED file contains only one window around fragment B, so tile 0 has no relevant windows
+    //   and is skipped before any BAM reads are scanned there
+    // - each paired fragment contributes 2 reads, so:
+    //   * whole BAM contains 4 reads
+    //   * processed tiles contain only the 2 reads from fragment B
+    // - fragment B survives and both of its end motifs count, so public stats should report:
+    //   * 2 observed reads in processed tiles
+    //   * 1 fragment with counted motifs
+    //   * 2 distinct counted end motifs
+    let fragment_a = paired_fragment(10, 10, 4);
+    let fragment_b = paired_fragment(1_500_000, 10, 4);
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 2_000_100)],
+        vec![fragment_a, fragment_b],
+        Vec::new(),
+        "ends_cli_stats_skipped_tile",
+    )?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(
+        &windows_bed,
+        &[("chr1", 1_500_000, 1_500_010, "processed_tile_window")],
+    )?;
+    let binary = cfdna_binary_path()?;
+
+    // Act
+    let output = Command::new(binary)
+        .args([
+            "ends",
+            "--bam",
+            bam.bam.to_str().context("bam path is not valid UTF-8")?,
+            "--output-dir",
+            out_dir.path().to_str().context("output dir is not valid UTF-8")?,
+            "--chromosomes",
+            "chr1",
+            "--k-within",
+            "1",
+            "--k-outside",
+            "0",
+            "--by-bed",
+            windows_bed
+                .to_str()
+                .context("windows BED path is not valid UTF-8")?,
+            "--min-fragment-length",
+            "10",
+            "--max-fragment-length",
+            "10",
+            "--min-mapq",
+            "0",
+            "--tile-size",
+            "1000000",
+            "--output-prefix",
+            "ends",
+            "--n-threads",
+            "1",
+        ])
+        .output()
+        .context("running cfdna ends CLI with skipped tile")?;
+
+    // Assert
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\n\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).context("stdout is not valid UTF-8")?;
+    assert!(stdout.contains("Note: counts below cover only tiles with relevant output windows"));
+    assert!(stdout.contains("Observed reads in processed tiles: 2"));
+    assert!(stdout.contains("Initially accepted observed reads: 2"));
+    assert!(stdout.contains("Fragments with one or more counted motifs: 1"));
+    assert!(stdout.contains("Distinct counted end motifs across those fragments: 2"));
     Ok(())
 }
 
