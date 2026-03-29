@@ -6,6 +6,7 @@ pub mod cli_common;
 mod counters;
 #[cfg(feature = "cmd_coverage_weights")]
 pub mod coverage_weights;
+#[cfg(feature = "cmd_ends")]
 pub mod ends;
 #[cfg(feature = "cmd_fcoverage")]
 pub mod fcoverage;

@@ -4,6 +4,8 @@ use crate::commands::bam_to_bam::config::BamToBamConfig;
 use crate::commands::bam_to_frag::config::BamToFragConfig;
 #[cfg(feature = "cmd_coverage_weights")]
 use crate::commands::coverage_weights::config::CoverageWeightsConfig;
+#[cfg(feature = "cmd_ends")]
+use crate::commands::ends::config::EndsConfig;
 #[cfg(feature = "cmd_fcoverage")]
 use crate::commands::fcoverage::config::FCoverageConfig;
 #[cfg(feature = "cmd_frag_to_bam")]
@@ -36,6 +38,7 @@ use clap::builder::styling::{AnsiColor, Style, Styles};
         feature = "cmd_bam_to_frag",
         feature = "cmd_frag_to_bam",
         feature = "cmd_coverage_weights",
+        feature = "cmd_ends",
         feature = "cmd_fcoverage",
         feature = "cmd_fragment_kmers",
         feature = "cmd_gc_bias",
@@ -65,6 +68,8 @@ pub enum Cmd {
     RefGcBias(RefGCBiasConfig),
     #[cfg(feature = "cmd_coverage_weights")]
     CoverageWeights(CoverageWeightsConfig),
+    #[cfg(feature = "cmd_ends")]
+    Ends(EndsConfig),
     #[cfg(feature = "cmd_lengths")]
     Lengths(LengthsConfig),
     #[cfg(feature = "cmd_fcoverage")]

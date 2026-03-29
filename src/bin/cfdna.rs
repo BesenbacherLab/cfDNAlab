@@ -23,6 +23,8 @@ fn main() {
         Cmd::CoverageWeights(config) => {
             cfdnalab::commands::coverage_weights::coverage_weights::run(&config)
         }
+        #[cfg(feature = "cmd_ends")]
+        Cmd::Ends(config) => cfdnalab::commands::ends::ends::run(&config),
         #[cfg(feature = "cmd_lengths")]
         Cmd::Lengths(config) => cfdnalab::commands::lengths::lengths::run(&config),
         #[cfg(feature = "cmd_fcoverage")]
