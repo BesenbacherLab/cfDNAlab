@@ -54,6 +54,11 @@ impl FragmentWithEnds {
     }
 
     #[inline]
+    pub fn assignment_len(&self) -> u32 {
+        self.assignment_interval.len()
+    }
+
+    #[inline]
     pub fn assignment_start(&self) -> u32 {
         self.assignment_interval.start()
     }
@@ -526,12 +531,8 @@ fn build_resolved_end(
     k_within: usize,
 ) -> Option<ResolvedFragmentEnd> {
     let within_bases = match end_side {
-        FragmentEndSide::Left => {
-            extract_left_within_bases(read, clip_strategy, k_within)?
-        }
-        FragmentEndSide::Right => {
-            extract_right_within_bases(read, clip_strategy, k_within)?
-        }
+        FragmentEndSide::Left => extract_left_within_bases(read, clip_strategy, k_within)?,
+        FragmentEndSide::Right => extract_right_within_bases(read, clip_strategy, k_within)?,
     };
 
     Some(ResolvedFragmentEnd {

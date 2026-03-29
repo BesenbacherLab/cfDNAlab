@@ -22,6 +22,7 @@ pub mod sampling;
 pub mod scale_genome;
 pub mod thread_pool;
 pub mod tiled_run;
+pub mod windowing;
 pub mod writers;
 // Plotting helpers gated behind the plotters feature
 #[cfg(feature = "plotters")]

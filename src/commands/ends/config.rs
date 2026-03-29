@@ -10,11 +10,14 @@ use crate::{
 };
 use std::path::PathBuf;
 
-// TODO: save_sparse was not kept, but we should save as sparse when sum(k_*) is big
-
 /// Count fragment end motifs in a BAM-file.
 ///
-/// Writes an `.npy` file with shape (# windows, # motifs) along with a text file with the matching motifs.
+/// Writes either:
+///
+/// - a dense `.npy` matrix with shape `(# windows, # motifs)` when `--all-motifs` is enabled
+/// - or a sparse `.npz` matrix otherwise
+///
+/// along with a text file with the matching motif labels.
 ///
 /// ## GC correction
 ///
@@ -70,6 +73,7 @@ pub struct EndsConfig {
     ///
     /// Examples produce files like:
     ///   `<prefix>.end_motifs.npy`
+    ///   `<prefix>.end_motifs.sparse.npz`
     #[cfg_attr(
         feature = "cli",
         clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
@@ -112,10 +116,10 @@ pub struct EndsConfig {
             help_heading = "Motifs"
         )
     )]
-    source_within: KmerSource,
+    pub source_within: KmerSource,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    clip: ClippingArgs,
+    pub clip: ClippingArgs,
 
     /// When to filter motifs due to indels.
     ///
@@ -174,11 +178,11 @@ pub struct EndsConfig {
     ///
     /// - Motifs are collapsed with their complement, using the lexicographically smaller motif representation.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Motifs"))]
-    collapse_complement: bool,
+    pub collapse_complement: bool,
 
     /// Include every possible motif in the output, even if its count is zero  [flag]
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Motifs"))]
-    all_motifs: bool,
+    pub all_motifs: bool,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,

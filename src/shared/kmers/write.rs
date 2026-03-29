@@ -126,6 +126,21 @@ pub fn write_category_sparse(
     prefix: &str,
     out_dir: &Path,
 ) -> Result<()> {
+    let counts_path = out_dir.join(format!("{prefix}_counts_sparse.npz"));
+    let motifs_path = out_dir.join(format!("{prefix}_motifs.txt"));
+    write_category_sparse_with_paths(bins, motifs, &counts_path, &motifs_path)
+}
+
+/// Write SciPy-compatible COO matrix to explicit output paths.
+///
+/// This is the same sparse COO payload as [`write_category_sparse`], but it lets callers choose
+/// filenames instead of going through the shared `<prefix>_...` convention.
+pub fn write_category_sparse_with_paths(
+    bins: &[FxHashMap<String, f64>],
+    motifs: &[String],
+    counts_path: &Path,
+    motifs_path: &Path,
+) -> Result<()> {
     if bins.is_empty() {
         return Ok(());
     }
@@ -170,9 +185,8 @@ pub fn write_category_sparse(
     // format = np.array('coo', dtype='|S3')
     let format_buf = numpy_string_scalar("coo")?;
 
-    // Pack everything into <prefix>_counts_sparse.npz
-    let npz_path = out_dir.join(format!("{prefix}_counts_sparse.npz"));
-    let file = File::create(&npz_path)?;
+    // Pack everything into the requested sparse output file.
+    let file = File::create(counts_path)?;
     let mut npz = ZipWriter::new(file);
     let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
@@ -189,7 +203,7 @@ pub fn write_category_sparse(
     npz.finish()?;
 
     // Plain-text motif list
-    let mut txt = File::create(out_dir.join(format!("{prefix}_motifs.txt")))?;
+    let mut txt = File::create(motifs_path)?;
     for m in motifs {
         writeln!(txt, "{m}")?;
     }

@@ -1,5 +1,5 @@
 use crate::Result;
-use crate::shared::gc_tag::{GcTagValue, combine_gc_tag_values};
+use crate::shared::gc_tag::combine_gc_tag_values;
 use crate::shared::interval::Interval;
 use rust_htslib::bam::ext::BamRecordExtensions;
 use rust_htslib::bam::record::Record;

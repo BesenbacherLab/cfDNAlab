@@ -62,11 +62,79 @@ For consistency and compactness:
 - `outside` reference context should use the same positional k-mer encoding style as `fragment-kmers`
 - `within` sequence should use the same radix-5 encoding, but encoded directly from the resolved end sequence rather than from a chromosome-wide positional table
 
+Implementation consequence:
+
+- `shared/kmers/kmer_codec.rs` should remain the one codec implementation
+- `ends` should not introduce its own parallel encoding logic
+- the shared codec needs one small additional helper for direct encoding of a single byte slice, because the current public API is centered on chromosome-wide positional precomputation
+
+Working addition:
+
+- `KmerSpec::encode_kmer_bytes(&self, seq: &[u8]) -> u64`
+
+This should:
+
+- encode one exact k-mer-sized byte slice using the same radix-5 representation already used elsewhere
+- return the existing sentinel values when the slice contains `N` or is otherwise not a valid full k-mer
+- let `ends` encode `within_bases` directly without duplicating codec logic
+
+### 4b. `k_within` or `k_outside` may be zero, but not both
+
+`ends` should allow one side of the motif to be empty:
+
+- `k_within = 0`, `k_outside > 0`
+- `k_within > 0`, `k_outside = 0`
+
+But it should reject:
+
+- `k_within = 0` and `k_outside = 0`
+
+because that would define an empty motif and make the output meaningless.
+
+Implementation rule:
+
+- only build `KmerSpec` values and positional code tables for sides with `k > 0`
+- when one side has `k = 0`, always store code `0` for that side in the internal key
+- on decode/output, treat that side as the empty string rather than as a real k-mer
+
+This keeps the count key compact and avoids `Option<u64>` in the hot path.
+
 ### 5. Complement collapsing happens on the combined full motif, not per half
 
 If `collapse_complement` is enabled, it must be applied to the full joined motif after `within` and `outside` are combined and oriented correctly.
 
 Do not canonicalize the two halves independently.
+
+### 6. `ends` needs its own encoded count key
+
+`shared/kmers/kmer_codec::Kmer` is not the right internal count key for `ends`.
+
+It only models one k-mer plus orientation, while `ends` needs:
+
+- one `within` code
+- one `outside` code
+- one decode-time orientation flag
+
+So `ends` should define its own dedicated key type in command-local code.
+
+Working shape:
+
+```rust
+pub struct EncodedEndMotifKey {
+    pub within_code: u64,
+    pub outside_code: u64,
+    pub reverse_on_decode: bool,
+}
+```
+
+Notes:
+
+- this is an internal counting key, not a user-facing output type
+- it should be `Eq + Hash + Clone + Copy`
+- it should stay minimal and not accumulate unrelated fragment metadata
+- reverse-complement collapsing still happens later on the full reconstructed motif, not on this key directly
+- when `k_within == 0`, `within_code` must always be `0`
+- when `k_outside == 0`, `outside_code` must always be `0`
 
 ## Fragment payload design
 
@@ -132,6 +200,138 @@ Notes:
 - if an end is skipped, no `ResolvedFragmentEnd` exists for it
 
 This shape is intentionally minimal. If later implementation shows that another small field is needed for counters or validation, it can be added.
+
+## Counting model
+
+### Sparse per-window counting
+
+`ends` should follow `fragment-kmers`, not `lengths`, for the count container shape.
+
+`lengths` is still a good model for:
+
+- tiling
+- GC correction
+- blacklist and scaling plumbing
+- reduction over tile outputs
+
+But its dense one-dimensional count arrays are the wrong shape for motifs.
+
+So `ends` should use sparse per-window maps keyed by `EncodedEndMotifKey`.
+
+## Output conventions
+
+### Dense vs sparse final output
+
+Final output should only be dense when `--all-motifs` is enabled.
+
+Reason:
+
+- dense output is useful for small motif spaces where users want the same motif columns across samples
+- when `--all-motifs` is disabled, the natural output is sparse because only observed motifs need to be written
+
+Implementation rule:
+
+- `all_motifs = true`:
+  - enumerate the full motif universe
+  - write a dense `.npy` matrix
+  - estimate the dense output size up front against a configurable output-size budget and fail early if it would exceed that budget
+- `all_motifs = false`:
+  - collect only observed motifs
+  - write a sparse COO `.npz` matrix plus the matching motif label file
+
+The dense-output budget should be based on actual output size, not only on `k`.
+
+Working threshold:
+
+- default to roughly 4-5 GiB, with an environment-variable override for users who want to allow larger dense outputs
+
+### Motif labels
+
+The final motif labels should be written as:
+
+- `<outside>_<within>`
+
+Examples:
+
+- `GG_ATC`
+- `_AC` when `k_outside = 0`
+- `GG_` when `k_within = 0`
+
+Implementation rule:
+
+- first decode and orient the full motif in the existing `outside || within` order
+- then split by `k_outside`
+- then format directly as the user-facing `<outside>_<within>` label
+
+This keeps the current motif orientation and collapse semantics intact while making the displayed order match the cut-centered motif orientation.
+
+### Settings sidecar
+
+The settings sidecar should be renamed from the inherited `lengths` filename.
+
+Working filename:
+
+- `end_motif_settings.json`
+
+It should include the settings needed to interpret the output, especially:
+
+- `k_within`
+- `k_outside`
+- `source_within`
+- `clip_strategy`
+- `max_soft_clips`
+- `indel_filter`
+- `window_assignment`
+- `collapse_complement`
+- `reads_are_fragments`
+- fragment-length filter settings
+
+### Fragment-length filtering
+
+Fragment-length filters remain defined on the aligned fragment interval, not on the assignment interval.
+
+Working shape:
+
+```rust
+type EndMotifCounts = FxHashMap<EncodedEndMotifKey, f64>;
+type WindowEndMotifCounts = FxHashMap<u64, EndMotifCounts>;
+```
+
+Meaning:
+
+- one tile accumulates sparse counts per global window id
+- each window stores only the motifs actually seen in that tile
+- reduction merges sparse maps across tiles before final decoding/output
+
+This is the same overall strategy already used by `fragment-kmers`.
+
+### Decode only at the end
+
+The hot path should count encoded keys only.
+
+During reduction/output:
+
+- decode `within_code`
+- decode `outside_code`
+- join them into the full motif
+- apply `reverse_on_decode`
+- then apply optional complement collapse
+
+This keeps the streaming path small and fast.
+
+### `ends` should get a small dedicated counting module
+
+Add a small command-local counting module, for example:
+
+- `src/commands/ends/counting.rs`
+
+This module should own:
+
+- `EncodedEndMotifKey`
+- sparse per-window count types
+- small helpers for incrementing, merging, and later decoding counts
+
+It should not duplicate generic radix-5 logic from `shared/kmers/`.
 
 ## Per-read collection design
 
@@ -257,6 +457,144 @@ For indels, the collector only needs motif-level booleans:
 - `right_motif_has_indels`
 
 These are derived from the first `k_within` aligned bases used by the selected clip strategy. The collector does not need to store indel offsets or other intermediate state.
+
+### Blacklist handling must be two-stage
+
+`ends` must follow the same two-stage blacklist idea as `fragment-kmers`, but adapted to end motifs.
+
+Stage 1:
+
+- apply fragment-level exclusion using `is_blacklisted(...)` on the aligned fragment interval
+- this uses the configured `blacklist_strategy`
+- if the fragment is excluded here, stop before any end motif work
+
+Stage 2:
+
+- every end motif must also be checked against a blacklist-masked reference representation
+- this stage is always on, independent of `blacklist_strategy`
+- if the genomic span used by an end motif touches a blacklisted base, that end motif is skipped
+
+The fast path must not use per-end overlap queries. Instead, it should reuse the `fragment-kmers` idea:
+
+- load the tile reference sequence when blacklist-aware motif validation is needed
+- mask blacklisted bases in that tile slice before precomputing k-mer codes
+- use the existing radix-5 sentinel behavior to detect invalid spans
+
+Implementation rule:
+
+- a blacklist-masked motif span should produce the same invalid signal as any other ambiguous base span
+- in practice this means the masked-reference code at the lookup point should decode to the existing `N` sentinel and the end should be skipped
+
+This rule applies to both motif halves:
+
+- `outside` always validates against the masked reference span for that outside lookup
+- `within` also validates against the masked reference span for the within lookup, even when the actual within sequence is taken from the read
+
+So for `source_within = read`:
+
+- the actual `within_code` still comes from `within_bases`
+- but the corresponding genomic within span must first be validated against the masked reference
+- if that masked reference span produces the `N` sentinel, skip the end instead of counting the read-derived motif
+
+This keeps blacklist semantics genomic without forcing expensive overlap checks on every end.
+
+### End-specific lookup coordinates for blacklist validation
+
+Blacklist validation must use the same genomic lookup starts as the reference-backed motif encoding.
+
+For a kept end with assignment boundary `boundary_pos`:
+
+- left `outside` span starts at `boundary_pos - k_outside`
+- left `within` span starts at `boundary_pos`
+- right `outside` span starts at `boundary_pos`
+- right `within` span starts at `boundary_pos - k_within`
+
+The right-end offsets are easy to get wrong and must be tested explicitly.
+
+### Exact fallback path must preserve blacklist semantics
+
+If a requested reference-backed motif span falls outside the currently preloaded tile slice and the implementation falls back to an exact reference fetch, that fallback must preserve blacklist masking semantics.
+
+In other words:
+
+- exact fallback must not read raw reference sequence and bypass the blacklist mask
+- the fallback result must behave exactly like the masked tile-precomputed path for the same genomic span
+
+## Windowing and run-shape
+
+### Reuse the existing window helpers
+
+For window indexing and metadata, `ends` should follow the current `fragment-kmers` helpers rather than copying another custom windowing path.
+
+The useful existing pieces are:
+
+- `WindowContext`
+- `compute_window_offsets(...)`
+- `build_bin_info(...)`
+
+These already handle:
+
+- `--by-size`
+- `--by-bed`
+- `--global`
+- chromosome-local to global window index mapping
+- output row ordering
+
+So the first implementation should reuse them directly, even if they later move to a more neutral shared location.
+
+### Overall runner shape
+
+For the top-level `run()` implementation:
+
+- follow `lengths` for tile processing, GC correction, blacklist/scaling plumbing, and reduction flow
+- follow `fragment-kmers` for sparse counting and final decode/write steps
+
+In other words:
+
+- `lengths` is the right model for tile orchestration
+- `fragment-kmers` is the right model for motif counting representation
+
+This split is intentional and should be preserved while implementing `ends.rs`.
+
+### Tile ownership and downstream windows
+
+The sparse tile payload design must preserve the same fragment ownership invariant as the existing tiled commands.
+
+Rule:
+
+- a fragment is counted only in the tile whose core contains the fragment start
+
+In practice:
+
+- every tile fetches a wider halo region so it can see fragments near its boundaries
+- a fragment visible in multiple fetch halos must still be counted only once
+- the ownership check is the fragment-start-in-core rule
+
+This ownership rule is separate from window assignment.
+
+Once a tile owns a fragment, that fragment may still contribute to windows outside the tile core if the chosen window-assignment rule allows it.
+
+So the implementation must also preserve:
+
+- window lookup spans that extend beyond the core far enough to include all windows that an owned fragment can legitimately hit
+
+This means:
+
+- sparse tile payloads do not need the old dense "cross" file format
+- but they still must include counts for downstream windows beyond the tile core
+- later reduction should merge sparse counts by global `original_idx`
+- duplicate counting should be prevented by tile ownership, not by the reducer
+
+This is important and should not be "simplified away" later. A fragment can be owned by one tile while still contributing to windows that begin in a later tile.
+
+## Immediate next steps
+
+The implementation should proceed in this order:
+
+1. add the direct byte-slice radix-5 encoder to `shared/kmers/kmer_codec.rs`
+2. add the `ends` counting module with `EncodedEndMotifKey` and sparse per-window counts
+3. wire `ends.rs` to use the shared window helpers and sparse counting path
+4. only then add the tile-level motif extraction loop and output writing
 
 ## Assignment boundary rules
 

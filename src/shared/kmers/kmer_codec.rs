@@ -99,6 +99,28 @@ impl KmerSpec {
         build_left_aligned_codes(seq, self.k, self.sentinel_none, self.sentinel_n)
     }
 
+    /// Encode one exact k-mer-sized slice with the shared radix-5 representation.
+    ///
+    /// Returns:
+    /// - `sentinel_none` when `seq.len() != self.k`
+    /// - `sentinel_n` when any base encodes as `N`
+    /// - otherwise the radix-5 code for the provided bases
+    pub fn encode_kmer_bytes(&self, seq: &[u8]) -> u64 {
+        if seq.len() != self.k {
+            return self.sentinel_none;
+        }
+
+        let mut code: u64 = 0;
+        for &base in seq {
+            let encoded = encode_base(base) as u64;
+            if encoded == 4 {
+                return self.sentinel_n;
+            }
+            code = code * 5 + encoded;
+        }
+        code
+    }
+
     /// Decode a single code back to its k‑mer string, returning all‑'N' if the
     /// code is one of the sentinels.
     pub fn decode_kmer(&self, code: u64) -> String {

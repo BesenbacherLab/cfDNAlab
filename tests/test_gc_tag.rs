@@ -80,8 +80,8 @@ mod test_fragment_iterator_gc_tags {
                 segment_kmer_fragment::FragmentWithKmerSegments,
             },
             fragment_iterators::{
-                fragments_from_bam, fragments_with_ends_from_bam, fragments_with_kmer_segments_from_bam,
-                fragments_with_segments_from_bam,
+                fragments_from_bam, fragments_with_ends_from_bam,
+                fragments_with_kmer_segments_from_bam, fragments_with_segments_from_bam,
             },
             gc_tag::GcTagValue,
             indel_mode::{IndelMode, IndelMotifFilterPolicy},
@@ -113,7 +113,9 @@ mod test_fragment_iterator_gc_tags {
         let seq = vec![b'A'; seq_len];
         let qual = vec![30u8; seq_len];
         record.set(qname, Some(&cigar), &seq, &qual);
-        record.push_aux(b"GC", Aux::Float(gc_weight)).expect("set GC tag");
+        record
+            .push_aux(b"GC", Aux::Float(gc_weight))
+            .expect("set GC tag");
 
         record
     }
@@ -143,7 +145,9 @@ mod test_fragment_iterator_gc_tags {
             .expect("valid fragment")
     }
 
-    fn first_end_fragment(iter: impl Iterator<Item = Result<FragmentWithEnds>>) -> FragmentWithEnds {
+    fn first_end_fragment(
+        iter: impl Iterator<Item = Result<FragmentWithEnds>>,
+    ) -> FragmentWithEnds {
         iter.into_iter()
             .next()
             .expect("one fragment")
@@ -158,15 +162,13 @@ mod test_fragment_iterator_gc_tags {
         let reverse = make_record(qname, 0, 150, true, 50, 4.0);
 
         // Act: build fragments through the same iterator used by basic-fragment commands.
-        let fragment = first_fragment(
-            fragments_from_bam(
-                vec![Ok(forward), Ok(reverse)].into_iter(),
-                |_record| true,
-                Some(b"GC"),
-                |_fragment: &Fragment| true,
-                false,
-            ),
-        );
+        let fragment = first_fragment(fragments_from_bam(
+            vec![Ok(forward), Ok(reverse)].into_iter(),
+            |_record| true,
+            Some(b"GC"),
+            |_fragment: &Fragment| true,
+            false,
+        ));
 
         // Assert: the configured GC tag is preserved and combined at fragment level.
         assert_valid_gc_tag(fragment.gc_tag, 3.0);
@@ -178,15 +180,13 @@ mod test_fragment_iterator_gc_tags {
         let record = make_record(b"single_basic", 0, 100, false, 50, 2.5);
 
         // Act
-        let fragment = first_fragment(
-            fragments_from_bam(
-                vec![Ok(record)].into_iter(),
-                |_record| true,
-                Some(b"GC"),
-                |_fragment: &Fragment| true,
-                true,
-            ),
-        );
+        let fragment = first_fragment(fragments_from_bam(
+            vec![Ok(record)].into_iter(),
+            |_record| true,
+            Some(b"GC"),
+            |_fragment: &Fragment| true,
+            true,
+        ));
 
         // Assert
         assert_valid_gc_tag(fragment.gc_tag, 2.5);
@@ -200,17 +200,15 @@ mod test_fragment_iterator_gc_tags {
         let reverse = make_record(qname, 0, 150, true, 50, 4.0);
 
         // Act
-        let fragment = first_segment_fragment(
-            fragments_with_segments_from_bam(
-                vec![Ok(forward), Ok(reverse)].into_iter(),
-                |_record| true,
-                1,
-                true,
-                Some(b"GC"),
-                |_fragment: &FragmentWithSegments| true,
-                false,
-            ),
-        );
+        let fragment = first_segment_fragment(fragments_with_segments_from_bam(
+            vec![Ok(forward), Ok(reverse)].into_iter(),
+            |_record| true,
+            1,
+            true,
+            Some(b"GC"),
+            |_fragment: &FragmentWithSegments| true,
+            false,
+        ));
 
         // Assert
         assert_valid_gc_tag(fragment.gc_tag, 3.0);
@@ -222,17 +220,15 @@ mod test_fragment_iterator_gc_tags {
         let record = make_record(b"single_segments", 0, 100, false, 50, 2.5);
 
         // Act
-        let fragment = first_segment_fragment(
-            fragments_with_segments_from_bam(
-                vec![Ok(record)].into_iter(),
-                |_record| true,
-                1,
-                true,
-                Some(b"GC"),
-                |_fragment: &FragmentWithSegments| true,
-                true,
-            ),
-        );
+        let fragment = first_segment_fragment(fragments_with_segments_from_bam(
+            vec![Ok(record)].into_iter(),
+            |_record| true,
+            1,
+            true,
+            Some(b"GC"),
+            |_fragment: &FragmentWithSegments| true,
+            true,
+        ));
 
         // Assert
         assert_valid_gc_tag(fragment.gc_tag, 2.5);
@@ -246,18 +242,16 @@ mod test_fragment_iterator_gc_tags {
         let reverse = make_record(qname, 0, 150, true, 50, 4.0);
 
         // Act
-        let fragment = first_kmer_segment_fragment(
-            fragments_with_kmer_segments_from_bam(
-                vec![Ok(forward), Ok(reverse)].into_iter(),
-                |_record| true,
-                IndelMode::Ignore,
-                true,
-                0,
-                Some(b"GC"),
-                |_fragment: &FragmentWithKmerSegments| true,
-                false,
-            ),
-        );
+        let fragment = first_kmer_segment_fragment(fragments_with_kmer_segments_from_bam(
+            vec![Ok(forward), Ok(reverse)].into_iter(),
+            |_record| true,
+            IndelMode::Ignore,
+            true,
+            0,
+            Some(b"GC"),
+            |_fragment: &FragmentWithKmerSegments| true,
+            false,
+        ));
 
         // Assert
         assert_valid_gc_tag(fragment.gc_tag, 3.0);
@@ -269,18 +263,16 @@ mod test_fragment_iterator_gc_tags {
         let record = make_record(b"single_kmers", 0, 100, false, 50, 2.5);
 
         // Act
-        let fragment = first_kmer_segment_fragment(
-            fragments_with_kmer_segments_from_bam(
-                vec![Ok(record)].into_iter(),
-                |_record| true,
-                IndelMode::Ignore,
-                true,
-                0,
-                Some(b"GC"),
-                |_fragment: &FragmentWithKmerSegments| true,
-                true,
-            ),
-        );
+        let fragment = first_kmer_segment_fragment(fragments_with_kmer_segments_from_bam(
+            vec![Ok(record)].into_iter(),
+            |_record| true,
+            IndelMode::Ignore,
+            true,
+            0,
+            Some(b"GC"),
+            |_fragment: &FragmentWithKmerSegments| true,
+            true,
+        ));
 
         // Assert
         assert_valid_gc_tag(fragment.gc_tag, 2.5);
@@ -294,20 +286,18 @@ mod test_fragment_iterator_gc_tags {
         let reverse = make_record(qname, 0, 150, true, 50, 4.0);
 
         // Act
-        let fragment = first_end_fragment(
-            fragments_with_ends_from_bam(
-                vec![Ok(forward), Ok(reverse)].into_iter(),
-                |_record| true,
-                ClipStrategy::Aligned,
-                KmerSource::Read,
-                IndelMotifFilterPolicy::Auto,
-                4,
-                None,
-                Some(b"GC"),
-                |_fragment: &FragmentWithEnds| true,
-                false,
-            ),
-        );
+        let fragment = first_end_fragment(fragments_with_ends_from_bam(
+            vec![Ok(forward), Ok(reverse)].into_iter(),
+            |_record| true,
+            ClipStrategy::Aligned,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            None,
+            Some(b"GC"),
+            |_fragment: &FragmentWithEnds| true,
+            false,
+        ));
 
         // Assert
         assert_valid_gc_tag(fragment.gc_tag, 3.0);
@@ -319,20 +309,18 @@ mod test_fragment_iterator_gc_tags {
         let record = make_record(b"single_ends", 0, 100, false, 50, 2.5);
 
         // Act
-        let fragment = first_end_fragment(
-            fragments_with_ends_from_bam(
-                vec![Ok(record)].into_iter(),
-                |_record| true,
-                ClipStrategy::Aligned,
-                KmerSource::Read,
-                IndelMotifFilterPolicy::Auto,
-                4,
-                None,
-                Some(b"GC"),
-                |_fragment: &FragmentWithEnds| true,
-                true,
-            ),
-        );
+        let fragment = first_end_fragment(fragments_with_ends_from_bam(
+            vec![Ok(record)].into_iter(),
+            |_record| true,
+            ClipStrategy::Aligned,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            None,
+            Some(b"GC"),
+            |_fragment: &FragmentWithEnds| true,
+            true,
+        ));
 
         // Assert
         assert_valid_gc_tag(fragment.gc_tag, 2.5);

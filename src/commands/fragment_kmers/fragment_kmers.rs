@@ -18,7 +18,6 @@ use crate::{
             positions::*,
             selection::{SelectionDecision, evaluate_selection},
             tiling::*,
-            windows::*,
         },
         gc_bias::{
             correct::{GCCorrector, load_gc_corrector},
@@ -47,6 +46,7 @@ use crate::{
         tiled_run::{
             Tile, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
         },
+        windowing::{WindowContext, build_bin_info, compute_window_offsets},
     },
 };
 use anyhow::{Context, Result, bail};

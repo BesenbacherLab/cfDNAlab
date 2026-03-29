@@ -100,6 +100,12 @@ counter_struct!(LengthsCounters;
     gc_failed_fragments: u64
 );
 
+counter_struct!(EndsCounters;
+    blacklisted_fragments: u64,
+    gc_failed_fragments: u64,
+    gc_out_of_range_tags: u64
+);
+
 counter_struct!(ProfileGroupsCounters;
     blacklisted_fragments: u64,
     gc_failed_fragments: u64,

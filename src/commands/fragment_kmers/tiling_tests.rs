@@ -1,9 +1,10 @@
 use super::determine_fetch_span;
 use crate::{
-    commands::{cli_common::WindowSpec, fragment_kmers::windows::WindowContext},
+    commands::cli_common::WindowSpec,
     shared::{
         interval::IndexedInterval,
         tiled_run::{Tile, TileWindowSpan},
+        windowing::WindowContext,
     },
 };
 use anyhow::Result;

@@ -64,7 +64,7 @@ for _ in it.by_ref() {}
 let stats = it.counters_snapshot();
 */
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use fxhash::FxHashMap;
 use rust_htslib::bam::Record;
 

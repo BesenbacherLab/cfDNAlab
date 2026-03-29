@@ -1,8 +1,7 @@
 use crate::{
     commands::{
-        cli_common::WindowSpec,
-        counters::FragmentKmersCounters,
-        fragment_kmers::{positions::PositionGroup, windows::WindowContext},
+        cli_common::WindowSpec, counters::FragmentKmersCounters,
+        fragment_kmers::positions::PositionGroup,
     },
     shared::{
         interval::Interval,
@@ -11,6 +10,7 @@ use crate::{
             process_counts::{DecodedCounts, split_and_decode_counts},
         },
         tiled_run::{Tile, TileWindowSpan, clamp_fetch_to_window_span, tile_window_min_max},
+        windowing::WindowContext,
     },
 };
 use anyhow::{Context, Result, bail};

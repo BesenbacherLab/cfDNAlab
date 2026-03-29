@@ -413,8 +413,7 @@ mod tests_fragment_with_indel_counts {
         let f = make_rec(0, 100, false, m(60));
         let r = make_rec(0, 180, true, m(40));
         let frag =
-            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, true)
-                .unwrap();
+            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, true).unwrap();
         assert_eq!(frag.tid, 0);
         assert_eq!(frag.start(), 100);
         assert_eq!(frag.end(), 220);
@@ -444,8 +443,7 @@ mod tests_fragment_with_indel_counts {
         let f = make_rec(0, 100, false, m_ins_m(20, 3, 20));
         let r = make_rec(0, 140, true, m_del_m(10, 4, 30));
         let frag =
-            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, false)
-                .unwrap();
+            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, false).unwrap();
         assert_eq!(frag.deletions_nonoverlap, 0);
         assert_eq!(frag.insertions_nonoverlap, 0);
         assert_eq!(frag.deletions_overlap_supported, 0);
@@ -460,8 +458,7 @@ mod tests_fragment_with_indel_counts {
         let f = make_rec(0, 100, false, m_del_m(10, 3, 7)); // 100..120
         let r = make_rec(0, 140, true, m_ins_m(10, 4, 10)); // 140..160
         let frag =
-            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, true)
-                .unwrap();
+            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, true).unwrap();
         // No aligned overlap -> both indels are non-overlap
         assert_eq!(frag.deletions_nonoverlap, 3);
         assert_eq!(frag.insertions_nonoverlap, 4);
@@ -480,8 +477,7 @@ mod tests_fragment_with_indel_counts {
         let f = make_rec(0, 100, false, m_del_m(70, 5, 5)); // del at [170,175)
         let r = make_rec(0, 160, true, m_del_m(12, 6, 42)); // del at [172,178)
         let frag =
-            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, true)
-                .unwrap();
+            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, true).unwrap();
         assert_eq!(frag.deletions_nonoverlap, 0);
         assert_eq!(frag.deletions_overlap_supported, 3);
         assert_eq!(frag.insertions_nonoverlap, 0);
@@ -575,8 +571,7 @@ mod tests_fragment_with_indel_counts {
         });
         let r = make_rec(0, 160, true, m_ins_m(5, 3, 15)); // ins at 165
         let frag =
-            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, true)
-                .unwrap();
+            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, true).unwrap();
         assert_eq!(frag.insertions_nonoverlap, 0); // Unpaired overlap insertions are discarded rather than counted elsewhere
         assert_eq!(frag.insertions_overlap_supported, 3); // min(5,3)
     }
@@ -590,8 +585,7 @@ mod tests_fragment_with_indel_counts {
         let f = make_rec(0, 150, false, m_ins_s_ins_m(20, 2, 4, 5, 26)); // two I at ref 170
         let r = make_rec(0, 160, true, m_ins_m(10, 3, 30)); // I at ref 170
         let frag =
-            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, true)
-                .unwrap();
+            collect_fragment_with_indel_counts_from_records_for_test(&f, &r, false, true).unwrap();
         assert_eq!(frag.insertions_overlap_supported, 3);
         assert_eq!(frag.insertions_nonoverlap, 0);
     }

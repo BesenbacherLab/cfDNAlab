@@ -1,0 +1,631 @@
+//! Motif extraction and reference-lookup helpers for the `ends` command.
+//!
+//! This module keeps the tile-local reference context, end-level motif
+//! encoding, and per-window counting logic out of the top-level runner so
+//! `ends.rs` can focus on orchestration.
+
+use crate::{
+    commands::ends::{
+        config::EndsConfig,
+        config_structs::{KmerSource, WindowMotifAssigner},
+        counting::{EncodedEndMotifKey, EndCountsByWindow},
+    },
+    shared::{
+        blacklist::apply_blacklist_mask_to_seq,
+        fragment::ends_fragment::{FragmentWithEnds, ResolvedFragmentEnd},
+        interval::Interval,
+        kmers::kmer_codec::{
+            KmerCodes, KmerSpec, build_kmer_specs, build_left_aligned_codes_per_k,
+        },
+        reference::read_seq_in_range,
+        tiled_run::Tile,
+    },
+};
+use anyhow::{Context, Result};
+use fxhash::FxHashMap;
+use std::{path::PathBuf, sync::Arc};
+
+/// Reference-backed motif resources for one tile.
+///
+/// This groups the per-tile state needed to validate and encode end motifs:
+/// optional masked reference bases, optional radix-5 lookup tables for the
+/// within and outside halves, and the metadata needed for exact fallback
+/// reference fetches when a requested motif crosses the loaded tile slice.
+pub(crate) struct TileMotifContext<'a> {
+    /// Chromosome name used for exact fallback reference fetches
+    chrom: String,
+    /// Optional 2bit handle for exact reference fetches when a lookup crosses the tile slice
+    ref_2bit: Option<PathBuf>,
+    /// Absolute genomic start of `reference_bases`
+    fetch_start: u64,
+    /// Tile reference bases, already blacklist-masked when needed
+    reference_bases: Option<Vec<u8>>,
+    /// Spec for the within half, if `k_within > 0`
+    within_spec: Option<KmerSpec>,
+    /// Spec for the outside half, if `k_outside > 0`
+    outside_spec: Option<KmerSpec>,
+    /// Precomputed masked-reference codes for within lookups
+    within_codes: Option<Arc<KmerCodes>>,
+    /// Precomputed masked-reference codes for outside lookups
+    outside_codes: Option<Arc<KmerCodes>>,
+    /// Blacklist intervals for exact masked fallback fetches
+    blacklist_intervals: &'a [Interval<u64>],
+    /// Chromosome length used for `sentinel_none` checks
+    chrom_len: u64,
+}
+
+/// Identify which fragment end is being processed.
+///
+/// The left and right ends use different genomic lookup starts for both the
+/// within and outside halves, so this enum keeps that branching explicit.
+#[derive(Clone, Copy)]
+pub(crate) enum EndSide {
+    Left,
+    Right,
+}
+
+/// Build an optional k-mer spec, treating `k=0` as an empty motif half.
+///
+/// Parameters
+/// ----------
+/// - `k`:
+///   Requested k-mer size for one motif half
+/// - `label`:
+///   Human-readable side name used in error messages
+///
+/// Returns
+/// -------
+/// - `Result<Option<KmerSpec>>`:
+///   `None` when `k=0`, otherwise the radix-5 codec spec for that half
+pub(crate) fn build_optional_kmer_spec(k: usize, label: &str) -> Result<Option<KmerSpec>> {
+    if k == 0 {
+        return Ok(None);
+    }
+
+    let k_u8: u8 = k
+        .try_into()
+        .with_context(|| format!("{label} k-mer size {k} does not fit in u8"))?;
+    let mut specs = build_kmer_specs(&[k_u8])?;
+    Ok(specs.remove(&k_u8))
+}
+
+/// Prepare tile-local masked reference resources for motif encoding.
+///
+/// This loads and masks the tile reference slice only when the current run
+/// actually needs it:
+/// - always for outside motifs
+/// - for reference-backed within motifs
+/// - for read-backed within motifs when blacklist-driven motif validation is active
+///
+/// Parameters
+/// ----------
+/// - `opt`:
+///   Full `ends` command configuration
+/// - `tile`:
+///   Tile currently being processed
+/// - `fetch_span`:
+///   Tile-local reference span that can still contribute to the current windows
+/// - `chrom_len`:
+///   Full chromosome length
+/// - `blacklist_intervals`:
+///   Merged blacklist intervals for this chromosome
+///
+/// Returns
+/// -------
+/// - `Result<TileMotifContext<'a>>`:
+///   Tile-local reference resources ready for motif validation and encoding
+pub(crate) fn build_tile_motif_context<'a>(
+    opt: &EndsConfig,
+    tile: &Tile,
+    fetch_span: Interval<u64>,
+    chrom_len: u64,
+    blacklist_intervals: &'a [Interval<u64>],
+) -> Result<TileMotifContext<'a>> {
+    let within_spec = build_optional_kmer_spec(opt.k_within, "within")?;
+    let outside_spec = build_optional_kmer_spec(opt.k_outside, "outside")?;
+
+    let needs_reference_bases = outside_spec.is_some()
+        || (within_spec.is_some()
+            && (matches!(opt.source_within, KmerSource::Reference)
+                || !blacklist_intervals.is_empty()));
+    let (fetch_start, fetch_end) = fetch_span.as_tuple();
+
+    if !needs_reference_bases {
+        return Ok(TileMotifContext {
+            chrom: tile.chr.clone(),
+            ref_2bit: opt.ref_2bit.clone(),
+            fetch_start,
+            reference_bases: None,
+            within_spec,
+            outside_spec,
+            within_codes: None,
+            outside_codes: None,
+            blacklist_intervals,
+            chrom_len,
+        });
+    }
+
+    let ref_2bit = opt
+        .ref_2bit
+        .as_ref()
+        .context("Reference-backed motif extraction requires --ref-2bit")?;
+    let mut reference_bases = read_seq_in_range(
+        ref_2bit,
+        &tile.chr,
+        (fetch_start as usize)..(fetch_end as usize),
+    )?;
+    if !blacklist_intervals.is_empty() {
+        apply_blacklist_mask_to_seq(&mut reference_bases, blacklist_intervals, fetch_start);
+    }
+
+    let (within_codes, outside_codes) = match (within_spec.as_ref(), outside_spec.as_ref()) {
+        (Some(within_spec), Some(outside_spec)) if within_spec.k == outside_spec.k => {
+            let shared_codes =
+                build_precomputed_reference_codes(Some(within_spec), &reference_bases);
+            (shared_codes.clone(), shared_codes)
+        }
+        _ => (
+            build_precomputed_reference_codes(within_spec.as_ref(), &reference_bases),
+            build_precomputed_reference_codes(outside_spec.as_ref(), &reference_bases),
+        ),
+    };
+
+    Ok(TileMotifContext {
+        chrom: tile.chr.clone(),
+        ref_2bit: opt.ref_2bit.clone(),
+        fetch_start,
+        reference_bases: Some(reference_bases),
+        within_spec,
+        outside_spec,
+        within_codes,
+        outside_codes,
+        blacklist_intervals,
+        chrom_len,
+    })
+}
+
+/// Precompute one tile-local radix-5 code vector for a single motif half.
+///
+/// Parameters
+/// ----------
+/// - `spec`:
+///   Codec spec for the requested half, or `None` when that half is empty
+/// - `reference_bases`:
+///   Tile-local reference slice, already blacklist-masked when needed
+///
+/// Returns
+/// -------
+/// - `Option<Arc<KmerCodes>>`:
+///   Shared per-position codes for that `k`, or `None` when the half is empty
+fn build_precomputed_reference_codes(
+    spec: Option<&KmerSpec>,
+    reference_bases: &[u8],
+) -> Option<Arc<KmerCodes>> {
+    let spec = spec?;
+    let k: u8 = spec
+        .k
+        .try_into()
+        .expect("validated k-mer size should fit into u8");
+    let mut spec_map = FxHashMap::default();
+    spec_map.insert(k, spec.clone());
+    let mut codes_by_k = build_left_aligned_codes_per_k(reference_bases, &spec_map);
+    Some(Arc::new(codes_by_k.remove(&k).expect(
+        "missing precomputed k-mer codes after precomputation",
+    )))
+}
+
+/// Count the relevant end motifs from one fragment into one output window.
+///
+/// Endpoint mode filters left and right ends independently against the current
+/// window. All other assignment modes count every kept end in every candidate
+/// window selected by the outer fragment-level overlap logic.
+///
+/// Parameters
+/// ----------
+/// - `counts_by_window`:
+///   Sparse output counts updated in place
+/// - `original_idx`:
+///   Global output-row index for the current window
+/// - `window_interval`:
+///   Genomic coordinates of the current output window
+/// - `fragment`:
+///   Fragment with already-resolved ends
+/// - `weight`:
+///   Combined overlap, scaling, and GC weight for this count
+/// - `motif_context`:
+///   Tile-local reference resources
+/// - `source_within`:
+///   Whether within bases come from the read or the reference
+/// - `assign_by`:
+///   Window-assignment rule for deciding whether each end counts here
+///
+/// Returns
+/// -------
+/// - `Result<()>`:
+///   `Ok(())` after any relevant end motifs have been added
+pub(crate) fn count_fragment_in_window(
+    counts_by_window: &mut EndCountsByWindow,
+    original_idx: u64,
+    window_interval: Interval<u64>,
+    fragment: &FragmentWithEnds,
+    weight: f64,
+    motif_context: &TileMotifContext<'_>,
+    source_within: KmerSource,
+    assign_by: WindowMotifAssigner,
+) -> Result<()> {
+    if let Some(left_end) = fragment.left_end.as_ref() {
+        let count_left_end = match assign_by {
+            WindowMotifAssigner::Endpoint => {
+                window_interval.contains_point(left_end.boundary_pos as u64)
+            }
+            _ => true,
+        };
+        if count_left_end {
+            if let Some(key) =
+                maybe_encode_end_motif_key(left_end, EndSide::Left, motif_context, source_within)?
+            {
+                counts_by_window
+                    .entry(original_idx)
+                    .or_default()
+                    .incr_weighted(key, weight);
+            }
+        }
+    }
+
+    if let Some(right_end) = fragment.right_end.as_ref() {
+        let right_endpoint_pos = right_end
+            .boundary_pos
+            .checked_sub(1)
+            .expect("right boundary must be > 0 for a valid half-open interval");
+        let count_right_end = match assign_by {
+            WindowMotifAssigner::Endpoint => {
+                window_interval.contains_point(right_endpoint_pos as u64)
+            }
+            _ => true,
+        };
+        if count_right_end {
+            if let Some(key) =
+                maybe_encode_end_motif_key(right_end, EndSide::Right, motif_context, source_within)?
+            {
+                counts_by_window
+                    .entry(original_idx)
+                    .or_default()
+                    .incr_weighted(key, weight);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Encode one end motif if both halves are valid.
+///
+/// Invalid means either:
+/// - no full reference k-mer exists at the requested coordinate
+/// - the masked reference span contains a blacklisted base
+///
+/// In both cases the end is skipped by returning `None`.
+///
+/// Parameters
+/// ----------
+/// - `end`:
+///   Resolved fragment end to encode
+/// - `end_side`:
+///   Whether this is the left or right fragment end
+/// - `motif_context`:
+///   Tile-local reference resources
+/// - `source_within`:
+///   Whether within bases come from the read or the reference
+///
+/// Returns
+/// -------
+/// - `Result<Option<EncodedEndMotifKey>>`:
+///   The encoded motif key for a kept end, or `None` when the end should be skipped
+fn maybe_encode_end_motif_key(
+    end: &ResolvedFragmentEnd,
+    end_side: EndSide,
+    motif_context: &TileMotifContext<'_>,
+    source_within: KmerSource,
+) -> Result<Option<EncodedEndMotifKey>> {
+    let within_code = encode_within_code(end, end_side, motif_context, source_within)?;
+    let outside_code = encode_outside_code(end.boundary_pos as u64, end_side, motif_context)?;
+    if motif_code_is_invalid(within_code, motif_context.within_spec.as_ref())
+        || motif_code_is_invalid(outside_code, motif_context.outside_spec.as_ref())
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(EncodedEndMotifKey {
+        within_code,
+        outside_code,
+        reverse_on_decode: matches!(end_side, EndSide::Right),
+    }))
+}
+
+/// Check whether a code represents an invalid motif half.
+///
+/// Parameters
+/// ----------
+/// - `code`:
+///   Encoded motif-half value
+/// - `spec`:
+///   Matching codec spec for that half, or `None` when the half is empty
+///
+/// Returns
+/// -------
+/// - `bool`:
+///   `true` when the code is a sentinel and the end should be skipped
+#[inline]
+fn motif_code_is_invalid(code: u64, spec: Option<&KmerSpec>) -> bool {
+    let Some(spec) = spec else {
+        return false;
+    };
+    code == spec.sentinel_none() || code == spec.sentinel_n()
+}
+
+/// Encode the within-fragment half for one end.
+///
+/// Read-backed mode validates blacklist overlap from the masked reference first,
+/// then encodes the actual read bases. Reference-backed mode encodes directly
+/// from the masked reference lookup.
+///
+/// Parameters
+/// ----------
+/// - `end`:
+///   Resolved fragment end to encode
+/// - `end_side`:
+///   Whether this is the left or right fragment end
+/// - `motif_context`:
+///   Tile-local reference resources
+/// - `source_within`:
+///   Whether within bases come from the read or the reference
+///
+/// Returns
+/// -------
+/// - `Result<u64>`:
+///   Encoded within-half code or an invalid sentinel
+fn encode_within_code(
+    end: &ResolvedFragmentEnd,
+    end_side: EndSide,
+    motif_context: &TileMotifContext<'_>,
+    source_within: KmerSource,
+) -> Result<u64> {
+    let Some(spec) = motif_context.within_spec.as_ref() else {
+        return Ok(0);
+    };
+
+    match source_within {
+        KmerSource::Read => {
+            if let Some(masked_reference_code) =
+                encode_blacklist_validation_within_code(end, end_side, spec, motif_context)?
+            {
+                if motif_code_is_invalid(masked_reference_code, Some(spec)) {
+                    return Ok(masked_reference_code);
+                }
+            }
+            Ok(spec.encode_kmer_bytes(&end.within_bases))
+        }
+        KmerSource::Reference => {
+            let start_pos = match end_side {
+                EndSide::Left => end.boundary_pos as u64,
+                EndSide::Right => {
+                    let k = spec.k as u64;
+                    if (end.boundary_pos as u64) < k {
+                        return Ok(spec.sentinel_none());
+                    }
+                    end.boundary_pos as u64 - k
+                }
+            };
+            get_reference_code(
+                start_pos,
+                spec,
+                motif_context.within_codes.as_deref(),
+                motif_context,
+            )
+        }
+    }
+}
+
+/// Validate the genomic within span against blacklist-masked reference codes.
+///
+/// This is only used for `source_within=read`, where the actual motif still
+/// comes from the read but blacklist skipping must remain genomic.
+///
+/// Parameters
+/// ----------
+/// - `end`:
+///   Resolved fragment end to validate
+/// - `end_side`:
+///   Whether this is the left or right fragment end
+/// - `spec`:
+///   Within-half k-mer spec
+/// - `motif_context`:
+///   Tile-local reference resources
+///
+/// Returns
+/// -------
+/// - `Result<Option<u64>>`:
+///   `None` when blacklist validation is not needed, otherwise the masked-reference code to inspect
+fn encode_blacklist_validation_within_code(
+    end: &ResolvedFragmentEnd,
+    end_side: EndSide,
+    spec: &KmerSpec,
+    motif_context: &TileMotifContext<'_>,
+) -> Result<Option<u64>> {
+    if motif_context.blacklist_intervals.is_empty() {
+        return Ok(None);
+    }
+
+    let start_pos = match end_side {
+        EndSide::Left => end.boundary_pos as u64,
+        EndSide::Right => {
+            let k = spec.k as u64;
+            if (end.boundary_pos as u64) < k {
+                return Ok(Some(spec.sentinel_none()));
+            }
+            end.boundary_pos as u64 - k
+        }
+    };
+
+    Ok(Some(get_reference_code(
+        start_pos,
+        spec,
+        motif_context.within_codes.as_deref(),
+        motif_context,
+    )?))
+}
+
+/// Encode the outside-fragment half for one end from reference coordinates.
+///
+/// Parameters
+/// ----------
+/// - `boundary_pos`:
+///   Assignment boundary for the end
+/// - `end_side`:
+///   Whether this is the left or right fragment end
+/// - `motif_context`:
+///   Tile-local reference resources
+///
+/// Returns
+/// -------
+/// - `Result<u64>`:
+///   Encoded outside-half code or an invalid sentinel
+fn encode_outside_code(
+    boundary_pos: u64,
+    end_side: EndSide,
+    motif_context: &TileMotifContext<'_>,
+) -> Result<u64> {
+    let Some(spec) = motif_context.outside_spec.as_ref() else {
+        return Ok(0);
+    };
+
+    let start_pos = match end_side {
+        EndSide::Left => {
+            let k = spec.k as u64;
+            if boundary_pos < k {
+                return Ok(spec.sentinel_none());
+            }
+            boundary_pos - k
+        }
+        EndSide::Right => boundary_pos,
+    };
+
+    get_reference_code(
+        start_pos,
+        spec,
+        motif_context.outside_codes.as_deref(),
+        motif_context,
+    )
+}
+
+/// Look up one reference-backed motif half from either the precomputed tile
+/// codes or an exact masked-reference fallback fetch.
+///
+/// Parameters
+/// ----------
+/// - `start_pos`:
+///   Genomic start position of the requested motif half
+/// - `spec`:
+///   Codec spec for the requested half
+/// - `precomputed_codes`:
+///   Optional tile-local code vector for this `k`
+/// - `motif_context`:
+///   Tile-local reference resources
+///
+/// Returns
+/// -------
+/// - `Result<u64>`:
+///   Encoded reference-backed motif code or an invalid sentinel
+fn get_reference_code(
+    start_pos: u64,
+    spec: &KmerSpec,
+    precomputed_codes: Option<&KmerCodes>,
+    motif_context: &TileMotifContext<'_>,
+) -> Result<u64> {
+    if let Some(codes) = precomputed_codes {
+        if let Some(local_start) = try_reference_start_index(start_pos, spec.k, motif_context) {
+            return Ok(codes.get(local_start));
+        }
+    }
+
+    fetch_reference_kmer_exact(start_pos, spec, motif_context)
+}
+
+/// Translate a genomic motif start into a tile-local slice index when possible.
+///
+/// Parameters
+/// ----------
+/// - `start_pos`:
+///   Genomic start position of the requested motif half
+/// - `k`:
+///   Requested motif length
+/// - `motif_context`:
+///   Tile-local reference resources
+///
+/// Returns
+/// -------
+/// - `Option<usize>`:
+///   Tile-local start index, or `None` when the motif crosses the loaded tile slice
+fn try_reference_start_index(
+    start_pos: u64,
+    k: usize,
+    motif_context: &TileMotifContext<'_>,
+) -> Option<usize> {
+    if start_pos < motif_context.fetch_start {
+        return None;
+    }
+
+    let local_start = (start_pos - motif_context.fetch_start) as usize;
+    if local_start + k > motif_context.reference_bases.as_ref().map_or(0, Vec::len) {
+        return None;
+    }
+    Some(local_start)
+}
+
+/// Fetch one exact masked-reference motif half outside the preloaded tile slice.
+///
+/// Parameters
+/// ----------
+/// - `start_pos`:
+///   Genomic start position of the requested motif half
+/// - `spec`:
+///   Codec spec for the requested half
+/// - `motif_context`:
+///   Tile-local reference resources
+///
+/// Returns
+/// -------
+/// - `Result<u64>`:
+///   Encoded exact-reference motif code or an invalid sentinel
+fn fetch_reference_kmer_exact(
+    start_pos: u64,
+    spec: &KmerSpec,
+    motif_context: &TileMotifContext<'_>,
+) -> Result<u64> {
+    if start_pos + spec.k as u64 > motif_context.chrom_len {
+        return Ok(spec.sentinel_none());
+    }
+
+    let ref_2bit = motif_context
+        .ref_2bit
+        .as_ref()
+        .context("reference-backed motif extraction requires --ref-2bit")?;
+    let mut exact_bases = read_seq_in_range(
+        ref_2bit,
+        &motif_context.chrom,
+        (start_pos as usize)..((start_pos as usize) + spec.k),
+    )?;
+    if !motif_context.blacklist_intervals.is_empty() {
+        apply_blacklist_mask_to_seq(
+            &mut exact_bases,
+            motif_context.blacklist_intervals,
+            start_pos,
+        );
+    }
+    Ok(spec.encode_kmer_bytes(&exact_bases))
+}
+
+#[cfg(test)]
+mod tests {
+    include!("motifs_tests.rs");
+}
