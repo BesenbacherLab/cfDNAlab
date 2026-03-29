@@ -39,6 +39,8 @@ mod tests_bam_to_frag {
     #[cfg(feature = "cmd_bam_to_bam")]
     use super::fixtures::{build_real_neutral_gc_package, build_real_non_neutral_gc_package};
     #[cfg(feature = "cmd_bam_to_bam")]
+    use rust_htslib::bam::Read;
+    #[cfg(feature = "cmd_bam_to_bam")]
     use rust_htslib::bam::record::Aux;
 
     #[test]
