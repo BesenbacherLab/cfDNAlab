@@ -41,7 +41,7 @@ fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
 fn base_config(
     bam_path: &Path,
     output_dir: &Path,
-    k_within: usize,
+    k_inside: usize,
     k_outside: usize,
 ) -> EndsConfig {
     let mut cfg = EndsConfig::new(
@@ -51,7 +51,7 @@ fn base_config(
             n_threads: 1,
         },
         base_chromosomes(&["chr1"]),
-        k_within,
+        k_inside,
         k_outside,
     );
     cfg.output_prefix = "ends".to_string();
@@ -196,6 +196,62 @@ fn motif_count(matrix: &Array2<f64>, motifs: &[String], row: usize, motif: &str)
     matrix[(row, column)]
 }
 
+fn expected_combined_1_plus_1_dense_order_without_collapse() -> Vec<String> {
+    let bases = ["A", "C", "G", "T"];
+    let mut motifs = Vec::new();
+    for outside in bases {
+        for inside in bases {
+            motifs.push(format!("{outside}_{inside}"));
+        }
+    }
+    motifs
+}
+
+fn expected_combined_1_plus_1_dense_order_with_collapse() -> Vec<String> {
+    let bases = ["A", "C", "G", "T"];
+    let mut motifs = Vec::new();
+    for outside in ["A", "C"] {
+        for inside in bases {
+            motifs.push(format!("{outside}_{inside}"));
+        }
+    }
+    motifs
+}
+
+fn expected_combined_2_plus_2_dense_order_without_collapse() -> Vec<String> {
+    let bases = ["A", "C", "G", "T"];
+    let mut motifs = Vec::new();
+    for first_outside in bases {
+        for second_outside in bases {
+            for first_inside in bases {
+                for second_inside in bases {
+                    motifs.push(format!(
+                        "{first_outside}{second_outside}_{first_inside}{second_inside}"
+                    ));
+                }
+            }
+        }
+    }
+    motifs
+}
+
+fn expected_combined_2_plus_2_dense_order_with_collapse() -> Vec<String> {
+    let bases = ["A", "C", "G", "T"];
+    let mut motifs = Vec::new();
+    for first_outside in ["A", "C"] {
+        for second_outside in bases {
+            for first_inside in bases {
+                for second_inside in bases {
+                    motifs.push(format!(
+                        "{first_outside}{second_outside}_{first_inside}{second_inside}"
+                    ));
+                }
+            }
+        }
+    }
+    motifs
+}
+
 fn read_text_file(path: &Path) -> Result<String> {
     let mut buf = String::new();
     File::open(path)?.read_to_string(&mut buf)?;
@@ -220,7 +276,7 @@ fn blacklist_any_skips_a_fragment_before_any_end_motifs_are_counted() -> Result<
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.blacklist = Some(vec![blacklist_bed]);
     cfg.blacklist_strategy = BlacklistStrategy::Any;
@@ -244,7 +300,7 @@ fn blacklist_any_skips_a_fragment_before_any_end_motifs_are_counted() -> Result<
 fn blacklist_masking_skips_only_the_reference_backed_end_motif_that_overlaps_a_blacklisted_base()
 -> Result<()> {
     // Arrange: fragment [10,20) has left terminal base at 10 and right terminal base at 19.
-    // Blacklisting [10,11) masks only the left within base. Using blacklist_strategy=All keeps
+    // Blacklisting [10,11) masks only the left inside base. Using blacklist_strategy=All keeps
     // the fragment itself, so only the left endpoint motif should disappear.
     let bam = simple_paired_fragment_bam("ends_blacklist_reference_end", 10, 10, 4)?;
     let reference = simple_reference_twobit()?;
@@ -254,7 +310,7 @@ fn blacklist_masking_skips_only_the_reference_backed_end_motif_that_overlaps_a_b
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     cfg.blacklist = Some(vec![blacklist_bed]);
     cfg.blacklist_strategy = BlacklistStrategy::All;
@@ -312,7 +368,7 @@ fn cli_statistics_count_one_fragment_and_one_motif_when_only_one_end_survives() 
                 .context("output dir is not valid UTF-8")?,
             "--chromosomes",
             "chr1",
-            "--k-within",
+            "--k-inside",
             "1",
             "--k-outside",
             "0",
@@ -321,7 +377,7 @@ fn cli_statistics_count_one_fragment_and_one_motif_when_only_one_end_survives() 
                 .path
                 .to_str()
                 .context("reference path is not valid UTF-8")?,
-            "--source-within",
+            "--source-inside",
             "reference",
             "--blacklist",
             blacklist_bed
@@ -400,10 +456,13 @@ fn cli_statistics_only_count_reads_from_tiles_with_relevant_windows() -> Result<
             "--bam",
             bam.bam.to_str().context("bam path is not valid UTF-8")?,
             "--output-dir",
-            out_dir.path().to_str().context("output dir is not valid UTF-8")?,
+            out_dir
+                .path()
+                .to_str()
+                .context("output dir is not valid UTF-8")?,
             "--chromosomes",
             "chr1",
-            "--k-within",
+            "--k-inside",
             "1",
             "--k-outside",
             "0",
@@ -444,12 +503,12 @@ fn cli_statistics_only_count_reads_from_tiles_with_relevant_windows() -> Result<
 }
 
 #[test]
-fn blacklist_masking_still_skips_read_backed_within_motifs_using_genomic_reference_coordinates()
+fn blacklist_masking_still_skips_read_backed_inside_motifs_using_genomic_reference_coordinates()
 -> Result<()> {
     // Arrange: unpaired read-fragment [10,14) with read sequence A C G A.
     // - left read-backed motif = "_A"
     // - right read-backed motif = reverse-complement("A") = "_T"
-    // Blacklisting [10,11) should drop only the left motif even though within bases come from
+    // Blacklisting [10,11) should drop only the left motif even though inside bases come from
     // the read, because blacklist validation is still genomic.
     let bam = single_read_bam("ends_blacklist_read_end", 10, vec![('M', 4)], b"ACGA")?;
     let reference = simple_reference_twobit()?;
@@ -459,7 +518,7 @@ fn blacklist_masking_still_skips_read_backed_within_motifs_using_genomic_referen
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = false;
     cfg.blacklist = Some(vec![blacklist_bed]);
     cfg.blacklist_strategy = BlacklistStrategy::All;
@@ -501,7 +560,7 @@ fn scaling_factors_weight_each_counted_end_motif() -> Result<()> {
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_scaling_factors(Some(scaling_path));
     {
@@ -543,7 +602,7 @@ fn gc_file_weights_each_counted_end_motif_by_the_fragment_gc_correction() -> Res
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
@@ -722,7 +781,7 @@ fn blacklist_gc_and_scaling_weights_combine_to_the_exact_expected_endpoint_count
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.blacklist = Some(vec![blacklist_bed]);
     cfg.blacklist_strategy = BlacklistStrategy::All;
@@ -775,18 +834,38 @@ fn blacklist_gc_and_scaling_weights_combine_to_the_exact_expected_endpoint_count
     assert_eq!(motif_count(&matrix, &motifs, 0, "_C"), 0.0);
     assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 0.0);
 
-    let total_a: f64 = matrix.column(
-        motifs.iter().position(|label| label == "_A").context("missing _A motif")?,
-    ).sum();
-    let total_t: f64 = matrix.column(
-        motifs.iter().position(|label| label == "_T").context("missing _T motif")?,
-    ).sum();
-    let total_g: f64 = matrix.column(
-        motifs.iter().position(|label| label == "_G").context("missing _G motif")?,
-    ).sum();
-    let total_c: f64 = matrix.column(
-        motifs.iter().position(|label| label == "_C").context("missing _C motif")?,
-    ).sum();
+    let total_a: f64 = matrix
+        .column(
+            motifs
+                .iter()
+                .position(|label| label == "_A")
+                .context("missing _A motif")?,
+        )
+        .sum();
+    let total_t: f64 = matrix
+        .column(
+            motifs
+                .iter()
+                .position(|label| label == "_T")
+                .context("missing _T motif")?,
+        )
+        .sum();
+    let total_g: f64 = matrix
+        .column(
+            motifs
+                .iter()
+                .position(|label| label == "_G")
+                .context("missing _G motif")?,
+        )
+        .sum();
+    let total_c: f64 = matrix
+        .column(
+            motifs
+                .iter()
+                .position(|label| label == "_C")
+                .context("missing _C motif")?,
+        )
+        .sum();
     assert_eq!(total_a, 8.0);
     assert_eq!(total_t, 2.0);
     assert_eq!(total_g, 12.0);
@@ -823,7 +902,7 @@ fn drop_invalid_gc_skips_fragments_when_gc_correction_cannot_be_computed() -> Re
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
@@ -848,7 +927,7 @@ fn drop_invalid_gc_skips_fragments_when_gc_correction_cannot_be_computed() -> Re
 #[test]
 fn auto_indel_filter_keeps_indel_affected_read_backed_end_motifs() -> Result<()> {
     // Arrange: the forward read has an insertion inside the left aligned 4-base footprint.
-    // In auto mode with read-backed within bases, that end should still be kept.
+    // In auto mode with read-backed inside bases, that end should still be kept.
     let forward = ReadSpec {
         tid: 0,
         pos: 100,
@@ -879,7 +958,7 @@ fn auto_indel_filter_keeps_indel_affected_read_backed_end_motifs() -> Result<()>
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 4, 0);
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = false;
     cfg.set_indel_filter(IndelMotifFilterPolicy::Auto);
     {
@@ -895,8 +974,8 @@ fn auto_indel_filter_keeps_indel_affected_read_backed_end_motifs() -> Result<()>
     // Assert: both ends survive.
     //
     // Mental derivation:
-    // - left read-backed within bases come directly from the forward read prefix: `ACGT`
-    // - right read-backed within bases come from the reverse read suffix `CCGG`
+    // - left read-backed inside bases come directly from the forward read prefix: `ACGT`
+    // - right read-backed inside bases come from the reverse read suffix `CCGG`
     // - right ends are reverse-complemented on decode, but `CCGG` is palindromic
     // - therefore the two observed labels are exactly `_ACGT` and `_CCGG`
     assert_eq!(matrix.shape(), &[1, 2]);
@@ -909,7 +988,7 @@ fn auto_indel_filter_keeps_indel_affected_read_backed_end_motifs() -> Result<()>
 
 #[test]
 fn auto_indel_filter_skips_indel_affected_reference_backed_end_motifs() -> Result<()> {
-    // Arrange: the same pair as above, but now auto mode uses reference-backed within bases and
+    // Arrange: the same pair as above, but now auto mode uses reference-backed inside bases and
     // should therefore skip the indel-affected left end while keeping the right end.
     let forward = ReadSpec {
         tid: 0,
@@ -942,14 +1021,19 @@ fn auto_indel_filter_skips_indel_affected_reference_backed_end_motifs() -> Resul
         "ends_auto_indel_reference_context",
         vec![(
             "chr1".to_string(),
-            format!("{}{}{}", "T".repeat(100), "TGCAAAAACCCCGGTT", "T".repeat(140)),
+            format!(
+                "{}{}{}",
+                "T".repeat(100),
+                "TGCAAAAACCCCGGTT",
+                "T".repeat(140)
+            ),
         )],
     )?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 4, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     cfg.set_indel_filter(IndelMotifFilterPolicy::Auto);
     {
@@ -1013,7 +1097,7 @@ fn skip_affected_fragment_drops_the_whole_fragment_when_any_end_motif_is_indel_a
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 4, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     cfg.set_indel_filter(IndelMotifFilterPolicy::SkipAffectedFragment);
     {
@@ -1047,7 +1131,7 @@ fn outside_reference_lookup_falls_back_to_exact_reference_fetch_when_the_motif_c
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 0, 5);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = false;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -1092,7 +1176,7 @@ fn endpoint_assigns_left_and_right_end_motifs_to_separate_windows() -> Result<()
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -1132,7 +1216,7 @@ fn midpoint_assigns_both_end_motifs_to_the_midpoint_window() -> Result<()> {
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -1171,7 +1255,7 @@ fn count_overlap_weights_both_end_motifs_by_the_fragment_overlap_fraction() -> R
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -1210,7 +1294,7 @@ fn cross_tile_fragment_is_counted_once_per_window_when_it_reaches_into_the_next_
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.tile_size = 20;
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: Some(20),
@@ -1251,7 +1335,7 @@ fn all_requires_the_full_fragment_to_overlap_the_window() -> Result<()> {
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -1287,7 +1371,7 @@ fn all_assignment_counts_the_fragment_when_the_window_fully_contains_it() -> Res
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -1326,7 +1410,7 @@ fn proportion_assignment_counts_the_fragment_when_the_requested_fraction_is_met(
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -1364,7 +1448,7 @@ fn proportion_assignment_rejects_the_fragment_when_the_requested_fraction_is_not
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -1401,7 +1485,7 @@ fn any_assignment_counts_both_end_motifs_when_any_fragment_base_overlaps() -> Re
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -1439,7 +1523,7 @@ fn endpoint_counts_both_end_motifs_when_one_window_contains_both_terminal_bases(
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -1467,7 +1551,7 @@ fn endpoint_counts_both_end_motifs_when_one_window_contains_both_terminal_bases(
 }
 
 #[test]
-fn collapse_complement_merges_reverse_complement_equivalent_end_motifs() -> Result<()> {
+fn collapse_complement_merges_complement_equivalent_single_base_end_motifs() -> Result<()> {
     // Arrange: fragment [11,21) on ACGT-repeat gives:
     // - left terminal base  seq[11] = T -> "_T"
     // - right terminal base seq[20] = A -> oriented right-end also "_T"
@@ -1478,7 +1562,7 @@ fn collapse_complement_merges_reverse_complement_equivalent_end_motifs() -> Resu
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.collapse_complement = true;
     {
@@ -1499,6 +1583,500 @@ fn collapse_complement_merges_reverse_complement_equivalent_end_motifs() -> Resu
 }
 
 #[test]
+fn dense_all_motifs_output_enumerates_the_full_combined_1_plus_1_universe_without_collapse()
+-> Result<()> {
+    // Arrange: left endpoint only for fragment [10,20) with one outside and one inside
+    // reference base. The observed motif is "C_G", but dense output must still write the full
+    // combined 1+1 universe.
+    let bam = simple_paired_fragment_bam("ends_dense_combined_no_collapse", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(&windows_bed, &[("chr1", 10, 11, "left")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 1);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(
+        motifs,
+        expected_combined_1_plus_1_dense_order_without_collapse()
+    );
+    assert_eq!(matrix.shape(), &[1, 16]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "C_G"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "A_A"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "T_T"), 0.0);
+    assert_eq!(matrix.sum(), 1.0);
+    Ok(())
+}
+
+#[test]
+fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_1_plus_1_universe() -> Result<()>
+{
+    // Arrange: two left endpoints produce "G_T" and "C_A", which are same-orientation
+    // complements and must both collapse to the canonical label "C_A".
+    let reference = twobit_from_sequences(
+        "ends_dense_collapsed_1_plus_1_reference",
+        vec![(
+            "chr1".to_string(),
+            format!(
+                "{}{}{}{}{}",
+                "T".repeat(9),
+                "GT",
+                "T".repeat(8),
+                "CA",
+                "T".repeat(235)
+            ),
+        )],
+    )?;
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 256)],
+        Vec::new(),
+        vec![
+            ReadSpec {
+                tid: 0,
+                pos: 10,
+                cigar: vec![('M', 4)],
+                seq: b"AAAA".to_vec(),
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: 0,
+                mate_tid: None,
+                mate_pos: None,
+                insert_size: 0,
+            },
+            ReadSpec {
+                tid: 0,
+                pos: 20,
+                cigar: vec![('M', 4)],
+                seq: b"CCCC".to_vec(),
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: 0,
+                mate_tid: None,
+                mate_pos: None,
+                insert_size: 0,
+            },
+        ],
+        "ends_dense_collapsed_1_plus_1",
+    )?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(
+        &windows_bed,
+        &[("chr1", 10, 11, "left_a"), ("chr1", 20, 21, "left_b")],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 1);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.collapse_complement = true;
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 4;
+        lengths.max_fragment_length = 4;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(
+        motifs,
+        expected_combined_1_plus_1_dense_order_with_collapse()
+    );
+    assert_eq!(matrix.shape(), &[2, 8]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "C_A"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "C_A"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "A_A"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "C_T"), 0.0);
+    assert_eq!(matrix.sum(), 2.0);
+    Ok(())
+}
+
+#[test]
+fn dense_all_motifs_output_enumerates_the_full_combined_2_plus_2_universe_without_collapse()
+-> Result<()> {
+    // Arrange: one left endpoint with a 2+2 reference motif. Dense output must still enumerate
+    // the full 4^4 universe, not just the observed "GT_AC" column.
+    let reference = twobit_from_sequences(
+        "ends_dense_combined_2_plus_2_reference",
+        vec![(
+            "chr1".to_string(),
+            format!("{}{}{}", "T".repeat(8), "GTAC", "T".repeat(244)),
+        )],
+    )?;
+    let bam = single_read_bam("ends_dense_combined_2_plus_2", 10, vec![('M', 4)], b"AAAA")?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(&windows_bed, &[("chr1", 10, 11, "left")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 2, 2);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 4;
+        lengths.max_fragment_length = 4;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(
+        motifs,
+        expected_combined_2_plus_2_dense_order_without_collapse()
+    );
+    assert_eq!(matrix.shape(), &[1, 256]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "GT_AC"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "CA_TG"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "AA_AA"), 0.0);
+    assert_eq!(matrix.sum(), 1.0);
+    Ok(())
+}
+
+#[test]
+fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_2_plus_2_universe() -> Result<()>
+{
+    // Arrange: two left endpoints produce "GT_AC" and "CA_TG", which are same-orientation
+    // complements and must both land in the canonical "CA_TG" column.
+    let reference = twobit_from_sequences(
+        "ends_dense_collapsed_2_plus_2_reference",
+        vec![(
+            "chr1".to_string(),
+            format!(
+                "{}{}{}{}{}",
+                "T".repeat(8),
+                "GTAC",
+                "T".repeat(6),
+                "CATG",
+                "T".repeat(234)
+            ),
+        )],
+    )?;
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 256)],
+        Vec::new(),
+        vec![
+            ReadSpec {
+                tid: 0,
+                pos: 10,
+                cigar: vec![('M', 4)],
+                seq: b"AAAA".to_vec(),
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: 0,
+                mate_tid: None,
+                mate_pos: None,
+                insert_size: 0,
+            },
+            ReadSpec {
+                tid: 0,
+                pos: 20,
+                cigar: vec![('M', 4)],
+                seq: b"CCCC".to_vec(),
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: 0,
+                mate_tid: None,
+                mate_pos: None,
+                insert_size: 0,
+            },
+        ],
+        "ends_dense_collapsed_2_plus_2",
+    )?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(
+        &windows_bed,
+        &[("chr1", 10, 11, "left_a"), ("chr1", 20, 21, "left_b")],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 2, 2);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.collapse_complement = true;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 4;
+        lengths.max_fragment_length = 4;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(
+        motifs,
+        expected_combined_2_plus_2_dense_order_with_collapse()
+    );
+    assert_eq!(matrix.shape(), &[2, 128]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "CA_TG"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "CA_TG"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "AA_AA"), 0.0);
+    assert_eq!(matrix.sum(), 2.0);
+    Ok(())
+}
+
+#[test]
+fn collapse_complement_preserves_outside_inside_order_for_odd_length_end_motifs() -> Result<()> {
+    // Arrange: two unpaired fragments of length 4 on a custom reference, with k_outside=1 and
+    // k_inside=2 so the full motif length is 3.
+    //
+    // The intended contract is:
+    // - decode first into biological 5'->3' `outside || inside` order
+    // - then collapse against the same-orientation complement
+    //
+    // Fragment A spans [10,14):
+    // - left full motif uses reference [9,12) = G T A -> "GTA" -> label "G_TA"
+    // - right storage uses reference [12,15) = A T G -> revcomp("ATG") = "CAT" -> label "C_AT"
+    //
+    // Fragment B spans [20,24):
+    // - left full motif uses reference [19,22) = C A T -> "CAT" -> label "C_AT"
+    // - right storage uses reference [22,25) = A T G -> revcomp("ATG") = "CAT" -> label "C_AT"
+    //
+    // `GTA` and `CAT` are same-orientation complements:
+    // - complement("GTA") = "CAT"
+    // - complement("CAT") = "GTA"
+    //
+    // Lexicographically, "CAT" < "GTA", so all four counted ends must collapse to "C_AT".
+    let reference = twobit_from_sequences(
+        "ends_odd_length_complement_reference",
+        vec![(
+            "chr1".to_string(),
+            format!(
+                "{}{}{}{}{}",
+                "T".repeat(9),
+                "GTAATG",
+                "T".repeat(4),
+                "CATATG",
+                "T".repeat(231)
+            ),
+        )],
+    )?;
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 256)],
+        Vec::new(),
+        vec![
+            ReadSpec {
+                tid: 0,
+                pos: 10,
+                cigar: vec![('M', 4)],
+                seq: b"AAAA".to_vec(),
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: 0,
+                mate_tid: None,
+                mate_pos: None,
+                insert_size: 0,
+            },
+            ReadSpec {
+                tid: 0,
+                pos: 20,
+                cigar: vec![('M', 4)],
+                seq: b"CCCC".to_vec(),
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: 0,
+                mate_tid: None,
+                mate_pos: None,
+                insert_size: 0,
+            },
+        ],
+        "ends_odd_length_complement",
+    )?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 2, 1);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = false;
+    cfg.collapse_complement = true;
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 4;
+        lengths.max_fragment_length = 4;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_sparse_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(motifs, vec!["C_AT"]);
+    assert_eq!(matrix.shape(), &[1, 1]);
+    assert_eq!(matrix[(0, 0)], 4.0);
+    assert_eq!(matrix.sum(), 4.0);
+    Ok(())
+}
+
+#[test]
+fn collapse_complement_preserves_outside_inside_order_for_multi_base_2_plus_2_end_motifs()
+-> Result<()> {
+    // Arrange: two unpaired fragments of length 4 on a custom reference, with k_outside=2 and
+    // k_inside=2 so the full motif length is 4.
+    //
+    // The intended contract is:
+    // - decode first into biological 5'->3' `outside || inside` order
+    // - then collapse against the same-orientation complement on the full 4-base motif
+    // - only after that split into `<outside>_<inside>`
+    //
+    // Fragment A spans [10,14):
+    // - left full motif uses reference [8,12) = G T A C -> "GTAC" -> label "GT_AC"
+    // - right storage uses reference [12,16) = C A T G -> revcomp("CATG") = "CATG"
+    //   -> label "CA_TG"
+    //
+    // Fragment B spans [20,24):
+    // - left full motif uses reference [18,22) = T G C A -> "TGCA" -> label "TG_CA"
+    // - right storage uses reference [22,26) = A C G T -> revcomp("ACGT") = "ACGT"
+    //   -> label "AC_GT"
+    //
+    // Same-orientation complement pairs:
+    // - complement("GTAC") = "CATG", so canonical label is "CA_TG"
+    // - complement("TGCA") = "ACGT", so canonical label is "AC_GT"
+    //
+    // So the four counted ends must collapse into exactly two labels with count 2 each.
+    let reference = twobit_from_sequences(
+        "ends_2_plus_2_complement_reference",
+        vec![(
+            "chr1".to_string(),
+            format!(
+                "{}{}{}{}{}",
+                "T".repeat(8),
+                "GTACCATG",
+                "T".repeat(2),
+                "TGCAACGT",
+                "T".repeat(230)
+            ),
+        )],
+    )?;
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 256)],
+        Vec::new(),
+        vec![
+            ReadSpec {
+                tid: 0,
+                pos: 10,
+                cigar: vec![('M', 4)],
+                seq: b"AAAA".to_vec(),
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: 0,
+                mate_tid: None,
+                mate_pos: None,
+                insert_size: 0,
+            },
+            ReadSpec {
+                tid: 0,
+                pos: 20,
+                cigar: vec![('M', 4)],
+                seq: b"CCCC".to_vec(),
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: 0,
+                mate_tid: None,
+                mate_pos: None,
+                insert_size: 0,
+            },
+        ],
+        "ends_2_plus_2_complement",
+    )?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 2, 2);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = false;
+    cfg.collapse_complement = true;
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 4;
+        lengths.max_fragment_length = 4;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_sparse_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(motifs, vec!["AC_GT", "CA_TG"]);
+    assert_eq!(matrix.shape(), &[1, 2]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "AC_GT"), 2.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "CA_TG"), 2.0);
+    assert_eq!(matrix.sum(), 4.0);
+    Ok(())
+}
+
+#[test]
 fn sparse_output_is_the_default_when_all_motifs_is_disabled() -> Result<()> {
     // Arrange: one fragment with two observed motifs should produce a sparse 1x2 matrix by default.
     let bam = simple_paired_fragment_bam("ends_sparse_default", 10, 10, 4)?;
@@ -1507,7 +2085,7 @@ fn sparse_output_is_the_default_when_all_motifs_is_disabled() -> Result<()> {
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -1527,9 +2105,9 @@ fn sparse_output_is_the_default_when_all_motifs_is_disabled() -> Result<()> {
     assert_eq!(matrix.shape(), &[1, 2]);
     assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);
     assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 1.0);
-    assert!(settings.contains("\"k_within\": 1"));
+    assert!(settings.contains("\"k_inside\": 1"));
     assert!(settings.contains("\"k_outside\": 0"));
-    assert!(settings.contains("\"source_within\": \"reference\""));
+    assert!(settings.contains("\"source_inside\": \"reference\""));
     assert!(!settings.contains("\"output_format\""));
     assert!(!settings.contains("\"all_motifs\""));
     Ok(())
@@ -1544,7 +2122,7 @@ fn dense_all_motifs_output_still_uses_the_same_settings_sidecar() -> Result<()> 
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -1574,7 +2152,7 @@ fn global_mode_counts_both_end_motifs_in_one_output_row() -> Result<()> {
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -1605,7 +2183,7 @@ fn all_motifs_dense_output_includes_zero_count_columns_for_unobserved_motifs() -
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -1626,7 +2204,7 @@ fn all_motifs_dense_output_includes_zero_count_columns_for_unobserved_motifs() -
 }
 
 #[test]
-fn all_motifs_dense_output_enumerates_outside_only_labels_when_k_within_is_zero() -> Result<()> {
+fn all_motifs_dense_output_enumerates_outside_only_labels_when_k_inside_is_zero() -> Result<()> {
     // Arrange: outside-only motifs should still have a fixed dense column universe.
     let bam = simple_paired_fragment_bam("ends_outside_only_dense", 10, 10, 4)?;
     let reference = simple_reference_twobit()?;
@@ -1634,7 +2212,7 @@ fn all_motifs_dense_output_enumerates_outside_only_labels_when_k_within_is_zero(
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 0, 1);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -1653,14 +2231,14 @@ fn all_motifs_dense_output_enumerates_outside_only_labels_when_k_within_is_zero(
 
 #[test]
 fn reference_backed_inside_and_outside_bases_are_combined_into_the_expected_labels() -> Result<()> {
-    // Arrange: fragment [10,20) on the ACGT-repeat reference with `k_outside = 1, k_within = 2`.
+    // Arrange: fragment [10,20) on the ACGT-repeat reference with `k_outside = 1, k_inside = 2`.
     //
     // Mental derivation:
     // - left outside base is seq[9]  = C
-    // - left within bases are seq[10..12) = GT
+    // - left inside bases are seq[10..12) = GT
     //   -> left label = `C_GT`
     //
-    // - right within bases are seq[18..20) = GT
+    // - right inside bases are seq[18..20) = GT
     // - right outside base is seq[20] = A
     // - right-end storage order is `GTA`, which reverse-complements to `TAC`
     //   -> right label = `T_AC`
@@ -1670,7 +2248,7 @@ fn reference_backed_inside_and_outside_bases_are_combined_into_the_expected_labe
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 2, 1);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -1688,6 +2266,93 @@ fn reference_backed_inside_and_outside_bases_are_combined_into_the_expected_labe
     assert_eq!(motif_count(&matrix, &motifs, 0, "C_GT"), 1.0);
     assert_eq!(motif_count(&matrix, &motifs, 0, "T_AC"), 1.0);
     assert_eq!(matrix.sum(), 2.0);
+    Ok(())
+}
+
+#[test]
+fn config_docstring_visualization_example_counts_the_expected_motifs_with_and_without_collapse()
+-> Result<()> {
+    // Arrange: this is the exact example from the `EndsConfig` docstring.
+    //
+    // Reference indices:
+    //   0  1  2  3  4  5  6  7  8  9  10 11 12 13 14
+    //   A  T  C  G  T  T  T  T  T  T   T  C  A  T  C
+    //
+    // One read-as-fragment spans [2,13), so with `k_outside=2` and `k_inside=2`:
+    // - left full motif uses reference [0,4)  = A T C G -> `ATCG` -> label `AT_CG`
+    // - right storage uses reference [11,15) = C A T C -> `CATC`
+    //   and right-end decode reverse-complements that to `GATG` -> label `GA_TG`
+    //
+    // With `collapse_complement=true`:
+    // - complement(`ATCG`) = `TAGC`, so canonical label stays `AT_CG`
+    // - complement(`GATG`) = `CTAC`, so canonical label becomes `CT_AC`
+    let reference = twobit_from_sequences(
+        "ends_config_docstring_visualization_reference",
+        vec![("chr1".to_string(), "ATCGTTTTTTTCATC".to_string())],
+    )?;
+    let bam = single_read_bam(
+        "ends_config_docstring_visualization",
+        2,
+        vec![('M', 11)],
+        b"AAAAAAAAAAA",
+    )?;
+
+    let out_dir_uncollapsed = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir_uncollapsed.path(), 2, 2);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = false;
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 11;
+        lengths.max_fragment_length = 11;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_sparse_output(out_dir_uncollapsed.path())?;
+
+    // Assert
+    assert_eq!(motifs, vec!["AT_CG", "GA_TG"]);
+    assert_eq!(matrix.shape(), &[1, 2]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "AT_CG"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "GA_TG"), 1.0);
+    assert_eq!(matrix.sum(), 2.0);
+
+    let out_dir_collapsed = TempDir::new()?;
+    let mut collapsed_cfg = base_config(&bam.bam, out_dir_collapsed.path(), 2, 2);
+    collapsed_cfg.set_ref_2bit(Some(reference.path.clone()));
+    collapsed_cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    collapsed_cfg.source_inside = KmerSource::Reference;
+    collapsed_cfg.all_motifs = false;
+    collapsed_cfg.collapse_complement = true;
+    {
+        let lengths = collapsed_cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 11;
+        lengths.max_fragment_length = 11;
+    }
+
+    // Act
+    run(&collapsed_cfg)?;
+    let (collapsed_motifs, collapsed_matrix) = read_sparse_output(out_dir_collapsed.path())?;
+
+    // Assert
+    assert_eq!(collapsed_motifs, vec!["AT_CG", "CT_AC"]);
+    assert_eq!(collapsed_matrix.shape(), &[1, 2]);
+    assert_eq!(
+        motif_count(&collapsed_matrix, &collapsed_motifs, 0, "AT_CG"),
+        1.0
+    );
+    assert_eq!(
+        motif_count(&collapsed_matrix, &collapsed_motifs, 0, "CT_AC"),
+        1.0
+    );
+    assert_eq!(collapsed_matrix.sum(), 2.0);
     Ok(())
 }
 
@@ -1716,7 +2381,7 @@ fn raw_endpoint_assignment_uses_the_shifted_assignment_boundaries() -> Result<()
         reads_are_fragments: true,
     });
     cfg.clip.clip_strategy = ClipStrategy::Raw;
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -1765,7 +2430,7 @@ fn aligned_endpoint_assignment_ignores_raw_shifted_boundary_positions() -> Resul
         reads_are_fragments: true,
     });
     cfg.clip.clip_strategy = ClipStrategy::Aligned;
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -1807,7 +2472,7 @@ fn fragment_length_filters_use_the_aligned_fragment_length_even_in_raw_mode() ->
         reads_are_fragments: true,
     });
     cfg.clip.clip_strategy = ClipStrategy::Raw;
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -1843,7 +2508,7 @@ fn drop_clipping_skips_only_the_clipped_end_and_keeps_the_unclipped_end() -> Res
         reads_are_fragments: true,
     });
     cfg.clip.clip_strategy = ClipStrategy::Drop;
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -1877,7 +2542,7 @@ fn drop_clipping_skips_the_fragment_when_both_ends_are_soft_clipped() -> Result<
         reads_are_fragments: true,
     });
     cfg.clip.clip_strategy = ClipStrategy::Drop;
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -1913,7 +2578,7 @@ fn max_soft_clips_skips_only_the_over_clipped_end() -> Result<()> {
     });
     cfg.clip.clip_strategy = ClipStrategy::Raw;
     cfg.clip.max_soft_clips = Some(1);
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -1949,7 +2614,7 @@ fn max_soft_clips_keeps_an_end_when_the_clip_count_equals_the_threshold() -> Res
     });
     cfg.clip.clip_strategy = ClipStrategy::Raw;
     cfg.clip.max_soft_clips = Some(2);
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -1986,7 +2651,7 @@ fn max_soft_clips_skips_the_fragment_when_both_ends_exceed_the_threshold() -> Re
     });
     cfg.clip.clip_strategy = ClipStrategy::Raw;
     cfg.clip.max_soft_clips = Some(1);
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -2014,7 +2679,7 @@ fn hard_clipped_fragments_are_discarded_entirely() -> Result<()> {
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -2033,10 +2698,10 @@ fn hard_clipped_fragments_are_discarded_entirely() -> Result<()> {
 }
 
 #[test]
-fn motif_labels_use_outside_within_order_when_outside_bases_are_present() -> Result<()> {
-    // Arrange: left endpoint only for fragment [10,20) with one outside and one within reference base.
+fn motif_labels_use_outside_inside_order_when_outside_bases_are_present() -> Result<()> {
+    // Arrange: left endpoint only for fragment [10,20) with one outside and one inside reference base.
     // - outside base before left boundary: seq[9]  = C
-    // - within base at left boundary:      seq[10] = G
+    // - inside base at left boundary:      seq[10] = G
     // So the final user-facing label should be "C_G".
     let bam = simple_paired_fragment_bam("ends_label_order", 10, 10, 4)?;
     let reference = simple_reference_twobit()?;
@@ -2046,7 +2711,7 @@ fn motif_labels_use_outside_within_order_when_outside_bases_are_present() -> Res
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 1);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -2073,8 +2738,62 @@ fn motif_labels_use_outside_within_order_when_outside_bases_are_present() -> Res
 }
 
 #[test]
-fn outside_only_motifs_are_labeled_with_an_empty_within_half() -> Result<()> {
-    // Arrange: left endpoint only with k_within=0 and k_outside=1.
+fn right_end_motif_labels_use_outside_inside_order_when_outside_bases_are_present() -> Result<()> {
+    // Arrange: right endpoint only for fragment [10,14) with one outside and one inside
+    // reference base chosen so the right-end decode is non-palindromic.
+    //
+    // Reference around the right boundary:
+    // - inside base at fragment end-1: seq[13] = T
+    // - outside base after fragment:   seq[14] = G
+    //
+    // Right-end storage order is "TG", and revcomp("TG") = "CA", so the final public label must
+    // be "C_A".
+    let reference = twobit_from_sequences(
+        "ends_right_label_order_reference",
+        vec![(
+            "chr1".to_string(),
+            format!("{}{}{}", "T".repeat(13), "TG", "T".repeat(241)),
+        )],
+    )?;
+    let bam = single_read_bam("ends_right_label_order", 10, vec![('M', 4)], b"AAAA")?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(&windows_bed, &[("chr1", 13, 14, "right")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 1);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = false;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 4;
+        lengths.max_fragment_length = 4;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_sparse_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(motifs, vec!["C_A"]);
+    assert_eq!(matrix.shape(), &[1, 1]);
+    assert_eq!(matrix[(0, 0)], 1.0);
+    Ok(())
+}
+
+#[test]
+fn outside_only_motifs_are_labeled_with_an_empty_inside_half() -> Result<()> {
+    // Arrange: left endpoint only with k_inside=0 and k_outside=1.
     // The base immediately outside the left boundary of [10,20) is seq[9] = C, so the label must
     // be "C_".
     let bam = simple_paired_fragment_bam("ends_outside_only", 10, 10, 4)?;
@@ -2085,7 +2804,7 @@ fn outside_only_motifs_are_labeled_with_an_empty_within_half() -> Result<()> {
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 0, 1);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -2126,7 +2845,7 @@ fn left_edge_missing_outside_context_drops_the_left_endpoint_motif() -> Result<(
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 1);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -2166,7 +2885,7 @@ fn right_edge_missing_outside_context_drops_the_right_endpoint_motif() -> Result
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 1);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -2193,7 +2912,7 @@ fn right_edge_missing_outside_context_drops_the_right_endpoint_motif() -> Result
 
 #[test]
 fn raw_boundary_shifting_still_applies_when_only_outside_bases_are_counted() -> Result<()> {
-    // Arrange: with k_within=0 and raw clipping, the shifted raw boundary should still control
+    // Arrange: with k_inside=0 and raw clipping, the shifted raw boundary should still control
     // endpoint assignment and outside-base extraction.
     //
     // 2S4M2S at pos 10 gives raw assignment interval [8,16), so the left endpoint is 8.
@@ -2215,7 +2934,7 @@ fn raw_boundary_shifting_still_applies_when_only_outside_bases_are_counted() -> 
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.clip.clip_strategy = ClipStrategy::Raw;
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -2254,7 +2973,7 @@ fn both_kmer_sizes_zero_is_rejected() -> Result<()> {
     // Assert
     assert!(
         err.to_string()
-            .contains("At least one of --k-within or --k-outside must be > 0")
+            .contains("At least one of --k-inside or --k-outside must be > 0")
     );
     Ok(())
 }
@@ -2275,7 +2994,7 @@ fn settings_json_records_clip_and_window_assignment_semantics() -> Result<()> {
         reads_are_fragments: true,
     });
     cfg.clip.clip_strategy = ClipStrategy::Drop;
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = false;
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -2294,18 +3013,18 @@ fn settings_json_records_clip_and_window_assignment_semantics() -> Result<()> {
     assert!(settings.contains("\"clip_strategy\": \"drop\""));
     assert!(settings.contains("\"window_assignment\": \"endpoint\""));
     assert!(settings.contains("\"reads_are_fragments\": true"));
-    assert!(settings.contains("\"source_within\": \"read\""));
+    assert!(settings.contains("\"source_inside\": \"read\""));
     Ok(())
 }
 
 #[test]
-fn reference_backed_within_bases_require_ref_2bit() -> Result<()> {
-    // Arrange: reference-backed within extraction is documented to require --ref-2bit.
+fn reference_backed_inside_bases_require_ref_2bit() -> Result<()> {
+    // Arrange: reference-backed inside extraction is documented to require --ref-2bit.
     let bam = simple_paired_fragment_bam("ends_missing_ref_2bit", 10, 10, 4)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -2322,13 +3041,13 @@ fn reference_backed_within_bases_require_ref_2bit() -> Result<()> {
 }
 
 #[test]
-fn outside_bases_require_ref_2bit_even_when_within_bases_come_from_reads() -> Result<()> {
+fn outside_bases_require_ref_2bit_even_when_inside_bases_come_from_reads() -> Result<()> {
     // Arrange: outside motifs always come from the reference, so k_outside>0 still requires --ref-2bit.
     let bam = simple_paired_fragment_bam("ends_missing_ref_for_outside", 10, 10, 4)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 1);
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = false;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -2359,7 +3078,7 @@ fn scaling_factors_must_cover_every_counted_fragment() -> Result<()> {
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_scaling_factors(Some(scaling_path));
     {
@@ -2373,7 +3092,8 @@ fn scaling_factors_must_cover_every_counted_fragment() -> Result<()> {
 
     // Assert
     assert!(
-        format!("{err:#}").contains("scaling TSV: bins on 'chr1' must end at chrom_len=256 (got end=10)")
+        format!("{err:#}")
+            .contains("scaling TSV: bins on 'chr1' must end at chrom_len=256 (got end=10)")
     );
     Ok(())
 }
@@ -2392,7 +3112,7 @@ fn windowed_runs_write_bins_bed_with_the_selected_windows() -> Result<()> {
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -2428,7 +3148,7 @@ fn settings_json_records_fragment_length_bounds() -> Result<()> {
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -2484,7 +3204,7 @@ fn sparse_output_motif_labels_only_include_observed_motifs() -> Result<()> {
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -2502,15 +3222,15 @@ fn sparse_output_motif_labels_only_include_observed_motifs() -> Result<()> {
 }
 
 #[test]
-fn all_motifs_dense_output_enumerates_within_only_labels_when_k_outside_is_zero() -> Result<()> {
-    // Arrange: within-only motifs should still have a fixed dense universe under all-motifs.
-    let bam = simple_paired_fragment_bam("ends_within_only_dense", 10, 10, 4)?;
+fn all_motifs_dense_output_enumerates_inside_only_labels_when_k_outside_is_zero() -> Result<()> {
+    // Arrange: inside-only motifs should still have a fixed dense universe under all-motifs.
+    let bam = simple_paired_fragment_bam("ends_inside_only_dense", 10, 10, 4)?;
     let reference = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -2528,8 +3248,8 @@ fn all_motifs_dense_output_enumerates_within_only_labels_when_k_outside_is_zero(
 }
 
 #[test]
-fn read_backed_within_only_runs_without_ref_2bit() -> Result<()> {
-    // Arrange: when both the within bases come from reads and k_outside=0, the command should not
+fn read_backed_inside_only_runs_without_ref_2bit() -> Result<()> {
+    // Arrange: when both the inside bases come from reads and k_outside=0, the command should not
     // require a reference genome.
     let bam = single_read_bam("ends_read_only_no_ref", 10, vec![('M', 4)], b"ACGT")?;
     let out_dir = TempDir::new()?;
@@ -2538,7 +3258,7 @@ fn read_backed_within_only_runs_without_ref_2bit() -> Result<()> {
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = false;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -2565,7 +3285,7 @@ fn output_prefix_is_applied_to_all_primary_end_outputs() -> Result<()> {
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.output_prefix = "sampleA".to_string();
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -2607,7 +3327,7 @@ fn default_window_assignment_is_endpoint() -> Result<()> {
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.set_windows(WindowsArgs {
         by_size: None,
@@ -2640,7 +3360,7 @@ fn by_size_windowing_writes_bins_bed() -> Result<()> {
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     cfg.set_windows(WindowsArgs {
         by_size: Some(20),
@@ -2672,7 +3392,7 @@ fn output_prefix_is_applied_to_bins_bed_for_windowed_runs() -> Result<()> {
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.output_prefix = "sampleA".to_string();
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     cfg.set_windows(WindowsArgs {
         by_size: Some(20),
@@ -2702,7 +3422,7 @@ fn output_prefix_is_applied_to_dense_all_motifs_outputs() -> Result<()> {
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.output_prefix = "sampleA".to_string();
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -2735,7 +3455,7 @@ fn empty_output_prefix_writes_unprefixed_primary_outputs() -> Result<()> {
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.output_prefix.clear();
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -2763,7 +3483,7 @@ fn empty_output_prefix_writes_unprefixed_bins_bed_for_windowed_runs() -> Result<
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.output_prefix.clear();
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.source_within = KmerSource::Reference;
+    cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     cfg.set_windows(WindowsArgs {
         by_size: Some(20),
@@ -2784,14 +3504,14 @@ fn empty_output_prefix_writes_unprefixed_bins_bed_for_windowed_runs() -> Result<
 }
 
 #[test]
-fn read_backed_paired_within_only_runs_without_ref_2bit() -> Result<()> {
-    // Arrange: paired runs also should not require a reference when both the within bases come
+fn read_backed_paired_inside_only_runs_without_ref_2bit() -> Result<()> {
+    // Arrange: paired runs also should not require a reference when both the inside bases come
     // from reads and k_outside=0.
     let bam = simple_paired_fragment_bam("ends_paired_read_only_no_ref", 10, 10, 4)?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
-    cfg.source_within = KmerSource::Read;
+    cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = false;
     {
         let lengths = cfg.fragment_lengths_mut();

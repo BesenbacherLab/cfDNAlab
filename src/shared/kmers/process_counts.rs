@@ -144,7 +144,7 @@ pub fn collapse_map(map: FxHashMap<String, f64>) -> FxHashMap<String, f64> {
     out.reserve(map.len());
 
     for (kmer, count) in map {
-        let canon = make_canonical(kmer);
+        let canon = make_canonical(kmer, true, false);
         *out.entry(canon).or_insert(0.0) += count;
     }
 
@@ -153,7 +153,9 @@ pub fn collapse_map(map: FxHashMap<String, f64>) -> FxHashMap<String, f64> {
 
 /// Collapse a set of reference kmers into a set of canonical keys
 pub fn collapse_set(set: &FxHashSet<String>) -> FxHashSet<String> {
-    set.iter().map(|m| make_canonical(m.to_string())).collect()
+    set.iter()
+        .map(|m| make_canonical(m.to_string(), true, false))
+        .collect()
 }
 
 /// Return all possible reference motifs (4ᵏ) for a given k.

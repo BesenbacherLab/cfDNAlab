@@ -95,14 +95,14 @@ pub fn write_end_settings_json(output_dir: &Path, prefix: &str, opt: &EndsConfig
         .map_or_else(|| "null".to_string(), |value| value.to_string());
     writeln!(settings_writer, "{{")
         .with_context(|| format!("write {}", settings_path.display()))?;
-    writeln!(settings_writer, "  \"k_within\": {},", opt.k_within)
+    writeln!(settings_writer, "  \"k_inside\": {},", opt.k_inside)
         .with_context(|| format!("write {}", settings_path.display()))?;
     writeln!(settings_writer, "  \"k_outside\": {},", opt.k_outside)
         .with_context(|| format!("write {}", settings_path.display()))?;
     writeln!(
         settings_writer,
-        "  \"source_within\": \"{}\",",
-        kmer_source_name(opt.source_within)
+        "  \"source_inside\": \"{}\",",
+        kmer_source_name(opt.source_inside)
     )
     .with_context(|| format!("write {}", settings_path.display()))?;
     writeln!(
@@ -197,12 +197,12 @@ fn stack_end_motif_counts(
     Ok(mat)
 }
 
-/// Convert the within-source enum to its JSON-sidecar string form.
+/// Convert the inside-source enum to its JSON-sidecar string form.
 ///
 /// Parameters
 /// ----------
 /// - `source`:
-///   Within-sequence source mode
+///   Inside-sequence source mode
 ///
 /// Returns
 /// -------

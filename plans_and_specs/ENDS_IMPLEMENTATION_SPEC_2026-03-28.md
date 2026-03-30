@@ -47,7 +47,7 @@ This means:
 
 Each counted end motif should be represented internally as:
 
-- one encoded `within` part
+- one encoded `inside` part
 - one encoded `outside` part
 - one orientation flag that tells output whether the combined motif must be reverse-complemented on reconstruction
 
@@ -55,12 +55,12 @@ These are counted in a dedicated struct and only turned into full motif strings 
 
 This keeps counting fast and compact while preserving the exact motif identity.
 
-### 4. Outside and within should use the same radix-5 encoding family
+### 4. Outside and inside should use the same radix-5 encoding family
 
 For consistency and compactness:
 
 - `outside` reference context should use the same positional k-mer encoding style as `fragment-kmers`
-- `within` sequence should use the same radix-5 encoding, but encoded directly from the resolved end sequence rather than from a chromosome-wide positional table
+- `inside` sequence should use the same radix-5 encoding, but encoded directly from the resolved end sequence rather than from a chromosome-wide positional table
 
 Implementation consequence:
 
@@ -76,18 +76,18 @@ This should:
 
 - encode one exact k-mer-sized byte slice using the same radix-5 representation already used elsewhere
 - return the existing sentinel values when the slice contains `N` or is otherwise not a valid full k-mer
-- let `ends` encode `within_bases` directly without duplicating codec logic
+- let `ends` encode `inside_bases` directly without duplicating codec logic
 
-### 4b. `k_within` or `k_outside` may be zero, but not both
+### 4b. `k_inside` or `k_outside` may be zero, but not both
 
 `ends` should allow one side of the motif to be empty:
 
-- `k_within = 0`, `k_outside > 0`
-- `k_within > 0`, `k_outside = 0`
+- `k_inside = 0`, `k_outside > 0`
+- `k_inside > 0`, `k_outside = 0`
 
 But it should reject:
 
-- `k_within = 0` and `k_outside = 0`
+- `k_inside = 0` and `k_outside = 0`
 
 because that would define an empty motif and make the output meaningless.
 
@@ -101,9 +101,41 @@ This keeps the count key compact and avoids `Option<u64>` in the hot path.
 
 ### 5. Complement collapsing happens on the combined full motif, not per half
 
-If `collapse_complement` is enabled, it must be applied to the full joined motif after `within` and `outside` are combined and oriented correctly.
+If `collapse_complement` is enabled, it must be applied to the full joined motif after `inside` and `outside` are combined and oriented correctly.
 
 Do not canonicalize the two halves independently.
+
+For `ends`, the public contract is that the decoded motif string is already in final
+biological `outside || inside` order before any collapsing happens. That means:
+
+- `decode_full_motif` is the only step that may reverse the joined sequence
+- `collapse_complement` must compare the decoded motif against its direct
+  same-orientation complement, not against its reverse complement
+- the canonical representative is the lexicographically smaller of
+  `{motif, complement(motif)}`
+
+Why this matters:
+
+- `revcomp(outside || inside) = revcomp(inside) || revcomp(outside)`
+- so reverse-complement canonicalization would swap the two conceptual halves
+- the final split by `k_outside` would then put the wrong bases into the
+  `outside` and `inside` slots
+
+This is not a per-half rule. `outside || inside` is one combined end motif identity.
+The full decoded motif is compared as one string against its same-orientation
+complement, and only then split into the public `<outside>_<inside>` label.
+
+Worked example:
+
+- `k_outside = 1`, `k_inside = 2`
+- left end decodes to `GTA`
+- matching right-end storage decodes to `CAT`
+- `complement("GTA") = "CAT"`
+- `CAT < GTA`, so the canonical full motif is `CAT`
+- final label is `C_AT`
+
+At no point should the canonicalization step return `revcomp("GTA")`, because that
+would be `TAC` and would no longer respect the `outside || inside` contract.
 
 ### 6. `ends` needs its own encoded count key
 
@@ -111,7 +143,7 @@ Do not canonicalize the two halves independently.
 
 It only models one k-mer plus orientation, while `ends` needs:
 
-- one `within` code
+- one `inside` code
 - one `outside` code
 - one decode-time orientation flag
 
@@ -121,7 +153,7 @@ Working shape:
 
 ```rust
 pub struct EncodedEndMotifKey {
-    pub within_code: u64,
+    pub inside_code: u64,
     pub outside_code: u64,
     pub reverse_on_decode: bool,
 }
@@ -132,8 +164,8 @@ Notes:
 - this is an internal counting key, not a user-facing output type
 - it should be `Eq + Hash + Clone + Copy`
 - it should stay minimal and not accumulate unrelated fragment metadata
-- reverse-complement collapsing still happens later on the full reconstructed motif, not on this key directly
-- when `k_within == 0`, `within_code` must always be `0`
+- complement collapsing still happens later on the full reconstructed motif, not on this key directly
+- when `k_inside == 0`, `inside_code` must always be `0`
 - when `k_outside == 0`, `outside_code` must always be `0`
 
 ## Fragment payload design
@@ -188,7 +220,7 @@ Working shape:
 ```rust
 pub struct ResolvedFragmentEnd {
     pub boundary_pos: u32,
-    pub within_bases: Vec<u8>,
+    pub inside_bases: Vec<u8>,
 }
 ```
 
@@ -196,7 +228,7 @@ Notes:
 
 - `boundary_pos` is the assignment boundary used by the kept end
 - for `aligned`, `boundary_pos` is the aligned boundary after terminal clipping is excluded
-- for `raw`, `boundary_pos` may move outward beyond the aligned span while the counted `within_bases` still come from the raw terminal sequence
+- for `raw`, `boundary_pos` may move outward beyond the aligned span while the counted `inside_bases` still come from the raw terminal sequence
 - if an end is skipped, no `ResolvedFragmentEnd` exists for it
 
 This shape is intentionally minimal. If later implementation shows that another small field is needed for counters or validation, it can be added.
@@ -249,19 +281,21 @@ Working threshold:
 
 The final motif labels should be written as:
 
-- `<outside>_<within>`
+- `<outside>_<inside>`
 
 Examples:
 
 - `GG_ATC`
 - `_AC` when `k_outside = 0`
-- `GG_` when `k_within = 0`
+- `GG_` when `k_inside = 0`
 
 Implementation rule:
 
-- first decode and orient the full motif in the existing `outside || within` order
+- first decode and orient the full motif in the existing `outside || inside` order
+- then, if `collapse_complement` is enabled, compare that full decoded motif against
+  its same-orientation complement and keep the lexicographically smaller of the two
 - then split by `k_outside`
-- then format directly as the user-facing `<outside>_<within>` label
+- then format directly as the user-facing `<outside>_<inside>` label
 
 This keeps the current motif orientation and collapse semantics intact while making the displayed order match the cut-centered motif orientation.
 
@@ -275,9 +309,9 @@ Working filename:
 
 It should include the settings needed to interpret the output, especially:
 
-- `k_within`
+- `k_inside`
 - `k_outside`
-- `source_within`
+- `source_inside`
 - `clip_strategy`
 - `max_soft_clips`
 - `indel_filter`
@@ -311,11 +345,12 @@ The hot path should count encoded keys only.
 
 During reduction/output:
 
-- decode `within_code`
+- decode `inside_code`
 - decode `outside_code`
 - join them into the full motif
 - apply `reverse_on_decode`
-- then apply optional complement collapse
+- then apply optional same-orientation complement collapse on the already oriented
+  full motif
 
 This keeps the streaming path small and fast.
 
@@ -343,7 +378,7 @@ The per-read summary needs enough information to:
 
 - orient the read relative to the fragment
 - inspect terminal clipping
-- build the resolved within-fragment sequence for the end
+- build the resolved inside-fragment sequence for the end
 - support unpaired and paired input consistently
 
 It should include:
@@ -406,8 +441,8 @@ Collector behavior:
 
 - keep the end
 - use the aligned fragment boundary as the counted end
-- resolve `within_bases` from the first aligned bases inside the fragment
-- clipped terminal bases are excluded from the counted within-fragment sequence
+- resolve `inside_bases` from the first aligned bases inside the fragment
+- clipped terminal bases are excluded from the counted inside-fragment sequence
 
 This is the default clip strategy.
 
@@ -416,7 +451,7 @@ This is the default clip strategy.
 Collector behavior:
 
 - keep the end
-- resolve `within_bases` from the observed read bases at the fragment end, including soft-clipped bases
+- resolve `inside_bases` from the observed read bases at the fragment end, including soft-clipped bases
 - if terminal soft clipping is present, move the counted fragment boundary outward beyond the aligned span by the clipped length
 - clipping is allowed
 
@@ -456,7 +491,7 @@ For indels, the collector only needs motif-level booleans:
 - `left_motif_has_indels`
 - `right_motif_has_indels`
 
-These are derived from the first `k_within` aligned bases used by the selected clip strategy. The collector does not need to store indel offsets or other intermediate state.
+These are derived from the first `k_inside` aligned bases used by the selected clip strategy. The collector does not need to store indel offsets or other intermediate state.
 
 ### Blacklist handling must be two-stage
 
@@ -488,12 +523,12 @@ Implementation rule:
 This rule applies to both motif halves:
 
 - `outside` always validates against the masked reference span for that outside lookup
-- `within` also validates against the masked reference span for the within lookup, even when the actual within sequence is taken from the read
+- `inside` also validates against the masked reference span for the inside lookup, even when the actual inside sequence is taken from the read
 
-So for `source_within = read`:
+So for `source_inside = read`:
 
-- the actual `within_code` still comes from `within_bases`
-- but the corresponding genomic within span must first be validated against the masked reference
+- the actual `inside_code` still comes from `inside_bases`
+- but the corresponding genomic inside span must first be validated against the masked reference
 - if that masked reference span produces the `N` sentinel, skip the end instead of counting the read-derived motif
 
 This keeps blacklist semantics genomic without forcing expensive overlap checks on every end.
@@ -505,9 +540,9 @@ Blacklist validation must use the same genomic lookup starts as the reference-ba
 For a kept end with assignment boundary `boundary_pos`:
 
 - left `outside` span starts at `boundary_pos - k_outside`
-- left `within` span starts at `boundary_pos`
+- left `inside` span starts at `boundary_pos`
 - right `outside` span starts at `boundary_pos`
-- right `within` span starts at `boundary_pos - k_within`
+- right `inside` span starts at `boundary_pos - k_inside`
 
 The right-end offsets are easy to get wrong and must be tested explicitly.
 
@@ -648,7 +683,7 @@ One resolved end should return one of these semantic outcomes:
   - when exceeded, return `SkipEndDropAssignmentBoundary`
 
 - `IndelMotifFilterPolicy::SkipAffectedEnd`
-  - if the end motif has indels in its aligned `k_within` footprint, return
+  - if the end motif has indels in its aligned `k_inside` footprint, return
     `SkipEndKeepAssignmentBoundary`
 
 - `IndelMotifFilterPolicy::Auto`
@@ -656,7 +691,7 @@ One resolved end should return one of these semantic outcomes:
   - in `Read` source mode, keep the end
 
 - `IndelMotifFilterPolicy::SkipAffectedFragment`
-  - if either end motif has indels in its aligned `k_within` footprint, return `DropFragment`
+  - if either end motif has indels in its aligned `k_inside` footprint, return `DropFragment`
 
 ## Required tests
 
@@ -672,8 +707,8 @@ These tests are required before calling the collector stable enough.
 
 ### Clip strategy behavior
 
-- `aligned` excludes terminal soft-clipped bases from `within_bases`
-- `raw` includes terminal soft-clipped bases in `within_bases`
+- `aligned` excludes terminal soft-clipped bases from `inside_bases`
+- `raw` includes terminal soft-clipped bases in `inside_bases`
 - `raw` moves the assignment boundary outward by the soft-clipped length
 - `drop` skips a soft-clipped end
 - hard-clipped reads are always discarded
@@ -691,7 +726,7 @@ These tests are required before calling the collector stable enough.
 - `Auto` + `Reference` source skips indel-affected ends but keeps assignment boundaries
 - `SkipAffectedEnd` skips only the affected end
 - `SkipAffectedFragment` drops the whole fragment
-- indels outside the aligned `k_within` footprint do not trigger skipping
+- indels outside the aligned `k_inside` footprint do not trigger skipping
 
 ### Paired vs unpaired consistency
 
@@ -715,14 +750,14 @@ This should provide encoded `k_outside` motifs at genomic positions without repe
 
 ### Within bases
 
-The within-fragment side should use the same radix-5 encoding family, but encoded directly from the resolved end sequence.
+The inside-fragment side should use the same radix-5 encoding family, but encoded directly from the resolved end sequence.
 
 This means:
 
-- do not build chromosome-wide within-position tables
-- encode only the short `within_bases` slice already resolved by the collector
+- do not build chromosome-wide inside-position tables
+- encode only the short `inside_bases` slice already resolved by the collector
 
-This keeps the representation uniform without pretending that within-fragment sequence is a reference-position track.
+This keeps the representation uniform without pretending that inside-fragment sequence is a reference-position track.
 
 ## Count key design
 
@@ -730,7 +765,7 @@ Each counted end motif should be stored internally in a dedicated key struct:
 
 ```rust
 pub struct EncodedEndMotifKey {
-    pub within_code: u64,
+    pub inside_code: u64,
     pub outside_code: u64,
     pub reverse_complement_on_decode: bool,
 }
@@ -744,12 +779,16 @@ The important point is that counting is done on encoded motif parts plus decode-
 
 At reduction/output time:
 
-1. decode `within_code` using the `k_within` spec
+1. decode `inside_code` using the `k_inside` spec
 2. decode `outside_code` using the `k_outside` spec
 3. join them into the full motif string in storage order
 4. if `reverse_complement_on_decode` is true, reverse-complement the joined full motif
-5. if `collapse_complement` is enabled, canonicalize the oriented full motif
+   so the result is now in final biological `outside || inside` order
+5. if `collapse_complement` is enabled, canonicalize that already oriented full motif by
+   taking the lexicographically smaller of `{motif, complement(motif)}`
 6. aggregate duplicate full motifs if canonicalization merges them
+7. split the canonical full motif at `k_outside` and write the final
+   `<outside>_<inside>` label
 
 This produces the final motif columns written to disk.
 
@@ -775,9 +814,9 @@ This means the fragment payload must preserve:
    - `drop`
    - `align-start`
    - `fill-with-ref => unimplemented!()`
-5. Add direct encoding for resolved `within` sequences
+5. Add direct encoding for resolved `inside` sequences
 6. Add positional reference encoding for `outside`
-7. Count encoded `(within_code, outside_code)` tuples
+7. Count encoded `(inside_code, outside_code)` tuples
 8. Decode and combine motifs only at final output
 
 ## Explicit non-goals for this step

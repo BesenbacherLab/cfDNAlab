@@ -112,6 +112,61 @@ gives no guidance. The check should explain that scaling coverage is incomplete.
 
 ---
 
+### B7 — `collapse_complement` produces wrong motif labels for right-end combined-k motifs (~50% of cases)
+
+**File:** `src/commands/ends/counting.rs:154-163`, `src/shared/base.rs:66-79`
+
+**Severity: High** — silent wrong-label output in a common configuration.
+
+**Status:** fixed by making `ends` collapse operate on the fully decoded
+`outside || inside` motif and compare against the same-orientation complement rather
+than the reverse complement.
+
+When `collapse_complement = true`, `k_inside ≥ 1`, and `k_outside ≥ 1`, `make_canonical` compares
+the biologically-oriented decoded motif string against its reverse complement. For a right-end motif:
+
+```
+decoded = RC(storage_order)   where storage_order = inside_genomic + outside_genomic
+RC(decoded) = RC(RC(storage_order)) = storage_order
+```
+
+So `make_canonical(decoded) = min(decoded, storage_order)`. When `storage_order < decoded`
+lexicographically (~50% of non-palindromes), the canonical is `storage_order`, which is **not**
+a biologically oriented string. `format_end_motif_label` then calls `split_at(k_outside)` on
+`storage_order`:
+
+- First `k_outside` chars → the "outside" slot receives `inside_genomic[0..k_outside]` (wrong strand, wrong component)
+- Remaining chars → the "inside" slot receives `inside_genomic[k_outside..] ++ outside_genomic` (wrong)
+
+**Example:** k_inside=1, k_outside=1, right end with `inside_genomic="G"`, `outside_genomic="A"`:
+
+| | Value |
+|-|-------|
+| storage_order | `"GA"` |
+| decoded (correct) | `RC("GA") = "TC"` |
+| canonical | `min("TC", "GA") = "GA"` = storage_order |
+| label produced | `split_at(1) of "GA"` → outside=`"G"`, inside=`"A"` → **`"G_A"`** |
+| correct label | outside=`RC("A")`=`"T"`, inside=`RC("G")`=`"C"` → **`"T_C"`** |
+
+Without `collapse_complement` the label is correct (`"T_C"`). With it enabled and this pair, the
+label becomes the genomic storage bytes with swapped and strand-inverted components.
+
+The degenerate cases `k_outside = 0` (inside-only) and `k_inside = 0` (outside-only) are not
+affected because there is no two-component split.
+
+The implemented contract is now:
+
+- decode first into final biological `outside || inside` order
+- only `reverse_on_decode` may reverse the full motif
+- if `collapse_complement` is enabled, compare the decoded full motif against its
+  direct complement, not its reverse complement
+- keep the lexicographically smaller of `{motif, complement(motif)}`
+- split that canonical full motif at `k_outside` to form `<outside>_<inside>`
+
+That preserves the public label contract and avoids reintroducing the component-swap bug.
+
+---
+
 ## Part 2 — Logic / Semantic Issues
 
 ### L1 — `fragment_assignment_length` computed unconditionally but only used by `Midpoint`
@@ -186,7 +241,7 @@ stored in `TileMotifContext` would avoid this.
 
 ---
 
-### L6 — `encode_blacklist_validation_within_code` returns `Some(sentinel_none)` for right end below `k`
+### L6 — `encode_blacklist_validation_inside_code` returns `Some(sentinel_none)` for right end below `k`
 
 **File:** `motifs.rs:462-465`
 
@@ -197,11 +252,11 @@ if (end.boundary_pos as u64) < k {
 ```
 
 The sentinel_none is returned, then checked by `motif_code_is_invalid` and causes the
-end to be skipped. But the check in `encode_within_code` (line 402) only acts on this
+end to be skipped. But the check in `encode_inside_code` (line 402) only acts on this
 result if `motif_code_is_invalid` is true. The flow is:
 
 ```
-encode_blacklist_validation_within_code → Some(sentinel_none)
+encode_blacklist_validation_inside_code → Some(sentinel_none)
 → motif_code_is_invalid → true
 → return Ok(masked_reference_code)   // which IS the sentinel
 ```
@@ -223,7 +278,7 @@ debug_assert_eq!(full_motif.len(), within_len + outside_len);
 
 The invariant is structurally guaranteed: `decode_kmer` always returns exactly `k`
 characters (Ns for sentinels included), so the concatenated `full_motif` length is
-always `k_within + k_outside`. The `debug_assert` would only fire if the codec was
+always `k_inside + k_outside`. The `debug_assert` would only fire if the codec was
 changed to return variable-length strings, which is not a realistic failure mode. It
 is fine as-is — just noting it is a sanity check rather than real protection.
 
@@ -246,7 +301,7 @@ explicit error would be safer.
 
 ---
 
-### L9 — `build_all_end_motif_order` size guard uses `4^(k_within + k_outside)` (ignores collapse reduction)
+### L9 — `build_all_end_motif_order` size guard uses `4^(k_inside + k_outside)` (ignores collapse reduction)
 
 **File:** `output.rs:182-184`
 
@@ -300,8 +355,8 @@ assignment.
 
 ```rust
 let aligned_bases_in_motif = match clip_strategy {
-    ClipStrategy::Aligned | ClipStrategy::Drop => k_within,
-    ClipStrategy::Raw => k_within.saturating_sub(soft_clip_bp as usize),
+    ClipStrategy::Aligned | ClipStrategy::Drop => k_inside,
+    ClipStrategy::Raw => k_inside.saturating_sub(soft_clip_bp as usize),
 };
 ```
 
@@ -342,7 +397,7 @@ string preserved).
 
 ---
 
-### L15 — `make_canonical` for odd-length motifs does not produce the same canonical as even-length (convention mismatch depends on parity of `k_within + k_outside`)
+### L15 — `make_canonical` for odd-length motifs does not produce the same canonical as even-length (convention mismatch depends on parity of `k_inside + k_outside`)
 
 **File:** `src/shared/base.rs:68-78`
 
@@ -353,20 +408,25 @@ if mid == b'G' || mid == b'T' {
 return kmer;
 ```
 
-For even-length combined motifs (`k_within + k_outside` is even), `make_canonical`
+For even-length combined motifs (`k_inside + k_outside` is even), `make_canonical`
 returns the lexicographically smaller of the motif and its RC — the standard IUPAC
 convention. For odd-length combined motifs the approach is a middle-base heuristic: if
 the middle base is G or T, reverse-complement, otherwise keep.
 
-These two rules can disagree. Concrete example with `k_within=2, k_outside=1`
+These two rules can disagree. Concrete example with `k_inside=2, k_outside=1`
 (total k=3): motif `"GTA"` — RC is `"TAC"`. Lex min is `"GTA"` (G < T), but the
 middle base is `T`, so the heuristic returns `"TAC"`. A user expecting lexicographic
 canonicalization for all motifs would get the wrong representative.
 
-This affects any run where `k_within + k_outside` is odd. Whether the middle-base
+This affects any run where `k_inside + k_outside` is odd. Whether the middle-base
 heuristic is the intended convention for cfDNA odd-length motifs should be documented
 explicitly. If lexicographic canonicalization is desired uniformly, the even-length
 branch should be applied for all lengths.
+
+Resolution:
+Use uniform lexicographic canonicalization for end motifs and fragment-kmers:
+for every motif length, compare the motif with its reverse complement and keep the
+lexicographically smaller representation.
 
 ---
 
@@ -376,7 +436,7 @@ branch should be applied for all lengths.
 
 **File:** `config.rs:288-330`
 
-`set_ref_2bit(None)` after `source_within = KmerSource::Reference` leaves an
+`set_ref_2bit(None)` after `source_inside = KmerSource::Reference` leaves an
 inconsistent state. `run()` detects this at tile time (line 443 in ends.rs), but the
 error is deferred until the processing begins, not caught at configuration time.
 
@@ -412,7 +472,7 @@ all output files.
 
 **File:** `write.rs:88-159`
 
-The sidecar records: k_within, k_outside, source_within, clip_strategy, max_soft_clips,
+The sidecar records: k_inside, k_outside, source_inside, clip_strategy, max_soft_clips,
 indel_filter, window_assignment, collapse_complement, reads_are_fragments,
 fragment_length_basis, min_fragment_length, max_fragment_length.
 
@@ -492,23 +552,23 @@ wrong keys would pass this test. The test should assert the specific key-value p
 
 ---
 
-### T2 — `encode_within_code` for `KmerSource::Read` is not directly unit-tested
+### T2 — `encode_inside_code` for `KmerSource::Read` is not directly unit-tested
 
 **File:** `motifs_tests.rs`
 
-The three direct tests of `encode_outside_code` and `encode_within_code` all use
-`KmerSource::Reference`. The read-backed path (`spec.encode_kmer_bytes(&end.within_bases)`)
+The three direct tests of `encode_outside_code` and `encode_inside_code` all use
+`KmerSource::Reference`. The read-backed path (`spec.encode_kmer_bytes(&end.inside_bases)`)
 is exercised only indirectly through `count_fragment_in_window` tests. There is no test
-that directly calls `encode_within_code` with `KmerSource::Read` and verifies the exact
+that directly calls `encode_inside_code` with `KmerSource::Read` and verifies the exact
 encoded value.
 
 ---
 
-### T3 — `encode_blacklist_validation_within_code` has no isolated test
+### T3 — `encode_blacklist_validation_inside_code` has no isolated test
 
 **File:** `motifs.rs:449-476`
 
-The blacklist-validation path — where read-source within encoding first validates the
+The blacklist-validation path — where read-source inside encoding first validates the
 reference to check for blacklisted bases before using the read sequence — has no unit
 test. The only way to hit it is with a non-empty `blacklist_intervals` slice in the
 context, which none of the current tests provide.
@@ -549,12 +609,12 @@ Missing:
 
 ---
 
-### T7 — `decode_end_motif_counts` with `k_outside > 0` and `k_within = 0` not tested
+### T7 — `decode_end_motif_counts` with `k_outside > 0` and `k_inside = 0` not tested
 
 **File:** `counting.rs` tests
 
-All counting tests use `k_within > 0` with `outside_spec = None`. The case
-`k_outside > 0, k_within = 0` (outside-only motif) is never exercised. Given the
+All counting tests use `k_inside > 0` with `outside_spec = None`. The case
+`k_outside > 0, k_inside = 0` (outside-only motif) is never exercised. Given the
 asymmetric decode logic (`storage_order` differs for left/right ends), this is a
 meaningful gap.
 
@@ -564,10 +624,19 @@ meaningful gap.
 
 **File:** `output_tests.rs`
 
-Both output tests that exercise `build_all_end_motif_order` pass `None` for one of
-the specs. No test verifies the combined case, where the label includes both an outside
-and a within component, and collapse operates on the full `outside+within` concatenated
-string.
+**Status:** fixed.
+
+`output_tests.rs` now covers the combined case with both:
+
+- `k_outside=1, k_inside=1` for an exact even-length collapsed dense universe
+- `k_outside=1, k_inside=2` for an exact odd-length collapsed dense universe
+- `k_outside=2, k_inside=2` for readable hand-derived examples where both halves are
+  multi-base and the split itself is part of what is being tested
+
+These tests are intentionally contract-based: they assert the full dense motif order
+after collapsing against the same-orientation complement on the combined
+`outside || inside` motif, and they explicitly reject the old bug-shaped label
+`"G_TA"` in the odd-length case.
 
 ---
 
@@ -587,7 +656,7 @@ existing keys.
 **File:** `motifs_tests.rs:235-246`
 
 ```rust
-assert!(Arc::ptr_eq(within_codes, outside_codes));
+assert!(Arc::ptr_eq(inside_codes, outside_codes));
 ```
 
 This test asserts that the `Arc` pointers are identical — an internal memory
@@ -606,9 +675,14 @@ The test claims "GT" and "AC" are reverse complements. Verify:
 `rev_complement("AC")` = reversed "CA", complement each → "GT". ✓
 Both canonicalize to "AC" (since lex("AC") < lex("GT")). ✓
 
-The test is sound. Note however that `reverse_on_decode: false` is used for BOTH
-keys — meaning both are treated as left ends. A complementary test for right-end keys
-(where `reverse_on_decode: true` and the full decode includes a RC step) is missing.
+The original left-end-only test was sound for its narrow case. The gap was that it did not cover
+right-end decode or wider combined motifs.
+
+This is now covered by:
+
+- a right-end same-orientation complement test for inside-only motifs
+- a combined `k_outside=1, k_inside=2` collapse test
+- a multi-base `k_outside=2, k_inside=2` collapse test
 
 ---
 
@@ -617,7 +691,7 @@ keys — meaning both are treated as left ends. A complementary test for right-e
 **File:** `counting.rs:388-404`
 
 ```rust
-within_code: within_spec.encode_kmer_bytes(b"AN"),
+inside_code: within_spec.encode_kmer_bytes(b"AN"),
 ```
 
 `encode_kmer_bytes(b"AN")` returns `sentinel_n` (not a code for 'A'+'N', since 'N'
@@ -704,14 +778,14 @@ of the window covered by the BAM? This is opaque.
 
 ---
 
-### D4 — `--k-within = 0` and `--k-outside = 0` check is documented but the allowed combination (`k_within=0 OR k_outside=0`) is not
+### D4 — `--k-inside = 0` and `--k-outside = 0` check is documented but the allowed combination (`k_inside=0 OR k_outside=0`) is not
 
 **File:** `ends.rs:74-76`
 
-The guard allows one of the two to be zero. Using `k_within=0` means only outside
-bases are counted; using `k_outside=0` means only within bases. The motif label format
+The guard allows one of the two to be zero. Using `k_inside=0` means only outside
+bases are counted; using `k_outside=0` means only inside bases. The motif label format
 becomes `"GT_"` or `"_AC"`. This is not documented in the help text for either
-`--k-within` or `--k-outside`.
+`--k-inside` or `--k-outside`.
 
 ---
 
@@ -724,11 +798,11 @@ redundantly (or misunderstand that they're not subtly different).
 
 ---
 
-### D6 — The `within_bases` orientation convention for `KmerSource::Read` on reverse reads is undocumented
+### D6 — The `inside_bases` orientation convention for `KmerSource::Read` on reverse reads is undocumented
 
 **File:** `ends_fragment.rs:560-573`
 
-`extract_right_within_bases` takes the last `k_within` bases of `read.seq`. This relies
+`extract_right_inside_bases` takes the last `k_inside` bases of `read.seq`. This relies
 on the BAM convention that `seq` is stored in the forward-strand orientation for
 reverse-strand reads (i.e., BAM stores the reverse-complement of the original read
 sequence for reverse reads). This is a non-obvious assumption that is not documented in
@@ -744,7 +818,7 @@ is always in read orientation and introduce a bug.
 `decode_full_motif` implements the 5'→3' orientation by reverse-complementing right-end
 motifs. The function comment (lines 198-215) explains the storage/decode sequence, but
 does not state the final biological interpretation. A reader understanding the
-intermediate steps could still misidentify what "outside" and "within" mean
+intermediate steps could still misidentify what "outside" and "inside" mean
 biologically after the RC.
 
 ---
@@ -839,11 +913,11 @@ with Rust's lifetime rules.
 
 ---
 
-### M7 — `EndsConfig::new()` silently accepts `k_within=0` and `k_outside=0` simultaneously
+### M7 — `EndsConfig::new()` silently accepts `k_inside=0` and `k_outside=0` simultaneously
 
 **File:** `config.rs:246-286`, `ends.rs:74-76`
 
-The validation `k_within == 0 && k_outside == 0` happens only in `run()`, not in
+The validation `k_inside == 0 && k_outside == 0` happens only in `run()`, not in
 `new()`. Constructing a config with both zero is possible programmatically without
 an error until `run()` is called.
 
@@ -854,7 +928,7 @@ an error until `run()` is called.
 **File:** `counting.rs:185-196`
 
 The function name is accurate but its docstring says "The full motif string is expected
-to be oriented already and ordered as `outside || within`." This ordering assumption
+to be oriented already and ordered as `outside || inside`." This ordering assumption
 should be an explicit pre-condition (assert or type-level guarantee), not just a
 docstring note.
 
@@ -884,7 +958,7 @@ needed there. But the call in `build_all_end_motif_order` (line 75) constructs a
 temporary `String` just to pass in:
 
 ```rust
-format!("{outside}{within}")
+format!("{outside}{inside}")
 ```
 
 This is fine as-is but the function signature forces the caller to relinquish ownership
@@ -911,16 +985,16 @@ issues.
 - Forward read: `seq = vec![b'A'; read_len]`
 - Reverse read: `seq = vec![b'T'; read_len]`, `is_reverse = true`
 
-For `k_within=1, k_outside=0, KmerSource::Read`:
-- Left within = first 1 base of forward seq = `'A'` → label `_A`
-- Right within = last 1 base of reverse seq = `'T'`, decoded as `RC('T') = 'A'` → label `_A`
+For `k_inside=1, k_outside=0, KmerSource::Read`:
+- Left inside = first 1 base of forward seq = `'A'` → label `_A`
+- Right inside = last 1 base of reverse seq = `'T'`, decoded as `RC('T') = 'A'` → label `_A`
 
 Both endpoints produce the **same motif label**. Any integration test using this
 fixture with `KmerSource::Read` cannot distinguish left from right endpoint by motif
 label. A regression that swapped left/right endpoints would pass every such test as
 long as the counts sum correctly.
 
-The two CLI tests do not pass `--source-within`, so they use the Read default and both
+The two CLI tests do not pass `--source-inside`, so they use the Read default and both
 endpoints give `_A`. The assertion `"Distinct counted end motifs: 2"` in the tile-skip
 test (line 422) counts 2 endpoint *instances*, not 2 distinct motif *strings*. The stat
 field name "Distinct" is misleading in this case.
@@ -1091,8 +1165,8 @@ fragment is accepted when threshold is 0.0 is untested.
 assert!(stdout.contains("Distinct counted end motifs across those fragments: 2"));
 ```
 
-Fragment B uses `KmerSource::Read` (no `--source-within` flag). Forward seq = AAAA,
-reverse seq = TTTT. Left within = 'A' → `_A`. Right within = RC('T') = 'A' → `_A`.
+Fragment B uses `KmerSource::Read` (no `--source-inside` flag). Forward seq = AAAA,
+reverse seq = TTTT. Left inside = 'A' → `_A`. Right inside = RC('T') = 'A' → `_A`.
 Both endpoints emit the same motif label `_A`, so there is 1 distinct motif *string*
 but 2 endpoint counting *events*. The counter reports 2, which the test asserts.
 
@@ -1112,8 +1186,8 @@ inadvertently documents the confusing stat name.
 // The raw terminal bases are T on the left and A on the right, which both orient to "_T".
 ```
 
-- Left raw base: `seq[0]` of `b"TTACGTAA"` = `'T'`. Left within = `'T'` → label `_T`. ✓
-- Right raw base: `seq[7]` = `'A'`. Right within = `'A'`, decoded as `RC('A') = 'T'` → label `_T`. ✓
+- Left raw base: `seq[0]` of `b"TTACGTAA"` = `'T'`. Left inside = `'T'` → label `_T`. ✓
+- Right raw base: `seq[7]` = `'A'`. Right inside = `'A'`, decoded as `RC('A') = 'T'` → label `_T`. ✓
 
 The comment correctly notes that both ends produce `_T` for different reasons (T on
 the left is kept as-is; A on the right is reverse-complemented). Sound.
@@ -1142,7 +1216,7 @@ Verification:
   max_frag_len. Here k_outside=5 > max_frag_len=4, so the tile slice covers [6, …) but
   position 5 is needed → fallback. Correct reasoning. ✓
 - `reference[5..10]`: pos 5=C, 6=G, 7=T, 8=A, 9=C → `"CGTAC"`. ✓
-- Outside-only label format: `"CGTAC_"` (outside bases then underscore for empty within). ✓
+- Outside-only label format: `"CGTAC_"` (outside bases then underscore for empty inside). ✓
 
 This test has the most rigorous mental derivation in the suite.
 
@@ -1158,8 +1232,8 @@ This test has the most rigorous mental derivation in the suite.
 ```
 
 Read seq = `b"ACGA"`, so:
-- Left within = `seq[0] = 'A'` → `_A`. ✓
-- Right within = `seq[3] = 'A'`, decoded as `RC(b'A') = b'T'` → `_T`. ✓
+- Left inside = `seq[0] = 'A'` → `_A`. ✓
+- Right inside = `seq[3] = 'A'`, decoded as `RC(b'A') = b'T'` → `_T`. ✓
 
 The comment writes "reverse-complement("A") = '_T'", which applies RC to the *base*
 `'A'` to get `'T'`, then forms the label `_T`. This is correct but could be read as
@@ -1184,29 +1258,39 @@ would pass all current tests.
 
 ---
 
-#### IT-M2 — No integration test for `k_within > 0 AND k_outside > 0` simultaneously
+#### IT-M2 — No integration test for `k_inside > 0 AND k_outside > 0` simultaneously
 
-**File:** No test file
+**File:** `test_ends_command.rs`
 
-Every integration test sets either `k_within=1, k_outside=0` (the vast majority) or
-`k_within=0, k_outside=5` (the fallback test). The combined case — where both within
-and outside bases are present and the label is `"outside_within"` — is never exercised
-end-to-end. The label format, the encoding ordering (outside concatenated before within
-for the left end), and the collapse-complement behavior on full concatenated labels are
-all untested in integration.
+**Status:** fixed.
+
+The integration suite now exercises combined motifs end-to-end in both sparse and dense modes:
+
+- `k_outside=1, k_inside=1` with exact dense all-motifs universes, with and without collapse
+- `k_outside=2, k_inside=2` with exact dense all-motifs universes, with and without collapse
+- `k_outside=1, k_inside=2` with odd-length collapse
+- `k_outside=2, k_inside=2` with readable multi-base collapse examples
+
+So the public `<outside>_<inside>` label format, the decode ordering, and the dense/sparse output
+paths for combined motifs are all exercised in integration.
 
 ---
 
-#### IT-M3 — `collapse_complement` with odd `k_within + k_outside ≥ 3` is not tested
+#### IT-M3 — `collapse_complement` with odd `k_inside + k_outside ≥ 3` is not tested
 
-**File:** No test file
+**File:** `test_ends_command.rs`
 
-The `collapse_complement_merges_reverse_complement_equivalent_end_motifs` test (line
-1390) uses `k_within=1, k_outside=0`. Total k=1 (odd). For k=1, the middle-base
-heuristic and lexicographic canonicalization coincide: RC('G') = 'C' and 'C' < 'G',
-so both methods return 'C'. The two approaches can diverge for odd k≥3 (issue L15).
-No integration test exercises `collapse_complement=true` with k_within+k_outside ≥ 3
-and odd, so the L15 heuristic discrepancy is entirely untested.
+**Status:** fixed by `collapse_complement_preserves_outside_inside_order_for_odd_length_end_motifs`.
+
+The integration suite now exercises `collapse_complement=true` with `k_outside=1`,
+`k_inside=2`, and explicit left/right-end examples that would have drifted under the
+old reverse-complement canonicalization. It also now exercises a readable multi-base
+`k_outside=2`, `k_inside=2` command-level case. The intended contract is now
+regression-tested:
+
+- decode first into biological `outside || inside`
+- collapse against the same-orientation complement
+- keep the canonical full motif in `outside || inside` order before formatting
 
 ---
 
@@ -1294,14 +1378,14 @@ would pass all current tests.
 
 ---
 
-#### IT-M11 — No integration test for `k_within` or `k_outside` > 1 with KmerSource::Reference
+#### IT-M11 — No integration test for `k_inside` or `k_outside` > 1 with KmerSource::Reference
 
 **File:** No test file
 
-All within-only tests use `k_within=1`. The fallback test uses `k_outside=5` with
+All inside-only tests use `k_inside=1`. The fallback test uses `k_outside=5` with
 `KmerSource::Read` (not `KmerSource::Reference`). No test exercises reference-backed
-within-bases with `k_within > 1`. The `get_reference_code` logic for multi-base
-within reference lookup — including sentinel_n handling for any N in the k-mer — has
+inside-bases with `k_inside > 1`. The `get_reference_code` logic for multi-base
+inside reference lookup — including sentinel_n handling for any N in the k-mer — has
 no integration coverage.
 
 ---
@@ -1313,7 +1397,7 @@ no integration coverage.
 **File:** `test_ends_command.rs:2143-2180, 2268-2293`
 
 ```rust
-assert!(settings.contains("\"k_within\": 1"));
+assert!(settings.contains("\"k_inside\": 1"));
 assert!(settings.contains("\"clip_strategy\": \"aligned\""));
 ```
 
@@ -1366,13 +1450,13 @@ error) would not be caught.
 
 ---
 
-#### IT-ST5 — CLI tests don't exercise `--source-within reference`
+#### IT-ST5 — CLI tests don't exercise `--source-inside reference`
 
 **File:** `test_ends_command.rs:263-340, 345-424`
 
-Both CLI tests omit `--source-within`. The CLI defaults to `KmerSource::Read` (no
+Both CLI tests omit `--source-inside`. The CLI defaults to `KmerSource::Read` (no
 reference required). No CLI test exercises the full pipeline through the binary with
-`--source-within reference`, meaning the CLI argument parsing for that flag is not
+`--source-inside reference`, meaning the CLI argument parsing for that flag is not
 integration-tested at the binary level. Only the programmatic API tests use
 `KmerSource::Reference`.
 
@@ -1390,7 +1474,81 @@ standard geometry.
 
 ---
 
-### 8.6 Test Suite Positive Observations
+### 8.6 Implementation-Fitted Tests (tests written from implementation, not contract)
+
+The following tests were written by tracing through the implementation rather than from
+the biological contract. They pass for the wrong reasons and cannot detect the bugs they
+appear to exercise.
+
+---
+
+#### IT-CF1 — `collapse_complement_merges_reverse_complement_equivalent_end_motifs` never merged two distinct values
+
+**File:** `test_ends_command.rs:1470-1499`
+
+**Historical note:** the original test title claimed two distinct complementary motifs were
+observed and collapsed into one canonical label.
+
+**What actually happens:** Fragment [11, 21) on the ACGT-repeat reference with k_inside=1,
+k_outside=0:
+
+- Left end: genomic pos 11 = `'T'`, `reverse_on_decode=false` → decoded = `"T"` → pre-canonical `"_T"`
+- Right end: genomic pos 20 = `'A'`, `reverse_on_decode=true` → `RC("A") = "T"` → decoded = `"T"` → pre-canonical `"_T"`
+
+Both ends decode to `"T"` before canonicalization. There is no merging of distinct complementary
+values — two identical `"T"` values both map to `make_canonical("T", false, false) = "A"` → `"_A"`.
+Count = 2.
+
+A genuine merging test would require one end to produce pre-canonical `"_A"` and another to
+produce pre-canonical `"_T"`. The ACGT-repeat reference and this fragment position do not achieve
+that. Because the test only ever sees two copies of the same pre-canonical value, any
+canonicalization function that preserves palindromes and is consistent would pass it — including a
+no-op. The test also uses k_outside=0, which immunized it against B7 (the component-swap bug).
+
+This has now been renamed to `collapse_complement_merges_complement_equivalent_single_base_end_motifs`
+so the test title matches what it actually proves.
+
+---
+
+#### IT-CF2 — `collapse_complement_uses_lexicographic_canonicalization_for_odd_length_end_motifs` validated the old B7 bug
+
+**File:** `test_ends_command.rs:1502-1595`
+
+**Historical note:** the original test title claimed four end observations from two fragments
+all collapsed to one canonical label `"G_TA"` under lexicographic canonicalization.
+
+**What actually happens (k_inside=2, k_outside=1):**
+
+Fragment A [10, 14): both ends correctly decode to `"GTA"` via the non-bug path (decoded wins
+canonical comparison). Label `"G_TA"`.
+
+Fragment B [20, 24): both ends hit the B7 bug path:
+
+| | Decoded (correct) | Canonical selected | Label produced | Correct label |
+|-|-|-|-|-|
+| B left | `"TAC"` | `"GTA"` (storage wins) | `"G_TA"` | `"T_AC"` |
+| B right | `RC("GTA")="TAC"` | `"GTA"` (storage wins) | `"G_TA"` | `"T_AC"` |
+
+For Fragment B, the canonical selected `storage_order = "GTA"` over the biologically-oriented
+decoded `"TAC"`, so the old test passed for the wrong reason: it was validating the bug-shaped
+label rather than the intended biological label contract.
+
+This test has now been replaced by
+`collapse_complement_preserves_outside_inside_order_for_odd_length_end_motifs`, which asserts the
+correct post-fix contract instead:
+
+- the decoded full motif is already `outside || inside`
+- collapse compares against the same-orientation complement
+- the canonical full motif remains in `outside || inside` order
+- the final odd-length collapsed label is `"C_AT"` in the worked fixture
+
+The replacement test is intentionally contract-based rather than implementation-fitted: it uses
+left- and right-end examples that decode to complementary full motifs, then asserts that the
+collapsed output keeps the correct `outside || inside` ordering in the public label.
+
+---
+
+### 8.7 Test Suite Positive Observations
 
 For completeness, the following tests are particularly thorough:
 
@@ -1424,6 +1582,7 @@ For completeness, the following tests are particularly thorough:
 | [√] B2 | Bug | Medium | counters.rs, ends.rs |
 | M11 | Style | Low | ends.rs |
 | B4 | Bug | Low | ends.rs |
+| [√] B7 | Bug | High | counting.rs, base.rs |
 | [√] D8 | Docs | Low | ends.rs |
 | [√] B6 | Bug | Medium | ends.rs |
 | [√] L1 | Logic | Low | ends.rs |
@@ -1440,7 +1599,7 @@ For completeness, the following tests are particularly thorough:
 | L12 | Logic | Low | ends_fragment.rs |
 | L13 | Logic | Low | ends_fragment.rs |
 | [√] L14 | Logic | Medium | write.rs |
-| L15 | Logic | High | base.rs, counting.rs |
+| [√] L15 | Logic | High | base.rs, counting.rs |
 | C1 | Config | Low | config.rs |
 | C3 | Config | Medium | config_structs.rs |
 | C4 | Config | Low | write.rs |
@@ -1455,10 +1614,10 @@ For completeness, the following tests are particularly thorough:
 | [√] T5 | Tests | High | write.rs |
 | T6 | Tests | Medium | tiling_tests.rs |
 | T7 | Tests | Medium | counting.rs |
-| T8 | Tests | Medium | output_tests.rs |
+| [√] T8 | Tests | Medium | output_tests.rs |
 | T9 | Tests | Low | tiling_tests.rs |
 | T10 | Tests | Low | motifs_tests.rs |
-| T11 | Tests | Low | counting.rs |
+| [√] T11 | Tests | Low | counting.rs |
 | T12 | Tests | Low | counting.rs |
 | P1 | Perf | Low | motifs.rs |
 | P2 | Perf | Low | ends.rs |
@@ -1491,8 +1650,8 @@ For completeness, the following tests are particularly thorough:
 | IT-S4 | Tests | Low | test_ends_command.rs:1153 |
 | IT-S6 | Tests | Low | test_ends_command.rs:422 |
 | IT-M1 | Tests | High | (no test) |
-| IT-M2 | Tests | High | (no test) |
-| IT-M3 | Tests | Medium | (no test) |
+| [√] IT-M2 | Tests | High | test_ends_command.rs |
+| [√] IT-M3 | Tests | Medium | test_ends_command.rs |
 | IT-M4 | Tests | Medium | (no test) |
 | IT-M5 | Tests | Medium | (no test) |
 | IT-M6 | Tests | Low | (no test) |
@@ -1507,3 +1666,5 @@ For completeness, the following tests are particularly thorough:
 | IT-ST4 | Tests | Low | test_ends_command.rs:2125 |
 | IT-ST5 | Tests | Medium | test_ends_command.rs:263,345 |
 | IT-ST6 | Tests | Low | test_ends_command.rs |
+| IT-CF1 | Tests | High | test_ends_command.rs:1470 |
+| IT-CF2 | Tests | High | test_ends_command.rs:1502 |

@@ -17,9 +17,9 @@ use super::{InputItem, Pairer, PairingAdapter};
 #[derive(Clone, Copy)]
 pub struct WithEndsPairer {
     pub clip_strategy: ClipStrategy,
-    pub source_within: KmerSource,
+    pub source_inside: KmerSource,
     pub indel_filter: IndelMotifFilterPolicy,
-    pub k_within: usize,
+    pub k_inside: usize,
     pub max_soft_clips: Option<u32>,
 }
 
@@ -32,9 +32,9 @@ impl Pairer for WithEndsPairer {
             a,
             b,
             self.clip_strategy,
-            self.source_within,
+            self.source_inside,
             self.indel_filter,
-            self.k_within,
+            self.k_inside,
             self.max_soft_clips,
         )
     }
@@ -44,9 +44,9 @@ pub fn fragments_with_ends_from_bam<RIter, PF>(
     records: RIter,
     include_read: impl Fn(&Record) -> bool + Send + Sync + 'static,
     clip_strategy: ClipStrategy,
-    source_within: KmerSource,
+    source_inside: KmerSource,
     indel_filter: IndelMotifFilterPolicy,
-    k_within: usize,
+    k_inside: usize,
     max_soft_clips: Option<u32>,
     gc_tag: Option<&[u8]>,
     fragment_filter: PF,
@@ -63,9 +63,9 @@ where
 {
     let pairer = WithEndsPairer {
         clip_strategy,
-        source_within,
+        source_inside,
         indel_filter,
-        k_within,
+        k_inside,
         max_soft_clips,
     };
     let gc_tag_bytes = gc_tag.map(|tag| tag.to_vec());
@@ -81,7 +81,7 @@ where
         },
     )
     .with_bam_filter_and_mapper(include_read, move |rec| {
-        EndReadInfo::from_record_with_gc_tag(rec, gc_tag_bytes.as_deref(), clip_strategy, k_within)
+        EndReadInfo::from_record_with_gc_tag(rec, gc_tag_bytes.as_deref(), clip_strategy, k_inside)
             .map_err(anyhow::Error::from)
     })
     .with_fragment_filter(fragment_filter);
@@ -91,9 +91,9 @@ where
             collect_fragment_with_ends_from_single_read(
                 read,
                 clip_strategy,
-                source_within,
+                source_inside,
                 indel_filter,
-                k_within,
+                k_inside,
                 max_soft_clips,
             )
         });

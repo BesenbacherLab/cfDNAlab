@@ -14,7 +14,7 @@ fn payload_signature(payload: &[TileWindowEndCounts]) -> Vec<(u64, Vec<(u64, u64
                     .iter()
                     .map(|entry| {
                         (
-                            entry.within_code,
+                            entry.inside_code,
                             entry.outside_code,
                             entry.reverse_on_decode,
                             entry.value,
@@ -37,7 +37,7 @@ fn build_tile_payload_sorts_windows_and_entries_deterministically() {
             counts: FxHashMap::from_iter([
                 (
                     EncodedEndMotifKey {
-                        within_code: 5,
+                        inside_code: 5,
                         outside_code: 1,
                         reverse_on_decode: true,
                     },
@@ -45,7 +45,7 @@ fn build_tile_payload_sorts_windows_and_entries_deterministically() {
                 ),
                 (
                     EncodedEndMotifKey {
-                        within_code: 2,
+                        inside_code: 2,
                         outside_code: 9,
                         reverse_on_decode: false,
                     },
@@ -59,7 +59,7 @@ fn build_tile_payload_sorts_windows_and_entries_deterministically() {
         EndMotifCounts {
             counts: FxHashMap::from_iter([(
                 EncodedEndMotifKey {
-                    within_code: 4,
+                    inside_code: 4,
                     outside_code: 4,
                     reverse_on_decode: false,
                 },
@@ -88,7 +88,7 @@ fn merge_tile_payload_merges_counts_by_window_and_key() {
         vec![TileWindowEndCounts {
             original_idx: 7,
             entries: vec![TileEndMotifCountEntry {
-                within_code: 1,
+                inside_code: 1,
                 outside_code: 2,
                 reverse_on_decode: false,
                 value: 1.5,
@@ -97,7 +97,7 @@ fn merge_tile_payload_merges_counts_by_window_and_key() {
         vec![TileWindowEndCounts {
             original_idx: 7,
             entries: vec![TileEndMotifCountEntry {
-                within_code: 1,
+                inside_code: 1,
                 outside_code: 2,
                 reverse_on_decode: false,
                 value: 2.0,
@@ -114,7 +114,7 @@ fn merge_tile_payload_merges_counts_by_window_and_key() {
     // Assert
     let counts = reduced.get(&7).expect("window 7 should be present");
     let key = EncodedEndMotifKey {
-        within_code: 1,
+        inside_code: 1,
         outside_code: 2,
         reverse_on_decode: false,
     };
@@ -129,7 +129,7 @@ fn merge_tile_payload_merges_multiple_windows_without_cross_talk() {
             TileWindowEndCounts {
                 original_idx: 7,
                 entries: vec![TileEndMotifCountEntry {
-                    within_code: 1,
+                    inside_code: 1,
                     outside_code: 2,
                     reverse_on_decode: false,
                     value: 1.5,
@@ -138,7 +138,7 @@ fn merge_tile_payload_merges_multiple_windows_without_cross_talk() {
             TileWindowEndCounts {
                 original_idx: 9,
                 entries: vec![TileEndMotifCountEntry {
-                    within_code: 3,
+                    inside_code: 3,
                     outside_code: 4,
                     reverse_on_decode: true,
                     value: 2.0,
@@ -149,7 +149,7 @@ fn merge_tile_payload_merges_multiple_windows_without_cross_talk() {
             TileWindowEndCounts {
                 original_idx: 7,
                 entries: vec![TileEndMotifCountEntry {
-                    within_code: 1,
+                    inside_code: 1,
                     outside_code: 2,
                     reverse_on_decode: false,
                     value: 0.5,
@@ -158,7 +158,7 @@ fn merge_tile_payload_merges_multiple_windows_without_cross_talk() {
             TileWindowEndCounts {
                 original_idx: 9,
                 entries: vec![TileEndMotifCountEntry {
-                    within_code: 8,
+                    inside_code: 8,
                     outside_code: 1,
                     reverse_on_decode: false,
                     value: 3.0,
@@ -178,7 +178,7 @@ fn merge_tile_payload_merges_multiple_windows_without_cross_talk() {
     let window_7 = reduced.get(&7).expect("window 7 should be present");
     assert_eq!(
         window_7.counts.get(&EncodedEndMotifKey {
-            within_code: 1,
+            inside_code: 1,
             outside_code: 2,
             reverse_on_decode: false,
         }),
@@ -188,7 +188,7 @@ fn merge_tile_payload_merges_multiple_windows_without_cross_talk() {
     let window_9 = reduced.get(&9).expect("window 9 should be present");
     assert_eq!(
         window_9.counts.get(&EncodedEndMotifKey {
-            within_code: 3,
+            inside_code: 3,
             outside_code: 4,
             reverse_on_decode: true,
         }),
@@ -196,7 +196,7 @@ fn merge_tile_payload_merges_multiple_windows_without_cross_talk() {
     );
     assert_eq!(
         window_9.counts.get(&EncodedEndMotifKey {
-            within_code: 8,
+            inside_code: 8,
             outside_code: 1,
             reverse_on_decode: false,
         }),
@@ -213,7 +213,7 @@ fn serialize_tile_counts_round_trips_the_sorted_payload() {
         TileWindowEndCounts {
             original_idx: 3,
             entries: vec![TileEndMotifCountEntry {
-                within_code: 4,
+                inside_code: 4,
                 outside_code: 4,
                 reverse_on_decode: false,
                 value: 7.0,
@@ -223,13 +223,13 @@ fn serialize_tile_counts_round_trips_the_sorted_payload() {
             original_idx: 9,
             entries: vec![
                 TileEndMotifCountEntry {
-                    within_code: 2,
+                    inside_code: 2,
                     outside_code: 9,
                     reverse_on_decode: false,
                     value: 1.0,
                 },
                 TileEndMotifCountEntry {
-                    within_code: 5,
+                    inside_code: 5,
                     outside_code: 1,
                     reverse_on_decode: true,
                     value: 2.0,

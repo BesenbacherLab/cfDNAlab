@@ -20,8 +20,8 @@ use rust_htslib::bam::{
 pub struct ResolvedFragmentEnd {
     /// Fragment boundary used by the selected clip strategy.
     pub boundary_pos: u32,
-    /// First `k_within` bases adjacent to this end in BAM/reference storage orientation.
-    pub within_bases: Vec<u8>,
+    /// First `k_inside` bases adjacent to this end in BAM/reference storage orientation.
+    pub inside_bases: Vec<u8>,
 }
 
 /// Fragment payload for the `ends` command.
@@ -104,7 +104,7 @@ impl EndReadInfo {
         r: &Record,
         gc_tag: Option<&[u8]>,
         clip_strategy: ClipStrategy,
-        k_within: usize,
+        k_inside: usize,
     ) -> Result<Self> {
         let (left_soft_clip_bp, right_soft_clip_bp, has_hard_clip) = inspect_cigar_edges(r);
         let gc_tag_value = gc_tag
@@ -121,14 +121,14 @@ impl EndReadInfo {
                 r,
                 FragmentEndSide::Left,
                 clip_strategy,
-                k_within,
+                k_inside,
                 left_soft_clip_bp,
             ),
             right_motif_has_indels: motif_has_indels(
                 r,
                 FragmentEndSide::Right,
                 clip_strategy,
-                k_within,
+                k_inside,
                 right_soft_clip_bp,
             ),
             has_hard_clip,
@@ -181,9 +181,9 @@ pub fn collect_fragment_with_ends(
     a: &EndReadInfo,
     b: &EndReadInfo,
     clip_strategy: ClipStrategy,
-    source_within: KmerSource,
+    source_inside: KmerSource,
     indel_filter: IndelMotifFilterPolicy,
-    k_within: usize,
+    k_inside: usize,
     max_soft_clips: Option<u32>,
 ) -> Option<FragmentWithEnds> {
     let (forward, reverse) = oriented_pair_from_read_info(a, b)?;
@@ -198,9 +198,9 @@ pub fn collect_fragment_with_ends(
         forward,
         FragmentEndSide::Left,
         clip_strategy,
-        source_within,
+        source_inside,
         indel_filter,
-        k_within,
+        k_inside,
         max_soft_clips,
     ) {
         ResolvedEndOutcome::DropFragment => return None,
@@ -217,9 +217,9 @@ pub fn collect_fragment_with_ends(
         reverse,
         FragmentEndSide::Right,
         clip_strategy,
-        source_within,
+        source_inside,
         indel_filter,
-        k_within,
+        k_inside,
         max_soft_clips,
     ) {
         ResolvedEndOutcome::DropFragment => return None,
@@ -256,9 +256,9 @@ pub fn collect_fragment_with_ends(
 pub fn collect_fragment_with_ends_from_single_read(
     read: &EndReadInfo,
     clip_strategy: ClipStrategy,
-    source_within: KmerSource,
+    source_inside: KmerSource,
     indel_filter: IndelMotifFilterPolicy,
-    k_within: usize,
+    k_inside: usize,
     max_soft_clips: Option<u32>,
 ) -> Option<FragmentWithEnds> {
     if read.has_hard_clip {
@@ -269,9 +269,9 @@ pub fn collect_fragment_with_ends_from_single_read(
         read,
         FragmentEndSide::Left,
         clip_strategy,
-        source_within,
+        source_inside,
         indel_filter,
-        k_within,
+        k_inside,
         max_soft_clips,
     ) {
         ResolvedEndOutcome::DropFragment => return None,
@@ -288,9 +288,9 @@ pub fn collect_fragment_with_ends_from_single_read(
         read,
         FragmentEndSide::Right,
         clip_strategy,
-        source_within,
+        source_inside,
         indel_filter,
-        k_within,
+        k_inside,
         max_soft_clips,
     ) {
         ResolvedEndOutcome::DropFragment => return None,
@@ -366,17 +366,17 @@ fn inspect_cigar_edges(record: &Record) -> (u32, u32, bool) {
     (left_soft_clip_bp, right_soft_clip_bp, has_hard_clip)
 }
 
-/// Check whether the within-fragment motif uses aligned bases across an indel.
+/// Check whether the inside-fragment motif uses aligned bases across an indel.
 fn motif_has_indels(
     record: &Record,
     end_side: FragmentEndSide,
     clip_strategy: ClipStrategy,
-    k_within: usize,
+    k_inside: usize,
     soft_clip_bp: u32,
 ) -> bool {
     let aligned_bases_in_motif = match clip_strategy {
-        ClipStrategy::Aligned | ClipStrategy::Drop => k_within,
-        ClipStrategy::Raw => k_within.saturating_sub(soft_clip_bp as usize),
+        ClipStrategy::Aligned | ClipStrategy::Drop => k_inside,
+        ClipStrategy::Raw => k_inside.saturating_sub(soft_clip_bp as usize),
     };
     if aligned_bases_in_motif == 0 {
         return false;
@@ -436,9 +436,9 @@ fn resolve_fragment_end(
     read: &EndReadInfo,
     end_side: FragmentEndSide,
     clip_strategy: ClipStrategy,
-    source_within: KmerSource,
+    source_inside: KmerSource,
     indel_filter: IndelMotifFilterPolicy,
-    k_within: usize,
+    k_inside: usize,
     max_soft_clips: Option<u32>,
 ) -> ResolvedEndOutcome {
     let (aligned_boundary_pos, soft_clip_bp, motif_has_indels) = match end_side {
@@ -466,7 +466,7 @@ fn resolve_fragment_end(
 
     let skip_end_due_to_indels = motif_has_indels
         && match indel_filter {
-            IndelMotifFilterPolicy::Auto => matches!(source_within, KmerSource::Reference),
+            IndelMotifFilterPolicy::Auto => matches!(source_inside, KmerSource::Reference),
             IndelMotifFilterPolicy::SkipAffectedEnd
             | IndelMotifFilterPolicy::SkipAffectedFragment => true,
         };
@@ -486,7 +486,7 @@ fn resolve_fragment_end(
                 end_side,
                 clip_strategy,
                 aligned_boundary_pos,
-                k_within,
+                k_inside,
             ) {
                 Some(end) => ResolvedEndOutcome::KeepEnd {
                     assignment_boundary_pos: aligned_boundary_pos,
@@ -511,7 +511,7 @@ fn resolve_fragment_end(
                 end_side,
                 clip_strategy,
                 assignment_boundary_pos,
-                k_within,
+                k_inside,
             ) {
                 Some(end) => ResolvedEndOutcome::KeepEnd {
                     assignment_boundary_pos,
@@ -528,39 +528,39 @@ fn build_resolved_end(
     end_side: FragmentEndSide,
     clip_strategy: ClipStrategy,
     boundary_pos: u32,
-    k_within: usize,
+    k_inside: usize,
 ) -> Option<ResolvedFragmentEnd> {
-    let within_bases = match end_side {
-        FragmentEndSide::Left => extract_left_within_bases(read, clip_strategy, k_within)?,
-        FragmentEndSide::Right => extract_right_within_bases(read, clip_strategy, k_within)?,
+    let inside_bases = match end_side {
+        FragmentEndSide::Left => extract_left_inside_bases(read, clip_strategy, k_inside)?,
+        FragmentEndSide::Right => extract_right_inside_bases(read, clip_strategy, k_inside)?,
     };
 
     Some(ResolvedFragmentEnd {
         boundary_pos,
-        within_bases,
+        inside_bases,
     })
 }
 
-fn extract_left_within_bases(
+fn extract_left_inside_bases(
     read: &EndReadInfo,
     clip_strategy: ClipStrategy,
-    k_within: usize,
+    k_inside: usize,
 ) -> Option<Vec<u8>> {
     let start_idx = match clip_strategy {
         ClipStrategy::Aligned | ClipStrategy::Drop => read.left_soft_clip_bp as usize,
         ClipStrategy::Raw => 0,
     };
-    let end_idx = start_idx.saturating_add(k_within);
+    let end_idx = start_idx.saturating_add(k_inside);
     if end_idx > read.seq.len() {
         return None;
     }
     Some(read.seq[start_idx..end_idx].to_vec())
 }
 
-fn extract_right_within_bases(
+fn extract_right_inside_bases(
     read: &EndReadInfo,
     clip_strategy: ClipStrategy,
-    k_within: usize,
+    k_inside: usize,
 ) -> Option<Vec<u8>> {
     let end_idx = match clip_strategy {
         ClipStrategy::Aligned | ClipStrategy::Drop => read
@@ -569,6 +569,6 @@ fn extract_right_within_bases(
             .checked_sub(read.right_soft_clip_bp as usize)?,
         ClipStrategy::Raw => read.seq.len(),
     };
-    let start_idx = end_idx.checked_sub(k_within)?;
+    let start_idx = end_idx.checked_sub(k_inside)?;
     Some(read.seq[start_idx..end_idx].to_vec())
 }

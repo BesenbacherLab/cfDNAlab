@@ -320,10 +320,14 @@ pub struct FragmentKmersConfig {
         clap(short = 'k', long, num_args = 1.., value_parser = clap::value_parser!(u8).range(1..28), required=true, help_heading="Core"))]
     pub kmer_sizes: Vec<u8>,
 
+    // TODO: Re-audit whether reverse-complement collapse is the right biological contract here.
+    // `ends` intentionally decodes to a final orientation first and then compares against the
+    // same-orientation complement, but `fragment-kmers` may still want true reverse-complement
+    // collapse. Decide that explicitly before adding more contract-level tests or docs here.
     /// Collapse each kmer with its reverse-complement. [flag]
     ///
-    /// Odd-sized k-mers are collapsed such that the middle base is `A` or `C`.
-    /// Even-sized k-mers are collapsed to the lexicographically lowest motif.
+    /// Each k-mer is compared with its reverse complement and the lexicographically smaller
+    /// motif is kept.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub canonical: bool,
 

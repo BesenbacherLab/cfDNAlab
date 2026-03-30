@@ -9,15 +9,15 @@ fn spec_for_k(k: u8) -> KmerSpec {
     specs[&k].clone()
 }
 
-fn read_only_motif_context(k_within: u8) -> TileMotifContext<'static> {
+fn read_only_motif_context(k_inside: u8) -> TileMotifContext<'static> {
     TileMotifContext {
         chrom: "chr1".to_string(),
         ref_2bit: None,
         fetch_start: 0,
         reference_bases: None,
-        within_spec: Some(spec_for_k(k_within)),
+        inside_spec: Some(spec_for_k(k_inside)),
         outside_spec: None,
-        within_codes: None,
+        inside_codes: None,
         outside_codes: None,
         blacklist_intervals: &[],
         chrom_len: 1_000,
@@ -26,18 +26,18 @@ fn read_only_motif_context(k_within: u8) -> TileMotifContext<'static> {
 
 fn reference_motif_context(
     seq: &[u8],
-    k_within: Option<u8>,
+    k_inside: Option<u8>,
     k_outside: Option<u8>,
 ) -> TileMotifContext<'static> {
-    let within_spec = k_within.map(spec_for_k);
+    let inside_spec = k_inside.map(spec_for_k);
     let outside_spec = k_outside.map(spec_for_k);
-    let (within_codes, outside_codes) = match (within_spec.as_ref(), outside_spec.as_ref()) {
-        (Some(within_spec), Some(outside_spec)) if within_spec.k == outside_spec.k => {
-            let shared_codes = build_precomputed_reference_codes(Some(within_spec), seq);
+    let (inside_codes, outside_codes) = match (inside_spec.as_ref(), outside_spec.as_ref()) {
+        (Some(inside_spec), Some(outside_spec)) if inside_spec.k == outside_spec.k => {
+            let shared_codes = build_precomputed_reference_codes(Some(inside_spec), seq);
             (shared_codes.clone(), shared_codes)
         }
         _ => (
-            build_precomputed_reference_codes(within_spec.as_ref(), seq),
+            build_precomputed_reference_codes(inside_spec.as_ref(), seq),
             build_precomputed_reference_codes(outside_spec.as_ref(), seq),
         ),
     };
@@ -47,9 +47,9 @@ fn reference_motif_context(
         ref_2bit: None,
         fetch_start: 0,
         reference_bases: Some(seq.to_vec()),
-        within_spec,
+        inside_spec,
         outside_spec,
-        within_codes,
+        inside_codes,
         outside_codes,
         blacklist_intervals: &[],
         chrom_len: seq.len() as u64,
@@ -58,9 +58,9 @@ fn reference_motif_context(
 
 fn fragment_with_two_ends(
     left_boundary_pos: u32,
-    left_within: &[u8],
+    left_inside: &[u8],
     right_boundary_pos: u32,
-    right_within: &[u8],
+    right_inside: &[u8],
 ) -> FragmentWithEnds {
     FragmentWithEnds {
         tid: 0,
@@ -70,11 +70,11 @@ fn fragment_with_two_ends(
         gc_tag: Default::default(),
         left_end: Some(ResolvedFragmentEnd {
             boundary_pos: left_boundary_pos,
-            within_bases: left_within.to_vec(),
+            inside_bases: left_inside.to_vec(),
         }),
         right_end: Some(ResolvedFragmentEnd {
             boundary_pos: right_boundary_pos,
-            within_bases: right_within.to_vec(),
+            inside_bases: right_inside.to_vec(),
         }),
     }
 }
@@ -93,19 +93,19 @@ fn count_fragment_in_window_endpoint_counts_only_left_end_when_window_hits_left_
     let motif_context = read_only_motif_context(2);
     let mut counts_by_window = EndCountsByWindow::default();
     let left_key = EncodedEndMotifKey {
-        within_code: motif_context
-            .within_spec
+        inside_code: motif_context
+            .inside_spec
             .as_ref()
-            .expect("within spec")
+            .expect("inside spec")
             .encode_kmer_bytes(b"AC"),
         outside_code: 0,
         reverse_on_decode: false,
     };
     let right_key = EncodedEndMotifKey {
-        within_code: motif_context
-            .within_spec
+        inside_code: motif_context
+            .inside_spec
             .as_ref()
-            .expect("within spec")
+            .expect("inside spec")
             .encode_kmer_bytes(b"GT"),
         outside_code: 0,
         reverse_on_decode: true,
@@ -146,10 +146,10 @@ fn count_fragment_in_window_endpoint_counts_only_right_end_when_window_hits_righ
     let motif_context = read_only_motif_context(2);
     let mut counts_by_window = EndCountsByWindow::default();
     let right_key = EncodedEndMotifKey {
-        within_code: motif_context
-            .within_spec
+        inside_code: motif_context
+            .inside_spec
             .as_ref()
-            .expect("within spec")
+            .expect("inside spec")
             .encode_kmer_bytes(b"GT"),
         outside_code: 0,
         reverse_on_decode: true,
@@ -193,19 +193,19 @@ fn count_fragment_in_window_any_counts_both_ends_in_same_window() {
     let motif_context = read_only_motif_context(2);
     let mut counts_by_window = EndCountsByWindow::default();
     let left_key = EncodedEndMotifKey {
-        within_code: motif_context
-            .within_spec
+        inside_code: motif_context
+            .inside_spec
             .as_ref()
-            .expect("within spec")
+            .expect("inside spec")
             .encode_kmer_bytes(b"AC"),
         outside_code: 0,
         reverse_on_decode: false,
     };
     let right_key = EncodedEndMotifKey {
-        within_code: motif_context
-            .within_spec
+        inside_code: motif_context
+            .inside_spec
             .as_ref()
-            .expect("within spec")
+            .expect("inside spec")
             .encode_kmer_bytes(b"GT"),
         outside_code: 0,
         reverse_on_decode: true,
@@ -239,69 +239,69 @@ fn count_fragment_in_window_any_counts_both_ends_in_same_window() {
 }
 
 #[test]
-fn encode_within_code_read_uses_the_resolved_read_bases_directly() {
-    // Arrange: in read-backed mode, the within code should come directly from `within_bases`
+fn encode_inside_code_read_uses_the_resolved_read_bases_directly() {
+    // Arrange: in read-backed mode, the inside code should come directly from `inside_bases`
     // rather than from genomic coordinates. So the expected answer is just the codec applied
     // to the literal bytes `AC`.
     let motif_context = read_only_motif_context(2);
     let left_end = ResolvedFragmentEnd {
         boundary_pos: 10,
-        within_bases: b"AC".to_vec(),
+        inside_bases: b"AC".to_vec(),
     };
 
     // Act
     let code =
-        encode_within_code(&left_end, EndSide::Left, &motif_context, KmerSource::Read)
-            .expect("read-backed within code should work");
+        encode_inside_code(&left_end, EndSide::Left, &motif_context, KmerSource::Read)
+            .expect("read-backed inside code should work");
 
     // Assert
-    let spec = motif_context.within_spec.as_ref().expect("within spec");
+    let spec = motif_context.inside_spec.as_ref().expect("inside spec");
     assert_eq!(code, spec.encode_kmer_bytes(b"AC"));
 }
 
 #[test]
-fn encode_blacklist_validation_within_code_returns_masked_reference_code_for_read_source() {
-    // Arrange: the blacklist masks the first within base at genomic position 2, so the
+fn encode_blacklist_validation_inside_code_returns_masked_reference_code_for_read_source() {
+    // Arrange: the blacklist masks the first inside base at genomic position 2, so the
     // validation code should become the `N` sentinel even though the actual motif would come
     // from the read.
     //
     // Mental derivation:
-    // - left within with `k=2` at boundary 2 reads genomic bases [2, 4)
+    // - left inside with `k=2` at boundary 2 reads genomic bases [2, 4)
     // - after masking [2, 3), that span starts with `N`
     // - any k-mer containing `N` must encode as `sentinel_n`
-    let within_spec = spec_for_k(2);
+    let inside_spec = spec_for_k(2);
     let mut reference_bases = b"ACGTAC".to_vec();
     let blacklist = [Interval::new(2_u64, 3_u64).expect("valid blacklist")];
     apply_blacklist_mask_to_seq(&mut reference_bases, &blacklist, 0);
-    let within_codes = build_precomputed_reference_codes(Some(&within_spec), &reference_bases);
+    let inside_codes = build_precomputed_reference_codes(Some(&inside_spec), &reference_bases);
     let motif_context = TileMotifContext {
         chrom: "chr1".to_string(),
         ref_2bit: None,
         fetch_start: 0,
         reference_bases: Some(reference_bases),
-        within_spec: Some(within_spec.clone()),
+        inside_spec: Some(inside_spec.clone()),
         outside_spec: None,
-        within_codes,
+        inside_codes,
         outside_codes: None,
         blacklist_intervals: &blacklist,
         chrom_len: 6,
     };
     let left_end = ResolvedFragmentEnd {
         boundary_pos: 2,
-        within_bases: b"GT".to_vec(),
+        inside_bases: b"GT".to_vec(),
     };
 
     // Act
-    let code = encode_blacklist_validation_within_code(
+    let code = encode_blacklist_validation_inside_code(
         &left_end,
         EndSide::Left,
-        &within_spec,
+        &inside_spec,
         &motif_context,
     )
     .expect("blacklist validation should work");
 
     // Assert
-    assert_eq!(code, Some(within_spec.sentinel_n()));
+    assert_eq!(code, Some(inside_spec.sentinel_n()));
 }
 
 #[test]
@@ -333,44 +333,44 @@ fn encode_outside_code_right_uses_reference_bases_starting_at_boundary() {
 }
 
 #[test]
-fn encode_within_code_reference_right_uses_reference_bases_ending_at_boundary() {
-    // Arrange: right within at boundary 4 with k=2 should read bases [2, 4) = "GT".
+fn encode_inside_code_reference_right_uses_reference_bases_ending_at_boundary() {
+    // Arrange: right inside at boundary 4 with k=2 should read bases [2, 4) = "GT".
     let motif_context = reference_motif_context(b"ACGTAC", Some(2), None);
     let right_end = ResolvedFragmentEnd {
         boundary_pos: 4,
-        within_bases: vec![],
+        inside_bases: vec![],
     };
 
     // Act
-    let code = encode_within_code(
+    let code = encode_inside_code(
         &right_end,
         EndSide::Right,
         &motif_context,
         KmerSource::Reference,
     )
-    .expect("reference-backed within code should work");
+    .expect("reference-backed inside code should work");
 
     // Assert
-    let spec = motif_context.within_spec.as_ref().expect("within spec");
+    let spec = motif_context.inside_spec.as_ref().expect("inside spec");
     assert_eq!(code, spec.encode_kmer_bytes(b"GT"));
 }
 
 #[test]
-fn reference_motif_context_uses_equivalent_codes_for_within_and_outside_when_k_match() {
+fn reference_motif_context_uses_equivalent_codes_for_inside_and_outside_when_k_match() {
     // Arrange: matching `k` values may share an internal table, but the observable contract is
     // simply that the same genomic slice produces the same code for each half.
     let motif_context = reference_motif_context(b"ACGTACGT", Some(2), Some(2));
-    let within_spec = motif_context.within_spec.as_ref().expect("within spec");
+    let inside_spec = motif_context.inside_spec.as_ref().expect("inside spec");
     let outside_spec = motif_context.outside_spec.as_ref().expect("outside spec");
 
     // Act
-    let within_code = get_reference_code(
+    let inside_code = get_reference_code(
         2,
-        within_spec,
-        motif_context.within_codes.as_deref(),
+        inside_spec,
+        motif_context.inside_codes.as_deref(),
         &motif_context,
     )
-    .expect("within code");
+    .expect("inside code");
     let outside_code = get_reference_code(
         2,
         outside_spec,
@@ -380,6 +380,6 @@ fn reference_motif_context_uses_equivalent_codes_for_within_and_outside_when_k_m
     .expect("outside code");
 
     // Assert
-    assert_eq!(within_code, within_spec.encode_kmer_bytes(b"GT"));
+    assert_eq!(inside_code, inside_spec.encode_kmer_bytes(b"GT"));
     assert_eq!(outside_code, outside_spec.encode_kmer_bytes(b"GT"));
 }

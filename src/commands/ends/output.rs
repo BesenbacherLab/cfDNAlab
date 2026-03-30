@@ -6,7 +6,10 @@
 
 use crate::{
     commands::ends::counting::format_end_motif_label,
-    shared::kmers::{kmer_codec::KmerSpec, process_counts::all_motifs as all_half_kmer_motifs},
+    shared::{
+        base::make_canonical,
+        kmers::{kmer_codec::KmerSpec, process_counts::all_motifs as all_half_kmer_motifs},
+    },
 };
 use anyhow::{Context, Result, ensure};
 use fxhash::FxHashMap;
@@ -40,45 +43,47 @@ pub fn collect_end_motif_order(bins: &[FxHashMap<String, f64>]) -> Vec<String> {
 
 /// Build the full dense motif universe for `--all-motifs`.
 ///
-/// The returned labels follow the public `<outside>_<within>` convention after
+/// The returned labels follow the public `<outside>_<inside>` convention after
 /// optional complement collapsing. This is only used for dense outputs where
 /// every possible motif column must exist, even when a given sample has zero
 /// counts for some motifs.
 ///
 /// Parameters
 /// ----------
-/// - `within_spec`:
-///   Codec spec for the within half, or `None` when `k_within = 0`
+/// - `inside_spec`:
+///   Codec spec for the inside half, or `None` when `k_inside = 0`.
 /// - `outside_spec`:
-///   Codec spec for the outside half, or `None` when `k_outside = 0`
+///   Codec spec for the outside half, or `None` when `k_outside = 0`.
 /// - `collapse_complement`:
-///   Whether reverse-complement-equivalent full motifs should collapse to one label
+///   Whether complement-equivalent full motifs should collapse to one label.
 ///
 /// Returns
 /// -------
 /// - `Result<Vec<String>>`:
 ///   Sorted dense motif universe for the current settings
 pub fn build_all_end_motif_order(
-    within_spec: Option<&KmerSpec>,
+    inside_spec: Option<&KmerSpec>,
     outside_spec: Option<&KmerSpec>,
     collapse_complement: bool,
 ) -> Result<Vec<String>> {
-    let within_motifs = all_half_motifs(within_spec)?;
+    let inside_motifs = all_half_motifs(inside_spec)?;
     let outside_motifs = all_half_motifs(outside_spec)?;
     let mut motifs = std::collections::BTreeSet::new();
 
     for outside in &outside_motifs {
-        for within in &within_motifs {
-            // Collapse operates on the biological motif sequence in `outside || within` order.
+        for inside in &inside_motifs {
+            // Collapse operates on the biological motif sequence in `outside || inside` order.
             // The underscore is only a user-facing separator and is added after optional
-            // reverse-complement collapsing.
-            let full_motif = crate::commands::ends::counting::maybe_collapse_full_motif(
-                format!("{outside}{within}"),
-                collapse_complement,
-            );
+            // same-orientation complement collapsing.
+            let full_motif = format!("{outside}{inside}");
+            let full_motif = if collapse_complement {
+                make_canonical(full_motif, false, false)
+            } else {
+                full_motif
+            };
             motifs.insert(format_end_motif_label(
                 &full_motif,
-                within_spec,
+                inside_spec,
                 outside_spec,
             ));
         }
@@ -160,8 +165,8 @@ pub fn ensure_dense_end_motif_output_size(n_windows: usize, n_motifs: usize) -> 
 ///
 /// Parameters
 /// ----------
-/// - `k_within`:
-///   Number of within-fragment bases in the motif
+/// - `k_inside`:
+///   Number of inside-fragment bases in the motif
 /// - `k_outside`:
 ///   Number of outside-fragment bases in the motif
 /// - `n_windows`:
@@ -172,11 +177,11 @@ pub fn ensure_dense_end_motif_output_size(n_windows: usize, n_motifs: usize) -> 
 /// - `Result<()>`:
 ///   `Ok(())` when dense `--all-motifs` enumeration stays within the size budget
 pub fn ensure_all_motifs_enumeration_size(
-    k_within: usize,
+    k_inside: usize,
     k_outside: usize,
     n_windows: usize,
 ) -> Result<()> {
-    let total_k = k_within
+    let total_k = k_inside
         .checked_add(k_outside)
         .context("combined motif length overflows usize")?;
     let motif_count_upper = 4_u64
@@ -187,7 +192,7 @@ pub fn ensure_all_motifs_enumeration_size(
         .context("all-motifs universe does not fit in usize")?;
 
     ensure_dense_end_motif_output_size(n_windows, n_motifs).with_context(|| {
-        format!("refusing to enumerate all motifs for k_within={k_within}, k_outside={k_outside}")
+        format!("refusing to enumerate all motifs for k_inside={k_inside}, k_outside={k_outside}")
     })?;
 
     Ok(())

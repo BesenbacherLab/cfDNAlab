@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// independently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EncodedEndMotifKey {
-    pub within_code: u64,
+    pub inside_code: u64,
     pub outside_code: u64,
     pub reverse_on_decode: bool,
 }
@@ -131,8 +131,8 @@ impl EndMotifCounts {
 /// ----------
 /// - `counts`:
 ///   Sparse encoded counts for one window
-/// - `within_spec`:
-///   Codec spec for the within half, or `None` when `k_within = 0`
+/// - `inside_spec`:
+///   Codec spec for the inside half, or `None` when `k_inside = 0`
 /// - `outside_spec`:
 ///   Codec spec for the outside half, or `None` when `k_outside = 0`
 /// - `collapse_complement`:
@@ -144,62 +144,68 @@ impl EndMotifCounts {
 ///   Final motif labels mapped to their merged counts
 pub fn decode_end_motif_counts(
     counts: &EndMotifCounts,
-    within_spec: Option<&KmerSpec>,
+    inside_spec: Option<&KmerSpec>,
     outside_spec: Option<&KmerSpec>,
     collapse_complement: bool,
 ) -> FxHashMap<String, f64> {
     let mut decoded = FxHashMap::default();
 
     for (&key, &value) in &counts.counts {
-        let full_motif = maybe_collapse_full_motif(
-            decode_full_motif(key, within_spec, outside_spec),
-            collapse_complement,
-        );
+        // Decode motif such that right-end motifs are reverse-complemented
+        // into their 5'->3' orientation
+        let full_motif = decode_full_motif(key, inside_spec, outside_spec);
+        // Collapse to the same-orientation complement when requested
+        // This keeps the outside_inside order contract
+        let full_motif = if collapse_complement {
+            make_canonical(full_motif, false, false)
+        } else {
+            full_motif
+        };
         if full_motif.contains('N') {
             continue;
         }
-        let motif_label = format_end_motif_label(&full_motif, within_spec, outside_spec);
+        let motif_label = format_end_motif_label(&full_motif, inside_spec, outside_spec);
         *decoded.entry(motif_label).or_insert(0.0) += value;
     }
 
     decoded
 }
 
-/// Format a fully decoded motif as `<outside>_<within>`.
+/// Format a fully decoded motif as `<outside>_<inside>`.
 ///
-/// The full motif string is expected to be oriented already and ordered as `outside || within`.
+/// The full motif string is expected to be oriented already and ordered as `outside || inside`.
 ///
 /// Parameters
 /// ----------
 /// - `full_motif`:
-///   Fully decoded motif sequence in `outside || within` order
-/// - `within_spec`:
-///   Codec spec for the within half, or `None` when that half is empty
+///   Fully decoded motif sequence in `outside || inside` order
+/// - `inside_spec`:
+///   Codec spec for the inside half, or `None` when that half is empty
 /// - `outside_spec`:
 ///   Codec spec for the outside half, or `None` when that half is empty
 ///
 /// Returns
 /// -------
 /// - `String`:
-///   Public motif label in `<outside>_<within>` form
+///   Public motif label in `<outside>_<inside>` form
 pub fn format_end_motif_label(
     full_motif: &str,
-    within_spec: Option<&KmerSpec>,
+    inside_spec: Option<&KmerSpec>,
     outside_spec: Option<&KmerSpec>,
 ) -> String {
-    let within_len = within_spec.map_or(0, |spec| spec.k);
+    let inside_len = inside_spec.map_or(0, |spec| spec.k);
     let outside_len = outside_spec.map_or(0, |spec| spec.k);
-    debug_assert_eq!(full_motif.len(), within_len + outside_len);
+    debug_assert_eq!(full_motif.len(), inside_len + outside_len);
 
-    let (outside, within) = full_motif.split_at(outside_len);
-    format!("{outside}_{within}")
+    let (outside, inside) = full_motif.split_at(outside_len);
+    format!("{outside}_{inside}")
 }
 
 /// Decode one counted key back into its full motif string.
 ///
 /// The two encoded halves are decoded in storage order first:
-/// - left ends: `outside || within`
-/// - right ends: `within || outside`
+/// - left ends: `outside || inside`
+/// - right ends: `inside || outside`
 ///
 /// Then the full joined string is reverse-complemented when `reverse_on_decode`
 /// is set, so the final motif always runs from the fragment end inward in
@@ -209,8 +215,8 @@ pub fn format_end_motif_label(
 /// ----------
 /// - `key`:
 ///   Encoded motif key to decode
-/// - `within_spec`:
-///   Codec spec for the within half, or `None` when that half is empty
+/// - `inside_spec`:
+///   Codec spec for the inside half, or `None` when that half is empty
 /// - `outside_spec`:
 ///   Codec spec for the outside half, or `None` when that half is empty
 ///
@@ -220,44 +226,16 @@ pub fn format_end_motif_label(
 ///   Full biological motif sequence before optional complement collapse
 pub fn decode_full_motif(
     key: EncodedEndMotifKey,
-    within_spec: Option<&KmerSpec>,
+    inside_spec: Option<&KmerSpec>,
     outside_spec: Option<&KmerSpec>,
 ) -> String {
-    let within = within_spec.map_or_else(String::new, |spec| spec.decode_kmer(key.within_code));
+    let inside = inside_spec.map_or_else(String::new, |spec| spec.decode_kmer(key.inside_code));
     let outside = outside_spec.map_or_else(String::new, |spec| spec.decode_kmer(key.outside_code));
 
-    let storage_order = if key.reverse_on_decode {
-        format!("{within}{outside}")
-    } else {
-        format!("{outside}{within}")
-    };
-
     if key.reverse_on_decode {
-        rev_complement(&storage_order)
+        rev_complement(&format!("{inside}{outside}"))
     } else {
-        storage_order
-    }
-}
-
-/// Apply optional reverse-complement collapsing to a decoded motif string.
-///
-/// Parameters
-/// ----------
-/// - `motif`:
-///   Fully decoded motif sequence
-/// - `collapse_complement`:
-///   Whether to canonicalize the motif with its reverse complement
-///
-/// Returns
-/// -------
-/// - `String`:
-///   The original motif or its canonical representative
-#[inline]
-pub fn maybe_collapse_full_motif(motif: String, collapse_complement: bool) -> String {
-    if collapse_complement {
-        make_canonical(motif)
-    } else {
-        motif
+        format!("{outside}{inside}")
     }
 }
 
@@ -267,7 +245,7 @@ pub fn maybe_collapse_full_motif(motif: String, collapse_complement: bool) -> St
 #[cfg_attr(not(test), doc(hidden))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TileEndMotifCountEntry {
-    pub within_code: u64,
+    pub inside_code: u64,
     pub outside_code: u64,
     pub reverse_on_decode: bool,
     pub value: f64,
@@ -276,7 +254,7 @@ pub struct TileEndMotifCountEntry {
 impl From<(EncodedEndMotifKey, f64)> for TileEndMotifCountEntry {
     fn from((key, value): (EncodedEndMotifKey, f64)) -> Self {
         Self {
-            within_code: key.within_code,
+            inside_code: key.inside_code,
             outside_code: key.outside_code,
             reverse_on_decode: key.reverse_on_decode,
             value,
@@ -287,7 +265,7 @@ impl From<(EncodedEndMotifKey, f64)> for TileEndMotifCountEntry {
 impl From<&TileEndMotifCountEntry> for EncodedEndMotifKey {
     fn from(entry: &TileEndMotifCountEntry) -> Self {
         Self {
-            within_code: entry.within_code,
+            inside_code: entry.inside_code,
             outside_code: entry.outside_code,
             reverse_on_decode: entry.reverse_on_decode,
         }

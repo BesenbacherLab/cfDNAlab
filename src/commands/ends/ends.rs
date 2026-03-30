@@ -72,8 +72,8 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
-    if opt.k_within == 0 && opt.k_outside == 0 {
-        bail!("At least one of --k-within or --k-outside must be > 0");
+    if opt.k_inside == 0 && opt.k_outside == 0 {
+        bail!("At least one of --k-inside or --k-outside must be > 0");
     }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
@@ -160,7 +160,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
 
     let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
     let counts_prefix = &dot_join(&[prefix, "counts"]);
-    let within_spec = build_optional_kmer_spec(opt.k_within, "within")?;
+    let inside_spec = build_optional_kmer_spec(opt.k_inside, "inside")?;
     let outside_spec = build_optional_kmer_spec(opt.k_outside, "outside")?;
 
     println!("Start: Counting per tile");
@@ -202,7 +202,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                 gc_corrector.clone(),
                 &temp_dir,
                 counts_prefix,
-                within_spec.as_ref(),
+                inside_spec.as_ref(),
                 outside_spec.as_ref(),
             )?;
             pb.inc(1);
@@ -251,7 +251,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
             |(original_idx, counts)| -> Result<(usize, FxHashMap<String, f64>)> {
                 let decoded = decode_end_motif_counts(
                     &counts,
-                    within_spec.as_ref(),
+                    inside_spec.as_ref(),
                     outside_spec.as_ref(),
                     opt.collapse_complement,
                 );
@@ -285,11 +285,11 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     // `all_motifs` switches the final output from "observed motifs only" to a dense fixed motif
     // universe. The dense size checks happen before we allocate or enumerate that full universe.
     if opt.all_motifs {
-        ensure_all_motifs_enumeration_size(opt.k_within, opt.k_outside, all_bins.len())?;
+        ensure_all_motifs_enumeration_size(opt.k_inside, opt.k_outside, all_bins.len())?;
     }
     let motif_order = if opt.all_motifs {
         build_all_end_motif_order(
-            within_spec.as_ref(),
+            inside_spec.as_ref(),
             outside_spec.as_ref(),
             opt.collapse_complement,
         )?
@@ -441,8 +441,8 @@ fn record_counted_fragment_stats(counter: &mut EndsCounters, counted_end_flags: 
 ///   Temporary directory for tile payloads
 /// - `counts_prefix`:
 ///   Prefix used when naming serialized tile payloads
-/// - `within_spec`:
-///   Shared codec spec for the within half, or `None` when `k_within = 0`
+/// - `inside_spec`:
+///   Shared codec spec for the inside half, or `None` when `k_inside = 0`
 /// - `outside_spec`:
 ///   Shared codec spec for the outside half, or `None` when `k_outside = 0`
 ///
@@ -462,7 +462,7 @@ fn process_tile(
     gc_corrector_opt: Option<GCCorrector>,
     temp_dir: &Path,
     counts_prefix: &str,
-    within_spec: Option<&crate::shared::kmers::kmer_codec::KmerSpec>,
+    inside_spec: Option<&crate::shared::kmers::kmer_codec::KmerSpec>,
     outside_spec: Option<&crate::shared::kmers::kmer_codec::KmerSpec>,
 ) -> Result<Option<TileResult>> {
     // One BAM reader per tile
@@ -517,7 +517,7 @@ fn process_tile(
         fetch_span,
         chrom_len,
         blacklist_intervals,
-        within_spec,
+        inside_spec,
         outside_spec,
     )?;
     let window_context = WindowContext {
@@ -591,9 +591,9 @@ fn process_tile(
         reader.records().map(|r| r.map_err(anyhow::Error::from)),
         move |rec| include_read_fn(rec),
         opt.clip.clip_strategy,
-        opt.source_within,
+        opt.source_inside,
         opt.indel_filter,
-        opt.k_within,
+        opt.k_inside,
         max_soft_clips,
         opt.gc.gc_tag.as_deref().map(str::as_bytes),
         fragment_filter,
@@ -774,7 +774,7 @@ fn process_tile(
                     &fragment,
                     count_weight,
                     &motif_context,
-                    opt.source_within,
+                    opt.source_inside,
                     opt.window_assignment.assign_by,
                 )?);
             }
@@ -794,7 +794,7 @@ fn process_tile(
                     &fragment,
                     count_weight,
                     &motif_context,
-                    opt.source_within,
+                    opt.source_inside,
                     opt.window_assignment.assign_by,
                 )?);
             }

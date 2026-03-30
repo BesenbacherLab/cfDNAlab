@@ -10,14 +10,60 @@ use crate::{
 };
 use std::path::PathBuf;
 
-/// Count fragment end motifs in a BAM-file.
+/// Count fragment end- and breakpoint-motifs in a BAM-file.
+///
+/// For each fragment end, it extracts the `--k-outside` bases just outside the fragment and the
+/// `--k-inside` bases just inside the fragment. For the right fragment end, these are
+/// reverse-complemented together. Finally, they are combined to the 5'->3'-oriented
+/// "<outside>_<inside>" motif.
+///
+/// When `--collapse-complements` is passed, each motif is compared against its same-orientation
+/// complement (to keep the "<outside>_<inside>" form) and the lexicographically smallest
+/// motif is kept (summing the counts).
+///
+/// ## Visualization of counting
+///
+/// The following shows the counting for aligned fragment ends with and without collapsing of complements:
+///
+/// ```text
+/// For `--k-inside 2 --k-outside 2`:
+///
+/// Reference 5' >>>>>>>>>>>>>>> 3'
+///              ATCGTTTTTTTCATC
+/// Fragment     --|---------|--
+/// Forward     5' |>>>>>>>| 3'   
+///   Outside    AT
+///   Inside       CG  
+/// Reverse      3' |<<<<<<<<| 5'
+///   Inside               CA
+///   Outside                TC
+///
+/// Reverse (`CATC`) is reverse complemented to `GATG`
+///
+/// Counts (<outside>_<inside>): `AT_CG: 1`, `GA_TG: 1`
+///
+/// ---
+///
+/// When `--collapse-complements` is passed:
+///
+/// Compare `AT_CG` to complement `TA_GC`. Lexicographically smallest: `AT_CG`
+///
+/// Compare `GA_TG` to complement `CT_AC`. Lexicographically smallest: `CT_AC`
+///
+/// Counts (<outside>_<inside>): `AT_CG: 1`, `CT_AC: 1`
+/// ```
+///
+/// ## Output files
 ///
 /// Writes either:
 ///
 /// - a dense `.npy` matrix with shape `(# windows, # motifs)` when `--all-motifs` is enabled
+///
 /// - or a sparse `.npz` matrix otherwise
 ///
 /// along with a text file with the matching motif labels.
+///
+/// Motif labels are saved as "<outside>_<inside>".
 ///
 /// ## GC correction
 ///
@@ -97,26 +143,29 @@ pub struct EndsConfig {
     )]
     pub ref_2bit: Option<PathBuf>,
 
-    /// Number of bases to use from within the fragment `[integer]`
-    #[cfg_attr(feature = "cli", clap(long, required = true, help_heading = "Motifs"))]
-    pub k_within: usize,
+    /// Number of bases to use from inside the fragment `[integer]`
+    #[cfg_attr(
+        feature = "cli",
+        clap(long = "k-inside", required = true, help_heading = "Motifs")
+    )]
+    pub k_inside: usize,
 
     /// Number of bases to use from outside the fragment `[integer]`
     #[cfg_attr(feature = "cli", clap(long, required = true, help_heading = "Motifs"))]
     pub k_outside: usize,
 
-    /// Whether to get the within-fragment bases from the read or the reference `[string]`
+    /// Whether to get the inside-fragment bases from the read or the reference `[string]`
     #[cfg_attr(
         feature = "cli",
         clap(
-            long,
+            long = "source-inside",
             value_enum,
             default_value = "read",
             requires_if("reference", "ref_2bit"),
             help_heading = "Motifs"
         )
     )]
-    pub source_within: KmerSource,
+    pub source_inside: KmerSource,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub clip: ClippingArgs,
@@ -246,16 +295,16 @@ impl EndsConfig {
     pub fn new(
         ioc: IOCArgs,
         chromosomes: ChromosomeArgs,
-        k_within: usize,
+        k_inside: usize,
         k_outside: usize,
     ) -> Self {
         Self {
             ioc,
             output_prefix: String::new(),
             ref_2bit: None,
-            k_within,
+            k_inside,
             k_outside,
-            source_within: KmerSource::Read,
+            source_inside: KmerSource::Read,
             clip: ClippingArgs {
                 clip_strategy: ClipStrategy::Aligned,
                 max_soft_clips: None,

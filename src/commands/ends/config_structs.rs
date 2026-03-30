@@ -5,19 +5,19 @@ use clap::ValueEnum;
 
 // TODO these structs should use the format used by other cfDNAlab commands instead
 
-/// Select where the within-fragment bases come from for end motifs.
+/// Select where the inside-fragment bases come from for end motifs.
 ///
 /// The `ends` pipeline can either trust the read sequence itself or reconstruct
-/// the within-fragment half from the reference genome. The read-backed mode is
+/// the inside-fragment half from the reference genome. The read-backed mode is
 /// the default because it reflects what was actually sequenced, while the
 /// reference-backed mode is useful when you want alignment-consistent sequence
 /// context and are willing to skip indel-affected motifs.
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum KmerSource {
-    /// Extract the within-fragment bases from the sequenced read.
+    /// Extract the inside-fragment bases from the sequenced read.
     Read,
-    /// Extract the within-fragment bases from the reference genome.
+    /// Extract the inside-fragment bases from the reference genome.
     Reference,
 }
 

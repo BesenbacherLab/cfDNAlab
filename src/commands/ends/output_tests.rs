@@ -7,6 +7,45 @@ fn spec_for_k(k: u8) -> KmerSpec {
     specs[&k].clone()
 }
 
+fn expected_combined_1_plus_1_order_without_collapse() -> Vec<String> {
+    let bases = ["A", "C", "G", "T"];
+    let mut motifs = Vec::new();
+    for outside in bases {
+        for inside in bases {
+            motifs.push(format!("{outside}_{inside}"));
+        }
+    }
+    motifs
+}
+
+fn expected_combined_1_plus_1_order_with_collapse() -> Vec<String> {
+    let bases = ["A", "C", "G", "T"];
+    let mut motifs = Vec::new();
+    for outside in ["A", "C"] {
+        for inside in bases {
+            motifs.push(format!("{outside}_{inside}"));
+        }
+    }
+    motifs
+}
+
+fn expected_collapsed_combined_2_plus_2_order() -> Vec<String> {
+    let bases = ["A", "C", "G", "T"];
+    let mut motifs = Vec::new();
+    for first_outside in ["A", "C"] {
+        for second_outside in bases {
+            for first_inside in bases {
+                for second_inside in bases {
+                    motifs.push(format!(
+                        "{first_outside}{second_outside}_{first_inside}{second_inside}"
+                    ));
+                }
+            }
+        }
+    }
+    motifs
+}
+
 #[test]
 fn ensure_dense_end_motif_output_size_accepts_small_matrix() {
     // Arrange / Act / Assert
@@ -46,45 +85,139 @@ fn ensure_all_motifs_enumeration_size_rejects_large_universe_before_enumeration(
 #[test]
 fn build_all_end_motif_order_returns_full_single_base_universe_without_collapse() {
     // Arrange
-    let within_spec = spec_for_k(1);
+    let inside_spec = spec_for_k(1);
 
     // Act
-    let motifs = build_all_end_motif_order(Some(&within_spec), None, false).expect("motif order");
+    let motifs = build_all_end_motif_order(Some(&inside_spec), None, false).expect("motif order");
 
     // Assert
     assert_eq!(motifs, vec!["_A", "_C", "_G", "_T"]);
 }
 
 #[test]
-fn build_all_end_motif_order_collapses_single_base_reverse_complements() {
-    // Arrange
-    let within_spec = spec_for_k(1);
+fn build_all_end_motif_order_collapses_single_base_complements() {
+    // Arrange: for k=1, complement and reverse-complement are identical, so this test only
+    // checks the single-base universe reduction itself. The transform distinction is covered by
+    // the combined-motif tests below.
+    let inside_spec = spec_for_k(1);
 
     // Act
     let motifs =
-        build_all_end_motif_order(Some(&within_spec), None, true).expect("canonical motif order");
+        build_all_end_motif_order(Some(&inside_spec), None, true).expect("canonical motif order");
 
     // Assert
     assert_eq!(motifs, vec!["_A", "_C"]);
 }
 
 #[test]
-fn build_all_end_motif_order_enumerates_the_full_combined_outside_within_universe() {
+fn build_all_end_motif_order_enumerates_the_full_combined_outside_inside_universe() {
     // Arrange
-    let within_spec = spec_for_k(1);
+    let inside_spec = spec_for_k(1);
     let outside_spec = spec_for_k(1);
 
     // Act
-    let motifs = build_all_end_motif_order(Some(&within_spec), Some(&outside_spec), false)
+    let motifs = build_all_end_motif_order(Some(&inside_spec), Some(&outside_spec), false)
         .expect("combined motif order");
 
-    // Assert: labels are sorted lexicographically after formatting as `<outside>_<within>`.
+    // Assert: labels are sorted lexicographically after formatting as `<outside>_<inside>`.
+    assert_eq!(motifs, expected_combined_1_plus_1_order_without_collapse());
+}
+
+#[test]
+fn build_all_end_motif_order_collapses_combined_even_length_motifs_by_same_orientation_complement()
+{
+    // Arrange: with k_outside=1 and k_inside=1, canonicalization is applied to the full
+    // `outside || inside` string before formatting.
+    //
+    // First-principles derivation:
+    // - compare the first base of the full motif to its complement
+    // - A < T and C < G, so motifs starting with A or C stay as-is
+    // - motifs starting with G or T collapse to complements starting with C or A
+    //
+    // Therefore the full canonical universe is exactly the eight labels whose outside base is
+    // A or C.
+    let inside_spec = spec_for_k(1);
+    let outside_spec = spec_for_k(1);
+
+    // Act
+    let motifs = build_all_end_motif_order(Some(&inside_spec), Some(&outside_spec), true)
+        .expect("collapsed combined motif order");
+
+    // Assert
+    assert_eq!(motifs, expected_combined_1_plus_1_order_with_collapse());
+}
+
+#[test]
+fn build_all_end_motif_order_collapses_combined_odd_length_motifs_without_swapping_components() {
+    // Arrange: k_outside=1 and k_inside=2 gives a 3-base full motif. This is the case that would
+    // drift if collapse were done against revcomp(full_motif) instead of complement(full_motif).
+    //
+    // First-principles derivation:
+    // - the full motif is compared as one `outside || inside` string
+    // - the first base always decides the lexicographic winner against its complement
+    // - canonical full motifs must therefore start with A or C, never G or T
+    // - after splitting at k_outside=1, the exact dense universe is:
+    //   A_<any 2-mer> and C_<any 2-mer>
+    let inside_spec = spec_for_k(2);
+    let outside_spec = spec_for_k(1);
+
+    // Act
+    let motifs = build_all_end_motif_order(Some(&inside_spec), Some(&outside_spec), true)
+        .expect("collapsed odd-length combined motif order");
+
+    // Assert: exact dense universe in sorted order.
+    let bases = ["A", "C", "G", "T"];
+    let mut expected = Vec::new();
+    for outside in ["A", "C"] {
+        for first_inside in bases {
+            for second_inside in bases {
+                expected.push(format!("{outside}_{first_inside}{second_inside}"));
+            }
+        }
+    }
+    assert_eq!(motifs, expected);
+
+    // Spot-check the specific pair that distinguishes the intended contract from revcomp-based
+    // collapsing on the full decoded motif.
+    assert!(motifs.contains(&"C_AT".to_string()));
+    assert!(!motifs.contains(&"G_TA".to_string()));
+}
+
+#[test]
+fn build_all_end_motif_order_collapses_readable_combined_2_plus_2_examples() {
+    // Arrange: k_outside=2 and k_inside=2 keeps both halves multi-base, but we only assert a few
+    // hand-derived pairs instead of an opaque generated universe.
+    //
+    // First-principles examples:
+    // - "GTAC" complements to "CATG", so the canonical label must be "CA_TG", not "GT_AC"
+    // - "TGCA" complements to "ACGT", so the canonical label must be "AC_GT", not "TG_CA"
+    // - "ACGT" is already canonical and must remain "AC_GT"
+    //
+    // These examples are enough to catch:
+    // - using revcomp(full_motif) instead of complement(full_motif)
+    // - splitting before canonicalization
+    // - swapping `outside` and `inside` after collapse
+    let inside_spec = spec_for_k(2);
+    let outside_spec = spec_for_k(2);
+
+    // Act
+    let motifs = build_all_end_motif_order(Some(&inside_spec), Some(&outside_spec), true)
+        .expect("collapsed 2+2 dense universe");
+
+    // Assert: exact dense universe plus a few hand-derived labels that make the contract obvious.
+    assert_eq!(motifs, expected_collapsed_combined_2_plus_2_order());
+
+    assert!(motifs.contains(&"CA_TG".to_string()));
+    assert!(!motifs.contains(&"GT_AC".to_string()));
+
+    assert!(motifs.contains(&"AC_GT".to_string()));
+    assert!(!motifs.contains(&"TG_CA".to_string()));
+
+    // `AC_GT` is produced both directly and as the complement of `TG_CA`, so it must appear only
+    // once in the dense universe.
     assert_eq!(
-        motifs,
-        vec![
-            "A_A", "A_C", "A_G", "A_T", "C_A", "C_C", "C_G", "C_T", "G_A", "G_C", "G_G",
-            "G_T", "T_A", "T_C", "T_G", "T_T",
-        ]
+        motifs.iter().filter(|motif| motif.as_str() == "AC_GT").count(),
+        1
     );
 }
 

@@ -99,7 +99,7 @@ pub fn build_tile_payload(
 
             entries.sort_unstable_by_key(|entry| {
                 (
-                    entry.within_code,
+                    entry.inside_code,
                     entry.outside_code,
                     entry.reverse_on_decode,
                 )

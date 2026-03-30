@@ -649,10 +649,10 @@ mod test_fragment_with_ends {
     fn end_info(
         record: &Record,
         clip_strategy: ClipStrategy,
-        k_within: usize,
+        k_inside: usize,
         gc_tag: Option<&[u8]>,
     ) -> EndReadInfo {
-        EndReadInfo::from_record_with_gc_tag(record, gc_tag, clip_strategy, k_within)
+        EndReadInfo::from_record_with_gc_tag(record, gc_tag, clip_strategy, k_inside)
             .expect("end read info")
     }
 
@@ -660,21 +660,21 @@ mod test_fragment_with_ends {
         a: &Record,
         b: &Record,
         clip_strategy: ClipStrategy,
-        source_within: KmerSource,
+        source_inside: KmerSource,
         indel_filter: IndelMotifFilterPolicy,
-        k_within: usize,
+        k_inside: usize,
         max_soft_clips: Option<u32>,
         gc_tag: Option<&[u8]>,
     ) -> Option<FragmentWithEnds> {
-        let a_info = end_info(a, clip_strategy, k_within, gc_tag);
-        let b_info = end_info(b, clip_strategy, k_within, gc_tag);
+        let a_info = end_info(a, clip_strategy, k_inside, gc_tag);
+        let b_info = end_info(b, clip_strategy, k_inside, gc_tag);
         collect_fragment_with_ends(
             &a_info,
             &b_info,
             clip_strategy,
-            source_within,
+            source_inside,
             indel_filter,
-            k_within,
+            k_inside,
             max_soft_clips,
         )
     }
@@ -682,19 +682,19 @@ mod test_fragment_with_ends {
     fn collect_single(
         record: &Record,
         clip_strategy: ClipStrategy,
-        source_within: KmerSource,
+        source_inside: KmerSource,
         indel_filter: IndelMotifFilterPolicy,
-        k_within: usize,
+        k_inside: usize,
         max_soft_clips: Option<u32>,
         gc_tag: Option<&[u8]>,
     ) -> Option<FragmentWithEnds> {
-        let read = end_info(record, clip_strategy, k_within, gc_tag);
+        let read = end_info(record, clip_strategy, k_inside, gc_tag);
         collect_fragment_with_ends_from_single_read(
             &read,
             clip_strategy,
-            source_within,
+            source_inside,
             indel_filter,
-            k_within,
+            k_inside,
             max_soft_clips,
         )
     }
@@ -758,11 +758,11 @@ mod test_fragment_with_ends {
         assert_eq!(fragment.assignment_start(), 100);
         assert_eq!(fragment.assignment_end(), 116);
         assert_eq!(
-            fragment.left_end.as_ref().expect("left end").within_bases,
+            fragment.left_end.as_ref().expect("left end").inside_bases,
             b"ACGT".to_vec()
         );
         assert_eq!(
-            fragment.right_end.as_ref().expect("right end").within_bases,
+            fragment.right_end.as_ref().expect("right end").inside_bases,
             b"TACG".to_vec()
         );
     }
@@ -806,11 +806,11 @@ mod test_fragment_with_ends {
         assert_eq!(fragment.assignment_start(), 98);
         assert_eq!(fragment.assignment_end(), 118);
         assert_eq!(
-            fragment.left_end.as_ref().expect("left end").within_bases,
+            fragment.left_end.as_ref().expect("left end").inside_bases,
             b"TTAC".to_vec()
         );
         assert_eq!(
-            fragment.right_end.as_ref().expect("right end").within_bases,
+            fragment.right_end.as_ref().expect("right end").inside_bases,
             b"CGTT".to_vec()
         );
     }
@@ -1468,11 +1468,11 @@ mod test_fragment_with_ends {
         assert_eq!(fragment.assignment_start(), 100);
         assert_eq!(fragment.assignment_end(), 106);
         assert_eq!(
-            fragment.left_end.as_ref().expect("left end").within_bases,
+            fragment.left_end.as_ref().expect("left end").inside_bases,
             b"ACGT".to_vec()
         );
         assert_eq!(
-            fragment.right_end.as_ref().expect("right end").within_bases,
+            fragment.right_end.as_ref().expect("right end").inside_bases,
             b"GTAC".to_vec()
         );
     }
@@ -1506,11 +1506,11 @@ mod test_fragment_with_ends {
         assert_eq!(fragment.assignment_start(), 98);
         assert_eq!(fragment.assignment_end(), 108);
         assert_eq!(
-            fragment.left_end.as_ref().expect("left end").within_bases,
+            fragment.left_end.as_ref().expect("left end").inside_bases,
             b"TTAC".to_vec()
         );
         assert_eq!(
-            fragment.right_end.as_ref().expect("right end").within_bases,
+            fragment.right_end.as_ref().expect("right end").inside_bases,
             b"ACGG".to_vec()
         );
     }
