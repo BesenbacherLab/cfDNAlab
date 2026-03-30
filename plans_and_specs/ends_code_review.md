@@ -892,6 +892,530 @@ even when the result is discarded, which is counterintuitive.
 
 ---
 
+## Part 8 — Integration Test Deep Analysis
+
+Scope: `tests/test_ends_command.rs` (56 tests) plus the shared `tests/fixtures/mod.rs`.
+All line numbers are from the integration test file. The analysis covers soundness of
+assertions, correctness of mental derivations in comments, assertion gaps, and structural
+issues.
+
+---
+
+### 8.1 Test Fixture Limitations
+
+#### IT-I1 — `paired_fragment` fixture produces identical left and right motif labels under `KmerSource::Read`
+
+**File:** `fixtures/mod.rs:59,72`
+
+`paired_fragment(start, fragment_len, read_len)` creates:
+- Forward read: `seq = vec![b'A'; read_len]`
+- Reverse read: `seq = vec![b'T'; read_len]`, `is_reverse = true`
+
+For `k_within=1, k_outside=0, KmerSource::Read`:
+- Left within = first 1 base of forward seq = `'A'` → label `_A`
+- Right within = last 1 base of reverse seq = `'T'`, decoded as `RC('T') = 'A'` → label `_A`
+
+Both endpoints produce the **same motif label**. Any integration test using this
+fixture with `KmerSource::Read` cannot distinguish left from right endpoint by motif
+label. A regression that swapped left/right endpoints would pass every such test as
+long as the counts sum correctly.
+
+The two CLI tests do not pass `--source-within`, so they use the Read default and both
+endpoints give `_A`. The assertion `"Distinct counted end motifs: 2"` in the tile-skip
+test (line 422) counts 2 endpoint *instances*, not 2 distinct motif *strings*. The stat
+field name "Distinct" is misleading in this case.
+
+---
+
+#### IT-I2 — `simple_reference_twobit` is a strictly periodic `ACGT` repeat
+
+**File:** `fixtures/mod.rs:180`
+
+```rust
+let chr1 = ("chr1".to_string(), "ACGT".repeat(64));
+```
+
+`chr1` is 256 bases of `ACGT` repeating. Every reference position is fully
+deterministic: `base(i) = "ACGT"[i % 4]`. The tests rely on this to drive specific
+expected values (e.g., `reference[10] = 'G'`, `reference[19] = 'T'`). This is good
+for exact testing, but:
+
+- Outside-k tests with `k_outside ≥ 4` will see repeating patterns. The fallback
+  test (`outside_reference_lookup_falls_back_to_exact_reference_fetch`, line 994) uses
+  `k_outside=5` and correctly derives `"CGTAC"` from positions 5–9 using the period-4
+  sequence. If the reference were non-periodic, that derivation would differ. The test
+  does not guard against accidentally correct results from the periodicity.
+
+- A reference with `N` bases at specific positions, which would test the `sentinel_n`
+  path in motif encoding, is only constructed in `drop_invalid_gc` (line 785) for GC
+  purposes, not for motif encoding.
+
+---
+
+#### IT-I3 — `base_config` explicit `ClipStrategy::Aligned` override masks pre-fix B1
+
+**File:** `test_ends_command.rs:61`
+
+```rust
+cfg.clip.clip_strategy = ClipStrategy::Aligned;
+```
+
+This was necessary to work around B1 (`EndsConfig::new()` defaulting to `Raw`). After
+B1 is fixed, the override is redundant but harmless. More importantly: there is no
+regression test asserting that `EndsConfig::new()` produces `ClipStrategy::Aligned`.
+If B1 silently regresses (someone changes the default back to `Raw`), `base_config`
+would still mask it and all tests would continue to pass.
+
+---
+
+#### IT-I4 — `single_read_bam` produces reads with `flags: 0`
+
+**File:** `test_ends_command.rs:97`
+
+```rust
+flags: 0,
+```
+
+Flags = 0 means: not paired, not properly paired, not reverse strand, not first in
+pair, etc. This produces reads that real single-end sequencing would not emit — real
+single reads have the `READ_UNMAPPED`/`READ_PAIRED` flags differently. The unpaired
+tests use `reads_are_fragments = true`, which bypasses pairing logic, so the flags are
+irrelevant in practice. But a test reader might wonder why single reads have flags = 0.
+
+---
+
+### 8.2 Assertions That Miss Regressions
+
+#### IT-S1 — Indel filter tests check count, not identity of surviving ends
+
+**File:** `test_ends_command.rs:875-878, 931-934`
+
+`auto_indel_filter_keeps_indel_affected_read_backed_end_motifs`:
+```rust
+assert_eq!(matrix.shape(), &[1, 2]);  // 2 motifs
+assert_eq!(motifs.len(), 2);
+assert_eq!(matrix.sum(), 2.0);
+```
+
+`auto_indel_filter_skips_indel_affected_reference_backed_end_motifs`:
+```rust
+assert_eq!(matrix.shape(), &[1, 1]);  // 1 motif
+assert_eq!(motifs.len(), 1);
+assert_eq!(matrix.sum(), 1.0);
+```
+
+Neither test asserts **which end survived**. In the reference-backed case, the left
+end (forward read, CIGAR `2M 1I 5M`, indel within the 4-base left footprint) should
+be dropped, and the right end (reverse read, CIGAR `6M`, no indel) should survive.
+But the test only checks `motifs.len() == 1`. A regression where the indel filter
+accidentally kept the left end and dropped the right end would pass both assertions,
+since either way there is one surviving motif. The correct assertion would compare
+the surviving motif label against the expected right-end decode of the reference
+sequence at positions 110–113.
+
+---
+
+#### IT-S2 — `all_requires_the_full_fragment_to_overlap_the_window` tests only rejection
+
+**File:** `test_ends_command.rs:1202-1236`
+
+Fragment `[10,20)` is tested against window `[10,19)`. Because `[10,19)` does not
+fully contain `[10,20)`, the result is `sum = 0.0`. This confirms rejection. But there
+is no test where the window fully contains the fragment (e.g., `[9,21)` or `[10,20)`)
+to confirm that `All` mode actually counts when containment holds. A broken `All`
+implementation that always rejects would pass all current tests.
+
+---
+
+#### IT-S3 — `midpoint_assigns_both_end_motifs_to_the_midpoint_window` comment is imprecise
+
+**File:** `test_ends_command.rs:1084`
+
+```
+// fragment [10,20) has even midpoint 14 or 15, both inside [14,16).
+```
+
+Fragment start=10, aligned_length=10. The midpoint formula in `ends.rs` is:
+`start + fragment_assignment_length / 2 = 10 + 10/2 = 10 + 5 = 15` (integer division).
+
+The midpoint is **deterministically 15**, not "14 or 15". The comment acknowledges
+ambiguity that does not exist in the code. If the formula ever changed to ceiling
+division (midpoint = 15), the test would still pass since the window is `[14,16)`.
+The comment should say "midpoint 15", not "14 or 15".
+
+---
+
+#### IT-S4 — Float equality assertions rely on IEEE 754 exact representability
+
+**File:** `test_ends_command.rs:1153-1154, 1269-1271`
+
+```rust
+assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 0.5);  // count_overlap
+assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);  // proportion
+```
+
+The `count_overlap` test uses window `[10,15)` and fragment `[10,20)`: overlap = 5/10
+= 0.5. The value 0.5 = 1/2 is exactly representable in f64, so `5.0_f64 / 10.0 ==
+0.5` is guaranteed true. If a future test used overlap 6/10 = 0.6 (not exactly
+representable), the same `assert_eq!` pattern would be fragile. The suite should
+document the IEEE 754 dependency or switch to approximate comparisons for non-dyadic
+fractions. The GC-scaling combined test (`blacklist_gc_and_scaling_weights_combine_*`)
+uses weights like `2.5` and `0.75` — both dyadic, so exact. Currently safe but
+undocumented.
+
+---
+
+#### IT-S5 — `proportion_assignment` exact-boundary test is actually a good positive case
+
+**File:** `test_ends_command.rs:1256`
+
+```rust
+assign_by: WindowMotifAssigner::Proportion(0.5),
+```
+
+Fragment `[10,20)`, window `[10,15)`, overlap = 5/10 = 0.5, threshold = 0.5. The
+comparison `0.5 >= 0.5` is true, so the fragment is accepted. This is a correct
+boundary test. The complementary rejection test (line 1278) uses window `[10,14)`,
+overlap = 4/10 = 0.4, which is unambiguously below 0.5. The pair is sound. ✓
+
+The edge case `proportion = 0.0` (from L10) has no test, so the behavior that every
+fragment is accepted when threshold is 0.0 is untested.
+
+---
+
+#### IT-S6 — `cli_statistics_only_count_reads_from_tiles_with_relevant_windows` stat interpretation is ambiguous
+
+**File:** `test_ends_command.rs:422`
+
+```rust
+assert!(stdout.contains("Distinct counted end motifs across those fragments: 2"));
+```
+
+Fragment B uses `KmerSource::Read` (no `--source-within` flag). Forward seq = AAAA,
+reverse seq = TTTT. Left within = 'A' → `_A`. Right within = RC('T') = 'A' → `_A`.
+Both endpoints emit the same motif label `_A`, so there is 1 distinct motif *string*
+but 2 endpoint counting *events*. The counter reports 2, which the test asserts.
+
+The stat label "Distinct counted end motifs" appears to mean "endpoint instances
+counted", not "distinct motif labels". A user reading the printed statistics might
+interpret "distinct" as the number of unique motif labels and be confused when a
+fragment with 2 identical endpoints reports "2 distinct end motifs". The test
+inadvertently documents the confusing stat name.
+
+---
+
+#### IT-S7 — `raw_endpoint_assignment` comment derivation is correct but subtle
+
+**File:** `test_ends_command.rs:1579-1581`
+
+```
+// The raw terminal bases are T on the left and A on the right, which both orient to "_T".
+```
+
+- Left raw base: `seq[0]` of `b"TTACGTAA"` = `'T'`. Left within = `'T'` → label `_T`. ✓
+- Right raw base: `seq[7]` = `'A'`. Right within = `'A'`, decoded as `RC('A') = 'T'` → label `_T`. ✓
+
+The comment correctly notes that both ends produce `_T` for different reasons (T on
+the left is kept as-is; A on the right is reverse-complemented). Sound.
+
+---
+
+### 8.3 Mental Derivation Checks
+
+#### IT-C1 — `outside_reference_lookup_falls_back_to_exact_reference_fetch` derivation is correct and rigorous
+
+**File:** `test_ends_command.rs:996-1000`
+
+```
+// ...Asking for k_outside=5 on the left endpoint at 10
+// needs reference bases [5,10), which crosses one base outside the preloaded tile slice and
+// must therefore use the exact fallback path. On the ACGT-repeat reference, seq[5..10) is
+// C G T A C, so the outside-only label is "CGTAC_".
+```
+
+Verification:
+- tile_size=100 (default in `base_config`), max_frag_len=4
+- Tile halo = max_frag_len = 4. Tile 0 starts at 0; local slice loaded with extra 4
+  bp before pos 0... but this is `[10,11)` window so the tile covers [0, 100). The
+  halo for k_outside prefetching extends the reference slice back by k_outside from the
+  leftmost window boundary. But the *exact fallback* is triggered when k_outside exceeds
+  max_frag_len. Here k_outside=5 > max_frag_len=4, so the tile slice covers [6, …) but
+  position 5 is needed → fallback. Correct reasoning. ✓
+- `reference[5..10]`: pos 5=C, 6=G, 7=T, 8=A, 9=C → `"CGTAC"`. ✓
+- Outside-only label format: `"CGTAC_"` (outside bases then underscore for empty within). ✓
+
+This test has the most rigorous mental derivation in the suite.
+
+---
+
+#### IT-C2 — `blacklist_masking_still_skips_read_backed_within_motifs` derivation note
+
+**File:** `test_ends_command.rs:430-432`
+
+```
+// - left read-backed motif = "_A"
+// - right read-backed motif = reverse-complement("A") = "_T"
+```
+
+Read seq = `b"ACGA"`, so:
+- Left within = `seq[0] = 'A'` → `_A`. ✓
+- Right within = `seq[3] = 'A'`, decoded as `RC(b'A') = b'T'` → `_T`. ✓
+
+The comment writes "reverse-complement("A") = '_T'", which applies RC to the *base*
+`'A'` to get `'T'`, then forms the label `_T`. This is correct but could be read as
+applying RC to the motif string `"A"` (which also gives `"T"` for a 1-mer). The
+description is unambiguous for k=1 but would be wrong for k>1 if interpreted as
+motif-level RC. Minor documentation risk for future test authors.
+
+---
+
+### 8.4 Missing Coverage
+
+#### IT-M1 — `WindowMotifAssigner::All` acceptance case is not tested
+
+**File:** No test file
+
+The only `All`-mode integration test (`all_requires_the_full_fragment_to_overlap_the_window`,
+line 1203) tests rejection: window `[10,19)` is 1 bp smaller than fragment `[10,20)`,
+so nothing is counted. There is no test where the window is large enough to fully
+contain the fragment (e.g., `[10,20)` or `[9,21)`), so the acceptance branch of the
+`All` predicate has no integration-level coverage. A bug where `All` always rejects
+would pass all current tests.
+
+---
+
+#### IT-M2 — No integration test for `k_within > 0 AND k_outside > 0` simultaneously
+
+**File:** No test file
+
+Every integration test sets either `k_within=1, k_outside=0` (the vast majority) or
+`k_within=0, k_outside=5` (the fallback test). The combined case — where both within
+and outside bases are present and the label is `"outside_within"` — is never exercised
+end-to-end. The label format, the encoding ordering (outside concatenated before within
+for the left end), and the collapse-complement behavior on full concatenated labels are
+all untested in integration.
+
+---
+
+#### IT-M3 — `collapse_complement` with odd `k_within + k_outside ≥ 3` is not tested
+
+**File:** No test file
+
+The `collapse_complement_merges_reverse_complement_equivalent_end_motifs` test (line
+1390) uses `k_within=1, k_outside=0`. Total k=1 (odd). For k=1, the middle-base
+heuristic and lexicographic canonicalization coincide: RC('G') = 'C' and 'C' < 'G',
+so both methods return 'C'. The two approaches can diverge for odd k≥3 (issue L15).
+No integration test exercises `collapse_complement=true` with k_within+k_outside ≥ 3
+and odd, so the L15 heuristic discrepancy is entirely untested.
+
+---
+
+#### IT-M4 — No multi-chromosome integration test
+
+**File:** All tests use `base_chromosomes(&["chr1"])`
+
+All 56 tests restrict processing to a single chromosome. The chromosome-iteration
+logic in `run()`, `chr_offsets_for_threads`, and the per-chromosome scaling lookup
+(`scaling_chr` in `ends.rs:510`) are never exercised with more than one chromosome.
+A regression in chromosome switching or off-by-one in tile assignment across chromosome
+boundaries would be invisible.
+
+---
+
+#### IT-M5 — Most tests use exactly one fragment
+
+**File:** Most tests
+
+Only three tests use multiple fragments: `cli_statistics_only_count_reads_from_tiles_with_relevant_windows`
+(2 fragments), `blacklist_gc_and_scaling_weights_combine_*` (3 fragments), and
+`cross_tile_fragment_is_counted_once_per_window_when_it_reaches_into_the_next_tile`
+(1 fragment spanning 2 tiles). All window-assignment tests, all clip-mode tests, all
+indel-filter tests, and all motif-label tests use exactly 1 fragment. Multi-fragment
+window accumulation — where motif counts stack across fragments in the same window — is
+essentially untested.
+
+---
+
+#### IT-M6 — No test for the B6 error path (incomplete scaling coverage)
+
+**File:** No test file
+
+`scaling_factors_weight_each_counted_end_motif` (line 470) provides a scaling file
+covering `[0, 256)` — the entire chromosome. There is no test where the scaling file
+has a gap and a fragment falls in an uncovered region. The B6 issue (opaque error
+message) is therefore not regression-tested.
+
+---
+
+#### IT-M7 — No regression test for B1 (ClipStrategy default after fix)
+
+**File:** No test file
+
+B1 is now fixed, but there is no test asserting `EndsConfig::new().clip.clip_strategy
+== ClipStrategy::Aligned`. Since `base_config` in the test suite explicitly sets
+`Aligned`, a future regression to `Raw` would not be caught by the integration tests.
+
+---
+
+#### IT-M8 — No test for proportion value precision in settings JSON (L14)
+
+**File:** No test file
+
+`settings_json_records_clip_and_window_assignment_semantics` (line 2143) does not use
+`WindowMotifAssigner::Proportion`. The L14 risk — that `proportion=0.2` could
+serialize as `"proportion=0.19999999999999998"` — has no test.
+
+---
+
+#### IT-M9 — `global_mode` tested with only one fragment
+
+**File:** `test_ends_command.rs:1489`
+
+`global_mode_counts_both_end_motifs_in_one_output_row` uses a single fragment.
+"Global mode" (no windowing) is the default when no `--by-size` or `--by-bed` is
+specified. With a single fragment the output must be a 1×N matrix. There is no test
+confirming that two fragments produce correctly accumulated counts in the same single
+output row.
+
+---
+
+#### IT-M10 — No test for the `bins.bed` 4th-column value (C7)
+
+**File:** No test file
+
+`windowed_runs_write_bins_bed_with_the_selected_windows` (line 2228) asserts:
+```rust
+assert!(rows[0].starts_with("chr1\t10\t11\t"));
+```
+The 4th column (overlap_perc from C7) is present in the output but never tested for
+correctness. Its value is undocumented and unvalidated. A regression changing the 4th
+column from a float to an integer, or from overlap percentage to some other statistic,
+would pass all current tests.
+
+---
+
+#### IT-M11 — No integration test for `k_within` or `k_outside` > 1 with KmerSource::Reference
+
+**File:** No test file
+
+All within-only tests use `k_within=1`. The fallback test uses `k_outside=5` with
+`KmerSource::Read` (not `KmerSource::Reference`). No test exercises reference-backed
+within-bases with `k_within > 1`. The `get_reference_code` logic for multi-base
+within reference lookup — including sentinel_n handling for any N in the k-mer — has
+no integration coverage.
+
+---
+
+### 8.5 Structural Issues
+
+#### IT-ST1 — Settings JSON tests use `contains()` only — cannot detect malformed JSON
+
+**File:** `test_ends_command.rs:2143-2180, 2268-2293`
+
+```rust
+assert!(settings.contains("\"k_within\": 1"));
+assert!(settings.contains("\"clip_strategy\": \"aligned\""));
+```
+
+These assertions confirm field presence but not JSON validity. A regression that
+introduced a trailing comma (breaking JSON syntax), duplicated a field, or omitted a
+field not currently asserted would go undetected. The tests should at minimum parse the
+JSON with `serde_json::from_str` to confirm it is valid, and ideally assert on the
+complete field set.
+
+---
+
+#### IT-ST2 — `by_size_windowing_writes_bins_bed` only checks "non-empty" and "chr1\t" prefix
+
+**File:** `test_ends_command.rs:2506-2508`
+
+```rust
+assert!(!bins_bed.trim().is_empty());
+assert!(bins_bed.lines().all(|row| row.starts_with("chr1\t")));
+```
+
+This does not verify the number of windows generated, their sizes, or whether the
+window size matches the requested `by_size = Some(20)`. The test passes for any
+non-empty chr1 BED output, including incorrect window boundaries.
+
+---
+
+#### IT-ST3 — Output prefix existence tests don't verify absence of un-prefixed files
+
+**File:** `test_ends_command.rs:2404-2439, 2542-2571`
+
+The prefix tests verify that `sampleA.end_motifs.sparse.npz` etc. exist. They do not
+verify that `ends.end_motifs.sparse.npz` (or any un-prefixed variant) was NOT created.
+A regression that wrote both the prefixed and un-prefixed copies would pass.
+
+---
+
+#### IT-ST4 — `both_kmer_sizes_zero_is_rejected` does not validate error message
+
+**File:** `test_ends_command.rs:2125-2141`
+
+```rust
+assert!(run(&cfg).is_err());
+```
+
+Only checks that an error is returned, not what message it carries. This is inconsistent
+with `unpaired_mode_rejects_require_proper_pair` (line 2314), which asserts the error
+contains `"--require-proper-pair cannot be used with --reads-are-fragments"`. A future
+change that returned the wrong error (e.g., a downstream panic rather than a validation
+error) would not be caught.
+
+---
+
+#### IT-ST5 — CLI tests don't exercise `--source-within reference`
+
+**File:** `test_ends_command.rs:263-340, 345-424`
+
+Both CLI tests omit `--source-within`. The CLI defaults to `KmerSource::Read` (no
+reference required). No CLI test exercises the full pipeline through the binary with
+`--source-within reference`, meaning the CLI argument parsing for that flag is not
+integration-tested at the binary level. Only the programmatic API tests use
+`KmerSource::Reference`.
+
+---
+
+#### IT-ST6 — All fixture fragments use the same start/length geometry
+
+**File:** Most tests use `simple_paired_fragment_bam("...", 10, 10, 4)`
+
+With rare exceptions (edge tests, cross-tile), every standard fragment is at position
+10 with aligned length 10. Bugs that only manifest for fragments at position 0,
+fragments whose k_outside window crosses the chromosome start, or fragments with
+lengths that interact with tile-size modulo arithmetic would not be caught by the
+standard geometry.
+
+---
+
+### 8.6 Test Suite Positive Observations
+
+For completeness, the following tests are particularly thorough:
+
+- **`blacklist_gc_and_scaling_weights_combine_to_the_exact_expected_endpoint_counts`**
+  (line 552): Three fragments with a blacklisted region, separate GC correction
+  weights per fragment, and per-region scaling factors, with exact per-motif
+  numerical assertions. This is the highest-fidelity end-to-end numerical test.
+
+- **`outside_reference_lookup_falls_back_to_exact_reference_fetch_when_the_motif_crosses_the_tile_slice`**
+  (line 994): Complete mental derivation of the tile-slice halo boundary condition,
+  verified against the exact reference sequence. The only test exercising the fallback
+  reference lookup code path.
+
+- **`cross_tile_fragment_is_counted_once_per_window_when_it_reaches_into_the_next_tile`**
+  (line 1160): Validates the halo/deduplication invariant for a fragment spanning two
+  tile boundaries. Critical behavioral guarantee with exact per-window assertions.
+
+- **`raw_endpoint_assignment_uses_the_shifted_assignment_boundaries`** +
+  **`aligned_endpoint_assignment_ignores_raw_shifted_boundary_positions`** +
+  **`fragment_length_filters_use_the_aligned_fragment_length_even_in_raw_mode`**
+  (lines 1575–1706): Three complementary tests that pin the Raw clip-strategy behavior
+  from three different angles (assignment boundaries, window selection, length filter).
+
+---
+
 ## Summary Table
 
 | # | Category | Severity | File(s) |
@@ -957,3 +1481,29 @@ even when the result is discarded, which is counterintuitive.
 | M8 | Style | Low | counting.rs |
 | M9 | Style | Low | motifs.rs |
 | M10 | Style | Low | counting.rs |
+| IT-I1 | Tests/Infra | Medium | fixtures/mod.rs, test_ends_command.rs |
+| IT-I2 | Tests/Infra | Low | fixtures/mod.rs |
+| IT-I3 | Tests/Infra | Low | test_ends_command.rs |
+| IT-I4 | Tests/Infra | Low | fixtures/mod.rs |
+| IT-S1 | Tests | Medium | test_ends_command.rs:829,883 |
+| IT-S2 | Tests | Medium | test_ends_command.rs:1202 |
+| IT-S3 | Tests | Low | test_ends_command.rs:1084 |
+| IT-S4 | Tests | Low | test_ends_command.rs:1153 |
+| IT-S6 | Tests | Low | test_ends_command.rs:422 |
+| IT-M1 | Tests | High | (no test) |
+| IT-M2 | Tests | High | (no test) |
+| IT-M3 | Tests | Medium | (no test) |
+| IT-M4 | Tests | Medium | (no test) |
+| IT-M5 | Tests | Medium | (no test) |
+| IT-M6 | Tests | Low | (no test) |
+| IT-M7 | Tests | Low | (no test) |
+| IT-M8 | Tests | Low | (no test) |
+| IT-M9 | Tests | Low | (no test) |
+| IT-M10 | Tests | Low | (no test) |
+| IT-M11 | Tests | Medium | (no test) |
+| IT-ST1 | Tests | Low | test_ends_command.rs |
+| IT-ST2 | Tests | Low | test_ends_command.rs:2506 |
+| IT-ST3 | Tests | Low | test_ends_command.rs:2426 |
+| IT-ST4 | Tests | Low | test_ends_command.rs:2125 |
+| IT-ST5 | Tests | Medium | test_ends_command.rs:263,345 |
+| IT-ST6 | Tests | Low | test_ends_command.rs |

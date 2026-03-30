@@ -3,7 +3,6 @@ use crate::shared::{
     blacklist::apply_blacklist_mask_to_seq,
     fragment::ends_fragment::{FragmentWithEnds, ResolvedFragmentEnd},
 };
-use std::sync::Arc;
 
 fn spec_for_k(k: u8) -> KmerSpec {
     let specs = build_kmer_specs(&[k]).expect("valid k-mer spec");
@@ -357,14 +356,30 @@ fn encode_within_code_reference_right_uses_reference_bases_ending_at_boundary() 
 }
 
 #[test]
-fn reference_motif_context_shares_code_table_when_within_and_outside_k_match() {
-    // Arrange
+fn reference_motif_context_uses_equivalent_codes_for_within_and_outside_when_k_match() {
+    // Arrange: matching `k` values may share an internal table, but the observable contract is
+    // simply that the same genomic slice produces the same code for each half.
     let motif_context = reference_motif_context(b"ACGTACGT", Some(2), Some(2));
+    let within_spec = motif_context.within_spec.as_ref().expect("within spec");
+    let outside_spec = motif_context.outside_spec.as_ref().expect("outside spec");
 
     // Act
-    let within_codes = motif_context.within_codes.as_ref().expect("within codes");
-    let outside_codes = motif_context.outside_codes.as_ref().expect("outside codes");
+    let within_code = get_reference_code(
+        2,
+        within_spec,
+        motif_context.within_codes.as_deref(),
+        &motif_context,
+    )
+    .expect("within code");
+    let outside_code = get_reference_code(
+        2,
+        outside_spec,
+        motif_context.outside_codes.as_deref(),
+        &motif_context,
+    )
+    .expect("outside code");
 
     // Assert
-    assert!(Arc::ptr_eq(within_codes, outside_codes));
+    assert_eq!(within_code, within_spec.encode_kmer_bytes(b"GT"));
+    assert_eq!(outside_code, outside_spec.encode_kmer_bytes(b"GT"));
 }

@@ -69,6 +69,26 @@ fn build_all_end_motif_order_collapses_single_base_reverse_complements() {
 }
 
 #[test]
+fn build_all_end_motif_order_enumerates_the_full_combined_outside_within_universe() {
+    // Arrange
+    let within_spec = spec_for_k(1);
+    let outside_spec = spec_for_k(1);
+
+    // Act
+    let motifs = build_all_end_motif_order(Some(&within_spec), Some(&outside_spec), false)
+        .expect("combined motif order");
+
+    // Assert: labels are sorted lexicographically after formatting as `<outside>_<within>`.
+    assert_eq!(
+        motifs,
+        vec![
+            "A_A", "A_C", "A_G", "A_T", "C_A", "C_C", "C_G", "C_T", "G_A", "G_C", "G_G",
+            "G_T", "T_A", "T_C", "T_G", "T_T",
+        ]
+    );
+}
+
+#[test]
 fn collect_end_motif_order_returns_sorted_union_of_observed_sparse_motifs() {
     // Arrange: the sparse path should keep only observed motifs, but it must still produce one
     // stable global order across all windows.

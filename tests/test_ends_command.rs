@@ -62,6 +62,26 @@ fn base_config(
     cfg
 }
 
+#[test]
+fn ends_config_new_defaults_to_aligned_clip_strategy() -> Result<()> {
+    // Arrange
+    let out_dir = TempDir::new()?;
+    let cfg = EndsConfig::new(
+        IOCArgs {
+            bam: out_dir.path().join("dummy.bam"),
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+        1,
+        0,
+    );
+
+    // Assert
+    assert_eq!(cfg.clip.clip_strategy, ClipStrategy::Aligned);
+    Ok(())
+}
+
 fn simple_paired_fragment_bam(
     name: &str,
     start: i64,
@@ -549,6 +569,234 @@ fn gc_file_weights_each_counted_end_motif_by_the_fragment_gc_correction() -> Res
 
 #[cfg(feature = "cmd_gc_bias")]
 #[test]
+fn blacklist_gc_and_scaling_weights_combine_to_the_exact_expected_endpoint_counts() -> Result<()> {
+    // Arrange: this fixture combines all three weighting/filtering layers in one run.
+    //
+    // We use four paired fragments of length 10 on one chromosome:
+    //
+    //   F1: [10,20)   = AAAAAAAAAA     -> GC 0%
+    //   F2: [40,50)   = CCCCCCCCCC     -> GC 100%
+    //   F3: [70,80)   = AAAAACCCCC     -> GC 50%
+    //   F4: [100,110) = GGGGGGGGGG     -> fully blacklisted
+    //
+    // The scaling bins fully cover the chromosome:
+    //
+    //   [0,30)   -> 1.0
+    //   [30,60)  -> 2.0
+    //   [60,75)  -> 1.0
+    //   [75,90)  -> 2.0
+    //   [90,120) -> 1.0
+    //
+    // So the fragment-level scaling averages are:
+    //
+    //   F1: 10 bp inside [0,30)                 -> 1.0
+    //   F2: 10 bp inside [30,60)                -> 2.0
+    //   F3: 5 bp in [60,75) and 5 bp in [75,90) -> (5*1 + 5*2) / 10 = 1.5
+    //   F4: irrelevant because the fragment is dropped by full-fragment blacklisting
+    //
+    // The blacklist BED has two roles:
+    //
+    //   [40,41)   masks only the left terminal base of F2
+    //   [100,110) fully covers F4, so `blacklist-strategy=all` drops that fragment
+    //
+    // The GC package is set up so length 10 gets:
+    //
+    //   GC 0%   -> weight 2.0
+    //   GC 50%  -> weight 4.0
+    //   GC 100% -> weight 3.0
+    //
+    // Endpoint windows are one base wide and isolate each expected end:
+    //
+    //   W0 [10,11)   -> F1 left
+    //   W1 [19,20)   -> F1 right
+    //   W2 [40,41)   -> F2 left, but masked by blacklist
+    //   W3 [49,50)   -> F2 right
+    //   W4 [70,71)   -> F3 left
+    //   W5 [79,80)   -> F3 right
+    //   W6 [100,101) -> F4 left, but whole fragment is blacklisted away
+    //
+    // Mental derivation of the exact final endpoint weights:
+    //
+    //   F1 left:  `_A` weight = GC 2.0 * scaling 1.0 = 2.0
+    //   F1 right: `_T` weight = GC 2.0 * scaling 1.0 = 2.0
+    //             right terminal base is A, which reverse-complements to T
+    //
+    //   F2 left:  skipped entirely because [40,41) is blacklist-masked
+    //   F2 right: `_G` weight = GC 3.0 * scaling 2.0 = 6.0
+    //             right terminal base is C, which reverse-complements to G
+    //
+    //   F3 left:  `_A` weight = GC 4.0 * scaling 1.5 = 6.0
+    //   F3 right: `_G` weight = GC 4.0 * scaling 1.5 = 6.0
+    //
+    //   F4 left:  skipped because the full fragment is blacklisted by `all`
+    //
+    // Therefore the row sums must be:
+    //
+    //   [2.0, 2.0, 0.0, 6.0, 6.0, 6.0, 0.0]
+    //
+    // and the global motif totals must be:
+    //
+    //   `_A` = 8.0
+    //   `_T` = 2.0
+    //   `_G` = 12.0
+    //   `_C` = 0.0
+    //   total = 22.0
+    let chromosome_sequence = format!(
+        "{}{}{}{}{}{}{}{}{}",
+        "T".repeat(10),
+        "A".repeat(10),
+        "T".repeat(20),
+        "C".repeat(10),
+        "T".repeat(20),
+        "AAAAACCCCC",
+        "T".repeat(20),
+        "G".repeat(10),
+        "T".repeat(10),
+    );
+    let reference = twobit_from_sequences(
+        "ends_blacklist_gc_scaling_reference",
+        vec![("chr1".to_string(), chromosome_sequence)],
+    )?;
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 120)],
+        vec![
+            paired_fragment(10, 10, 4),
+            paired_fragment(40, 10, 4),
+            paired_fragment(70, 10, 4),
+            paired_fragment(100, 10, 4),
+        ],
+        Vec::new(),
+        "ends_blacklist_gc_scaling",
+    )?;
+    let out_dir = TempDir::new()?;
+
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(
+        &windows_bed,
+        &[
+            ("chr1", 10, 11, "f1_left"),
+            ("chr1", 19, 20, "f1_right"),
+            ("chr1", 40, 41, "f2_left_masked"),
+            ("chr1", 49, 50, "f2_right"),
+            ("chr1", 70, 71, "f3_left"),
+            ("chr1", 79, 80, "f3_right"),
+            ("chr1", 100, 101, "f4_left_blacklisted"),
+        ],
+    )?;
+
+    let blacklist_bed = out_dir.path().join("blacklist.bed");
+    write_bed(
+        &blacklist_bed,
+        &[
+            ("chr1", 40, 41, "mask_f2_left"),
+            ("chr1", 100, 110, "drop_f4"),
+        ],
+    )?;
+
+    let scaling_path = out_dir.path().join("scaling.tsv");
+    std::fs::write(
+        &scaling_path,
+        concat!(
+            "chromosome\tstart\tend\tscaling_factor\n",
+            "chr1\t0\t30\t1\n",
+            "chr1\t30\t60\t2\n",
+            "chr1\t60\t75\t1\n",
+            "chr1\t75\t90\t2\n",
+            "chr1\t90\t120\t1\n",
+        ),
+    )?;
+
+    let gc_path = out_dir.path().join("gc_package.npz");
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 0,
+        length_edges: vec![10, 11, 20],
+        gc_edges: vec![0, 1, 50, 51, 100],
+        length_bin_frequencies: array![1.0_f64, 1.0_f64],
+        correction_matrix: array![
+            [2.0_f64, 1.0_f64, 4.0_f64, 3.0_f64],
+            [1.0_f64, 1.0_f64, 1.0_f64, 1.0_f64]
+        ],
+    };
+    package.write_npz(&gc_path)?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_within = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.blacklist = Some(vec![blacklist_bed]);
+    cfg.blacklist_strategy = BlacklistStrategy::All;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    cfg.set_scaling_factors(Some(scaling_path));
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        drop_invalid_gc: false,
+    });
+    cfg.tile_size = 1_000_000;
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert: one row per BED window, one column per single-base motif.
+    assert_eq!(matrix.shape(), &[7, 4]);
+
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 2.0);
+    assert_eq!(matrix.row(0).sum(), 2.0);
+
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_T"), 2.0);
+    assert_eq!(matrix.row(1).sum(), 2.0);
+
+    assert_eq!(matrix.row(2).sum(), 0.0);
+
+    assert_eq!(motif_count(&matrix, &motifs, 3, "_G"), 6.0);
+    assert_eq!(matrix.row(3).sum(), 6.0);
+
+    assert_eq!(motif_count(&matrix, &motifs, 4, "_A"), 6.0);
+    assert_eq!(matrix.row(4).sum(), 6.0);
+
+    assert_eq!(motif_count(&matrix, &motifs, 5, "_G"), 6.0);
+    assert_eq!(matrix.row(5).sum(), 6.0);
+
+    assert_eq!(matrix.row(6).sum(), 0.0);
+
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_C"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 0.0);
+
+    let total_a: f64 = matrix.column(
+        motifs.iter().position(|label| label == "_A").context("missing _A motif")?,
+    ).sum();
+    let total_t: f64 = matrix.column(
+        motifs.iter().position(|label| label == "_T").context("missing _T motif")?,
+    ).sum();
+    let total_g: f64 = matrix.column(
+        motifs.iter().position(|label| label == "_G").context("missing _G motif")?,
+    ).sum();
+    let total_c: f64 = matrix.column(
+        motifs.iter().position(|label| label == "_C").context("missing _C motif")?,
+    ).sum();
+    assert_eq!(total_a, 8.0);
+    assert_eq!(total_t, 2.0);
+    assert_eq!(total_g, 12.0);
+    assert_eq!(total_c, 0.0);
+    assert_eq!(matrix.sum(), 22.0);
+    Ok(())
+}
+
+#[cfg(feature = "cmd_gc_bias")]
+#[test]
 fn drop_invalid_gc_skips_fragments_when_gc_correction_cannot_be_computed() -> Result<()> {
     // Arrange: use a reference where the fragment GC window contains only `N`, so GC fraction
     // cannot be computed even though the correction package covers the fragment length. With
@@ -644,9 +892,17 @@ fn auto_indel_filter_keeps_indel_affected_read_backed_end_motifs() -> Result<()>
     run(&cfg)?;
     let (motifs, matrix) = read_sparse_output(out_dir.path())?;
 
-    // Assert: both ends survive, so one global row should contain two observed motifs.
+    // Assert: both ends survive.
+    //
+    // Mental derivation:
+    // - left read-backed within bases come directly from the forward read prefix: `ACGT`
+    // - right read-backed within bases come from the reverse read suffix `CCGG`
+    // - right ends are reverse-complemented on decode, but `CCGG` is palindromic
+    // - therefore the two observed labels are exactly `_ACGT` and `_CCGG`
     assert_eq!(matrix.shape(), &[1, 2]);
-    assert_eq!(motifs.len(), 2);
+    assert_eq!(motifs, vec!["_ACGT", "_CCGG"]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_ACGT"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_CCGG"), 1.0);
     assert_eq!(matrix.sum(), 2.0);
     Ok(())
 }
@@ -682,7 +938,13 @@ fn auto_indel_filter_skips_indel_affected_reference_backed_end_motifs() -> Resul
         insert_size: -16,
     };
     let bam = custom_paired_fragment_bam("ends_auto_indel_reference", forward, reverse)?;
-    let reference = simple_reference_twobit()?;
+    let reference = twobit_from_sequences(
+        "ends_auto_indel_reference_context",
+        vec![(
+            "chr1".to_string(),
+            format!("{}{}{}", "T".repeat(100), "TGCAAAAACCCCGGTT", "T".repeat(140)),
+        )],
+    )?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 4, 0);
@@ -701,8 +963,15 @@ fn auto_indel_filter_skips_indel_affected_reference_backed_end_motifs() -> Resul
     let (motifs, matrix) = read_sparse_output(out_dir.path())?;
 
     // Assert
+    //
+    // Mental derivation on the custom reference:
+    // - left reference-backed 4-mer would have been `TGCA`, but that end is indel-affected and skipped
+    // - right reference-backed 4-mer is ref[112..116) = `GGTT`
+    // - right-end decoding reverse-complements that to `AACC`
+    // - therefore the only surviving motif is `_AACC`
     assert_eq!(matrix.shape(), &[1, 1]);
-    assert_eq!(motifs.len(), 1);
+    assert_eq!(motifs, vec!["_AACC"]);
+    assert_eq!(matrix[(0, 0)], 1.0);
     assert_eq!(matrix.sum(), 1.0);
     Ok(())
 }
@@ -1004,6 +1273,45 @@ fn all_requires_the_full_fragment_to_overlap_the_window() -> Result<()> {
     // Assert
     assert_eq!(matrix.shape(), &[1, 4]);
     assert_eq!(matrix.sum(), 0.0);
+    Ok(())
+}
+
+#[test]
+fn all_assignment_counts_the_fragment_when_the_window_fully_contains_it() -> Result<()> {
+    // Arrange: fragment [10,20) is fully contained in [10,20), so `all` should accept it.
+    let bam = simple_paired_fragment_bam("ends_all_accept", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(&windows_bed, &[("chr1", 10, 20, "full")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_within = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::All,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert: `All` is fragment-centric once the fragment passes the overlap test, so both ends
+    // are counted into the same window.
+    assert_eq!(matrix.shape(), &[1, 4]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 1.0);
+    assert_eq!(matrix.sum(), 2.0);
     Ok(())
 }
 
@@ -1340,6 +1648,46 @@ fn all_motifs_dense_output_enumerates_outside_only_labels_when_k_within_is_zero(
 
     // Assert
     assert_eq!(motifs, vec!["A_", "C_", "G_", "T_"]);
+    Ok(())
+}
+
+#[test]
+fn reference_backed_inside_and_outside_bases_are_combined_into_the_expected_labels() -> Result<()> {
+    // Arrange: fragment [10,20) on the ACGT-repeat reference with `k_outside = 1, k_within = 2`.
+    //
+    // Mental derivation:
+    // - left outside base is seq[9]  = C
+    // - left within bases are seq[10..12) = GT
+    //   -> left label = `C_GT`
+    //
+    // - right within bases are seq[18..20) = GT
+    // - right outside base is seq[20] = A
+    // - right-end storage order is `GTA`, which reverse-complements to `TAC`
+    //   -> right label = `T_AC`
+    let bam = simple_paired_fragment_bam("ends_combined_inside_outside_reference", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 2, 1);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_within = KmerSource::Reference;
+    cfg.all_motifs = false;
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_sparse_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(motifs, vec!["C_GT", "T_AC"]);
+    assert_eq!(matrix.shape(), &[1, 2]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "C_GT"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "T_AC"), 1.0);
+    assert_eq!(matrix.sum(), 2.0);
     Ok(())
 }
 
@@ -1993,6 +2341,40 @@ fn outside_bases_require_ref_2bit_even_when_within_bases_come_from_reads() -> Re
 
     // Assert
     assert!(err.to_string().contains("--ref-2bit"));
+    Ok(())
+}
+
+#[test]
+fn scaling_factors_must_cover_every_counted_fragment() -> Result<()> {
+    // Arrange: fragment [10,20) is counted, but the scaling file only covers [0,10), so there
+    // is no overlapping scaling bin at all for that fragment.
+    let bam = simple_paired_fragment_bam("ends_scaling_gap", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let scaling_path = out_dir.path().join("scaling.tsv");
+    std::fs::write(
+        &scaling_path,
+        "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t2\n",
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_within = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_scaling_factors(Some(scaling_path));
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    let err = run(&cfg).expect_err("incomplete scaling coverage should fail loudly");
+
+    // Assert
+    assert!(
+        format!("{err:#}").contains("scaling TSV: bins on 'chr1' must end at chrom_len=256 (got end=10)")
+    );
     Ok(())
 }
 
