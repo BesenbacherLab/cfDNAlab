@@ -10,99 +10,86 @@ use crate::{
 };
 use std::path::PathBuf;
 
-/// Count fragment end- and breakpoint-motifs in a BAM-file.
-///
-/// For each fragment end, it extracts the `--k-outside` bases just outside the fragment and the
-/// `--k-inside` bases just inside the fragment. For the right fragment end, these are
-/// reverse-complemented together. Finally, they are combined to the 5'->3'-oriented
-/// "<outside>_<inside>" motif.
-///
-/// When `--collapse-complements` is passed, each motif is compared against its same-orientation
-/// complement (to keep the "<outside>_<inside>" form) and the lexicographically smallest
-/// motif is kept (summing the counts).
-///
-/// ## Visualization of counting
-///
-/// The following shows the counting for aligned fragment ends with and without collapsing of complements:
-///
-/// ```text
-/// For `--k-inside 2 --k-outside 2`:
-///
-/// Reference 5' >>>>>>>>>>>>>>> 3'
-///              ATCGTTTTTTTCATC
-/// Fragment     --|---------|--
-/// Forward     5' |>>>>>>>| 3'   
-///   Outside    AT
-///   Inside       CG  
-/// Reverse      3' |<<<<<<<<| 5'
-///   Inside               CA
-///   Outside                TC
-///
-/// Reverse (`CATC`) is reverse complemented to `GATG`
-///
-/// Counts (<outside>_<inside>): `AT_CG: 1`, `GA_TG: 1`
-///
-/// ---
-///
-/// When `--collapse-complements` is passed:
-///
-/// Compare `AT_CG` to complement `TA_GC`. Lexicographically smallest: `AT_CG`
-///
-/// Compare `GA_TG` to complement `CT_AC`. Lexicographically smallest: `CT_AC`
-///
-/// Counts (<outside>_<inside>): `AT_CG: 1`, `CT_AC: 1`
-/// ```
-///
-/// ## Output files
-///
-/// Writes either:
-///
-/// - a dense `.npy` matrix with shape `(# windows, # motifs)` when `--all-motifs` is enabled
-///
-/// - or a sparse `.npz` matrix otherwise
-///
-/// along with a text file with the matching motif labels.
-///
-/// Motif labels are saved as "<outside>_<inside>".
-///
-/// ## GC correction
-///
-/// Weight the contribution of each fragment based on their GC contents per fragment length.
-///
-/// ## Genomic smoothing (--scaling-factors)
-///
-/// Weight how genomic regions contribute to the count distribution(s), e.g., to reduce the
-/// influence of copy number alterations (if that is meaningful to your analysis).
-/// This weights the contribution of each fragment by region-wise precomputed scaling factors.
-///
-/// Can be precomputed with `cfdna coverage-weights`.
-///
-/// ## Window assignment
-///
-/// By default, a motif is counted in the window the fragment end falls in with the weight 1.0 (before correction/scaling).
-///
-/// Alternatively, we can weight the motif by how much the fragment overlaps the window or
-/// we can count both end motifs of a fragment if the *fragment midpoint* or a given
-/// *proportion* of positions overlaps the window.
-///
-/// ## Blacklisting
-///
-/// Ignores fragments that overlap blacklisted regions with a given proportion.
-///
-/// Motifs overlapping blacklisted regions are skipped.
-///
-/// ## Always-on exclusion criteria
-///
-/// The following criteria always exclude a read:
-///
-/// The read is secondary, supplementary or duplicate.
-/// The read failed quality check.
-///
-/// **Paired-end input only**:
-/// The read or mate read is unmapped.
-/// The read is mapped to a different `tid` than the mate.
-/// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
+const ENDS_ABOUT: &str = "Count fragment end- and breakpoint-motifs in a BAM-file.";
+
+const ENDS_LONG_ABOUT: &str = concat!(
+    "Count fragment end- and breakpoint-motifs in a BAM-file.\n\n",
+    "For each fragment end, it extracts the `--k-outside` bases just outside the fragment and the ",
+    "`--k-inside` bases just inside the fragment. For the right fragment end, these are ",
+    "reverse-complemented together. Finally, they are combined to the reference 5'->3'-oriented ",
+    "`\"<outside>_<inside>\"` motif.\n\n",
+    "When `--collapse-complements` is passed, each motif is compared against its same-orientation ",
+    "complement (to keep the `\"<outside>_<inside>\"` form) and the lexicographically smallest ",
+    "motif is kept (summing the counts).\n\n",
+    "## Visualization of counting\n\n",
+    "The following shows the counting for aligned fragment ends with and without collapsing of complements:\n\n",
+    r#"For `--k-inside 2 --k-outside 2`:
+
+---
+
+Reference 5' >>>>>>>>>>>>>>> 3'
+             ATCGTTTTTTTCATC
+Fragment     --|---------|--
+Forward     5' |>>>>>>>| 3'
+  Outside    AT
+  Inside       CG
+Reverse      3' |<<<<<<<<| 5'
+  Inside                CA
+  Outside                 TC
+
+Reverse (`CATC`) is reverse complemented to `GATG`
+
+Counts (`<outside>_<inside>`): `AT_CG: 1`, `GA_TG: 1`
+
+---
+
+When `--collapse-complements` is passed:
+
+Compare `AT_CG` to complement `TA_GC`. Lexicographically smallest: `AT_CG`
+
+Compare `GA_TG` to complement `CT_AC`. Lexicographically smallest: `CT_AC`
+
+Counts (`<outside>_<inside>`): `AT_CG: 1`, `CT_AC: 1`
+
+---
+"#,
+    "\n",
+    "## Output files\n\n",
+    "Writes either:\n\n",
+    "- a dense `.npy` matrix with shape `(# windows, # motifs)` when `--all-motifs` is enabled\n\n",
+    "- or a sparse `.npz` matrix otherwise\n\n",
+    "along with a text file with the matching motif labels.\n\n",
+    "Motif labels are saved as \"<outside>_<inside>\".\n\n",
+    "## GC correction\n\n",
+    "Weight the contribution of each fragment based on their GC contents per fragment length.\n\n",
+    "## Genomic smoothing (--scaling-factors)\n\n",
+    "Weight how genomic regions contribute to the count distribution(s), e.g., to reduce the ",
+    "influence of copy number alterations (if that is meaningful to your analysis). ",
+    "This weights the contribution of each fragment by region-wise precomputed scaling factors.\n\n",
+    "Can be precomputed with `cfdna coverage-weights`.\n\n",
+    "## Window assignment\n\n",
+    "By default, a motif is counted in the window the fragment end falls in with the weight 1.0 (before correction/scaling).\n\n",
+    "Alternatively, we can weight the motif by how much the fragment overlaps the window or ",
+    "we can count both end motifs of a fragment if the *fragment midpoint* or a given ",
+    "*proportion* of positions overlaps the window.\n\n",
+    "## Blacklisting\n\n",
+    "Ignores fragments that overlap blacklisted regions with a given proportion.\n\n",
+    "Motifs overlapping blacklisted regions are skipped.\n\n",
+    "## Always-on exclusion criteria\n\n",
+    "The following criteria always exclude a read:\n\n",
+    "The read is secondary, supplementary or duplicate. ",
+    "The read failed quality check.\n\n",
+    "**Paired-end input only**: ",
+    "The read or mate read is unmapped. ",
+    "The read is mapped to a different `tid` than the mate. ",
+    "The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`). ",
+);
+
 #[cfg_attr(feature = "cli", derive(clap::Args))]
+#[cfg_attr(
+    feature = "cli",
+    clap(about = ENDS_ABOUT, long_about = ENDS_LONG_ABOUT)
+)]
 #[derive(Clone)]
 pub struct EndsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
