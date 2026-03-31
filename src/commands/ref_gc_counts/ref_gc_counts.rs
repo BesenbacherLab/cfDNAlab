@@ -282,16 +282,22 @@ pub fn run(opt: &RefGCCountsConfig) -> Result<()> {
     )
     .context("Writing reference GC package failed")?;
 
-    // Write bins BED file
+    // Write window coordinates plus overlap metadata as TSV
     if !matches!(window_opt, WindowSpec::Global) {
         println!("Start: Writing window coordinates to disk");
-        let bins_path = opt.output_dir.join("ref_gc_bins.bed");
-        let mut bed_writer = create_text_writer(&bins_path).context("Create bed fail")?;
-        for (chr, start, end, _, overlap_perc) in &bin_info {
-            writeln!(bed_writer, "{}\t{}\t{}\t{}", chr, start, end, overlap_perc)
-                .context("Write bed line fail")?;
+        let bins_path = opt.output_dir.join("ref_gc_bins.tsv");
+        let mut tsv_writer = create_text_writer(&bins_path).context("Create bins TSV fail")?;
+        writeln!(tsv_writer, "chrom\tstart\tend\tblacklisted_fraction")
+            .context("Write bins TSV header fail")?;
+        for (chr, start, end, _, blacklist_overlap_fraction) in &bin_info {
+            writeln!(
+                tsv_writer,
+                "{}\t{}\t{}\t{}",
+                chr, start, end, blacklist_overlap_fraction
+            )
+            .context("Write bins TSV row fail")?;
         }
-        bed_writer.finish().context("Finalize bins.bed writer")?;
+        tsv_writer.finish().context("Finalize bins.tsv writer")?;
     }
 
     // Print execution time
@@ -437,7 +443,7 @@ fn process_chrom(
         let mut bl_ptr = 0;
         let mut bin_info = Vec::with_capacity(num_bins);
         for window in &windows {
-            let overlap_perc = compute_blacklist_overlap(
+            let blacklist_overlap_fraction = compute_blacklist_overlap(
                 blacklist_intervals,
                 Interval::new(window.start(), window.end())?,
                 0u64,
@@ -449,7 +455,7 @@ fn process_chrom(
                 window.end(),
                 // Note: index is a placeholder that is removed later
                 window.idx(),
-                overlap_perc,
+                blacklist_overlap_fraction,
             ));
         }
         Some(bin_info)
@@ -458,7 +464,7 @@ fn process_chrom(
         let mut bl_ptr = 0;
         let mut bin_info = Vec::with_capacity(num_bins);
         for window in &windows {
-            let overlap_perc = compute_blacklist_overlap(
+            let blacklist_overlap_fraction = compute_blacklist_overlap(
                 blacklist_intervals,
                 Interval::new(window.start(), window.end())?,
                 0u64,
@@ -469,7 +475,7 @@ fn process_chrom(
                 window.start(),
                 window.end(),
                 window.idx(),
-                overlap_perc,
+                blacklist_overlap_fraction,
             ));
         }
         Some(bin_info)

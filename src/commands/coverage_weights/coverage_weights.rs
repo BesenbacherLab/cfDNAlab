@@ -121,19 +121,18 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
         global_avg_overlap_coverage
     );
 
-    // Write window coordinates as BED file to output_dir
-    // Write bins BED file
+    // Write stride-bin coordinates and scaling factors as TSV to output_dir
 
     println!("Start: Writing stride-bin coordinates and scaling factors to disk");
     let file_name = dot_join(&[opt.output_prefix.as_str(), "scaling_factors.tsv"]);
-    let mut bed_writer = BufWriter::new(
+    let mut tsv_writer = BufWriter::new(
         File::create(opt.ioc.output_dir.join(file_name)).context("Creating tsv failed")?,
     );
     writeln!(
-        bed_writer,
+        tsv_writer,
         "chromosome\tstart\tend\tavg_pos_cov\tavg_overlapping_pos_cov\tscaling_factor"
     )
-    .context("Write bed line fail")?;
+    .context("Write TSV header fail")?;
     for chr in chromosomes {
         let bins = bins_by_chr
             .get(&chr)
@@ -141,7 +140,7 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
 
         for bin in bins.iter() {
             writeln!(
-                bed_writer,
+                tsv_writer,
                 "{}\t{}\t{}\t{}\t{}\t{}",
                 chr,
                 bin.start(),
@@ -150,7 +149,7 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
                 bin.avg_overlap_coverage,
                 bin.scaling_factor
             )
-            .context("Write tsv line fail")?;
+            .context("Write TSV row fail")?;
         }
     }
 

@@ -2105,11 +2105,10 @@ fn sparse_output_is_the_default_when_all_motifs_is_disabled() -> Result<()> {
     assert_eq!(matrix.shape(), &[1, 2]);
     assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);
     assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 1.0);
-    assert!(settings.contains("\"k_inside\": 1"));
-    assert!(settings.contains("\"k_outside\": 0"));
-    assert!(settings.contains("\"source_inside\": \"reference\""));
-    assert!(!settings.contains("\"output_format\""));
-    assert!(!settings.contains("\"all_motifs\""));
+    assert_eq!(
+        settings,
+        "{\n  \"source_inside\": \"reference\",\n  \"clip_strategy\": \"aligned\",\n  \"window_assignment\": \"endpoint\",\n  \"collapse_complement\": false,\n}\n"
+    );
     Ok(())
 }
 
@@ -2137,9 +2136,10 @@ fn dense_all_motifs_output_still_uses_the_same_settings_sidecar() -> Result<()> 
     // Assert
     assert!(dense_output_paths(out_dir.path()).0.exists());
     assert!(!sparse_output_paths(out_dir.path()).0.exists());
-    assert!(settings.contains("\"fragment_length_basis\": \"aligned\""));
-    assert!(!settings.contains("\"output_format\""));
-    assert!(!settings.contains("\"all_motifs\""));
+    assert_eq!(
+        settings,
+        "{\n  \"source_inside\": \"reference\",\n  \"clip_strategy\": \"aligned\",\n  \"window_assignment\": \"endpoint\",\n  \"collapse_complement\": false,\n}\n"
+    );
     Ok(())
 }
 
@@ -2169,7 +2169,7 @@ fn global_mode_counts_both_end_motifs_in_one_output_row() -> Result<()> {
     assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);
     assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 1.0);
     assert_eq!(matrix.sum(), 2.0);
-    assert!(!out_dir.path().join("ends.bins.bed").exists());
+    assert!(!out_dir.path().join("ends.bins.tsv").exists());
     Ok(())
 }
 
@@ -2979,8 +2979,12 @@ fn both_kmer_sizes_zero_is_rejected() -> Result<()> {
 }
 
 #[test]
-fn settings_json_records_clip_and_window_assignment_semantics() -> Result<()> {
-    // Arrange: the settings sidecar should tell downstream users how the motifs were defined.
+fn settings_json_keeps_the_runtime_fields_needed_to_interpret_output() -> Result<()> {
+    // Arrange: this run changes only fields that still belong in the sidecar contract:
+    // - source_inside = read
+    // - clip_strategy = drop
+    // - window_assignment = endpoint
+    // - collapse_complement = false
     let bam = single_read_bam(
         "ends_settings_semantics",
         10,
@@ -3010,10 +3014,17 @@ fn settings_json_records_clip_and_window_assignment_semantics() -> Result<()> {
     let settings = read_text_file(&settings_path(out_dir.path()))?;
 
     // Assert
-    assert!(settings.contains("\"clip_strategy\": \"drop\""));
-    assert!(settings.contains("\"window_assignment\": \"endpoint\""));
-    assert!(settings.contains("\"reads_are_fragments\": true"));
-    assert!(settings.contains("\"source_inside\": \"read\""));
+    assert_eq!(
+        settings,
+        concat!(
+            "{\n",
+            "  \"source_inside\": \"read\",\n",
+            "  \"clip_strategy\": \"drop\",\n",
+            "  \"window_assignment\": \"endpoint\",\n",
+            "  \"collapse_complement\": false,\n",
+            "}\n"
+        )
+    );
     Ok(())
 }
 
@@ -3099,9 +3110,9 @@ fn scaling_factors_must_cover_every_counted_fragment() -> Result<()> {
 }
 
 #[test]
-fn windowed_runs_write_bins_bed_with_the_selected_windows() -> Result<()> {
-    // Arrange: in BED-windowed mode the command should persist the window coordinates it used.
-    let bam = simple_paired_fragment_bam("ends_bins_bed", 10, 10, 4)?;
+fn windowed_runs_write_bins_tsv_with_the_selected_windows() -> Result<()> {
+    // Arrange: in BED-windowed mode the command should persist the selected windows as TSV.
+    let bam = simple_paired_fragment_bam("ends_bins_tsv", 10, 10, 4)?;
     let reference = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
@@ -3129,19 +3140,25 @@ fn windowed_runs_write_bins_bed_with_the_selected_windows() -> Result<()> {
 
     // Act
     run(&cfg)?;
-    let bins_bed = read_text_file(&out_dir.path().join("ends.bins.bed"))?;
+    let bins_tsv = read_text_file(&out_dir.path().join("ends.bins.tsv"))?;
 
-    // Assert: BED rows should preserve the selected windows.
-    let rows: Vec<&str> = bins_bed.lines().collect();
-    assert_eq!(rows.len(), 2);
-    assert!(rows[0].starts_with("chr1\t10\t11\t"));
-    assert!(rows[1].starts_with("chr1\t19\t20\t"));
+    // Assert: header plus one row per selected window.
+    let rows: Vec<&str> = bins_tsv.lines().collect();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0], "chrom\tstart\tend\tblacklisted_fraction");
+    assert!(rows[1].starts_with("chr1\t10\t11\t"));
+    assert!(rows[2].starts_with("chr1\t19\t20\t"));
     Ok(())
 }
 
 #[test]
-fn settings_json_records_fragment_length_bounds() -> Result<()> {
-    // Arrange: the sidecar should tell downstream users exactly which aligned fragment lengths were kept.
+fn settings_json_ignores_fragment_length_bounds_but_keeps_motif_definition_fields() -> Result<()> {
+    // Arrange:
+    // - fragment-length bounds change counting eligibility only, so they should not appear
+    // - source_inside stays reference
+    // - clip_strategy stays aligned
+    // - window_assignment stays endpoint
+    // - collapse_complement stays false
     let bam = simple_paired_fragment_bam("ends_settings_lengths", 10, 10, 4)?;
     let reference = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
@@ -3161,9 +3178,17 @@ fn settings_json_records_fragment_length_bounds() -> Result<()> {
     let settings = read_text_file(&settings_path(out_dir.path()))?;
 
     // Assert
-    assert!(settings.contains("\"min_fragment_length\": 9"));
-    assert!(settings.contains("\"max_fragment_length\": 11"));
-    assert!(settings.contains("\"fragment_length_basis\": \"aligned\""));
+    assert_eq!(
+        settings,
+        concat!(
+            "{\n",
+            "  \"source_inside\": \"reference\",\n",
+            "  \"clip_strategy\": \"aligned\",\n",
+            "  \"window_assignment\": \"endpoint\",\n",
+            "  \"collapse_complement\": false,\n",
+            "}\n"
+        )
+    );
     Ok(())
 }
 
@@ -3352,7 +3377,7 @@ fn default_window_assignment_is_endpoint() -> Result<()> {
 }
 
 #[test]
-fn by_size_windowing_writes_bins_bed() -> Result<()> {
+fn by_size_windowing_writes_bins_tsv() -> Result<()> {
     // Arrange: fixed-size windowing should also persist the resolved window coordinates.
     let bam = simple_paired_fragment_bam("ends_by_size_bins", 10, 10, 4)?;
     let reference = simple_reference_twobit()?;
@@ -3374,17 +3399,19 @@ fn by_size_windowing_writes_bins_bed() -> Result<()> {
 
     // Act
     run(&cfg)?;
-    let bins_bed = read_text_file(&out_dir.path().join("ends.bins.bed"))?;
+    let bins_tsv = read_text_file(&out_dir.path().join("ends.bins.tsv"))?;
 
     // Assert
-    assert!(!bins_bed.trim().is_empty());
-    assert!(bins_bed.lines().all(|row| row.starts_with("chr1\t")));
+    let rows: Vec<&str> = bins_tsv.lines().collect();
+    assert!(!rows.is_empty());
+    assert_eq!(rows[0], "chrom\tstart\tend\tblacklisted_fraction");
+    assert!(rows.iter().skip(1).all(|row| row.starts_with("chr1\t")));
     Ok(())
 }
 
 #[test]
-fn output_prefix_is_applied_to_bins_bed_for_windowed_runs() -> Result<()> {
-    // Arrange: prefixed runs should namespace the auxiliary bins BED too.
+fn output_prefix_is_applied_to_bins_tsv_for_windowed_runs() -> Result<()> {
+    // Arrange: prefixed runs should namespace the auxiliary bins TSV too.
     let bam = simple_paired_fragment_bam("ends_prefixed_bins", 10, 10, 4)?;
     let reference = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
@@ -3408,7 +3435,7 @@ fn output_prefix_is_applied_to_bins_bed_for_windowed_runs() -> Result<()> {
     run(&cfg)?;
 
     // Assert
-    assert!(out_dir.path().join("sampleA.bins.bed").exists());
+    assert!(out_dir.path().join("sampleA.bins.tsv").exists());
     Ok(())
 }
 
@@ -3474,7 +3501,7 @@ fn empty_output_prefix_writes_unprefixed_primary_outputs() -> Result<()> {
 }
 
 #[test]
-fn empty_output_prefix_writes_unprefixed_bins_bed_for_windowed_runs() -> Result<()> {
+fn empty_output_prefix_writes_unprefixed_bins_tsv_for_windowed_runs() -> Result<()> {
     // Arrange: the empty-prefix contract should also apply to auxiliary window outputs.
     let bam = simple_paired_fragment_bam("ends_empty_prefix_bins", 10, 10, 4)?;
     let reference = simple_reference_twobit()?;
@@ -3499,7 +3526,7 @@ fn empty_output_prefix_writes_unprefixed_bins_bed_for_windowed_runs() -> Result<
     run(&cfg)?;
 
     // Assert
-    assert!(out_dir.path().join("bins.bed").exists());
+    assert!(out_dir.path().join("bins.tsv").exists());
     Ok(())
 }
 

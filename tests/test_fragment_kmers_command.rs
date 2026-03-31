@@ -1,3 +1,87 @@
+#![cfg(feature = "cmd_fragment_kmers")]
+
+mod fixtures;
+
+use anyhow::Result;
+use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
+use cfdnalab::commands::fragment_kmers::{config::FragmentKmersConfig, fragment_kmers::run};
+use cfdnalab::shared::io::dot_join;
+use fixtures::{simple_inward_bam, simple_reference_twobit, write_bed};
+use tempfile::TempDir;
+
+fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
+    ChromosomeArgs {
+        chromosomes: Some(chrs.iter().map(|chr| chr.to_string()).collect()),
+        chromosomes_file: None,
+    }
+}
+
+#[test]
+fn bed_windowed_runs_write_prefixed_bins_tsv_with_exact_blacklisted_fractions() -> Result<()> {
+    // Arrange:
+    // - `simple_inward_bam()` gives one 60 bp fragment on chr1 spanning [20,80).
+    // - The two BED windows are [10,20) and [20,30).
+    // - The blacklist interval [15,20) overlaps only the first window for 5 of its 10 bases.
+    // - With a non-empty output prefix, the bins metadata should follow the same prefixed filename
+    //   contract as the primary count outputs.
+    let bam = simple_inward_bam()?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    let blacklist_bed = out_dir.path().join("blacklist.bed");
+    write_bed(
+        &windows_bed,
+        &[("chr1", 10, 20, "left"), ("chr1", 20, 30, "right")],
+    )?;
+    write_bed(&blacklist_bed, &[("chr1", 15, 20, "masked")])?;
+
+    let mut cfg = FragmentKmersConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 1,
+        },
+        cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+            ref_2bit: reference.path.clone(),
+        },
+        base_chromosomes(&["chr1"]),
+    );
+    cfg.set_output_prefix("sampleA".to_string());
+    cfg.set_kmer_sizes(vec![1]);
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_blacklist(Some(vec![blacklist_bed]));
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 60;
+        frag.max_fragment_length = 60;
+    }
+
+    // Act
+    run(&cfg)?;
+    let bins_tsv = std::fs::read_to_string(
+        out_dir
+            .path()
+            .join(dot_join(&["sampleA", "bins.tsv"])),
+    )?;
+
+    // Assert
+    assert_eq!(
+        bins_tsv,
+        concat!(
+            "chrom\tstart\tend\tblacklisted_fraction\n",
+            "chr1\t10\t20\t0.5\n",
+            "chr1\t20\t30\t0\n"
+        )
+    );
+    assert!(!out_dir.path().join("bins.tsv").exists());
+    Ok(())
+}
+
 // #![cfg(feature = "cmd_fragment_kmers_tests")]
 
 // mod fixtures;

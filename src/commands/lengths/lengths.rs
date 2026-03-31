@@ -271,13 +271,19 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 for (window_index, length_counts) in counts.into_iter().enumerate() {
                     let start = window_index as u64 * *window_bp;
                     let end = (start + *window_bp).min(chrom_len);
-                    let overlap_perc = compute_blacklist_overlap(
+                    let blacklist_overlap_fraction = compute_blacklist_overlap(
                         blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
                         Interval::new(start, end)?,
                         0u64,
                         &mut bl_ptr,
                     );
-                    bin_info.push((chr.clone(), start, end, window_index as u64, overlap_perc));
+                    bin_info.push((
+                        chr.clone(),
+                        start,
+                        end,
+                        window_index as u64,
+                        blacklist_overlap_fraction,
+                    ));
                     all_bins.push(length_counts);
                 }
             }
@@ -313,7 +319,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 // Create bin info
                 let mut bl_ptr = 0;
                 for (window, lc) in wchr_slice.iter().zip(counts.into_iter()) {
-                    let overlap_perc = compute_blacklist_overlap(
+                    let blacklist_overlap_fraction = compute_blacklist_overlap(
                         blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
                         window.interval,
                         0u64,
@@ -325,7 +331,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                         window.end(),
                         // Preserve the original window index for downstream ordering and output
                         window.idx(),
-                        overlap_perc,
+                        blacklist_overlap_fraction,
                     ));
                     all_bins.push(lc);
                 }
@@ -435,17 +441,22 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         }
     }
 
-    // Write window coordinates as BED file to output_dir
-    // Write bins BED file
+    // Write window coordinates plus overlap metadata as TSV to output_dir
     if !matches!(window_opt, WindowSpec::Global) {
         println!("Start: Writing window coordinates to disk");
-        let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.bed"]));
-        let mut bed_writer = create_text_writer(&bins_path).context("Create bed fail")?;
-        for (chr, start, end, _, overlap_perc) in &bin_info {
-            writeln!(bed_writer, "{}\t{}\t{}\t{}", chr, start, end, overlap_perc)
-                .context("Write bed line fail")?;
+        let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.tsv"]));
+        let mut tsv_writer = create_text_writer(&bins_path).context("Create bins TSV fail")?;
+        writeln!(tsv_writer, "chrom\tstart\tend\tblacklisted_fraction")
+            .context("Write bins TSV header fail")?;
+        for (chr, start, end, _, blacklist_overlap_fraction) in &bin_info {
+            writeln!(
+                tsv_writer,
+                "{}\t{}\t{}\t{}",
+                chr, start, end, blacklist_overlap_fraction
+            )
+            .context("Write bins TSV row fail")?;
         }
-        bed_writer.finish().context("Finalize bins.bed writer")?;
+        tsv_writer.finish().context("Finalize bins.tsv writer")?;
     }
 
     println!();

@@ -1,8 +1,5 @@
 use super::*;
-use crate::commands::{
-    cli_common::{ChromosomeArgs, IOCArgs},
-    ends::config_structs::AssignMotifToWindowArgs,
-};
+use crate::commands::cli_common::{ChromosomeArgs, IOCArgs};
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -62,27 +59,31 @@ fn stack_end_motif_counts_errors_when_a_bin_contains_an_unknown_motif() {
 }
 
 #[test]
-fn write_end_settings_json_serializes_proportion_assignment_without_float_noise() {
-    // Arrange: `0.1 + 0.2` is the classic floating-point trap and often becomes
-    // `0.30000000000000004`. The sidecar should still serialize the human meaning, `0.3`.
+fn write_end_settings_json_writes_the_minimal_interpretation_sidecar() {
+    // Arrange: the minimal default config has
+    // - inside source: read
+    // - clip strategy: aligned
+    // - window assignment: endpoint
+    // - collapse_complement: false
+    // Those are the fields currently retained in the sidecar.
     let out_dir = TempDir::new().expect("tempdir");
-    let mut cfg = minimal_config(out_dir.path());
-    cfg.set_window_assignment(AssignMotifToWindowArgs {
-        assign_by: WindowMotifAssigner::Proportion(0.1 + 0.2),
-    });
+    let cfg = minimal_config(out_dir.path());
 
+    // Act
     write_end_settings_json(out_dir.path(), "ends", &cfg).expect("settings json should write");
     let settings = std::fs::read_to_string(out_dir.path().join("ends.end_motif_settings.json"))
         .expect("settings json should be readable");
 
-    assert!(settings.contains("\"window_assignment\": \"proportion=0.3\""));
-}
-
-#[test]
-fn format_proportion_threshold_keeps_a_trailing_decimal_for_whole_numbers() {
-    // Arrange / Act / Assert:
-    // We keep `1.0` and `0.0` rather than collapsing them to `1` and `0` so the value still
-    // reads like a proportion threshold in the sidecar.
-    assert_eq!(format_proportion_threshold(1.0), "1.0");
-    assert_eq!(format_proportion_threshold(0.0), "0.0");
+    // Assert
+    assert_eq!(
+        settings,
+        concat!(
+            "{\n",
+            "  \"source_inside\": \"read\",\n",
+            "  \"clip_strategy\": \"aligned\",\n",
+            "  \"window_assignment\": \"endpoint\",\n",
+            "  \"collapse_complement\": false,\n",
+            "}\n"
+        )
+    );
 }

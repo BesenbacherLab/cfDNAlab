@@ -2124,6 +2124,67 @@ mod tests_lengths_command {
         );
         Ok(())
     }
+
+    #[test]
+    fn bed_windowed_runs_write_prefixed_bins_tsv_with_exact_blacklisted_fractions() -> Result<()> {
+        // Arrange:
+        // - `simple_inward_bam()` gives one 60 bp fragment on chr1 spanning [20,80).
+        // - The two BED windows are [10,20) and [20,30).
+        // - The blacklist interval [15,20) overlaps only the first window for 5 of its 10 bases.
+        // - Therefore the persisted window metadata must be:
+        //     chr1  10  20  0.5
+        //     chr1  20  30  0
+        let bam = simple_inward_bam()?;
+        let out_dir = TempDir::new()?;
+        let windows_bed = out_dir.path().join("windows.bed");
+        let blacklist_bed = out_dir.path().join("blacklist.bed");
+        write_bed(
+            &windows_bed,
+            &[("chr1", 10, 20, "left"), ("chr1", 20, 30, "right")],
+        )?;
+        write_bed(&blacklist_bed, &[("chr1", 15, 20, "masked")])?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.output_prefix = "sampleA".to_string();
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(windows_bed),
+        });
+        cfg.blacklist = Some(vec![blacklist_bed]);
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 60;
+            frag.max_fragment_length = 60;
+        }
+
+        // Act
+        run(&cfg)?;
+        let bins_tsv = std::fs::read_to_string(
+            out_dir
+                .path()
+                .join(dot_join(&["sampleA", "bins.tsv"])),
+        )?;
+
+        // Assert
+        assert_eq!(
+            bins_tsv,
+            concat!(
+                "chrom\tstart\tend\tblacklisted_fraction\n",
+                "chr1\t10\t20\t0.5\n",
+                "chr1\t20\t30\t0\n"
+            )
+        );
+        Ok(())
+    }
 }
 
 mod tests_lengths_tiling_reducer {
@@ -2397,6 +2458,7 @@ mod tests_lengths_tiling_reducer {
         assert!(res.is_none());
         Ok(())
     }
+
 }
 
 mod tests_lengths_tiling_helpers {
@@ -2543,4 +2605,5 @@ mod tests_lengths_tiling_helpers {
         let err = Tile::from_coords("chr1".to_string(), 0, 0, 100, 100, 80, 120).unwrap_err();
         assert!(format!("{err}").contains("interval end (100) must be greater than start (100)"));
     }
+
 }

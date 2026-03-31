@@ -325,17 +325,22 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
 
     write_end_settings_json(&opt.ioc.output_dir, prefix, opt)?;
 
-    // Write window coordinates as BED file to output_dir
-    // Write bins BED file
+    // Write window coordinates plus overlap metadata as TSV to output_dir
     if !matches!(window_opt, WindowSpec::Global) {
         println!("Start: Writing window coordinates to disk");
-        let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.bed"]));
-        let mut bed_writer = create_text_writer(&bins_path).context("Create bed fail")?;
-        for (chr, start, end, _, overlap_perc) in &bin_info {
-            writeln!(bed_writer, "{}\t{}\t{}\t{}", chr, start, end, overlap_perc)
-                .context("Write bed line fail")?;
+        let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.tsv"]));
+        let mut tsv_writer = create_text_writer(&bins_path).context("Create bins TSV fail")?;
+        writeln!(tsv_writer, "chrom\tstart\tend\tblacklisted_fraction")
+            .context("Write bins TSV header fail")?;
+        for (chr, start, end, _, blacklist_overlap_fraction) in &bin_info {
+            writeln!(
+                tsv_writer,
+                "{}\t{}\t{}\t{}",
+                chr, start, end, blacklist_overlap_fraction
+            )
+            .context("Write bins TSV row fail")?;
         }
-        bed_writer.finish().context("Finalize bins.bed writer")?;
+        tsv_writer.finish().context("Finalize bins.tsv writer")?;
     }
 
     println!();

@@ -89,15 +89,7 @@ pub fn write_end_settings_json(output_dir: &Path, prefix: &str, opt: &EndsConfig
     let settings_path = output_dir.join(dot_join(&[prefix, "end_motif_settings.json"]));
     let mut settings_writer = create_text_writer(&settings_path)
         .with_context(|| format!("create {}", settings_path.display()))?;
-    let max_soft_clips = opt
-        .clip
-        .max_soft_clips
-        .map_or_else(|| "null".to_string(), |value| value.to_string());
     writeln!(settings_writer, "{{")
-        .with_context(|| format!("write {}", settings_path.display()))?;
-    writeln!(settings_writer, "  \"k_inside\": {},", opt.k_inside)
-        .with_context(|| format!("write {}", settings_path.display()))?;
-    writeln!(settings_writer, "  \"k_outside\": {},", opt.k_outside)
         .with_context(|| format!("write {}", settings_path.display()))?;
     writeln!(
         settings_writer,
@@ -111,14 +103,6 @@ pub fn write_end_settings_json(output_dir: &Path, prefix: &str, opt: &EndsConfig
         clip_strategy_name(opt.clip.clip_strategy)
     )
     .with_context(|| format!("write {}", settings_path.display()))?;
-    writeln!(settings_writer, "  \"max_soft_clips\": {max_soft_clips},")
-        .with_context(|| format!("write {}", settings_path.display()))?;
-    writeln!(
-        settings_writer,
-        "  \"indel_filter\": \"{}\",",
-        indel_filter_name(opt.indel_filter)
-    )
-    .with_context(|| format!("write {}", settings_path.display()))?;
     writeln!(
         settings_writer,
         "  \"window_assignment\": \"{}\",",
@@ -129,26 +113,6 @@ pub fn write_end_settings_json(output_dir: &Path, prefix: &str, opt: &EndsConfig
         settings_writer,
         "  \"collapse_complement\": {},",
         opt.collapse_complement
-    )
-    .with_context(|| format!("write {}", settings_path.display()))?;
-    writeln!(
-        settings_writer,
-        "  \"reads_are_fragments\": {},",
-        opt.unpaired.reads_are_fragments
-    )
-    .with_context(|| format!("write {}", settings_path.display()))?;
-    writeln!(settings_writer, "  \"fragment_length_basis\": \"aligned\",")
-        .with_context(|| format!("write {}", settings_path.display()))?;
-    writeln!(
-        settings_writer,
-        "  \"min_fragment_length\": {},",
-        opt.fragment_lengths.min_fragment_length
-    )
-    .with_context(|| format!("write {}", settings_path.display()))?;
-    writeln!(
-        settings_writer,
-        "  \"max_fragment_length\": {}",
-        opt.fragment_lengths.max_fragment_length
     )
     .with_context(|| format!("write {}", settings_path.display()))?;
     writeln!(settings_writer, "}}")
@@ -231,27 +195,6 @@ fn clip_strategy_name(strategy: ClipStrategy) -> &'static str {
         ClipStrategy::Aligned => "aligned",
         ClipStrategy::Raw => "raw",
         ClipStrategy::Drop => "drop",
-    }
-}
-
-/// Convert the indel-filter enum to its JSON-sidecar string form.
-///
-/// Parameters
-/// ----------
-/// - `filter`:
-///   Indel-motif filtering policy
-///
-/// Returns
-/// -------
-/// - `&'static str`:
-///   Stable sidecar string for that setting
-fn indel_filter_name(filter: crate::shared::indel_mode::IndelMotifFilterPolicy) -> &'static str {
-    match filter {
-        crate::shared::indel_mode::IndelMotifFilterPolicy::Auto => "auto",
-        crate::shared::indel_mode::IndelMotifFilterPolicy::SkipAffectedEnd => "skip-affected-end",
-        crate::shared::indel_mode::IndelMotifFilterPolicy::SkipAffectedFragment => {
-            "skip-affected-fragment"
-        }
     }
 }
 
