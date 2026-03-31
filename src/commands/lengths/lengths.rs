@@ -18,7 +18,7 @@ use crate::{
     shared::{
         bam::create_chromosome_reader,
         bed::load_windows_from_bed,
-        blacklist::{compute_blacklist_overlap, is_blacklisted},
+        blacklist::is_blacklisted,
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
         fragment_iterators::fragments_with_indel_counts_from_bam,
         interval::{IndexedInterval, Interval},
@@ -34,6 +34,7 @@ use crate::{
             Tile, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
         },
         window_fetch::fetch_span_for_tile,
+        windowing::{build_bin_info, compute_window_offsets},
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -221,7 +222,6 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     println!("Start: Reducing temporary tile files");
 
     let mut all_bins: Vec<LengthCounts> = Vec::new();
-    let mut bin_info: Vec<(String, u64, u64, u64, f64)> = Vec::new();
 
     match &window_opt {
         WindowSpec::Global => {
@@ -265,27 +265,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                     chr,
                     counts.len()
                 );
-
-                // Create bin info
-                let mut bl_ptr = 0;
-                for (window_index, length_counts) in counts.into_iter().enumerate() {
-                    let start = window_index as u64 * *window_bp;
-                    let end = (start + *window_bp).min(chrom_len);
-                    let blacklist_overlap_fraction = compute_blacklist_overlap(
-                        blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
-                        Interval::new(start, end)?,
-                        0u64,
-                        &mut bl_ptr,
-                    );
-                    bin_info.push((
-                        chr.clone(),
-                        start,
-                        end,
-                        window_index as u64,
-                        blacklist_overlap_fraction,
-                    ));
-                    all_bins.push(length_counts);
-                }
+                all_bins.extend(counts);
             }
         }
         WindowSpec::Bed(_) => {
@@ -315,29 +295,26 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                     chr,
                     counts.len()
                 );
-
-                // Create bin info
-                let mut bl_ptr = 0;
-                for (window, lc) in wchr_slice.iter().zip(counts.into_iter()) {
-                    let blacklist_overlap_fraction = compute_blacklist_overlap(
-                        blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
-                        window.interval,
-                        0u64,
-                        &mut bl_ptr,
-                    );
-                    bin_info.push((
-                        chr.clone(),
-                        window.start(),
-                        window.end(),
-                        // Preserve the original window index for downstream ordering and output
-                        window.idx(),
-                        blacklist_overlap_fraction,
-                    ));
-                    all_bins.push(lc);
-                }
+                all_bins.extend(counts);
             }
         }
     }
+
+    let mut bin_info: Vec<(String, u64, u64, u64, f64)> = if matches!(window_opt, WindowSpec::Global)
+    {
+        Vec::new()
+    } else {
+        let (_total_windows, chr_offsets) =
+            compute_window_offsets(&window_opt, &chromosomes, &contigs, windows_map.as_ref())?;
+        build_bin_info(
+            &window_opt,
+            &chromosomes,
+            &contigs,
+            windows_map.as_ref(),
+            &blacklist_map,
+            &chr_offsets,
+        )?
+    };
 
     drop(blacklist_map);
 

@@ -24,8 +24,6 @@ pub mod midpoints;
 pub mod prepare_windows;
 #[cfg(feature = "cmd_ref_gc_bias")]
 pub mod ref_gc_bias;
-#[cfg(feature = "cmd_ref_gc_counts")]
-pub mod ref_gc_counts;
 #[cfg(feature = "cmd_transitions")]
 pub mod transitions;
 #[cfg(feature = "cmd_visualize_positions")]

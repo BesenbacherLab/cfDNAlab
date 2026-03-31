@@ -9,8 +9,7 @@ use std::path::PathBuf;
 /// overlapping intervals are merged and counting is limited to those bases. Problematic regions
 /// can be excluded via a blacklist. Otherwise, the full genome is used.
 ///
-/// This command never produces per-window outputs. Use `ref-gc-counts` if you need window-level
-/// counts. After counting, the table is smoothed length-wise and converted to GC percentages.
+/// After counting, the table is smoothed length-wise and converted to GC percentages.
 /// A support mask flags bins with too few counts per megabase (including theoretically unobservable
 /// GC-by-length combinations), and the sparse bins are interpolated using neighbours.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
