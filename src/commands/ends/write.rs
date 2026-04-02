@@ -111,7 +111,7 @@ pub fn write_end_settings_json(output_dir: &Path, prefix: &str, opt: &EndsConfig
     .with_context(|| format!("write {}", settings_path.display()))?;
     writeln!(
         settings_writer,
-        "  \"collapse_complement\": {},",
+        "  \"collapse_complement\": {}",
         opt.collapse_complement
     )
     .with_context(|| format!("write {}", settings_path.display()))?;

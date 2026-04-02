@@ -8,7 +8,7 @@ mod tests {
     use cfdnalab::shared::interval::{IndexedInterval, Interval};
     use cfdnalab::shared::tiled_run::{
         Tile, TileMode, TileWindowSpan, build_tiles, clamp_fetch_to_window_span,
-        precompute_tile_window_spans, tile_window_min_max,
+        overlapping_windows_for_tile, precompute_tile_window_spans, tile_window_min_max,
     };
     use fxhash::FxHashMap;
     use std::path::PathBuf;
@@ -177,6 +177,40 @@ mod tests {
     }
 
     #[test]
+    fn clamp_fetch_does_not_narrow_when_window_span_expands() {
+        // Human verification status: unverified
+        let tile = make_tile(100, 150, 80, 170, 0);
+
+        // Manual derivation:
+        // - Tile halo already carried by `tile.fetch` is 20 bp on both sides.
+        // - Narrow window span [110,140) widens to [90,160) after keeping that halo.
+        // - Wider window span [90,160) widens to [70,180) and then clamps to the tile fetch
+        //   interval [80,170).
+        // - Adding support farther left and right must therefore move the final fetch outward,
+        //   never inward.
+        let narrower_window_span = Interval::new(110, 140).expect("test span should be valid");
+        let wider_window_span = Interval::new(90, 160).expect("test span should be valid");
+
+        let narrower_fetch = clamp_fetch_to_window_span(&tile, 500, narrower_window_span, 0)
+            .unwrap()
+            .expect("narrower window span should produce a fetch interval");
+        let wider_fetch = clamp_fetch_to_window_span(&tile, 500, wider_window_span, 0)
+            .unwrap()
+            .expect("wider window span should produce a fetch interval");
+
+        assert_eq!(narrower_fetch, Interval::new(90, 160).unwrap());
+        assert_eq!(wider_fetch, Interval::new(80, 170).unwrap());
+        assert!(
+            wider_fetch.start() <= narrower_fetch.start(),
+            "wider window support must not move the fetch start to the right"
+        );
+        assert!(
+            wider_fetch.end() >= narrower_fetch.end(),
+            "wider window support must not move the fetch end to the left"
+        );
+    }
+
+    #[test]
     fn clamp_fetch_returns_none_when_windows_right_of_tile() {
         // Human verification status: unverified
         let tile = make_tile(100, 150, 90, 200, 0);
@@ -201,6 +235,49 @@ mod tests {
             .unwrap()
             .expect("window span expected");
         assert_eq!(interval, Interval::new(40, 200).unwrap());
+    }
+
+    #[test]
+    fn overlapping_windows_for_tile_filters_halo_only_candidates_from_cached_span() {
+        // Human verification status: unverified
+        // Manual derivation:
+        // - The cached candidate span may come from a fragment-reach model and include halo-only
+        //   windows [8,9) and [22,23) around core [10,20).
+        // - Core-overlap helpers must still yield only windows that truly intersect the core.
+        let tile = make_tile(10, 20, 6, 24, 0);
+        let windows = indexed_windows(&[(8, 9, 0), (10, 11, 1), (22, 23, 2)]);
+        let span = TileWindowSpan {
+            first_idx: 0,
+            last_idx_exclusive: 3,
+        };
+
+        let overlapping: Vec<_> = overlapping_windows_for_tile(&windows, &tile, Some(&span))
+            .map(|window| window.as_tuple())
+            .collect();
+
+        assert_eq!(overlapping, vec![(10, 11, 1)]);
+    }
+
+    #[test]
+    fn tile_window_min_max_ignores_halo_only_candidates_from_cached_span() {
+        // Human verification status: unverified
+        // Manual derivation:
+        // - The cached candidate span below includes one left halo-only window [8,9), one
+        //   core-overlap window [10,11), and one right halo-only window [22,23).
+        // - `tile_window_min_max(...)` is the core-overlap helper, so the halo-only windows must
+        //   not affect the returned extremes.
+        let tile = make_tile(10, 20, 6, 24, 0);
+        let windows = indexed_windows(&[(8, 9, 0), (10, 11, 1), (22, 23, 2)]);
+        let span = TileWindowSpan {
+            first_idx: 0,
+            last_idx_exclusive: 3,
+        };
+
+        let interval = tile_window_min_max(&windows, &tile, Some(&span))
+            .unwrap()
+            .expect("core-overlap window span expected");
+
+        assert_eq!(interval, Interval::new(10, 11).unwrap());
     }
 
     #[test]

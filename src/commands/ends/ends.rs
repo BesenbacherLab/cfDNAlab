@@ -7,10 +7,11 @@ use crate::{
         counters::EndsCounters,
         ends::{
             config::EndsConfig,
-            config_structs::WindowMotifAssigner,
+            config_structs::{ClipStrategy, WindowMotifAssigner},
             counting::{EndCountsByWindow, decode_end_motif_counts},
             motifs::{
                 CountedEndFlags, build_optional_kmer_spec, build_tile_motif_context,
+                motif_reference_span_for_tile,
                 count_fragment_in_window,
             },
             output::{
@@ -46,7 +47,7 @@ use crate::{
         tiled_run::{
             Tile, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
         },
-        window_fetch::fetch_span_for_tile,
+        window_fetch::{BedFetchPolicy, fetch_span_for_tile},
         windowing::{WindowContext, build_bin_info, compute_window_offsets},
     },
 };
@@ -137,6 +138,17 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(tiles.len() as u64));
 
+    let tile_span_left_halo = if matches!(opt.clip.clip_strategy, ClipStrategy::Raw) {
+        opt.clip.max_soft_clips as u64
+    } else {
+        0
+    };
+    let tile_span_right_halo = if matches!(opt.clip.clip_strategy, ClipStrategy::Raw) {
+        opt.fragment_lengths.max_fragment_length as u64 + opt.clip.max_soft_clips as u64
+    } else {
+        opt.fragment_lengths.max_fragment_length as u64
+    };
+
     let windows_lookup = windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
         &tiles,
@@ -145,9 +157,9 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                 .and_then(|m| m.get(chr).map(|w| w.as_slice()))
                 .unwrap_or(&[])
         },
-        0,
+        tile_span_left_halo,
         // We use fragments starting in a tile, so we need fragment-overlapping windows starting after the tile
-        opt.fragment_lengths.max_fragment_length as u64,
+        tile_span_right_halo,
     ));
     let tile_window_spans_for_threads = tile_window_spans.clone();
     // Window rows are global across chromosomes. For fixed-size windows we therefore need a
@@ -474,6 +486,12 @@ fn process_tile(
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
     debug_assert_eq!(_tid_check, tile.tid as u32);
 
+    let effective_max_fragment_length = if matches!(opt.clip.clip_strategy, ClipStrategy::Raw) {
+        opt.fragment_lengths.max_fragment_length + opt.clip.max_soft_clips as u32 * 2
+    } else {
+        opt.fragment_lengths.max_fragment_length
+    };
+
     // Counters
     let mut counter = EndsCounters::default();
     let counts_path = temp_dir.join(format!(
@@ -503,23 +521,36 @@ fn process_tile(
     // Narrow the BAM fetch to the part of the tile that can still contribute to the current
     // windows. In global/by-size modes this usually stays close to the tile fetch span; in BED
     // mode it can shrink substantially.
+    let bed_fetch_halo_bp = if matches!(opt.clip.clip_strategy, ClipStrategy::Raw) {
+        opt.fragment_lengths.max_fragment_length as u64 + opt.clip.max_soft_clips as u64
+    } else {
+        opt.fragment_lengths.max_fragment_length as u64
+    };
     let Some(fetch_span) = fetch_span_for_tile(
         tile,
         tile_window_span,
         windows_chr,
         window_opt,
         chrom_len,
-        opt.fragment_lengths.max_fragment_length as u64,
+        bed_fetch_halo_bp,
+        BedFetchPolicy::CandidateWindowExtent,
     )?
     else {
         // Skip tiles with no relevant windows
         return Ok(None);
     };
     let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
+    let reference_span = motif_reference_span_for_tile(
+        tile,
+        chrom_len,
+        opt.clip.clip_strategy,
+        opt.clip.max_soft_clips,
+        opt.k_outside,
+    )?;
     let motif_context = build_tile_motif_context(
         opt,
         tile,
-        fetch_span,
+        reference_span,
         chrom_len,
         blacklist_intervals,
         inside_spec,
@@ -543,11 +574,9 @@ fn process_tile(
     let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
         WindowMotifAssigner::Any
         | WindowMotifAssigner::Endpoint
-        | WindowMotifAssigner::CountOverlap => {
-            1. / (2. * opt.fragment_lengths.max_fragment_length as f64 + 1.0)
-        } // 2x to allow for raw-clipping-mode expansion and +1 to avoid rounding error issues
+        | WindowMotifAssigner::CountOverlap => 1. / (effective_max_fragment_length as f64 + 1.0), // 2x to allow for raw-clipping-mode expansion and +1 to avoid rounding error issues
         WindowMotifAssigner::All | WindowMotifAssigner::Midpoint => {
-            1.0 - (1. / (2. * opt.fragment_lengths.max_fragment_length as f64 + 1.0))
+            1.0 - (1. / (effective_max_fragment_length as f64 + 1.0))
         } // 1.0 but just below to avoid rounding errors
         WindowMotifAssigner::Proportion(p) => p,
     };
@@ -573,15 +602,11 @@ fn process_tile(
 
     // Create fragment iterator with per-tile filtering and optional GC tag handling
     let unpaired = opt.unpaired.reads_are_fragments;
-    let max_soft_clips = opt
+    let max_soft_clips: u32 = opt
         .clip
         .max_soft_clips
-        .map(|value| {
-            value
-                .try_into()
-                .context("max_soft_clips does not fit in u32 for fragment iteration")
-        })
-        .transpose()?;
+        .try_into()
+        .context("max_soft_clips does not fit in u32 for fragment iteration")?;
     let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if unpaired {
         let min_mapq = opt.min_mapq;
         Box::new(move |r: &Record| default_include_read_unpaired(r, min_mapq))
@@ -642,7 +667,7 @@ fn process_tile(
             continue;
         }
 
-        // Determine blacklist status
+        // Determine blacklist status (based on aligned fragment coordinates)
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.blacklist_strategy,
@@ -684,7 +709,7 @@ fn process_tile(
             by_size,
             query_interval,
             min_overlap_fraction,
-            opt.fragment_lengths.max_fragment_length.into(),
+            effective_max_fragment_length.into(),
         )?;
         let overlapping_windows = if let Some(overlaps) = overlapping_windows {
             overlaps
@@ -720,8 +745,8 @@ fn process_tile(
                 Some(&scaling_with_bin_idx),
                 None,
                 fragment.interval.try_to_u64()?, // Full fragment
-                1. / (2. * opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap without rounding error issues
-                opt.fragment_lengths.max_fragment_length.into(),
+                1. / (effective_max_fragment_length as f64 + 1.0), // Any overlap without rounding error issues
+                effective_max_fragment_length.into(),
             )
             .with_context(|| format!("finding overlapping scaling bins on chr {}", tile.chr))?
             .with_context(|| {

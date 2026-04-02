@@ -602,6 +602,8 @@ mod test_fragment_with_ends {
     use rust_htslib::bam::Record;
     use rust_htslib::bam::record::{Aux, Cigar, CigarString};
 
+    const NO_MAX_SOFT_CLIP_LIMIT: u32 = u32::MAX;
+
     fn cigar(ops: &[(char, u32)]) -> CigarString {
         let mut v = Vec::with_capacity(ops.len());
         for (op, len) in ops {
@@ -663,7 +665,7 @@ mod test_fragment_with_ends {
         source_inside: KmerSource,
         indel_filter: IndelMotifFilterPolicy,
         k_inside: usize,
-        max_soft_clips: Option<u32>,
+        max_soft_clips: u32,
         gc_tag: Option<&[u8]>,
     ) -> Option<FragmentWithEnds> {
         let a_info = end_info(a, clip_strategy, k_inside, gc_tag);
@@ -685,7 +687,7 @@ mod test_fragment_with_ends {
         source_inside: KmerSource,
         indel_filter: IndelMotifFilterPolicy,
         k_inside: usize,
-        max_soft_clips: Option<u32>,
+        max_soft_clips: u32,
         gc_tag: Option<&[u8]>,
     ) -> Option<FragmentWithEnds> {
         let read = end_info(record, clip_strategy, k_inside, gc_tag);
@@ -748,7 +750,7 @@ mod test_fragment_with_ends {
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
-            None,
+            NO_MAX_SOFT_CLIP_LIMIT,
             None,
         )
         .expect("fragment");
@@ -796,7 +798,7 @@ mod test_fragment_with_ends {
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
-            None,
+            NO_MAX_SOFT_CLIP_LIMIT,
             None,
         )
         .expect("fragment");
@@ -844,7 +846,7 @@ mod test_fragment_with_ends {
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
-            None,
+            NO_MAX_SOFT_CLIP_LIMIT,
             None,
         )
         .expect("fragment");
@@ -888,7 +890,7 @@ mod test_fragment_with_ends {
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
-            None,
+            NO_MAX_SOFT_CLIP_LIMIT,
             None,
         )
         .expect("fragment");
@@ -932,7 +934,7 @@ mod test_fragment_with_ends {
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
-            None,
+            NO_MAX_SOFT_CLIP_LIMIT,
             None,
         )
         .expect("fragment");
@@ -973,7 +975,7 @@ mod test_fragment_with_ends {
                 KmerSource::Read,
                 IndelMotifFilterPolicy::Auto,
                 4,
-                None,
+                NO_MAX_SOFT_CLIP_LIMIT,
                 None,
             )
             .is_none()
@@ -1009,7 +1011,7 @@ mod test_fragment_with_ends {
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
-            Some(2),
+            2,
             None,
         )
         .expect("fragment");
@@ -1049,7 +1051,7 @@ mod test_fragment_with_ends {
                 KmerSource::Read,
                 IndelMotifFilterPolicy::Auto,
                 4,
-                None,
+                NO_MAX_SOFT_CLIP_LIMIT,
                 None,
             )
             .is_none()
@@ -1198,7 +1200,7 @@ mod test_fragment_with_ends {
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
-            None,
+            NO_MAX_SOFT_CLIP_LIMIT,
             None,
         )
         .expect("fragment");
@@ -1236,7 +1238,7 @@ mod test_fragment_with_ends {
             KmerSource::Reference,
             IndelMotifFilterPolicy::Auto,
             4,
-            None,
+            NO_MAX_SOFT_CLIP_LIMIT,
             None,
         )
         .expect("fragment");
@@ -1274,7 +1276,7 @@ mod test_fragment_with_ends {
             KmerSource::Read,
             IndelMotifFilterPolicy::SkipAffectedEnd,
             4,
-            None,
+            NO_MAX_SOFT_CLIP_LIMIT,
             None,
         )
         .expect("fragment");
@@ -1314,7 +1316,7 @@ mod test_fragment_with_ends {
             KmerSource::Reference,
             IndelMotifFilterPolicy::Auto,
             4,
-            None,
+            NO_MAX_SOFT_CLIP_LIMIT,
             None,
         )
         .expect("fragment");
@@ -1353,7 +1355,7 @@ mod test_fragment_with_ends {
                 KmerSource::Read,
                 IndelMotifFilterPolicy::SkipAffectedFragment,
                 4,
-                None,
+                NO_MAX_SOFT_CLIP_LIMIT,
                 None,
             )
             .is_none()
@@ -1389,7 +1391,7 @@ mod test_fragment_with_ends {
             KmerSource::Read,
             IndelMotifFilterPolicy::SkipAffectedEnd,
             4,
-            None,
+            NO_MAX_SOFT_CLIP_LIMIT,
             None,
         )
         .expect("fragment");
@@ -1430,7 +1432,7 @@ mod test_fragment_with_ends {
             KmerSource::Reference,
             IndelMotifFilterPolicy::SkipAffectedEnd,
             4,
-            Some(1),
+            1,
             None,
         )
         .expect("fragment");
@@ -1458,7 +1460,7 @@ mod test_fragment_with_ends {
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
-            None,
+            NO_MAX_SOFT_CLIP_LIMIT,
             None,
         )
         .expect("fragment");
@@ -1496,7 +1498,7 @@ mod test_fragment_with_ends {
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
-            None,
+            NO_MAX_SOFT_CLIP_LIMIT,
             None,
         )
         .expect("fragment");
@@ -1535,7 +1537,7 @@ mod test_fragment_with_ends {
                 KmerSource::Read,
                 IndelMotifFilterPolicy::Auto,
                 4,
-                None,
+                NO_MAX_SOFT_CLIP_LIMIT,
                 None,
             )
             .is_none()
@@ -1571,7 +1573,7 @@ mod test_fragment_with_ends {
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
-            None,
+            NO_MAX_SOFT_CLIP_LIMIT,
             Some(b"GC"),
         )
         .expect("fragment");
@@ -1598,7 +1600,7 @@ mod test_fragment_with_ends {
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
-            None,
+            NO_MAX_SOFT_CLIP_LIMIT,
             Some(b"GC"),
         )
         .expect("fragment");
@@ -1635,7 +1637,7 @@ mod test_fragment_with_ends {
                 KmerSource::Read,
                 IndelMotifFilterPolicy::Auto,
                 4,
-                None,
+                NO_MAX_SOFT_CLIP_LIMIT,
                 None,
             )
             .is_none()
@@ -1658,7 +1660,7 @@ mod test_fragment_with_ends {
                 KmerSource::Read,
                 IndelMotifFilterPolicy::Auto,
                 4,
-                None,
+                NO_MAX_SOFT_CLIP_LIMIT,
                 None,
             )
             .is_none()
@@ -1685,7 +1687,7 @@ mod test_fragment_with_ends {
                 KmerSource::Read,
                 IndelMotifFilterPolicy::Auto,
                 4,
-                None,
+                NO_MAX_SOFT_CLIP_LIMIT,
                 None,
             )
             .is_none()

@@ -338,6 +338,75 @@ pub fn tile_window_min_max(
     Ok(Some(Interval::new(min_start, max_end)?))
 }
 
+/// Return the cached candidate-window span for a core-overlap tile/window model.
+///
+/// Coordinate space:
+/// - consumes BED window coordinates
+/// - returns a BED-window index span
+///
+/// Fragment ownership rule:
+/// - none; this helper does not reason about fragment ownership
+///
+/// Counting or assignment interval assumption:
+/// - none; relevance is defined only by BED/core overlap
+///
+/// Aligned fetch narrowing:
+/// - not performed here
+///
+/// This helper answers only:
+/// - which BED windows overlap the tile core?
+///
+/// It is not valid for fragment-reach commands such as `lengths`, `ends`, or `gc_bias`.
+pub fn candidate_window_span_for_tile_core_overlap(
+    windows: &[IndexedInterval<u64>],
+    tile: &Tile,
+) -> Option<TileWindowSpan> {
+    let core_start = tile.core_start() as u64;
+    let core_end = tile.core_end() as u64;
+    let (first_idx, last_idx_exclusive) = span_bounds_without_cache(windows, core_start, core_end);
+    (first_idx < last_idx_exclusive).then_some(TileWindowSpan {
+        first_idx,
+        last_idx_exclusive,
+    })
+}
+
+/// Return the cached candidate-window span for a fragment-reach tile/window model.
+///
+/// Coordinate space:
+/// - consumes BED window coordinates
+/// - returns a BED-window index span
+///
+/// Fragment ownership rule:
+/// - fragment is owned iff its aligned start lies in the tile core
+///
+/// Counting or assignment interval assumption:
+/// - the caller must choose the left and right reach values that correspond to the command's
+///   actual counting or assignment interval
+///
+/// Aligned fetch narrowing:
+/// - not performed here
+///
+/// This helper answers only:
+/// - which BED windows could receive counts from tile-owned fragments under the supplied reach?
+///
+/// It is not valid for future commands that use a different ownership rule, such as "fragment end
+/// lies in the tile core", unless they define a separate helper or prove the same reach model.
+pub fn candidate_window_span_for_tile_fragment_reach(
+    windows: &[IndexedInterval<u64>],
+    tile: &Tile,
+    left_reach_bp: u64,
+    right_reach_bp: u64,
+) -> Option<TileWindowSpan> {
+    let left_bound = (tile.core_start() as u64).saturating_sub(left_reach_bp);
+    let right_bound = (tile.core_end() as u64).saturating_add(right_reach_bp);
+    let (first_idx, last_idx_exclusive) =
+        span_bounds_without_cache(windows, left_bound, right_bound);
+    (first_idx < last_idx_exclusive).then_some(TileWindowSpan {
+        first_idx,
+        last_idx_exclusive,
+    })
+}
+
 /// Tightens a tile's fetch bounds to the observed window span while respecting halos.
 ///
 /// The narrowed span subtracts the left/right halo from the minimum/maximum window edges and then
@@ -582,4 +651,9 @@ pub fn make_temp_dir(
     let p = base_out.join(dot_join(&["tmp", prefix, &ts.to_string()]));
     std::fs::create_dir_all(&p)?;
     Ok(p)
+}
+
+#[cfg(test)]
+mod tests {
+    include!("tiled_run_tests.rs");
 }

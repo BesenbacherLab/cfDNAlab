@@ -1,5 +1,6 @@
 use super::*;
 use crate::commands::cli_common::{ChromosomeArgs, IOCArgs};
+use serde_json::{Value, json};
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -17,6 +18,10 @@ fn minimal_config(output_dir: &Path) -> EndsConfig {
         1,
         0,
     )
+}
+
+fn parse_json(text: &str) -> Value {
+    serde_json::from_str(text).expect("settings sidecar should be valid JSON")
 }
 
 #[test]
@@ -76,14 +81,23 @@ fn write_end_settings_json_writes_the_minimal_interpretation_sidecar() {
 
     // Assert
     assert_eq!(
-        settings,
-        concat!(
-            "{\n",
-            "  \"source_inside\": \"read\",\n",
-            "  \"clip_strategy\": \"aligned\",\n",
-            "  \"window_assignment\": \"endpoint\",\n",
-            "  \"collapse_complement\": false,\n",
-            "}\n"
-        )
+        parse_json(&settings),
+        json!({
+            "source_inside": "read",
+            "clip_strategy": "aligned",
+            "window_assignment": "endpoint",
+            "collapse_complement": false
+        })
     );
+}
+
+#[test]
+fn window_assigner_name_formats_proportion_without_noisy_trailing_precision() {
+    // Arrange / Act
+    let exact_eighth = window_assigner_name(WindowMotifAssigner::Proportion(0.125));
+    let exact_half = window_assigner_name(WindowMotifAssigner::Proportion(0.5));
+
+    // Assert: the sidecar contract should keep simple decimal inputs readable and stable.
+    assert_eq!(exact_eighth, "proportion=0.125");
+    assert_eq!(exact_half, "proportion=0.5");
 }

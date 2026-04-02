@@ -4,7 +4,7 @@ use crate::shared::{
     bam::Contigs,
     bed::Windows,
     interval::{IndexedInterval, Interval},
-    tiled_run::{Tile, TileWindowSpan, overlapping_windows_for_tile},
+    tiled_run::{Tile, TileWindowSpan},
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use fxhash::FxHashMap;
@@ -393,14 +393,22 @@ pub fn prepare_tile_windows(
                     &tile.chr
                 )
             })?;
+            let Some(span) = tile_window_span.filter(|span| !span.is_empty()) else {
+                skip_tile = true;
+                return Ok(PreparedTileWindows {
+                    windows,
+                    streaming_buffers,
+                    skip_tile,
+                });
+            };
             if win_slice.is_empty() {
                 skip_tile = true;
             } else {
-                let capacity = tile_window_span
-                    .map(|span| span.last_idx_exclusive.saturating_sub(span.first_idx))
-                    .unwrap_or(win_slice.len());
+                let start_idx = span.first_idx.min(win_slice.len());
+                let end_idx = span.last_idx_exclusive.min(win_slice.len());
+                let capacity = end_idx.saturating_sub(start_idx);
                 windows.reserve(capacity);
-                for window in overlapping_windows_for_tile(win_slice, tile, tile_window_span) {
+                for window in &win_slice[start_idx..end_idx] {
                     let window_start = window.start();
                     let window_end = window.end();
                     let window_idx = window.idx();

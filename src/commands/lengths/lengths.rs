@@ -33,7 +33,7 @@ use crate::{
         tiled_run::{
             Tile, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
         },
-        window_fetch::fetch_span_for_tile,
+        window_fetch::{BedFetchPolicy, fetch_span_for_tile},
         windowing::{build_bin_info, compute_window_offsets},
     },
 };
@@ -300,21 +300,21 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         }
     }
 
-    let mut bin_info: Vec<(String, u64, u64, u64, f64)> = if matches!(window_opt, WindowSpec::Global)
-    {
-        Vec::new()
-    } else {
-        let (_total_windows, chr_offsets) =
-            compute_window_offsets(&window_opt, &chromosomes, &contigs, windows_map.as_ref())?;
-        build_bin_info(
-            &window_opt,
-            &chromosomes,
-            &contigs,
-            windows_map.as_ref(),
-            &blacklist_map,
-            &chr_offsets,
-        )?
-    };
+    let mut bin_info: Vec<(String, u64, u64, u64, f64)> =
+        if matches!(window_opt, WindowSpec::Global) {
+            Vec::new()
+        } else {
+            let (_total_windows, chr_offsets) =
+                compute_window_offsets(&window_opt, &chromosomes, &contigs, windows_map.as_ref())?;
+            build_bin_info(
+                &window_opt,
+                &chromosomes,
+                &contigs,
+                windows_map.as_ref(),
+                &blacklist_map,
+                &chr_offsets,
+            )?
+        };
 
     drop(blacklist_map);
 
@@ -522,6 +522,7 @@ fn process_tile(
         window_opt,
         chrom_len,
         opt.fragment_lengths.max_fragment_length as u64,
+        BedFetchPolicy::CandidateWindowExtent,
     )?
     else {
         // Skip tiles with no relevant windows

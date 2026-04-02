@@ -1078,7 +1078,7 @@ fn explicit_chromosome_order_controls_scaling_tsv_row_order() -> Result<()> {
     cfg.set_min_mapq(0);
     {
         let frag = cfg.fragment_lengths_mut();
-        frag.min_fragment_length = 1;
+        frag.min_fragment_length = 10;
         frag.max_fragment_length = 200;
     }
 
@@ -1126,7 +1126,7 @@ fn chromosomes_all_uses_bam_header_order_for_scaling_tsv_rows() -> Result<()> {
     cfg.set_min_mapq(0);
     {
         let frag = cfg.fragment_lengths_mut();
-        frag.min_fragment_length = 1;
+        frag.min_fragment_length = 10;
         frag.max_fragment_length = 200;
     }
 

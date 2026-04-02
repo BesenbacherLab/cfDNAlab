@@ -112,6 +112,31 @@ fn single_read_fragment_bam(name: &str) -> Result<BamFixture> {
     )
 }
 
+fn single_read_fragment_bam_at(
+    name: &str,
+    fragment_start: i64,
+    fragment_len: u32,
+) -> Result<BamFixture> {
+    bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        Vec::new(),
+        vec![ReadSpec {
+            tid: 0,
+            pos: fragment_start,
+            cigar: vec![('M', fragment_len)],
+            seq: vec![b'A'; fragment_len as usize],
+            qual: 40,
+            is_reverse: false,
+            mapq: 60,
+            flags: 0,
+            mate_tid: None,
+            mate_pos: None,
+            insert_size: 0,
+        }],
+        name,
+    )
+}
+
 fn build_bai_for_test_bam(bam_path: &Path) -> Result<()> {
     let bai_path = bam_path.with_extension("bam.bai");
     bam::index::build(bam_path, None, bam::index::Type::Bai, 1)?;
@@ -1210,6 +1235,63 @@ fn by_bed_total_is_invariant_when_windows_cross_tile_boundaries() -> Result<()> 
         "chr1\t0\t40\t20\t0\n",
         "chr1\t20\t80\t60\t0\n",
         "chr1\t70\t90\t10\t0\n",
+    );
+    assert_eq!(outputs, vec![expected.to_string(), expected.to_string()]);
+
+    Ok(())
+}
+
+#[test]
+fn by_bed_total_mixed_core_and_downstream_windows_is_tile_size_invariant() -> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // - one unpaired fragment span [19,29), coverage 1 across those ten bases
+    // - BED window [10,11) is upstream and should stay zero
+    // - BED window [22,23) is downstream and should total 1
+    // - with tile_size=10, the two windows fall into different tiles; with tile_size=1000 they do
+    //   not. The final output must still be identical.
+    let bam = single_read_fragment_bam_at("fcoverage_mixed_core_and_downstream_bed", 19, 10)?;
+    let tile_sizes = [10_u32, 1_000_u32];
+    let mut outputs = Vec::new();
+
+    for tile_size in tile_sizes {
+        let out_dir = TempDir::new()?;
+        let bed_path = out_dir
+            .path()
+            .join(format!("mixed_windows_{tile_size}.bed"));
+        write_bed(
+            &bed_path,
+            &[
+                ("chr1", 10, 11, "core_row"),
+                ("chr1", 22, 23, "downstream_row"),
+            ],
+        )?;
+
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        cfg.unpaired.reads_are_fragments = true;
+        cfg.set_decimals(0);
+        cfg.set_per_window(CoverageWindowAction::Total);
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+        });
+        cfg.set_tile_size(tile_size);
+        {
+            let fragment_lengths = cfg.fragment_lengths_mut();
+            fragment_lengths.min_fragment_length = 10;
+            fragment_lengths.max_fragment_length = 10;
+        }
+
+        run(&cfg)?;
+
+        let output_path = out_dir.path().join("testcov.fcoverage.total.tsv.zst");
+        outputs.push(read_zst_to_string(&output_path)?);
+    }
+
+    let expected = concat!(
+        "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions\n",
+        "chr1\t10\t11\t0\t0\n",
+        "chr1\t22\t23\t1\t0\n",
     );
     assert_eq!(outputs, vec![expected.to_string(), expected.to_string()]);
 

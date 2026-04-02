@@ -8,50 +8,6 @@ actual source lines.
 
 ## Part 1 — Confirmed Bugs
 
-### B1 — `EndsConfig::new()` defaults `ClipStrategy::Raw`; CLI defaults `"aligned"`
-
-**File:** `config.rs:259-262` vs `config_structs.rs:71`
-
-```rust
-// config.rs:259-262  (programmatic default)
-clip: ClippingArgs {
-    clip_strategy: ClipStrategy::Raw,
-    max_soft_clips: None,
-},
-
-// config_structs.rs:71 (CLI default)
-clap(long, value_enum, default_value = "aligned", …)
-```
-
-`ClipStrategy` derives `Default` and marks `Aligned` as the default
-(`config_structs.rs:35`). The CLI correctly uses `aligned`. Every test or downstream
-crate that calls `EndsConfig::new()` silently gets `Raw` instead. Any integration test
-that builds config programmatically is testing a different code path than the user-facing
-CLI.
-
----
-
-### B2 — `EndsCounters::gc_out_of_range_tags` is declared but never incremented
-
-**File:** `src/commands/counters.rs:127-131`, `ends.rs:645-659`
-
-```rust
-// counters.rs:127-131
-counter_struct!(EndsCounters;
-    blacklisted_fragments: u64,
-    gc_failed_fragments: u64,
-    gc_out_of_range_tags: u64   // ← never touched
-);
-```
-
-In `ends.rs`, the GC match block increments only `gc_failed_fragments`.
-`gc_out_of_range_tags` is never written. The field is dead weight, but because it is
-`AddAssign`-accumulated across tiles, it will always read zero in the statistics. No
-user-visible line in the statistics prints it, so it produces no observable artefact
-today — but if someone ever adds a statistics line for it, it will silently report 0.
-
----
-
 ### M11 — Statistics and progress go to `stdout`, not `stderr` (convention note)
 
 **File:** `ends.rs:87, 99, 119, 163, 211, 227, 338-374`
@@ -80,90 +36,6 @@ if !keep_temp {
 
 The `else` branch can never execute. This is a debugging leftover. Either expose
 `keep_temp` as a config option (or env-var) or delete the `else` branch entirely.
-
----
-
-### D8 — Statistics only reflect reads in tiles that have relevant windows
-
-**File:** `ends.rs:460-471`
-
-When `fetch_span_for_tile` returns `None` (tile has no relevant windows), the function
-returns before opening the BAM reader. This is correct behavior — scanning reads that
-can't contribute to any output would be wasteful. However, the statistics block printed
-at the end ("Total reads", "Initially accepted reads", etc.) only counts reads from
-processed tiles. With a narrow BED window set, a significant fraction of reads is
-never counted. The statistics header or a companion note should make this scope
-explicit so users don't interpret the numbers as genome-wide totals.
-
----
-
-### B6 — Scaling: `.context("no overlapping scaling bins found")?` panics on valid inputs
-
-**File:** `ends.rs:675`
-
-```rust
-.context("no overlapping scaling bins found")?; // Should always find >= 1 bin
-```
-
-If the user provides a scaling file that does not cover every base of every chromosome
-(gaps, chromosomes missing, etc.), a fragment in an uncovered region produces an opaque
-`anyhow` error mid-run. The comment acknowledges the assumption but the error message
-gives no guidance. The check should explain that scaling coverage is incomplete.
-
----
-
-### B7 — `collapse_complement` produces wrong motif labels for right-end combined-k motifs (~50% of cases)
-
-**File:** `src/commands/ends/counting.rs:154-163`, `src/shared/base.rs:66-79`
-
-**Severity: High** — silent wrong-label output in a common configuration.
-
-**Status:** fixed by making `ends` collapse operate on the fully decoded
-`outside || inside` motif and compare against the same-orientation complement rather
-than the reverse complement.
-
-When `collapse_complement = true`, `k_inside ≥ 1`, and `k_outside ≥ 1`, `make_canonical` compares
-the biologically-oriented decoded motif string against its reverse complement. For a right-end motif:
-
-```
-decoded = RC(storage_order)   where storage_order = inside_genomic + outside_genomic
-RC(decoded) = RC(RC(storage_order)) = storage_order
-```
-
-So `make_canonical(decoded) = min(decoded, storage_order)`. When `storage_order < decoded`
-lexicographically (~50% of non-palindromes), the canonical is `storage_order`, which is **not**
-a biologically oriented string. `format_end_motif_label` then calls `split_at(k_outside)` on
-`storage_order`:
-
-- First `k_outside` chars → the "outside" slot receives `inside_genomic[0..k_outside]` (wrong strand, wrong component)
-- Remaining chars → the "inside" slot receives `inside_genomic[k_outside..] ++ outside_genomic` (wrong)
-
-**Example:** k_inside=1, k_outside=1, right end with `inside_genomic="G"`, `outside_genomic="A"`:
-
-| | Value |
-|-|-------|
-| storage_order | `"GA"` |
-| decoded (correct) | `RC("GA") = "TC"` |
-| canonical | `min("TC", "GA") = "GA"` = storage_order |
-| label produced | `split_at(1) of "GA"` → outside=`"G"`, inside=`"A"` → **`"G_A"`** |
-| correct label | outside=`RC("A")`=`"T"`, inside=`RC("G")`=`"C"` → **`"T_C"`** |
-
-Without `collapse_complement` the label is correct (`"T_C"`). With it enabled and this pair, the
-label becomes the genomic storage bytes with swapped and strand-inverted components.
-
-The degenerate cases `k_outside = 0` (inside-only) and `k_inside = 0` (outside-only) are not
-affected because there is no two-component split.
-
-The implemented contract is now:
-
-- decode first into final biological `outside || inside` order
-- only `reverse_on_decode` may reverse the full motif
-- if `collapse_complement` is enabled, compare the decoded full motif against its
-  direct complement, not its reverse complement
-- keep the lexicographically smaller of `{motif, complement(motif)}`
-- split that canonical full motif at `k_outside` to form `<outside>_<inside>`
-
-That preserves the public label contract and avoids reintroducing the component-swap bug.
 
 ---
 
@@ -284,23 +156,6 @@ is fine as-is — just noting it is a sanity check rather than real protection.
 
 ---
 
-### L8 — Sparse path: `stack_end_motif_counts` silently drops motifs absent from `motif_columns`
-
-**File:** `write.rs:187-190`
-
-```rust
-if let Some(&col) = motif_columns.get(motif) {
-    mat[(row, col)] = count;
-}
-```
-
-In dense `--all-motifs` mode, `motif_columns` is the full universe, so this branch is
-dead. But any future code path that calls this function with a partial universe would
-silently lose data. An assertion `assert!(motif_columns.contains_key(motif))` or an
-explicit error would be safer.
-
----
-
 ### L9 — `build_all_end_motif_order` size guard uses `4^(k_inside + k_outside)` (ignores collapse reduction)
 
 **File:** `output.rs:182-184`
@@ -314,22 +169,6 @@ conservative, which means it will reject some `(k, n_windows)` combinations that
 actually fit. Not a correctness issue, but users can hit the guard for parameters that
 would work with collapse enabled. The guard could be tightened to report the actual
 post-collapse estimate.
-
----
-
-### L10 — `proportion=0.0` is accepted as a valid window assigner
-
-**File:** `config_structs.rs:172`
-
-```rust
-if !(0.0..=1.0).contains(&thr) { Err(…) }
-```
-
-A proportion of 0.0 means every window overlaps every fragment (since any overlap ≥ 0),
-which would be pathological. This should probably be rejected or at least produce a
-warning. There is no documentation indicating this is an intentional use case.
-
----
 
 ### L11 — `assignment_interval` in `fragment_with_two_ends` test helper is identical to `interval`
 
@@ -381,55 +220,6 @@ intentional — but it diverges from the paired-end flow in a way that is undocu
 
 ---
 
-### L14 — The `window_assigner_name` serialises `Proportion(f)` as `"proportion=<float>"` with no precision control
-
-**File:** `write.rs:272`
-
-```rust
-WindowMotifAssigner::Proportion(value) => format!("proportion={value}"),
-```
-
-A user who passes `proportion=0.2` may get `"proportion=0.2"` back — or they may get
-`"proportion=0.19999999999999998"` depending on how Rust formats the f64. The JSON
-sidecar would then be misleading and could not be round-tripped through `FromStr`. The
-precision should be fixed (e.g., `format!("proportion={value:.10}")` or the original
-string preserved).
-
----
-
-### L15 — `make_canonical` for odd-length motifs does not produce the same canonical as even-length (convention mismatch depends on parity of `k_inside + k_outside`)
-
-**File:** `src/shared/base.rs:68-78`
-
-```rust
-if mid == b'G' || mid == b'T' {
-    return rev_complement(&kmer);
-}
-return kmer;
-```
-
-For even-length combined motifs (`k_inside + k_outside` is even), `make_canonical`
-returns the lexicographically smaller of the motif and its RC — the standard IUPAC
-convention. For odd-length combined motifs the approach is a middle-base heuristic: if
-the middle base is G or T, reverse-complement, otherwise keep.
-
-These two rules can disagree. Concrete example with `k_inside=2, k_outside=1`
-(total k=3): motif `"GTA"` — RC is `"TAC"`. Lex min is `"GTA"` (G < T), but the
-middle base is `T`, so the heuristic returns `"TAC"`. A user expecting lexicographic
-canonicalization for all motifs would get the wrong representative.
-
-This affects any run where `k_inside + k_outside` is odd. Whether the middle-base
-heuristic is the intended convention for cfDNA odd-length motifs should be documented
-explicitly. If lexicographic canonicalization is desired uniformly, the even-length
-branch should be applied for all lengths.
-
-Resolution:
-Use uniform lexicographic canonicalization for end motifs and fragment-kmers:
-for every motif length, compare the motif with its reverse complement and keep the
-lexicographically smaller representation.
-
----
-
 ## Part 3 — Configuration & API Inconsistencies
 
 ### C1 — `EndsConfig` programmatic API setters have no cross-field validation
@@ -454,42 +244,6 @@ an error, while the CLI accepts it silently. Same issue applies to
 
 ---
 
-### C4 — `fragment_length_basis` is hardcoded to `"aligned"` in the settings JSON
-
-**File:** `write.rs:140`
-
-```rust
-writeln!(settings_writer, "  \"fragment_length_basis\": \"aligned\",")
-```
-
-This is a static string, not derived from `opt`. If the length basis is ever made
-configurable (e.g., assignment-interval length), this will silently remain "aligned" in
-all output files.
-
----
-
-### C5 — Settings JSON omits many parameters that affect results
-
-**File:** `write.rs:88-159`
-
-The sidecar records: k_inside, k_outside, source_inside, clip_strategy, max_soft_clips,
-indel_filter, window_assignment, collapse_complement, reads_are_fragments,
-fragment_length_basis, min_fragment_length, max_fragment_length.
-
-It does **not** record:
-- `blacklist` files / `blacklist_strategy` / `blacklist_min_size`
-- `scale_genome.scaling_factors`
-- `gc.gc_file` presence / `gc.gc_tag`
-- `min_mapq`
-- `require_proper_pair`
-- `all_motifs`
-- `windows` spec (BED file path, window size, or global)
-
-Reproducibility requires the full parameter set. A downstream user loading the `.json`
-cannot reconstruct the exact run.
-
----
-
 ### C6 — Hand-rolled JSON in `write_end_settings_json` is brittle
 
 **File:** `write.rs:96-155`
@@ -503,21 +257,6 @@ builds a `Vec<(key, value)>` and emits commas only between entries would be safe
 
 ---
 
-### C7 — `bins.bed` 4th column is `overlap_perc`, not a standard BED `name` column
-
-**File:** `ends.rs:332`
-
-```rust
-writeln!(bed_writer, "{}\t{}\t{}\t{}", chr, start, end, overlap_perc)
-```
-
-Standard BED4 uses the 4th column as `name`. Many downstream tools assume this. Using
-it for a float percentage is non-standard and should be documented or the column
-should be named something unambiguous (e.g., by adding a header, or using a 5-column
-format with an explicit empty name).
-
----
-
 ### C8 — `EndsConfig` does not implement `Default`; the TODO in `config_structs.rs:6` is stale
 
 **File:** `config_structs.rs:6`
@@ -527,164 +266,12 @@ format with an explicit empty name).
 ```
 
 This TODO has presumably been open since the command was started. Without `Default`,
-test setup and downstream programmatic use must call `EndsConfig::new()` (which has the
-`ClipStrategy::Raw` bug, B1) or construct all fields manually. The inconsistency with
-other commands creates friction.
+test setup and downstream programmatic use must call `EndsConfig::new()` or construct
+all fields manually. The inconsistency with other commands creates friction.
 
 ---
 
 ## Part 4 — Test Coverage Gaps & Soundness Issues
-
-### T1 — `count_fragment_in_window_any_counts_both_ends_in_same_window` does not verify the actual keys or weights
-
-**File:** `motifs_tests.rs:159-182`
-
-```rust
-assert_eq!(counts.counts.len(), 2);
-```
-
-The test verifies that *two distinct keys* exist but not:
-- Which two keys they are (left AC / right GT as encoded)
-- That each has weight 1.0
-
-A future refactor that produces two identical keys (which would merge) or produces the
-wrong keys would pass this test. The test should assert the specific key-value pairs.
-
----
-
-### T2 — `encode_inside_code` for `KmerSource::Read` is not directly unit-tested
-
-**File:** `motifs_tests.rs`
-
-The three direct tests of `encode_outside_code` and `encode_inside_code` all use
-`KmerSource::Reference`. The read-backed path (`spec.encode_kmer_bytes(&end.inside_bases)`)
-is exercised only indirectly through `count_fragment_in_window` tests. There is no test
-that directly calls `encode_inside_code` with `KmerSource::Read` and verifies the exact
-encoded value.
-
----
-
-### T3 — `encode_blacklist_validation_inside_code` has no isolated test
-
-**File:** `motifs.rs:449-476`
-
-The blacklist-validation path — where read-source inside encoding first validates the
-reference to check for blacklisted bases before using the read sequence — has no unit
-test. The only way to hit it is with a non-empty `blacklist_intervals` slice in the
-context, which none of the current tests provide.
-
----
-
-### T4 — `collect_end_motif_order` (sparse path) is not tested at all
-
-**File:** `output.rs:31-39`, `output_tests.rs`
-
-The four tests in `output_tests.rs` cover size guards and `build_all_end_motif_order`
-(dense path only). `collect_end_motif_order` — the primary code path for the default
-non-`--all-motifs` run — has zero direct tests. A sort-order regression or set-union
-bug would go undetected.
-
----
-
-### T5 — `stack_end_motif_counts` (dense matrix assembly) has no test
-
-**File:** `write.rs:175-194`
-
-The function that converts per-window sparse maps into a dense `ndarray` matrix is
-never tested. A row/column transposition or motif-lookup regression would be invisible
-until integration testing.
-
----
-
-### T6 — `build_tile_payload` sort and serialization round-trip are not tested
-
-**File:** `tiling.rs:88-116`, `tiling_tests.rs`
-
-`tiling_tests.rs` has exactly one test (`merge_tile_payload_merges_counts_by_window_and_key`).
-Missing:
-- Merging into multiple distinct windows
-- Empty payload
-- `build_tile_payload` sort correctness (within-window and across-window)
-- `serialize_tile_counts` / `deserialize_tile_counts` round-trip
-
----
-
-### T7 — `decode_end_motif_counts` with `k_outside > 0` and `k_inside = 0` not tested
-
-**File:** `counting.rs` tests
-
-All counting tests use `k_inside > 0` with `outside_spec = None`. The case
-`k_outside > 0, k_inside = 0` (outside-only motif) is never exercised. Given the
-asymmetric decode logic (`storage_order` differs for left/right ends), this is a
-meaningful gap.
-
----
-
-### T8 — `build_all_end_motif_order` with both `within_spec` and `outside_spec` not tested
-
-**File:** `output_tests.rs`
-
-**Status:** fixed.
-
-`output_tests.rs` now covers the combined case with both:
-
-- `k_outside=1, k_inside=1` for an exact even-length collapsed dense universe
-- `k_outside=1, k_inside=2` for an exact odd-length collapsed dense universe
-- `k_outside=2, k_inside=2` for readable hand-derived examples where both halves are
-  multi-base and the split itself is part of what is being tested
-
-These tests are intentionally contract-based: they assert the full dense motif order
-after collapsing against the same-orientation complement on the combined
-`outside || inside` motif, and they explicitly reject the old bug-shaped label
-`"G_TA"` in the odd-length case.
-
----
-
-### T9 — `merge_tile_payload` with multiple distinct windows not tested
-
-**File:** `tiling_tests.rs`
-
-The sole test merges two payloads for the *same* window index (7). It does not test
-merging payloads that cover *different* windows (e.g., window 7 and window 12), which
-exercises the `HashMap::entry` path for new keys, not just the additive path for
-existing keys.
-
----
-
-### T10 — `reference_motif_context_shares_code_table_when_within_and_outside_k_match` tests implementation detail
-
-**File:** `motifs_tests.rs:235-246`
-
-```rust
-assert!(Arc::ptr_eq(inside_codes, outside_codes));
-```
-
-This test asserts that the `Arc` pointers are identical — an internal memory
-optimization. If the optimization is ever changed to a non-sharing strategy (still
-semantically correct), the test fails. Tests should assert behavior (same codes at
-same positions), not internal representation.
-
----
-
-### T11 — `decode_end_motif_counts_collapses_reverse_complements_when_requested` test has potential misidentified pair
-
-**File:** `counting.rs:355-383`
-
-The test claims "GT" and "AC" are reverse complements. Verify:
-`rev_complement("GT")` = reversed "TG", complement each → "AC". ✓
-`rev_complement("AC")` = reversed "CA", complement each → "GT". ✓
-Both canonicalize to "AC" (since lex("AC") < lex("GT")). ✓
-
-The original left-end-only test was sound for its narrow case. The gap was that it did not cover
-right-end decode or wider combined motifs.
-
-This is now covered by:
-
-- a right-end same-orientation complement test for inside-only motifs
-- a combined `k_outside=1, k_inside=2` collapse test
-- a multi-base `k_outside=2, k_inside=2` collapse test
-
----
 
 ### T12 — `decode_end_motif_counts_drops_motifs_with_n` constructs an N-containing key directly
 
@@ -751,13 +338,6 @@ weight in the struct but causes a heap allocation per tile.
 
 ## Part 6 — Documentation Issues
 
-### D1 — `ClipStrategy::Raw` default in `EndsConfig::new()` is not documented
-
-There is no doc comment or `//` note explaining why `new()` uses `Raw` while the CLI
-uses `Aligned`. The discrepancy is invisible to programmatic users.
-
----
-
 ### D2 — `Endpoint` mode doc does not explain how it interacts with `CountOverlap` weight
 
 **File:** `config_structs.rs:98-113`
@@ -767,14 +347,6 @@ fragment bases overlapping each window" but does not clarify that, in this mode,
 ends of a fragment are counted in EVERY candidate window (not just the window the end
 falls in). This is a significant semantic difference that users familiar with
 `endpoint` mode may miss.
-
----
-
-### D3 — `bins.bed` `overlap_perc` column meaning is undocumented in code or help text
-
-No inline comment or help text explains what `overlap_perc` represents in the output
-BED. Is it the fraction of the window covered by blacklisted regions? The fraction
-of the window covered by the BAM? This is opaque.
 
 ---
 
@@ -1026,22 +598,6 @@ for exact testing, but:
 
 ---
 
-#### IT-I3 — `base_config` explicit `ClipStrategy::Aligned` override masks pre-fix B1
-
-**File:** `test_ends_command.rs:61`
-
-```rust
-cfg.clip.clip_strategy = ClipStrategy::Aligned;
-```
-
-This was necessary to work around B1 (`EndsConfig::new()` defaulting to `Raw`). After
-B1 is fixed, the override is redundant but harmless. More importantly: there is no
-regression test asserting that `EndsConfig::new()` produces `ClipStrategy::Aligned`.
-If B1 silently regresses (someone changes the default back to `Raw`), `base_config`
-would still mask it and all tests would continue to pass.
-
----
-
 #### IT-I4 — `single_read_bam` produces reads with `flags: 0`
 
 **File:** `test_ends_command.rs:97`
@@ -1059,47 +615,6 @@ irrelevant in practice. But a test reader might wonder why single reads have fla
 ---
 
 ### 8.2 Assertions That Miss Regressions
-
-#### IT-S1 — Indel filter tests check count, not identity of surviving ends
-
-**File:** `test_ends_command.rs:875-878, 931-934`
-
-`auto_indel_filter_keeps_indel_affected_read_backed_end_motifs`:
-```rust
-assert_eq!(matrix.shape(), &[1, 2]);  // 2 motifs
-assert_eq!(motifs.len(), 2);
-assert_eq!(matrix.sum(), 2.0);
-```
-
-`auto_indel_filter_skips_indel_affected_reference_backed_end_motifs`:
-```rust
-assert_eq!(matrix.shape(), &[1, 1]);  // 1 motif
-assert_eq!(motifs.len(), 1);
-assert_eq!(matrix.sum(), 1.0);
-```
-
-Neither test asserts **which end survived**. In the reference-backed case, the left
-end (forward read, CIGAR `2M 1I 5M`, indel within the 4-base left footprint) should
-be dropped, and the right end (reverse read, CIGAR `6M`, no indel) should survive.
-But the test only checks `motifs.len() == 1`. A regression where the indel filter
-accidentally kept the left end and dropped the right end would pass both assertions,
-since either way there is one surviving motif. The correct assertion would compare
-the surviving motif label against the expected right-end decode of the reference
-sequence at positions 110–113.
-
----
-
-#### IT-S2 — `all_requires_the_full_fragment_to_overlap_the_window` tests only rejection
-
-**File:** `test_ends_command.rs:1202-1236`
-
-Fragment `[10,20)` is tested against window `[10,19)`. Because `[10,19)` does not
-fully contain `[10,20)`, the result is `sum = 0.0`. This confirms rejection. But there
-is no test where the window fully contains the fragment (e.g., `[9,21)` or `[10,20)`)
-to confirm that `All` mode actually counts when containment holds. A broken `All`
-implementation that always rejects would pass all current tests.
-
----
 
 #### IT-S3 — `midpoint_assigns_both_end_motifs_to_the_midpoint_window` comment is imprecise
 
@@ -1245,67 +760,6 @@ motif-level RC. Minor documentation risk for future test authors.
 
 ### 8.4 Missing Coverage
 
-#### IT-M1 — `WindowMotifAssigner::All` acceptance case is not tested
-
-**File:** No test file
-
-The only `All`-mode integration test (`all_requires_the_full_fragment_to_overlap_the_window`,
-line 1203) tests rejection: window `[10,19)` is 1 bp smaller than fragment `[10,20)`,
-so nothing is counted. There is no test where the window is large enough to fully
-contain the fragment (e.g., `[10,20)` or `[9,21)`), so the acceptance branch of the
-`All` predicate has no integration-level coverage. A bug where `All` always rejects
-would pass all current tests.
-
----
-
-#### IT-M2 — No integration test for `k_inside > 0 AND k_outside > 0` simultaneously
-
-**File:** `test_ends_command.rs`
-
-**Status:** fixed.
-
-The integration suite now exercises combined motifs end-to-end in both sparse and dense modes:
-
-- `k_outside=1, k_inside=1` with exact dense all-motifs universes, with and without collapse
-- `k_outside=2, k_inside=2` with exact dense all-motifs universes, with and without collapse
-- `k_outside=1, k_inside=2` with odd-length collapse
-- `k_outside=2, k_inside=2` with readable multi-base collapse examples
-
-So the public `<outside>_<inside>` label format, the decode ordering, and the dense/sparse output
-paths for combined motifs are all exercised in integration.
-
----
-
-#### IT-M3 — `collapse_complement` with odd `k_inside + k_outside ≥ 3` is not tested
-
-**File:** `test_ends_command.rs`
-
-**Status:** fixed by `collapse_complement_preserves_outside_inside_order_for_odd_length_end_motifs`.
-
-The integration suite now exercises `collapse_complement=true` with `k_outside=1`,
-`k_inside=2`, and explicit left/right-end examples that would have drifted under the
-old reverse-complement canonicalization. It also now exercises a readable multi-base
-`k_outside=2`, `k_inside=2` command-level case. The intended contract is now
-regression-tested:
-
-- decode first into biological `outside || inside`
-- collapse against the same-orientation complement
-- keep the canonical full motif in `outside || inside` order before formatting
-
----
-
-#### IT-M4 — No multi-chromosome integration test
-
-**File:** All tests use `base_chromosomes(&["chr1"])`
-
-All 56 tests restrict processing to a single chromosome. The chromosome-iteration
-logic in `run()`, `chr_offsets_for_threads`, and the per-chromosome scaling lookup
-(`scaling_chr` in `ends.rs:510`) are never exercised with more than one chromosome.
-A regression in chromosome switching or off-by-one in tile assignment across chromosome
-boundaries would be invisible.
-
----
-
 #### IT-M5 — Most tests use exactly one fragment
 
 **File:** Most tests
@@ -1320,147 +774,7 @@ essentially untested.
 
 ---
 
-#### IT-M6 — No test for the B6 error path (incomplete scaling coverage)
-
-**File:** No test file
-
-`scaling_factors_weight_each_counted_end_motif` (line 470) provides a scaling file
-covering `[0, 256)` — the entire chromosome. There is no test where the scaling file
-has a gap and a fragment falls in an uncovered region. The B6 issue (opaque error
-message) is therefore not regression-tested.
-
----
-
-#### IT-M7 — No regression test for B1 (ClipStrategy default after fix)
-
-**File:** No test file
-
-B1 is now fixed, but there is no test asserting `EndsConfig::new().clip.clip_strategy
-== ClipStrategy::Aligned`. Since `base_config` in the test suite explicitly sets
-`Aligned`, a future regression to `Raw` would not be caught by the integration tests.
-
----
-
-#### IT-M8 — No test for proportion value precision in settings JSON (L14)
-
-**File:** No test file
-
-`settings_json_records_clip_and_window_assignment_semantics` (line 2143) does not use
-`WindowMotifAssigner::Proportion`. The L14 risk — that `proportion=0.2` could
-serialize as `"proportion=0.19999999999999998"` — has no test.
-
----
-
-#### IT-M9 — `global_mode` tested with only one fragment
-
-**File:** `test_ends_command.rs:1489`
-
-`global_mode_counts_both_end_motifs_in_one_output_row` uses a single fragment.
-"Global mode" (no windowing) is the default when no `--by-size` or `--by-bed` is
-specified. With a single fragment the output must be a 1×N matrix. There is no test
-confirming that two fragments produce correctly accumulated counts in the same single
-output row.
-
----
-
-#### IT-M10 — No test for the `bins.bed` 4th-column value (C7)
-
-**File:** No test file
-
-`windowed_runs_write_bins_bed_with_the_selected_windows` (line 2228) asserts:
-```rust
-assert!(rows[0].starts_with("chr1\t10\t11\t"));
-```
-The 4th column (overlap_perc from C7) is present in the output but never tested for
-correctness. Its value is undocumented and unvalidated. A regression changing the 4th
-column from a float to an integer, or from overlap percentage to some other statistic,
-would pass all current tests.
-
----
-
-#### IT-M11 — No integration test for `k_inside` or `k_outside` > 1 with KmerSource::Reference
-
-**File:** No test file
-
-All inside-only tests use `k_inside=1`. The fallback test uses `k_outside=5` with
-`KmerSource::Read` (not `KmerSource::Reference`). No test exercises reference-backed
-inside-bases with `k_inside > 1`. The `get_reference_code` logic for multi-base
-inside reference lookup — including sentinel_n handling for any N in the k-mer — has
-no integration coverage.
-
----
-
 ### 8.5 Structural Issues
-
-#### IT-ST1 — Settings JSON tests use `contains()` only — cannot detect malformed JSON
-
-**File:** `test_ends_command.rs:2143-2180, 2268-2293`
-
-```rust
-assert!(settings.contains("\"k_inside\": 1"));
-assert!(settings.contains("\"clip_strategy\": \"aligned\""));
-```
-
-These assertions confirm field presence but not JSON validity. A regression that
-introduced a trailing comma (breaking JSON syntax), duplicated a field, or omitted a
-field not currently asserted would go undetected. The tests should at minimum parse the
-JSON with `serde_json::from_str` to confirm it is valid, and ideally assert on the
-complete field set.
-
----
-
-#### IT-ST2 — `by_size_windowing_writes_bins_bed` only checks "non-empty" and "chr1\t" prefix
-
-**File:** `test_ends_command.rs:2506-2508`
-
-```rust
-assert!(!bins_bed.trim().is_empty());
-assert!(bins_bed.lines().all(|row| row.starts_with("chr1\t")));
-```
-
-This does not verify the number of windows generated, their sizes, or whether the
-window size matches the requested `by_size = Some(20)`. The test passes for any
-non-empty chr1 BED output, including incorrect window boundaries.
-
----
-
-#### IT-ST3 — Output prefix existence tests don't verify absence of un-prefixed files
-
-**File:** `test_ends_command.rs:2404-2439, 2542-2571`
-
-The prefix tests verify that `sampleA.end_motifs.sparse.npz` etc. exist. They do not
-verify that `ends.end_motifs.sparse.npz` (or any un-prefixed variant) was NOT created.
-A regression that wrote both the prefixed and un-prefixed copies would pass.
-
----
-
-#### IT-ST4 — `both_kmer_sizes_zero_is_rejected` does not validate error message
-
-**File:** `test_ends_command.rs:2125-2141`
-
-```rust
-assert!(run(&cfg).is_err());
-```
-
-Only checks that an error is returned, not what message it carries. This is inconsistent
-with `unpaired_mode_rejects_require_proper_pair` (line 2314), which asserts the error
-contains `"--require-proper-pair cannot be used with --reads-are-fragments"`. A future
-change that returned the wrong error (e.g., a downstream panic rather than a validation
-error) would not be caught.
-
----
-
-#### IT-ST5 — CLI tests don't exercise `--source-inside reference`
-
-**File:** `test_ends_command.rs:263-340, 345-424`
-
-Both CLI tests omit `--source-inside`. The CLI defaults to `KmerSource::Read` (no
-reference required). No CLI test exercises the full pipeline through the binary with
-`--source-inside reference`, meaning the CLI argument parsing for that flag is not
-integration-tested at the binary level. Only the programmatic API tests use
-`KmerSource::Reference`.
-
----
 
 #### IT-ST6 — All fixture fragments use the same start/length geometry
 
@@ -1471,80 +785,6 @@ With rare exceptions (edge tests, cross-tile), every standard fragment is at pos
 fragments whose k_outside window crosses the chromosome start, or fragments with
 lengths that interact with tile-size modulo arithmetic would not be caught by the
 standard geometry.
-
----
-
-### 8.6 Implementation-Fitted Tests (tests written from implementation, not contract)
-
-The following tests were written by tracing through the implementation rather than from
-the biological contract. They pass for the wrong reasons and cannot detect the bugs they
-appear to exercise.
-
----
-
-#### IT-CF1 — `collapse_complement_merges_reverse_complement_equivalent_end_motifs` never merged two distinct values
-
-**File:** `test_ends_command.rs:1470-1499`
-
-**Historical note:** the original test title claimed two distinct complementary motifs were
-observed and collapsed into one canonical label.
-
-**What actually happens:** Fragment [11, 21) on the ACGT-repeat reference with k_inside=1,
-k_outside=0:
-
-- Left end: genomic pos 11 = `'T'`, `reverse_on_decode=false` → decoded = `"T"` → pre-canonical `"_T"`
-- Right end: genomic pos 20 = `'A'`, `reverse_on_decode=true` → `RC("A") = "T"` → decoded = `"T"` → pre-canonical `"_T"`
-
-Both ends decode to `"T"` before canonicalization. There is no merging of distinct complementary
-values — two identical `"T"` values both map to `make_canonical("T", false, false) = "A"` → `"_A"`.
-Count = 2.
-
-A genuine merging test would require one end to produce pre-canonical `"_A"` and another to
-produce pre-canonical `"_T"`. The ACGT-repeat reference and this fragment position do not achieve
-that. Because the test only ever sees two copies of the same pre-canonical value, any
-canonicalization function that preserves palindromes and is consistent would pass it — including a
-no-op. The test also uses k_outside=0, which immunized it against B7 (the component-swap bug).
-
-This has now been renamed to `collapse_complement_merges_complement_equivalent_single_base_end_motifs`
-so the test title matches what it actually proves.
-
----
-
-#### IT-CF2 — `collapse_complement_uses_lexicographic_canonicalization_for_odd_length_end_motifs` validated the old B7 bug
-
-**File:** `test_ends_command.rs:1502-1595`
-
-**Historical note:** the original test title claimed four end observations from two fragments
-all collapsed to one canonical label `"G_TA"` under lexicographic canonicalization.
-
-**What actually happens (k_inside=2, k_outside=1):**
-
-Fragment A [10, 14): both ends correctly decode to `"GTA"` via the non-bug path (decoded wins
-canonical comparison). Label `"G_TA"`.
-
-Fragment B [20, 24): both ends hit the B7 bug path:
-
-| | Decoded (correct) | Canonical selected | Label produced | Correct label |
-|-|-|-|-|-|
-| B left | `"TAC"` | `"GTA"` (storage wins) | `"G_TA"` | `"T_AC"` |
-| B right | `RC("GTA")="TAC"` | `"GTA"` (storage wins) | `"G_TA"` | `"T_AC"` |
-
-For Fragment B, the canonical selected `storage_order = "GTA"` over the biologically-oriented
-decoded `"TAC"`, so the old test passed for the wrong reason: it was validating the bug-shaped
-label rather than the intended biological label contract.
-
-This test has now been replaced by
-`collapse_complement_preserves_outside_inside_order_for_odd_length_end_motifs`, which asserts the
-correct post-fix contract instead:
-
-- the decoded full motif is already `outside || inside`
-- collapse compares against the same-orientation complement
-- the canonical full motif remains in `outside || inside` order
-- the final odd-length collapsed label is `"C_AT"` in the worked fixture
-
-The replacement test is intentionally contract-based rather than implementation-fitted: it uses
-left- and right-end examples that decode to complementary full motifs, then asserts that the
-collapsed output keeps the correct `outside || inside` ordering in the public label.
 
 ---
 
@@ -1578,54 +818,29 @@ For completeness, the following tests are particularly thorough:
 
 | # | Category | Severity | File(s) |
 |---|----------|----------|---------|
-| [√] B1 | Bug | High | config.rs, config_structs.rs |
-| [√] B2 | Bug | Medium | counters.rs, ends.rs |
 | M11 | Style | Low | ends.rs |
 | B4 | Bug | Low | ends.rs |
-| [√] B7 | Bug | High | counting.rs, base.rs |
-| [√] D8 | Docs | Low | ends.rs |
-| [√] B6 | Bug | Medium | ends.rs |
-| [√] L1 | Logic | Low | ends.rs |
+| L1 | Logic | Low | ends.rs |
 | L2 | Logic | Medium | ends.rs |
-| [√] L3 | Logic | Low | ends.rs |
-| [√] L4 | Logic | Low | ends.rs, motifs.rs |
+| L3 | Logic | Low | ends.rs |
+| L4 | Logic | Low | ends.rs, motifs.rs |
 | L5 | Logic | Low | motifs.rs |
 | L6 | Logic | Low | motifs.rs |
 | M12 | Style | Low | counting.rs |
-| [√] L8 | Logic | Low | write.rs |
 | L9 | Logic | Low | output.rs |
-| L10 | Logic | Medium | config_structs.rs |
 | L11 | Logic | Low | motifs_tests.rs |
 | L12 | Logic | Low | ends_fragment.rs |
 | L13 | Logic | Low | ends_fragment.rs |
-| [√] L14 | Logic | Medium | write.rs |
-| [√] L15 | Logic | High | base.rs, counting.rs |
 | C1 | Config | Low | config.rs |
 | C3 | Config | Medium | config_structs.rs |
-| C4 | Config | Low | write.rs |
-| C5 | Config | Medium | write.rs |
 | C6 | Config | Low | write.rs |
-| C7 | Config | Medium | ends.rs |
 | C8 | Config | Medium | config_structs.rs |
-| [√] T1 | Tests | Medium | motifs_tests.rs |
-| [√] T2 | Tests | Medium | motifs_tests.rs |
-| [√] T3 | Tests | High | motifs.rs |
-| [√] T4 | Tests | High | output_tests.rs |
-| [√] T5 | Tests | High | write.rs |
-| T6 | Tests | Medium | tiling_tests.rs |
-| T7 | Tests | Medium | counting.rs |
-| [√] T8 | Tests | Medium | output_tests.rs |
-| T9 | Tests | Low | tiling_tests.rs |
-| T10 | Tests | Low | motifs_tests.rs |
-| [√] T11 | Tests | Low | counting.rs |
 | T12 | Tests | Low | counting.rs |
 | P1 | Perf | Low | motifs.rs |
 | P2 | Perf | Low | ends.rs |
 | P3 | Perf | Low | ends.rs |
 | P4 | Perf | Low | tiling.rs |
-| D1 | Docs | High | config.rs |
 | D2 | Docs | Medium | config_structs.rs |
-| D3 | Docs | Low | ends.rs |
 | D4 | Docs | Medium | config.rs |
 | D5 | Docs | Low | config_structs.rs |
 | D6 | Docs | High | ends_fragment.rs |
@@ -1642,29 +857,9 @@ For completeness, the following tests are particularly thorough:
 | M10 | Style | Low | counting.rs |
 | IT-I1 | Tests/Infra | Medium | fixtures/mod.rs, test_ends_command.rs |
 | IT-I2 | Tests/Infra | Low | fixtures/mod.rs |
-| IT-I3 | Tests/Infra | Low | test_ends_command.rs |
 | IT-I4 | Tests/Infra | Low | fixtures/mod.rs |
-| IT-S1 | Tests | Medium | test_ends_command.rs:829,883 |
-| IT-S2 | Tests | Medium | test_ends_command.rs:1202 |
 | IT-S3 | Tests | Low | test_ends_command.rs:1084 |
 | IT-S4 | Tests | Low | test_ends_command.rs:1153 |
 | IT-S6 | Tests | Low | test_ends_command.rs:422 |
-| IT-M1 | Tests | High | (no test) |
-| [√] IT-M2 | Tests | High | test_ends_command.rs |
-| [√] IT-M3 | Tests | Medium | test_ends_command.rs |
-| IT-M4 | Tests | Medium | (no test) |
 | IT-M5 | Tests | Medium | (no test) |
-| IT-M6 | Tests | Low | (no test) |
-| IT-M7 | Tests | Low | (no test) |
-| IT-M8 | Tests | Low | (no test) |
-| IT-M9 | Tests | Low | (no test) |
-| IT-M10 | Tests | Low | (no test) |
-| IT-M11 | Tests | Medium | (no test) |
-| IT-ST1 | Tests | Low | test_ends_command.rs |
-| IT-ST2 | Tests | Low | test_ends_command.rs:2506 |
-| IT-ST3 | Tests | Low | test_ends_command.rs:2426 |
-| IT-ST4 | Tests | Low | test_ends_command.rs:2125 |
-| IT-ST5 | Tests | Medium | test_ends_command.rs:263,345 |
 | IT-ST6 | Tests | Low | test_ends_command.rs |
-| IT-CF1 | Tests | High | test_ends_command.rs:1470 |
-| IT-CF2 | Tests | High | test_ends_command.rs:1502 |

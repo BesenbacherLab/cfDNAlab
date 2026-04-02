@@ -63,11 +63,8 @@ fn bed_windowed_runs_write_prefixed_bins_tsv_with_exact_blacklisted_fractions() 
 
     // Act
     run(&cfg)?;
-    let bins_tsv = std::fs::read_to_string(
-        out_dir
-            .path()
-            .join(dot_join(&["sampleA", "bins.tsv"])),
-    )?;
+    let bins_tsv =
+        std::fs::read_to_string(out_dir.path().join(dot_join(&["sampleA", "bins.tsv"])))?;
 
     // Assert
     assert_eq!(

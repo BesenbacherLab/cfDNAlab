@@ -7,7 +7,7 @@
 use crate::{
     commands::ends::{
         config::EndsConfig,
-        config_structs::{KmerSource, WindowMotifAssigner},
+        config_structs::{ClipStrategy, KmerSource, WindowMotifAssigner},
         counting::{EncodedEndMotifKey, EndCountsByWindow},
     },
     shared::{
@@ -23,21 +23,17 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use fxhash::FxHashMap;
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 /// Reference-backed motif resources for one tile.
 ///
 /// This groups the per-tile state needed to validate and encode end motifs:
 /// optional masked reference bases, optional radix-5 lookup tables for the
-/// inside and outside halves, and the metadata needed for exact fallback
-/// reference fetches when a requested motif crosses the loaded tile slice.
+/// inside and outside halves, and the metadata needed to translate absolute
+/// genomic motif starts into the preloaded tile-local reference slice.
 pub(crate) struct TileMotifContext<'a> {
-    /// Chromosome name used for exact fallback reference fetches
-    chrom: String,
-    /// Optional 2bit handle for exact reference fetches when a lookup crosses the tile slice
-    ref_2bit: Option<PathBuf>,
     /// Absolute genomic start of `reference_bases`
-    fetch_start: u64,
+    reference_start: u64,
     /// Tile reference bases, already blacklist-masked when needed
     reference_bases: Option<Vec<u8>>,
     /// Spec for the inside half, if `k_inside > 0`
@@ -48,7 +44,7 @@ pub(crate) struct TileMotifContext<'a> {
     inside_codes: Option<Arc<KmerCodes>>,
     /// Precomputed masked-reference codes for outside lookups
     outside_codes: Option<Arc<KmerCodes>>,
-    /// Blacklist intervals for exact masked fallback fetches
+    /// Blacklist intervals used to decide whether read-backed inside validation is needed
     blacklist_intervals: &'a [Interval<u64>],
     /// Chromosome length used for `sentinel_none` checks
     chrom_len: u64,
@@ -133,6 +129,29 @@ pub(crate) fn build_optional_kmer_spec(k: usize, label: &str) -> Result<Option<K
     Ok(specs.remove(&k_u8))
 }
 
+/// Compute the preloaded motif-reference span for one tile.
+///
+/// BAM fetch narrowing is independent of motif reference preload. For motif
+/// lookups, `ends` needs the full tile fetch band plus any extra sequence that
+/// raw clipping and outside-of-fragment k-mers may inspect beyond that band.
+pub(crate) fn motif_reference_span_for_tile(
+    tile: &Tile,
+    chrom_len: u64,
+    clip_strategy: ClipStrategy,
+    max_soft_clips: u16,
+    k_outside: usize,
+) -> Result<Interval<u64>> {
+    let raw_extra = if matches!(clip_strategy, ClipStrategy::Raw) {
+        u64::from(max_soft_clips)
+    } else {
+        0
+    };
+    let pad = raw_extra.saturating_add(k_outside as u64);
+    let reference_start = (tile.fetch_start() as u64).saturating_sub(pad);
+    let reference_end = (tile.fetch_end() as u64).saturating_add(pad).min(chrom_len);
+    Interval::new(reference_start, reference_end).map_err(Into::into)
+}
+
 /// Prepare tile-local masked reference resources for motif encoding.
 ///
 /// This loads and masks the tile reference slice only when the current run
@@ -147,8 +166,8 @@ pub(crate) fn build_optional_kmer_spec(k: usize, label: &str) -> Result<Option<K
 ///   Full `ends` command configuration
 /// - `tile`:
 ///   Tile currently being processed
-/// - `fetch_span`:
-///   Tile-local reference span that can still contribute to the current windows
+/// - `reference_span`:
+///   Tile-local reference span guaranteed to cover every valid motif lookup for this tile
 /// - `chrom_len`:
 ///   Full chromosome length
 /// - `blacklist_intervals`:
@@ -165,7 +184,7 @@ pub(crate) fn build_optional_kmer_spec(k: usize, label: &str) -> Result<Option<K
 pub(crate) fn build_tile_motif_context<'a>(
     opt: &EndsConfig,
     tile: &Tile,
-    fetch_span: Interval<u64>,
+    reference_span: Interval<u64>,
     chrom_len: u64,
     blacklist_intervals: &'a [Interval<u64>],
     inside_spec: Option<&KmerSpec>,
@@ -178,13 +197,11 @@ pub(crate) fn build_tile_motif_context<'a>(
         || (inside_spec.is_some()
             && (matches!(opt.source_inside, KmerSource::Reference)
                 || !blacklist_intervals.is_empty()));
-    let (fetch_start, fetch_end) = fetch_span.as_tuple();
+    let (reference_start, reference_end) = reference_span.as_tuple();
 
     if !needs_reference_bases {
         return Ok(TileMotifContext {
-            chrom: tile.chr.clone(),
-            ref_2bit: opt.ref_2bit.clone(),
-            fetch_start,
+            reference_start,
             reference_bases: None,
             inside_spec,
             outside_spec,
@@ -202,10 +219,10 @@ pub(crate) fn build_tile_motif_context<'a>(
     let mut reference_bases = read_seq_in_range(
         ref_2bit,
         &tile.chr,
-        (fetch_start as usize)..(fetch_end as usize),
+        (reference_start as usize)..(reference_end as usize),
     )?;
     if !blacklist_intervals.is_empty() {
-        apply_blacklist_mask_to_seq(&mut reference_bases, blacklist_intervals, fetch_start);
+        apply_blacklist_mask_to_seq(&mut reference_bases, blacklist_intervals, reference_start);
     }
 
     let (inside_codes, outside_codes) = match (inside_spec.as_ref(), outside_spec.as_ref()) {
@@ -221,9 +238,7 @@ pub(crate) fn build_tile_motif_context<'a>(
     };
 
     Ok(TileMotifContext {
-        chrom: tile.chr.clone(),
-        ref_2bit: opt.ref_2bit.clone(),
-        fetch_start,
+        reference_start,
         reference_bases: Some(reference_bases),
         inside_spec,
         outside_spec,
@@ -572,8 +587,7 @@ fn encode_outside_code(
     )
 }
 
-/// Look up one reference-backed motif half from either the precomputed tile
-/// codes or an exact masked-reference fallback fetch.
+/// Look up one reference-backed motif half from the precomputed tile codes.
 ///
 /// Parameters
 /// ----------
@@ -582,7 +596,7 @@ fn encode_outside_code(
 /// - `spec`:
 ///   Codec spec for the requested half
 /// - `precomputed_codes`:
-///   Optional tile-local code vector for this `k`
+///   Tile-local code vector for this `k`
 /// - `motif_context`:
 ///   Tile-local reference resources
 ///
@@ -596,13 +610,24 @@ fn get_reference_code(
     precomputed_codes: Option<&KmerCodes>,
     motif_context: &TileMotifContext<'_>,
 ) -> Result<u64> {
-    if let Some(codes) = precomputed_codes {
-        if let Some(local_start) = try_reference_start_index(start_pos, spec.k, motif_context) {
-            return Ok(codes.get(local_start));
-        }
+    if start_pos + spec.k as u64 > motif_context.chrom_len {
+        return Ok(spec.sentinel_none());
     }
 
-    fetch_reference_kmer_exact(start_pos, spec, motif_context)
+    let codes = precomputed_codes.context(
+        "missing precomputed reference codes for a reference-backed motif lookup",
+    )?;
+    let local_start = try_reference_start_index(start_pos, spec.k, motif_context).with_context(
+        || {
+            let loaded_end = motif_context.reference_start
+                + motif_context.reference_bases.as_ref().map_or(0, Vec::len) as u64;
+            format!(
+                "motif reference lookup escaped preloaded tile span: start={start_pos}, k={}, loaded_reference_span=[{}, {})",
+                spec.k, motif_context.reference_start, loaded_end
+            )
+        },
+    )?;
+    Ok(codes.get(local_start))
 }
 
 /// Translate a genomic motif start into a tile-local slice index when possible.
@@ -625,58 +650,15 @@ fn try_reference_start_index(
     k: usize,
     motif_context: &TileMotifContext<'_>,
 ) -> Option<usize> {
-    if start_pos < motif_context.fetch_start {
+    if start_pos < motif_context.reference_start {
         return None;
     }
 
-    let local_start = (start_pos - motif_context.fetch_start) as usize;
+    let local_start = (start_pos - motif_context.reference_start) as usize;
     if local_start + k > motif_context.reference_bases.as_ref().map_or(0, Vec::len) {
         return None;
     }
     Some(local_start)
-}
-
-/// Fetch one exact masked-reference motif half outside the preloaded tile slice.
-///
-/// Parameters
-/// ----------
-/// - `start_pos`:
-///   Genomic start position of the requested motif half
-/// - `spec`:
-///   Codec spec for the requested half
-/// - `motif_context`:
-///   Tile-local reference resources
-///
-/// Returns
-/// -------
-/// - `Result<u64>`:
-///   Encoded exact-reference motif code or an invalid sentinel
-fn fetch_reference_kmer_exact(
-    start_pos: u64,
-    spec: &KmerSpec,
-    motif_context: &TileMotifContext<'_>,
-) -> Result<u64> {
-    if start_pos + spec.k as u64 > motif_context.chrom_len {
-        return Ok(spec.sentinel_none());
-    }
-
-    let ref_2bit = motif_context
-        .ref_2bit
-        .as_ref()
-        .context("reference-backed motif extraction requires --ref-2bit")?;
-    let mut exact_bases = read_seq_in_range(
-        ref_2bit,
-        &motif_context.chrom,
-        (start_pos as usize)..((start_pos as usize) + spec.k),
-    )?;
-    if !motif_context.blacklist_intervals.is_empty() {
-        apply_blacklist_mask_to_seq(
-            &mut exact_bases,
-            motif_context.blacklist_intervals,
-            start_pos,
-        );
-    }
-    Ok(spec.encode_kmer_bytes(&exact_bases))
 }
 
 #[cfg(test)]

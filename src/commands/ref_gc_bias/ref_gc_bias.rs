@@ -1,3 +1,29 @@
+//! Runner for calculating reference GC-bias.
+//!
+//! [Agents: Doc comments are humanly controlled, don't edit unless asked directly]
+//!
+//! It samples fitting fragments for all valid fragment lengths at N starting positions and
+//! calculates their GC contents. It then calculates the bias per fragment length.
+//!
+//! ## Implementation requirements
+//!
+//! Parallelization: Tiles.
+//!
+//! Windowing: Inclusion. Overlapping and touching BED intervals are merged.
+//! No by-size option is available as it would collapse to global mode after merging.
+//! BED windows can potentially extend across many or all tiles on a chromosome.
+//!
+//! "Fragment" ownership: For a given tile, we sample from all the possible starting positions.
+//! A "fragment" can cross into the following tile but never across genomic windows.
+//! If a fragment cannot fit inside a window, it is not counted. This means the final
+//! possible starting position is different per fragment length.
+//! For a given tile, only BED windows overlapping the core can get counts.
+//!
+//! To know exactly how many valid ACGT bases are in each tile for normalization,
+//! we calculate these for the bases included in the tile (non-blacklisted bases and
+//! within the windows / global). Overlapping windows reaching outside the tile are
+//! thus clipped to the core (for this ACGT base count only).
+
 use crate::{
     commands::{
         cli_common::*,
@@ -145,7 +171,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
                 .unwrap_or(&[])
         },
         0,
-        0,
+        0, // Windows can extend outside tiles but must overlap
     ));
 
     // Configure global thread‐pool size
@@ -379,6 +405,7 @@ fn process_tile(
         return Ok((empty, 0));
     }
 
+    // Absolute genomic sequence loaded for this tile via 2bit
     let seq_start = tile.fetch_start().min(tile.core_start()) as u64;
     let seq_end = tile.fetch_end().min(chrom_len as u32) as u64;
 
@@ -396,11 +423,13 @@ fn process_tile(
 
     let core_start_usize = core_start as usize;
     let core_end_usize = core_end as usize;
-    let seq_offset = seq_start as usize;
 
-    // Build windows that start in the core but may extend into the right halo
+    // Build/redefine windows to have tile-local coordinates.
+    // These windows are clipped to start in the core but may extend into the right halo.
     // We keep starts inside the core (so starts are unique per tile) while letting fragment ends
     // reach into the fetched halo, which carries the needed sequence context
+    // Absolute -> tile-local coordinates: We offset coordinates by sequence start
+    // so they are relative to the loaded reference sequence
     let mut tile_windows: Vec<IndexedInterval<u64>> = Vec::new();
     if let Some(win_chr) = windows {
         let iter = overlapping_windows_for_tile(win_chr, tile, tile_window_span);
@@ -419,8 +448,10 @@ fn process_tile(
             )?);
         }
     } else {
-        // Global mode: one window spanning the tile core
+        // Global mode: one tile-local window starting from the tile core start
+        // and ending at the end of the loaded reference sequence
         tile_windows.push(IndexedInterval::new(
+            // Starts at the core start in the loaded sequence (offset by the left halo)
             core_start.saturating_sub(seq_start),
             seq_end.saturating_sub(seq_start),
             0,
@@ -441,7 +472,7 @@ fn process_tile(
     let core_end_idx = start_positions.partition_point(|&s| s < core_end_usize);
     let tile_starts: Vec<usize> = start_positions[core_start_idx..core_end_idx]
         .iter()
-        .map(|s| s.saturating_sub(seq_offset))
+        .map(|s| s.saturating_sub(seq_start as usize))
         .collect();
 
     // Allocate per-tile window accumulators (global sum comes from merging them)
@@ -455,6 +486,9 @@ fn process_tile(
         tile_windows.len()
     ];
 
+    // Count the reference GC by length and windows
+    // The tile_windows, tile_starts, and passed chrom_len (seq_end - seq_start)
+    // all use tile-local coordinates / size
     count_reference_gc_and_length_by_window(
         &mut counts_by_bin,
         &gc_prefixes,
@@ -507,4 +541,9 @@ fn process_tile(
     )?;
 
     Ok((merged, total_acgt_in_core))
+}
+
+#[cfg(test)]
+mod tests {
+    include!("ref_gc_bias_tests.rs");
 }

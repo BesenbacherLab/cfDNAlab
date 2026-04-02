@@ -16,6 +16,7 @@ This file is the authoritative entry point for repo-specific agent instructions.
 - Base answers about existing functionality on actual code behavior, not comments etc. that might be outdated.
 - For fragment code, preserve the project's domain semantics and vocabulary. Paired fragment spans are defined directionally as `forward.pos` to `reverse.reference_end`, and docs/comments should keep using `pos` / `end` / `reference_end` terminology even if the implementation stores checked intervals internally.
 - Read the Interval and IndexedInterval API and default to using the helpers when working on interval-logic.
+- The minimum allowed fragment length possible is 10bp. Do not use smaller values than that in test fixtures. And in general check argument constraints before setting them in fixtures.
 
 ## Read These Files When Relevant
 

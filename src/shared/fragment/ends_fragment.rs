@@ -184,7 +184,7 @@ pub fn collect_fragment_with_ends(
     source_inside: KmerSource,
     indel_filter: IndelMotifFilterPolicy,
     k_inside: usize,
-    max_soft_clips: Option<u32>,
+    max_soft_clips: u32,
 ) -> Option<FragmentWithEnds> {
     let (forward, reverse) = oriented_pair_from_read_info(a, b)?;
     if !is_inwards_oriented(forward, reverse) {
@@ -259,7 +259,7 @@ pub fn collect_fragment_with_ends_from_single_read(
     source_inside: KmerSource,
     indel_filter: IndelMotifFilterPolicy,
     k_inside: usize,
-    max_soft_clips: Option<u32>,
+    max_soft_clips: u32,
 ) -> Option<FragmentWithEnds> {
     if read.has_hard_clip {
         return None;
@@ -439,7 +439,7 @@ fn resolve_fragment_end(
     source_inside: KmerSource,
     indel_filter: IndelMotifFilterPolicy,
     k_inside: usize,
-    max_soft_clips: Option<u32>,
+    max_soft_clips: u32,
 ) -> ResolvedEndOutcome {
     let (aligned_boundary_pos, soft_clip_bp, motif_has_indels) = match end_side {
         FragmentEndSide::Left => (
@@ -454,7 +454,7 @@ fn resolve_fragment_end(
         ),
     };
 
-    if max_soft_clips.is_some_and(|max_bp| soft_clip_bp > max_bp) {
+    if soft_clip_bp > max_soft_clips {
         return ResolvedEndOutcome::SkipEndDropAssignmentBoundary;
     }
 

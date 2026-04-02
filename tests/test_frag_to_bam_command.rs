@@ -162,10 +162,11 @@ fn make_config(
     let mut config = FragToBamConfig::new(frag_path, output_dir, chromosomes, chrom_sizes_path);
     config.set_output_prefix("restored");
     // Keep non-length tests independent from the production defaults (30..=1000).
+    // Still respect the shared minimum included fragment length of 10.
     // Individual tests that validate length behavior override this explicitly.
     {
         let fragment_lengths = config.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 1;
+        fragment_lengths.min_fragment_length = 10;
         fragment_lengths.max_fragment_length = 1_000;
     }
     config
@@ -349,7 +350,7 @@ fn run_blacklist_strategy_case(strategy: BlacklistStrategy) -> Result<Vec<u64>> 
     config.set_min_mapq(0);
     {
         let fragment_lengths = config.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 1;
+        fragment_lengths.min_fragment_length = 10;
         fragment_lengths.max_fragment_length = 100;
     }
 
@@ -367,14 +368,14 @@ fn given_valid_frag_when_run_then_writes_expected_unpaired_bam_records() -> Resu
     // Two fragments in input order chr1 then chr2.
     // Chrom sizes order is intentionally chr2 then chr1.
     // The writer iterates chrom-sizes order in the second pass, so output row order should be:
-    //   1) chr2 fragment [5,9), mapq=30, strand='-'
+    //   1) chr2 fragment [5,15), mapq=30, strand='-'
     //   2) chr1 fragment [10,20), mapq=60, strand='+'
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
     let chrom_sizes_path = input_dir.path().join("chrom.sizes");
 
-    write_frag_file(&frag_path, &["chr1\t10\t20\t60\t+", "chr2\t5\t9\t30\t-"])?;
+    write_frag_file(&frag_path, &["chr1\t10\t20\t60\t+", "chr2\t5\t15\t30\t-"])?;
     write_chrom_sizes(&chrom_sizes_path, &[("chr2", 100), ("chr1", 100)])?;
 
     let config = make_config(
@@ -391,7 +392,7 @@ fn given_valid_frag_when_run_then_writes_expected_unpaired_bam_records() -> Resu
 
     // Assert
     assert_eq!(rows.len(), 2);
-    assert_unpaired_full_match_record(&rows[0], "chr2", 5, 9, 30, '-', "fragment_1");
+    assert_unpaired_full_match_record(&rows[0], "chr2", 5, 15, 30, '-', "fragment_1");
     assert_unpaired_full_match_record(&rows[1], "chr1", 10, 20, 60, '+', "fragment_2");
 
     Ok(())
@@ -403,7 +404,7 @@ fn given_filters_and_extra_columns_when_run_then_only_expected_fragments_remain(
     // Arrange:
     // - Keep chromosomes: chr1 only.
     // - Keep mapq >= 20.
-    // - Keep fragment length in [5, 25].
+    // - Keep fragment length in [10, 25].
     // Expected keeps:
     // - chr1 [0,20) mapq 60
     // - chr1 [40,50) mapq 60 with extra trailing columns (ignored by parser)
@@ -433,7 +434,7 @@ fn given_filters_and_extra_columns_when_run_then_only_expected_fragments_remain(
     config.set_min_mapq(20);
     {
         let fragment_lengths = config.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 5;
+        fragment_lengths.min_fragment_length = 10;
         fragment_lengths.max_fragment_length = 25;
     }
 
@@ -1415,7 +1416,7 @@ fn given_touching_short_blacklists_in_separate_files_when_min_size_exceeds_each_
     config.set_min_mapq(0);
     {
         let fragment_lengths = config.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 1;
+        fragment_lengths.min_fragment_length = 10;
         fragment_lengths.max_fragment_length = 100;
     }
 
@@ -1468,7 +1469,7 @@ fn given_same_blacklist_premerged_in_one_file_when_min_size_is_met_then_fragment
     config.set_min_mapq(0);
     {
         let fragment_lengths = config.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 1;
+        fragment_lengths.min_fragment_length = 10;
         fragment_lengths.max_fragment_length = 100;
     }
 
@@ -1757,7 +1758,7 @@ fn given_chromosomes_all_when_run_then_header_and_output_follow_chrom_sizes_orde
     let frag_path = input_dir.path().join("input.frag.tsv");
     let chrom_sizes_path = input_dir.path().join("chrom.sizes");
 
-    write_frag_file(&frag_path, &["chr1\t10\t20\t60\t+", "chr2\t5\t9\t30\t-"])?;
+    write_frag_file(&frag_path, &["chr1\t10\t20\t60\t+", "chr2\t5\t15\t30\t-"])?;
     write_chrom_sizes(
         &chrom_sizes_path,
         &[("chr2", 100), ("chr1", 100), ("chr3", 100)],

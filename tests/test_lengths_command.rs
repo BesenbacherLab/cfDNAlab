@@ -334,6 +334,369 @@ mod tests_lengths_command {
     }
 
     #[test]
+    fn bed_windowing_counts_a_right_halo_only_window_reached_by_an_owned_fragment() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // - one unpaired fragment span [19,29), length 10
+        // - tile size 10 gives the owning tile core [10,20)
+        // - BED window [28,29) sits entirely in the right halo, not in the core
+        // - with assign-by=any, that halo window should still receive the fragment once
+        let bam = single_read_fragment_bam("lengths_right_halo_only_bed", 19, 10)?;
+        let out_dir = TempDir::new()?;
+        let bed_path = out_dir.path().join("right_halo_only.bed");
+        write_bed(&bed_path, &[("chr1", 28, 29, "halo_only")])?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(cfdnalab::commands::cli_common::UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Any,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_tile_size(10);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+
+        // Assert
+        let prefix = cfg.output_prefix.trim();
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[prefix, "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.shape(), &[1, 1]);
+        assert!((arr[(0, 0)] - 1.0).abs() < 1e-6);
+        assert!((arr.sum() - 1.0).abs() < 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn bed_windowing_does_not_count_a_window_starting_at_fragment_end() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // - one unpaired fragment span [19,29), length 10
+        // - tile size 10 again gives the owning tile core [10,20)
+        // - BED window [29,30) still sits inside the reachable right-side candidate envelope
+        // - but the fragment ends exactly at 29, so the half-open overlap is zero
+        let bam = single_read_fragment_bam("lengths_right_boundary_open", 19, 10)?;
+        let out_dir = TempDir::new()?;
+        let bed_path = out_dir.path().join("right_boundary_open.bed");
+        write_bed(&bed_path, &[("chr1", 29, 30, "touches_end_only")])?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(cfdnalab::commands::cli_common::UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Any,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_tile_size(10);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+
+        // Assert
+        let prefix = cfg.output_prefix.trim();
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[prefix, "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.shape(), &[1, 1]);
+        assert_eq!(arr[(0, 0)], 0.0);
+        assert_eq!(arr.sum(), 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn bed_windowing_must_not_shrink_fetch_to_unrelated_core_windows() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // - one unpaired fragment span [19,29), length 10
+        // - tile size 10 again gives the owning tile core [10,20)
+        // - BED window [10,11) overlaps the core but not the fragment
+        // - BED window [28,29) is the real target window in the right halo
+        // The correct result is two output rows with counts [0.0, 1.0].
+        let bam = single_read_fragment_bam("lengths_right_halo_with_core_window", 19, 10)?;
+        let out_dir = TempDir::new()?;
+        let bed_path = out_dir.path().join("mixed_windows.bed");
+        write_bed(
+            &bed_path,
+            &[
+                ("chr1", 10, 11, "core_only"),
+                ("chr1", 28, 29, "halo_target"),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(cfdnalab::commands::cli_common::UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Any,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_tile_size(10);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+
+        // Assert
+        let prefix = cfg.output_prefix.trim();
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[prefix, "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.shape(), &[2, 1]);
+        assert_eq!(arr[(0, 0)], 0.0);
+        assert!((arr[(1, 0)] - 1.0).abs() < 1e-6);
+        assert!((arr.sum() - 1.0).abs() < 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn bed_windowing_right_halo_only_count_is_tile_size_invariant() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // - one unpaired fragment span [19,29), length 10
+        // - BED window [28,29) is the only counted row
+        // - with tile_size=10 the window lies outside the owning tile core; with tile_size=1000
+        //   it lies in the same tile
+        // The final BED output must be identical across those decompositions.
+        let bam = single_read_fragment_bam("lengths_right_halo_tile_invariance", 19, 10)?;
+        let tile_sizes = [10_u32, 1_000_u32];
+        let mut outputs = Vec::new();
+
+        for tile_size in tile_sizes {
+            let out_dir = TempDir::new()?;
+            let bed_path = out_dir.path().join(format!("right_halo_{tile_size}.bed"));
+            write_bed(&bed_path, &[("chr1", 28, 29, "halo_only")])?;
+
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: out_dir.path().to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.set_unpaired(cfdnalab::commands::cli_common::UnpairedArgs {
+                reads_are_fragments: true,
+            });
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.set_windows(WindowsArgs {
+                by_size: None,
+                by_bed: Some(bed_path),
+            });
+            cfg.set_window_assignment(AssignToWindowArgs {
+                assign_by: WindowAssigner::Any,
+            });
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            cfg.set_tile_size(tile_size);
+            {
+                let frag = cfg.fragment_lengths_mut();
+                frag.min_fragment_length = 10;
+                frag.max_fragment_length = 10;
+            }
+
+            run(&cfg)?;
+
+            let prefix = cfg.output_prefix.trim();
+            let npy_path = out_dir
+                .path()
+                .join(dot_join(&[prefix, "length_counts.npy"]));
+            outputs.push(read_npy::<_, Array2<f64>>(&npy_path)?);
+        }
+
+        assert_eq!(outputs[0], outputs[1]);
+        assert_eq!(outputs[0].shape(), &[1, 1]);
+        assert_eq!(outputs[0][[0, 0]], 1.0);
+        Ok(())
+    }
+
+    #[test]
+    fn bed_windowing_mixed_core_and_right_halo_rows_are_tile_size_invariant() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // - one unpaired fragment span [19,29), length 10
+        // - BED row [10,11) is upstream and must stay zero
+        // - BED row [28,29) is the true counted row and must equal 1
+        // - with tile_size=10 these rows fall in different tiles; with tile_size=1000 they do not
+        let bam = single_read_fragment_bam("lengths_mixed_bed_tile_invariance", 19, 10)?;
+        let tile_sizes = [10_u32, 1_000_u32];
+        let mut outputs = Vec::new();
+
+        for tile_size in tile_sizes {
+            let out_dir = TempDir::new()?;
+            let bed_path = out_dir.path().join(format!("mixed_{tile_size}.bed"));
+            write_bed(
+                &bed_path,
+                &[
+                    ("chr1", 10, 11, "core_only"),
+                    ("chr1", 28, 29, "halo_target"),
+                ],
+            )?;
+
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: out_dir.path().to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.set_unpaired(cfdnalab::commands::cli_common::UnpairedArgs {
+                reads_are_fragments: true,
+            });
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.set_windows(WindowsArgs {
+                by_size: None,
+                by_bed: Some(bed_path),
+            });
+            cfg.set_window_assignment(AssignToWindowArgs {
+                assign_by: WindowAssigner::Any,
+            });
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            cfg.set_tile_size(tile_size);
+            {
+                let frag = cfg.fragment_lengths_mut();
+                frag.min_fragment_length = 10;
+                frag.max_fragment_length = 10;
+            }
+
+            run(&cfg)?;
+
+            let prefix = cfg.output_prefix.trim();
+            let npy_path = out_dir
+                .path()
+                .join(dot_join(&[prefix, "length_counts.npy"]));
+            outputs.push(read_npy::<_, Array2<f64>>(&npy_path)?);
+        }
+
+        assert_eq!(outputs[0], outputs[1]);
+        assert_eq!(outputs[0].shape(), &[2, 1]);
+        assert_eq!(outputs[0][[0, 0]], 0.0);
+        assert_eq!(outputs[0][[1, 0]], 1.0);
+        Ok(())
+    }
+
+    #[test]
+    fn bed_windowing_right_boundary_zero_is_tile_size_invariant() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // - one unpaired fragment span [19,29), length 10
+        // - BED window [29,30) touches fragment end only and must stay zero
+        // - tile_size changes the decomposition but not the final half-open overlap result
+        let bam = single_read_fragment_bam("lengths_right_boundary_tile_invariance", 19, 10)?;
+        let tile_sizes = [10_u32, 1_000_u32];
+        let mut outputs = Vec::new();
+
+        for tile_size in tile_sizes {
+            let out_dir = TempDir::new()?;
+            let bed_path = out_dir.path().join(format!("boundary_{tile_size}.bed"));
+            write_bed(&bed_path, &[("chr1", 29, 30, "touches_end_only")])?;
+
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: out_dir.path().to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.set_unpaired(cfdnalab::commands::cli_common::UnpairedArgs {
+                reads_are_fragments: true,
+            });
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.set_windows(WindowsArgs {
+                by_size: None,
+                by_bed: Some(bed_path),
+            });
+            cfg.set_window_assignment(AssignToWindowArgs {
+                assign_by: WindowAssigner::Any,
+            });
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            cfg.set_tile_size(tile_size);
+            {
+                let frag = cfg.fragment_lengths_mut();
+                frag.min_fragment_length = 10;
+                frag.max_fragment_length = 10;
+            }
+
+            run(&cfg)?;
+
+            let prefix = cfg.output_prefix.trim();
+            let npy_path = out_dir
+                .path()
+                .join(dot_join(&[prefix, "length_counts.npy"]));
+            outputs.push(read_npy::<_, Array2<f64>>(&npy_path)?);
+        }
+
+        assert_eq!(outputs[0], outputs[1]);
+        assert_eq!(outputs[0].shape(), &[1, 1]);
+        assert_eq!(outputs[0][[0, 0]], 0.0);
+        Ok(())
+    }
+
+    #[test]
     fn global_by_size_and_bed_full_chromosome_windows_match_exactly() -> Result<()> {
         // Human verification status: unverified
         // Arrange:
@@ -766,6 +1129,85 @@ mod tests_lengths_command {
         }
         assert!((arr.sum() - 3.0).abs() < 1e-6);
 
+        Ok(())
+    }
+
+    #[test]
+    fn by_size_and_bed_equivalent_full_chromosome_windows_match_across_three_chromosomes()
+    -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // - three chromosomes of length 200
+        // - one fragment per chromosome with lengths 60, 80, and 100
+        // - by-size 200 creates one full-chromosome row per chromosome
+        // - BED windows [0,200) for each chromosome describe the exact same row partition
+        // The two modes must therefore produce identical row-wise length matrices.
+        let bam = three_chrom_length_fixture("lengths_three_chr_bed_vs_size")?;
+        let by_size_out = TempDir::new()?;
+        let bed_out = TempDir::new()?;
+        let bed_path = bed_out.path().join("windows_three_chr_full.bed");
+        fixtures::write_bed(
+            &bed_path,
+            &[
+                ("chr1", 0, 200, "chr1_window"),
+                ("chr2", 0, 200, "chr2_window"),
+                ("chr3", 0, 200, "chr3_window"),
+            ],
+        )?;
+
+        let make_cfg = |output_dir: &std::path::Path, windows: WindowsArgs| {
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: output_dir.to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1", "chr2", "chr3"]),
+            );
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.set_windows(windows);
+            cfg.set_window_assignment(AssignToWindowArgs::default());
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            cfg.set_tile_size(50);
+            {
+                let frag = cfg.fragment_lengths_mut();
+                frag.min_fragment_length = 10;
+                frag.max_fragment_length = 120;
+            }
+            cfg
+        };
+
+        let by_size_cfg = make_cfg(
+            by_size_out.path(),
+            WindowsArgs {
+                by_size: Some(200),
+                by_bed: None,
+            },
+        );
+        let bed_cfg = make_cfg(
+            bed_out.path(),
+            WindowsArgs {
+                by_size: None,
+                by_bed: Some(bed_path),
+            },
+        );
+
+        // Act
+        run(&by_size_cfg)?;
+        run(&bed_cfg)?;
+
+        // Assert
+        let read_counts = |dir: &std::path::Path| -> Result<Array2<f64>> {
+            Ok(read_npy(dir.join(dot_join(&["", "length_counts.npy"])))?)
+        };
+        let by_size_arr = read_counts(by_size_out.path())?;
+        let bed_arr = read_counts(bed_out.path())?;
+
+        assert_eq!(by_size_arr.shape(), &[3, 111]);
+        assert_eq!(bed_arr.shape(), &[3, 111]);
+        assert_eq!(by_size_arr, bed_arr);
+        assert!((by_size_arr.sum() - 3.0).abs() < 1e-6);
         Ok(())
     }
 
@@ -2168,11 +2610,8 @@ mod tests_lengths_command {
 
         // Act
         run(&cfg)?;
-        let bins_tsv = std::fs::read_to_string(
-            out_dir
-                .path()
-                .join(dot_join(&["sampleA", "bins.tsv"])),
-        )?;
+        let bins_tsv =
+            std::fs::read_to_string(out_dir.path().join(dot_join(&["sampleA", "bins.tsv"])))?;
 
         // Assert
         assert_eq!(
@@ -2458,7 +2897,6 @@ mod tests_lengths_tiling_reducer {
         assert!(res.is_none());
         Ok(())
     }
-
 }
 
 mod tests_lengths_tiling_helpers {
@@ -2467,7 +2905,7 @@ mod tests_lengths_tiling_helpers {
     use cfdnalab::shared::bam::Contigs;
     use cfdnalab::shared::interval::IndexedInterval;
     use cfdnalab::shared::tiled_run::{Tile, TileWindowSpan, build_tiles};
-    use cfdnalab::shared::window_fetch::fetch_span_for_tile;
+    use cfdnalab::shared::window_fetch::{BedFetchPolicy, fetch_span_for_tile};
     use fxhash::FxHashMap;
     use std::path::PathBuf;
 
@@ -2487,9 +2925,17 @@ mod tests_lengths_tiling_helpers {
         // Tile: core 50-150, fetch 30-200 (halo 20 left, 50 right), chrom len 180
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 50, 150, 30, 200)
             .expect("test tile should be valid");
-        let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(100), 180, 0)
-            .expect("span expected")
-            .expect("fetch span expected");
+        let span = fetch_span_for_tile(
+            &tile,
+            None,
+            None,
+            &WindowSpec::Size(100),
+            180,
+            0,
+            BedFetchPolicy::CandidateWindowExtent,
+        )
+        .expect("span expected")
+        .expect("fetch span expected");
         // Window span touching core: 0..200, after halo clamp -> 30..180
         assert_eq!(span.start(), 30);
         assert_eq!(span.end(), 180);
@@ -2534,9 +2980,17 @@ mod tests_lengths_tiling_helpers {
         // Human verification status: unverified
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 0, 50, 0, 200)
             .expect("test tile should be valid");
-        let span = fetch_span_for_tile(&tile, None, None, &WindowSpec::Global, 120, 0)
-            .expect("span")
-            .expect("fetch span expected");
+        let span = fetch_span_for_tile(
+            &tile,
+            None,
+            None,
+            &WindowSpec::Global,
+            120,
+            0,
+            BedFetchPolicy::CandidateWindowExtent,
+        )
+        .expect("span")
+        .expect("fetch span expected");
         assert_eq!(span.start(), 0);
         assert_eq!(span.end(), 120);
     }
@@ -2558,6 +3012,7 @@ mod tests_lengths_tiling_helpers {
             &WindowSpec::Bed(PathBuf::from("dummy")),
             500,
             0,
+            BedFetchPolicy::CoreOverlap,
         )
         .expect("span")
         .expect("fetch span expected");
@@ -2584,6 +3039,7 @@ mod tests_lengths_tiling_helpers {
             &WindowSpec::Bed(PathBuf::from("dummy")),
             200,
             0,
+            BedFetchPolicy::CoreOverlap,
         )
         .expect("fetch span computation should succeed");
         assert!(res.is_none());
@@ -2594,8 +3050,16 @@ mod tests_lengths_tiling_helpers {
         // Human verification status: unverified
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 250, 260, 230, 270)
             .expect("test tile should be valid");
-        let res = fetch_span_for_tile(&tile, None, None, &WindowSpec::Size(50), 200, 0)
-            .expect("fetch span computation should succeed");
+        let res = fetch_span_for_tile(
+            &tile,
+            None,
+            None,
+            &WindowSpec::Size(50),
+            200,
+            0,
+            BedFetchPolicy::CandidateWindowExtent,
+        )
+        .expect("fetch span computation should succeed");
         assert!(res.is_none());
     }
 
@@ -2605,5 +3069,4 @@ mod tests_lengths_tiling_helpers {
         let err = Tile::from_coords("chr1".to_string(), 0, 0, 100, 100, 80, 120).unwrap_err();
         assert!(format!("{err}").contains("interval end (100) must be greater than start (100)"));
     }
-
 }

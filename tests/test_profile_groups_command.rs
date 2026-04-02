@@ -423,6 +423,106 @@ fn unpaired_single_read_matches_paired_midpoint_profile_for_same_span() -> Resul
 }
 
 #[test]
+fn bed_sites_mixed_core_and_halo_rows_keep_only_the_core_midpoint_count_across_tile_sizes()
+-> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // - one unpaired fragment span [5,16), so the deterministic midpoint is 10
+    // - BED site [10,11) is the true core-overlap site and should receive one count at position 0
+    // - BED site [22,23) is downstream and should stay zero
+    // - with tile_size=10 the two sites fall in different tiles; with tile_size=1000 they do not
+    // - the final grouped midpoint profiles must therefore be identical across tile sizes
+    let bam = single_read_fragment_bam("midpoints_mixed_core_and_halo_rows", 5, 11)?;
+    let tile_sizes = [10_u32, 1_000_u32];
+    let mut outputs = Vec::new();
+
+    for tile_size in tile_sizes {
+        let temp = TempDir::new()?;
+        let bed_path = temp.path().join(format!("sites_{tile_size}.bed"));
+        write_bed(
+            &bed_path,
+            &[
+                ("chr1", 10, 11, "group_core"),
+                ("chr1", 22, 23, "group_halo"),
+            ],
+        )?;
+
+        let mut cfg = MidpointsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: temp.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+            bed_path,
+        );
+        cfg.set_output_prefix("sites");
+        cfg.set_length_bins(vec![11, 12]);
+        cfg.set_tile_size(tile_size);
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.unpaired.reads_are_fragments = true;
+
+        run(&cfg)?;
+
+        let counts_path = temp.path().join("sites.midpoint_profiles.npy");
+        let arr: Array3<f32> = read_npy(&counts_path)?;
+        let map_path = temp.path().join("sites.group_index.tsv");
+        let group_to_idx = read_group_index_map(&map_path)?;
+
+        outputs.push((arr, group_to_idx));
+    }
+
+    let (small_tile_arr, small_tile_groups) = &outputs[0];
+    let (large_tile_arr, large_tile_groups) = &outputs[1];
+
+    assert_eq!(small_tile_groups, large_tile_groups);
+    assert_eq!(small_tile_arr, large_tile_arr);
+    assert_eq!(small_tile_arr.shape(), &[2, 1, 1]);
+    assert_eq!(small_tile_arr[[small_tile_groups["group_core"], 0, 0]], 1.0);
+    assert_eq!(small_tile_arr[[small_tile_groups["group_halo"], 0, 0]], 0.0);
+    assert_eq!(small_tile_arr.sum(), 1.0);
+
+    Ok(())
+}
+
+#[test]
+fn core_overlap_bed_site_is_kept_for_midpoints() -> Result<()> {
+    // Arrange:
+    // - one unpaired fragment span [5,16), so the deterministic midpoint is 10
+    // - BED site [10,11) overlaps that midpoint and must receive one count
+    let bam = single_read_fragment_bam("midpoints_core_site", 5, 11)?;
+    let temp = TempDir::new()?;
+    let bed_path = temp.path().join("sites.bed");
+    write_bed(&bed_path, &[("chr1", 10, 11, "group_core")])?;
+
+    let mut cfg = MidpointsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: temp.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+        bed_path,
+    );
+    cfg.set_output_prefix("sites");
+    cfg.set_length_bins(vec![11, 12]);
+    cfg.set_tile_size(10);
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    cfg.unpaired.reads_are_fragments = true;
+
+    run(&cfg)?;
+
+    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+    let group_to_idx = read_group_index_map(&temp.path().join("sites.group_index.tsv"))?;
+    assert_eq!(arr.shape(), &[1, 1, 1]);
+    assert_eq!(arr[[group_to_idx["group_core"], 0, 0]], 1.0);
+    assert_eq!(arr.sum(), 1.0);
+    Ok(())
+}
+
+#[test]
 fn even_length_midpoint_tie_counts_exactly_one_of_two_adjacent_edge_windows() -> Result<()> {
     // Arrange:
     // One even-length fragment spans [40,50), so `midpoints` randomizes the tie and places the

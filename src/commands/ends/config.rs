@@ -294,7 +294,7 @@ impl EndsConfig {
             source_inside: KmerSource::Read,
             clip: ClippingArgs {
                 clip_strategy: ClipStrategy::Aligned,
-                max_soft_clips: None,
+                max_soft_clips: DEFAULT_MAX_SOFT_CLIPS,
             },
             indel_filter: IndelMotifFilterPolicy::Auto,
             all_motifs: false,

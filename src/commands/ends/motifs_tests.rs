@@ -2,6 +2,7 @@ use super::*;
 use crate::shared::{
     blacklist::apply_blacklist_mask_to_seq,
     fragment::ends_fragment::{FragmentWithEnds, ResolvedFragmentEnd},
+    tiled_run::Tile,
 };
 
 fn spec_for_k(k: u8) -> KmerSpec {
@@ -11,9 +12,7 @@ fn spec_for_k(k: u8) -> KmerSpec {
 
 fn read_only_motif_context(k_inside: u8) -> TileMotifContext<'static> {
     TileMotifContext {
-        chrom: "chr1".to_string(),
-        ref_2bit: None,
-        fetch_start: 0,
+        reference_start: 0,
         reference_bases: None,
         inside_spec: Some(spec_for_k(k_inside)),
         outside_spec: None,
@@ -29,6 +28,15 @@ fn reference_motif_context(
     k_inside: Option<u8>,
     k_outside: Option<u8>,
 ) -> TileMotifContext<'static> {
+    reference_motif_context_with_chrom_len(seq, k_inside, k_outside, seq.len() as u64)
+}
+
+fn reference_motif_context_with_chrom_len(
+    seq: &[u8],
+    k_inside: Option<u8>,
+    k_outside: Option<u8>,
+    chrom_len: u64,
+) -> TileMotifContext<'static> {
     let inside_spec = k_inside.map(spec_for_k);
     let outside_spec = k_outside.map(spec_for_k);
     let (inside_codes, outside_codes) = match (inside_spec.as_ref(), outside_spec.as_ref()) {
@@ -43,16 +51,14 @@ fn reference_motif_context(
     };
 
     TileMotifContext {
-        chrom: "chr1".to_string(),
-        ref_2bit: None,
-        fetch_start: 0,
+        reference_start: 0,
         reference_bases: Some(seq.to_vec()),
         inside_spec,
         outside_spec,
         inside_codes,
         outside_codes,
         blacklist_intervals: &[],
-        chrom_len: seq.len() as u64,
+        chrom_len,
     }
 }
 
@@ -275,9 +281,7 @@ fn encode_blacklist_validation_inside_code_returns_masked_reference_code_for_rea
     apply_blacklist_mask_to_seq(&mut reference_bases, &blacklist, 0);
     let inside_codes = build_precomputed_reference_codes(Some(&inside_spec), &reference_bases);
     let motif_context = TileMotifContext {
-        chrom: "chr1".to_string(),
-        ref_2bit: None,
-        fetch_start: 0,
+        reference_start: 0,
         reference_bases: Some(reference_bases),
         inside_spec: Some(inside_spec.clone()),
         outside_spec: None,
@@ -382,4 +386,71 @@ fn reference_motif_context_uses_equivalent_codes_for_inside_and_outside_when_k_m
     // Assert
     assert_eq!(inside_code, inside_spec.encode_kmer_bytes(b"GT"));
     assert_eq!(outside_code, outside_spec.encode_kmer_bytes(b"GT"));
+}
+
+#[test]
+fn motif_reference_span_for_tile_extends_full_tile_fetch_by_k_outside_when_aligned() {
+    // Mental derivation:
+    // - tile fetch is [10, 30)
+    // - aligned mode adds no soft-clip expansion
+    // - with k_outside=3, preload must cover [10 - 3, 30 + 3) = [7, 33)
+    let tile = Tile::from_coords("chr1".to_string(), 0, 0, 12, 28, 10, 30).expect("valid tile");
+
+    let reference_span =
+        motif_reference_span_for_tile(&tile, 100, ClipStrategy::Aligned, 5, 3)
+            .expect("reference span");
+
+    assert_eq!(reference_span, Interval::new(7_u64, 33_u64).expect("valid interval"));
+}
+
+#[test]
+fn motif_reference_span_for_tile_extends_full_tile_fetch_by_k_outside_and_soft_clips_when_raw() {
+    // Mental derivation:
+    // - tile fetch is [10, 30)
+    // - raw mode adds max_soft_clips on both sides
+    // - with k_outside=3 and max_soft_clips=5, pad = 8
+    // - preload must therefore cover [10 - 8, 30 + 8) = [2, 38)
+    let tile = Tile::from_coords("chr1".to_string(), 0, 0, 12, 28, 10, 30).expect("valid tile");
+
+    let reference_span = motif_reference_span_for_tile(&tile, 100, ClipStrategy::Raw, 5, 3)
+        .expect("reference span");
+
+    assert_eq!(reference_span, Interval::new(2_u64, 38_u64).expect("valid interval"));
+}
+
+#[test]
+fn motif_reference_span_for_tile_clamps_to_chromosome_edges() {
+    // Mental derivation:
+    // - tile fetch is [4, 18) on a chromosome of length 20
+    // - pad is 6 from k_outside=4 plus max_soft_clips=2 in raw mode
+    // - unclamped span would be [-2, 24), which must clamp to [0, 20)
+    let tile = Tile::from_coords("chr1".to_string(), 0, 0, 6, 16, 4, 18).expect("valid tile");
+
+    let reference_span = motif_reference_span_for_tile(&tile, 20, ClipStrategy::Raw, 2, 4)
+        .expect("reference span");
+
+    assert_eq!(reference_span, Interval::new(0_u64, 20_u64).expect("valid interval"));
+}
+
+#[test]
+fn get_reference_code_errors_when_lookup_escapes_preloaded_span() {
+    // Arrange: the preloaded reference slice is [0, 4), but the chromosome extends to 10.
+    // Requesting start 3 with k=2 therefore needs [3, 5), which stays within the chromosome
+    // yet still escapes the loaded tile slice and must error.
+    let motif_context = reference_motif_context_with_chrom_len(b"ACGT", Some(2), None, 10);
+    let inside_spec = motif_context.inside_spec.as_ref().expect("inside spec");
+
+    // Act
+    let err = get_reference_code(
+        3,
+        inside_spec,
+        motif_context.inside_codes.as_deref(),
+        &motif_context,
+    )
+    .expect_err("lookup outside the preloaded span should fail loudly");
+
+    // Assert
+    assert!(err
+        .to_string()
+        .contains("motif reference lookup escaped preloaded tile span"));
 }

@@ -256,7 +256,7 @@ mod tests_prepare_tile_windows {
         },
         shared::{
             interval::IndexedInterval,
-            tiled_run::{Tile, TileWindowSpan},
+            tiled_run::{Tile, precompute_tile_window_spans},
         },
     };
     use std::path::PathBuf;
@@ -281,33 +281,49 @@ mod tests_prepare_tile_windows {
     }
 
     #[test]
-    fn builds_bed_windows_for_tile_core() -> Result<()> {
+    fn builds_bed_windows_for_tile_reach() -> Result<()> {
         // Human verification status: unverified
         let template = make_template();
         let tile = make_tile();
-        // Span covers three windows, and the last ends after the core and must be filtered out
-        let windows = indexed_windows(&[(90, 140, 0), (120, 180, 1), (200, 240, 2)]);
-        let span = TileWindowSpan {
-            first_idx: 0,
-            last_idx_exclusive: windows.len(),
-        };
+        // Manual derivation:
+        // - Tile core is [100,190).
+        // - `gc_bias` candidate spans use left_halo=0 and right_halo=max_fragment_length.
+        // - With max_fragment_length=20, the reachable right bound is 210.
+        // - Therefore windows starting before 210 stay, and windows starting at/after 210 drop.
+        // - [90,140), [120,180), and [200,240) stay; [210,250) and [220,260) drops.
+        let windows = indexed_windows(&[
+            (90, 140, 0),
+            (120, 180, 1),
+            (200, 240, 2),
+            (210, 250, 3),
+            (220, 260, 4),
+        ]);
+        let tiles = vec![tile.clone()];
+        let spans = precompute_tile_window_spans(&tiles, |_| windows.as_slice(), 0, 20);
+        let span = spans[0]
+            .as_ref()
+            .expect("fragment-reach precompute should keep the first three windows");
+        assert_eq!(span.first_idx, 0);
+        assert_eq!(span.last_idx_exclusive, 3);
 
         let prepared = prepare_tile_windows(
             &WindowSpec::Bed(PathBuf::from("dummy.bed")),
             Some(&windows),
             &tile,
-            Some(&span),
+            Some(span),
             500,
             &template,
         )?;
 
         assert!(!prepared.skip_tile);
         assert!(prepared.streaming_buffers.is_none());
-        assert_eq!(prepared.windows.len(), 2);
+        assert_eq!(prepared.windows.len(), 3);
         assert_eq!(prepared.windows[0].idx, 0);
         assert_eq!(prepared.windows[1].idx, 1);
+        assert_eq!(prepared.windows[2].idx, 2);
         assert!(!prepared.windows[0].contained);
         assert!(prepared.windows[1].contained);
+        assert!(!prepared.windows[2].contained);
         Ok(())
     }
 

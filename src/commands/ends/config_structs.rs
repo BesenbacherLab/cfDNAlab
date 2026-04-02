@@ -72,12 +72,23 @@ pub struct ClippingArgs {
     )]
     pub clip_strategy: ClipStrategy,
 
-    /// Skip motifs with a higher number of soft-clipped bases than this.
+    /// Skip motifs with a higher number of soft-clipped bases than this `[integer]`
     ///
     /// Use `--clip-strategy drop` to discard all soft-clipped motifs.
-    #[cfg_attr(feature = "cli", clap(long, help_heading = "Clipping"))]
-    pub max_soft_clips: Option<usize>,
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value_t = DEFAULT_MAX_SOFT_CLIPS,
+            value_parser = clap::value_parser!(u16).range(0..=MAX_MAX_SOFT_CLIPS as i64),
+            help_heading = "Clipping"
+        )
+    )]
+    pub max_soft_clips: u16,
 }
+
+pub const DEFAULT_MAX_SOFT_CLIPS: u16 = 256;
+pub const MAX_MAX_SOFT_CLIPS: u16 = 256;
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]

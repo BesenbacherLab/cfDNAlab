@@ -20,7 +20,7 @@ pub struct WithEndsPairer {
     pub source_inside: KmerSource,
     pub indel_filter: IndelMotifFilterPolicy,
     pub k_inside: usize,
-    pub max_soft_clips: Option<u32>,
+    pub max_soft_clips: u32,
 }
 
 impl Pairer for WithEndsPairer {
@@ -47,7 +47,7 @@ pub fn fragments_with_ends_from_bam<RIter, PF>(
     source_inside: KmerSource,
     indel_filter: IndelMotifFilterPolicy,
     k_inside: usize,
-    max_soft_clips: Option<u32>,
+    max_soft_clips: u32,
     gc_tag: Option<&[u8]>,
     fragment_filter: PF,
     unpaired: bool,

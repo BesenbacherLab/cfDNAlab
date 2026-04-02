@@ -9,7 +9,10 @@ use cfdnalab::commands::{
     cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, UnpairedArgs, WindowsArgs},
     ends::{
         config::EndsConfig,
-        config_structs::{AssignMotifToWindowArgs, ClipStrategy, KmerSource, WindowMotifAssigner},
+        config_structs::{
+            AssignMotifToWindowArgs, ClipStrategy, DEFAULT_MAX_SOFT_CLIPS, KmerSource,
+            WindowMotifAssigner,
+        },
         ends::run,
     },
 };
@@ -22,6 +25,7 @@ use fixtures::{
 use ndarray::array;
 use ndarray::{Array1, Array2};
 use ndarray_npy::{NpzReader, read_npy};
+use serde_json::{Value, json};
 #[cfg(feature = "cli")]
 use std::process::Command;
 use std::{
@@ -79,6 +83,7 @@ fn ends_config_new_defaults_to_aligned_clip_strategy() -> Result<()> {
 
     // Assert
     assert_eq!(cfg.clip.clip_strategy, ClipStrategy::Aligned);
+    assert_eq!(cfg.clip.max_soft_clips, DEFAULT_MAX_SOFT_CLIPS);
     Ok(())
 }
 
@@ -133,6 +138,50 @@ fn custom_paired_fragment_bam(
         Vec::new(),
         name,
     )
+}
+
+fn fragment_on_tid(tid: usize, start: i64, fragment_len: i64, read_len: i64) -> FragmentSpec {
+    let mut fragment = paired_fragment(start, fragment_len, read_len);
+    fragment.forward.tid = tid;
+    fragment.reverse.tid = tid;
+    fragment.forward.mate_tid = Some(tid);
+    fragment.reverse.mate_tid = Some(tid);
+    fragment
+}
+
+fn three_chrom_reference_end_fixture(name: &str) -> Result<(BamFixture, fixtures::TwoBitFixture)> {
+    let bam = bam_from_specs(
+        vec![
+            ("chr1".to_string(), 200),
+            ("chr2".to_string(), 200),
+            ("chr3".to_string(), 200),
+        ],
+        vec![
+            fragment_on_tid(0, 20, 60, 20),
+            fragment_on_tid(1, 30, 80, 20),
+            fragment_on_tid(2, 40, 100, 20),
+        ],
+        Vec::new(),
+        name,
+    )?;
+
+    // Mental derivation for k_inside=1, k_outside=0, source_inside=reference:
+    // - chr1 fragment [20,80):  left base A -> "_A", right base A -> revcomp "_T"
+    // - chr2 fragment [30,110): left base C -> "_C", right base C -> revcomp "_G"
+    // - chr3 fragment [40,140): left base T -> "_T", right base G -> revcomp "_C"
+    let reference = twobit_from_sequences(
+        &format!("{name}_reference"),
+        vec![
+            ("chr1".to_string(), "A".repeat(200)),
+            ("chr2".to_string(), "C".repeat(200)),
+            (
+                "chr3".to_string(),
+                format!("{}T{}G{}", "A".repeat(40), "A".repeat(98), "A".repeat(60)),
+            ),
+        ],
+    )?;
+
+    Ok((bam, reference))
 }
 
 fn dense_output_paths(out_dir: &Path) -> (PathBuf, PathBuf) {
@@ -256,6 +305,10 @@ fn read_text_file(path: &Path) -> Result<String> {
     let mut buf = String::new();
     File::open(path)?.read_to_string(&mut buf)?;
     Ok(buf)
+}
+
+fn parse_json(text: &str) -> Value {
+    serde_json::from_str(text).expect("settings sidecar should be valid JSON")
 }
 
 #[cfg(feature = "cli")]
@@ -502,15 +555,95 @@ fn cli_statistics_only_count_reads_from_tiles_with_relevant_windows() -> Result<
     Ok(())
 }
 
+#[cfg(feature = "cli")]
+#[test]
+fn cli_source_inside_reference_writes_the_expected_dense_reference_backed_counts() -> Result<()> {
+    // Arrange: this fixture intentionally makes the read-backed and reference-backed outcomes
+    // disagree, so the test fails loudly if `--source-inside reference` is ignored.
+    //
+    // `paired_fragment(...)` writes forward read bases as `AAAA` and reverse read bases as `TTTT`.
+    // For fragment [10,20):
+    //
+    // - reference-backed inside bases on the ACGT-repeat reference are:
+    //   - left inside base at 10 = G -> "_G"
+    //   - right inside base at 19 = T -> reverse-complement "_A"
+    //   - expected dense counts: `_A = 1`, `_G = 1`
+    //
+    // - read-backed inside bases would instead be:
+    //   - left inside from forward read `AAAA` -> "_A"
+    //   - right inside from reverse read `TTTT` -> reverse-complement "_A"
+    //   - wrong dense counts if the CLI ignored `--source-inside reference`: `_A = 2`, `_G = 0`
+    let bam = simple_paired_fragment_bam("ends_cli_reference_source", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let binary = cfdna_binary_path()?;
+
+    // Act
+    let output = Command::new(binary)
+        .args([
+            "ends",
+            "--bam",
+            bam.bam.to_str().context("bam path is not valid UTF-8")?,
+            "--output-dir",
+            out_dir
+                .path()
+                .to_str()
+                .context("output dir is not valid UTF-8")?,
+            "--chromosomes",
+            "chr1",
+            "--k-inside",
+            "1",
+            "--k-outside",
+            "0",
+            "--ref-2bit",
+            reference
+                .path
+                .to_str()
+                .context("reference path is not valid UTF-8")?,
+            "--source-inside",
+            "reference",
+            "--all-motifs",
+            "--min-fragment-length",
+            "10",
+            "--max-fragment-length",
+            "10",
+            "--min-mapq",
+            "0",
+            "--tile-size",
+            "1000000",
+            "--output-prefix",
+            "ends",
+            "--n-threads",
+            "1",
+        ])
+        .output()
+        .context("running cfdna ends CLI with --source-inside reference")?;
+
+    // Assert
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\n\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+    assert_eq!(motifs, vec!["_A", "_C", "_G", "_T"]);
+    assert_eq!(matrix.shape(), &[1, 4]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 1.0);
+    assert_eq!(matrix.sum(), 2.0);
+    Ok(())
+}
+
 #[test]
 fn blacklist_masking_still_skips_read_backed_inside_motifs_using_genomic_reference_coordinates()
 -> Result<()> {
-    // Arrange: unpaired read-fragment [10,14) with read sequence A C G A.
+    // Arrange: unpaired read-fragment [10,20) with read sequence A C G A A C G A A A.
     // - left read-backed motif = "_A"
     // - right read-backed motif = reverse-complement("A") = "_T"
     // Blacklisting [10,11) should drop only the left motif even though inside bases come from
     // the read, because blacklist validation is still genomic.
-    let bam = single_read_bam("ends_blacklist_read_end", 10, vec![('M', 4)], b"ACGA")?;
+    let bam = single_read_bam("ends_blacklist_read_end", 10, vec![('M', 10)], b"ACGAACGAAA")?;
     let reference = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
     let blacklist_bed = out_dir.path().join("blacklist.bed");
@@ -530,8 +663,8 @@ fn blacklist_masking_still_skips_read_backed_inside_motifs_using_genomic_referen
     });
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -542,6 +675,71 @@ fn blacklist_masking_still_skips_read_backed_inside_motifs_using_genomic_referen
     assert_eq!(motifs, vec!["_T"]);
     assert_eq!(matrix.shape(), &[1, 1]);
     assert_eq!(matrix[(0, 0)], 1.0);
+    Ok(())
+}
+
+#[test]
+fn blacklist_masking_skips_outside_bases_independently_of_inside_source() -> Result<()> {
+    // Arrange: fragment [11,21) with k_outside=1 and k_inside=1.
+    //
+    // The left outside base is genomic position 10. Blacklisting [10,11) therefore masks only the
+    // left outside base and must skip the full left-end motif regardless of where the inside base
+    // comes from.
+    //
+    // This fixture intentionally makes the surviving right-end label differ between inside-source
+    // modes, so we can prove that only the outside masking is shared:
+    //
+    // - reference-backed inside:
+    //   - right inside genomic base at 20 = A
+    //   - right outside genomic base at 21 = C
+    //   - storage order = "AC", decode RC("AC") = "GT" -> "G_T"
+    //
+    // - read-backed inside:
+    //   - reverse read base is T (from the paired fixture's `TTTT`)
+    //   - right outside genomic base at 21 = C
+    //   - storage order = "TC", decode RC("TC") = "GA" -> "G_A"
+    //
+    // Without outside masking, both ends would contribute the same label within each mode, so the
+    // surviving label would have count 2. After masking [10,11), the left end must disappear and
+    // the surviving right-end label must have count exactly 1 in both modes.
+    let bam = simple_paired_fragment_bam("ends_blacklist_outside_source_independent", 11, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir_read = TempDir::new()?;
+    let out_dir_reference = TempDir::new()?;
+    let blacklist_bed = out_dir_read.path().join("blacklist.bed");
+    write_bed(&blacklist_bed, &[("chr1", 10, 11, "mask_left_outside")])?;
+
+    let run_with_source =
+        |output_dir: &Path, source_inside: KmerSource| -> Result<(Vec<String>, Array2<f64>)> {
+            let mut cfg = base_config(&bam.bam, output_dir, 1, 1);
+            cfg.set_ref_2bit(Some(reference.path.clone()));
+            cfg.source_inside = source_inside;
+            cfg.all_motifs = false;
+            cfg.blacklist = Some(vec![blacklist_bed.clone()]);
+            cfg.blacklist_strategy = BlacklistStrategy::All;
+            {
+                let lengths = cfg.fragment_lengths_mut();
+                lengths.min_fragment_length = 10;
+                lengths.max_fragment_length = 10;
+            }
+
+            run(&cfg)?;
+            read_sparse_output(output_dir)
+        };
+
+    // Act
+    let (read_motifs, read_matrix) = run_with_source(out_dir_read.path(), KmerSource::Read)?;
+    let (reference_motifs, reference_matrix) =
+        run_with_source(out_dir_reference.path(), KmerSource::Reference)?;
+
+    // Assert
+    assert_eq!(read_motifs, vec!["G_A"]);
+    assert_eq!(read_matrix.shape(), &[1, 1]);
+    assert_eq!(read_matrix[(0, 0)], 1.0);
+
+    assert_eq!(reference_motifs, vec!["G_T"]);
+    assert_eq!(reference_matrix.shape(), &[1, 1]);
+    assert_eq!(reference_matrix[(0, 0)], 1.0);
     Ok(())
 }
 
@@ -1116,20 +1314,21 @@ fn skip_affected_fragment_drops_the_whole_fragment_when_any_end_motif_is_indel_a
 }
 
 #[test]
-fn outside_reference_lookup_falls_back_to_exact_reference_fetch_when_the_motif_crosses_the_tile_slice()
+fn outside_reference_lookup_uses_preloaded_tile_reference_when_the_motif_extends_left_of_tile_fetch()
 -> Result<()> {
-    // Arrange: by-BED window [10,11) with max_fragment_length=4 gives a tile-local fetch halo of
-    // 4 bp, so the loaded slice starts at 6. Asking for k_outside=5 on the left endpoint at 10
-    // needs reference bases [5,10), which crosses one base outside the preloaded tile slice and
-    // must therefore use the exact fallback path. On the ACGT-repeat reference, seq[5..10) is
-    // C G T A C, so the outside-only label is "CGTAC_".
-    let bam = single_read_bam("ends_exact_reference_fallback", 10, vec![('M', 4)], b"ACGT")?;
+    // Arrange: by-BED window [20,21) with max_fragment_length=10 gives tile fetch [10,31).
+    // The motif preload now widens from full tile fetch by k_outside on both sides, so with
+    // k_outside=11 the loaded reference span starts at 0. Asking for the left outside motif at
+    // boundary 20 needs reference bases [9,20), which is left of tile.fetch but still inside the
+    // preloaded reference span. On the ACGT-repeat reference, seq[9..20) is
+    // C G T A C G T A C G T, so the outside-only label is "CGTACGTACGT_".
+    let bam = single_read_bam("ends_exact_reference_fallback", 20, vec![('M', 10)], b"AAAAAAAAAA")?;
     let reference = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
-    write_bed(&windows_bed, &[("chr1", 10, 11, "left")])?;
+    write_bed(&windows_bed, &[("chr1", 20, 21, "left")])?;
 
-    let mut cfg = base_config(&bam.bam, out_dir.path(), 0, 5);
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 0, 11);
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = false;
@@ -1145,8 +1344,8 @@ fn outside_reference_lookup_falls_back_to_exact_reference_fetch_when_the_motif_c
     });
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -1154,7 +1353,7 @@ fn outside_reference_lookup_falls_back_to_exact_reference_fetch_when_the_motif_c
     let (motifs, matrix) = read_sparse_output(out_dir.path())?;
 
     // Assert
-    assert_eq!(motifs, vec!["CGTAC_"]);
+    assert_eq!(motifs, vec!["CGTACGTACGT_"]);
     assert_eq!(matrix.shape(), &[1, 1]);
     assert_eq!(matrix[(0, 0)], 1.0);
     Ok(())
@@ -1654,8 +1853,8 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_1_plus_1_unive
             ReadSpec {
                 tid: 0,
                 pos: 10,
-                cigar: vec![('M', 4)],
-                seq: b"AAAA".to_vec(),
+                cigar: vec![('M', 10)],
+                seq: b"AAAAAAAAAA".to_vec(),
                 qual: 40,
                 is_reverse: false,
                 mapq: 60,
@@ -1667,8 +1866,8 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_1_plus_1_unive
             ReadSpec {
                 tid: 0,
                 pos: 20,
-                cigar: vec![('M', 4)],
-                seq: b"CCCC".to_vec(),
+                cigar: vec![('M', 10)],
+                seq: b"CCCCCCCCCC".to_vec(),
                 qual: 40,
                 is_reverse: false,
                 mapq: 60,
@@ -1704,8 +1903,8 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_1_plus_1_unive
     });
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -1729,8 +1928,8 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_1_plus_1_unive
 #[test]
 fn dense_all_motifs_output_enumerates_the_full_combined_2_plus_2_universe_without_collapse()
 -> Result<()> {
-    // Arrange: one left endpoint with a 2+2 reference motif. Dense output must still enumerate
-    // the full 4^4 universe, not just the observed "GT_AC" column.
+    // Arrange: one left endpoint from a 10 bp fragment with a 2+2 reference motif. Dense output
+    // must still enumerate the full 4^4 universe, not just the observed "GT_AC" column.
     let reference = twobit_from_sequences(
         "ends_dense_combined_2_plus_2_reference",
         vec![(
@@ -1738,7 +1937,7 @@ fn dense_all_motifs_output_enumerates_the_full_combined_2_plus_2_universe_withou
             format!("{}{}{}", "T".repeat(8), "GTAC", "T".repeat(244)),
         )],
     )?;
-    let bam = single_read_bam("ends_dense_combined_2_plus_2", 10, vec![('M', 4)], b"AAAA")?;
+    let bam = single_read_bam("ends_dense_combined_2_plus_2", 10, vec![('M', 10)], b"AAAAAAAAAA")?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
     write_bed(&windows_bed, &[("chr1", 10, 11, "left")])?;
@@ -1759,8 +1958,8 @@ fn dense_all_motifs_output_enumerates_the_full_combined_2_plus_2_universe_withou
     });
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -1806,8 +2005,8 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_2_plus_2_unive
             ReadSpec {
                 tid: 0,
                 pos: 10,
-                cigar: vec![('M', 4)],
-                seq: b"AAAA".to_vec(),
+                cigar: vec![('M', 10)],
+                seq: b"AAAAAAAAAA".to_vec(),
                 qual: 40,
                 is_reverse: false,
                 mapq: 60,
@@ -1819,8 +2018,8 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_2_plus_2_unive
             ReadSpec {
                 tid: 0,
                 pos: 20,
-                cigar: vec![('M', 4)],
-                seq: b"CCCC".to_vec(),
+                cigar: vec![('M', 10)],
+                seq: b"CCCCCCCCCC".to_vec(),
                 qual: 40,
                 is_reverse: false,
                 mapq: 60,
@@ -1856,8 +2055,8 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_2_plus_2_unive
     });
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -1879,20 +2078,20 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_2_plus_2_unive
 
 #[test]
 fn collapse_complement_preserves_outside_inside_order_for_odd_length_end_motifs() -> Result<()> {
-    // Arrange: two unpaired fragments of length 4 on a custom reference, with k_outside=1 and
+    // Arrange: two unpaired fragments of length 10 on a custom reference, with k_outside=1 and
     // k_inside=2 so the full motif length is 3.
     //
     // The intended contract is:
     // - decode first into biological 5'->3' `outside || inside` order
     // - then collapse against the same-orientation complement
     //
-    // Fragment A spans [10,14):
+    // Fragment A spans [10,20):
     // - left full motif uses reference [9,12) = G T A -> "GTA" -> label "G_TA"
-    // - right storage uses reference [12,15) = A T G -> revcomp("ATG") = "CAT" -> label "C_AT"
+    // - right storage uses reference [18,21) = A T G -> revcomp("ATG") = "CAT" -> label "C_AT"
     //
-    // Fragment B spans [20,24):
-    // - left full motif uses reference [19,22) = C A T -> "CAT" -> label "C_AT"
-    // - right storage uses reference [22,25) = A T G -> revcomp("ATG") = "CAT" -> label "C_AT"
+    // Fragment B spans [30,40):
+    // - left full motif uses reference [29,32) = C A T -> "CAT" -> label "C_AT"
+    // - right storage uses reference [38,41) = A T G -> revcomp("ATG") = "CAT" -> label "C_AT"
     //
     // `GTA` and `CAT` are same-orientation complements:
     // - complement("GTA") = "CAT"
@@ -1904,12 +2103,16 @@ fn collapse_complement_preserves_outside_inside_order_for_odd_length_end_motifs(
         vec![(
             "chr1".to_string(),
             format!(
-                "{}{}{}{}{}",
+                "{}{}{}{}{}{}{}{}{}",
                 "T".repeat(9),
-                "GTAATG",
-                "T".repeat(4),
-                "CATATG",
-                "T".repeat(231)
+                "GTA",
+                "T".repeat(6),
+                "ATG",
+                "T".repeat(8),
+                "CAT",
+                "T".repeat(6),
+                "ATG",
+                "T".repeat(215)
             ),
         )],
     )?;
@@ -1920,8 +2123,8 @@ fn collapse_complement_preserves_outside_inside_order_for_odd_length_end_motifs(
             ReadSpec {
                 tid: 0,
                 pos: 10,
-                cigar: vec![('M', 4)],
-                seq: b"AAAA".to_vec(),
+                cigar: vec![('M', 10)],
+                seq: b"AAAAAAAAAA".to_vec(),
                 qual: 40,
                 is_reverse: false,
                 mapq: 60,
@@ -1932,9 +2135,9 @@ fn collapse_complement_preserves_outside_inside_order_for_odd_length_end_motifs(
             },
             ReadSpec {
                 tid: 0,
-                pos: 20,
-                cigar: vec![('M', 4)],
-                seq: b"CCCC".to_vec(),
+                pos: 30,
+                cigar: vec![('M', 10)],
+                seq: b"CCCCCCCCCC".to_vec(),
                 qual: 40,
                 is_reverse: false,
                 mapq: 60,
@@ -1958,8 +2161,8 @@ fn collapse_complement_preserves_outside_inside_order_for_odd_length_end_motifs(
     });
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -1977,7 +2180,7 @@ fn collapse_complement_preserves_outside_inside_order_for_odd_length_end_motifs(
 #[test]
 fn collapse_complement_preserves_outside_inside_order_for_multi_base_2_plus_2_end_motifs()
 -> Result<()> {
-    // Arrange: two unpaired fragments of length 4 on a custom reference, with k_outside=2 and
+    // Arrange: two unpaired fragments of length 10 on a custom reference, with k_outside=2 and
     // k_inside=2 so the full motif length is 4.
     //
     // The intended contract is:
@@ -1985,14 +2188,14 @@ fn collapse_complement_preserves_outside_inside_order_for_multi_base_2_plus_2_en
     // - then collapse against the same-orientation complement on the full 4-base motif
     // - only after that split into `<outside>_<inside>`
     //
-    // Fragment A spans [10,14):
+    // Fragment A spans [10,20):
     // - left full motif uses reference [8,12) = G T A C -> "GTAC" -> label "GT_AC"
-    // - right storage uses reference [12,16) = C A T G -> revcomp("CATG") = "CATG"
+    // - right storage uses reference [18,22) = C A T G -> revcomp("CATG") = "CATG"
     //   -> label "CA_TG"
     //
-    // Fragment B spans [20,24):
-    // - left full motif uses reference [18,22) = T G C A -> "TGCA" -> label "TG_CA"
-    // - right storage uses reference [22,26) = A C G T -> revcomp("ACGT") = "ACGT"
+    // Fragment B spans [30,40):
+    // - left full motif uses reference [28,32) = T G C A -> "TGCA" -> label "TG_CA"
+    // - right storage uses reference [38,42) = A C G T -> revcomp("ACGT") = "ACGT"
     //   -> label "AC_GT"
     //
     // Same-orientation complement pairs:
@@ -2005,12 +2208,16 @@ fn collapse_complement_preserves_outside_inside_order_for_multi_base_2_plus_2_en
         vec![(
             "chr1".to_string(),
             format!(
-                "{}{}{}{}{}",
+                "{}{}{}{}{}{}{}{}{}",
                 "T".repeat(8),
-                "GTACCATG",
-                "T".repeat(2),
-                "TGCAACGT",
-                "T".repeat(230)
+                "GTAC",
+                "T".repeat(6),
+                "CATG",
+                "T".repeat(6),
+                "TGCA",
+                "T".repeat(6),
+                "ACGT",
+                "T".repeat(214)
             ),
         )],
     )?;
@@ -2021,8 +2228,8 @@ fn collapse_complement_preserves_outside_inside_order_for_multi_base_2_plus_2_en
             ReadSpec {
                 tid: 0,
                 pos: 10,
-                cigar: vec![('M', 4)],
-                seq: b"AAAA".to_vec(),
+                cigar: vec![('M', 10)],
+                seq: b"AAAAAAAAAA".to_vec(),
                 qual: 40,
                 is_reverse: false,
                 mapq: 60,
@@ -2033,9 +2240,9 @@ fn collapse_complement_preserves_outside_inside_order_for_multi_base_2_plus_2_en
             },
             ReadSpec {
                 tid: 0,
-                pos: 20,
-                cigar: vec![('M', 4)],
-                seq: b"CCCC".to_vec(),
+                pos: 30,
+                cigar: vec![('M', 10)],
+                seq: b"CCCCCCCCCC".to_vec(),
                 qual: 40,
                 is_reverse: false,
                 mapq: 60,
@@ -2059,8 +2266,8 @@ fn collapse_complement_preserves_outside_inside_order_for_multi_base_2_plus_2_en
     });
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -2106,8 +2313,13 @@ fn sparse_output_is_the_default_when_all_motifs_is_disabled() -> Result<()> {
     assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);
     assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 1.0);
     assert_eq!(
-        settings,
-        "{\n  \"source_inside\": \"reference\",\n  \"clip_strategy\": \"aligned\",\n  \"window_assignment\": \"endpoint\",\n  \"collapse_complement\": false,\n}\n"
+        parse_json(&settings),
+        json!({
+            "source_inside": "reference",
+            "clip_strategy": "aligned",
+            "window_assignment": "endpoint",
+            "collapse_complement": false
+        })
     );
     Ok(())
 }
@@ -2137,9 +2349,300 @@ fn dense_all_motifs_output_still_uses_the_same_settings_sidecar() -> Result<()> 
     assert!(dense_output_paths(out_dir.path()).0.exists());
     assert!(!sparse_output_paths(out_dir.path()).0.exists());
     assert_eq!(
-        settings,
-        "{\n  \"source_inside\": \"reference\",\n  \"clip_strategy\": \"aligned\",\n  \"window_assignment\": \"endpoint\",\n  \"collapse_complement\": false,\n}\n"
+        parse_json(&settings),
+        json!({
+            "source_inside": "reference",
+            "clip_strategy": "aligned",
+            "window_assignment": "endpoint",
+            "collapse_complement": false
+        })
     );
+    Ok(())
+}
+
+#[test]
+fn global_mode_accumulates_reference_end_motifs_across_three_chromosomes() -> Result<()> {
+    // Arrange:
+    // The three-chrom fixture contributes these reference-backed inside-only motifs:
+    //
+    // - chr1 [20,80):  `_A` and `_T`
+    // - chr2 [30,110): `_C` and `_G`
+    // - chr3 [40,140): `_T` and `_C`
+    //
+    // Global mode must collapse all three chromosomes into one output row, so the exact totals are:
+    // - `_A` = 1
+    // - `_C` = 2
+    // - `_G` = 1
+    // - `_T` = 2
+    let (bam, reference) = three_chrom_reference_end_fixture("ends_three_chr_global")?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = EndsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1", "chr2", "chr3"]),
+        1,
+        0,
+    );
+    cfg.output_prefix = "ends".to_string();
+    cfg.tile_size = 50;
+    cfg.min_mapq = 0;
+    cfg.require_proper_pair = false;
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 60;
+        lengths.max_fragment_length = 100;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[1, 4]);
+    assert_eq!(motifs, vec!["_A", "_C", "_G", "_T"]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_C"), 2.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_T"), 2.0);
+    assert_eq!(matrix.sum(), 6.0);
+    Ok(())
+}
+
+#[test]
+fn by_size_windowing_keeps_three_chromosome_rows_in_chromosome_order() -> Result<()> {
+    // Arrange:
+    // With by_size=200 on three 200 bp chromosomes, the output must have one row per chromosome
+    // in the selected chromosome order. The three-chrom fixture yields exact row motifs:
+    //
+    // - row 0 / chr1: `_A` = 1, `_T` = 1
+    // - row 1 / chr2: `_C` = 1, `_G` = 1
+    // - row 2 / chr3: `_C` = 1, `_T` = 1
+    let (bam, reference) = three_chrom_reference_end_fixture("ends_three_chr_by_size")?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = EndsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1", "chr2", "chr3"]),
+        1,
+        0,
+    );
+    cfg.output_prefix = "ends".to_string();
+    cfg.tile_size = 50;
+    cfg.min_mapq = 0;
+    cfg.require_proper_pair = false;
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(WindowsArgs {
+        by_size: Some(200),
+        by_bed: None,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 60;
+        lengths.max_fragment_length = 100;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+    let bins_tsv = read_text_file(&out_dir.path().join("ends.bins.tsv"))?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[3, 4]);
+    assert_eq!(motifs, vec!["_A", "_C", "_G", "_T"]);
+
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_C"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_T"), 1.0);
+
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_A"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_C"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_G"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_T"), 0.0);
+
+    assert_eq!(motif_count(&matrix, &motifs, 2, "_A"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 2, "_C"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 2, "_G"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 2, "_T"), 1.0);
+    assert_eq!(matrix.sum(), 6.0);
+
+    let rows: Vec<&str> = bins_tsv.lines().collect();
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[0], "chrom\tstart\tend\tblacklisted_fraction");
+    assert_eq!(rows[1], "chr1\t0\t200\t0");
+    assert_eq!(rows[2], "chr2\t0\t200\t0");
+    assert_eq!(rows[3], "chr3\t0\t200\t0");
+    Ok(())
+}
+
+#[test]
+fn bed_windowing_preserves_bed_row_order_and_skips_selected_chromosomes_without_windows()
+-> Result<()> {
+    // Arrange:
+    // Chromosome selection includes chr1, chr2, chr3, but the BED file only contains chr3 then chr1.
+    // chr2 must therefore contribute no output row at all.
+    //
+    // BED order is intentionally non-chromosomal to test original-index preservation:
+    // - row 0 / chr3: `_C` = 1, `_T` = 1
+    // - row 1 / chr1: `_A` = 1, `_T` = 1
+    let (bam, reference) = three_chrom_reference_end_fixture("ends_three_chr_by_bed_sparse")?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows_three_chr.bed");
+    write_bed(
+        &windows_bed,
+        &[
+            ("chr3", 0, 200, "chr3_window"),
+            ("chr1", 0, 200, "chr1_window"),
+        ],
+    )?;
+
+    let mut cfg = EndsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1", "chr2", "chr3"]),
+        1,
+        0,
+    );
+    cfg.output_prefix = "ends".to_string();
+    cfg.tile_size = 50;
+    cfg.min_mapq = 0;
+    cfg.require_proper_pair = false;
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 60;
+        lengths.max_fragment_length = 100;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+    let bins_tsv = read_text_file(&out_dir.path().join("ends.bins.tsv"))?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[2, 4]);
+    assert_eq!(motifs, vec!["_A", "_C", "_G", "_T"]);
+
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_C"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_T"), 1.0);
+
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_A"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_C"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_G"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_T"), 1.0);
+    assert_eq!(matrix.sum(), 4.0);
+
+    let rows: Vec<&str> = bins_tsv.lines().collect();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0], "chrom\tstart\tend\tblacklisted_fraction");
+    assert_eq!(rows[1], "chr3\t0\t200\t0");
+    assert_eq!(rows[2], "chr1\t0\t200\t0");
+    assert!(rows.iter().skip(1).all(|row| !row.starts_with("chr2\t")));
+    Ok(())
+}
+
+#[test]
+fn by_size_and_bed_equivalent_full_chromosome_windows_match_across_three_chromosomes() -> Result<()>
+{
+    // Arrange:
+    // - three chromosomes of length 200
+    // - by-size 200 produces one full-chromosome row per chromosome
+    // - BED windows [0,200) for each chromosome describe the exact same row partition
+    // Under aligned endpoint counting, these two window modes must therefore produce identical
+    // motif labels and identical row-wise count matrices.
+    let (bam, reference) = three_chrom_reference_end_fixture("ends_three_chr_bed_vs_size")?;
+    let by_size_out = TempDir::new()?;
+    let bed_out = TempDir::new()?;
+    let windows_bed = bed_out.path().join("windows_three_chr_full.bed");
+    write_bed(
+        &windows_bed,
+        &[
+            ("chr1", 0, 200, "chr1_window"),
+            ("chr2", 0, 200, "chr2_window"),
+            ("chr3", 0, 200, "chr3_window"),
+        ],
+    )?;
+
+    let make_cfg = |out_dir: &Path, windows: WindowsArgs| {
+        let mut cfg = EndsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1", "chr2", "chr3"]),
+            1,
+            0,
+        );
+        cfg.output_prefix = "ends".to_string();
+        cfg.tile_size = 50;
+        cfg.min_mapq = 0;
+        cfg.require_proper_pair = false;
+        cfg.set_ref_2bit(Some(reference.path.clone()));
+        cfg.source_inside = KmerSource::Reference;
+        cfg.all_motifs = true;
+        cfg.set_windows(windows);
+        {
+            let lengths = cfg.fragment_lengths_mut();
+            lengths.min_fragment_length = 60;
+            lengths.max_fragment_length = 100;
+        }
+        cfg
+    };
+
+    let by_size_cfg = make_cfg(
+        by_size_out.path(),
+        WindowsArgs {
+            by_size: Some(200),
+            by_bed: None,
+        },
+    );
+    let bed_cfg = make_cfg(
+        bed_out.path(),
+        WindowsArgs {
+            by_size: None,
+            by_bed: Some(windows_bed),
+        },
+    );
+
+    // Act
+    run(&by_size_cfg)?;
+    run(&bed_cfg)?;
+
+    // Assert
+    let (by_size_motifs, by_size_matrix) = read_dense_output(by_size_out.path())?;
+    let (bed_motifs, bed_matrix) = read_dense_output(bed_out.path())?;
+
+    assert_eq!(by_size_motifs, vec!["_A", "_C", "_G", "_T"]);
+    assert_eq!(by_size_motifs, bed_motifs);
+    assert_eq!(by_size_matrix.shape(), &[3, 4]);
+    assert_eq!(bed_matrix.shape(), &[3, 4]);
+    assert_eq!(by_size_matrix, bed_matrix);
+    assert_eq!(by_size_matrix.sum(), 6.0);
     Ok(())
 }
 
@@ -2358,22 +2861,22 @@ fn config_docstring_visualization_example_counts_the_expected_motifs_with_and_wi
 
 #[test]
 fn raw_endpoint_assignment_uses_the_shifted_assignment_boundaries() -> Result<()> {
-    // Arrange: unpaired read-as-fragment with 2S4M2S at pos 10.
-    // - aligned interval [10,14)
-    // - raw assignment interval [8,16)
-    // - endpoint positions 8 and 15
+    // Arrange: unpaired read-as-fragment with 2S10M2S at pos 10.
+    // - aligned interval [10,20)
+    // - raw assignment interval [8,22)
+    // - endpoint positions 8 and 21
     // The raw terminal bases are T on the left and A on the right, which both orient to "_T".
     let bam = single_read_bam(
         "ends_raw_shifted",
         10,
-        vec![('S', 2), ('M', 4), ('S', 2)],
-        b"TTACGTAA",
+        vec![('S', 2), ('M', 10), ('S', 2)],
+        b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
     write_bed(
         &windows_bed,
-        &[("chr1", 8, 9, "left_raw"), ("chr1", 15, 16, "right_raw")],
+        &[("chr1", 8, 9, "left_raw"), ("chr1", 21, 22, "right_raw")],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -2392,8 +2895,8 @@ fn raw_endpoint_assignment_uses_the_shifted_assignment_boundaries() -> Result<()
     });
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -2409,20 +2912,170 @@ fn raw_endpoint_assignment_uses_the_shifted_assignment_boundaries() -> Result<()
 }
 
 #[test]
+fn raw_endpoint_assignment_keeps_a_left_window_that_only_raw_reach_can_touch() -> Result<()> {
+    // Arrange: unpaired 2S10M2S at pos 10 with tile size 10.
+    //
+    // Mental derivation:
+    // - aligned interval is [10,20), so the fragment belongs to tile core [10,20)
+    // - raw assignment interval is [8,22), so the left endpoint is 8
+    // - BED window [8,9) lies left of the tile core and is only relevant because raw clipping
+    //   moves the counted endpoint there
+    // - the left raw base is T, which decodes to "_T"
+    let bam = single_read_bam(
+        "ends_raw_left_of_tile_core",
+        10,
+        vec![('S', 2), ('M', 10), ('S', 2)],
+        b"TTAAAAAAAAAAAA",
+    )?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(&windows_bed, &[("chr1", 8, 9, "left_raw_only")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::Raw;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.tile_size = 10;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[1, 4]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_T"), 1.0);
+    assert_eq!(matrix.sum(), 1.0);
+    Ok(())
+}
+
+#[test]
+fn raw_endpoint_left_only_window_is_tile_size_invariant() -> Result<()> {
+    // Arrange:
+    // - unpaired 2S10M2S at pos 10
+    // - BED row [8,9) is reachable only through raw left clipping
+    // - tile_size=10 forces a cross-tile situation; tile_size=1000 does not
+    // The final motif output must be identical across both decompositions.
+    let bam = single_read_bam(
+        "ends_raw_left_only_tile_invariance",
+        10,
+        vec![('S', 2), ('M', 10), ('S', 2)],
+        b"TTAAAAAAAAAAAA",
+    )?;
+    let tile_sizes = [10_u32, 1_000_u32];
+    let mut outputs = Vec::new();
+
+    for tile_size in tile_sizes {
+        let out_dir = TempDir::new()?;
+        let windows_bed = out_dir.path().join(format!("windows_{tile_size}.bed"));
+        write_bed(&windows_bed, &[("chr1", 8, 9, "left_raw_only")])?;
+
+        let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.clip.clip_strategy = ClipStrategy::Raw;
+        cfg.source_inside = KmerSource::Read;
+        cfg.all_motifs = true;
+        cfg.tile_size = tile_size;
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(windows_bed),
+        });
+        cfg.set_window_assignment(AssignMotifToWindowArgs {
+            assign_by: WindowMotifAssigner::Endpoint,
+        });
+        {
+            let lengths = cfg.fragment_lengths_mut();
+            lengths.min_fragment_length = 10;
+            lengths.max_fragment_length = 10;
+        }
+
+        run(&cfg)?;
+        outputs.push(read_dense_output(out_dir.path())?);
+    }
+
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[0].1.shape(), &[1, 4]);
+    assert_eq!(motif_count(&outputs[0].1, &outputs[0].0, 0, "_T"), 1.0);
+    assert_eq!(outputs[0].1.sum(), 1.0);
+    Ok(())
+}
+
+#[test]
+fn raw_endpoint_assignment_does_not_count_a_window_ending_at_the_left_raw_boundary() -> Result<()> {
+    // Arrange: the same 2S10M2S read has raw left boundary 8, so BED window [7,8) touches the
+    // boundary but does not contain the left endpoint under half-open semantics.
+    let bam = single_read_bam(
+        "ends_raw_left_boundary_open",
+        10,
+        vec![('S', 2), ('M', 10), ('S', 2)],
+        b"TTAAAAAAAAAAAA",
+    )?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(&windows_bed, &[("chr1", 7, 8, "touches_left_only")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::Raw;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.tile_size = 10;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[1, 4]);
+    assert_eq!(matrix.sum(), 0.0);
+    Ok(())
+}
+
+#[test]
 fn aligned_endpoint_assignment_ignores_raw_shifted_boundary_positions() -> Result<()> {
-    // Arrange: the same 2S4M2S read uses aligned endpoints [10,13] under aligned clipping, so
-    // windows at the raw-shifted positions [8,9) and [15,16) should receive no counts.
+    // Arrange: the same 2S10M2S read uses aligned endpoints [10,19] under aligned clipping, so
+    // windows at the raw-shifted positions [8,9) and [21,22) should receive no counts.
     let bam = single_read_bam(
         "ends_aligned_not_raw",
         10,
-        vec![('S', 2), ('M', 4), ('S', 2)],
-        b"TTACGTAA",
+        vec![('S', 2), ('M', 10), ('S', 2)],
+        b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
     write_bed(
         &windows_bed,
-        &[("chr1", 8, 9, "raw_left"), ("chr1", 15, 16, "raw_right")],
+        &[("chr1", 8, 9, "raw_left"), ("chr1", 21, 22, "raw_right")],
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -2441,8 +3094,8 @@ fn aligned_endpoint_assignment_ignores_raw_shifted_boundary_positions() -> Resul
     });
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -2456,14 +3109,144 @@ fn aligned_endpoint_assignment_ignores_raw_shifted_boundary_positions() -> Resul
 }
 
 #[test]
+fn aligned_endpoint_assignment_keeps_a_right_halo_only_window_reached_by_an_owned_fragment()
+-> Result<()> {
+    // Arrange:
+    // - unpaired 10M at pos 19 has aligned interval [19,29)
+    // - fragment ownership is by aligned start in tile core [10,20)
+    // - BED row [28,29) is outside the core but contains the aligned right endpoint
+    let bam = single_read_bam("ends_aligned_right_halo", 19, vec![('M', 10)], b"AAAAAAAAAA")?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(&windows_bed, &[("chr1", 28, 29, "right_halo_only")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::Aligned;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.tile_size = 10;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    assert_eq!(matrix.shape(), &[1, 4]);
+    assert_eq!(matrix.row(0).sum(), 1.0);
+    assert_eq!(matrix.sum(), 1.0);
+    Ok(())
+}
+
+#[test]
+fn aligned_endpoint_assignment_mixed_core_and_right_halo_rows_count_only_the_true_target()
+-> Result<()> {
+    // Arrange:
+    // - unpaired 10M at pos 19 has aligned endpoints at 19 and 28
+    // - row [10,11) is a non-target core row
+    // - row [28,29) is the true right-end target
+    let bam = single_read_bam("ends_aligned_mixed_core_and_halo", 19, vec![('M', 10)], b"AAAAAAAAAA")?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(
+        &windows_bed,
+        &[
+            ("chr1", 10, 11, "core_only"),
+            ("chr1", 28, 29, "right_halo_only"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::Aligned;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.tile_size = 10;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    assert_eq!(matrix.shape(), &[2, 4]);
+    assert_eq!(matrix.row(0).sum(), 0.0);
+    assert_eq!(matrix.row(1).sum(), 1.0);
+    assert_eq!(matrix.sum(), 1.0);
+    Ok(())
+}
+
+#[test]
+fn drop_endpoint_assignment_keeps_a_right_halo_only_window_when_no_end_is_soft_clipped()
+-> Result<()> {
+    // Arrange: in drop mode an unclipped fragment should match aligned endpoint assignment.
+    let bam = single_read_bam("ends_drop_right_halo", 19, vec![('M', 10)], b"AAAAAAAAAA")?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(&windows_bed, &[("chr1", 28, 29, "right_halo_only")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::Drop;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.tile_size = 10;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    assert_eq!(matrix.shape(), &[1, 4]);
+    assert_eq!(matrix.row(0).sum(), 1.0);
+    assert_eq!(matrix.sum(), 1.0);
+    Ok(())
+}
+
+#[test]
 fn fragment_length_filters_use_the_aligned_fragment_length_even_in_raw_mode() -> Result<()> {
-    // Arrange: the same 2S4M2S read has aligned length 4 but raw assignment length 8.
-    // Keeping only length 4 should therefore still retain the fragment.
+    // Arrange: the same 2S10M2S read has aligned length 10 but raw assignment length 14.
+    // Keeping only length 10 should therefore still retain the fragment.
     let bam = single_read_bam(
         "ends_aligned_length_filter",
         10,
-        vec![('S', 2), ('M', 4), ('S', 2)],
-        b"TTACGTAA",
+        vec![('S', 2), ('M', 10), ('S', 2)],
+        b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
 
@@ -2476,15 +3259,15 @@ fn fragment_length_filters_use_the_aligned_fragment_length_even_in_raw_mode() ->
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
     run(&cfg)?;
     let (motifs, matrix) = read_dense_output(out_dir.path())?;
 
-    // Assert: both raw end motifs survive because the filter is based on the aligned 4 bp span.
+    // Assert: both raw end motifs survive because the filter is based on the aligned 10 bp span.
     assert_eq!(motif_count(&matrix, &motifs, 0, "_T"), 2.0);
     assert_eq!(matrix.sum(), 2.0);
     Ok(())
@@ -2492,14 +3275,14 @@ fn fragment_length_filters_use_the_aligned_fragment_length_even_in_raw_mode() ->
 
 #[test]
 fn drop_clipping_skips_only_the_clipped_end_and_keeps_the_unclipped_end() -> Result<()> {
-    // Arrange: 2S4M at pos 10 has a clipped left end and an unclipped right end.
+    // Arrange: 2S10M at pos 10 has a clipped left end and an unclipped right end.
     // With drop-clipping, only the right end should remain. The aligned terminal base is T,
     // which orients to right-end label "_A".
     let bam = single_read_bam(
         "ends_drop_clipped_end",
         10,
-        vec![('S', 2), ('M', 4)],
-        b"TTACGT",
+        vec![('S', 2), ('M', 10)],
+        b"TTAAAAAAAAAT",
     )?;
     let out_dir = TempDir::new()?;
 
@@ -2512,8 +3295,8 @@ fn drop_clipping_skips_only_the_clipped_end_and_keeps_the_unclipped_end() -> Res
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -2528,12 +3311,12 @@ fn drop_clipping_skips_only_the_clipped_end_and_keeps_the_unclipped_end() -> Res
 
 #[test]
 fn drop_clipping_skips_the_fragment_when_both_ends_are_soft_clipped() -> Result<()> {
-    // Arrange: 2S4M2S has soft clipping on both ends, so drop-clipping should leave no motif.
+    // Arrange: 2S10M2S has soft clipping on both ends, so drop-clipping should leave no motif.
     let bam = single_read_bam(
         "ends_drop_both_clipped",
         10,
-        vec![('S', 2), ('M', 4), ('S', 2)],
-        b"TTACGTAA",
+        vec![('S', 2), ('M', 10), ('S', 2)],
+        b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
 
@@ -2546,8 +3329,8 @@ fn drop_clipping_skips_the_fragment_when_both_ends_are_soft_clipped() -> Result<
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -2562,13 +3345,13 @@ fn drop_clipping_skips_the_fragment_when_both_ends_are_soft_clipped() -> Result<
 
 #[test]
 fn max_soft_clips_skips_only_the_over_clipped_end() -> Result<()> {
-    // Arrange: 2S4M has two soft-clipped bases on the left end and none on the right end.
+    // Arrange: 2S10M has two soft-clipped bases on the left end and none on the right end.
     // With max_soft_clips=1, the left end should be skipped while the unclipped right end remains.
     let bam = single_read_bam(
         "ends_max_soft_clips",
         10,
-        vec![('S', 2), ('M', 4)],
-        b"TTACGT",
+        vec![('S', 2), ('M', 10)],
+        b"TTAAAAAAAAAT",
     )?;
     let out_dir = TempDir::new()?;
 
@@ -2577,13 +3360,13 @@ fn max_soft_clips_skips_only_the_over_clipped_end() -> Result<()> {
         reads_are_fragments: true,
     });
     cfg.clip.clip_strategy = ClipStrategy::Raw;
-    cfg.clip.max_soft_clips = Some(1);
+    cfg.clip.max_soft_clips = 1;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -2598,13 +3381,13 @@ fn max_soft_clips_skips_only_the_over_clipped_end() -> Result<()> {
 
 #[test]
 fn max_soft_clips_keeps_an_end_when_the_clip_count_equals_the_threshold() -> Result<()> {
-    // Arrange: with max_soft_clips=2, a 2S4M read should still keep the clipped left end because
+    // Arrange: with max_soft_clips=2, a 2S10M read should still keep the clipped left end because
     // the documented rule is "higher number of soft-clipped bases than this".
     let bam = single_read_bam(
         "ends_max_soft_clips_equal",
         10,
-        vec![('S', 2), ('M', 4)],
-        b"TTACGT",
+        vec![('S', 2), ('M', 10)],
+        b"TTAAAAAAAAAT",
     )?;
     let out_dir = TempDir::new()?;
 
@@ -2613,13 +3396,13 @@ fn max_soft_clips_keeps_an_end_when_the_clip_count_equals_the_threshold() -> Res
         reads_are_fragments: true,
     });
     cfg.clip.clip_strategy = ClipStrategy::Raw;
-    cfg.clip.max_soft_clips = Some(2);
+    cfg.clip.max_soft_clips = 2;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -2635,13 +3418,13 @@ fn max_soft_clips_keeps_an_end_when_the_clip_count_equals_the_threshold() -> Res
 
 #[test]
 fn max_soft_clips_skips_the_fragment_when_both_ends_exceed_the_threshold() -> Result<()> {
-    // Arrange: 2S4M2S has two soft-clipped bases on both ends, so max_soft_clips=1 should leave
+    // Arrange: 2S10M2S has two soft-clipped bases on both ends, so max_soft_clips=1 should leave
     // no surviving motifs.
     let bam = single_read_bam(
         "ends_max_soft_clips_both",
         10,
-        vec![('S', 2), ('M', 4), ('S', 2)],
-        b"TTACGTAA",
+        vec![('S', 2), ('M', 10), ('S', 2)],
+        b"TTAAAAAAAAAAAA",
     )?;
     let out_dir = TempDir::new()?;
 
@@ -2650,13 +3433,13 @@ fn max_soft_clips_skips_the_fragment_when_both_ends_exceed_the_threshold() -> Re
         reads_are_fragments: true,
     });
     cfg.clip.clip_strategy = ClipStrategy::Raw;
-    cfg.clip.max_soft_clips = Some(1);
+    cfg.clip.max_soft_clips = 1;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -2672,7 +3455,7 @@ fn max_soft_clips_skips_the_fragment_when_both_ends_exceed_the_threshold() -> Re
 #[test]
 fn hard_clipped_fragments_are_discarded_entirely() -> Result<()> {
     // Arrange: hard clipping is documented as an always-on fragment exclusion.
-    let bam = single_read_bam("ends_hard_clip", 10, vec![('H', 2), ('M', 4)], b"ACGT")?;
+    let bam = single_read_bam("ends_hard_clip", 10, vec![('H', 2), ('M', 10)], b"AAAAAAAAAA")?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -2683,8 +3466,8 @@ fn hard_clipped_fragments_are_discarded_entirely() -> Result<()> {
     cfg.all_motifs = true;
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -2739,7 +3522,7 @@ fn motif_labels_use_outside_inside_order_when_outside_bases_are_present() -> Res
 
 #[test]
 fn right_end_motif_labels_use_outside_inside_order_when_outside_bases_are_present() -> Result<()> {
-    // Arrange: right endpoint only for fragment [10,14) with one outside and one inside
+    // Arrange: right endpoint only for fragment [4,14) with one outside and one inside
     // reference base chosen so the right-end decode is non-palindromic.
     //
     // Reference around the right boundary:
@@ -2755,7 +3538,7 @@ fn right_end_motif_labels_use_outside_inside_order_when_outside_bases_are_presen
             format!("{}{}{}", "T".repeat(13), "TG", "T".repeat(241)),
         )],
     )?;
-    let bam = single_read_bam("ends_right_label_order", 10, vec![('M', 4)], b"AAAA")?;
+    let bam = single_read_bam("ends_right_label_order", 4, vec![('M', 10)], b"AAAAAAAAAA")?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
     write_bed(&windows_bed, &[("chr1", 13, 14, "right")])?;
@@ -2776,8 +3559,8 @@ fn right_end_motif_labels_use_outside_inside_order_when_outside_bases_are_presen
     });
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -2915,13 +3698,13 @@ fn raw_boundary_shifting_still_applies_when_only_outside_bases_are_counted() -> 
     // Arrange: with k_inside=0 and raw clipping, the shifted raw boundary should still control
     // endpoint assignment and outside-base extraction.
     //
-    // 2S4M2S at pos 10 gives raw assignment interval [8,16), so the left endpoint is 8.
+    // 2S10M2S at pos 10 gives raw assignment interval [8,22), so the left endpoint is 8.
     // The base immediately outside that raw left boundary is seq[7] on the reference, which is T.
     let bam = single_read_bam(
         "ends_raw_outside_only",
         10,
-        vec![('S', 2), ('M', 4), ('S', 2)],
-        b"TTACGTAA",
+        vec![('S', 2), ('M', 10), ('S', 2)],
+        b"TTAAAAAAAAAAAA",
     )?;
     let reference = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
@@ -2945,8 +3728,8 @@ fn raw_boundary_shifting_still_applies_when_only_outside_bases_are_counted() -> 
     });
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -2957,6 +3740,472 @@ fn raw_boundary_shifting_still_applies_when_only_outside_bases_are_counted() -> 
     assert_eq!(motifs, vec!["T_"]);
     assert_eq!(matrix.shape(), &[1, 1]);
     assert_eq!(matrix[(0, 0)], 1.0);
+    Ok(())
+}
+
+#[test]
+fn raw_endpoint_assignment_keeps_a_far_right_window_beyond_aligned_reach() -> Result<()> {
+    // Arrange: unpaired 10M10S at pos 10 with tile size 10.
+    //
+    // Mental derivation:
+    // - aligned interval is [10,20), so the fragment again belongs to tile core [10,20)
+    // - raw assignment interval is [10,30), so the right endpoint is 29
+    // - BED window [29,30) is outside the tile core and outside the aligned-length-only right
+    //   reach from that core, but it is still a valid raw endpoint window
+    // - the right raw base is A, which reverse-complements to "_T" on decode
+    let bam = single_read_bam(
+        "ends_raw_far_right_window",
+        10,
+        vec![('M', 10), ('S', 10)],
+        b"AAAAAAAAAAAAAAAAAAAA",
+    )?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(&windows_bed, &[("chr1", 29, 30, "right_raw_only")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::Raw;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.tile_size = 10;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[1, 4]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_T"), 1.0);
+    assert_eq!(matrix.sum(), 1.0);
+    Ok(())
+}
+
+#[test]
+fn raw_endpoint_far_right_only_window_is_tile_size_invariant() -> Result<()> {
+    // Arrange:
+    // - unpaired 10M10S at pos 10
+    // - BED row [29,30) is reachable only through raw right clipping
+    // - tile_size=10 and tile_size=1000 must therefore produce the same final motif row
+    let bam = single_read_bam(
+        "ends_raw_far_right_tile_invariance",
+        10,
+        vec![('M', 10), ('S', 10)],
+        b"AAAAAAAAAAAAAAAAAAAA",
+    )?;
+    let tile_sizes = [10_u32, 1_000_u32];
+    let mut outputs = Vec::new();
+
+    for tile_size in tile_sizes {
+        let out_dir = TempDir::new()?;
+        let windows_bed = out_dir.path().join(format!("windows_{tile_size}.bed"));
+        write_bed(&windows_bed, &[("chr1", 29, 30, "right_raw_only")])?;
+
+        let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.clip.clip_strategy = ClipStrategy::Raw;
+        cfg.source_inside = KmerSource::Read;
+        cfg.all_motifs = true;
+        cfg.tile_size = tile_size;
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(windows_bed),
+        });
+        cfg.set_window_assignment(AssignMotifToWindowArgs {
+            assign_by: WindowMotifAssigner::Endpoint,
+        });
+        {
+            let lengths = cfg.fragment_lengths_mut();
+            lengths.min_fragment_length = 10;
+            lengths.max_fragment_length = 10;
+        }
+
+        run(&cfg)?;
+        outputs.push(read_dense_output(out_dir.path())?);
+    }
+
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[0].1.shape(), &[1, 4]);
+    assert_eq!(motif_count(&outputs[0].1, &outputs[0].0, 0, "_T"), 1.0);
+    assert_eq!(outputs[0].1.sum(), 1.0);
+    Ok(())
+}
+
+#[test]
+fn raw_endpoint_assignment_does_not_count_a_window_starting_at_the_right_raw_boundary() -> Result<()>
+{
+    // Arrange: 10M10S at pos 10 has raw assignment interval [10,30), so the counted right-end
+    // position is 29. BED window [30,31) starts exactly at the exclusive boundary and must remain
+    // empty under half-open semantics.
+    let bam = single_read_bam(
+        "ends_raw_right_boundary_open",
+        10,
+        vec![('M', 10), ('S', 10)],
+        b"AAAAAAAAAAAAAAAAAAAA",
+    )?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(&windows_bed, &[("chr1", 30, 31, "touches_right_only")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::Raw;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.tile_size = 10;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[1, 4]);
+    assert_eq!(matrix.sum(), 0.0);
+    Ok(())
+}
+
+#[test]
+fn raw_endpoint_assignment_must_not_shrink_fetch_to_unrelated_core_windows() -> Result<()> {
+    // Arrange: unpaired 10M10S at pos 19 with tile size 10.
+    //
+    // Mental derivation:
+    // - aligned interval is [19,29), so the fragment is owned by tile core [10,20)
+    // - raw assignment interval is [19,39), so the right endpoint is 38
+    // - BED window [10,11) overlaps the core but not either endpoint
+    // - BED window [38,39) is the true target window for the right raw endpoint
+    // The correct output is therefore two rows with counts [0.0, 1.0].
+    let bam = single_read_bam(
+        "ends_raw_far_right_with_core_window",
+        19,
+        vec![('M', 10), ('S', 10)],
+        b"AAAAAAAAAAAAAAAAAAAA",
+    )?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(
+        &windows_bed,
+        &[
+            ("chr1", 10, 11, "core_only"),
+            ("chr1", 38, 39, "right_raw_only"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::Raw;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.tile_size = 10;
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[2, 4]);
+    assert_eq!(matrix.row(0).sum(), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_T"), 1.0);
+    assert_eq!(matrix.sum(), 1.0);
+    Ok(())
+}
+
+#[test]
+fn raw_endpoint_mixed_core_and_far_right_rows_are_tile_size_invariant() -> Result<()> {
+    // Arrange:
+    // - unpaired 10M10S at pos 19
+    // - BED row [10,11) is a non-target core row and must stay zero
+    // - BED row [38,39) is the true raw right-end target and must carry one motif
+    // - with tile_size=10 these rows live in different tiles; with tile_size=1000 they do not
+    let bam = single_read_bam(
+        "ends_raw_mixed_tile_invariance",
+        19,
+        vec![('M', 10), ('S', 10)],
+        b"AAAAAAAAAAAAAAAAAAAA",
+    )?;
+    let tile_sizes = [10_u32, 1_000_u32];
+    let mut outputs = Vec::new();
+
+    for tile_size in tile_sizes {
+        let out_dir = TempDir::new()?;
+        let windows_bed = out_dir.path().join(format!("windows_{tile_size}.bed"));
+        write_bed(
+            &windows_bed,
+            &[
+                ("chr1", 10, 11, "core_only"),
+                ("chr1", 38, 39, "right_raw_only"),
+            ],
+        )?;
+
+        let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.clip.clip_strategy = ClipStrategy::Raw;
+        cfg.source_inside = KmerSource::Read;
+        cfg.all_motifs = true;
+        cfg.tile_size = tile_size;
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(windows_bed),
+        });
+        cfg.set_window_assignment(AssignMotifToWindowArgs {
+            assign_by: WindowMotifAssigner::Endpoint,
+        });
+        {
+            let lengths = cfg.fragment_lengths_mut();
+            lengths.min_fragment_length = 10;
+            lengths.max_fragment_length = 10;
+        }
+
+        run(&cfg)?;
+        outputs.push(read_dense_output(out_dir.path())?);
+    }
+
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[0].1.shape(), &[2, 4]);
+    assert_eq!(outputs[0].1.row(0).sum(), 0.0);
+    assert_eq!(motif_count(&outputs[0].1, &outputs[0].0, 1, "_T"), 1.0);
+    assert_eq!(outputs[0].1.sum(), 1.0);
+    Ok(())
+}
+
+#[test]
+fn raw_endpoint_by_size_counts_the_previous_bin_reached_by_left_raw_clipping() -> Result<()> {
+    // Arrange:
+    // - unpaired 2S10M at pos 10 has raw endpoints at 8 and 19
+    // - fixed-size windows of 10 bp therefore put the left endpoint in [0,10)
+    //   and the right endpoint in [10,20)
+    // - ownership still comes from aligned start in tile core [10,20)
+    let bam = single_read_bam(
+        "ends_raw_by_size_left_previous_bin",
+        10,
+        vec![('S', 2), ('M', 10)],
+        b"TTAAAAAAAAAT",
+    )?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::Raw;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.tile_size = 10;
+    cfg.set_windows(WindowsArgs {
+        by_size: Some(10),
+        by_bed: None,
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    assert_eq!(matrix.row(0).sum(), 1.0);
+    assert_eq!(matrix.row(1).sum(), 1.0);
+    assert_eq!(matrix.row(2).sum(), 0.0);
+    assert_eq!(matrix.sum(), 2.0);
+    Ok(())
+}
+
+#[test]
+fn raw_endpoint_by_size_counts_the_next_bin_reached_by_right_raw_clipping() -> Result<()> {
+    // Arrange:
+    // - unpaired 10M10S at pos 10 has raw endpoints at 10 and 29
+    // - fixed-size windows of 10 bp therefore put the left endpoint in [10,20)
+    //   and the right endpoint in [20,30)
+    let bam = single_read_bam(
+        "ends_raw_by_size_right_next_bin",
+        10,
+        vec![('M', 10), ('S', 10)],
+        b"AAAAAAAAAAAAAAAAAAAA",
+    )?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::Raw;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.tile_size = 10;
+    cfg.set_windows(WindowsArgs {
+        by_size: Some(10),
+        by_bed: None,
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    assert_eq!(matrix.row(0).sum(), 0.0);
+    assert_eq!(matrix.row(1).sum(), 1.0);
+    assert_eq!(matrix.row(2).sum(), 1.0);
+    assert_eq!(matrix.sum(), 2.0);
+    Ok(())
+}
+
+#[test]
+fn raw_endpoint_by_size_keeps_exact_half_open_boundary_bins_zero() -> Result<()> {
+    // Arrange:
+    // - 2S10M at pos 10 has raw left endpoint 8, so [7,8) must stay zero while [8,9) counts
+    // - 10M10S at pos 10 has raw right endpoint 29, so [30,31) must stay zero while [29,30) counts
+    let left_bam = single_read_bam(
+        "ends_raw_by_size_left_boundary_open",
+        10,
+        vec![('S', 2), ('M', 10)],
+        b"TTAAAAAAAAAT",
+    )?;
+    let right_bam = single_read_bam(
+        "ends_raw_by_size_right_boundary_open",
+        10,
+        vec![('M', 10), ('S', 10)],
+        b"AAAAAAAAAAAAAAAAAAAA",
+    )?;
+    let left_out = TempDir::new()?;
+    let right_out = TempDir::new()?;
+
+    let make_cfg = |bam_path: &Path, out_dir: &Path| {
+        let mut cfg = base_config(bam_path, out_dir, 1, 0);
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.clip.clip_strategy = ClipStrategy::Raw;
+        cfg.source_inside = KmerSource::Read;
+        cfg.all_motifs = true;
+        cfg.tile_size = 10;
+        cfg.set_windows(WindowsArgs {
+            by_size: Some(1),
+            by_bed: None,
+        });
+        cfg.set_window_assignment(AssignMotifToWindowArgs {
+            assign_by: WindowMotifAssigner::Endpoint,
+        });
+        {
+            let lengths = cfg.fragment_lengths_mut();
+            lengths.min_fragment_length = 10;
+            lengths.max_fragment_length = 10;
+        }
+        cfg
+    };
+
+    run(&make_cfg(&left_bam.bam, left_out.path()))?;
+    run(&make_cfg(&right_bam.bam, right_out.path()))?;
+
+    let (_left_motifs, left_matrix) = read_dense_output(left_out.path())?;
+    let (_right_motifs, right_matrix) = read_dense_output(right_out.path())?;
+
+    assert_eq!(left_matrix.row(7).sum(), 0.0);
+    assert_eq!(left_matrix.row(8).sum(), 1.0);
+    assert_eq!(right_matrix.row(29).sum(), 1.0);
+    assert_eq!(right_matrix.row(30).sum(), 0.0);
+    Ok(())
+}
+
+#[test]
+fn raw_endpoint_by_size_output_is_tile_size_invariant() -> Result<()> {
+    // Arrange:
+    // - fixed-size windows are 10 bp bins
+    // - changing tile_size must not change the final by-size endpoint rows
+    let bam = single_read_bam(
+        "ends_raw_by_size_tile_invariance",
+        10,
+        vec![('M', 10), ('S', 10)],
+        b"AAAAAAAAAAAAAAAAAAAA",
+    )?;
+    let tile_sizes = [10_u32, 1_000_u32];
+    let mut outputs = Vec::new();
+
+    for tile_size in tile_sizes {
+        let out_dir = TempDir::new()?;
+        let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.clip.clip_strategy = ClipStrategy::Raw;
+        cfg.source_inside = KmerSource::Read;
+        cfg.all_motifs = true;
+        cfg.tile_size = tile_size;
+        cfg.set_windows(WindowsArgs {
+            by_size: Some(10),
+            by_bed: None,
+        });
+        cfg.set_window_assignment(AssignMotifToWindowArgs {
+            assign_by: WindowMotifAssigner::Endpoint,
+        });
+        {
+            let lengths = cfg.fragment_lengths_mut();
+            lengths.min_fragment_length = 10;
+            lengths.max_fragment_length = 10;
+        }
+
+        run(&cfg)?;
+        outputs.push(read_dense_output(out_dir.path())?);
+    }
+
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[0].1.row(1).sum(), 1.0);
+    assert_eq!(outputs[0].1.row(2).sum(), 1.0);
+    assert_eq!(outputs[0].1.sum(), 2.0);
     Ok(())
 }
 
@@ -2988,8 +4237,8 @@ fn settings_json_keeps_the_runtime_fields_needed_to_interpret_output() -> Result
     let bam = single_read_bam(
         "ends_settings_semantics",
         10,
-        vec![('S', 2), ('M', 4)],
-        b"TTACGT",
+        vec![('S', 2), ('M', 10)],
+        b"TTAAAAAAAAAT",
     )?;
     let out_dir = TempDir::new()?;
 
@@ -3005,8 +4254,8 @@ fn settings_json_keeps_the_runtime_fields_needed_to_interpret_output() -> Result
     });
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -3015,15 +4264,56 @@ fn settings_json_keeps_the_runtime_fields_needed_to_interpret_output() -> Result
 
     // Assert
     assert_eq!(
-        settings,
-        concat!(
-            "{\n",
-            "  \"source_inside\": \"read\",\n",
-            "  \"clip_strategy\": \"drop\",\n",
-            "  \"window_assignment\": \"endpoint\",\n",
-            "  \"collapse_complement\": false,\n",
-            "}\n"
-        )
+        parse_json(&settings),
+        json!({
+            "source_inside": "read",
+            "clip_strategy": "drop",
+            "window_assignment": "endpoint",
+            "collapse_complement": false
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn settings_json_formats_proportion_window_assignment_stably() -> Result<()> {
+    // Arrange: use a simple exact decimal that should stay readable in the sidecar.
+    let bam = single_read_bam(
+        "ends_settings_proportion_precision",
+        10,
+        vec![('M', 10)],
+        b"AAAAAAAAAA",
+    )?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = false;
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Proportion(0.125),
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let settings = read_text_file(&settings_path(out_dir.path()))?;
+
+    // Assert: exact sidecar contract, not just substring presence.
+    assert_eq!(
+        parse_json(&settings),
+        json!({
+            "source_inside": "read",
+            "clip_strategy": "aligned",
+            "window_assignment": "proportion=0.125",
+            "collapse_complement": false
+        })
     );
     Ok(())
 }
@@ -3169,7 +4459,7 @@ fn settings_json_ignores_fragment_length_bounds_but_keeps_motif_definition_field
     cfg.all_motifs = false;
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 9;
+        lengths.min_fragment_length = 10;
         lengths.max_fragment_length = 11;
     }
 
@@ -3179,15 +4469,13 @@ fn settings_json_ignores_fragment_length_bounds_but_keeps_motif_definition_field
 
     // Assert
     assert_eq!(
-        settings,
-        concat!(
-            "{\n",
-            "  \"source_inside\": \"reference\",\n",
-            "  \"clip_strategy\": \"aligned\",\n",
-            "  \"window_assignment\": \"endpoint\",\n",
-            "  \"collapse_complement\": false,\n",
-            "}\n"
-        )
+        parse_json(&settings),
+        json!({
+            "source_inside": "reference",
+            "clip_strategy": "aligned",
+            "window_assignment": "endpoint",
+            "collapse_complement": false
+        })
     );
     Ok(())
 }
@@ -3195,7 +4483,7 @@ fn settings_json_ignores_fragment_length_bounds_but_keeps_motif_definition_field
 #[test]
 fn unpaired_mode_rejects_require_proper_pair() -> Result<()> {
     // Arrange: the command explicitly forbids combining reads-as-fragments with proper-pair filtering.
-    let bam = single_read_bam("ends_unpaired_proper_pair", 10, vec![('M', 4)], b"ACGT")?;
+    let bam = single_read_bam("ends_unpaired_proper_pair", 10, vec![('M', 10)], b"AAAAAAAAAA")?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -3205,8 +4493,8 @@ fn unpaired_mode_rejects_require_proper_pair() -> Result<()> {
     cfg.require_proper_pair = true;
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -3276,7 +4564,7 @@ fn all_motifs_dense_output_enumerates_inside_only_labels_when_k_outside_is_zero(
 fn read_backed_inside_only_runs_without_ref_2bit() -> Result<()> {
     // Arrange: when both the inside bases come from reads and k_outside=0, the command should not
     // require a reference genome.
-    let bam = single_read_bam("ends_read_only_no_ref", 10, vec![('M', 4)], b"ACGT")?;
+    let bam = single_read_bam("ends_read_only_no_ref", 10, vec![('M', 10)], b"AAAAAAAAAA")?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -3287,8 +4575,8 @@ fn read_backed_inside_only_runs_without_ref_2bit() -> Result<()> {
     cfg.all_motifs = false;
     {
         let lengths = cfg.fragment_lengths_mut();
-        lengths.min_fragment_length = 4;
-        lengths.max_fragment_length = 4;
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
     }
 
     // Act
@@ -3335,6 +4623,9 @@ fn output_prefix_is_applied_to_all_primary_end_outputs() -> Result<()> {
             .join("sampleA.end_motif_settings.json")
             .exists()
     );
+    assert!(!out_dir.path().join("end_motifs.sparse.npz").exists());
+    assert!(!out_dir.path().join("end_motifs.txt").exists());
+    assert!(!out_dir.path().join("end_motif_settings.json").exists());
     Ok(())
 }
 
@@ -3436,6 +4727,7 @@ fn output_prefix_is_applied_to_bins_tsv_for_windowed_runs() -> Result<()> {
 
     // Assert
     assert!(out_dir.path().join("sampleA.bins.tsv").exists());
+    assert!(!out_dir.path().join("bins.tsv").exists());
     Ok(())
 }
 
@@ -3469,6 +4761,9 @@ fn output_prefix_is_applied_to_dense_all_motifs_outputs() -> Result<()> {
             .join("sampleA.end_motif_settings.json")
             .exists()
     );
+    assert!(!out_dir.path().join("end_motifs.npy").exists());
+    assert!(!out_dir.path().join("end_motifs.txt").exists());
+    assert!(!out_dir.path().join("end_motif_settings.json").exists());
     Ok(())
 }
 
