@@ -163,3 +163,158 @@ fn prepare_tile_windows_bed_keeps_core_and_right_halo_windows_together_for_fragm
     assert!(!prepared.windows[1].contained);
     Ok(())
 }
+
+#[test]
+fn prepare_tile_windows_bed_errors_when_windows_are_missing() -> Result<()> {
+    // Human verification status: unverified
+    // BED mode requires a chromosome window slice. The helper should fail loudly instead of
+    // silently treating missing windows as an empty BED file.
+    let template = make_template();
+    let tile = Tile::from_coords("chr1".to_string(), 0, 0, 10, 20, 6, 24)
+        .expect("test tile should be valid");
+    let span = TileWindowSpan {
+        first_idx: 0,
+        last_idx_exclusive: 1,
+    };
+    let window_opt = WindowSpec::Bed(PathBuf::from("windows.bed"));
+
+    let err = prepare_tile_windows(&window_opt, None, &tile, Some(&span), 200, &template)
+        .expect_err("BED mode without windows should fail");
+
+    assert!(
+        format!("{err}").contains("no windows provided"),
+        "unexpected error message: {err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn prepare_tile_windows_bed_skips_tile_for_empty_cached_span() -> Result<()> {
+    // Human verification status: unverified
+    // An explicitly empty cached candidate span means BED precomputation already proved that the
+    // tile has no relevant windows, so the helper should return skip=true without building states.
+    let template = make_template();
+    let tile = Tile::from_coords("chr1".to_string(), 0, 0, 10, 20, 6, 24)
+        .expect("test tile should be valid");
+    let windows = vec![IndexedInterval::new(10, 11, 0)?];
+    let span = TileWindowSpan {
+        first_idx: 0,
+        last_idx_exclusive: 0,
+    };
+    let window_opt = WindowSpec::Bed(PathBuf::from("windows.bed"));
+
+    let prepared =
+        prepare_tile_windows(&window_opt, Some(&windows), &tile, Some(&span), 200, &template)?;
+
+    assert!(prepared.skip_tile);
+    assert!(prepared.windows.is_empty());
+    assert!(prepared.streaming_buffers.is_none());
+    Ok(())
+}
+
+#[test]
+fn prepare_tile_windows_bed_skips_tile_for_empty_window_slice_even_with_nonempty_span() -> Result<()>
+{
+    // Human verification status: unverified
+    // This is a helper-level defensive case: the caller supplies a non-empty cached span but the
+    // chromosome window slice itself is empty. The helper clamps nothing and reports skip=true.
+    let template = make_template();
+    let tile = Tile::from_coords("chr1".to_string(), 0, 0, 10, 20, 6, 24)
+        .expect("test tile should be valid");
+    let windows: Vec<IndexedInterval<u64>> = Vec::new();
+    let span = TileWindowSpan {
+        first_idx: 0,
+        last_idx_exclusive: 2,
+    };
+    let window_opt = WindowSpec::Bed(PathBuf::from("windows.bed"));
+
+    let prepared =
+        prepare_tile_windows(&window_opt, Some(&windows), &tile, Some(&span), 200, &template)?;
+
+    assert!(prepared.skip_tile);
+    assert!(prepared.windows.is_empty());
+    assert!(prepared.streaming_buffers.is_none());
+    Ok(())
+}
+
+#[test]
+fn prepare_tile_windows_bed_clamps_candidate_span_to_available_window_slice() -> Result<()> {
+    // Human verification status: unverified
+    // Manual derivation:
+    // - The cached span says [1,4), but the chromosome slice has only two windows.
+    // - The helper clamps that to the available suffix [1,2), so only the second window is built.
+    let template = make_template();
+    let tile = Tile::from_coords("chr1".to_string(), 0, 0, 10, 20, 6, 24)
+        .expect("test tile should be valid");
+    let windows = vec![IndexedInterval::new(10, 11, 0)?, IndexedInterval::new(22, 23, 1)?];
+    let span = TileWindowSpan {
+        first_idx: 1,
+        last_idx_exclusive: 4,
+    };
+    let window_opt = WindowSpec::Bed(PathBuf::from("windows.bed"));
+
+    let prepared =
+        prepare_tile_windows(&window_opt, Some(&windows), &tile, Some(&span), 200, &template)?;
+
+    assert!(!prepared.skip_tile);
+    assert!(prepared.streaming_buffers.is_none());
+    assert_eq!(prepared.windows.len(), 1);
+    assert_eq!(prepared.windows[0].idx, 1);
+    assert_eq!(prepared.windows[0].interval, Interval::new(22, 23)?);
+    assert!(!prepared.windows[0].contained);
+    Ok(())
+}
+
+#[test]
+fn prepare_tile_windows_bed_returns_empty_windows_when_clamped_span_starts_past_slice_end()
+-> Result<()> {
+    // Human verification status: unverified
+    // Manual derivation:
+    // - The cached span says [5,8), but the chromosome slice has length 2.
+    // - Clamping both bounds to len=2 yields [2,2), so no windows are built.
+    // - This is a defensive helper behavior, distinct from skip=true on a truly empty span.
+    let template = make_template();
+    let tile = Tile::from_coords("chr1".to_string(), 0, 0, 10, 20, 6, 24)
+        .expect("test tile should be valid");
+    let windows = vec![IndexedInterval::new(10, 11, 0)?, IndexedInterval::new(22, 23, 1)?];
+    let span = TileWindowSpan {
+        first_idx: 5,
+        last_idx_exclusive: 8,
+    };
+    let window_opt = WindowSpec::Bed(PathBuf::from("windows.bed"));
+
+    let prepared =
+        prepare_tile_windows(&window_opt, Some(&windows), &tile, Some(&span), 200, &template)?;
+
+    assert!(!prepared.skip_tile);
+    assert!(prepared.streaming_buffers.is_none());
+    assert!(prepared.windows.is_empty());
+    Ok(())
+}
+
+#[test]
+fn prepare_tile_windows_bed_marks_exact_core_boundary_windows_as_contained() -> Result<()> {
+    // Human verification status: unverified
+    // Manual derivation:
+    // - Containment uses `start >= core_start && end <= core_end`.
+    // - Therefore windows that start exactly at the core start or end exactly at the core end are
+    //   still contained.
+    let template = make_template();
+    let tile = Tile::from_coords("chr1".to_string(), 0, 0, 10, 20, 6, 24)
+        .expect("test tile should be valid");
+    let windows = vec![IndexedInterval::new(10, 12, 0)?, IndexedInterval::new(18, 20, 1)?];
+    let span = TileWindowSpan {
+        first_idx: 0,
+        last_idx_exclusive: 2,
+    };
+    let window_opt = WindowSpec::Bed(PathBuf::from("windows.bed"));
+
+    let prepared =
+        prepare_tile_windows(&window_opt, Some(&windows), &tile, Some(&span), 200, &template)?;
+
+    assert!(!prepared.skip_tile);
+    assert_eq!(prepared.windows.len(), 2);
+    assert!(prepared.windows[0].contained);
+    assert!(prepared.windows[1].contained);
+    Ok(())
+}
