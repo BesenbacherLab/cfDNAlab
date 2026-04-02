@@ -47,6 +47,7 @@ use crate::{
         tiled_run::{
             Tile, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
         },
+        window_fetch::{BedFetchPolicy, fetch_span_for_tile},
         windowing::{WindowContext, build_bin_info, compute_window_offsets},
     },
 };
@@ -492,12 +493,14 @@ fn process_tile(
         None
     };
 
-    let Some(fetch_span) = determine_fetch_span(
+    let Some(fetch_span) = fetch_span_for_tile(
         tile,
-        window_ctx,
         tile_window_span,
+        window_ctx.windows_slice(),
+        window_ctx.spec,
         chrom_len,
         opt.shared_args.fragment_lengths.max_fragment_length as u64,
+        BedFetchPolicy::CoreOverlap,
     )?
     else {
         return Ok(TileResult {

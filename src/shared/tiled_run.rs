@@ -155,19 +155,8 @@ where
             let left_bound = core_start.saturating_sub(left_halo);
             let right_bound = core_end.saturating_add(right_halo);
 
-            // Discard windows that end before the left bound (core minus halo)
-            while w_left < windows_len && windows[w_left].end() <= left_bound {
-                w_left += 1;
-            }
-
-            if w_right < w_left {
-                w_right = w_left;
-            }
-
-            // Extend to cover every window whose start lies inside the right bound (core plus halo)
-            while w_right < windows_len && windows[w_right].start() < right_bound {
-                w_right += 1;
-            }
+            (w_left, w_right) =
+                advance_window_span_bounds(windows, w_left, w_right, left_bound, right_bound);
 
             if w_left == windows_len {
                 // No windows remain for this chromosome, so the rest of the tiles cannot overlap
@@ -188,8 +177,10 @@ where
                 continue;
             }
 
-            // The iterator helpers perform the precise overlap check (end > core_start &&
-            // start < core_end) so the recorded range only needs to bound the candidate windows
+            // Some commands consume this cached span directly as their production candidate set
+            // (`lengths`, `ends`, `gc_bias`), while core-overlap commands tighten it later with
+            // iterator-level overlap checks. So the half-open boundary logic here must itself stay
+            // correct; later filtering is model-dependent and not universal.
             spans[idx] = Some(TileWindowSpan {
                 first_idx: w_left,
                 last_idx_exclusive: w_right,
@@ -254,13 +245,54 @@ fn span_bounds_without_cache(
     core_start: u64,
     core_end: u64,
 ) -> (usize, usize) {
-    let mut left = 0usize;
-    while left < windows.len() && windows[left].end() <= core_start {
+    advance_window_span_bounds(windows, 0, 0, core_start, core_end)
+}
+
+/// Advance cached half-open window-span bounds through a start-sorted window list.
+///
+/// The caller supplies previously valid `left` and `right` scan positions from an earlier tile on
+/// the same chromosome. Because tiles are processed left-to-right and the requested bounds move
+/// monotonically forward, those positions are safe lower bounds for the next scan. The function
+/// advances them just far enough to satisfy the new half-open bounds:
+///
+/// - advance `left` while windows end at or before `left_bound`
+/// - advance `right` while windows start before `right_bound`
+///
+/// Passing `left = 0` and `right = 0` reproduces the uncached single-tile scan used by
+/// `span_bounds_without_cache(...)`.
+///
+/// Parameters
+/// ----------
+/// - `windows`:
+///   Start-sorted window triples `(start, end, idx)` for one chromosome
+/// - `left`:
+///   Previous lower-bound scan position for the first surviving candidate window
+/// - `right`:
+///   Previous lower-bound scan position for the exclusive right edge of the candidate span
+/// - `left_bound`:
+///   New inclusive left pruning bound. Windows with `end <= left_bound` are discarded
+/// - `right_bound`:
+///   New exclusive right inclusion bound. Windows with `start < right_bound` stay in the span
+///
+/// Returns
+/// -------
+/// - `(usize, usize)`:
+///   Updated half-open candidate-window index span `(left, right)`
+fn advance_window_span_bounds(
+    windows: &[IndexedInterval<u64>],
+    mut left: usize,
+    mut right: usize,
+    left_bound: u64,
+    right_bound: u64,
+) -> (usize, usize) {
+    while left < windows.len() && windows[left].end() <= left_bound {
         left += 1;
     }
 
-    let mut right = left;
-    while right < windows.len() && windows[right].start() < core_end {
+    if right < left {
+        right = left;
+    }
+    while right < windows.len() && windows[right].start() < right_bound {
         right += 1;
     }
 
@@ -299,43 +331,6 @@ pub fn overlapping_windows_for_tile<'a>(
         core_start,
         core_end,
     }
-}
-
-/// Finds the extreme start and end among windows that overlap the tile core.
-///
-/// The function iterates over the overlapping windows (using the cached span when provided) and
-/// tracks the minimum start and maximum end, yielding `None` when no windows intersect the core.
-///
-/// # Parameters
-/// - `windows`: Start-sorted window triples `(start, end, idx)` for the chromosome.
-/// - `tile`: Tile whose core is used for overlap checks.
-/// - `span`: Optional cached span for fast window access.
-///
-/// # Returns
-/// `Some(interval)` spanning the leftmost and rightmost overlapping window when at
-/// least one window overlaps, otherwise `None`.
-pub fn tile_window_min_max(
-    windows: &[IndexedInterval<u64>],
-    tile: &Tile,
-    span: Option<&TileWindowSpan>,
-) -> crate::Result<Option<Interval<u64>>> {
-    let mut iter = overlapping_windows_for_tile(windows, tile, span);
-    let Some(first) = iter.next() else {
-        return Ok(None);
-    };
-    let mut min_start = first.start();
-    let mut max_end = first.end();
-
-    for window in iter {
-        if window.start() < min_start {
-            min_start = window.start();
-        }
-        if window.end() > max_end {
-            max_end = window.end();
-        }
-    }
-
-    Ok(Some(Interval::new(min_start, max_end)?))
 }
 
 /// Return the cached candidate-window span for a core-overlap tile/window model.

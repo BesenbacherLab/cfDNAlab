@@ -3,11 +3,15 @@ use std::io::{BufWriter, Write};
 use anyhow::{Context, Result};
 
 use crate::{
+    commands::cli_common::WindowSpec,
     commands::fcoverage::window_results::CoverageWindowAction,
     shared::interval::Interval,
     shared::tiled_run::{
         Tile, TileMode, TileWindowSpan, clamp_fetch_to_window_span, parse_tile_index,
-        tile_window_min_max,
+    },
+    shared::window_fetch::{
+        BedFetchPolicy, fetch_span_for_tile, window_derived_fetch_extent_for_core_overlap,
+        full_tile_fetch_span,
     },
 };
 
@@ -181,15 +185,14 @@ pub fn adapt_fetch_to_extreme_windows(
     // For windowed runs: restrict to the overlapping window span widened by a fragment-sized halo,
     // then intersect it with the tile's existing fetch band.
     match mode {
-        TileMode::Positional { windows: None, .. } => Ok(Some(Interval::new(
-            tile.fetch_start() as u64,
-            tile.fetch_end() as u64,
-        )?)),
+        TileMode::Positional { windows: None, .. } => full_tile_fetch_span(tile, chrom_len_u64),
         TileMode::Positional {
             windows: Some(wchr),
             ..
         } => {
-            let Some(window_span) = tile_window_min_max(wchr, tile, tile_span)? else {
+            let Some(window_span) =
+                window_derived_fetch_extent_for_core_overlap(wchr, tile, tile_span)?
+            else {
                 return Ok(None);
             };
             Ok(clamp_fetch_to_window_span(
@@ -200,7 +203,9 @@ pub fn adapt_fetch_to_extreme_windows(
             )?)
         }
         TileMode::AggregatesByBed { windows: wchr, .. } => {
-            let Some(window_span) = tile_window_min_max(wchr, tile, tile_span)? else {
+            let Some(window_span) =
+                window_derived_fetch_extent_for_core_overlap(wchr, tile, tile_span)?
+            else {
                 return Ok(None);
             };
             Ok(clamp_fetch_to_window_span(
@@ -210,25 +215,15 @@ pub fn adapt_fetch_to_extreme_windows(
                 halo_bp,
             )?)
         }
-        TileMode::AggregatesBySize { window_bp, .. } => {
-            let core_start = tile.core_start() as u64;
-            let core_end = tile.core_end() as u64;
-            if core_start >= chrom_len_u64 {
-                return Ok(None);
-            }
-            let window_size_bp = *window_bp;
-            let first_window_idx = core_start / window_size_bp;
-            let last_window_idx = (core_end.saturating_sub(1)) / window_size_bp;
-            let min_window_start = first_window_idx * window_size_bp;
-            let max_window_end = ((last_window_idx + 1) * window_size_bp).min(chrom_len_u64);
-            let window_span = Interval::new(min_window_start, max_window_end)?;
-            Ok(clamp_fetch_to_window_span(
-                tile,
-                chrom_len_u64,
-                window_span,
-                halo_bp,
-            )?)
-        }
+        TileMode::AggregatesBySize { window_bp, .. } => fetch_span_for_tile(
+            tile,
+            None,
+            None,
+            &WindowSpec::Size(*window_bp),
+            chrom_len_u64,
+            halo_bp,
+            BedFetchPolicy::CoreOverlap,
+        ),
     }
 }
 

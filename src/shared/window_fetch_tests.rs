@@ -28,7 +28,7 @@ fn make_tile(core_start: u32, core_end: u32, fetch_start: u32, fetch_end: u32, i
 }
 
 #[test]
-fn aligned_window_extent_for_core_overlap_bed_keeps_one_core_window() -> Result<()> {
+fn window_derived_fetch_extent_for_core_overlap_keeps_one_core_window() -> Result<()> {
     let tile = make_tile(10, 20, 6, 24, 0);
     let windows = indexed_windows(&[(10, 11, 0)]);
     let candidate_span = TileWindowSpan {
@@ -37,7 +37,7 @@ fn aligned_window_extent_for_core_overlap_bed_keeps_one_core_window() -> Result<
     };
 
     let window_extent =
-        aligned_window_extent_for_core_overlap_bed(&windows, &tile, Some(&candidate_span))?
+        window_derived_fetch_extent_for_core_overlap(&windows, &tile, Some(&candidate_span))?
             .expect("one core-overlap window should produce an aligned window extent");
 
     assert_eq!(window_extent, Interval::new(10, 11)?);
@@ -45,7 +45,7 @@ fn aligned_window_extent_for_core_overlap_bed_keeps_one_core_window() -> Result<
 }
 
 #[test]
-fn aligned_window_extent_for_core_overlap_bed_ignores_halo_only_candidates_in_mixed_cached_span()
+fn window_derived_fetch_extent_for_core_overlap_ignores_halo_only_candidates_in_mixed_cached_span()
 -> Result<()> {
     let tile = make_tile(10, 20, 6, 24, 0);
     let windows = indexed_windows(&[(8, 9, 0), (10, 11, 1), (22, 23, 2)]);
@@ -55,7 +55,7 @@ fn aligned_window_extent_for_core_overlap_bed_ignores_halo_only_candidates_in_mi
     };
 
     let window_extent =
-        aligned_window_extent_for_core_overlap_bed(&windows, &tile, Some(&candidate_span))?
+        window_derived_fetch_extent_for_core_overlap(&windows, &tile, Some(&candidate_span))?
             .expect("mixed cached span should still keep the core-overlap window extent");
 
     assert_eq!(window_extent, Interval::new(10, 11)?);
@@ -63,7 +63,7 @@ fn aligned_window_extent_for_core_overlap_bed_ignores_halo_only_candidates_in_mi
 }
 
 #[test]
-fn aligned_window_extent_for_core_overlap_bed_returns_none_when_cached_span_has_no_true_core_window()
+fn window_derived_fetch_extent_for_core_overlap_returns_none_when_cached_span_has_no_true_core_window()
 -> Result<()> {
     let tile = make_tile(10, 20, 6, 24, 0);
     let windows = indexed_windows(&[(8, 9, 0), (22, 23, 1)]);
@@ -73,19 +73,19 @@ fn aligned_window_extent_for_core_overlap_bed_returns_none_when_cached_span_has_
     };
 
     let window_extent =
-        aligned_window_extent_for_core_overlap_bed(&windows, &tile, Some(&candidate_span))?;
+        window_derived_fetch_extent_for_core_overlap(&windows, &tile, Some(&candidate_span))?;
 
     assert!(window_extent.is_none());
     Ok(())
 }
 
 #[test]
-fn aligned_window_extent_for_core_overlap_bed_widens_monotonically_when_more_core_windows_are_added()
+fn window_derived_fetch_extent_for_core_overlap_widens_monotonically_when_more_core_windows_are_added()
 -> Result<()> {
     let tile = make_tile(10, 20, 6, 24, 0);
     let windows = indexed_windows(&[(10, 11, 0), (18, 19, 1)]);
 
-    let narrow = aligned_window_extent_for_core_overlap_bed(
+    let narrow = window_derived_fetch_extent_for_core_overlap(
         &windows,
         &tile,
         Some(&TileWindowSpan {
@@ -94,7 +94,7 @@ fn aligned_window_extent_for_core_overlap_bed_widens_monotonically_when_more_cor
         }),
     )?
     .expect("single core window should produce a window extent");
-    let wide = aligned_window_extent_for_core_overlap_bed(
+    let wide = window_derived_fetch_extent_for_core_overlap(
         &windows,
         &tile,
         Some(&TileWindowSpan {
@@ -112,14 +112,14 @@ fn aligned_window_extent_for_core_overlap_bed_widens_monotonically_when_more_cor
 }
 
 #[test]
-fn aligned_window_extent_for_bed_candidates_keeps_one_right_halo_only_window() -> Result<()> {
+fn window_derived_fetch_extent_for_candidates_keeps_one_right_halo_only_window() -> Result<()> {
     let windows = indexed_windows(&[(22, 23, 0)]);
     let candidate_span = TileWindowSpan {
         first_idx: 0,
         last_idx_exclusive: 1,
     };
 
-    let window_extent = aligned_window_extent_for_bed_candidates(&windows, Some(&candidate_span))?
+    let window_extent = window_derived_fetch_extent_for_candidates(&windows, Some(&candidate_span))?
         .expect("one right halo-only candidate should produce an aligned window extent");
 
     assert_eq!(window_extent, Interval::new(22, 23)?);
@@ -127,7 +127,7 @@ fn aligned_window_extent_for_bed_candidates_keeps_one_right_halo_only_window() -
 }
 
 #[test]
-fn aligned_window_extent_for_bed_candidates_uses_the_full_candidate_extent_in_mixed_case()
+fn window_derived_fetch_extent_for_candidates_uses_the_full_candidate_extent_in_mixed_case()
 -> Result<()> {
     let windows = indexed_windows(&[(10, 11, 0), (22, 23, 1)]);
     let candidate_span = TileWindowSpan {
@@ -135,7 +135,7 @@ fn aligned_window_extent_for_bed_candidates_uses_the_full_candidate_extent_in_mi
         last_idx_exclusive: 2,
     };
 
-    let window_extent = aligned_window_extent_for_bed_candidates(&windows, Some(&candidate_span))?
+    let window_extent = window_derived_fetch_extent_for_candidates(&windows, Some(&candidate_span))?
         .expect("mixed fragment-reach candidates should produce an aligned window extent");
 
     assert_eq!(window_extent, Interval::new(10, 23)?);
@@ -157,7 +157,7 @@ fn candidate_window_extent_and_clamp_keep_reads_starting_reach_bases_earlier() -
         last_idx_exclusive: 1,
     };
 
-    let window_extent = aligned_window_extent_for_bed_candidates(&windows, Some(&candidate_span))?
+    let window_extent = window_derived_fetch_extent_for_candidates(&windows, Some(&candidate_span))?
         .expect("fragment-reach candidate should produce an aligned window extent");
     let narrowed_fetch = clamp_fetch_to_window_span(&tile, 200, window_extent, 4)?
         .expect("fragment-reach window extent should produce a clamped fetch interval");
@@ -172,7 +172,7 @@ fn candidate_window_extent_and_clamp_widen_monotonically_when_more_candidates_ar
     let tile = make_tile(10, 20, 6, 30, 0);
     let windows = indexed_windows(&[(10, 11, 0), (22, 23, 1), (25, 26, 2)]);
 
-    let narrow_window_extent = aligned_window_extent_for_bed_candidates(
+    let narrow_window_extent = window_derived_fetch_extent_for_candidates(
         &windows,
         Some(&TileWindowSpan {
             first_idx: 0,
@@ -180,7 +180,7 @@ fn candidate_window_extent_and_clamp_widen_monotonically_when_more_candidates_ar
         }),
     )?
     .expect("narrow candidate set should produce a window extent");
-    let wide_window_extent = aligned_window_extent_for_bed_candidates(
+    let wide_window_extent = window_derived_fetch_extent_for_candidates(
         &windows,
         Some(&TileWindowSpan {
             first_idx: 0,
@@ -217,7 +217,7 @@ fn raw_candidate_window_extent_and_clamp_uses_explicit_halo_when_it_exceeds_tile
         last_idx_exclusive: 1,
     };
 
-    let window_extent = aligned_window_extent_for_bed_candidates(&windows, Some(&candidate_span))?
+    let window_extent = window_derived_fetch_extent_for_candidates(&windows, Some(&candidate_span))?
         .expect("raw left-only candidate should produce an aligned window extent");
 
     // The single window
@@ -250,7 +250,7 @@ fn raw_candidate_window_extent_and_clamp_keeps_larger_tile_fetch_halo_when_it_ex
         last_idx_exclusive: 1,
     };
 
-    let window_extent = aligned_window_extent_for_bed_candidates(&windows, Some(&candidate_span))?
+    let window_extent = window_derived_fetch_extent_for_candidates(&windows, Some(&candidate_span))?
         .expect("raw left-only candidate should produce an aligned window extent");
 
     assert_eq!(window_extent, Interval::new(8, 9)?);
@@ -276,7 +276,7 @@ fn raw_candidate_window_extent_and_clamp_narrows_far_right_raw_only_fetch() -> R
         last_idx_exclusive: 1,
     };
 
-    let window_extent = aligned_window_extent_for_bed_candidates(&windows, Some(&candidate_span))?
+    let window_extent = window_derived_fetch_extent_for_candidates(&windows, Some(&candidate_span))?
         .expect("raw far-right candidate should produce an aligned window extent");
     let narrowed_fetch = clamp_fetch_to_window_span(&tile, 200, window_extent, 14)?
         .expect("raw far-right candidate should produce a narrowed fetch interval");
@@ -296,7 +296,7 @@ fn raw_candidate_window_extent_and_clamp_matches_full_tile_when_candidates_span_
         last_idx_exclusive: 2,
     };
 
-    let window_extent = aligned_window_extent_for_bed_candidates(&windows, Some(&candidate_span))?
+    let window_extent = window_derived_fetch_extent_for_candidates(&windows, Some(&candidate_span))?
         .expect("mixed raw candidates should produce an aligned window extent");
     let narrowed_fetch = clamp_fetch_to_window_span(&tile, 200, window_extent, 14)?
         .expect("mixed raw candidates should produce a narrowed fetch interval");

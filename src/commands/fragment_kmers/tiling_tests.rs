@@ -1,17 +1,17 @@
-use super::determine_fetch_span;
 use crate::{
     commands::cli_common::WindowSpec,
     shared::{
         interval::IndexedInterval,
         tiled_run::{Tile, TileWindowSpan},
-        windowing::WindowContext,
+        window_fetch::{BedFetchPolicy, fetch_span_for_tile},
     },
 };
 use anyhow::Result;
 use std::path::PathBuf;
 
 #[test]
-fn determine_fetch_span_keeps_fragment_halo_for_bed_windows_at_chromosome_start() -> Result<()> {
+fn fetch_span_for_tile_core_overlap_keeps_fragment_halo_for_bed_windows_at_chromosome_start(
+) -> Result<()> {
     // Human verification status: unverified
     // Arrange:
     // Use a chromosome-start tile whose core is [0, 100) and whose fetch band was built with a
@@ -31,14 +31,16 @@ fn determine_fetch_span_keeps_fragment_halo_for_bed_windows_at_chromosome_start(
         last_idx_exclusive: 1,
     };
     let window_spec = WindowSpec::Bed(PathBuf::from("windows.bed"));
-    let window_ctx = WindowContext {
-        spec: &window_spec,
-        windows: Some(&windows),
-        chr_idx_offset: 0,
-    };
-
     // Act
-    let fetch_span = determine_fetch_span(&tile, &window_ctx, Some(&tile_window_span), 200, 60)?
+    let fetch_span = fetch_span_for_tile(
+        &tile,
+        Some(&tile_window_span),
+        Some(&windows),
+        &window_spec,
+        200,
+        60,
+        BedFetchPolicy::CoreOverlap,
+    )?
         .expect("the tile overlaps the BED window");
 
     // Assert
@@ -48,7 +50,7 @@ fn determine_fetch_span_keeps_fragment_halo_for_bed_windows_at_chromosome_start(
 }
 
 #[test]
-fn determine_fetch_span_returns_none_for_halo_only_bed_windows_in_core_overlap_models() -> Result<()>
+fn fetch_span_for_tile_core_overlap_returns_none_for_halo_only_bed_windows() -> Result<()>
 {
     // Human verification status: unverified
     // Arrange:
@@ -62,20 +64,23 @@ fn determine_fetch_span_returns_none_for_halo_only_bed_windows_in_core_overlap_m
         last_idx_exclusive: 1,
     };
     let window_spec = WindowSpec::Bed(PathBuf::from("windows.bed"));
-    let window_ctx = WindowContext {
-        spec: &window_spec,
-        windows: Some(&windows),
-        chr_idx_offset: 0,
-    };
-
-    let fetch_span = determine_fetch_span(&tile, &window_ctx, Some(&tile_window_span), 200, 4)?;
+    let fetch_span = fetch_span_for_tile(
+        &tile,
+        Some(&tile_window_span),
+        Some(&windows),
+        &window_spec,
+        200,
+        4,
+        BedFetchPolicy::CoreOverlap,
+    )?;
 
     assert!(fetch_span.is_none());
     Ok(())
 }
 
 #[test]
-fn determine_fetch_span_ignores_halo_only_candidates_when_a_core_window_is_present() -> Result<()> {
+fn fetch_span_for_tile_core_overlap_ignores_halo_only_candidates_when_a_core_window_is_present(
+) -> Result<()> {
     // Human verification status: unverified
     // Arrange:
     // - BED window [10,11) overlaps the core and should define the narrowed fetch.
@@ -89,13 +94,15 @@ fn determine_fetch_span_ignores_halo_only_candidates_when_a_core_window_is_prese
         last_idx_exclusive: 2,
     };
     let window_spec = WindowSpec::Bed(PathBuf::from("windows.bed"));
-    let window_ctx = WindowContext {
-        spec: &window_spec,
-        windows: Some(&windows),
-        chr_idx_offset: 0,
-    };
-
-    let fetch_span = determine_fetch_span(&tile, &window_ctx, Some(&tile_window_span), 200, 4)?
+    let fetch_span = fetch_span_for_tile(
+        &tile,
+        Some(&tile_window_span),
+        Some(&windows),
+        &window_spec,
+        200,
+        4,
+        BedFetchPolicy::CoreOverlap,
+    )?
         .expect("core-overlap window should keep a fetch span");
 
     assert_eq!(fetch_span.as_tuple(), (6, 15));

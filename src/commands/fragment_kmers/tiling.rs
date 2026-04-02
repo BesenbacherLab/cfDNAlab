@@ -1,14 +1,12 @@
 use crate::{
-    commands::{cli_common::WindowSpec, counters::FragmentKmersCounters},
+    commands::counters::FragmentKmersCounters,
     shared::{
-        interval::Interval,
         kmers::{
             kmer_codec::{Kmer, KmerOrientation, KmerSpec},
             process_counts::{DecodedCounts, split_and_decode_counts},
         },
         positioning::PositionGroup,
-        tiled_run::{Tile, TileWindowSpan, clamp_fetch_to_window_span, tile_window_min_max},
-        windowing::WindowContext,
+        tiled_run::Tile,
     },
 };
 use anyhow::{Context, Result, bail};
@@ -123,40 +121,6 @@ pub struct TileResult {
     pub chr: String,
     pub counts_path: Option<PathBuf>,
     pub counter: FragmentKmersCounters,
-}
-
-/// Determine the genomic span to request from the BAM reader for a tile.
-///
-/// Returns a checked absolute fetch interval, or `None` when the tile does not overlap any
-/// relevant BED windows.
-pub fn determine_fetch_span(
-    tile: &Tile,
-    window_ctx: &WindowContext,
-    tile_window_span: Option<&TileWindowSpan>,
-    chrom_len: u64,
-    halo_bp: u64,
-) -> Result<Option<Interval<u64>>> {
-    let chrom_len_u32 = chrom_len.min(u32::MAX as u64) as u32;
-    match window_ctx.spec {
-        WindowSpec::Global | WindowSpec::Size(_) => Ok(Some(Interval::new(
-            tile.fetch_start() as u64,
-            tile.fetch_end() as u64,
-        )?)),
-        WindowSpec::Bed(_) => {
-            let Some(windows) = window_ctx.windows_slice() else {
-                return Ok(None);
-            };
-            let Some(window_span) = tile_window_min_max(windows, tile, tile_window_span)? else {
-                return Ok(None);
-            };
-            Ok(clamp_fetch_to_window_span(
-                tile,
-                chrom_len.min(chrom_len_u32 as u64),
-                window_span,
-                halo_bp,
-            )?)
-        }
-    }
 }
 
 /// Reduce per-tile count payloads into a dense vector aligned with the global window order.

@@ -8,8 +8,9 @@ mod tests {
     use cfdnalab::shared::interval::{IndexedInterval, Interval};
     use cfdnalab::shared::tiled_run::{
         Tile, TileMode, TileWindowSpan, build_tiles, clamp_fetch_to_window_span,
-        overlapping_windows_for_tile, precompute_tile_window_spans, tile_window_min_max,
+        overlapping_windows_for_tile, precompute_tile_window_spans,
     };
+    use cfdnalab::shared::window_fetch::window_derived_fetch_extent_for_core_overlap;
     use fxhash::FxHashMap;
     use std::path::PathBuf;
 
@@ -223,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn tile_window_min_max_returns_extremes() {
+    fn window_derived_fetch_extent_for_core_overlap_returns_extremes() {
         // Human verification status: unverified
         let tile = make_tile(50, 150, 40, 160, 0);
         let windows = indexed_windows(&[(0, 40, 0), (40, 60, 1), (120, 200, 2), (300, 400, 3)]);
@@ -231,7 +232,7 @@ mod tests {
             first_idx: 1,
             last_idx_exclusive: 3,
         };
-        let interval = tile_window_min_max(&windows, &tile, Some(&span))
+        let interval = window_derived_fetch_extent_for_core_overlap(&windows, &tile, Some(&span))
             .unwrap()
             .expect("window span expected");
         assert_eq!(interval, Interval::new(40, 200).unwrap());
@@ -259,13 +260,13 @@ mod tests {
     }
 
     #[test]
-    fn tile_window_min_max_ignores_halo_only_candidates_from_cached_span() {
+    fn window_derived_fetch_extent_for_core_overlap_ignores_halo_only_candidates_from_cached_span() {
         // Human verification status: unverified
         // Manual derivation:
         // - The cached candidate span below includes one left halo-only window [8,9), one
         //   core-overlap window [10,11), and one right halo-only window [22,23).
-        // - `tile_window_min_max(...)` is the core-overlap helper, so the halo-only windows must
-        //   not affect the returned extremes.
+        // - `window_derived_fetch_extent_for_core_overlap(...)` is the core-overlap helper, so the
+        //   halo-only windows must not affect the returned extremes.
         let tile = make_tile(10, 20, 6, 24, 0);
         let windows = indexed_windows(&[(8, 9, 0), (10, 11, 1), (22, 23, 2)]);
         let span = TileWindowSpan {
@@ -273,7 +274,7 @@ mod tests {
             last_idx_exclusive: 3,
         };
 
-        let interval = tile_window_min_max(&windows, &tile, Some(&span))
+        let interval = window_derived_fetch_extent_for_core_overlap(&windows, &tile, Some(&span))
             .unwrap()
             .expect("core-overlap window span expected");
 
@@ -440,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn tile_window_min_max_returns_none_for_empty_span() {
+    fn window_derived_fetch_extent_for_core_overlap_returns_none_for_empty_span() {
         // Human verification status: unverified
         let tile = make_tile(10, 20, 0, 30, 0);
         let windows: Vec<IndexedInterval<u64>> = Vec::new();
@@ -449,7 +450,7 @@ mod tests {
             last_idx_exclusive: 0,
         };
         assert!(
-            tile_window_min_max(&windows, &tile, Some(&span))
+            window_derived_fetch_extent_for_core_overlap(&windows, &tile, Some(&span))
                 .expect("window span computation should succeed")
                 .is_none()
         );

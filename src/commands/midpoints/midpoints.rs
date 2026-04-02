@@ -33,6 +33,7 @@ use crate::{
             Tile, TileWindowSpan, build_tiles, clamp_fetch_to_window_span, make_temp_dir,
             overlapping_windows_for_tile, precompute_tile_window_spans,
         },
+        window_fetch::window_derived_fetch_extent_for_core_overlap,
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -693,18 +694,15 @@ pub fn get_overlapping_sites_and_adapt_fetch_to_extremes(
         .unwrap_or(0)
         .min(windows.len());
     let mut overlapping_sites = Vec::with_capacity(reserve_hint);
-    let mut min_site_start = u64::MAX;
-    let mut max_site_end = 0u64;
     for site in overlapping_windows_for_tile(windows, tile, tile_span) {
-        min_site_start = min_site_start.min(site.start());
-        max_site_end = max_site_end.max(site.end());
         overlapping_sites.push(*site);
     }
     if overlapping_sites.is_empty() {
         return Ok(None);
     }
 
-    let window_span = Interval::new(min_site_start, max_site_end)?;
+    let window_span = window_derived_fetch_extent_for_core_overlap(windows, tile, tile_span)?
+        .context("midpoint helper found overlapping sites but no core-overlap window extent")?;
 
     let Some(fetch_span) =
         clamp_fetch_to_window_span(tile, chrom_len as u64, window_span, halo_bp)?

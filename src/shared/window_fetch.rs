@@ -113,7 +113,7 @@ pub fn fetch_span_for_tile(
             };
             match bed_fetch_policy {
                 BedFetchPolicy::CoreOverlap => {
-                    let Some(window_span) = aligned_window_extent_for_core_overlap_bed(
+                    let Some(window_span) = window_derived_fetch_extent_for_core_overlap(
                         windows_chr,
                         tile,
                         tile_window_span,
@@ -130,7 +130,7 @@ pub fn fetch_span_for_tile(
                 }
                 BedFetchPolicy::CandidateWindowExtent => {
                     let Some(window_span) =
-                        aligned_window_extent_for_bed_candidates(windows_chr, tile_window_span)?
+                        window_derived_fetch_extent_for_candidates(windows_chr, tile_window_span)?
                     else {
                         return Ok(None);
                     };
@@ -149,6 +149,10 @@ pub fn fetch_span_for_tile(
 
 /// Derive the aligned min/max window extent from BED windows that truly overlap the tile core.
 ///
+/// The helper iterates over the core-overlapping windows, using the cached candidate span when
+/// provided, and tracks the minimum start and maximum end across those true overlaps. When no BED
+/// window intersects the tile core, it returns `None`.
+///
 /// Coordinate space:
 /// - consumes BED window coordinates
 /// - returns an aligned-coordinate window extent
@@ -162,9 +166,9 @@ pub fn fetch_span_for_tile(
 /// Aligned fetch narrowing:
 /// - allowed
 ///
-/// This helper must derive the min/max from windows that actually overlap the tile core, even when
-/// a wider cached candidate span is available.
-pub fn aligned_window_extent_for_core_overlap_bed(
+/// This helper must derive the leftmost and rightmost bounds from windows that actually overlap
+/// the tile core, even when a wider cached candidate span is available.
+pub fn window_derived_fetch_extent_for_core_overlap(
     windows_chr: &[IndexedInterval<u64>],
     tile: &Tile,
     candidate_span: Option<&TileWindowSpan>,
@@ -203,7 +207,7 @@ pub fn aligned_window_extent_for_core_overlap_bed(
 ///
 /// This helper must derive the min/max directly from the candidate span and must not reapply a
 /// core-overlap filter.
-pub fn aligned_window_extent_for_bed_candidates(
+pub fn window_derived_fetch_extent_for_candidates(
     windows_chr: &[IndexedInterval<u64>],
     candidate_span: Option<&TileWindowSpan>,
 ) -> Result<Option<Interval<u64>>> {
