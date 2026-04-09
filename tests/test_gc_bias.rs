@@ -191,6 +191,58 @@ mod tests_gc_bias {
         Ok(())
     }
 
+    #[test]
+    fn gc_correction_package_rejects_missing_path_before_opening() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange: point the loader at a `.npz` path that does not exist.
+        let tmp_dir = tempdir()?;
+        let missing_path = tmp_dir.path().join("missing_gc_package.npz");
+
+        // Act: try to load the missing package.
+        let err = GCCorrectionPackage::from_file(&missing_path)
+            .expect_err("missing GC correction package should fail");
+
+        // Assert: the user gets the shared "existing .npz file" contract directly instead of a
+        // lower-level IO or NPZ parsing error.
+        let msg = err.to_string();
+        assert!(
+            msg.contains("must point to an existing .npz file"),
+            "unexpected error message: {msg}"
+        );
+        assert!(
+            msg.contains("missing_gc_package.npz"),
+            "unexpected error message: {msg}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn gc_correction_package_rejects_non_npz_extension_before_parsing() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange: create a regular file with the wrong extension.
+        let tmp_dir = tempdir()?;
+        let wrong_extension_path = tmp_dir.path().join("gc_package.txt");
+        std::fs::write(&wrong_extension_path, b"not an npz archive")?;
+
+        // Act: try to load the non-`.npz` file.
+        let err = GCCorrectionPackage::from_file(&wrong_extension_path)
+            .expect_err("wrong extension should fail");
+
+        // Assert: extension validation runs before the NPZ reader.
+        let msg = err.to_string();
+        assert!(
+            msg.contains("must point to a .npz file"),
+            "unexpected error message: {msg}"
+        );
+        assert!(
+            msg.contains("gc_package.txt"),
+            "unexpected error message: {msg}"
+        );
+
+        Ok(())
+    }
+
     fn make_length_agnostic_package() -> GCCorrectionPackage {
         let correction_matrix = array![[1.0_f64, 2.0_f64], [3.0_f64, 5.0_f64]];
         GCCorrectionPackage {

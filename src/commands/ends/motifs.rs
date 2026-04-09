@@ -614,9 +614,8 @@ fn get_reference_code(
         return Ok(spec.sentinel_none());
     }
 
-    let codes = precomputed_codes.context(
-        "missing precomputed reference codes for a reference-backed motif lookup",
-    )?;
+    let codes = precomputed_codes
+        .context("missing precomputed reference codes for a reference-backed motif lookup")?;
     let local_start = try_reference_start_index(start_pos, spec.k, motif_context).with_context(
         || {
             let loaded_end = motif_context.reference_start

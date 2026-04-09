@@ -643,7 +643,12 @@ fn blacklist_masking_still_skips_read_backed_inside_motifs_using_genomic_referen
     // - right read-backed motif = reverse-complement("A") = "_T"
     // Blacklisting [10,11) should drop only the left motif even though inside bases come from
     // the read, because blacklist validation is still genomic.
-    let bam = single_read_bam("ends_blacklist_read_end", 10, vec![('M', 10)], b"ACGAACGAAA")?;
+    let bam = single_read_bam(
+        "ends_blacklist_read_end",
+        10,
+        vec![('M', 10)],
+        b"ACGAACGAAA",
+    )?;
     let reference = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
     let blacklist_bed = out_dir.path().join("blacklist.bed");
@@ -1322,7 +1327,12 @@ fn outside_reference_lookup_uses_preloaded_tile_reference_when_the_motif_extends
     // boundary 20 needs reference bases [9,20), which is left of tile.fetch but still inside the
     // preloaded reference span. On the ACGT-repeat reference, seq[9..20) is
     // C G T A C G T A C G T, so the outside-only label is "CGTACGTACGT_".
-    let bam = single_read_bam("ends_exact_reference_fallback", 20, vec![('M', 10)], b"AAAAAAAAAA")?;
+    let bam = single_read_bam(
+        "ends_exact_reference_fallback",
+        20,
+        vec![('M', 10)],
+        b"AAAAAAAAAA",
+    )?;
     let reference = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
@@ -1937,7 +1947,12 @@ fn dense_all_motifs_output_enumerates_the_full_combined_2_plus_2_universe_withou
             format!("{}{}{}", "T".repeat(8), "GTAC", "T".repeat(244)),
         )],
     )?;
-    let bam = single_read_bam("ends_dense_combined_2_plus_2", 10, vec![('M', 10)], b"AAAAAAAAAA")?;
+    let bam = single_read_bam(
+        "ends_dense_combined_2_plus_2",
+        10,
+        vec![('M', 10)],
+        b"AAAAAAAAAA",
+    )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
     write_bed(&windows_bed, &[("chr1", 10, 11, "left")])?;
@@ -3115,7 +3130,12 @@ fn aligned_endpoint_assignment_keeps_a_right_halo_only_window_reached_by_an_owne
     // - unpaired 10M at pos 19 has aligned interval [19,29)
     // - fragment ownership is by aligned start in tile core [10,20)
     // - BED row [28,29) is outside the core but contains the aligned right endpoint
-    let bam = single_read_bam("ends_aligned_right_halo", 19, vec![('M', 10)], b"AAAAAAAAAA")?;
+    let bam = single_read_bam(
+        "ends_aligned_right_halo",
+        19,
+        vec![('M', 10)],
+        b"AAAAAAAAAA",
+    )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
     write_bed(&windows_bed, &[("chr1", 28, 29, "right_halo_only")])?;
@@ -3157,7 +3177,12 @@ fn aligned_endpoint_assignment_mixed_core_and_right_halo_rows_count_only_the_tru
     // - unpaired 10M at pos 19 has aligned endpoints at 19 and 28
     // - row [10,11) is a non-target core row
     // - row [28,29) is the true right-end target
-    let bam = single_read_bam("ends_aligned_mixed_core_and_halo", 19, vec![('M', 10)], b"AAAAAAAAAA")?;
+    let bam = single_read_bam(
+        "ends_aligned_mixed_core_and_halo",
+        19,
+        vec![('M', 10)],
+        b"AAAAAAAAAA",
+    )?;
     let out_dir = TempDir::new()?;
     let windows_bed = out_dir.path().join("windows.bed");
     write_bed(
@@ -3455,7 +3480,12 @@ fn max_soft_clips_skips_the_fragment_when_both_ends_exceed_the_threshold() -> Re
 #[test]
 fn hard_clipped_fragments_are_discarded_entirely() -> Result<()> {
     // Arrange: hard clipping is documented as an always-on fragment exclusion.
-    let bam = single_read_bam("ends_hard_clip", 10, vec![('H', 2), ('M', 10)], b"AAAAAAAAAA")?;
+    let bam = single_read_bam(
+        "ends_hard_clip",
+        10,
+        vec![('H', 2), ('M', 10)],
+        b"AAAAAAAAAA",
+    )?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
@@ -4483,7 +4513,12 @@ fn settings_json_ignores_fragment_length_bounds_but_keeps_motif_definition_field
 #[test]
 fn unpaired_mode_rejects_require_proper_pair() -> Result<()> {
     // Arrange: the command explicitly forbids combining reads-as-fragments with proper-pair filtering.
-    let bam = single_read_bam("ends_unpaired_proper_pair", 10, vec![('M', 10)], b"AAAAAAAAAA")?;
+    let bam = single_read_bam(
+        "ends_unpaired_proper_pair",
+        10,
+        vec![('M', 10)],
+        b"AAAAAAAAAA",
+    )?;
     let out_dir = TempDir::new()?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);

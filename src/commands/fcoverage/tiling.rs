@@ -10,8 +10,8 @@ use crate::{
         Tile, TileMode, TileWindowSpan, clamp_fetch_to_window_span, parse_tile_index,
     },
     shared::window_fetch::{
-        BedFetchPolicy, fetch_span_for_tile, window_derived_fetch_extent_for_core_overlap,
-        full_tile_fetch_span,
+        BedFetchPolicy, fetch_span_for_tile, full_tile_fetch_span,
+        window_derived_fetch_extent_for_core_overlap,
     },
 };
 

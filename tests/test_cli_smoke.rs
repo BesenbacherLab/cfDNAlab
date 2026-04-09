@@ -149,6 +149,34 @@ fn help_text_is_available_for_all_enabled_release_commands() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "cmd_ends")]
+#[test]
+fn ends_help_only_shows_collapse_complements_when_experimental_feature_is_enabled() -> Result<()> {
+    // Human verification status: unverified
+    let output = command_output("ends", &["--help"])?;
+    let stdout_text = String::from_utf8_lossy(&output.stdout);
+    let stderr_text = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        output.status.success(),
+        "Expected cfdna ends --help to succeed.\nstdout:\n{stdout_text}\nstderr:\n{stderr_text}"
+    );
+
+    if cfg!(feature = "ends_experimental") {
+        assert!(
+            stdout_text.contains("--collapse-complement"),
+            "Expected experimental ends help to show --collapse-complement.\nstdout:\n{stdout_text}"
+        );
+    } else {
+        assert!(
+            !stdout_text.contains("--collapse-complement"),
+            "Expected default ends help to hide --collapse-complement.\nstdout:\n{stdout_text}"
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(feature = "cmd_lengths")]
 #[test]
 fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> Result<()> {

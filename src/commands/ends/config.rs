@@ -18,11 +18,8 @@ const ENDS_LONG_ABOUT: &str = concat!(
     "`--k-inside` bases just inside the fragment. For the right fragment end, these are ",
     "reverse-complemented together. Finally, they are combined to the reference 5'->3'-oriented ",
     "`\"<outside>_<inside>\"` motif.\n\n",
-    "When `--collapse-complements` is passed, each motif is compared against its same-orientation ",
-    "complement (to keep the `\"<outside>_<inside>\"` form) and the lexicographically smallest ",
-    "motif is kept (summing the counts).\n\n",
     "## Visualization of counting\n\n",
-    "The following shows the counting for aligned fragment ends with and without collapsing of complements:\n\n",
+    "The following shows the counting for aligned fragment ends:\n\n",
     r#"For `--k-inside 2 --k-outside 2`:
 
 ---
@@ -40,17 +37,6 @@ Reverse      3' |<<<<<<<<| 5'
 Reverse (`CATC`) is reverse complemented to `GATG`
 
 Counts (`<outside>_<inside>`): `AT_CG: 1`, `GA_TG: 1`
-
----
-
-When `--collapse-complements` is passed:
-
-Compare `AT_CG` to complement `TA_GC`. Lexicographically smallest: `AT_CG`
-
-Compare `GA_TG` to complement `CT_AC`. Lexicographically smallest: `CT_AC`
-
-Counts (`<outside>_<inside>`): `AT_CG: 1`, `CT_AC: 1`
-
 ---
 "#,
     "\n",
@@ -206,14 +192,24 @@ pub struct EndsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub scale_genome: ScaleGenomeArgs,
 
-    /// Collapse each motif with its reverse-complement [flag]
+    /// Collapse each motif with its same-orientation complement [EXPERIMENTAL] [flag]
     ///
-    /// How:
+    /// This option is hidden by default and is only shown in CLI help when cfDNAlab is built
+    /// with `--features ends_experimental`.
+    ///
+    /// **NOTE**: In many analyses, this may not be biologically meaningful.
     ///
     /// - (Always) Motifs are oriented so they run from the fragment end inward in 5'->3' direction.
     ///
     /// - Motifs are collapsed with their complement, using the lexicographically smaller motif representation.
-    #[cfg_attr(feature = "cli", clap(long, help_heading = "Motifs"))]
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            help_heading = "Motifs",
+            hide = !cfg!(feature = "ends_experimental")
+        )
+    )]
     pub collapse_complement: bool,
 
     /// Include every possible motif in the output, even if its count is zero  [flag]

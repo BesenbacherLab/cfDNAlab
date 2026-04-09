@@ -989,6 +989,55 @@ mod tests_bam_to_frag {
         Ok(())
     }
 
+    #[test]
+    fn gc_file_rejects_directory_with_clear_error() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // Point `--gc-file` at a directory instead of the expected `.npz` package file.
+        // The command should reject that immediately during GC package loading.
+        let bam = simple_inward_bam()?;
+        let work = tempdir().context("tempdir")?;
+        let out_dir = work.path().join("out_gc_directory_error");
+        std::fs::create_dir_all(&out_dir)?;
+
+        let gc_dir = out_dir.join("gc_package_dir");
+        std::fs::create_dir_all(&gc_dir)?;
+
+        let ioc = IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.clone(),
+            n_threads: 1,
+        };
+        let chromosomes = ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes_file: None,
+        };
+        let mut cfg = BamToFragConfig::new(ioc, chromosomes);
+        cfg.set_output_prefix("gc_directory_error");
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_gc(ApplyGCArgFileOnly {
+            gc_file: Some(gc_dir.clone()),
+            drop_invalid_gc: false,
+        });
+
+        // Act
+        let err = run_inner(&cfg).expect_err("directory-valued GC package path should fail");
+
+        // Assert
+        let msg = err.to_string();
+        assert!(
+            msg.contains("GC correction package path must point to an existing .npz file"),
+            "unexpected error message: {msg}"
+        );
+        assert!(
+            msg.contains("gc_package_dir"),
+            "unexpected error message: {msg}"
+        );
+
+        Ok(())
+    }
+
     #[cfg(feature = "cmd_bam_to_bam")]
     #[test]
     fn bam_to_frag_and_bam_to_bam_encode_same_scaling_weight() -> Result<()> {

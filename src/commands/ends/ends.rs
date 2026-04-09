@@ -11,8 +11,7 @@ use crate::{
             counting::{EndCountsByWindow, decode_end_motif_counts},
             motifs::{
                 CountedEndFlags, build_optional_kmer_spec, build_tile_motif_context,
-                motif_reference_span_for_tile,
-                count_fragment_in_window,
+                count_fragment_in_window, motif_reference_span_for_tile,
             },
             output::{
                 build_all_end_motif_order, collect_end_motif_order,

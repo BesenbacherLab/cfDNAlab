@@ -3,10 +3,10 @@ use crate::commands::gc_bias::{
     binning::{BinnedAxis, compute_bin_edges},
     load_reference_bias::ReferenceGCMetadata,
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use ndarray::{Array1, Array2};
 use ndarray_npy::{NpzReader, NpzWriter};
-use std::fs::File;
+use std::{fs::File, path::Path};
 
 #[derive(Clone, Debug)]
 pub struct GCCorrectionPackage {
@@ -60,9 +60,17 @@ impl GCCorrectionPackage {
     }
 
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
-        let file = File::open(path.as_ref())
-            .with_context(|| format!("opening correction package {}", path.as_ref().display()))?;
-        let mut reader = NpzReader::new(file)?;
+        let path = path.as_ref();
+        validate_correction_package_path(path)?;
+
+        let file = File::open(path)
+            .with_context(|| format!("opening correction package {}", path.display()))?;
+        let mut reader = NpzReader::new(file).with_context(|| {
+            format!(
+                "reading GC correction package {} as a .npz archive",
+                path.display()
+            )
+        })?;
 
         let correction_matrix: Array2<f64> = reader.by_name("correction_matrix")?;
         let length_edges_arr: Array1<u32> = reader.by_name("length_edges")?;
@@ -118,4 +126,26 @@ impl GCCorrectionPackage {
             length_bin_frequencies: length_bin_frequencies_arr,
         })
     }
+}
+
+fn validate_correction_package_path(path: &Path) -> Result<()> {
+    if !path.is_file() {
+        bail!(
+            "GC correction package path must point to an existing .npz file: {}",
+            path.display()
+        );
+    }
+
+    let has_npz_extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("npz"));
+
+    ensure!(
+        has_npz_extension,
+        "GC correction package path must point to a .npz file: {}",
+        path.display()
+    );
+
+    Ok(())
 }

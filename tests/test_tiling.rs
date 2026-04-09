@@ -260,7 +260,8 @@ mod tests {
     }
 
     #[test]
-    fn window_derived_fetch_extent_for_core_overlap_ignores_halo_only_candidates_from_cached_span() {
+    fn window_derived_fetch_extent_for_core_overlap_ignores_halo_only_candidates_from_cached_span()
+    {
         // Human verification status: unverified
         // Manual derivation:
         // - The cached candidate span below includes one left halo-only window [8,9), one
