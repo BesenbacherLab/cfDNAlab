@@ -1,6 +1,6 @@
 <img src='https://raw.githubusercontent.com/BesenbacherLab/cfdnalab/main/cfdnalab_logo_400x255_144dpi.png' align="center" height="255" />
 
-Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. Apply sample-specific GC correction and large-scale genomic smoothing.
+Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, **fragment end-motifs**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. Apply sample-specific GC correction and large-scale genomic smoothing.
 
 Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaired data where each read represents a full fragment. Written in rust for *speed*.
 
@@ -44,6 +44,7 @@ The following commands are currently available:
 | **Feature extraction**               | Extract fragmentomics features                                                                                                                                                                                         |
 | `cfdna fcoverage`                    | Count *fragment* coverage per position or aggregated in windows                                                                                                                                                        |
 | `cfdna midpoints`                    | Count fragment *midpoint* coverage in fixed-size intervals, collapsed by groups across the genome<br />E.g. transcription factor binding sites, aggregated per transcription factor<br />Fast alternative to *Griffin* |
+| `cfdna end`                    | Count fragment end- and breakpoint-motifs                                                                                                                                                        |
 | `cfdna lengths`                      | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)` for inwardly directed pairs only                                                                                                               |
 | **Normalization**                    | Precompute normalization/correction factors to enable their use in the feature extraction commands                                                                                                                     |
 | `cfdna gc-bias`, `cfdna ref-gc-bias` | Calculate GC-bias for correcting a sample in the main commands                                                                                                                                                         |
@@ -53,7 +54,7 @@ The following commands are currently available:
 | `cfdna bam-to-frag`                  | Write fragment coordinates to a "frag" file (bed-like tsv file)                                                                                                                                                        |
 | `cfdna frag-to-bam`                  | Convert fragment coordinates to a single-read unpaired BAM file                                                                                                                                                        |
 
-Planned: `cfdna ends` (end-motifs, breakpoint motifs), `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks` (call windowed protection score peaks). Let us know what other fragmentomics features you would like to extract with `cfDNAlab`.
+Planned: `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks` (call windowed protection score peaks). Let us know what other fragmentomics features you would like to extract with `cfDNAlab`.
 
 ### Common options
 
@@ -73,7 +74,7 @@ Planned: `cfdna ends` (end-motifs, breakpoint motifs), `cfdna fragment-kmers` (c
   - `mosdepth` counts the coverage of aligned bases per *read* [TODO: Not that simple]. `fcoverage` instead first collects the paired reads into a fragment and then counts the coverage of the aligned bases and (optionally) the gap between mate reads. (TODO on samtools!).
 
 - How do you define a "fragment" in paired-end sequencing data?
-  - We define the *fragment* as the bases from the start of the forward read till the end of the reverse read (`[start(forward), end(reverse))`) for *inwardly directed* pairs only (i.e., where `start(forward) <= start(reverse)`), as suggested by Wang, H. et al. 2025. Some methods exclude deletions and skipped-regions.
+  - We define the *fragment* as the bases from the start of the forward read till the end of the reverse read (`[start(forward), end(reverse))`) for *inwardly directed* pairs only (i.e., where `start(forward) <= start(reverse)`), as suggested by Wang, H. et al. 2025. Some methods exclude deletions and skipped-regions. Some methods allow including soft-clipped bases.
 
   Fragment visualization:
 
@@ -344,9 +345,14 @@ The **intervals** must have the same fixed size. A common binding site window si
 
 Consider removing intervals that lie closer than half the maximum fragment length from any blacklisted region, to reduce mappability biases.
 
+### Fragment end- and breakpoint motifs
+
+[TODO: Add example]
+
 ### Everything combined
 
 [TODO: Add output-prefix for remaining commands]
+[TODO: Add end motifs example]
 
 ```bash
 

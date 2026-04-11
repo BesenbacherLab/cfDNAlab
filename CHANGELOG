@@ -6,6 +6,7 @@ Adds the following public commands:
 
  - `cfdna fcoverage`
  - `cfdna lengths`
+ - `cfdna ends`
  - `cfdna midpoints`
  - `cfdna gc-bias`
  - `cfdna coverage-weights`
