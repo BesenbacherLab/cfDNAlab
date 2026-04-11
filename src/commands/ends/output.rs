@@ -11,10 +11,20 @@ use crate::{
         kmers::{kmer_codec::KmerSpec, process_counts::all_motifs as all_half_kmer_motifs},
     },
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
+use std::env;
 
-const MAX_DENSE_END_MOTIF_OUTPUT_BYTES: u64 = 5 * 1024 * 1024 * 1024;
+/// Default dense-output byte budget for `cfdna ends --all-motifs`.
+///
+/// This keeps accidental dense matrices from growing into multi-GiB allocations.
+/// Users can raise or lower the limit with `CFDNALAB_ENDS_MAX_DENSE_OUTPUT_BYTES`.
+const DEFAULT_MAX_DENSE_END_MOTIF_OUTPUT_BYTES: u64 = 5 * 1024 * 1024 * 1024;
+
+/// Environment variable that overrides the dense-output byte budget for `ends`.
+///
+/// The value must be a positive integer number of bytes.
+const MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV: &str = "CFDNALAB_ENDS_MAX_DENSE_OUTPUT_BYTES";
 
 /// Collect the observed motif labels in deterministic sorted order.
 ///
@@ -138,6 +148,7 @@ fn all_half_motifs(spec: Option<&KmerSpec>) -> Result<Vec<String>> {
 /// - `Result<()>`:
 ///   `Ok(())` when the dense matrix stays within the configured size budget
 pub fn ensure_dense_end_motif_output_size(n_windows: usize, n_motifs: usize) -> Result<()> {
+    let max_dense_output_bytes = max_dense_end_motif_output_bytes()?;
     let n_values = (n_windows as u64)
         .checked_mul(n_motifs as u64)
         .context("dense end-motif output shape overflows u64")?;
@@ -146,15 +157,40 @@ pub fn ensure_dense_end_motif_output_size(n_windows: usize, n_motifs: usize) -> 
         .context("dense end-motif output byte size overflows u64")?;
 
     ensure!(
-        bytes <= MAX_DENSE_END_MOTIF_OUTPUT_BYTES,
+        bytes <= max_dense_output_bytes,
         "Dense end-motif output would require {:.2} GiB for {} windows × {} motifs. \
-         This output path is intentionally guarded. Reduce the motif space or window count for now.",
+         This output path is intentionally guarded. Reduce the motif space or window count, or set {} to a larger byte limit.",
         bytes as f64 / (1024.0 * 1024.0 * 1024.0),
         n_windows,
-        n_motifs
+        n_motifs,
+        MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV
     );
 
     Ok(())
+}
+
+fn max_dense_end_motif_output_bytes() -> Result<u64> {
+    match env::var(MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV) {
+        Ok(raw_value) => {
+            let parsed = raw_value.parse::<u64>().with_context(|| {
+                format!(
+                    "{} must be a positive integer byte count, got '{}'",
+                    MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV, raw_value
+                )
+            })?;
+            ensure!(
+                parsed > 0,
+                "{} must be > 0 bytes",
+                MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV
+            );
+            Ok(parsed)
+        }
+        Err(env::VarError::NotPresent) => Ok(DEFAULT_MAX_DENSE_END_MOTIF_OUTPUT_BYTES),
+        Err(env::VarError::NotUnicode(_)) => bail!(
+            "{} must contain valid UTF-8 text",
+            MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV
+        ),
+    }
 }
 
 /// Guard full-universe enumeration for `--all-motifs`.

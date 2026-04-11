@@ -101,7 +101,7 @@ This keeps the count key compact and avoids `Option<u64>` in the hot path.
 
 ### 5. Complement collapsing happens on the combined full motif, not per half
 
-If `collapse_complement` is enabled, it must be applied to the full joined motif after `inside` and `outside` are combined and oriented correctly.
+If the experimental `collapse_complement` option is enabled, it must be applied to the full joined motif after `inside` and `outside` are combined and oriented correctly.
 
 Do not canonicalize the two halves independently.
 
@@ -275,7 +275,7 @@ The dense-output budget should be based on actual output size, not only on `k`.
 
 Working threshold:
 
-- default to roughly 4-5 GiB, with an environment-variable override for users who want to allow larger dense outputs
+- default to roughly 5 GiB, with `CFDNALAB_ENDS_MAX_DENSE_OUTPUT_BYTES` as the documented environment-variable override for users who want to allow larger dense outputs
 
 ### Motif labels
 
@@ -313,10 +313,16 @@ It should include the settings needed to interpret the output, especially:
 - `k_outside`
 - `source_inside`
 - `clip_strategy`
+- `window_assignment`
+
+If the command is built with `ends_experimental`, it should also include:
+
+- `collapse_complement`
+
+The current sidecar is intentionally narrower than the original draft and does not persist:
+
 - `max_soft_clips`
 - `indel_filter`
-- `window_assignment`
-- `collapse_complement`
 - `reads_are_fragments`
 - fragment-length filter settings
 
@@ -784,7 +790,7 @@ At reduction/output time:
 3. join them into the full motif string in storage order
 4. if `reverse_complement_on_decode` is true, reverse-complement the joined full motif
    so the result is now in final biological `outside || inside` order
-5. if `collapse_complement` is enabled, canonicalize that already oriented full motif by
+5. if the experimental `collapse_complement` option is enabled, canonicalize that already oriented full motif by
    taking the lexicographically smaller of `{motif, complement(motif)}`
 6. aggregate duplicate full motifs if canonicalization merges them
 7. split the canonical full motif at `k_outside` and write the final

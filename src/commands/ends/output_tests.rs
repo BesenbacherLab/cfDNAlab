@@ -1,6 +1,12 @@
 use super::*;
-use fxhash::FxHashMap;
 use crate::shared::kmers::kmer_codec::{KmerSpec, build_kmer_specs};
+use fxhash::FxHashMap;
+use std::sync::{Mutex, OnceLock};
+
+fn output_size_env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 fn spec_for_k(k: u8) -> KmerSpec {
     let specs = build_kmer_specs(&[k]).expect("valid k-mer spec");
@@ -55,7 +61,7 @@ fn ensure_dense_end_motif_output_size_accepts_small_matrix() {
 #[test]
 fn ensure_dense_end_motif_output_size_rejects_large_matrix() {
     // Arrange: just over the configured 5 GiB guard.
-    let n_values = (MAX_DENSE_END_MOTIF_OUTPUT_BYTES / 8) + 1;
+    let n_values = (DEFAULT_MAX_DENSE_END_MOTIF_OUTPUT_BYTES / 8) + 1;
 
     // Act
     let err = ensure_dense_end_motif_output_size(1, n_values as usize)
@@ -63,6 +69,58 @@ fn ensure_dense_end_motif_output_size_rejects_large_matrix() {
 
     // Assert
     assert!(err.to_string().contains("Dense end-motif output would require"));
+}
+
+#[test]
+fn ensure_dense_end_motif_output_size_respects_env_override() {
+    let _guard = output_size_env_lock()
+        .lock()
+        .expect("env-var test lock should not be poisoned");
+    let overridden_limit = DEFAULT_MAX_DENSE_END_MOTIF_OUTPUT_BYTES + 8;
+
+    // Safety: this test serializes environment mutation with a process-local mutex and restores
+    // the variable before releasing the lock.
+    unsafe {
+        std::env::set_var(
+            MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV,
+            overridden_limit.to_string(),
+        );
+    }
+    let result = ensure_dense_end_motif_output_size(1, (overridden_limit / 8) as usize);
+    // Safety: same reasoning as above; the mutation is serialized and immediately reverted.
+    unsafe {
+        std::env::remove_var(MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV);
+    }
+
+    assert!(
+        result.is_ok(),
+        "env override should allow a matrix up to the configured byte limit: {result:?}"
+    );
+}
+
+#[test]
+fn ensure_dense_end_motif_output_size_rejects_invalid_env_override() {
+    let _guard = output_size_env_lock()
+        .lock()
+        .expect("env-var test lock should not be poisoned");
+
+    // Safety: this test serializes environment mutation with a process-local mutex and restores
+    // the variable before releasing the lock.
+    unsafe {
+        std::env::set_var(MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV, "not-a-number");
+    }
+    let err = ensure_dense_end_motif_output_size(1, 1)
+        .expect_err("invalid env override should fail loudly");
+    // Safety: same reasoning as above; the mutation is serialized and immediately reverted.
+    unsafe {
+        std::env::remove_var(MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV);
+    }
+
+    assert!(
+        err.to_string()
+            .contains("CFDNALAB_ENDS_MAX_DENSE_OUTPUT_BYTES must be a positive integer byte count"),
+        "unexpected error message: {err:#}"
+    );
 }
 
 #[test]

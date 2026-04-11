@@ -1,6 +1,6 @@
 use super::*;
 use crate::commands::cli_common::{ChromosomeArgs, IOCArgs};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -22,6 +22,20 @@ fn minimal_config(output_dir: &Path) -> EndsConfig {
 
 fn parse_json(text: &str) -> Value {
     serde_json::from_str(text).expect("settings sidecar should be valid JSON")
+}
+
+fn expected_settings_json(
+    source_inside: &str,
+    clip_strategy: &str,
+    window_assignment: &str,
+) -> Value {
+    let mut expected = Map::new();
+    expected.insert("source_inside".to_string(), json!(source_inside));
+    expected.insert("clip_strategy".to_string(), json!(clip_strategy));
+    expected.insert("window_assignment".to_string(), json!(window_assignment));
+    #[cfg(feature = "ends_experimental")]
+    expected.insert("collapse_complement".to_string(), json!(false));
+    Value::Object(expected)
 }
 
 #[test]
@@ -82,12 +96,7 @@ fn write_end_settings_json_writes_the_minimal_interpretation_sidecar() {
     // Assert
     assert_eq!(
         parse_json(&settings),
-        json!({
-            "source_inside": "read",
-            "clip_strategy": "aligned",
-            "window_assignment": "endpoint",
-            "collapse_complement": false
-        })
+        expected_settings_json("read", "aligned", "endpoint")
     );
 }
 

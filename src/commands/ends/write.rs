@@ -89,38 +89,57 @@ pub fn write_end_settings_json(output_dir: &Path, prefix: &str, opt: &EndsConfig
     let settings_path = output_dir.join(dot_join(&[prefix, "end_motif_settings.json"]));
     let mut settings_writer = create_text_writer(&settings_path)
         .with_context(|| format!("create {}", settings_path.display()))?;
+    let settings_entries: Vec<String> = [
+        format!(
+            "  \"source_inside\": \"{}\"",
+            kmer_source_name(opt.source_inside)
+        ),
+        format!(
+            "  \"clip_strategy\": \"{}\"",
+            clip_strategy_name(opt.clip.clip_strategy)
+        ),
+        format!(
+            "  \"window_assignment\": \"{}\"",
+            window_assigner_name(opt.window_assignment.assign_by)
+        ),
+    ]
+    .into_iter()
+    .chain(collapse_complement_settings_entry(opt))
+    .collect();
+
     writeln!(settings_writer, "{{")
         .with_context(|| format!("write {}", settings_path.display()))?;
-    writeln!(
-        settings_writer,
-        "  \"source_inside\": \"{}\",",
-        kmer_source_name(opt.source_inside)
-    )
-    .with_context(|| format!("write {}", settings_path.display()))?;
-    writeln!(
-        settings_writer,
-        "  \"clip_strategy\": \"{}\",",
-        clip_strategy_name(opt.clip.clip_strategy)
-    )
-    .with_context(|| format!("write {}", settings_path.display()))?;
-    writeln!(
-        settings_writer,
-        "  \"window_assignment\": \"{}\",",
-        window_assigner_name(opt.window_assignment.assign_by)
-    )
-    .with_context(|| format!("write {}", settings_path.display()))?;
-    writeln!(
-        settings_writer,
-        "  \"collapse_complement\": {}",
-        opt.collapse_complement
-    )
-    .with_context(|| format!("write {}", settings_path.display()))?;
+    for (entry_index, entry) in settings_entries.iter().enumerate() {
+        let comma = if entry_index + 1 == settings_entries.len() {
+            ""
+        } else {
+            ","
+        };
+        writeln!(settings_writer, "{entry}{comma}")
+            .with_context(|| format!("write {}", settings_path.display()))?;
+    }
     writeln!(settings_writer, "}}")
         .with_context(|| format!("write {}", settings_path.display()))?;
     settings_writer
         .finish()
         .with_context(|| format!("finalize {}", settings_path.display()))?;
     Ok(())
+}
+
+#[cfg_attr(not(feature = "ends_experimental"), allow(unused_variables))]
+fn collapse_complement_settings_entry(opt: &EndsConfig) -> Option<String> {
+    #[cfg(feature = "ends_experimental")]
+    {
+        return Some(format!(
+            "  \"collapse_complement\": {}",
+            opt.collapse_complement
+        ));
+    }
+
+    #[cfg(not(feature = "ends_experimental"))]
+    {
+        None
+    }
 }
 
 /// Stack sparse per-window motif maps into a dense matrix with a fixed column order.

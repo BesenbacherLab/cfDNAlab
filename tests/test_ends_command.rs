@@ -25,7 +25,7 @@ use fixtures::{
 use ndarray::array;
 use ndarray::{Array1, Array2};
 use ndarray_npy::{NpzReader, read_npy};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 #[cfg(feature = "cli")]
 use std::process::Command;
 use std::{
@@ -309,6 +309,20 @@ fn read_text_file(path: &Path) -> Result<String> {
 
 fn parse_json(text: &str) -> Value {
     serde_json::from_str(text).expect("settings sidecar should be valid JSON")
+}
+
+fn expected_settings_json(
+    source_inside: &str,
+    clip_strategy: &str,
+    window_assignment: &str,
+) -> Value {
+    let mut expected = Map::new();
+    expected.insert("source_inside".to_string(), json!(source_inside));
+    expected.insert("clip_strategy".to_string(), json!(clip_strategy));
+    expected.insert("window_assignment".to_string(), json!(window_assignment));
+    #[cfg(feature = "ends_experimental")]
+    expected.insert("collapse_complement".to_string(), json!(false));
+    Value::Object(expected)
 }
 
 #[cfg(feature = "cli")]
@@ -2329,12 +2343,7 @@ fn sparse_output_is_the_default_when_all_motifs_is_disabled() -> Result<()> {
     assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 1.0);
     assert_eq!(
         parse_json(&settings),
-        json!({
-            "source_inside": "reference",
-            "clip_strategy": "aligned",
-            "window_assignment": "endpoint",
-            "collapse_complement": false
-        })
+        expected_settings_json("reference", "aligned", "endpoint")
     );
     Ok(())
 }
@@ -2365,12 +2374,7 @@ fn dense_all_motifs_output_still_uses_the_same_settings_sidecar() -> Result<()> 
     assert!(!sparse_output_paths(out_dir.path()).0.exists());
     assert_eq!(
         parse_json(&settings),
-        json!({
-            "source_inside": "reference",
-            "clip_strategy": "aligned",
-            "window_assignment": "endpoint",
-            "collapse_complement": false
-        })
+        expected_settings_json("reference", "aligned", "endpoint")
     );
     Ok(())
 }
@@ -4295,12 +4299,7 @@ fn settings_json_keeps_the_runtime_fields_needed_to_interpret_output() -> Result
     // Assert
     assert_eq!(
         parse_json(&settings),
-        json!({
-            "source_inside": "read",
-            "clip_strategy": "drop",
-            "window_assignment": "endpoint",
-            "collapse_complement": false
-        })
+        expected_settings_json("read", "drop", "endpoint")
     );
     Ok(())
 }
@@ -4338,12 +4337,7 @@ fn settings_json_formats_proportion_window_assignment_stably() -> Result<()> {
     // Assert: exact sidecar contract, not just substring presence.
     assert_eq!(
         parse_json(&settings),
-        json!({
-            "source_inside": "read",
-            "clip_strategy": "aligned",
-            "window_assignment": "proportion=0.125",
-            "collapse_complement": false
-        })
+        expected_settings_json("read", "aligned", "proportion=0.125")
     );
     Ok(())
 }
@@ -4500,12 +4494,7 @@ fn settings_json_ignores_fragment_length_bounds_but_keeps_motif_definition_field
     // Assert
     assert_eq!(
         parse_json(&settings),
-        json!({
-            "source_inside": "reference",
-            "clip_strategy": "aligned",
-            "window_assignment": "endpoint",
-            "collapse_complement": false
-        })
+        expected_settings_json("reference", "aligned", "endpoint")
     );
     Ok(())
 }
