@@ -8,7 +8,7 @@ mod tests_lengths_command {
 
     use anyhow::Result;
     use cfdnalab::commands::cli_common::{
-        AssignToWindowArgs, ChromosomeArgs, IOCArgs, WindowAssigner, WindowsArgs,
+        AssignToWindowArgs, ChromosomeArgs, IOCArgs, UnpairedArgs, WindowAssigner, WindowsArgs,
     };
     #[cfg(feature = "cmd_coverage_weights")]
     use cfdnalab::commands::coverage_weights::{
@@ -21,8 +21,8 @@ mod tests_lengths_command {
     use cfdnalab::commands::lengths::config::LengthsConfig;
     use cfdnalab::commands::lengths::lengths::run;
     use cfdnalab::shared::blacklist::strategy::BlacklistStrategy;
-    use cfdnalab::shared::indel_mode::IndelMode;
     use cfdnalab::shared::io::dot_join;
+    use cfdnalab::shared::{clip_mode::ClipMode, indel_mode::IndelMode};
     use fixtures::{
         BamFixture, FragmentSpec, ReadSpec, bam_from_specs, build_real_neutral_gc_package,
         build_real_non_neutral_gc_package, simple_inward_bam, simple_reference_twobit, write_bed,
@@ -62,6 +62,32 @@ mod tests_lengths_command {
                 pos: fragment_start,
                 cigar: vec![('M', fragment_len)],
                 seq: vec![b'A'; fragment_len as usize],
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: 0,
+                mate_tid: None,
+                mate_pos: None,
+                insert_size: 0,
+            }],
+            name,
+        )
+    }
+
+    fn single_read_fragment_bam_with_cigar(
+        name: &str,
+        fragment_start: i64,
+        cigar: Vec<(char, u32)>,
+        seq: Vec<u8>,
+    ) -> Result<BamFixture> {
+        bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            Vec::new(),
+            vec![ReadSpec {
+                tid: 0,
+                pos: fragment_start,
+                cigar,
+                seq,
                 qual: 40,
                 is_reverse: false,
                 mapq: 60,
@@ -1909,6 +1935,399 @@ mod tests_lengths_command {
         let l24 = 24 - 10;
         assert!((skip_arr[(0, l24)] - 1.0).abs() < 1e-6);
         assert!((skip_arr.sum() - 1.0).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
+    fn clip_adjust_counts_adjusted_length_and_clip_skip_drops() -> Result<()> {
+        // Human verification status: unverified
+        // One unpaired read-as-fragment with cigar 2S10M2S at pos 10.
+        //
+        // Mental derivation:
+        // - aligned fragment span is [10,20), so aligned mode counts length 10
+        // - clip-adjust mode uses 10 + 2 + 2 = 14
+        // - clip-skip mode rejects the fragment because it has soft clipping
+        let bam = single_read_fragment_bam_with_cigar(
+            "lengths_clip_modes_counting",
+            10,
+            vec![('S', 2), ('M', 10), ('S', 2)],
+            b"TTAAAAAAAAAAAA".to_vec(),
+        )?;
+
+        let build_cfg = |out_dir: &std::path::Path, clip_mode: ClipMode| {
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: out_dir.to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.clip_mode = clip_mode;
+            cfg.set_unpaired(UnpairedArgs {
+                reads_are_fragments: true,
+            });
+            cfg.set_windows(WindowsArgs::default());
+            cfg.set_window_assignment(AssignToWindowArgs::default());
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            {
+                let frag = cfg.fragment_lengths_mut();
+                frag.min_fragment_length = 10;
+                frag.max_fragment_length = 14;
+            }
+            cfg
+        };
+
+        let aligned_out = TempDir::new()?;
+        let adjust_out = TempDir::new()?;
+        let skip_out = TempDir::new()?;
+
+        let aligned_cfg = build_cfg(aligned_out.path(), ClipMode::Aligned);
+        let adjust_cfg = build_cfg(adjust_out.path(), ClipMode::Adjust);
+        let skip_cfg = build_cfg(skip_out.path(), ClipMode::Skip);
+
+        run(&aligned_cfg)?;
+        run(&adjust_cfg)?;
+        run(&skip_cfg)?;
+
+        let aligned_path = aligned_out.path().join(dot_join(&[
+            aligned_cfg.output_prefix.trim(),
+            "length_counts.npy",
+        ]));
+        let adjust_path = adjust_out.path().join(dot_join(&[
+            adjust_cfg.output_prefix.trim(),
+            "length_counts.npy",
+        ]));
+        let skip_path = skip_out.path().join(dot_join(&[
+            skip_cfg.output_prefix.trim(),
+            "length_counts.npy",
+        ]));
+
+        let aligned_arr: Array2<f64> = read_npy(&aligned_path)?;
+        let adjust_arr: Array2<f64> = read_npy(&adjust_path)?;
+        let skip_arr: Array2<f64> = read_npy(&skip_path)?;
+
+        assert_eq!(aligned_arr.shape(), &[1, 5]);
+        assert_eq!(adjust_arr.shape(), &[1, 5]);
+        assert_eq!(skip_arr.shape(), &[1, 5]);
+        assert!((aligned_arr[(0, 0)] - 1.0).abs() < 1e-6);
+        assert!((aligned_arr.sum() - 1.0).abs() < 1e-6);
+        assert!((adjust_arr[(0, 4)] - 1.0).abs() < 1e-6);
+        assert!((adjust_arr.sum() - 1.0).abs() < 1e-6);
+        assert!((skip_arr.sum()).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
+    fn clip_adjust_count_overlap_uses_the_adjusted_assignment_interval() -> Result<()> {
+        // Human verification status: unverified
+        // One unpaired 2S10M2S fragment at pos 10.
+        //
+        // Aligned mode:
+        // - aligned interval [10,20) sits fully inside bin [10,20)
+        // - length bin is 10
+        //
+        // Adjust mode:
+        // - assignment interval expands to [8,22), length 14
+        // - overlap with 10 bp bins is:
+        //   [0,10):  2 / 14
+        //   [10,20): 10 / 14
+        //   [20,30): 2 / 14
+        let bam = single_read_fragment_bam_with_cigar(
+            "lengths_clip_adjust_overlap",
+            10,
+            vec![('S', 2), ('M', 10), ('S', 2)],
+            b"TTAAAAAAAAAAAA".to_vec(),
+        )?;
+
+        let build_cfg = |out_dir: &std::path::Path, clip_mode: ClipMode| {
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: out_dir.to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.clip_mode = clip_mode;
+            cfg.set_unpaired(UnpairedArgs {
+                reads_are_fragments: true,
+            });
+            cfg.set_windows(WindowsArgs {
+                by_size: Some(10),
+                by_bed: None,
+            });
+            cfg.set_window_assignment(AssignToWindowArgs {
+                assign_by: WindowAssigner::CountOverlap,
+            });
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            cfg.set_tile_size(10);
+            {
+                let frag = cfg.fragment_lengths_mut();
+                frag.min_fragment_length = 10;
+                frag.max_fragment_length = 14;
+            }
+            cfg
+        };
+
+        let aligned_out = TempDir::new()?;
+        let adjust_out = TempDir::new()?;
+
+        let aligned_cfg = build_cfg(aligned_out.path(), ClipMode::Aligned);
+        let adjust_cfg = build_cfg(adjust_out.path(), ClipMode::Adjust);
+
+        run(&aligned_cfg)?;
+        run(&adjust_cfg)?;
+
+        let aligned_path = aligned_out.path().join(dot_join(&[
+            aligned_cfg.output_prefix.trim(),
+            "length_counts.npy",
+        ]));
+        let adjust_path = adjust_out.path().join(dot_join(&[
+            adjust_cfg.output_prefix.trim(),
+            "length_counts.npy",
+        ]));
+
+        let aligned_arr: Array2<f64> = read_npy(&aligned_path)?;
+        let adjust_arr: Array2<f64> = read_npy(&adjust_path)?;
+
+        assert!((aligned_arr[(1, 0)] - 1.0).abs() < 1e-6);
+        assert!((aligned_arr.row(0).sum()).abs() < 1e-6);
+        assert!((aligned_arr.row(2).sum()).abs() < 1e-6);
+        assert!((aligned_arr.sum() - 1.0).abs() < 1e-6);
+
+        assert!((adjust_arr[(0, 4)] - (2.0 / 14.0)).abs() < 1e-6);
+        assert!((adjust_arr[(1, 4)] - (10.0 / 14.0)).abs() < 1e-6);
+        assert!((adjust_arr[(2, 4)] - (2.0 / 14.0)).abs() < 1e-6);
+        assert!((adjust_arr.sum() - 1.0).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
+    fn clip_adjust_bins_by_adjusted_length_but_scales_over_aligned_span() -> Result<()> {
+        // Human verification status: unverified
+        // One unpaired 2S10M2S fragment at pos 10.
+        //
+        // Mental derivation:
+        // - clip-adjust mode bins this fragment at adjusted length 14
+        // - scaling must still use the aligned span [10,20)
+        // - with factors [0,10):1, [10,20):3, [20,200):1, the aligned-span average is exactly 3
+        // - a buggy assignment-interval average over [8,22) would instead be 34 / 14
+        let bam = single_read_fragment_bam_with_cigar(
+            "lengths_clip_adjust_scaling",
+            10,
+            vec![('S', 2), ('M', 10), ('S', 2)],
+            b"TTAAAAAAAAAAAA".to_vec(),
+        )?;
+        let out_dir = TempDir::new()?;
+        let scaling_path = out_dir.path().join("clip_adjust_scaling.tsv");
+        write_scaling_factors(
+            &scaling_path,
+            &[
+                ("chr1", 0, 10, 1.0_f32),
+                ("chr1", 10, 20, 3.0_f32),
+                ("chr1", 20, 200, 1.0_f32),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.clip_mode = ClipMode::Adjust;
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(WindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_scaling_factors(Some(scaling_path));
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 14;
+            frag.max_fragment_length = 14;
+        }
+
+        run(&cfg)?;
+
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.shape(), &[1, 1]);
+        assert!((arr[(0, 0)] - 3.0).abs() < 1e-6);
+        assert!((arr.sum() - 3.0).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
+    fn clip_adjust_count_overlap_scaling_uses_the_nearest_aligned_base_for_clipped_only_windows()
+    -> Result<()> {
+        // Human verification status: unverified
+        // One unpaired 2S10M2S fragment at pos 10, counted against three 10 bp windows.
+        //
+        // Assignment in clip-adjust mode uses [8,22), so the count fractions are:
+        // - [0,10):  2 / 14
+        // - [10,20): 10 / 14
+        // - [20,30): 2 / 14
+        //
+        // Scaling should remain reference-based:
+        // - the middle window samples its aligned overlap [10,20) => weight 3
+        // - the clipped-only left/right windows have no aligned overlap, so they should use the
+        //   nearest aligned base instead of the flanking bins
+        // - with flanking bins set to 11 and 13, all three windows should still use weight 3
+        let bam = single_read_fragment_bam_with_cigar(
+            "lengths_clip_adjust_scaling_nearest_base",
+            10,
+            vec![('S', 2), ('M', 10), ('S', 2)],
+            b"TTAAAAAAAAAAAA".to_vec(),
+        )?;
+        let out_dir = TempDir::new()?;
+        let bed_path = out_dir.path().join("clip_adjust_scaling_windows.bed");
+        let scaling_path = out_dir.path().join("clip_adjust_scaling.tsv");
+        write_bed(
+            &bed_path,
+            &[
+                ("chr1", 0, 10, "left"),
+                ("chr1", 10, 20, "middle"),
+                ("chr1", 20, 30, "right"),
+            ],
+        )?;
+        write_scaling_factors(
+            &scaling_path,
+            &[
+                ("chr1", 0, 10, 11.0_f32),
+                ("chr1", 10, 20, 3.0_f32),
+                ("chr1", 20, 200, 13.0_f32),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.clip_mode = ClipMode::Adjust;
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_scaling_factors(Some(scaling_path));
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 14;
+            frag.max_fragment_length = 14;
+        }
+
+        run(&cfg)?;
+
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.shape(), &[3, 1]);
+        assert!((arr[(0, 0)] - (2.0 / 14.0) * 3.0).abs() < 1e-6);
+        assert!((arr[(1, 0)] - (10.0 / 14.0) * 3.0).abs() < 1e-6);
+        assert!((arr[(2, 0)] - (2.0 / 14.0) * 3.0).abs() < 1e-6);
+        assert!((arr.sum() - 3.0).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
+    fn max_soft_clips_filters_lengths_fragments_before_counting_clip_adjusted_lengths() -> Result<()>
+    {
+        // Human verification status: unverified
+        // One unpaired 2S10M fragment at pos 10.
+        //
+        // Mental derivation:
+        // - adjusted length is 12
+        // - max_soft_clips=2 keeps it because the left end equals the threshold
+        // - max_soft_clips=1 drops it before counting
+        let bam = single_read_fragment_bam_with_cigar(
+            "lengths_max_soft_clips",
+            10,
+            vec![('S', 2), ('M', 10)],
+            b"TTAAAAAAAAAT".to_vec(),
+        )?;
+
+        let build_cfg = |out_dir: &std::path::Path, max_soft_clips: u16| {
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: out_dir.to_path_buf(),
+                    n_threads: 1,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.clip_mode = ClipMode::Adjust;
+            cfg.max_soft_clips = max_soft_clips;
+            cfg.set_unpaired(UnpairedArgs {
+                reads_are_fragments: true,
+            });
+            cfg.set_windows(WindowsArgs::default());
+            cfg.set_window_assignment(AssignToWindowArgs::default());
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            {
+                let frag = cfg.fragment_lengths_mut();
+                frag.min_fragment_length = 12;
+                frag.max_fragment_length = 12;
+            }
+            cfg
+        };
+
+        let keep_out = TempDir::new()?;
+        let drop_out = TempDir::new()?;
+
+        let keep_cfg = build_cfg(keep_out.path(), 2);
+        let drop_cfg = build_cfg(drop_out.path(), 1);
+
+        run(&keep_cfg)?;
+        run(&drop_cfg)?;
+
+        let keep_path = keep_out.path().join(dot_join(&[
+            keep_cfg.output_prefix.trim(),
+            "length_counts.npy",
+        ]));
+        let drop_path = drop_out.path().join(dot_join(&[
+            drop_cfg.output_prefix.trim(),
+            "length_counts.npy",
+        ]));
+
+        let keep_arr: Array2<f64> = read_npy(&keep_path)?;
+        let drop_arr: Array2<f64> = read_npy(&drop_path)?;
+
+        assert_eq!(keep_arr.shape(), &[1, 1]);
+        assert_eq!(drop_arr.shape(), &[1, 1]);
+        assert!((keep_arr[(0, 0)] - 1.0).abs() < 1e-6);
+        assert!((keep_arr.sum() - 1.0).abs() < 1e-6);
+        assert!((drop_arr.sum()).abs() < 1e-6);
 
         Ok(())
     }

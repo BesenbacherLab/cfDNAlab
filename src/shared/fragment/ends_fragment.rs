@@ -322,50 +322,6 @@ pub fn collect_fragment_with_ends_from_single_read(
     })
 }
 
-/// Inspect terminal clipping in BAM storage orientation.
-///
-/// Valid SAM edge patterns are:
-/// - `S...`
-/// - `H...`
-/// - `HS...`
-/// - `...S`
-/// - `...H`
-/// - `...SH`
-///
-/// Soft clips contribute to the returned clip lengths.
-/// Hard clips only contribute to the `has_hard_clip` flag.
-fn inspect_cigar_edges(record: &Record) -> (u32, u32, bool) {
-    let mut left_soft_clip_bp = 0;
-    let mut right_soft_clip_bp = 0;
-    let mut has_hard_clip = false;
-
-    for op in record.cigar().iter() {
-        match *op {
-            Cigar::SoftClip(bp) => {
-                left_soft_clip_bp += bp;
-            }
-            Cigar::HardClip(_) => {
-                has_hard_clip = true;
-            }
-            _ => break,
-        }
-    }
-
-    for op in record.cigar().iter().rev() {
-        match *op {
-            Cigar::SoftClip(bp) => {
-                right_soft_clip_bp += bp;
-            }
-            Cigar::HardClip(_) => {
-                has_hard_clip = true;
-            }
-            _ => break,
-        }
-    }
-
-    (left_soft_clip_bp, right_soft_clip_bp, has_hard_clip)
-}
-
 /// Check whether the inside-fragment motif uses aligned bases across an indel.
 fn motif_has_indels(
     record: &Record,

@@ -1,3 +1,4 @@
+pub mod cigar_counts;
 #[cfg(feature = "cmd_ends")]
 pub mod ends_fragment;
 #[cfg(feature = "cmd_bam_to_frag")]

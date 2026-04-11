@@ -19,12 +19,13 @@ use crate::{
         bam::create_chromosome_reader,
         bed::load_windows_from_bed,
         blacklist::is_blacklisted,
+        clip_mode::ClipMode,
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
         fragment_iterators::fragments_with_indel_counts_from_bam,
         interval::{IndexedInterval, Interval},
         io::{create_text_writer, dot_join},
         midpoint::midpoint_random_even_with_thread_rng,
-        overlaps::find_overlapping_windows,
+        overlaps::{OverlappingWindow, OverlappingWindows, find_overlapping_windows},
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
@@ -55,6 +56,48 @@ struct TileCounts {
 struct TileOutputs {
     counters: LengthsCounters,
     global_counts: Option<(String, LengthCounts)>,
+}
+
+/// Build the scaling-overlap view for `CountOverlap` under `clip_mode=adjust`.
+///
+/// The overlap fractions must still come from the clip-adjusted assignment
+/// geometry, but scaling itself should stay reference-based. So each counted
+/// window samples scaling from its aligned overlap with the fragment when
+/// possible, and otherwise from the nearest aligned reference base.
+fn build_reference_based_scaling_overlaps_for_clip_adjusted_count_overlap(
+    count_overlaps: &OverlappingWindows,
+    aligned_fragment_interval: Interval<u64>,
+) -> Result<OverlappingWindows> {
+    let left_nearest_base_interval = Interval::new(
+        aligned_fragment_interval.start(),
+        aligned_fragment_interval.start() + 1,
+    )?;
+    let right_nearest_base_interval = Interval::new(
+        aligned_fragment_interval.end() - 1,
+        aligned_fragment_interval.end(),
+    )?;
+
+    let mut scaling_overlaps = OverlappingWindows::new(aligned_fragment_interval);
+    for window in &count_overlaps.windows {
+        let scaling_sample_interval = if let Some(aligned_overlap_interval) =
+            window.interval.clip_to(aligned_fragment_interval)
+        {
+            aligned_overlap_interval
+        } else if window.end() <= aligned_fragment_interval.start() {
+            left_nearest_base_interval
+        } else {
+            debug_assert!(window.start() >= aligned_fragment_interval.end());
+            right_nearest_base_interval
+        };
+
+        scaling_overlaps.windows.push(OverlappingWindow::new(
+            window.idx,
+            scaling_sample_interval,
+            window.overlap_fraction,
+        )?);
+    }
+
+    Ok(scaling_overlaps)
 }
 
 /// Execute the fragment-length counting pipeline end-to-end.
@@ -124,14 +167,25 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         opt.fragment_lengths.max_fragment_length,
     )?;
 
-    let halo_bp = opt.fragment_lengths.max_fragment_length;
+    let aligned_fetch_halo_bp = opt.fragment_lengths.max_fragment_length;
+    let left_assignment_reach_bp = if matches!(opt.clip_mode, ClipMode::Adjust) {
+        opt.max_soft_clips as u64
+    } else {
+        0
+    };
     let align_bp = match &window_opt {
         WindowSpec::Size(bp) => Some(*bp),
         _ => None,
     };
 
     // Build tiles (core plus halo)
-    let (tiles, _) = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, align_bp)?;
+    let (tiles, _) = build_tiles(
+        &chromosomes,
+        &contigs,
+        opt.tile_size,
+        aligned_fetch_halo_bp,
+        align_bp,
+    )?;
 
     let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(tiles.len() as u64));
@@ -144,8 +198,9 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 .and_then(|m| m.get(chr).map(|w| w.as_slice()))
                 .unwrap_or(&[])
         },
-        0,
-        // We use fragments starting in a tile, so we need fragment-overlapping windows starting after the tile
+        left_assignment_reach_bp,
+        // We use fragments starting in a tile, so we need windows reachable by that assignment
+        // interval to the right of the tile as well
         opt.fragment_lengths.max_fragment_length as u64,
     ));
     let tile_window_spans_for_threads = tile_window_spans.clone();
@@ -537,6 +592,14 @@ fn process_tile(
         .fetch((tile.tid, fetch_from, fetch_to))
         .context(format!("fetch {} {}-{}", &tile.chr, fetch_from, fetch_to))?;
 
+    let left_assignment_reach_bp = if matches!(opt.clip_mode, ClipMode::Adjust) {
+        opt.max_soft_clips as u64
+    } else {
+        0
+    };
+    let leftmost_reachable_start =
+        (tile.core_start() as u64).saturating_sub(left_assignment_reach_bp);
+
     // Preallocate per-tile window counters
     // Keep indices aligned with global scan order so downstream merging works without remapping
     // Use Option to skip BED windows that cannot be hit by any fragment starting in this tile
@@ -562,7 +625,7 @@ fn process_tile(
             let chrom_bin_count = chrom_len.div_ceil(*window_bp) as usize;
             // Leftmost bin whose start is at or before the core start
             // (may begin before the core when cores are not aligned)
-            let min_bin_idx = (tile.core_start() as u64 / *window_bp) as usize;
+            let min_bin_idx = (leftmost_reachable_start / *window_bp) as usize;
             // Furthest coordinate a fragment starting in this tile can reach
             let max_reachable_end = (tile.core_end() as u64)
                 .saturating_add(opt.fragment_lengths.max_fragment_length as u64)
@@ -590,7 +653,8 @@ fn process_tile(
             (min_bin_idx, max_bin_idx_exclusive, counts)
         }
 
-        // BED mode: reuse the precomputed span but "drop" windows ending before the core start
+        // BED mode: reuse the precomputed span and skip only windows that still sit fully outside
+        // the clip-adjusted left reach
         WindowSpec::Bed(_) => {
             let span = tile_window_span.context(
                 "BED length counting requires a cached tile window span after fetch-span selection",
@@ -602,10 +666,10 @@ fn process_tile(
                 let window = wchr[idx];
                 let win_start = window.start();
                 let win_end = window.end();
-                // Windows fully to the left of the core cannot be hit because every counted fragment
-                // starts inside the core. We store None to preserve the global index while skipping
-                // both counting work and output rows for those windows
-                if win_end <= tile.core_start() as u64 {
+                // Windows fully to the left of the furthest clip-adjusted start cannot be hit
+                // because every counted fragment starts inside the core and can only extend left
+                // by the configured soft-clip reach
+                if win_end <= leftmost_reachable_start {
                     counts.push(None);
                     continue;
                 }
@@ -648,7 +712,18 @@ fn process_tile(
     // Function for filtering fragments after pairing
     let fragment_filter = {
         let lengths = opt.fragment_lengths.clone();
-        move |f: &FragmentWithIndelCounts| lengths.contains(f.len_indel_adjusted())
+        let indel_mode = opt.indel_mode;
+        let clip_mode = opt.clip_mode;
+        let max_soft_clips = opt.max_soft_clips as u32;
+        move |fragment: &FragmentWithIndelCounts| {
+            if !fragment.soft_clips_within_limit(max_soft_clips) {
+                return false;
+            }
+            if matches!(clip_mode, ClipMode::Skip) && fragment.has_soft_clipping() {
+                return false;
+            }
+            lengths.contains(fragment.adjusted_len(indel_mode, clip_mode))
+        }
     };
 
     // Create fragment iterator with per-tile filtering and optional GC tag handling
@@ -708,11 +783,13 @@ fn process_tile(
             continue;
         }
 
+        let aligned_fragment_interval = fragment.interval.try_to_u64()?;
+
         // Determine blacklist status
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.blacklist_strategy,
-            fragment.interval.try_to_u64()?,
+            aligned_fragment_interval,
             opt.fragment_lengths.max_fragment_length as u64,
             &mut bl_ptr,
         );
@@ -721,23 +798,26 @@ fn process_tile(
             continue;
         }
 
-        // Calculate fragment length
-        // Note: Only "adjusted" when `--indel-mode` asks for it
-        let fragment_length = fragment.len_indel_adjusted();
+        // Calculate fragment length and window-assignment interval
+        // GC, blacklist, and scaling still use the aligned reference span
+        let fragment_length = fragment.adjusted_len(opt.indel_mode, opt.clip_mode);
+        let assignment_interval = fragment.assignment_interval_with_clip_mode(opt.clip_mode)?;
 
         // Find all overlapping count-windows
 
         // Calculate what part needs to overlap to some degree
         let query_interval = match opt.window_assignment.assign_by {
             WindowAssigner::Midpoint => {
-                let midpoint =
-                    midpoint_random_even_with_thread_rng(fragment.start(), fragment_length);
+                let midpoint = midpoint_random_even_with_thread_rng(
+                    assignment_interval.start() as u32,
+                    fragment_length,
+                );
                 Interval::new(midpoint.into(), (midpoint + 1).into())?
             }
             WindowAssigner::Any
             | WindowAssigner::All
             | WindowAssigner::Proportion(_)
-            | WindowAssigner::CountOverlap => fragment.interval.try_to_u64()?,
+            | WindowAssigner::CountOverlap => assignment_interval,
         };
         let by_size = match window_opt {
             WindowSpec::Size(bp) => Some(*bp),
@@ -785,7 +865,7 @@ fn process_tile(
                 &mut sf_ptr,
                 Some(&scaling_with_bin_idx),
                 None,
-                fragment.interval.try_to_u64()?, // Full fragment
+                aligned_fragment_interval, // Full aligned fragment
                 1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
                 opt.fragment_lengths.max_fragment_length.into(),
             )
@@ -803,13 +883,28 @@ fn process_tile(
             // NOTE: `compute_window_scaling_over_fragment` always returns
             // an overlap fraction of 1.0 (count full fragment)!
             let overlap_weights = match opt.window_assignment.assign_by {
-                WindowAssigner::CountOverlap => compute_window_scaling_over_overlap(
-                    &overlapping_windows,
-                    &overlapping_scaling_bin_indices,
-                    scaling_chr,
-                )?,
+                WindowAssigner::CountOverlap => {
+                    if matches!(opt.clip_mode, ClipMode::Adjust) {
+                        let scaling_overlaps =
+                            build_reference_based_scaling_overlaps_for_clip_adjusted_count_overlap(
+                                &overlapping_windows,
+                                aligned_fragment_interval,
+                            )?;
+                        compute_window_scaling_over_overlap(
+                            &scaling_overlaps,
+                            &overlapping_scaling_bin_indices,
+                            scaling_chr,
+                        )?
+                    } else {
+                        compute_window_scaling_over_overlap(
+                            &overlapping_windows,
+                            &overlapping_scaling_bin_indices,
+                            scaling_chr,
+                        )?
+                    }
+                }
                 _ => compute_window_scaling_over_fragment(
-                    fragment.interval.try_to_u64()?,
+                    aligned_fragment_interval,
                     &overlapping_windows,
                     &overlapping_scaling_bin_indices,
                     scaling_chr,

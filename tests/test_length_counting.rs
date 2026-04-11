@@ -6,9 +6,11 @@ mod tests {
 
     use anyhow::{Context, Result};
     use cfdnalab::shared::{
+        clip_mode::ClipMode,
         fragment::indel_counting_fragment::{
             IndelReadInfo, InsertionAnchor, collect_fragment_with_indel_counts,
         },
+        indel_mode::IndelMode,
         interval::{IndexedInterval, Interval},
         midpoint::{midpoint_random_even, midpoint_random_even_with_thread_rng},
         overlaps::find_overlapping_windows,
@@ -586,6 +588,8 @@ mod tests {
             tid: 0,
             interval: Interval::new(100, 150).expect("test read interval should be valid"),
             is_reverse: false,
+            left_soft_clip_bp: 0,
+            right_soft_clip_bp: 0,
             // One deletion in non-overlap (inside fragment), one within overlap
             deletions: vec![
                 Interval::new(110, 115).expect("test deletion should be valid"),
@@ -607,6 +611,8 @@ mod tests {
             tid: 0,
             interval: Interval::new(120, 200).expect("test read interval should be valid"),
             is_reverse: true,
+            left_soft_clip_bp: 0,
+            right_soft_clip_bp: 0,
             // Deletion overlaps [120,122) by 2 bp (121..122), rest are discarded as non-consensus
             deletions: vec![Interval::new(121, 124).expect("test deletion should be valid")],
             // Insertion at same overlap ref pos 125 but length 1 (min rule will pick 1)
@@ -633,7 +639,7 @@ mod tests {
 
         // Length adjusted = ref_len + inserts_total - dels_total = 100 + (5+1) - (2+1) = 97
         assert_eq!(frag.len_ref(), 100);
-        assert_eq!(frag.len_indel_adjusted(), 97);
+        assert_eq!(frag.adjusted_len(IndelMode::Adjust, ClipMode::Aligned), 97);
 
         // Skip and no-counts
 
@@ -649,7 +655,10 @@ mod tests {
         assert_eq!(r.insertions_nonoverlap, 0);
         assert_eq!(r.deletions_overlap_supported, 0);
         assert_eq!(r.insertions_overlap_supported, 0);
-        assert_eq!(r.len_indel_adjusted(), r.len_ref());
+        assert_eq!(
+            r.adjusted_len(IndelMode::Ignore, ClipMode::Aligned),
+            r.len_ref()
+        );
     }
 
     #[test]

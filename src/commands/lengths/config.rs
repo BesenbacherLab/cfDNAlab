@@ -6,9 +6,12 @@ use crate::{
         },
         gc_bias::correct::MarginalizeLengthsWeightingScheme,
     },
-    shared::{blacklist::BlacklistStrategy, indel_mode::IndelMode},
+    shared::{blacklist::BlacklistStrategy, clip_mode::ClipMode, indel_mode::IndelMode},
 };
 use std::path::PathBuf;
+
+pub const DEFAULT_MAX_SOFT_CLIPS: u16 = 256;
+pub const MAX_MAX_SOFT_CLIPS: u16 = 256;
 
 // TODO: Add length bins to enable e.g. short/long in much smaller windows without exploding RAM
 
@@ -22,13 +25,16 @@ use std::path::PathBuf;
 ///
 /// **Unpaired** where each read is a fragment: `end(read) - start(read)`.
 ///
-/// See also `--indel-mode` for adjusting the length to present indels.
+/// See also `--indel-mode` and `--clip-mode` for adjusting the length to the
+/// present indels and soft clips. When enabled, fragment length filtering is based
+/// on the adjusted length.
 ///
 /// ## GC correction
 ///
 /// Weight the contribution of each fragment based on their GC contents.
 ///
-/// Note: The GC percentage is calculated from the full genomic coordinates (does not consider `--indel-mode`).
+/// Note: The GC percentage is calculated from the **aligned** reference span.
+/// It does not consider `--indel-mode` or `--clip-mode`.
 ///
 /// The length-dimension of the original correction matrix is averaged out with
 /// a specifiable weighting scheme (`--gc-length-weighting`).
@@ -118,8 +124,8 @@ pub struct LengthsConfig {
     ///     
     ///   Insertions: add the shortest insertion length per position.
     ///
-    ///   **NOTE**: Blacklist exclusion and calculation of scaling weights (--scaling-factors)
-    ///   use the full reference span.
+    ///   **NOTE**: Blacklist exclusion, GC correction, and calculation of scaling weights
+    ///   (--scaling-factors) use the aligned reference span.
     ///
     /// - `"skip"`:
     ///   Skip fragments with any insertion or deletion present.
@@ -133,6 +139,57 @@ pub struct LengthsConfig {
         )
     )]
     pub indel_mode: IndelMode,
+
+    /// How to handle soft clipping in fragment ends `[string]`
+    ///
+    /// When you believe soft clipping in the fragment ends is mostly due
+    /// to alignment difficulties instead of technical artefacts, you can
+    /// include the clipped bases in the fragment length.
+    ///
+    /// Possible values:
+    ///
+    /// - `"aligned"`:
+    ///   Ignore clipped bases and use the aligned positions.
+    ///
+    /// - `"adjust"`:
+    ///   Adjust the fragment length by the observed soft clipped bases in the fragment ends.
+    ///
+    ///   For paired-end data, the clipping is only considered
+    ///   for the 5' ends (start(forward), end(reverse)).
+    ///
+    ///   **NOTE**: Blacklist exclusion, GC correction, and scaling weights
+    ///   (--scaling-factors) use the aligned reference span.
+    ///   When `--assign-by count-overlap`, clipped-only window contributions use 
+    ///   the nearest aligned reference base for scaling.
+    ///   
+    ///
+    /// - `"skip"`:
+    ///   Skip fragments with any clipping.
+    ///
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value = "aligned",
+            ignore_case = true,
+            help_heading = "Core"
+        )
+    )]
+    pub clip_mode: ClipMode,
+
+    /// Skip fragments where one or both ends have more soft-clipped bases than this `[integer]`
+    ///
+    /// Use `--clip-mode skip` to discard all soft-clipped fragments.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value_t = DEFAULT_MAX_SOFT_CLIPS,
+            value_parser = clap::value_parser!(u16).range(0..=MAX_MAX_SOFT_CLIPS as i64),
+            help_heading = "Clipping"
+        )
+    )]
+    pub max_soft_clips: u16,
 
     /// Size of tiles to parallelize over `[integer]`
     ///
@@ -269,6 +326,8 @@ impl LengthsConfig {
             ioc,
             output_prefix: String::new(),
             indel_mode: IndelMode::Ignore,
+            clip_mode: ClipMode::Aligned,
+            max_soft_clips: DEFAULT_MAX_SOFT_CLIPS,
             windows: WindowsArgs::default(),
             window_assignment: AssignToWindowArgs::default(),
             chromosomes,

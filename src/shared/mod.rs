@@ -2,6 +2,7 @@ pub mod bam;
 pub mod base;
 pub mod bed;
 pub mod blacklist;
+pub mod clip_mode;
 pub mod coverage;
 pub mod formatters;
 pub mod frag_file;
@@ -27,7 +28,6 @@ pub mod visualization;
 pub mod window_fetch;
 pub mod windowing;
 pub mod writers;
-pub mod clip_mode;
 // Plotting helpers gated behind the plotters feature
 #[cfg(feature = "plotters")]
 pub mod plotters;

@@ -307,10 +307,12 @@ mod test_frag_file_fragment {
 
 #[cfg(all(test, feature = "cmd_lengths"))]
 mod tests_fragment_with_indel_counts {
+    use cfdnalab::shared::clip_mode::ClipMode;
     use cfdnalab::shared::fragment::indel_counting_fragment::*;
     use cfdnalab::shared::fragment::minimal_fragment::{
         is_inwards_oriented, oriented_pair_from_read_info,
     };
+    use cfdnalab::shared::indel_mode::IndelMode;
     use cfdnalab::shared::interval::Interval;
     use rust_htslib::bam::Record;
     use rust_htslib::bam::record::{Cigar, CigarString};
@@ -422,7 +424,10 @@ mod tests_fragment_with_indel_counts {
         assert_eq!(frag.insertions_nonoverlap, 0);
         assert_eq!(frag.deletions_overlap_supported, 0);
         assert_eq!(frag.insertions_overlap_supported, 0);
-        assert_eq!(frag.len_indel_adjusted(), frag.len_ref());
+        assert_eq!(
+            frag.adjusted_len(IndelMode::Adjust, ClipMode::Aligned),
+            frag.len_ref()
+        );
     }
 
     #[test]
@@ -466,7 +471,10 @@ mod tests_fragment_with_indel_counts {
         assert_eq!(frag.insertions_overlap_supported, 0);
         // Adjusted length = (end-start) + 4 - 3
         let expected = frag.len_ref() + 1;
-        assert_eq!(frag.len_indel_adjusted(), expected);
+        assert_eq!(
+            frag.adjusted_len(IndelMode::Adjust, ClipMode::Aligned),
+            expected
+        );
     }
 
     #[test]
@@ -483,7 +491,10 @@ mod tests_fragment_with_indel_counts {
         assert_eq!(frag.insertions_nonoverlap, 0);
         assert_eq!(frag.insertions_overlap_supported, 0);
         // Adjusted length subtracts 3
-        assert_eq!(frag.len_indel_adjusted(), frag.len_ref() - 3);
+        assert_eq!(
+            frag.adjusted_len(IndelMode::Adjust, ClipMode::Aligned),
+            frag.len_ref() - 3
+        );
     }
 
     #[test]
@@ -502,6 +513,8 @@ mod tests_fragment_with_indel_counts {
             tid: 0,
             interval: Interval::new(100, 180).expect("test read interval should be valid"),
             is_reverse: false,
+            left_soft_clip_bp: 0,
+            right_soft_clip_bp: 0,
             deletions: vec![Interval::new(150, 170).expect("test deletion should be valid")],
             insertions: vec![],
         };
@@ -509,6 +522,8 @@ mod tests_fragment_with_indel_counts {
             tid: 0,
             interval: Interval::new(160, 180).expect("test read interval should be valid"),
             is_reverse: true,
+            left_soft_clip_bp: 0,
+            right_soft_clip_bp: 0,
             deletions: vec![Interval::new(165, 175).expect("test deletion should be valid")],
             insertions: vec![],
         };
@@ -537,6 +552,8 @@ mod tests_fragment_with_indel_counts {
             tid: 0,
             interval: Interval::new(100, 180).expect("test read interval should be valid"),
             is_reverse: false,
+            left_soft_clip_bp: 0,
+            right_soft_clip_bp: 0,
             deletions: vec![Interval::new(165, 175).expect("test deletion should be valid")],
             insertions: vec![],
         };
@@ -544,6 +561,8 @@ mod tests_fragment_with_indel_counts {
             tid: 0,
             interval: Interval::new(160, 220).expect("test read interval should be valid"),
             is_reverse: true,
+            left_soft_clip_bp: 0,
+            right_soft_clip_bp: 0,
             deletions: vec![Interval::new(170, 190).expect("test deletion should be valid")],
             insertions: vec![],
         };
