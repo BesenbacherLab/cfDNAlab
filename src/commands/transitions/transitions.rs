@@ -248,7 +248,7 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
         global_counter.blacklisted_fragments
     );
     if opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some() {
-        let gc_fail_action = if opt.shared_args.gc.drop_invalid_gc {
+        let gc_fail_action = if opt.shared_args.gc.skip_invalid_gc {
             "fragment skipped"
         } else {
             "fragment counted with weight 1.0"

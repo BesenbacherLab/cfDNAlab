@@ -254,7 +254,7 @@ impl WPSSharedConfig {
             gc: ApplyGCArgs {
                 gc_file: None,
                 gc_tag: None,
-                drop_invalid_gc: false,
+                skip_invalid_gc: false,
             },
             ref_2bit: None,
         }

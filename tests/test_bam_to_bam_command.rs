@@ -762,7 +762,7 @@ fn gc_file_fallback_writes_gc_tag_one_on_both_mates() -> Result<()> {
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
     {
@@ -814,7 +814,7 @@ fn gc_file_drop_invalid_skips_fragment_entirely() -> Result<()> {
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        drop_invalid_gc: true,
+        skip_invalid_gc: true,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
     {
@@ -829,7 +829,7 @@ fn gc_file_drop_invalid_skips_fragment_entirely() -> Result<()> {
     // Manual expectations:
     // - one fragment is encountered
     // - GC lookup fails once for that fragment
-    // - with `drop_invalid_gc=true`, the command must skip the fragment instead of silently
+    // - with `skip_invalid_gc=true`, the command must skip the fragment instead of silently
     //   falling back to weight 1.0
     // - therefore the output BAM must contain no records and no AUX tags at all
     let counters = run_inner(&cfg)?;
@@ -868,7 +868,7 @@ fn gc_file_and_scaling_factors_write_identical_gc_cov_and_flen_tags_on_both_mate
     cfg.scale_genome.scaling_factors = Some(scaling_path);
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
     {
@@ -929,7 +929,7 @@ fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
     {
@@ -1003,7 +1003,7 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_bam_to_bam_in_expected_directio
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
     {
@@ -1065,7 +1065,7 @@ fn bed_blacklist_scaling_and_gc_together_keep_only_the_expected_tagged_fragment(
     cfg.scale_genome.scaling_factors = Some(scaling_path);
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.by_bed = Some(bed_path);
@@ -1268,7 +1268,7 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 

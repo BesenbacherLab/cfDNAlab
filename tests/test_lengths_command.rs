@@ -1347,7 +1347,7 @@ mod tests_lengths_command {
             cfg.set_gc_length_weighting(scheme);
             cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
                 gc_file: Some(gc_path.clone()),
-                drop_invalid_gc: false,
+                skip_invalid_gc: false,
             });
             cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
             {
@@ -1411,7 +1411,7 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         cfg.set_gc_length_weighting(MarginalizeLengthsWeightingScheme::Equal);
@@ -1505,7 +1505,7 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(reference.path.clone()));
         cfg.set_gc_length_weighting(MarginalizeLengthsWeightingScheme::Equal);
@@ -1615,7 +1615,7 @@ mod tests_lengths_command {
         cfg.set_scaling_factors(Some(scaling_path));
         cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         {
@@ -1687,7 +1687,7 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         {
@@ -1745,7 +1745,7 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
@@ -1785,7 +1785,7 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
             gc_file: Some(gc_path.clone()),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         {
             let frag = cfg.fragment_lengths_mut();
@@ -1828,7 +1828,7 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
             gc_file: Some(gc_path.clone()),
-            drop_invalid_gc: true,
+            skip_invalid_gc: true,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         {

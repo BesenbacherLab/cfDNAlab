@@ -593,7 +593,7 @@ for exact testing, but:
   does not guard against accidentally correct results from the periodicity.
 
 - A reference with `N` bases at specific positions, which would test the `sentinel_n`
-  path in motif encoding, is only constructed in `drop_invalid_gc` (line 785) for GC
+  path in motif encoding, is only constructed in `skip_invalid_gc` (line 785) for GC
   purposes, not for motif encoding.
 
 ---

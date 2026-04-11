@@ -27,6 +27,7 @@ pub mod visualization;
 pub mod window_fetch;
 pub mod windowing;
 pub mod writers;
+pub mod clip_mode;
 // Plotting helpers gated behind the plotters feature
 #[cfg(feature = "plotters")]
 pub mod plotters;

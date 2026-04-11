@@ -824,7 +824,7 @@ fn gc_file_weights_each_counted_end_motif_by_the_fragment_gc_correction() -> Res
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -1013,7 +1013,7 @@ fn blacklist_gc_and_scaling_weights_combine_to_the_exact_expected_endpoint_count
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.tile_size = 1_000_000;
     {
@@ -1093,13 +1093,13 @@ fn blacklist_gc_and_scaling_weights_combine_to_the_exact_expected_endpoint_count
 
 #[cfg(feature = "cmd_gc_bias")]
 #[test]
-fn drop_invalid_gc_skips_fragments_when_gc_correction_cannot_be_computed() -> Result<()> {
+fn skip_invalid_gc_skips_fragments_when_gc_correction_cannot_be_computed() -> Result<()> {
     // Arrange: use a reference where the fragment GC window contains only `N`, so GC fraction
     // cannot be computed even though the correction package covers the fragment length. With
-    // drop_invalid_gc=true the fragment should be skipped instead of falling back to weight 1.0.
-    let bam = simple_paired_fragment_bam("ends_drop_invalid_gc", 10, 10, 4)?;
+    // skip_invalid_gc=true the fragment should be skipped instead of falling back to weight 1.0.
+    let bam = simple_paired_fragment_bam("ends_skip_invalid_gc", 10, 10, 4)?;
     let reference = twobit_from_sequences(
-        "ends_drop_invalid_gc_reference",
+        "ends_skip_invalid_gc_reference",
         vec![(
             "chr1".to_string(),
             format!("{}{}{}", "A".repeat(10), "N".repeat(10), "A".repeat(236)),
@@ -1124,7 +1124,7 @@ fn drop_invalid_gc_skips_fragments_when_gc_correction_cannot_be_computed() -> Re
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: true,
+        skip_invalid_gc: true,
     });
     {
         let lengths = cfg.fragment_lengths_mut();

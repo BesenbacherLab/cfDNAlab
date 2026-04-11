@@ -213,7 +213,7 @@ fn clip_strategy_name(strategy: ClipStrategy) -> &'static str {
     match strategy {
         ClipStrategy::Aligned => "aligned",
         ClipStrategy::Raw => "raw",
-        ClipStrategy::Drop => "drop",
+        ClipStrategy::Skip => "skip",
     }
 }
 

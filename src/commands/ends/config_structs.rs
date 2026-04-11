@@ -25,7 +25,7 @@ pub enum KmerSource {
 ///
 /// End motifs can either follow the aligned fragment span, expand outward to
 /// include soft-clipped bases, or be skipped when clipping is present. The
-/// `Drop` option is stricter than the aligned mode because even soft-clipped
+/// `Skip` option is stricter than the aligned mode because soft-clipped
 /// ends are ignored rather than interpreted.
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -38,7 +38,7 @@ pub enum ClipStrategy {
     Raw,
 
     /// Skip motifs whose end is soft-clipped.
-    Drop,
+    Skip,
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
@@ -64,7 +64,7 @@ pub struct ClippingArgs {
     ///   outside the aligned span by the clipped length. This also happens when using
     ///   the reference genome as source or only counting `--k-outside` bases.
     ///
-    /// - `"drop"`:
+    /// - `"skip"`:
     ///   Skip motifs when their fragment end is soft-clipped. Hard-clipping always discards the full fragment.
     #[cfg_attr(
         feature = "cli",
@@ -74,7 +74,7 @@ pub struct ClippingArgs {
 
     /// Skip motifs with a higher number of soft-clipped bases than this `[integer]`
     ///
-    /// Use `--clip-strategy drop` to discard all soft-clipped motifs.
+    /// Use `--clip-strategy skip` to discard all soft-clipped motifs.
     #[cfg_attr(
         feature = "cli",
         clap(

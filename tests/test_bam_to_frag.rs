@@ -834,7 +834,7 @@ mod tests_bam_to_frag {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         {
@@ -911,7 +911,7 @@ mod tests_bam_to_frag {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         {
@@ -972,7 +972,7 @@ mod tests_bam_to_frag {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
@@ -1018,7 +1018,7 @@ mod tests_bam_to_frag {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_dir.clone()),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
 
         // Act
@@ -1160,7 +1160,7 @@ mod tests_bam_to_frag {
         frag_cfg.set_require_proper_pair(false);
         frag_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path.clone()),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         frag_cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         let mut frag_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
@@ -1179,7 +1179,7 @@ mod tests_bam_to_frag {
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         bam_cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         let mut bam_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
@@ -1550,7 +1550,7 @@ mod tests_bam_to_frag {
         frag_cfg.set_require_proper_pair(false);
         frag_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path.clone()),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         frag_cfg.set_ref_2bit(Some(reference.path.clone()));
         {
@@ -1566,7 +1566,7 @@ mod tests_bam_to_frag {
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         bam_cfg.set_ref_2bit(Some(reference.path.clone()));
         {
@@ -1678,7 +1678,7 @@ mod tests_bam_to_frag {
         frag_cfg.set_require_proper_pair(false);
         frag_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path.clone()),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         frag_cfg.set_ref_2bit(Some(reference.path.clone()));
         {
@@ -1694,7 +1694,7 @@ mod tests_bam_to_frag {
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         bam_cfg.set_ref_2bit(Some(reference.path.clone()));
         {

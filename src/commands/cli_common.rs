@@ -512,7 +512,7 @@ pub struct ApplyGCArgs {
     )]
     pub gc_tag: Option<String>,
 
-    /// Whether to drop fragments where the GC correction could not be calculated `[flag]`
+    /// Whether to skip fragments where the GC correction could not be calculated `[flag]`
     ///
     /// If a GC correction weight could not be computed/retrieved for a fragment,
     /// the default is to weight it as `1.0` (no correction). If you prefer to
@@ -521,7 +521,7 @@ pub struct ApplyGCArgs {
         feature = "cli",
         clap(long, help_heading = "GC Correction (select max. one source)")
     )]
-    pub drop_invalid_gc: bool,
+    pub skip_invalid_gc: bool,
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
@@ -538,13 +538,13 @@ pub struct ApplyGCArgFileOnly {
     )]
     pub gc_file: Option<PathBuf>,
 
-    /// Whether to drop fragments where the GC correction could not be calculated `[flag]`
+    /// Whether to skip fragments where the GC correction could not be calculated `[flag]`
     ///
     /// If a GC correction weight could not be computed for a fragment,
     /// the default is to weight it as `1.0` (no correction). If you prefer to
     /// exclude it instead, set this flag.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "GC Correction"))]
-    pub drop_invalid_gc: bool,
+    pub skip_invalid_gc: bool,
 }
 
 // TODO: Is "nearest" clear enough in all usecases?

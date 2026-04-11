@@ -97,7 +97,7 @@ The concrete missing items from the cleaned 2026-03-25 audit were added:
   Added real producer-consumer tests proving that reference-package smoothing and interpolation metadata are respected by the command.
 
 - `bam-to-bam`
-  Added combined `GC` + `COV` + `FLEN` tag tests, a combined BED/blacklist/scaling/GC test, and `drop_invalid_gc=true` coverage.
+  Added combined `GC` + `COV` + `FLEN` tag tests, a combined BED/blacklist/scaling/GC test, and `skip_invalid_gc=true` coverage.
 
 - `midpoints`
   Added even-length midpoint tie tests at window edges and an explicit blacklist-midpoint-vs-placement contract test.

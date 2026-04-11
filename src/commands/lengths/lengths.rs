@@ -457,7 +457,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         global_counter.blacklisted_fragments
     );
     if opt.gc.gc_file.is_some() {
-        let gc_fail_action = if opt.gc.drop_invalid_gc {
+        let gc_fail_action = if opt.gc.skip_invalid_gc {
             "fragment skipped"
         } else {
             "fragment counted with weight 1.0"
@@ -766,7 +766,7 @@ fn process_tile(
                 // Tried but failed to make a GC correction weight for the current fragment
                 // Fall back to no correction or skip
                 counter.gc_failed_fragments += 1;
-                if opt.gc.drop_invalid_gc {
+                if opt.gc.skip_invalid_gc {
                     continue;
                 } else {
                     1.0

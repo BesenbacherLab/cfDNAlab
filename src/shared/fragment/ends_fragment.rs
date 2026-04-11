@@ -164,7 +164,7 @@ enum FragmentEndSide {
 #[derive(Debug, Clone)]
 enum ResolvedEndOutcome {
     /// Abort the whole fragment, e.g. `skip-affected-fragment`.
-    DropFragment,
+    SkipFragment,
     /// Skip this end's motif but still use its clip-adjusted assignment boundary.
     SkipEndKeepAssignmentBoundary { assignment_boundary_pos: u32 },
     /// Skip this end's motif and fall back to the aligned boundary for assignment.
@@ -203,7 +203,7 @@ pub fn collect_fragment_with_ends(
         k_inside,
         max_soft_clips,
     ) {
-        ResolvedEndOutcome::DropFragment => return None,
+        ResolvedEndOutcome::SkipFragment => return None,
         ResolvedEndOutcome::SkipEndKeepAssignmentBoundary {
             assignment_boundary_pos,
         } => (assignment_boundary_pos, None),
@@ -222,7 +222,7 @@ pub fn collect_fragment_with_ends(
         k_inside,
         max_soft_clips,
     ) {
-        ResolvedEndOutcome::DropFragment => return None,
+        ResolvedEndOutcome::SkipFragment => return None,
         ResolvedEndOutcome::SkipEndKeepAssignmentBoundary {
             assignment_boundary_pos,
         } => (assignment_boundary_pos, None),
@@ -274,7 +274,7 @@ pub fn collect_fragment_with_ends_from_single_read(
         k_inside,
         max_soft_clips,
     ) {
-        ResolvedEndOutcome::DropFragment => return None,
+        ResolvedEndOutcome::SkipFragment => return None,
         ResolvedEndOutcome::SkipEndKeepAssignmentBoundary {
             assignment_boundary_pos,
         } => (assignment_boundary_pos, None),
@@ -293,7 +293,7 @@ pub fn collect_fragment_with_ends_from_single_read(
         k_inside,
         max_soft_clips,
     ) {
-        ResolvedEndOutcome::DropFragment => return None,
+        ResolvedEndOutcome::SkipFragment => return None,
         ResolvedEndOutcome::SkipEndKeepAssignmentBoundary {
             assignment_boundary_pos,
         } => (assignment_boundary_pos, None),
@@ -375,7 +375,7 @@ fn motif_has_indels(
     soft_clip_bp: u32,
 ) -> bool {
     let aligned_bases_in_motif = match clip_strategy {
-        ClipStrategy::Aligned | ClipStrategy::Drop => k_inside,
+        ClipStrategy::Aligned | ClipStrategy::Skip => k_inside,
         ClipStrategy::Raw => k_inside.saturating_sub(soft_clip_bp as usize),
     };
     if aligned_bases_in_motif == 0 {
@@ -422,7 +422,7 @@ fn motif_has_indels(
 /// Resolve one fragment end according to the selected clip strategy.
 ///
 /// Returns:
-/// - `ResolvedEndOutcome::DropFragment` when the whole fragment must be discarded, e.g.
+/// - `ResolvedEndOutcome::SkipFragment` when the whole fragment must be discarded, e.g.
 ///   `skip-affected-fragment`
 ///
 /// - `ResolvedEndOutcome::SkipEndKeepAssignmentBoundary` when this end's motif is skipped but the
@@ -461,7 +461,7 @@ fn resolve_fragment_end(
     // First decide whether indels invalidate just this end or the whole fragment.
     // Do not decide assignment-boundary behavior yet, because that depends on the clip strategy.
     if motif_has_indels && matches!(indel_filter, IndelMotifFilterPolicy::SkipAffectedFragment) {
-        return ResolvedEndOutcome::DropFragment;
+        return ResolvedEndOutcome::SkipFragment;
     }
 
     let skip_end_due_to_indels = motif_has_indels
@@ -472,8 +472,8 @@ fn resolve_fragment_end(
         };
 
     match clip_strategy {
-        ClipStrategy::Aligned | ClipStrategy::Drop => {
-            if matches!(clip_strategy, ClipStrategy::Drop) && soft_clip_bp > 0 {
+        ClipStrategy::Aligned | ClipStrategy::Skip => {
+            if matches!(clip_strategy, ClipStrategy::Skip) && soft_clip_bp > 0 {
                 return ResolvedEndOutcome::SkipEndDropAssignmentBoundary;
             }
             if skip_end_due_to_indels {
@@ -547,7 +547,7 @@ fn extract_left_inside_bases(
     k_inside: usize,
 ) -> Option<Vec<u8>> {
     let start_idx = match clip_strategy {
-        ClipStrategy::Aligned | ClipStrategy::Drop => read.left_soft_clip_bp as usize,
+        ClipStrategy::Aligned | ClipStrategy::Skip => read.left_soft_clip_bp as usize,
         ClipStrategy::Raw => 0,
     };
     let end_idx = start_idx.saturating_add(k_inside);
@@ -563,7 +563,7 @@ fn extract_right_inside_bases(
     k_inside: usize,
 ) -> Option<Vec<u8>> {
     let end_idx = match clip_strategy {
-        ClipStrategy::Aligned | ClipStrategy::Drop => read
+        ClipStrategy::Aligned | ClipStrategy::Skip => read
             .seq
             .len()
             .checked_sub(read.right_soft_clip_bp as usize)?,

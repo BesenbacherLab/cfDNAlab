@@ -77,7 +77,7 @@ pub fn run(opt: &BamToFragConfig) -> Result<()> {
             global_counter.blacklisted_fragments
         );
         if opt.gc.gc_file.is_some() {
-            let gc_fail_action = if opt.gc.drop_invalid_gc {
+            let gc_fail_action = if opt.gc.skip_invalid_gc {
                 "fragment skipped"
             } else {
                 "fragment counted with weight 1.0"

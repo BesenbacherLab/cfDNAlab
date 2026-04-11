@@ -566,7 +566,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
         global_counter.base.accepted_reverse
     );
     if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
-        let gc_fail_action = if opt.gc.drop_invalid_gc {
+        let gc_fail_action = if opt.gc.skip_invalid_gc {
             "fragment skipped"
         } else {
             "fragment counted with weight 1.0"
@@ -709,7 +709,7 @@ fn process_tile(
                     Some(weight) => weight,
                     None => {
                         counter.gc_failed_fragments += 1;
-                        if opt.gc.drop_invalid_gc {
+                        if opt.gc.skip_invalid_gc {
                             continue;
                         } else {
                             1.0
@@ -734,7 +734,7 @@ fn process_tile(
                 if fragment.gc_tag.was_out_of_range {
                     counter.gc_out_of_range_tags += 1;
                 }
-                if opt.gc.drop_invalid_gc {
+                if opt.gc.skip_invalid_gc {
                     continue;
                 } else {
                     1.0
@@ -743,7 +743,7 @@ fn process_tile(
                 w
             } else {
                 counter.gc_failed_fragments += 1;
-                if opt.gc.drop_invalid_gc {
+                if opt.gc.skip_invalid_gc {
                     continue;
                 } else {
                     1.0

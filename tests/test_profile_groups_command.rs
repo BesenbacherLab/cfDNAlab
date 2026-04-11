@@ -889,7 +889,7 @@ fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_midpo
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -1028,7 +1028,7 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -1098,7 +1098,7 @@ fn midpoints_rejects_gc_package_when_length_bins_are_outside_supported_range() -
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -1156,7 +1156,7 @@ fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -1470,7 +1470,7 @@ fn gc_tag_pair_average_sets_midpoint_profile_weight() -> Result<()> {
     cfg.set_gc(ApplyGCArgs {
         gc_file: None,
         gc_tag: Some("GC".to_string()),
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
 
     // Act
@@ -1583,7 +1583,7 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -1663,7 +1663,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
     bam_to_bam_cfg.min_mapq = 0;
     bam_to_bam_cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
         gc_file: Some(gc_path.clone()),
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     bam_to_bam_cfg.set_ref_2bit(Some(reference.path.clone()));
     {
@@ -1689,7 +1689,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
     original_cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     original_cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -1717,7 +1717,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
     tagged_cfg.set_gc(ApplyGCArgs {
         gc_file: None,
         gc_tag: Some("GC".to_string()),
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     run(&tagged_cfg)?;
 

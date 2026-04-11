@@ -1462,7 +1462,7 @@ fn by_size_total_aligned_fast_path_matches_general_path_with_blacklist_scaling_a
         cfg.set_gc(ApplyGCArgs {
             gc_file: Some(gc_path),
             gc_tag: None,
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
@@ -2091,7 +2091,7 @@ fn real_ref_gc_bias_gc_bias_and_coverage_weights_chain_is_coherent_in_fcoverage(
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
     {
@@ -2376,7 +2376,7 @@ fn gc_tag_weights_unpaired_positional_output() -> Result<()> {
     cfg.set_gc(ApplyGCArgs {
         gc_file: None,
         gc_tag: Some("GC".to_string()),
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
 
     // Manual expectations:
@@ -2412,7 +2412,7 @@ fn gc_tag_averages_valid_mate_weights_in_paired_mode() -> Result<()> {
     cfg.set_gc(ApplyGCArgs {
         gc_file: None,
         gc_tag: Some("GC".to_string()),
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
 
     // Manual expectations:
@@ -2475,7 +2475,7 @@ fn bam_to_bam_gc_file_output_drives_fcoverage_gc_tag_same_as_original_gc_file() 
     bam_to_bam_cfg.min_mapq = 0;
     bam_to_bam_cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
         gc_file: Some(gc_path.clone()),
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     bam_to_bam_cfg.set_ref_2bit(Some(reference.path.clone()));
     {
@@ -2492,7 +2492,7 @@ fn bam_to_bam_gc_file_output_drives_fcoverage_gc_tag_same_as_original_gc_file() 
     original_cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path.clone()),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     original_cfg.set_ref_2bit(Some(reference.path.clone()));
     {
@@ -2514,7 +2514,7 @@ fn bam_to_bam_gc_file_output_drives_fcoverage_gc_tag_same_as_original_gc_file() 
     tagged_cfg.set_gc(ApplyGCArgs {
         gc_file: None,
         gc_tag: Some("GC".to_string()),
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     {
         let frag = tagged_cfg.fragment_lengths_mut();
@@ -2570,13 +2570,13 @@ fn gc_tag_paired_edge_cases_follow_fragment_combination_rules() -> Result<()> {
         cfg.set_gc(ApplyGCArgs {
             gc_file: None,
             gc_tag: Some("GC".to_string()),
-            drop_invalid_gc: false,
+            skip_invalid_gc: false,
         });
 
         // Manual expectations:
         // - Scenario invalid_mate_falls_back:
         //   mate tags 2.0 and 2000.0 make the fragment GC tag invalid.
-        //   With drop_invalid_gc=false, fcoverage falls back to weight 1.0 -> [20, 80) with value 1.
+        //   With skip_invalid_gc=false, fcoverage falls back to weight 1.0 -> [20, 80) with value 1.
         // - Scenario zero_mate_forces_zero_weight:
         //   mate tags 0.0 and 4.0 combine to fragment weight 0.0.
         //   With keep_zero_runs=true, the whole chromosome is a single zero-coverage segment.
@@ -2611,7 +2611,7 @@ fn gc_tag_missing_or_invalid_values_fall_back_or_drop() -> Result<()> {
         ("out_of_range_drop", Some(2_000.0), true, Vec::<&str>::new()),
     ];
 
-    for (name, tag_value, drop_invalid_gc, expected_lines) in scenarios {
+    for (name, tag_value, skip_invalid_gc, expected_lines) in scenarios {
         let base_bam = single_read_fragment_bam(&format!("fcoverage_gc_tag_{name}_base"))?;
         let tagged_bam = bam_with_gc_tags(
             &base_bam.bam,
@@ -2626,13 +2626,13 @@ fn gc_tag_missing_or_invalid_values_fall_back_or_drop() -> Result<()> {
         cfg.set_gc(ApplyGCArgs {
             gc_file: None,
             gc_tag: Some("GC".to_string()),
-            drop_invalid_gc,
+            skip_invalid_gc,
         });
 
         // Manual expectations:
         // - Missing tags and out-of-range tags both produce no usable GC weight.
-        // - With drop_invalid_gc=false, fcoverage falls back to weight 1.0.
-        // - With drop_invalid_gc=true, the fragment is skipped entirely.
+        // - With skip_invalid_gc=false, fcoverage falls back to weight 1.0.
+        // - With skip_invalid_gc=true, the fragment is skipped entirely.
         run(&cfg)?;
 
         let output_path = out_dir
@@ -2661,7 +2661,7 @@ fn gc_file_requires_ref_2bit() -> Result<()> {
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
 
     let err = run(&cfg).expect_err("GC correction should require --ref-2bit");
@@ -2685,7 +2685,7 @@ fn gc_file_weights_positional_output_from_reference_package() -> Result<()> {
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
@@ -2732,7 +2732,7 @@ fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
     {
@@ -2779,7 +2779,7 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
@@ -2810,7 +2810,7 @@ fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_fcove
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
     {
@@ -2915,7 +2915,7 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_fcoverage_in_expected_direction
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
-        drop_invalid_gc: false,
+        skip_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
     {
@@ -2965,7 +2965,7 @@ fn gc_file_drop_invalid_controls_short_effective_length_fragments() -> Result<()
         ("drop", true, Vec::<&str>::new()),
     ];
 
-    for (name, drop_invalid_gc, expected_lines) in scenarios {
+    for (name, skip_invalid_gc, expected_lines) in scenarios {
         let out_dir = TempDir::new()?;
         let gc_path = out_dir.path().join(format!("gc_pkg_{name}.npz"));
         build_gc_package(&gc_path, 26)?;
@@ -2975,7 +2975,7 @@ fn gc_file_drop_invalid_controls_short_effective_length_fragments() -> Result<()
         cfg.set_gc(ApplyGCArgs {
             gc_file: Some(gc_path),
             gc_tag: None,
-            drop_invalid_gc,
+            skip_invalid_gc,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         {
@@ -2988,8 +2988,8 @@ fn gc_file_drop_invalid_controls_short_effective_length_fragments() -> Result<()
         //   min_fragment_length > 52. We set it to 53 so the run reaches GC weighting.
         // - Length 60 with end_offset 26 leaves only 8 bp for GC counting.
         // - The corrector requires at least 10 A/C/G/T bases, so it returns no weight.
-        // - With drop_invalid_gc=false, the fragment falls back to weight 1.0.
-        // - With drop_invalid_gc=true, the fragment is skipped.
+        // - With skip_invalid_gc=false, the fragment falls back to weight 1.0.
+        // - With skip_invalid_gc=true, the fragment is skipped.
         run(&cfg)?;
 
         let output_path = out_dir

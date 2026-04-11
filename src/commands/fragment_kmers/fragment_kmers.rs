@@ -105,7 +105,7 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
             global_counter.blacklisted_fragments
         );
         if opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some() {
-            let gc_fail_action = if opt.shared_args.gc.drop_invalid_gc {
+            let gc_fail_action = if opt.shared_args.gc.skip_invalid_gc {
                 "fragment skipped"
             } else {
                 "fragment counted with weight 1.0"
@@ -647,7 +647,7 @@ fn process_tile(
                 if fragment.gc_tag.was_out_of_range {
                     counter.gc_out_of_range_tags += 1;
                 }
-                if opt.shared_args.gc.drop_invalid_gc {
+                if opt.shared_args.gc.skip_invalid_gc {
                     continue;
                 } else {
                     1.0
@@ -656,7 +656,7 @@ fn process_tile(
                 tag_w as f64
             } else {
                 counter.gc_failed_fragments += 1;
-                if opt.shared_args.gc.drop_invalid_gc {
+                if opt.shared_args.gc.skip_invalid_gc {
                     continue;
                 } else {
                     1.0
@@ -669,7 +669,7 @@ fn process_tile(
                 (None, true) => {
                     // Tried but failed to make a GC correction weight
                     counter.gc_failed_fragments += 1;
-                    if opt.shared_args.gc.drop_invalid_gc {
+                    if opt.shared_args.gc.skip_invalid_gc {
                         continue;
                     } else {
                         1.0

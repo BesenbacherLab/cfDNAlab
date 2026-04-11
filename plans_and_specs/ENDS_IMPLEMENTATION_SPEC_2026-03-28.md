@@ -655,7 +655,7 @@ This distinction is important and must stay explicit in the collector.
 
 One resolved end should return one of these semantic outcomes:
 
-- `DropFragment`
+- `SkipFragment`
   - abort the whole fragment
   - used for policies such as `skip-affected-fragment`
 
