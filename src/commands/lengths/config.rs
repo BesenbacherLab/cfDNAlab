@@ -159,7 +159,7 @@ pub struct LengthsConfig {
     ///
     ///   **NOTE**: Blacklist exclusion, GC correction, and scaling weights
     ///   (--scaling-factors) use the aligned reference span.
-    ///   When `--assign-by count-overlap`, clipped-only window contributions use 
+    ///   When `--assign-by count-overlap`, clipped-only window contributions use
     ///   the nearest aligned reference base for scaling.
     ///   
     ///

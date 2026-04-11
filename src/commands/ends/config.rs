@@ -55,12 +55,15 @@ Counts (`<outside>_<inside>`): `AT_CG: 1`, `GA_TG: 1`
     "Can be precomputed with `cfdna coverage-weights`.\n\n",
     "## Window assignment\n\n",
     "By default, a motif is counted in the window the fragment end falls in with the weight 1.0 (before correction/scaling).\n\n",
+    "With `--clip-strategy raw-shifted-boundary`, that endpoint can move outside the aligned span by the soft-clipped length.\n\n",
+    "With `--clip-strategy raw-aligned-boundary`, the inside motif uses the raw read bases, but the endpoint assignment stays at the aligned boundary.\n\n",
     "Alternatively, we can weight the motif by how much the fragment overlaps the window or ",
     "we can count both end motifs of a fragment if the *fragment midpoint* or a given ",
     "*proportion* of positions overlaps the window.\n\n",
     "## Blacklisting\n\n",
     "Ignores fragments that overlap blacklisted regions with a given proportion.\n\n",
     "Motifs overlapping blacklisted regions are skipped.\n\n",
+    "With `--clip-strategy raw-aligned-boundary`, motif-level blacklist validation only checks the part of the inside motif that still overlaps reference coordinates.\n\n",
     "## Always-on exclusion criteria\n\n",
     "The following criteria always exclude a read:\n\n",
     "The read is secondary, supplementary or duplicate. ",
@@ -128,6 +131,9 @@ pub struct EndsConfig {
     pub k_outside: usize,
 
     /// Whether to get the inside-fragment bases from the read or the reference `[string]`
+    ///
+    /// `--source-inside reference` cannot be combined with
+    /// `--clip-strategy raw-aligned-boundary`.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -289,7 +295,7 @@ impl EndsConfig {
             k_outside,
             source_inside: KmerSource::Read,
             clip: ClippingArgs {
-                clip_strategy: ClipStrategy::Aligned,
+                clip_strategy: ClipStrategy::Skip,
                 max_soft_clips: DEFAULT_MAX_SOFT_CLIPS,
             },
             indel_filter: IndelMotifFilterPolicy::Auto,

@@ -55,7 +55,7 @@ noise that suggests the intent was to use it more broadly.
 
 ---
 
-### L2 — `min_overlap_fraction` formula does not account for `ClipStrategy::Raw` expansion beyond `max_fragment_length`
+### L2 — `min_overlap_fraction` formula does not account for `ClipStrategy::RawShiftedBoundary` expansion beyond `max_fragment_length`
 
 **File:** `ends.rs:490-500`
 
@@ -64,7 +64,7 @@ noise that suggests the intent was to use it more broadly.
 // 2x to allow for raw-clipping-mode expansion
 ```
 
-For `ClipStrategy::Raw`, each end's assignment boundary extends outward by
+For `ClipStrategy::RawShiftedBoundary`, each end's assignment boundary extends outward by
 `soft_clip_bp`. If `max_soft_clips` is not set there is no bound on this expansion. The
 `2×` multiplier assumes the expansion is at most `max_fragment_length`, which is the
 aligned length limit, not the assignment interval limit. For extremely soft-clipped reads
@@ -180,7 +180,7 @@ assignment_interval: Interval::new(left_boundary_pos, right_boundary_pos)
 ```
 
 This sets `assignment_interval == interval` for all test fragments. In
-`ClipStrategy::Raw`, these would differ. Since the tests use `KmerSource::Read`, the
+`ClipStrategy::RawShiftedBoundary`, these would differ. Since the tests use `KmerSource::Read`, the
 assignment_interval is only used for midpoint/overlap logic inside `process_tile` (not
 in `count_fragment_in_window` itself), so the tests are still valid — but the helper is
 misleading for anyone writing future tests involving Raw clip mode or non-Endpoint
@@ -188,21 +188,23 @@ assignment.
 
 ---
 
-### L12 — `EndReadInfo::from_record_with_gc_tag` passes `clip_strategy` to `motif_has_indels` but `ClipStrategy::Aligned` and `ClipStrategy::Drop` are treated identically
+### L12 — `EndReadInfo::from_record_with_gc_tag` passes `clip_strategy` to `motif_has_indels` but `ClipStrategy::Aligned` and `ClipStrategy::Skip` are treated identically
 
 **File:** `ends_fragment.rs:377-379`
 
 ```rust
 let aligned_bases_in_motif = match clip_strategy {
-    ClipStrategy::Aligned | ClipStrategy::Drop => k_inside,
-    ClipStrategy::Raw => k_inside.saturating_sub(soft_clip_bp as usize),
+    ClipStrategy::Aligned | ClipStrategy::Skip => k_inside,
+    ClipStrategy::RawAlignedBoundary | ClipStrategy::RawShiftedBoundary => {
+        k_inside.saturating_sub(soft_clip_bp as usize)
+    }
 };
 ```
 
-`Drop` and `Aligned` behave identically in the indel check. But `Drop` mode later
+`Skip` and `Aligned` behave identically in the indel check. But `Skip` mode later
 skips the end entirely if `soft_clip_bp > 0` (line 476). The indel check for a
-soft-clipped `Drop` end is therefore wasted work. Not a bug, but an unnecessary
-computation that the structure implies may need special-casing if `Drop` semantics
+soft-clipped `Skip` end is therefore wasted work. Not a bug, but an unnecessary
+computation that the structure implies may need special-casing if `Skip` semantics
 ever change.
 
 ---
@@ -361,9 +363,9 @@ becomes `"GT_"` or `"_AC"`. This is not documented in the help text for either
 
 ---
 
-### D5 — `ClipStrategy::Drop` vs `--max-soft-clips 0` equivalence is not documented
+### D5 — `ClipStrategy::Skip` vs `--max-soft-clips 0` equivalence is not documented
 
-Both cause soft-clipped ends to be skipped, but `Drop` uses `SkipEndDropAssignmentBoundary`
+Both cause soft-clipped ends to be skipped, and `Skip` uses `SkipEndDropAssignmentBoundary`
 while `max_soft_clips = 0` also uses `SkipEndDropAssignmentBoundary`. For counting
 purposes they are equivalent. This should be noted so users don't combine them
 redundantly (or misunderstand that they're not subtly different).

@@ -11,7 +11,7 @@ use crate::{
         counting::{EncodedEndMotifKey, EndCountsByWindow},
     },
     shared::{
-        blacklist::apply_blacklist_mask_to_seq,
+        blacklist::{apply_blacklist_mask_to_seq, apply_mask::BLACKLIST_BYTE},
         fragment::ends_fragment::{FragmentWithEnds, ResolvedFragmentEnd},
         interval::Interval,
         kmers::kmer_codec::{
@@ -141,7 +141,7 @@ pub(crate) fn motif_reference_span_for_tile(
     max_soft_clips: u16,
     k_outside: usize,
 ) -> Result<Interval<u64>> {
-    let raw_extra = if matches!(clip_strategy, ClipStrategy::Raw) {
+    let raw_extra = if clip_strategy.uses_shifted_boundary() {
         u64::from(max_soft_clips)
     } else {
         0
@@ -192,6 +192,14 @@ pub(crate) fn build_tile_motif_context<'a>(
 ) -> Result<TileMotifContext<'a>> {
     let inside_spec = inside_spec.cloned();
     let outside_spec = outside_spec.cloned();
+
+    if matches!(opt.clip.clip_strategy, ClipStrategy::RawAlignedBoundary)
+        && matches!(opt.source_inside, KmerSource::Reference)
+    {
+        anyhow::bail!(
+            "`--clip-strategy raw-aligned-boundary` cannot be combined with `--source-inside reference`"
+        );
+    }
 
     let needs_reference_bases = outside_spec.is_some()
         || (inside_spec.is_some()
@@ -466,7 +474,7 @@ fn encode_inside_code(
     match source_inside {
         KmerSource::Read => {
             if let Some(masked_reference_code) =
-                encode_blacklist_validation_inside_code(end, end_side, spec, motif_context)?
+                validate_blacklist_for_read_inside_code(end, end_side, spec, motif_context)?
             {
                 if motif_code_is_invalid(masked_reference_code, Some(spec)) {
                     return Ok(masked_reference_code);
@@ -495,10 +503,14 @@ fn encode_inside_code(
     }
 }
 
-/// Validate the genomic inside span against blacklist-masked reference codes.
+/// Validate the reference-addressable part of a read-backed inside motif against the
+/// blacklist-masked reference.
 ///
-/// This is only used for `source_inside=read`, where the actual motif still
-/// comes from the read but blacklist skipping must remain genomic.
+/// This is only used for `source_inside=read`, where the emitted inside code still comes from the
+/// read but blacklist filtering must remain genomic. `inside_reference_validation_bp` tells us how
+/// much of `inside_bases` still maps to concrete reference positions; in
+/// `raw-aligned-boundary`, clipped-only inside bases are intentionally ignored here because they
+/// lie outside the aligned reference span.
 ///
 /// Parameters
 /// ----------
@@ -514,8 +526,9 @@ fn encode_inside_code(
 /// Returns
 /// -------
 /// - `Result<Option<u64>>`:
-///   `None` when blacklist validation is not needed, otherwise the masked-reference code to inspect
-fn encode_blacklist_validation_inside_code(
+///   `None` when validation passed and the caller should keep the read-backed code, otherwise an
+///   invalid sentinel that should be returned instead
+fn validate_blacklist_for_read_inside_code(
     end: &ResolvedFragmentEnd,
     end_side: EndSide,
     spec: &KmerSpec,
@@ -525,23 +538,57 @@ fn encode_blacklist_validation_inside_code(
         return Ok(None);
     }
 
+    let validation_bp = end.inside_reference_validation_bp;
+    if validation_bp == 0 {
+        return Ok(None);
+    }
+
     let start_pos = match end_side {
         EndSide::Left => end.boundary_pos as u64,
         EndSide::Right => {
-            let k = spec.k as u64;
-            if (end.boundary_pos as u64) < k {
+            let validation_bp = validation_bp as u64;
+            if (end.boundary_pos as u64) < validation_bp {
                 return Ok(Some(spec.sentinel_none()));
             }
-            end.boundary_pos as u64 - k
+            end.boundary_pos as u64 - validation_bp
         }
     };
 
-    Ok(Some(get_reference_code(
-        start_pos,
-        spec,
-        motif_context.inside_codes.as_deref(),
-        motif_context,
-    )?))
+    let is_unmasked =
+        masked_reference_span_is_valid(start_pos, validation_bp, spec, motif_context)?;
+    if is_unmasked {
+        Ok(None)
+    } else {
+        Ok(Some(spec.sentinel_n()))
+    }
+}
+
+/// Check whether a reference-addressable genomic span stays inside the preloaded tile reference and
+/// avoids blacklist masking.
+fn masked_reference_span_is_valid(
+    start_pos: u64,
+    span_bp: usize,
+    spec: &KmerSpec,
+    motif_context: &TileMotifContext<'_>,
+) -> Result<bool> {
+    if start_pos + span_bp as u64 > motif_context.chrom_len {
+        return Ok(false);
+    }
+
+    let reference_bases = motif_context
+        .reference_bases
+        .as_ref()
+        .context("missing preloaded reference bases for blacklist validation")?;
+    let local_start =
+        try_reference_start_index(start_pos, span_bp, motif_context).with_context(|| {
+            let loaded_end = motif_context.reference_start + reference_bases.len() as u64;
+            format!(
+                "motif reference lookup escaped preloaded tile span: start={start_pos}, k={}, loaded_reference_span=[{}, {})",
+                spec.k, motif_context.reference_start, loaded_end
+            )
+        })?;
+
+    Ok(!reference_bases[local_start..local_start + span_bp].contains(&BLACKLIST_BYTE))
 }
 
 /// Encode the outside-fragment half for one end from reference coordinates.

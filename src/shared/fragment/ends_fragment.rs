@@ -2,6 +2,7 @@ use crate::{
     Result,
     commands::ends::config_structs::{ClipStrategy, KmerSource},
     shared::{
+        fragment::cigar_counts::inspect_cigar_edges,
         fragment::minimal_fragment::{
             PairOrientable, is_inwards_oriented, oriented_pair_from_read_info,
         },
@@ -22,6 +23,13 @@ pub struct ResolvedFragmentEnd {
     pub boundary_pos: u32,
     /// First `k_inside` bases adjacent to this end in BAM/reference storage orientation.
     pub inside_bases: Vec<u8>,
+    /// Number of leading inside bases that still have concrete reference positions next to
+    /// `boundary_pos`.
+    ///
+    /// This matters for `RawAlignedBoundary`: the clipped-only prefix/suffix is kept in
+    /// `inside_bases`, but those bases lie outside the aligned reference span and therefore cannot
+    /// be blacklist-validated against genomic coordinates.
+    pub inside_reference_validation_bp: usize,
 }
 
 /// Fragment payload for the `ends` command.
@@ -106,7 +114,7 @@ impl EndReadInfo {
         clip_strategy: ClipStrategy,
         k_inside: usize,
     ) -> Result<Self> {
-        let (left_soft_clip_bp, right_soft_clip_bp, has_hard_clip) = inspect_cigar_edges(r);
+        let edge_info = inspect_cigar_edges(r);
         let gc_tag_value = gc_tag
             .map(|tag| read_gc_tag_from_record(r, tag))
             .unwrap_or_default();
@@ -115,23 +123,23 @@ impl EndReadInfo {
             tid: r.tid(),
             interval: Interval::new(r.pos() as u32, r.reference_end() as u32)?,
             is_reverse: r.is_reverse(),
-            left_soft_clip_bp,
-            right_soft_clip_bp,
+            left_soft_clip_bp: edge_info.left_soft_clip_bp,
+            right_soft_clip_bp: edge_info.right_soft_clip_bp,
             left_motif_has_indels: motif_has_indels(
                 r,
                 FragmentEndSide::Left,
                 clip_strategy,
                 k_inside,
-                left_soft_clip_bp,
+                edge_info.left_soft_clip_bp,
             ),
             right_motif_has_indels: motif_has_indels(
                 r,
                 FragmentEndSide::Right,
                 clip_strategy,
                 k_inside,
-                right_soft_clip_bp,
+                edge_info.right_soft_clip_bp,
             ),
-            has_hard_clip,
+            has_hard_clip: edge_info.has_hard_clip,
             seq: r.seq().as_bytes(),
             gc_tag: gc_tag_value,
         })
@@ -332,7 +340,9 @@ fn motif_has_indels(
 ) -> bool {
     let aligned_bases_in_motif = match clip_strategy {
         ClipStrategy::Aligned | ClipStrategy::Skip => k_inside,
-        ClipStrategy::Raw => k_inside.saturating_sub(soft_clip_bp as usize),
+        ClipStrategy::RawAlignedBoundary | ClipStrategy::RawShiftedBoundary => {
+            k_inside.saturating_sub(soft_clip_bp as usize)
+        }
     };
     if aligned_bases_in_motif == 0 {
         return false;
@@ -451,10 +461,15 @@ fn resolve_fragment_end(
                 None => ResolvedEndOutcome::SkipEndDropAssignmentBoundary,
             }
         }
-        ClipStrategy::Raw => {
+        ClipStrategy::RawAlignedBoundary | ClipStrategy::RawShiftedBoundary => {
             let assignment_boundary_pos = match end_side {
-                FragmentEndSide::Left => aligned_boundary_pos.saturating_sub(soft_clip_bp),
-                FragmentEndSide::Right => aligned_boundary_pos.saturating_add(soft_clip_bp),
+                FragmentEndSide::Left if clip_strategy.uses_shifted_boundary() => {
+                    aligned_boundary_pos.saturating_sub(soft_clip_bp)
+                }
+                FragmentEndSide::Right if clip_strategy.uses_shifted_boundary() => {
+                    aligned_boundary_pos.saturating_add(soft_clip_bp)
+                }
+                _ => aligned_boundary_pos,
             };
 
             if skip_end_due_to_indels {
@@ -490,11 +505,40 @@ fn build_resolved_end(
         FragmentEndSide::Left => extract_left_inside_bases(read, clip_strategy, k_inside)?,
         FragmentEndSide::Right => extract_right_inside_bases(read, clip_strategy, k_inside)?,
     };
+    let inside_reference_validation_bp =
+        inside_reference_validation_bp(read, end_side, clip_strategy, k_inside);
 
     Some(ResolvedFragmentEnd {
         boundary_pos,
         inside_bases,
+        inside_reference_validation_bp,
     })
+}
+
+/// Return how many of the extracted inside bases can still be checked against reference-backed
+/// genomic positions.
+///
+/// Most clip strategies keep the motif boundary aligned with the genomic start/end they use for
+/// validation, so all `k_inside` bases remain reference-addressable. `RawAlignedBoundary` is the
+/// exception: it keeps the aligned genomic boundary but prepends/appends clipped read bases to the
+/// inside motif. Those clipped-only bases do not correspond to reference positions and must be
+/// excluded from blacklist validation.
+fn inside_reference_validation_bp(
+    read: &EndReadInfo,
+    end_side: FragmentEndSide,
+    clip_strategy: ClipStrategy,
+    k_inside: usize,
+) -> usize {
+    match clip_strategy {
+        ClipStrategy::Aligned | ClipStrategy::Skip | ClipStrategy::RawShiftedBoundary => k_inside,
+        ClipStrategy::RawAlignedBoundary => {
+            let soft_clip_bp = match end_side {
+                FragmentEndSide::Left => read.left_soft_clip_bp,
+                FragmentEndSide::Right => read.right_soft_clip_bp,
+            };
+            k_inside.saturating_sub(soft_clip_bp as usize)
+        }
+    }
 }
 
 fn extract_left_inside_bases(
@@ -504,7 +548,7 @@ fn extract_left_inside_bases(
 ) -> Option<Vec<u8>> {
     let start_idx = match clip_strategy {
         ClipStrategy::Aligned | ClipStrategy::Skip => read.left_soft_clip_bp as usize,
-        ClipStrategy::Raw => 0,
+        ClipStrategy::RawAlignedBoundary | ClipStrategy::RawShiftedBoundary => 0,
     };
     let end_idx = start_idx.saturating_add(k_inside);
     if end_idx > read.seq.len() {
@@ -523,7 +567,7 @@ fn extract_right_inside_bases(
             .seq
             .len()
             .checked_sub(read.right_soft_clip_bp as usize)?,
-        ClipStrategy::Raw => read.seq.len(),
+        ClipStrategy::RawAlignedBoundary | ClipStrategy::RawShiftedBoundary => read.seq.len(),
     };
     let start_idx = end_idx.checked_sub(k_inside)?;
     Some(read.seq[start_idx..end_idx].to_vec())

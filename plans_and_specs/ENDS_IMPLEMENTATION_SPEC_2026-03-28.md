@@ -40,7 +40,7 @@ This keeps downstream logic simple and fits the repo pattern where fragment payl
 
 This means:
 
-- `aligned`, `raw`, and `drop` are handled in fragment collection
+- `aligned`, the raw clip variants, and `skip` are handled in fragment collection
 - `fill-with-ref` is not implemented yet and should explicitly use `unimplemented!()`
 
 ### 3. Internal counting uses encoded motif halves plus orientation
@@ -221,6 +221,7 @@ Working shape:
 pub struct ResolvedFragmentEnd {
     pub boundary_pos: u32,
     pub inside_bases: Vec<u8>,
+    pub inside_reference_validation_bp: usize,
 }
 ```
 
@@ -228,10 +229,14 @@ Notes:
 
 - `boundary_pos` is the assignment boundary used by the kept end
 - for `aligned`, `boundary_pos` is the aligned boundary after terminal clipping is excluded
-- for `raw`, `boundary_pos` may move outward beyond the aligned span while the counted `inside_bases` still come from the raw terminal sequence
+- for the raw clip variants, `boundary_pos` follows the selected boundary interpretation
+- `inside_reference_validation_bp` records how many inside bases still overlap real reference
+  coordinates for motif-level blacklist validation
 - if an end is skipped, no `ResolvedFragmentEnd` exists for it
 
-This shape is intentionally minimal. If later implementation shows that another small field is needed for counters or validation, it can be added.
+This shape is still intentionally small, but it now includes the one extra field needed to keep
+`raw-aligned-boundary` blacklist validation reference-based without inventing coordinates for
+fully clipped bases.
 
 ## Counting model
 
@@ -328,7 +333,12 @@ The current sidecar is intentionally narrower than the original draft and does n
 
 ### Fragment-length filtering
 
-Fragment-length filters remain defined on the aligned fragment interval, not on the assignment interval.
+Fragment-length filters remain defined on the assignment interval, not only on the aligned fragment interval.
+
+This matches the current `ends` implementation:
+
+- aligned fragment interval geometry is still used for fragment-level blacklist filtering, GC correction, and genomic scaling
+- assignment interval geometry is used for fragment-length filtering and window assignment
 
 Working shape:
 
@@ -432,14 +442,14 @@ This is not "fixing BAM". It is converting from BAM storage orientation to the m
 
 ### Default fragment-end interpretation
 
-By default, `ends` should trust the aligner and use aligned fragment ends.
+By default, `ends` should skip soft-clipped ends.
 
 This applies in both input modes:
 
 - paired fragments use the aligned span `forward.pos -> reverse.reference_end`
 - unpaired `--reads-are-fragments` input uses the aligned span `pos -> reference_end`
 
-So clipped terminal bases are not part of the fragment by default. Users opt into using clipped terminal sequence only by selecting `raw`.
+So clipped terminal bases are not part of counted motifs by default. Users must opt in to interpreting clipped terminal sequence by selecting an explicit non-skip clip strategy.
 
 ### `aligned`
 
@@ -450,9 +460,43 @@ Collector behavior:
 - resolve `inside_bases` from the first aligned bases inside the fragment
 - clipped terminal bases are excluded from the counted inside-fragment sequence
 
-This is the default clip strategy.
+### Raw clip variants
 
-### `raw`
+The current `raw` behavior is doing two conceptually different things at once:
+
+- use raw read sequence from the clipped end
+- shift the genomic end boundary outward and treat that shifted boundary as a genomic position for
+  assignment, outside lookup, and motif-level blacklist validation
+
+This should be split into two explicit user-facing modes.
+
+Working CLI names are still provisional, but the current preferred pair is:
+
+- `raw-aligned-boundary`
+- `raw-shifted-boundary`
+
+These names are preferred over insertion-like wording because the user choice is really about how
+to interpret the end boundary on the reference, not about claiming that soft-clipped bases are
+literal insertions.
+
+### `raw-aligned-boundary`
+
+Collector behavior:
+
+- keep the end
+- resolve `inside_bases` from the observed read bases at the fragment end, including soft-clipped bases
+- keep the assignment boundary aligned at the original fragment boundary
+- keep assignment length aligned
+- `outside` starts at the aligned boundary
+- fragment-level blacklist, GC correction, and scaling stay aligned
+- motif-level blacklist validation only applies where the motif overlaps reference coordinates
+
+Compatibility rule:
+
+- this mode only makes semantic sense with `source_inside = read`
+- the command should reject `source_inside = reference` together with `raw-aligned-boundary`
+
+### `raw-shifted-boundary`
 
 Collector behavior:
 
@@ -460,8 +504,13 @@ Collector behavior:
 - resolve `inside_bases` from the observed read bases at the fragment end, including soft-clipped bases
 - if terminal soft clipping is present, move the counted fragment boundary outward beyond the aligned span by the clipped length
 - clipping is allowed
+- `outside` starts at the shifted boundary
+- assignment interval and assignment length use the shifted boundary
+- motif-level blacklist validation uses the genomic positions implied by that shifted boundary
 
-### `drop`
+This is the current `raw` implementation.
+
+### `skip`
 
 Collector behavior:
 
@@ -509,6 +558,11 @@ Stage 1:
 - this uses the configured `blacklist_strategy`
 - if the fragment is excluded here, stop before any end motif work
 
+Important consequence:
+
+- fragment-level blacklisting does not expand outward under raw clipping
+- even in `raw-shifted-boundary`, this stage still uses the aligned fragment interval
+
 Stage 2:
 
 - every end motif must also be checked against a blacklist-masked reference representation
@@ -541,7 +595,8 @@ This keeps blacklist semantics genomic without forcing expensive overlap checks 
 
 ### End-specific lookup coordinates for blacklist validation
 
-Blacklist validation must use the same genomic lookup starts as the reference-backed motif encoding.
+Blacklist validation must use the same genomic lookup starts as the reference-backed motif encoding
+for the selected clip strategy.
 
 For a kept end with assignment boundary `boundary_pos`:
 
@@ -551,6 +606,17 @@ For a kept end with assignment boundary `boundary_pos`:
 - right `inside` span starts at `boundary_pos - k_inside`
 
 The right-end offsets are easy to get wrong and must be tested explicitly.
+
+Mode-specific interpretation:
+
+- `aligned` and `skip` use the aligned boundary
+- `raw-shifted-boundary` uses the clip-shifted boundary
+- `raw-aligned-boundary` keeps the aligned boundary and therefore does not invent reference
+  positions outside the aligned span
+
+For `raw-aligned-boundary`, blacklist validation must stay reference-based only where the motif
+actually overlaps reference coordinates. It must not pretend that clipped bases occupy inferred
+reference positions beyond the aligned span.
 
 ### Exact fallback path must preserve blacklist semantics
 
@@ -642,12 +708,12 @@ The implementation should proceed in this order:
 The command now has two distinct geometries:
 
 - aligned fragment interval geometry
-  - used for fragment length and GC correction
+  - used for fragment-level blacklist filtering, GC correction, and genomic scaling
   - always stays on the original aligned interval
 
 - assignment boundary geometry
-  - used for end-based placement when an end is actually kept for assignment
-  - may differ from the aligned boundary under `raw`
+  - used for fragment-length filtering and end/window assignment when an end is actually kept for assignment
+  - may differ from the aligned boundary under `raw-shifted-boundary`
 
 This distinction is important and must stay explicit in the collector.
 
@@ -677,16 +743,22 @@ One resolved end should return one of these semantic outcomes:
   - if the end can be built, return `KeepEnd` with aligned assignment boundary
   - if too few sequence bases remain, return `SkipEndDropAssignmentBoundary`
 
-- `raw`
+- `raw-aligned-boundary`
+  - if the end can be built, return `KeepEnd` with aligned assignment boundary
+  - if too few sequence bases remain after using raw sequence, return `SkipEndDropAssignmentBoundary`
+  - forbid `source_inside = reference`
+
+- `raw-shifted-boundary`
   - if the end can be built, return `KeepEnd` with outward-shifted assignment boundary
   - if too few sequence bases remain after using raw sequence, return `SkipEndDropAssignmentBoundary`
 
-- `drop`
+- `skip`
   - if the end is soft-clipped, return `SkipEndDropAssignmentBoundary`
   - otherwise behave like `aligned`
 
 - `max_soft_clips`
   - when exceeded, return `SkipEndDropAssignmentBoundary`
+  - apply the threshold independently to each relevant fragment end
 
 - `IndelMotifFilterPolicy::SkipAffectedEnd`
   - if the end motif has indels in its aligned `k_inside` footprint, return
@@ -714,17 +786,25 @@ These tests are required before calling the collector stable enough.
 ### Clip strategy behavior
 
 - `aligned` excludes terminal soft-clipped bases from `inside_bases`
-- `raw` includes terminal soft-clipped bases in `inside_bases`
-- `raw` moves the assignment boundary outward by the soft-clipped length
-- `drop` skips a soft-clipped end
+- both raw clip variants include terminal soft-clipped bases in `inside_bases`
+- `raw-aligned-boundary` keeps the aligned assignment boundary
+- `raw-shifted-boundary` moves the assignment boundary outward by the soft-clipped length
+- `skip` skips a soft-clipped end
 - hard-clipped reads are always discarded
 
 ### Boundary semantics
 
 - fragment `interval` stays on aligned boundaries for length and GC purposes
-- kept `raw` ends use shifted assignment boundaries
-- skipped ends from `drop` or `max_soft_clips` fall back to aligned assignment boundaries
+- kept `raw-aligned-boundary` ends use aligned assignment boundaries
+- kept `raw-shifted-boundary` ends use shifted assignment boundaries
+- skipped ends from `skip` or `max_soft_clips` fall back to aligned assignment boundaries
 - skipped ends from indel filtering keep assignment boundaries when policy says to keep them
+
+### Source/clip compatibility
+
+- `raw-aligned-boundary` + `source_inside = reference` is rejected
+- `aligned`, `skip`, and `raw-shifted-boundary` remain valid with both inside sources
+- motif-level blacklist tests must cover the difference between aligned-boundary and shifted-boundary raw modes
 
 ### Indel filtering
 
@@ -816,9 +896,10 @@ This means the fragment payload must preserve:
 2. Add `collect_fragment_with_ends(...)`
 3. Add iterator support in `src/shared/fragment_iterator.rs`
 4. Make the collector support:
-   - `raw`
-   - `drop`
-   - `align-start`
+   - `aligned`
+   - `skip`
+   - `raw-aligned-boundary`
+   - `raw-shifted-boundary`
    - `fill-with-ref => unimplemented!()`
 5. Add direct encoding for resolved `inside` sequences
 6. Add positional reference encoding for `outside`

@@ -7,7 +7,7 @@ use crate::{
         counters::EndsCounters,
         ends::{
             config::EndsConfig,
-            config_structs::{ClipStrategy, WindowMotifAssigner},
+            config_structs::{ClipStrategy, KmerSource, WindowMotifAssigner},
             counting::{EndCountsByWindow, decode_end_motif_counts},
             motifs::{
                 CountedEndFlags, build_optional_kmer_spec, build_tile_motif_context,
@@ -75,6 +75,13 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     if opt.k_inside == 0 && opt.k_outside == 0 {
         bail!("At least one of --k-inside or --k-outside must be > 0");
     }
+    if matches!(opt.clip.clip_strategy, ClipStrategy::RawAlignedBoundary)
+        && matches!(opt.source_inside, KmerSource::Reference)
+    {
+        bail!(
+            "`--clip-strategy raw-aligned-boundary` cannot be combined with `--source-inside reference`"
+        );
+    }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
@@ -137,16 +144,12 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(tiles.len() as u64));
 
-    let tile_span_left_halo = if matches!(opt.clip.clip_strategy, ClipStrategy::Raw) {
+    let tile_span_left_halo = if opt.clip.clip_strategy.uses_shifted_boundary() {
         opt.clip.max_soft_clips as u64
     } else {
         0
     };
-    let tile_span_right_halo = if matches!(opt.clip.clip_strategy, ClipStrategy::Raw) {
-        opt.fragment_lengths.max_fragment_length as u64 + opt.clip.max_soft_clips as u64
-    } else {
-        opt.fragment_lengths.max_fragment_length as u64
-    };
+    let tile_span_right_halo = opt.fragment_lengths.max_fragment_length as u64;
 
     let windows_lookup = windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
@@ -485,11 +488,7 @@ fn process_tile(
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
     debug_assert_eq!(_tid_check, tile.tid as u32);
 
-    let effective_max_fragment_length = if matches!(opt.clip.clip_strategy, ClipStrategy::Raw) {
-        opt.fragment_lengths.max_fragment_length + opt.clip.max_soft_clips as u32 * 2
-    } else {
-        opt.fragment_lengths.max_fragment_length
-    };
+    let max_fragment_length = opt.fragment_lengths.max_fragment_length;
 
     // Counters
     let mut counter = EndsCounters::default();
@@ -520,11 +519,7 @@ fn process_tile(
     // Narrow the BAM fetch to the part of the tile that can still contribute to the current
     // windows. In global/by-size modes this usually stays close to the tile fetch span; in BED
     // mode it can shrink substantially.
-    let bed_fetch_halo_bp = if matches!(opt.clip.clip_strategy, ClipStrategy::Raw) {
-        opt.fragment_lengths.max_fragment_length as u64 + opt.clip.max_soft_clips as u64
-    } else {
-        opt.fragment_lengths.max_fragment_length as u64
-    };
+    let bed_fetch_halo_bp = opt.fragment_lengths.max_fragment_length as u64;
     let Some(fetch_span) = fetch_span_for_tile(
         tile,
         tile_window_span,
@@ -573,9 +568,9 @@ fn process_tile(
     let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
         WindowMotifAssigner::Any
         | WindowMotifAssigner::Endpoint
-        | WindowMotifAssigner::CountOverlap => 1. / (effective_max_fragment_length as f64 + 1.0), // 2x to allow for raw-clipping-mode expansion and +1 to avoid rounding error issues
+        | WindowMotifAssigner::CountOverlap => 1. / (max_fragment_length as f64 + 1.0), // +1 to avoid rounding error issues
         WindowMotifAssigner::All | WindowMotifAssigner::Midpoint => {
-            1.0 - (1. / (effective_max_fragment_length as f64 + 1.0))
+            1.0 - (1. / (max_fragment_length as f64 + 1.0))
         } // 1.0 but just below to avoid rounding errors
         WindowMotifAssigner::Proportion(p) => p,
     };
@@ -596,7 +591,7 @@ fn process_tile(
     // Function for filtering fragments after pairing
     let fragment_filter = {
         let lengths = opt.fragment_lengths.clone();
-        move |f: &FragmentWithEnds| lengths.contains(f.len())
+        move |fragment: &FragmentWithEnds| lengths.contains(fragment.assignment_len())
     };
 
     // Create fragment iterator with per-tile filtering and optional GC tag handling
@@ -708,7 +703,7 @@ fn process_tile(
             by_size,
             query_interval,
             min_overlap_fraction,
-            effective_max_fragment_length.into(),
+            max_fragment_length.into(),
         )?;
         let overlapping_windows = if let Some(overlaps) = overlapping_windows {
             overlaps
@@ -744,8 +739,8 @@ fn process_tile(
                 Some(&scaling_with_bin_idx),
                 None,
                 fragment.interval.try_to_u64()?, // Full fragment
-                1. / (effective_max_fragment_length as f64 + 1.0), // Any overlap without rounding error issues
-                effective_max_fragment_length.into(),
+                1. / (max_fragment_length as f64 + 1.0), // Any overlap without rounding error issues
+                max_fragment_length.into(),
             )
             .with_context(|| format!("finding overlapping scaling bins on chr {}", tile.chr))?
             .with_context(|| {

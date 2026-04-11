@@ -77,10 +77,12 @@ fn fragment_with_two_ends(
         left_end: Some(ResolvedFragmentEnd {
             boundary_pos: left_boundary_pos,
             inside_bases: left_inside.to_vec(),
+            inside_reference_validation_bp: left_inside.len(),
         }),
         right_end: Some(ResolvedFragmentEnd {
             boundary_pos: right_boundary_pos,
             inside_bases: right_inside.to_vec(),
+            inside_reference_validation_bp: right_inside.len(),
         }),
     }
 }
@@ -253,12 +255,12 @@ fn encode_inside_code_read_uses_the_resolved_read_bases_directly() {
     let left_end = ResolvedFragmentEnd {
         boundary_pos: 10,
         inside_bases: b"AC".to_vec(),
+        inside_reference_validation_bp: 2,
     };
 
     // Act
-    let code =
-        encode_inside_code(&left_end, EndSide::Left, &motif_context, KmerSource::Read)
-            .expect("read-backed inside code should work");
+    let code = encode_inside_code(&left_end, EndSide::Left, &motif_context, KmerSource::Read)
+        .expect("read-backed inside code should work");
 
     // Assert
     let spec = motif_context.inside_spec.as_ref().expect("inside spec");
@@ -266,7 +268,7 @@ fn encode_inside_code_read_uses_the_resolved_read_bases_directly() {
 }
 
 #[test]
-fn encode_blacklist_validation_inside_code_returns_masked_reference_code_for_read_source() {
+fn validate_blacklist_for_read_inside_code_returns_masked_reference_code_for_read_source() {
     // Arrange: the blacklist masks the first inside base at genomic position 2, so the
     // validation code should become the `N` sentinel even though the actual motif would come
     // from the read.
@@ -293,10 +295,11 @@ fn encode_blacklist_validation_inside_code_returns_masked_reference_code_for_rea
     let left_end = ResolvedFragmentEnd {
         boundary_pos: 2,
         inside_bases: b"GT".to_vec(),
+        inside_reference_validation_bp: 2,
     };
 
     // Act
-    let code = encode_blacklist_validation_inside_code(
+    let code = validate_blacklist_for_read_inside_code(
         &left_end,
         EndSide::Left,
         &inside_spec,
@@ -309,13 +312,51 @@ fn encode_blacklist_validation_inside_code_returns_masked_reference_code_for_rea
 }
 
 #[test]
+fn validate_blacklist_for_read_inside_code_ignores_clipped_only_prefix_in_raw_aligned_mode() {
+    // Arrange: the blacklist masks genomic position 1, but this left end only validates the
+    // aligned-overlapping suffix at position 2. The clipped-only prefix must not trigger skipping.
+    let inside_spec = spec_for_k(2);
+    let mut reference_bases = b"ACGTAC".to_vec();
+    let blacklist = [Interval::new(1_u64, 2_u64).expect("valid blacklist")];
+    apply_blacklist_mask_to_seq(&mut reference_bases, &blacklist, 0);
+    let inside_codes = build_precomputed_reference_codes(Some(&inside_spec), &reference_bases);
+    let motif_context = TileMotifContext {
+        reference_start: 0,
+        reference_bases: Some(reference_bases),
+        inside_spec: Some(inside_spec.clone()),
+        outside_spec: None,
+        inside_codes,
+        outside_codes: None,
+        blacklist_intervals: &blacklist,
+        chrom_len: 6,
+    };
+    let left_end = ResolvedFragmentEnd {
+        boundary_pos: 2,
+        inside_bases: b"TG".to_vec(),
+        inside_reference_validation_bp: 1,
+    };
+
+    // Act
+    let code = validate_blacklist_for_read_inside_code(
+        &left_end,
+        EndSide::Left,
+        &inside_spec,
+        &motif_context,
+    )
+    .expect("blacklist validation should work");
+
+    // Assert
+    assert_eq!(code, None);
+}
+
+#[test]
 fn encode_outside_code_left_uses_reference_bases_before_boundary() {
     // Arrange: left outside at boundary 4 with k=2 should read bases [2, 4) = "GT".
     let motif_context = reference_motif_context(b"ACGTAC", None, Some(2));
 
     // Act
-    let code = encode_outside_code(4, EndSide::Left, &motif_context)
-        .expect("outside code should work");
+    let code =
+        encode_outside_code(4, EndSide::Left, &motif_context).expect("outside code should work");
 
     // Assert
     let spec = motif_context.outside_spec.as_ref().expect("outside spec");
@@ -343,6 +384,7 @@ fn encode_inside_code_reference_right_uses_reference_bases_ending_at_boundary() 
     let right_end = ResolvedFragmentEnd {
         boundary_pos: 4,
         inside_bases: vec![],
+        inside_reference_validation_bp: 2,
     };
 
     // Act
@@ -396,15 +438,36 @@ fn motif_reference_span_for_tile_extends_full_tile_fetch_by_k_outside_when_align
     // - with k_outside=3, preload must cover [10 - 3, 30 + 3) = [7, 33)
     let tile = Tile::from_coords("chr1".to_string(), 0, 0, 12, 28, 10, 30).expect("valid tile");
 
-    let reference_span =
-        motif_reference_span_for_tile(&tile, 100, ClipStrategy::Aligned, 5, 3)
-            .expect("reference span");
+    let reference_span = motif_reference_span_for_tile(&tile, 100, ClipStrategy::Aligned, 5, 3)
+        .expect("reference span");
 
-    assert_eq!(reference_span, Interval::new(7_u64, 33_u64).expect("valid interval"));
+    assert_eq!(
+        reference_span,
+        Interval::new(7_u64, 33_u64).expect("valid interval")
+    );
 }
 
 #[test]
-fn motif_reference_span_for_tile_extends_full_tile_fetch_by_k_outside_and_soft_clips_when_raw() {
+fn motif_reference_span_for_tile_keeps_aligned_padding_when_raw_boundary_stays_aligned() {
+    // Mental derivation:
+    // - tile fetch is [10, 30)
+    // - raw-aligned-boundary adds no soft-clip expansion to the reference preload
+    // - with k_outside=3, preload stays [10 - 3, 30 + 3) = [7, 33)
+    let tile = Tile::from_coords("chr1".to_string(), 0, 0, 12, 28, 10, 30).expect("valid tile");
+
+    let reference_span =
+        motif_reference_span_for_tile(&tile, 100, ClipStrategy::RawAlignedBoundary, 5, 3)
+            .expect("reference span");
+
+    assert_eq!(
+        reference_span,
+        Interval::new(7_u64, 33_u64).expect("valid interval")
+    );
+}
+
+#[test]
+fn motif_reference_span_for_tile_extends_full_tile_fetch_by_k_outside_and_soft_clips_when_raw_boundary_shifts()
+ {
     // Mental derivation:
     // - tile fetch is [10, 30)
     // - raw mode adds max_soft_clips on both sides
@@ -412,10 +475,14 @@ fn motif_reference_span_for_tile_extends_full_tile_fetch_by_k_outside_and_soft_c
     // - preload must therefore cover [10 - 8, 30 + 8) = [2, 38)
     let tile = Tile::from_coords("chr1".to_string(), 0, 0, 12, 28, 10, 30).expect("valid tile");
 
-    let reference_span = motif_reference_span_for_tile(&tile, 100, ClipStrategy::Raw, 5, 3)
-        .expect("reference span");
+    let reference_span =
+        motif_reference_span_for_tile(&tile, 100, ClipStrategy::RawShiftedBoundary, 5, 3)
+            .expect("reference span");
 
-    assert_eq!(reference_span, Interval::new(2_u64, 38_u64).expect("valid interval"));
+    assert_eq!(
+        reference_span,
+        Interval::new(2_u64, 38_u64).expect("valid interval")
+    );
 }
 
 #[test]
@@ -426,10 +493,14 @@ fn motif_reference_span_for_tile_clamps_to_chromosome_edges() {
     // - unclamped span would be [-2, 24), which must clamp to [0, 20)
     let tile = Tile::from_coords("chr1".to_string(), 0, 0, 6, 16, 4, 18).expect("valid tile");
 
-    let reference_span = motif_reference_span_for_tile(&tile, 20, ClipStrategy::Raw, 2, 4)
-        .expect("reference span");
+    let reference_span =
+        motif_reference_span_for_tile(&tile, 20, ClipStrategy::RawShiftedBoundary, 2, 4)
+            .expect("reference span");
 
-    assert_eq!(reference_span, Interval::new(0_u64, 20_u64).expect("valid interval"));
+    assert_eq!(
+        reference_span,
+        Interval::new(0_u64, 20_u64).expect("valid interval")
+    );
 }
 
 #[test]
@@ -450,7 +521,8 @@ fn get_reference_code_errors_when_lookup_escapes_preloaded_span() {
     .expect_err("lookup outside the preloaded span should fail loudly");
 
     // Assert
-    assert!(err
-        .to_string()
-        .contains("motif reference lookup escaped preloaded tile span"));
+    assert!(
+        err.to_string()
+            .contains("motif reference lookup escaped preloaded tile span")
+    );
 }

@@ -23,22 +23,39 @@ pub enum KmerSource {
 
 /// Select how clipped fragment ends should be interpreted.
 ///
-/// End motifs can either follow the aligned fragment span, expand outward to
-/// include soft-clipped bases, or be skipped when clipping is present. The
-/// `Skip` option is stricter than the aligned mode because soft-clipped
-/// ends are ignored rather than interpreted.
+/// End motifs can either follow the aligned fragment span, use raw read bases
+/// with aligned genomic boundaries, use raw read bases with shifted genomic
+/// boundaries, or be skipped when clipping is present.
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum ClipStrategy {
     /// Use the aligned fragment ends.
-    #[default]
     Aligned,
 
-    /// Use the raw read bases, including soft-clipped bases.
-    Raw,
+    /// Use raw read bases, but keep the aligned genomic boundary.
+    RawAlignedBoundary,
+
+    /// Use raw read bases and shift the genomic boundary outward.
+    RawShiftedBoundary,
 
     /// Skip motifs whose end is soft-clipped.
+    #[default]
     Skip,
+}
+
+impl ClipStrategy {
+    #[inline]
+    pub fn uses_raw_inside_bases(self) -> bool {
+        matches!(
+            self,
+            ClipStrategy::RawAlignedBoundary | ClipStrategy::RawShiftedBoundary
+        )
+    }
+
+    #[inline]
+    pub fn uses_shifted_boundary(self) -> bool {
+        matches!(self, ClipStrategy::RawShiftedBoundary)
+    }
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
@@ -47,32 +64,48 @@ pub struct ClippingArgs {
     /// How to extract a motif when its fragment end is clipped `[string]`
     ///
     /// Clipping means the read contains terminal bases that the aligner did not align normally.
-    /// The choice here is thus what sequence object to count when that happens.
+    /// The choice here is thus what sequence to count when that happens.
     ///
     /// **NOTE**: Fragments with **hard**-clipping are always discarded.
     ///
     /// Possible values:
     ///
     /// - `"aligned"`:
-    ///   Use the aligned start and end positions (the usual cfDNAlab fragment definition).
+    ///   Use the aligned start and end positions (the usual `cfDNAlab` fragment definition).
     ///   This trusts the aligner's choice and ignores clipped bases in the read sequences.
+    ///   
+    ///   **NOTE**: If the aligner clipped the actual DNA molecule, these motifs may not reflect
+    ///   the actual fragment ends.
     ///
-    /// - `"raw"`:
-    ///   Use the raw read bases, including soft-clipped bases.
+    /// - `"raw-aligned-boundary"`:
+    ///   Use the raw read bases, including soft-clipped bases, but keep the
+    ///   **aligned** fragment-end boundary.
     ///
-    ///   When soft-clipping is present, this moves the counted fragment end
-    ///   outside the aligned span by the clipped length. This also happens when using
-    ///   the reference genome as source or only counting `--k-outside` bases.
+    ///   The aligned boundary is used for outside-base lookup,
+    ///   window assignment, and motif-level blacklist validation.
+    ///
+    ///   This setting is only supported with `--source-inside read`.
+    ///
+    /// - `"raw-shifted-boundary"`:
+    ///   Use the raw read bases, including soft-clipped bases, and **move** the
+    ///   fragment-end boundary outside the aligned span by the clipped
+    ///   length.
+    ///
+    ///   This shifted boundary is used for outside-base lookup,
+    ///   window assignment, and motif-level blacklist validation.
     ///
     /// - `"skip"`:
-    ///   Skip motifs when their fragment end is soft-clipped. Hard-clipping always discards the full fragment.
+    ///   Skip motifs when their fragment end is soft-clipped.
+    ///   Hard-clipping always discards the full fragment.
     #[cfg_attr(
         feature = "cli",
-        clap(long, value_enum, default_value = "aligned", help_heading = "Clipping")
+        clap(long, value_enum, default_value = "skip", help_heading = "Clipping")
     )]
     pub clip_strategy: ClipStrategy,
 
-    /// Skip motifs with a higher number of soft-clipped bases than this `[integer]`
+    /// Skip motifs whose relevant end has more soft-clipped bases than this `[integer]`
+    ///
+    /// This limit is applied independently to each fragment end.
     ///
     /// Use `--clip-strategy skip` to discard all soft-clipped motifs.
     #[cfg_attr(

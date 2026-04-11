@@ -813,7 +813,7 @@ mod test_fragment_with_ends {
         let fragment = collect_pair(
             &forward,
             &reverse,
-            ClipStrategy::Raw,
+            ClipStrategy::RawShiftedBoundary,
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
@@ -905,7 +905,7 @@ mod test_fragment_with_ends {
         let fragment = collect_pair(
             &forward,
             &reverse,
-            ClipStrategy::Raw,
+            ClipStrategy::RawShiftedBoundary,
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
@@ -921,6 +921,60 @@ mod test_fragment_with_ends {
         assert_eq!(
             fragment.right_end.as_ref().expect("right end").boundary_pos,
             118
+        );
+    }
+
+    #[test]
+    fn raw_aligned_boundary_keeps_aligned_positions_but_uses_raw_inside_bases() {
+        // Human verification status: unverified
+        let forward = make_record(
+            b"pair_raw_aligned_boundary",
+            0,
+            100,
+            false,
+            cigar(&[('S', 2), ('M', 6)]),
+            b"TTACGTAC",
+            None,
+        );
+        let reverse = make_record(
+            b"pair_raw_aligned_boundary",
+            0,
+            110,
+            true,
+            cigar(&[('M', 6), ('S', 2)]),
+            b"CGTACGTT",
+            None,
+        );
+
+        let fragment = collect_pair(
+            &forward,
+            &reverse,
+            ClipStrategy::RawAlignedBoundary,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            NO_MAX_SOFT_CLIP_LIMIT,
+            None,
+        )
+        .expect("fragment");
+
+        assert_eq!(fragment.assignment_start(), 100);
+        assert_eq!(fragment.assignment_end(), 116);
+        assert_eq!(
+            fragment.left_end.as_ref().expect("left end").boundary_pos,
+            100
+        );
+        assert_eq!(
+            fragment.right_end.as_ref().expect("right end").boundary_pos,
+            116
+        );
+        assert_eq!(
+            fragment.left_end.as_ref().expect("left end").inside_bases,
+            b"TTAC".to_vec()
+        );
+        assert_eq!(
+            fragment.right_end.as_ref().expect("right end").inside_bases,
+            b"CGTT".to_vec()
         );
     }
 
@@ -949,7 +1003,7 @@ mod test_fragment_with_ends {
         let fragment = collect_pair(
             &forward,
             &reverse,
-            ClipStrategy::Drop,
+            ClipStrategy::Skip,
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
@@ -990,7 +1044,7 @@ mod test_fragment_with_ends {
             collect_pair(
                 &forward,
                 &reverse,
-                ClipStrategy::Drop,
+                ClipStrategy::Skip,
                 KmerSource::Read,
                 IndelMotifFilterPolicy::Auto,
                 4,
@@ -1026,7 +1080,7 @@ mod test_fragment_with_ends {
         let fragment = collect_pair(
             &forward,
             &reverse,
-            ClipStrategy::Raw,
+            ClipStrategy::RawShiftedBoundary,
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
@@ -1184,10 +1238,12 @@ mod test_fragment_with_ends {
         );
 
         let aligned_info = end_info(&record, ClipStrategy::Aligned, 4, None);
-        let raw_info = end_info(&record, ClipStrategy::Raw, 4, None);
+        let raw_aligned_info = end_info(&record, ClipStrategy::RawAlignedBoundary, 4, None);
+        let raw_shifted_info = end_info(&record, ClipStrategy::RawShiftedBoundary, 4, None);
 
         assert!(aligned_info.left_motif_has_indels);
-        assert!(!raw_info.left_motif_has_indels);
+        assert!(!raw_aligned_info.left_motif_has_indels);
+        assert!(!raw_shifted_info.left_motif_has_indels);
     }
 
     #[test]
@@ -1291,7 +1347,7 @@ mod test_fragment_with_ends {
         let fragment = collect_pair(
             &forward,
             &reverse,
-            ClipStrategy::Raw,
+            ClipStrategy::RawShiftedBoundary,
             KmerSource::Read,
             IndelMotifFilterPolicy::SkipAffectedEnd,
             4,
@@ -1331,7 +1387,7 @@ mod test_fragment_with_ends {
         let fragment = collect_pair(
             &forward,
             &reverse,
-            ClipStrategy::Raw,
+            ClipStrategy::RawShiftedBoundary,
             KmerSource::Reference,
             IndelMotifFilterPolicy::Auto,
             4,
@@ -1406,7 +1462,7 @@ mod test_fragment_with_ends {
         let fragment = collect_pair(
             &forward,
             &reverse,
-            ClipStrategy::Drop,
+            ClipStrategy::Skip,
             KmerSource::Read,
             IndelMotifFilterPolicy::SkipAffectedEnd,
             4,
@@ -1447,7 +1503,7 @@ mod test_fragment_with_ends {
         let fragment = collect_pair(
             &forward,
             &reverse,
-            ClipStrategy::Raw,
+            ClipStrategy::RawShiftedBoundary,
             KmerSource::Reference,
             IndelMotifFilterPolicy::SkipAffectedEnd,
             4,
@@ -1513,7 +1569,7 @@ mod test_fragment_with_ends {
 
         let fragment = collect_single(
             &record,
-            ClipStrategy::Raw,
+            ClipStrategy::RawShiftedBoundary,
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
@@ -1526,6 +1582,44 @@ mod test_fragment_with_ends {
         assert_eq!(fragment.end(), 106);
         assert_eq!(fragment.assignment_start(), 98);
         assert_eq!(fragment.assignment_end(), 108);
+        assert_eq!(
+            fragment.left_end.as_ref().expect("left end").inside_bases,
+            b"TTAC".to_vec()
+        );
+        assert_eq!(
+            fragment.right_end.as_ref().expect("right end").inside_bases,
+            b"ACGG".to_vec()
+        );
+    }
+
+    #[test]
+    fn unpaired_raw_aligned_boundary_keeps_assignment_interval_aligned() {
+        // Human verification status: unverified
+        let record = make_record(
+            b"single_raw_aligned_boundary",
+            0,
+            100,
+            false,
+            cigar(&[('S', 2), ('M', 6), ('S', 2)]),
+            b"TTACGTACGG",
+            None,
+        );
+
+        let fragment = collect_single(
+            &record,
+            ClipStrategy::RawAlignedBoundary,
+            KmerSource::Read,
+            IndelMotifFilterPolicy::Auto,
+            4,
+            NO_MAX_SOFT_CLIP_LIMIT,
+            None,
+        )
+        .expect("fragment");
+
+        assert_eq!(fragment.start(), 100);
+        assert_eq!(fragment.end(), 106);
+        assert_eq!(fragment.assignment_start(), 100);
+        assert_eq!(fragment.assignment_end(), 106);
         assert_eq!(
             fragment.left_end.as_ref().expect("left end").inside_bases,
             b"TTAC".to_vec()

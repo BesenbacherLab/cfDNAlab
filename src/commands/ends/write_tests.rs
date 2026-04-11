@@ -47,10 +47,7 @@ fn stack_end_motif_counts_places_values_in_the_expected_rows_and_columns() {
     // - row 1 contains only `_G = 3.0`
     // - any missing row/column pair must stay at the dense default 0.0
     let bins = vec![
-        FxHashMap::from_iter([
-            ("_A".to_string(), 1.0),
-            ("_G".to_string(), 2.5),
-        ]),
+        FxHashMap::from_iter([("_A".to_string(), 1.0), ("_G".to_string(), 2.5)]),
         FxHashMap::from_iter([("_G".to_string(), 3.0)]),
     ];
     let motifs = vec!["_A".to_string(), "_G".to_string()];
@@ -74,14 +71,17 @@ fn stack_end_motif_counts_errors_when_a_bin_contains_an_unknown_motif() {
     let err = stack_end_motif_counts(&bins, &motifs)
         .expect_err("unknown motif labels should fail loudly");
 
-    assert!(err.to_string().contains("missing dense output column for motif label '_C'"));
+    assert!(
+        err.to_string()
+            .contains("missing dense output column for motif label '_C'")
+    );
 }
 
 #[test]
 fn write_end_settings_json_writes_the_minimal_interpretation_sidecar() {
     // Arrange: the minimal default config has
     // - inside source: read
-    // - clip strategy: aligned
+    // - clip strategy: skip
     // - window assignment: endpoint
     // - collapse_complement: false
     // Those are the fields currently retained in the sidecar.
@@ -96,7 +96,7 @@ fn write_end_settings_json_writes_the_minimal_interpretation_sidecar() {
     // Assert
     assert_eq!(
         parse_json(&settings),
-        expected_settings_json("read", "aligned", "endpoint")
+        expected_settings_json("read", "skip", "endpoint")
     );
 }
 
