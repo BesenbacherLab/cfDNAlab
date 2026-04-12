@@ -166,6 +166,11 @@ impl FromStr for BaseQualityFilter {
                 "Invalid base-quality filter '{s}'. {BASE_QUALITY_FILTER_USAGE}"
             ));
         }
+        if tokens.len() > 5 {
+            return Err(format!(
+                "Invalid base-quality filter '{s}'. {BASE_QUALITY_FILTER_USAGE}"
+            ));
+        }
 
         let aggregation = tokens[0].parse::<BaseQualityAggregation>()?;
         if !tokens[1].eq_ignore_ascii_case("in") {

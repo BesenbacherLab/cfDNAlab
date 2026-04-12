@@ -563,10 +563,9 @@ fn build_resolved_end(
 ///
 /// Returns `None` when:
 ///
-/// - a fragment-scope filter fails
+/// - a fragment-scope filter fails, including the degenerate case where no
+///   quality bases are available across all surviving ends
 /// - an end-scope filter removes both ends
-/// - the requested inside-quality slice cannot be formed for an end that is
-///   supposed to be scored
 ///
 /// When `bq_filters` is empty, this is a no-op and returns the input ends
 /// unchanged.

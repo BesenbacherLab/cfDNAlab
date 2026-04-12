@@ -211,5 +211,16 @@ fn parse_base_quality_filter_errors_when_trailing_tokens_remain_after_threshold(
         .expect_err("trailing tokens should fail");
 
     // Assert
-    assert!(err.contains("Invalid base-quality threshold"));
+    assert!(err.contains("Invalid base-quality filter"));
+}
+
+#[test]
+fn parse_base_quality_filter_errors_when_trailing_numeric_token_would_merge_into_threshold() {
+    // Arrange: `30 5` must not silently merge into threshold `305`.
+    let err = "min in end >= 30 5"
+        .parse::<BaseQualityFilter>()
+        .expect_err("trailing numeric token should fail");
+
+    // Assert
+    assert!(err.contains("Invalid base-quality filter"));
 }
