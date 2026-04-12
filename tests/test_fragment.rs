@@ -673,7 +673,7 @@ mod test_fragment_with_ends {
         k_inside: usize,
         gc_tag: Option<&[u8]>,
     ) -> EndReadInfo {
-        EndReadInfo::from_record_with_gc_tag(record, gc_tag, clip_strategy, k_inside)
+        EndReadInfo::from_record_with_gc_tag(record, gc_tag, clip_strategy, k_inside, false)
             .expect("end read info")
     }
 
@@ -697,6 +697,7 @@ mod test_fragment_with_ends {
             indel_filter,
             k_inside,
             max_soft_clips,
+            &[],
         )
     }
 
@@ -717,6 +718,7 @@ mod test_fragment_with_ends {
             indel_filter,
             k_inside,
             max_soft_clips,
+            &[],
         )
     }
 

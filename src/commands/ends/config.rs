@@ -231,6 +231,50 @@ pub struct EndsConfig {
         clap(long, alias = "mq", default_value = "30", value_parser = clap::value_parser!(u8).range(0..), help_heading="Filtering"))]
     pub min_mapq: u8,
 
+    /// Base-quality filter on the inside read bases `[string]`
+    ///
+    /// Repeat `--bq-filter` to count only ends that pass all **end filters** and belong to fragments that pass all **fragment filters**.
+    ///
+    /// Examples:
+    ///
+    /// - `--bq-filter "min in end >= 30"`
+    ///
+    /// - `--bq-filter "mean in fragment < 25"`
+    ///
+    /// - `--bq-filter "max in fragment < 20"`
+    ///
+    /// Each expression must use:
+    ///
+    /// - `<agg> in <scope> <op> <threshold>`
+    ///
+    /// With the following values:
+    ///
+    /// - with `<agg>` in `min`, `mean`, or `max`
+    ///
+    /// - with `<scope>` in `end` or `fragment`
+    ///
+    /// - with `<op>` in `>=`, `>`, `<=`, or `<`
+    ///
+    /// The keywords are parsed case-insensitively and ASCII whitespace is ignored.
+    ///
+    /// Scope semantics:
+    ///
+    /// - `end`: Score each fragment end independently and drop only the failing end.
+    ///
+    /// - `fragment`: Score the fragment from its two end scores and drop the full fragment when it fails.
+    ///
+    /// **NOTE**: `--bq-filter` requires `--k-inside > 0` and `--source-inside read`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long = "bq-filter",
+            value_parser,
+            action = clap::ArgAction::Append,
+            help_heading = "Filtering"
+        )
+    )]
+    pub bq_filters: Vec<BaseQualityFilter>,
+
     /// Only count properly paired reads `[flag]`
     ///
     /// This is **NOT** recommended by default as it trims the tails of the length distribution.
@@ -311,6 +355,7 @@ impl EndsConfig {
             },
             tile_size: 20000000,
             min_mapq: 30,
+            bq_filters: Vec::new(),
             require_proper_pair: false,
             blacklist: None,
             blacklist_min_size: 1,

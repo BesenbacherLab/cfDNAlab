@@ -10,8 +10,8 @@ use cfdnalab::commands::{
     ends::{
         config::EndsConfig,
         config_structs::{
-            AssignMotifToWindowArgs, ClipStrategy, DEFAULT_MAX_SOFT_CLIPS, KmerSource,
-            WindowMotifAssigner,
+            AssignMotifToWindowArgs, BaseQualityFilter, ClipStrategy, DEFAULT_MAX_SOFT_CLIPS,
+            KmerSource, WindowMotifAssigner,
         },
         ends::run,
     },
@@ -19,7 +19,7 @@ use cfdnalab::commands::{
 use cfdnalab::shared::{blacklist::BlacklistStrategy, indel_mode::IndelMotifFilterPolicy};
 use fixtures::{
     BamFixture, FragmentSpec, ReadSpec, bam_from_specs, paired_fragment, simple_reference_twobit,
-    twobit_from_sequences, write_bed,
+    single_read_bam_with_qualities, twobit_from_sequences, write_bed,
 };
 #[cfg(feature = "cmd_gc_bias")]
 use ndarray::array;
@@ -66,6 +66,12 @@ fn base_config(
     cfg
 }
 
+fn set_exact_fragment_length(cfg: &mut EndsConfig, len: u32) {
+    let lengths = cfg.fragment_lengths_mut();
+    lengths.min_fragment_length = len;
+    lengths.max_fragment_length = len;
+}
+
 #[test]
 fn ends_config_new_defaults_to_skip_clip_strategy() -> Result<()> {
     // Arrange
@@ -84,6 +90,549 @@ fn ends_config_new_defaults_to_skip_clip_strategy() -> Result<()> {
     // Assert
     assert_eq!(cfg.clip.clip_strategy, ClipStrategy::Skip);
     assert_eq!(cfg.clip.max_soft_clips, DEFAULT_MAX_SOFT_CLIPS);
+    Ok(())
+}
+
+#[test]
+fn end_scope_bq_filter_drops_only_the_failing_end() -> Result<()> {
+    // Arrange: left end quality is 40 and right end quality is 10.
+    //
+    // Mental derivation for k_inside=1, k_outside=0, source_inside=read:
+    // - left read base `A` contributes `_A`
+    // - right read base `G` contributes `_C` after right-end reverse complementation
+    // - `min in end >= 30` keeps the left end and drops the right end
+    let mut fragment = paired_fragment(10, 10, 4);
+    fragment.forward.seq = b"AAAA".to_vec();
+    fragment.forward.qual = 40;
+    fragment.reverse.seq = b"GGGG".to_vec();
+    fragment.reverse.qual = 10;
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 256)],
+        vec![fragment],
+        Vec::new(),
+        "ends_bq_end_filter",
+    )?;
+    let baseline_out_dir = TempDir::new()?;
+    let mut baseline_cfg = base_config(&bam.bam, baseline_out_dir.path(), 1, 0);
+    baseline_cfg.all_motifs = true;
+    set_exact_fragment_length(&mut baseline_cfg, 10);
+
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.all_motifs = true;
+    set_exact_fragment_length(&mut cfg, 10);
+    cfg.bq_filters = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
+
+    // Act
+    run(&baseline_cfg)?;
+    let (baseline_motifs, baseline_matrix) = read_dense_output(baseline_out_dir.path())?;
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert: without BQ filters, the same 10 bp fragment is counted at both ends, so this test
+    // cannot pass because the default fragment-length filter removed the fragment earlier.
+    assert_eq!(baseline_matrix.sum(), 2.0);
+    assert_eq!(
+        motif_count(&baseline_matrix, &baseline_motifs, 0, "_A"),
+        1.0
+    );
+    assert_eq!(
+        motif_count(&baseline_matrix, &baseline_motifs, 0, "_C"),
+        1.0
+    );
+    assert_eq!(matrix.sum(), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_C"), 0.0);
+    Ok(())
+}
+
+#[test]
+fn fragment_scope_bq_filter_drops_the_full_fragment_when_it_fails() -> Result<()> {
+    // Arrange: the fragment mean across both kept end qualities is (40 + 10) / 2 = 25.
+    let mut fragment = paired_fragment(10, 10, 4);
+    fragment.forward.seq = b"AAAA".to_vec();
+    fragment.forward.qual = 40;
+    fragment.reverse.seq = b"GGGG".to_vec();
+    fragment.reverse.qual = 10;
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 256)],
+        vec![fragment],
+        Vec::new(),
+        "ends_bq_fragment_filter",
+    )?;
+    let baseline_out_dir = TempDir::new()?;
+    let mut baseline_cfg = base_config(&bam.bam, baseline_out_dir.path(), 1, 0);
+    baseline_cfg.all_motifs = true;
+    set_exact_fragment_length(&mut baseline_cfg, 10);
+
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.all_motifs = true;
+    set_exact_fragment_length(&mut cfg, 10);
+    cfg.bq_filters = vec![
+        "mean in fragment >= 30"
+            .parse::<BaseQualityFilter>()
+            .unwrap(),
+    ];
+
+    // Act
+    run(&baseline_cfg)?;
+    let (_baseline_motifs, baseline_matrix) = read_dense_output(baseline_out_dir.path())?;
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(baseline_matrix.sum(), 2.0);
+    assert_eq!(matrix.sum(), 0.0);
+    Ok(())
+}
+
+#[test]
+fn fragment_scope_bq_filters_apply_before_end_scope_filters_remove_one_end() -> Result<()> {
+    // Arrange: left end quality 40 passes the end filter, right end quality 10 fails it,
+    // but the fragment mean over both ends is still only 25.
+    //
+    // Mental derivation:
+    // - `min in end >= 30` would keep only the left end
+    // - `mean in fragment >= 30` fails on the raw candidate fragment
+    // - so the fragment must contribute nothing
+    let mut fragment = paired_fragment(10, 10, 4);
+    fragment.forward.seq = b"AAAA".to_vec();
+    fragment.forward.qual = 40;
+    fragment.reverse.seq = b"GGGG".to_vec();
+    fragment.reverse.qual = 10;
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 256)],
+        vec![fragment],
+        Vec::new(),
+        "ends_bq_filter_order",
+    )?;
+    let baseline_out_dir = TempDir::new()?;
+    let mut baseline_cfg = base_config(&bam.bam, baseline_out_dir.path(), 1, 0);
+    baseline_cfg.all_motifs = true;
+    set_exact_fragment_length(&mut baseline_cfg, 10);
+
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.all_motifs = true;
+    set_exact_fragment_length(&mut cfg, 10);
+    cfg.bq_filters = vec![
+        "min in end >= 30".parse::<BaseQualityFilter>().unwrap(),
+        "mean in fragment >= 30"
+            .parse::<BaseQualityFilter>()
+            .unwrap(),
+    ];
+
+    // Act
+    run(&baseline_cfg)?;
+    let (_baseline_motifs, baseline_matrix) = read_dense_output(baseline_out_dir.path())?;
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(baseline_matrix.sum(), 2.0);
+    assert_eq!(matrix.sum(), 0.0);
+    Ok(())
+}
+
+#[test]
+fn fragment_scope_bq_filter_can_pass_while_end_scope_filter_drops_one_end() -> Result<()> {
+    // Arrange: left end quality is 40 and right end quality is 20.
+    //
+    // Mental derivation for k_inside=1:
+    // - fragment mean is (40 + 20) / 2 = 30, so `mean in fragment >= 30` passes
+    // - `min in end >= 30` still drops the right end
+    // - only the left `_A` motif should remain
+    let mut fragment = paired_fragment(10, 10, 4);
+    fragment.forward.seq = b"AAAA".to_vec();
+    fragment.forward.qual = 40;
+    fragment.reverse.seq = b"GGGG".to_vec();
+    fragment.reverse.qual = 20;
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 256)],
+        vec![fragment],
+        Vec::new(),
+        "ends_bq_fragment_passes_end_drops_one",
+    )?;
+    let baseline_out_dir = TempDir::new()?;
+    let mut baseline_cfg = base_config(&bam.bam, baseline_out_dir.path(), 1, 0);
+    baseline_cfg.all_motifs = true;
+    set_exact_fragment_length(&mut baseline_cfg, 10);
+
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.all_motifs = true;
+    set_exact_fragment_length(&mut cfg, 10);
+    cfg.bq_filters = vec![
+        "mean in fragment >= 30"
+            .parse::<BaseQualityFilter>()
+            .unwrap(),
+        "min in end >= 30".parse::<BaseQualityFilter>().unwrap(),
+    ];
+
+    // Act
+    run(&baseline_cfg)?;
+    let (baseline_motifs, baseline_matrix) = read_dense_output(baseline_out_dir.path())?;
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(baseline_matrix.sum(), 2.0);
+    assert_eq!(
+        motif_count(&baseline_matrix, &baseline_motifs, 0, "_A"),
+        1.0
+    );
+    assert_eq!(
+        motif_count(&baseline_matrix, &baseline_motifs, 0, "_C"),
+        1.0
+    );
+    assert_eq!(matrix.sum(), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_C"), 0.0);
+    Ok(())
+}
+
+#[test]
+fn fragment_scope_bq_filter_can_pass_while_end_scope_filters_drop_both_ends() -> Result<()> {
+    // Arrange: both end qualities are 20.
+    //
+    // Mental derivation for k_inside=1:
+    // - fragment mean is (20 + 20) / 2 = 20, so `mean in fragment >= 20` passes
+    // - `min in end >= 30` fails on both ends
+    // - once both ends are removed, the fragment must contribute nothing
+    let mut fragment = paired_fragment(10, 10, 4);
+    fragment.forward.seq = b"AAAA".to_vec();
+    fragment.forward.qual = 20;
+    fragment.reverse.seq = b"GGGG".to_vec();
+    fragment.reverse.qual = 20;
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 256)],
+        vec![fragment],
+        Vec::new(),
+        "ends_bq_fragment_passes_both_ends_fail",
+    )?;
+    let baseline_out_dir = TempDir::new()?;
+    let mut baseline_cfg = base_config(&bam.bam, baseline_out_dir.path(), 1, 0);
+    baseline_cfg.all_motifs = true;
+    set_exact_fragment_length(&mut baseline_cfg, 10);
+
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.all_motifs = true;
+    set_exact_fragment_length(&mut cfg, 10);
+    cfg.bq_filters = vec![
+        "mean in fragment >= 20"
+            .parse::<BaseQualityFilter>()
+            .unwrap(),
+        "min in end >= 30".parse::<BaseQualityFilter>().unwrap(),
+    ];
+
+    // Act
+    run(&baseline_cfg)?;
+    let (_baseline_motifs, baseline_matrix) = read_dense_output(baseline_out_dir.path())?;
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(baseline_matrix.sum(), 2.0);
+    assert_eq!(matrix.sum(), 0.0);
+    Ok(())
+}
+
+#[test]
+fn reads_are_fragments_supports_combined_end_and_fragment_bq_filters() -> Result<()> {
+    // Arrange: left inside base quality is 40 and right inside base quality is 10.
+    //
+    // Mental derivation for k_inside=1:
+    // - the read spans one fragment, so left and right scores come from the first and last bases
+    // - fragment mean is (40 + 10) / 2 = 25, so `mean in fragment >= 25` passes
+    // - `min in end >= 30` drops only the right end
+    // - the first base is `A`, so only `_A` remains after filtering
+    let bam = single_read_bam_with_qualities(
+        "ends_unpaired_bq_filters",
+        10,
+        vec![('M', 10)],
+        b"AAAAAAAAAG",
+        &[40, 30, 30, 30, 30, 30, 30, 30, 30, 10],
+    )?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.all_motifs = true;
+    cfg.bq_filters = vec![
+        "mean in fragment >= 25"
+            .parse::<BaseQualityFilter>()
+            .unwrap(),
+        "min in end >= 30".parse::<BaseQualityFilter>().unwrap(),
+    ];
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.sum(), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_C"), 0.0);
+    Ok(())
+}
+
+#[test]
+fn reads_are_fragments_drop_the_fragment_when_fragment_filter_passes_but_both_ends_fail()
+-> Result<()> {
+    // Arrange: the first and last base qualities are both 20.
+    //
+    // Mental derivation for k_inside=1:
+    // - fragment mean is (20 + 20) / 2 = 20, so `mean in fragment >= 20` passes
+    // - `min in end >= 30` fails for both ends
+    // - after both ends are removed, there is nothing left to count
+    let bam = single_read_bam_with_qualities(
+        "ends_unpaired_bq_fragment_passes_both_ends_fail",
+        10,
+        vec![('M', 10)],
+        b"AAAAAAAAAA",
+        &[20, 30, 30, 30, 30, 30, 30, 30, 30, 20],
+    )?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.all_motifs = true;
+    cfg.bq_filters = vec![
+        "mean in fragment >= 20"
+            .parse::<BaseQualityFilter>()
+            .unwrap(),
+        "min in end >= 30".parse::<BaseQualityFilter>().unwrap(),
+    ];
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.sum(), 0.0);
+    Ok(())
+}
+
+#[test]
+fn aligned_bq_filter_uses_aligned_inside_qualities_for_k_inside_gt_one() -> Result<()> {
+    // Arrange: 2S10M2S with high-quality clipped bases and low-quality aligned interior.
+    //
+    // Mental derivation for k_inside=3:
+    // - aligned left slice is [30, 10, 10], so `min in end >= 30` fails
+    // - aligned right slice is [10, 10, 30], so it also fails
+    // - if aligned slicing is implemented correctly, neither end is counted
+    let bam = single_read_bam_with_qualities(
+        "ends_aligned_bq_k3",
+        10,
+        vec![('S', 2), ('M', 10), ('S', 2)],
+        b"TTAAAAAAAAAAAA",
+        &[40, 35, 30, 10, 10, 10, 10, 10, 10, 10, 10, 30, 35, 40],
+    )?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 3, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::Aligned;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.bq_filters = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.sum(), 0.0);
+    Ok(())
+}
+
+#[test]
+fn raw_aligned_boundary_bq_filter_uses_raw_inside_qualities_for_k_inside_gt_one() -> Result<()> {
+    // Arrange: the same 2S10M2S read should now use the raw terminal bases.
+    //
+    // Mental derivation for k_inside=3:
+    // - raw left slice is [40, 35, 30], so `min in end >= 30` passes
+    // - raw right slice is [30, 35, 40], so it also passes
+    // - if raw-aligned slicing regresses back to aligned slices, the count would drop to zero
+    let bam = single_read_bam_with_qualities(
+        "ends_raw_aligned_bq_k3",
+        10,
+        vec![('S', 2), ('M', 10), ('S', 2)],
+        b"TTAAAAAAAAAAAA",
+        &[40, 35, 30, 10, 10, 10, 10, 10, 10, 10, 10, 30, 35, 40],
+    )?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 3, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.bq_filters = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.sum(), 2.0);
+    Ok(())
+}
+
+#[test]
+fn raw_shifted_boundary_bq_filter_uses_raw_inside_qualities_for_k_inside_gt_one() -> Result<()> {
+    // Arrange: raw-shifted-boundary uses the same raw quality slices as raw-aligned-boundary but
+    // keeps the shifted fragment length of 14 bp.
+    let bam = single_read_bam_with_qualities(
+        "ends_raw_shifted_bq_k3",
+        10,
+        vec![('S', 2), ('M', 10), ('S', 2)],
+        b"TTAAAAAAAAAAAA",
+        &[40, 35, 30, 10, 10, 10, 10, 10, 10, 10, 10, 30, 35, 40],
+    )?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 3, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.bq_filters = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 14;
+        lengths.max_fragment_length = 14;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.sum(), 2.0);
+    Ok(())
+}
+
+#[test]
+fn bq_filter_rejects_reference_backed_inside_bases_with_descriptive_error() -> Result<()> {
+    // Arrange
+    let bam = simple_paired_fragment_bam("ends_bq_reference_source_error", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.bq_filters = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
+
+    // Act
+    let err = run(&cfg).expect_err("reference-backed inside bases should reject BQ filters");
+
+    // Assert
+    assert!(err.to_string().contains("`--bq-filter`"));
+    assert!(err.to_string().contains("`--source-inside reference`"));
+    assert!(err.to_string().contains("read base qualities"));
+    Ok(())
+}
+
+#[test]
+fn bq_filter_rejects_zero_inside_bases_with_descriptive_error() -> Result<()> {
+    // Arrange
+    let bam = simple_paired_fragment_bam("ends_bq_k_inside_zero_error", 10, 10, 4)?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 0, 1);
+    cfg.bq_filters = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
+
+    // Act
+    let err = run(&cfg).expect_err("BQ filters without inside bases should fail");
+
+    // Assert
+    assert!(
+        err.to_string()
+            .contains("`--bq-filter` requires `--k-inside > 0`")
+    );
+    Ok(())
+}
+
+#[test]
+fn bq_filter_rejects_missing_base_qualities_with_descriptive_error() -> Result<()> {
+    // Arrange: BAM uses 255 placeholders to mean missing qualities.
+    let bam = single_read_bam_with_qualities(
+        "ends_bq_missing_qualities_error",
+        10,
+        vec![('M', 10)],
+        b"AAAAAAAAAA",
+        &[255; 10],
+    )?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.all_motifs = true;
+    cfg.bq_filters = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    let err = run(&cfg).expect_err("missing BAM qualities should fail loudly");
+    let error_text = format!("{err:#}");
+
+    // Assert
+    assert!(error_text.contains("missing base qualities"));
+    assert!(error_text.contains("--bq-filter"));
+    Ok(())
+}
+
+#[test]
+fn settings_json_includes_bq_filters_in_command_output() -> Result<()> {
+    // Arrange
+    let bam = simple_paired_fragment_bam("ends_bq_settings", 10, 10, 4)?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.bq_filters = vec![
+        "min in end >= 30".parse::<BaseQualityFilter>().unwrap(),
+        "max in fragment < 20".parse::<BaseQualityFilter>().unwrap(),
+    ];
+
+    // Act
+    run(&cfg)?;
+    let settings = read_text_file(&settings_path(out_dir.path()))?;
+
+    // Assert
+    assert_eq!(
+        parse_json(&settings).get("bq_filters"),
+        Some(&json!(["min in end >= 30", "max in fragment < 20"]))
+    );
     Ok(())
 }
 

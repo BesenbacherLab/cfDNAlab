@@ -1,7 +1,7 @@
 use crate::{
     commands::ends::{
         config::EndsConfig,
-        config_structs::{ClipStrategy, KmerSource, WindowMotifAssigner},
+        config_structs::{BaseQualityFilter, ClipStrategy, KmerSource, WindowMotifAssigner},
     },
     shared::{
         io::{create_text_writer, dot_join},
@@ -104,6 +104,7 @@ pub fn write_end_settings_json(output_dir: &Path, prefix: &str, opt: &EndsConfig
         ),
     ]
     .into_iter()
+    .chain(base_quality_filter_settings_entry(&opt.bq_filters))
     .chain(collapse_complement_settings_entry(opt))
     .collect();
 
@@ -140,6 +141,19 @@ fn collapse_complement_settings_entry(opt: &EndsConfig) -> Option<String> {
     {
         None
     }
+}
+
+fn base_quality_filter_settings_entry(filters: &[BaseQualityFilter]) -> Option<String> {
+    if filters.is_empty() {
+        return None;
+    }
+
+    let joined = filters
+        .iter()
+        .map(|filter| format!("\"{}\"", filter.as_cli_expr()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!("  \"bq_filters\": [{joined}]"))
 }
 
 /// Stack sparse per-window motif maps into a dense matrix with a fixed column order.

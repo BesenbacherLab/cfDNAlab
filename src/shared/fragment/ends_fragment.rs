@@ -1,6 +1,7 @@
 use crate::{
-    Result,
-    commands::ends::config_structs::{ClipStrategy, KmerSource},
+    commands::ends::config_structs::{
+        BaseQualityAggregation, BaseQualityFilter, BaseQualityFilterScope, ClipStrategy, KmerSource,
+    },
     shared::{
         fragment::cigar_counts::inspect_cigar_edges,
         fragment::minimal_fragment::{
@@ -11,6 +12,7 @@ use crate::{
         interval::Interval,
     },
 };
+use anyhow::{Result, bail};
 use rust_htslib::bam::{
     ext::BamRecordExtensions,
     record::{Cigar, Record},
@@ -89,6 +91,7 @@ pub struct EndReadInfo {
     pub right_motif_has_indels: bool,
     pub has_hard_clip: bool,
     pub seq: Vec<u8>,
+    pub qualities: Option<Vec<u8>>,
     pub gc_tag: GcTagValue,
 }
 
@@ -113,11 +116,17 @@ impl EndReadInfo {
         gc_tag: Option<&[u8]>,
         clip_strategy: ClipStrategy,
         k_inside: usize,
+        load_base_qualities: bool,
     ) -> Result<Self> {
         let edge_info = inspect_cigar_edges(r);
         let gc_tag_value = gc_tag
             .map(|tag| read_gc_tag_from_record(r, tag))
             .unwrap_or_default();
+        let qualities = if load_base_qualities {
+            Some(load_record_qualities(r)?)
+        } else {
+            None
+        };
 
         Ok(EndReadInfo {
             tid: r.tid(),
@@ -141,6 +150,7 @@ impl EndReadInfo {
             ),
             has_hard_clip: edge_info.has_hard_clip,
             seq: r.seq().as_bytes(),
+            qualities,
             gc_tag: gc_tag_value,
         })
     }
@@ -193,6 +203,7 @@ pub fn collect_fragment_with_ends(
     indel_filter: IndelMotifFilterPolicy,
     k_inside: usize,
     max_soft_clips: u32,
+    bq_filters: &[BaseQualityFilter],
 ) -> Option<FragmentWithEnds> {
     let (forward, reverse) = oriented_pair_from_read_info(a, b)?;
     if !is_inwards_oriented(forward, reverse) {
@@ -245,6 +256,16 @@ pub fn collect_fragment_with_ends(
         return None;
     }
 
+    let (left_end, right_end) = apply_base_quality_filters(
+        forward,
+        reverse,
+        left_end,
+        right_end,
+        clip_strategy,
+        k_inside,
+        bq_filters,
+    )?;
+
     let gc_tag = combine_gc_tag_values(&forward.gc_tag, &reverse.gc_tag);
     let interval = Interval::new(forward.start(), reverse.end()).ok()?;
     let assignment_interval =
@@ -268,6 +289,7 @@ pub fn collect_fragment_with_ends_from_single_read(
     indel_filter: IndelMotifFilterPolicy,
     k_inside: usize,
     max_soft_clips: u32,
+    bq_filters: &[BaseQualityFilter],
 ) -> Option<FragmentWithEnds> {
     if read.has_hard_clip {
         return None;
@@ -315,6 +337,16 @@ pub fn collect_fragment_with_ends_from_single_read(
     if left_end.is_none() && right_end.is_none() {
         return None;
     }
+
+    let (left_end, right_end) = apply_base_quality_filters(
+        read,
+        read,
+        left_end,
+        right_end,
+        clip_strategy,
+        k_inside,
+        bq_filters,
+    )?;
 
     let interval = read.aligned_interval();
     let assignment_interval =
@@ -515,6 +547,134 @@ fn build_resolved_end(
     })
 }
 
+/// Apply parsed `--bq-filter` expressions to the already-resolved fragment ends.
+///
+/// This helper only scores the `k_inside` read bases for ends that are still
+/// present after clip handling and indel filtering.
+///
+/// Evaluation order is intentional:
+///
+/// - fragment-scope filters run first on the raw candidate fragment, combining
+///   the inside-base qualities from both currently resolved ends
+/// - end-scope filters then run independently per surviving end and may drop
+///   only the failing end
+/// - if both ends are removed, the whole fragment is dropped because there is
+///   nothing left to count
+///
+/// Returns `None` when:
+///
+/// - a fragment-scope filter fails
+/// - an end-scope filter removes both ends
+/// - the requested inside-quality slice cannot be formed for an end that is
+///   supposed to be scored
+///
+/// When `bq_filters` is empty, this is a no-op and returns the input ends
+/// unchanged.
+fn apply_base_quality_filters(
+    left_read: &EndReadInfo,
+    right_read: &EndReadInfo,
+    mut left_end: Option<ResolvedFragmentEnd>,
+    mut right_end: Option<ResolvedFragmentEnd>,
+    clip_strategy: ClipStrategy,
+    k_inside: usize,
+    bq_filters: &[BaseQualityFilter],
+) -> Option<(Option<ResolvedFragmentEnd>, Option<ResolvedFragmentEnd>)> {
+    if bq_filters.is_empty() {
+        return Some((left_end, right_end));
+    }
+
+    let left_qualities = left_end.as_ref().and_then(|_| {
+        extract_inside_qualities(left_read, FragmentEndSide::Left, clip_strategy, k_inside)
+    });
+    let right_qualities = right_end.as_ref().and_then(|_| {
+        extract_inside_qualities(right_read, FragmentEndSide::Right, clip_strategy, k_inside)
+    });
+
+    for &filter in bq_filters
+        .iter()
+        .filter(|filter| matches!(filter.scope, BaseQualityFilterScope::Fragment))
+    {
+        let fragment_score = fragment_quality_score(
+            left_qualities.as_deref(),
+            right_qualities.as_deref(),
+            filter.aggregation,
+        )?;
+        if !filter.passes_value(fragment_score) {
+            return None;
+        }
+    }
+
+    for &filter in bq_filters
+        .iter()
+        .filter(|filter| matches!(filter.scope, BaseQualityFilterScope::End))
+    {
+        if let Some(qualities) = left_qualities.as_deref() {
+            let left_score = aggregate_base_qualities(qualities, filter.aggregation)?;
+            if !filter.passes_value(left_score) {
+                left_end = None;
+            }
+        }
+        if let Some(qualities) = right_qualities.as_deref() {
+            let right_score = aggregate_base_qualities(qualities, filter.aggregation)?;
+            if !filter.passes_value(right_score) {
+                right_end = None;
+            }
+        }
+    }
+
+    if left_end.is_none() && right_end.is_none() {
+        None
+    } else {
+        Some((left_end, right_end))
+    }
+}
+
+fn fragment_quality_score(
+    left_qualities: Option<&[u8]>,
+    right_qualities: Option<&[u8]>,
+    aggregation: BaseQualityAggregation,
+) -> Option<f32> {
+    match aggregation {
+        BaseQualityAggregation::Min => left_qualities
+            .iter()
+            .chain(right_qualities.iter())
+            .flat_map(|qualities| qualities.iter().copied())
+            .min()
+            .map(f32::from),
+        BaseQualityAggregation::Max => left_qualities
+            .iter()
+            .chain(right_qualities.iter())
+            .flat_map(|qualities| qualities.iter().copied())
+            .max()
+            .map(f32::from),
+        BaseQualityAggregation::Mean => {
+            let (sum, count) = left_qualities
+                .iter()
+                .chain(right_qualities.iter())
+                .flat_map(|qualities| qualities.iter().copied())
+                .fold((0_u64, 0_u64), |(sum, count), value| {
+                    (sum + u64::from(value), count + 1)
+                });
+            (count > 0).then(|| sum as f32 / count as f32)
+        }
+    }
+}
+
+fn aggregate_base_qualities(qualities: &[u8], aggregation: BaseQualityAggregation) -> Option<f32> {
+    if qualities.is_empty() {
+        return None;
+    }
+
+    match aggregation {
+        BaseQualityAggregation::Min => qualities.iter().copied().min().map(f32::from),
+        BaseQualityAggregation::Mean => {
+            let sum: u64 = qualities.iter().map(|&value| u64::from(value)).sum();
+            Some(sum as f32 / qualities.len() as f32)
+        }
+        BaseQualityAggregation::Max => qualities.iter().copied().max().map(f32::from),
+    }
+}
+
 /// Return how many of the extracted inside bases can still be checked against reference-backed
 /// genomic positions.
 ///
@@ -546,14 +706,14 @@ fn extract_left_inside_bases(
     clip_strategy: ClipStrategy,
     k_inside: usize,
 ) -> Option<Vec<u8>> {
-    let start_idx = match clip_strategy {
-        ClipStrategy::Aligned | ClipStrategy::Skip => read.left_soft_clip_bp as usize,
-        ClipStrategy::RawAlignedBoundary | ClipStrategy::RawShiftedBoundary => 0,
-    };
-    let end_idx = start_idx.saturating_add(k_inside);
-    if end_idx > read.seq.len() {
-        return None;
-    }
+    let (start_idx, end_idx) = inside_slice_bounds(
+        read.seq.len(),
+        read.left_soft_clip_bp,
+        read.right_soft_clip_bp,
+        FragmentEndSide::Left,
+        clip_strategy,
+        k_inside,
+    )?;
     Some(read.seq[start_idx..end_idx].to_vec())
 }
 
@@ -562,13 +722,79 @@ fn extract_right_inside_bases(
     clip_strategy: ClipStrategy,
     k_inside: usize,
 ) -> Option<Vec<u8>> {
-    let end_idx = match clip_strategy {
-        ClipStrategy::Aligned | ClipStrategy::Skip => read
-            .seq
-            .len()
-            .checked_sub(read.right_soft_clip_bp as usize)?,
-        ClipStrategy::RawAlignedBoundary | ClipStrategy::RawShiftedBoundary => read.seq.len(),
-    };
-    let start_idx = end_idx.checked_sub(k_inside)?;
+    let (start_idx, end_idx) = inside_slice_bounds(
+        read.seq.len(),
+        read.left_soft_clip_bp,
+        read.right_soft_clip_bp,
+        FragmentEndSide::Right,
+        clip_strategy,
+        k_inside,
+    )?;
     Some(read.seq[start_idx..end_idx].to_vec())
+}
+
+fn extract_inside_qualities(
+    read: &EndReadInfo,
+    end_side: FragmentEndSide,
+    clip_strategy: ClipStrategy,
+    k_inside: usize,
+) -> Option<Vec<u8>> {
+    let qualities = read.qualities.as_ref()?;
+    let (start_idx, end_idx) = inside_slice_bounds(
+        qualities.len(),
+        read.left_soft_clip_bp,
+        read.right_soft_clip_bp,
+        end_side,
+        clip_strategy,
+        k_inside,
+    )?;
+    Some(qualities[start_idx..end_idx].to_vec())
+}
+
+fn load_record_qualities(record: &Record) -> Result<Vec<u8>> {
+    let qualities = record.qual().to_vec();
+    if qualities.iter().all(|&value| value == 255) {
+        let qname = String::from_utf8_lossy(record.qname());
+        bail!(
+            "BAM record '{qname}' at tid {}, pos {} has missing base qualities (`*` / 255 placeholder), but `--bq-filter` requires concrete read base qualities",
+            record.tid(),
+            record.pos()
+        );
+    }
+    Ok(qualities)
+}
+
+fn inside_slice_bounds(
+    len: usize,
+    left_soft_clip_bp: u32,
+    right_soft_clip_bp: u32,
+    end_side: FragmentEndSide,
+    clip_strategy: ClipStrategy,
+    k_inside: usize,
+) -> Option<(usize, usize)> {
+    match end_side {
+        FragmentEndSide::Left => {
+            let start_idx = match clip_strategy {
+                ClipStrategy::Aligned | ClipStrategy::Skip => left_soft_clip_bp as usize,
+                ClipStrategy::RawAlignedBoundary | ClipStrategy::RawShiftedBoundary => 0,
+            };
+            let end_idx = start_idx.checked_add(k_inside)?;
+            (end_idx <= len).then_some((start_idx, end_idx))
+        }
+        FragmentEndSide::Right => {
+            let end_idx = match clip_strategy {
+                ClipStrategy::Aligned | ClipStrategy::Skip => {
+                    len.checked_sub(right_soft_clip_bp as usize)?
+                }
+                ClipStrategy::RawAlignedBoundary | ClipStrategy::RawShiftedBoundary => len,
+            };
+            let start_idx = end_idx.checked_sub(k_inside)?;
+            Some((start_idx, end_idx))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    include!("ends_fragment_tests.rs");
 }

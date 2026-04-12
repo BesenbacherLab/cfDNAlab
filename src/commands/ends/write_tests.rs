@@ -1,5 +1,10 @@
 use super::*;
-use crate::commands::cli_common::{ChromosomeArgs, IOCArgs};
+use crate::{
+    commands::{
+        cli_common::{ChromosomeArgs, IOCArgs},
+        ends::config_structs::BaseQualityFilter,
+    },
+};
 use serde_json::{Map, Value, json};
 use std::path::Path;
 use tempfile::TempDir;
@@ -97,6 +102,34 @@ fn write_end_settings_json_writes_the_minimal_interpretation_sidecar() {
     assert_eq!(
         parse_json(&settings),
         expected_settings_json("read", "skip", "endpoint")
+    );
+}
+
+#[test]
+fn write_end_settings_json_includes_base_quality_filters_when_present() {
+    // Arrange: the sidecar should retain any configured base-quality filters because they affect
+    // which ends and fragments contribute to the output counts.
+    let out_dir = TempDir::new().expect("tempdir");
+    let mut cfg = minimal_config(out_dir.path());
+    cfg.bq_filters = vec![
+        "min in end >= 30"
+            .parse::<BaseQualityFilter>()
+            .expect("valid end filter"),
+        "max in fragment < 20"
+            .parse::<BaseQualityFilter>()
+            .expect("valid fragment filter"),
+    ];
+
+    // Act
+    write_end_settings_json(out_dir.path(), "ends", &cfg).expect("settings json should write");
+    let settings = std::fs::read_to_string(out_dir.path().join("ends.end_motif_settings.json"))
+        .expect("settings json should be readable");
+    let parsed = parse_json(&settings);
+
+    // Assert
+    assert_eq!(
+        parsed.get("bq_filters"),
+        Some(&json!(["min in end >= 30", "max in fragment < 20"]))
     );
 }
 

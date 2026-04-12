@@ -259,6 +259,52 @@ So `ends` should use sparse per-window maps keyed by `EncodedEndMotifKey`.
 
 ### Dense vs sparse final output
 
+## Base-quality filter grammar
+
+The `ends` command should support a repeatable `--bq-filter` argument for
+filtering by the inside read-base qualities.
+
+Each expression uses the strict grammar:
+
+- `<agg> in <scope> <op> <threshold>`
+
+with:
+
+- `<agg>` in `min`, `mean`, or `max`
+- `<scope>` in `end` or `fragment`
+- `<op>` in `>=`, `>`, `<=`, or `<`
+- keywords parsed case-insensitively
+- ASCII whitespace treated uniformly, so spaces, tabs, and newlines are equivalent separators
+
+Examples:
+
+- `--bq-filter "min in end >= 30"`
+- `--bq-filter "mean in fragment < 25"`
+- `--bq-filter "max in fragment < 20"`
+
+Semantics:
+
+- repeated `--bq-filter` calls count only ends that pass all end filters and belong to fragments that pass all fragment filters
+- `end` filters are end-local and should drop only the failing end
+- `fragment` filters are fragment-level and should drop the full fragment when
+  they fail
+- fragment-level filters must be evaluated from the raw candidate fragment,
+  aggregating across the kept inside read bases from its resolved ends, not
+  from a fragment after prior end-level filters already removed one end
+- `--bq-filter` requires `--k-inside > 0`
+- `--bq-filter` can only be used with `--source-inside read`, because
+  reference-backed inside bases do not carry read base qualities
+- BAM records with missing base qualities must fail loudly with a descriptive
+  error instead of being skipped silently
+
+Design notes:
+
+- `min` supports "weakest point controls" style filters
+- `mean` supports "overall level controls" style filters
+- `max` is supported because expressions such as `max in fragment < T` are
+  meaningful for asking whether no end score reaches the threshold
+- `median` is intentionally out of scope for the current design
+
 Final output should only be dense when `--all-motifs` is enabled.
 
 Reason:

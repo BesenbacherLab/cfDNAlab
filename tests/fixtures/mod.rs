@@ -683,6 +683,61 @@ pub fn bam_from_specs(
     Ok(BamFixture::new(tempdir, bam_path, bai))
 }
 
+pub fn single_read_bam_with_qualities(
+    name: &str,
+    pos: i64,
+    cigar_ops: Vec<(char, u32)>,
+    seq: &[u8],
+    qualities: &[u8],
+) -> Result<BamFixture> {
+    if seq.len() != qualities.len() {
+        return Err(anyhow!(
+            "seq length ({}) must match qualities length ({})",
+            seq.len(),
+            qualities.len()
+        ));
+    }
+
+    let tempdir = TempDir::new()?;
+    let bam_path = tempdir.path().join(format!("{name}.bam"));
+    let chrom_len = (pos.max(0) as u32)
+        .saturating_add(seq.len() as u32)
+        .saturating_add(100)
+        .max(256);
+
+    let mut header = bam::Header::new();
+    header.push_record(
+        HeaderRecord::new(b"HD")
+            .push_tag(b"VN", &"1.6")
+            .push_tag(b"SO", &"coordinate"),
+    );
+    header.push_record(
+        HeaderRecord::new(b"SQ")
+            .push_tag(b"SN", &"chr1")
+            .push_tag(b"LN", chrom_len),
+    );
+
+    let mut writer = bam::Writer::from_path(&bam_path, &header, bam::Format::Bam)
+        .with_context(|| format!("create bam at {}", bam_path.display()))?;
+
+    let mut record = bam::Record::new();
+    record.set_tid(0);
+    record.set_pos(pos);
+    record.set_mapq(60);
+    record.set(
+        b"single_custom_qualities",
+        Some(&cigar(&cigar_ops)),
+        seq,
+        qualities,
+    );
+    record.set_flags(0);
+    writer.write(&record)?;
+
+    drop(writer);
+    let bai = build_index(&bam_path)?;
+    Ok(BamFixture::new(tempdir, bam_path, bai))
+}
+
 pub fn bam_from_specs_strict_identity(
     chroms: Vec<(String, u32)>,
     fragments: Vec<FragmentSpec>,

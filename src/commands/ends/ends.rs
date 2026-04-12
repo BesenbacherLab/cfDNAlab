@@ -75,6 +75,18 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     if opt.k_inside == 0 && opt.k_outside == 0 {
         bail!("At least one of --k-inside or --k-outside must be > 0");
     }
+    if !opt.bq_filters.is_empty() {
+        if opt.k_inside == 0 {
+            bail!(
+                "`--bq-filter` requires `--k-inside > 0` because it scores the inside read bases"
+            );
+        }
+        if matches!(opt.source_inside, KmerSource::Reference) {
+            bail!(
+                "`--bq-filter` cannot be combined with `--source-inside reference` because reference-backed inside bases do not have read base qualities"
+            );
+        }
+    }
     if matches!(opt.clip.clip_strategy, ClipStrategy::RawAlignedBoundary)
         && matches!(opt.source_inside, KmerSource::Reference)
     {
@@ -619,6 +631,7 @@ fn process_tile(
         opt.indel_filter,
         opt.k_inside,
         max_soft_clips,
+        &opt.bq_filters,
         opt.gc.gc_tag.as_deref().map(str::as_bytes),
         fragment_filter,
         unpaired,

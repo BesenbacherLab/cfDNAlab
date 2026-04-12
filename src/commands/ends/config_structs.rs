@@ -3,6 +3,219 @@ use std::str::FromStr;
 #[cfg(feature = "cli")]
 use clap::ValueEnum;
 
+const BASE_QUALITY_FILTER_USAGE: &str = concat!(
+    "Use '<agg> in <scope> <op> <threshold>' with ",
+    "<agg> in {'min', 'mean', 'max'}, ",
+    "<scope> in {'end', 'fragment'}, ",
+    "and <op> in {'>=', '>', '<=', '<'}"
+);
+
+/// Aggregate base qualities across the inside bases of one counted unit.
+///
+/// These reductions each map to a clear thresholding question:
+/// weakest point (`min`), overall level (`mean`), or best point (`max`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaseQualityAggregation {
+    Min,
+    Mean,
+    Max,
+}
+
+impl BaseQualityAggregation {
+    #[inline]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BaseQualityAggregation::Min => "min",
+            BaseQualityAggregation::Mean => "mean",
+            BaseQualityAggregation::Max => "max",
+        }
+    }
+}
+
+impl FromStr for BaseQualityAggregation {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "min" => Ok(BaseQualityAggregation::Min),
+            "mean" => Ok(BaseQualityAggregation::Mean),
+            "max" => Ok(BaseQualityAggregation::Max),
+            _ => Err(format!(
+                "Invalid base-quality aggregation '{s}'. {BASE_QUALITY_FILTER_USAGE}"
+            )),
+        }
+    }
+}
+
+/// Decide whether a base-quality filter applies to one end or to the full fragment.
+///
+/// Fragment-level filters are intended for cases where the two fragment ends
+/// should first be summarized into one score before thresholding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaseQualityFilterScope {
+    End,
+    Fragment,
+}
+
+impl BaseQualityFilterScope {
+    #[inline]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BaseQualityFilterScope::End => "end",
+            BaseQualityFilterScope::Fragment => "fragment",
+        }
+    }
+}
+
+impl FromStr for BaseQualityFilterScope {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "end" => Ok(BaseQualityFilterScope::End),
+            "fragment" => Ok(BaseQualityFilterScope::Fragment),
+            _ => Err(format!(
+                "Invalid base-quality filter scope '{s}'. {BASE_QUALITY_FILTER_USAGE}"
+            )),
+        }
+    }
+}
+
+/// Supported comparison operators for parsed base-quality filters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BaseQualityComparisonOp {
+    Gt,
+    Ge,
+    Lt,
+    Le,
+}
+
+impl BaseQualityComparisonOp {
+    #[inline]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BaseQualityComparisonOp::Gt => ">",
+            BaseQualityComparisonOp::Ge => ">=",
+            BaseQualityComparisonOp::Lt => "<",
+            BaseQualityComparisonOp::Le => "<=",
+        }
+    }
+}
+
+impl BaseQualityComparisonOp {
+    #[inline]
+    pub fn eval(self, value: f32, threshold: f32) -> bool {
+        match self {
+            BaseQualityComparisonOp::Gt => value > threshold,
+            BaseQualityComparisonOp::Ge => value >= threshold,
+            BaseQualityComparisonOp::Lt => value < threshold,
+            BaseQualityComparisonOp::Le => value <= threshold,
+        }
+    }
+}
+
+/// One parsed `--bq-filter` expression.
+///
+/// The grammar is:
+///
+/// - `<agg> in <scope> <op> <threshold>`
+///
+/// Example expressions:
+///
+/// - `min in end >= 30`
+///
+/// - `mean in fragment < 25`
+///
+/// - `max in fragment < 20`
+///
+/// Repeating `--bq-filter` counts only ends that pass all end filters and belong to
+/// fragments that pass all fragment filters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BaseQualityFilter {
+    pub aggregation: BaseQualityAggregation,
+    pub scope: BaseQualityFilterScope,
+    pub op: BaseQualityComparisonOp,
+    pub threshold: f32,
+}
+
+impl BaseQualityFilter {
+    #[inline]
+    pub fn as_cli_expr(self) -> String {
+        format!(
+            "{} in {} {} {}",
+            self.aggregation.as_str(),
+            self.scope.as_str(),
+            self.op.as_str(),
+            self.threshold
+        )
+    }
+
+    #[inline]
+    pub fn passes_value(self, value: f32) -> bool {
+        self.op.eval(value, self.threshold)
+    }
+}
+
+impl FromStr for BaseQualityFilter {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let tokens: Vec<&str> = s.split_whitespace().collect();
+        if tokens.len() < 4 {
+            return Err(format!(
+                "Invalid base-quality filter '{s}'. {BASE_QUALITY_FILTER_USAGE}"
+            ));
+        }
+
+        let aggregation = tokens[0].parse::<BaseQualityAggregation>()?;
+        if !tokens[1].eq_ignore_ascii_case("in") {
+            return Err(format!(
+                "Invalid base-quality filter '{s}'. {BASE_QUALITY_FILTER_USAGE}"
+            ));
+        }
+        let scope = tokens[2].parse::<BaseQualityFilterScope>()?;
+        let comparison_expr = tokens[3..].join("");
+        let (op, threshold_str) = parse_base_quality_comparison(&comparison_expr)
+            .map_err(|msg| format!("Invalid base-quality filter '{s}'. {msg}"))?;
+        let threshold = threshold_str
+            .parse::<f32>()
+            .map_err(|_| format!("Invalid base-quality threshold '{threshold_str}'"))?;
+        if !threshold.is_finite() {
+            return Err(format!(
+                "Base-quality threshold must be finite, got '{threshold_str}'"
+            ));
+        }
+        if threshold < 0.0 {
+            return Err(format!(
+                "Base-quality threshold must be >= 0, got '{threshold_str}'"
+            ));
+        }
+
+        Ok(BaseQualityFilter {
+            aggregation,
+            scope,
+            op,
+            threshold,
+        })
+    }
+}
+
+fn parse_base_quality_comparison(
+    s: &str,
+) -> std::result::Result<(BaseQualityComparisonOp, &str), String> {
+    if let Some(rest) = s.strip_prefix(">=") {
+        Ok((BaseQualityComparisonOp::Ge, rest))
+    } else if let Some(rest) = s.strip_prefix("<=") {
+        Ok((BaseQualityComparisonOp::Le, rest))
+    } else if let Some(rest) = s.strip_prefix('>') {
+        Ok((BaseQualityComparisonOp::Gt, rest))
+    } else if let Some(rest) = s.strip_prefix('<') {
+        Ok((BaseQualityComparisonOp::Lt, rest))
+    } else {
+        Err(BASE_QUALITY_FILTER_USAGE.to_string())
+    }
+}
+
 // TODO these structs should use the format used by other cfDNAlab commands instead
 
 /// Select where the inside-fragment bases come from for end motifs.
@@ -221,4 +434,9 @@ impl FromStr for WindowMotifAssigner {
             Err("Use 'endpoint', 'count-overlap', 'any', 'all', 'midpoint', or 'proportion=<0.0–1.0>'".into())
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    include!("config_structs_tests.rs");
 }

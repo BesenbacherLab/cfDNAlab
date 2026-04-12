@@ -9,14 +9,14 @@ This file is the authoritative entry point for repo-specific agent instructions.
 - Keep functions small and single-purpose when reasonable.
 - Prefer explicit names over abbreviations. Do not use single-letter variable names.
 - Do not fail silently. If something is wrong, the program should tell the user.
-- Run `cargo check --features cli,plotters` after code changes. After major refactors, run `cargo check --all-features`.
+- Run `cargo check --features cli,plotters` after code changes and `cargo check --tests --features cli,plotters` after test code changes. After major refactors, run `cargo check --all-features`. When working on non-default commands (see cargo.toml), include their command features in these calls as well.
 - If a file is changed, always read it before answering.
 - If I ask for a new code review, never rely on memory to answer.
 - Do not make conclusions about code you have not re-read.
 - Base answers about existing functionality on actual code behavior, not comments etc. that might be outdated.
 - For fragment code, preserve the project's domain semantics and vocabulary. Paired fragment spans are defined directionally as `forward.pos` to `reverse.reference_end`, and docs/comments should keep using `pos` / `end` / `reference_end` terminology even if the implementation stores checked intervals internally.
 - Read the Interval and IndexedInterval API and default to using the helpers when working on interval-logic.
-- The minimum allowed fragment length possible is 10bp. Do not use smaller values than that in test fixtures. And in general check argument constraints before setting them in fixtures.
+- The minimum allowed fragment length possible is 10bp. Do not use smaller values than that in test fixtures. Note that commands often set a minimum fragment length inclusion filter of 30bp, so check up on that. In general, check argument constraints before setting them in fixtures.
 
 ## Read These Files When Relevant
 
