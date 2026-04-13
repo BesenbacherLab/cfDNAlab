@@ -2,31 +2,35 @@ use std::ops::{Deref, DerefMut};
 
 use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArgs;
 
-/// Extract fragment coverage-based smoothing weights in large genomic bins ("megabins")
+/// Extract fragment count-based smoothing weights in large genomic bins ("megabins")
 /// with a rolling window and calculate normalizing scaling factors for smoothing
 /// the genome.
 ///
-/// Use this when you want the smoothing profile to reflect total fragment coverage
-/// across the genome. This is the natural choice for coverage-like analyses.
-/// In contrast, fragment count-based weights (see `cfdna fragment-count-weights`)
-/// make long and short fragments contribute more equally.
+/// Use this when you want long and short fragments to contribute more equally to the
+/// large-scale smoothing profile. In contrast, regular coverage-based weights
+/// (see `cfdna coverage-weights`) count long fragments higher simply because
+/// they cover more bases.
 ///
 /// Outputs scaling factors per stride to allow other methods to apply the normalization.
 /// Files are written as:
 ///
-/// `<prefix>.coverage.scaling_factors.tsv`
+/// `<prefix>.fragment_counts.scaling_factors.tsv`
 ///
 /// The scaling factors are *inverted*, so normalization becomes multiplication.
-/// Zero-valued coverages lead to zero-valued scaling factors. Non-zero factors have `mean == 1.0`.
+/// Zero-valued support leads to zero-valued scaling factors. Non-zero factors have `mean == 1.0`.
 ///
-/// ## Coverage
+/// ## Fragment counts
 ///
-/// Internally, this command runs `fcoverage --by-size <stride> --per-window average`
+/// Internally, this command runs:
+///
+/// `fcoverage --normalize-by-length --by-size <stride> --per-window average`
+///
 /// and then smooths those stride-bin averages.
 ///
-/// Fragment counting therefore follows `fcoverage`.
-/// By default, the full fragment span is counted, except for deletions and skipped
-/// regions that are not covered by the other read.
+/// The resulting stride-bin values reflect local fragment counts.
+/// Strictly speaking they are approximations since fragments overlapping
+/// multiple stride bins are counted partly in each, but in sufficiently large
+/// bins the approximation error is tiny.
 ///
 /// ## Fragment span definition
 ///
@@ -37,7 +41,7 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 /// ## GC correction
 ///
 /// When downstream tools should use both genomic smoothing and GC-bias correction,
-/// you can build the smoothing weight off GC-corrected fragment coverage by supplying either
+/// you can build the smoothing weight off GC-corrected fragment support by supplying either
 /// `--gc-file` or `--gc-tag`. This avoids over-correction where the genomic smoothing scalars
 /// partly reflect large-scale GC bias.
 ///
@@ -47,38 +51,7 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 /// ## Smoothing
 ///
 /// Smoothing is performed as a triangular moving average, calculating
-/// a weighted average of coverages from all bins overlapping a stride.
-///
-/// ### Example
-///
-/// Assuming a bin-size of 6 and stride size of 2 (normally defaults to 5Mb and 0.5Mb respectively).
-///
-/// **Stride bins** (fixed along genome, each with an average coverage):
-///
-/// `[A] [B] [C] [D] [E] [F] [G] ...`
-///
-/// **Overlapping megabins** (`MB*`) (each covers 3 stride-bins). **`W_D`**, the number of overlapping megabins,
-/// is the (unnormalized) weight of each stride-bin in the weighted-average coverage for stride-bin `D`:
-///
-/// ```text
-///
-/// MB1: [A][B][C]
-///
-/// MB2:    [B][C][D]
-///
-/// MB3:       [C][D][E]
-///
-/// MB4:          [D][E][F]
-///
-/// MB5:             [E][F][G]
-///
-/// W_D: [0][1][2][3][2][1][0]
-///
-/// ```
-///
-/// At chromosome edges, the weights are truncated (e.g., `W_D: [2][3][2][1][0]`).
-///
-/// The weights are normalized by their sum (after potential truncation at edges).
+/// a weighted average of fragment-support values from all bins overlapping a stride.
 ///
 /// ## Always-on exclusion criteria
 ///
@@ -93,12 +66,12 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 /// The paired reads are not inwardly directed (we require: `start(forward) <= start(reverse)`).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
-pub struct CoverageWeightsConfig {
+pub struct FragmentCountWeightsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub shared: ScalingWeightsArgs,
 }
 
-impl CoverageWeightsConfig {
+impl FragmentCountWeightsConfig {
     pub fn new(
         ioc: crate::commands::cli_common::IOCArgs,
         chromosomes: crate::commands::cli_common::ChromosomeArgs,
@@ -109,7 +82,7 @@ impl CoverageWeightsConfig {
     }
 }
 
-impl Deref for CoverageWeightsConfig {
+impl Deref for FragmentCountWeightsConfig {
     type Target = ScalingWeightsArgs;
 
     fn deref(&self) -> &Self::Target {
@@ -117,7 +90,7 @@ impl Deref for CoverageWeightsConfig {
     }
 }
 
-impl DerefMut for CoverageWeightsConfig {
+impl DerefMut for FragmentCountWeightsConfig {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.shared
     }

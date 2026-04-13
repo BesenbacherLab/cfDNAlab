@@ -14,7 +14,7 @@ pub struct GcTagValue {
 
 /// Reject GC weights that are clearly out of range to avoid runaway coverage when tags are corrupt.
 ///
-/// Correction weights are expected to hover around 0–a few hundred at most. 
+/// Correction weights are expected to hover around 0–a few hundred at most.
 /// Values far beyond that are treated as invalid.
 pub const MAX_REASONABLE_GC_WEIGHT: f32 = 1.0e3;
 const MAX_GC_WARNINGS: usize = 5;

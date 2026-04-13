@@ -12,6 +12,8 @@ pub mod ends;
 pub mod fcoverage;
 #[cfg(feature = "cmd_frag_to_bam")]
 pub mod frag_to_bam;
+#[cfg(feature = "cmd_fragment_count_weights")]
+pub mod fragment_count_weights;
 #[cfg(feature = "cmd_fragment_kmers")]
 pub mod fragment_kmers;
 #[cfg(feature = "cmd_gc_bias")]

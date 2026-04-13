@@ -1176,7 +1176,7 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_t
     }
     run_coverage_weights(&weights_cfg)?;
 
-    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+    let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
     let out_bam = work.path().join("scaled_multi_chr.bam");
     let mut cfg = BamToBamConfig::new(
         bam.bam.clone(),

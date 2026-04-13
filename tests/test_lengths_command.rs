@@ -26,8 +26,7 @@ mod tests_lengths_command {
     use fixtures::{
         BamFixture, FragmentSpec, ReadSpec, bam_from_specs, build_real_neutral_gc_package,
         build_real_neutral_gc_package_for_range, build_real_non_neutral_gc_package,
-        simple_inward_bam, simple_reference_twobit, write_bed,
-        write_scaling_factors,
+        simple_inward_bam, simple_reference_twobit, write_bed, write_scaling_factors,
     };
     use ndarray::Array2;
     use ndarray::array;
@@ -1641,7 +1640,7 @@ mod tests_lengths_command {
 
         // Act
         run_coverage_weights(&scaling_cfg)?;
-        let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+        let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {
@@ -2951,7 +2950,7 @@ mod tests_lengths_command {
 
         // Act
         run_coverage_weights(&scaling_cfg)?;
-        let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+        let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
 
         let mut cfg = LengthsConfig::new(
             IOCArgs {

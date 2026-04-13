@@ -1,49 +1,42 @@
 use crate::{
     commands::{
-        cli_common::{ensure_output_dir, load_blacklist_map, resolve_chromosomes_and_contigs},
-        counters::CoverageWeightsCounters,
-        coverage_weights::config::CoverageWeightsConfig,
+        cli_common::{ensure_output_dir, resolve_chromosomes_and_contigs},
+        coverage_weights::scaling_weights_config::ScalingWeightsArgs,
         coverage_weights::striding::{
             StrideBin, fill_triangular_overlap, normalize_avg_overlap_by_global_mean,
         },
-        gc_bias::{
-            correct::{GCCorrector, load_gc_corrector},
-            counting::build_gc_prefixes,
+        fcoverage::{
+            config::FCoverageConfig,
+            fcoverage::{FCoverageRunResult, run_inner as fcoverage_run_inner},
+            window_results::CoverageWindowAction,
         },
     },
     shared::{
-        bam::create_chromosome_reader,
-        coverage::Coverage,
-        fragment::minimal_fragment::Fragment,
-        fragment_iterators::fragments_from_bam,
         interval::Interval,
-        io::dot_join,
-        progress::ProgressFactory,
-        read::{default_include_read_paired_end, default_include_read_unpaired},
-        reference::read_seq,
-        thread_pool::init_global_pool,
+        io::{dot_join, open_text_reader},
+        tiled_run::make_temp_dir,
     },
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
-use rayon::prelude::*;
-use rust_htslib::bam::{Read, Record};
 use std::{
     fs::File,
-    io::{BufWriter, Write},
-    sync::Arc,
+    io::{BufRead, BufWriter, Write},
+    path::{Path, PathBuf},
     time::Instant,
 };
+
+const FCOVERAGE_INTERMEDIATE_DECIMALS: u8 = 12;
 
 /// Calculates weights for genomic smoothing using large bins and a stride.
 ///
 /// Technical details:
-/// - Resolves chromosomes, prepares output directories, and loads optional blacklists before
-///   scanning each chromosome in parallel.
-/// - Converts fragments into coverage profiles, smooths them with a triangular kernel, and writes
-///   the resulting statistics to a TSV file.
-/// - Tracks iterator counters so the printed summary reflects accepted fragments, blacklist hits,
-///   and other bookkeeping numbers.
+/// - Reuses `fcoverage --by-size <stride> --per-window average` as the raw counting step so
+///   fragment handling, GC correction, blacklisting, and tiling stay consistent with `fcoverage`.
+/// - Reads the resulting stride-bin averages back from disk, smooths them with a triangular
+///   kernel, and writes the final scaling factors as TSV.
+/// - Tracks the internal `fcoverage` counters so the printed summary reflects the fragments
+///   that contributed to the scaling factors.
 ///
 /// Parameters
 /// ----------
@@ -57,78 +50,56 @@ use std::{
 ///
 /// Errors
 /// ------
-/// - Returns an error if the BAM cannot be read, blacklist files are invalid, or the output file
-///   cannot be created.
-pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
+/// - Returns an error if internal `fcoverage` fails, the intermediate TSV is malformed, or the
+///   final scaling output cannot be written.
+pub fn run(opt: &crate::commands::coverage_weights::config::CoverageWeightsConfig) -> Result<()> {
+    run_with_fcoverage(&opt.shared, false, "coverage.scaling_factors.tsv")
+}
+
+/// Shared implementation for coverage-based and count-normalized scaling weights.
+///
+/// The future count-based command can call this with `normalize_by_length = true`
+/// to reuse the exact same `fcoverage`-based counting path.
+pub(crate) fn run_with_fcoverage(
+    opt: &ScalingWeightsArgs,
+    normalize_by_length: bool,
+    output_file_name: &str,
+) -> Result<()> {
     let start_time = Instant::now();
-    if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
-        bail!("--require-proper-pair cannot be used with --reads-are-fragments");
-    }
     let (chromosomes, _contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     opt.check_bin_sizes()?;
-    let progress = ProgressFactory::new();
-    let pb = Arc::new(progress.default_bar(chromosomes.len() as u64));
 
-    // Create output directory
+    // Keep all intermediate files under the user-chosen output directory so disk usage stays
+    // within the filesystem location the user already selected for results.
     ensure_output_dir(&opt.ioc.output_dir)?;
+    let fcoverage_output_dir = make_temp_dir(
+        &opt.ioc.output_dir,
+        &dot_join(&[opt.output_prefix.as_str(), "coverage_weights_source"]),
+    )
+    .context("creating internal fcoverage output directory")?;
+    let _fcoverage_output_cleanup = RemoveDirOnDrop::new(fcoverage_output_dir.clone());
 
-    // Load blacklist intervals if provided
-    if opt.blacklist.is_some() {
-        println!("Start: Loading blacklists");
-    }
-    let blacklist_map = load_blacklist_map(
-        opt.blacklist.as_ref(),
-        opt.blacklist_min_size,
-        0,
-        &chromosomes,
-    )?;
+    let fcoverage_cfg =
+        build_fcoverage_average_config(opt, &fcoverage_output_dir, normalize_by_length);
 
-    // Configure global thread‐pool size
-    init_global_pool(opt.ioc.n_threads)?;
+    println!("Calling fcoverage");
+    println!("-----------------");
+    let fcoverage_result =
+        fcoverage_run_inner(&fcoverage_cfg).context("running internal fcoverage")?;
+    println!("-----------------");
+    println!("Reading fcoverage output");
 
-    // Load GC correction package if specified
-    if opt.gc.gc_file.is_some() {
-        println!("Start: Loading GC correction matrix");
-    }
-    let gc_corrector = load_gc_corrector(
-        opt.gc.gc_file.as_ref(),
-        opt.fragment_lengths.min_fragment_length,
-        opt.fragment_lengths.max_fragment_length,
-    )?;
-
-    // Prepare output containers
     let mut bins_by_chr =
-        FxHashMap::with_capacity_and_hasher(chromosomes.len(), Default::default());
-    let mut global_counter = CoverageWeightsCounters::default();
+        load_stride_bins_from_fcoverage_average_tsv(&fcoverage_result, chromosomes.as_slice())?;
 
-    println!("Start: Counting per chromosome");
-
-    pb.set_position(0);
-
-    let results: Vec<(String, Vec<StrideBin>, CoverageWeightsCounters)> = chromosomes
-        .par_iter()
-        .map(|chr| -> Result<(_, _, _)> {
-            let out = process_chrom(
-                chr,
-                opt,
-                blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
-                gc_corrector.clone(),
-            )?;
-            pb.inc(1);
-            Ok(out)
-        })
-        .collect::<Result<_>>()?; // short-circuits on the first Err
-
-    pb.finish_with_message("| Finished counting");
-
-    // Collect results (in chromosome order) back into the global vectors
-    for (chr, stride_bins, counter) in results {
-        bins_by_chr.insert(chr, stride_bins);
-        global_counter += counter;
+    for chromosome in &chromosomes {
+        let bins = bins_by_chr
+            .get_mut(chromosome)
+            .with_context(|| format!("missing stride bins for chromosome '{}'", chromosome))?;
+        fill_triangular_overlap(bins, opt.bin_size, opt.stride);
     }
 
-    // Normalize by global mean and invert to scaling factors (keeping 0s intact)
     let global_avg_overlap_coverage =
         normalize_avg_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
 
@@ -137,10 +108,8 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
         global_avg_overlap_coverage
     );
 
-    // Write stride-bin coordinates and scaling factors as TSV to output_dir
-
     println!("Start: Writing stride-bin coordinates and scaling factors to disk");
-    let file_name = dot_join(&[opt.output_prefix.as_str(), "scaling_factors.tsv"]);
+    let file_name = dot_join(&[opt.output_prefix.as_str(), output_file_name]);
     let mut tsv_writer = BufWriter::new(
         File::create(opt.ioc.output_dir.join(file_name)).context("creating scaling-factors TSV")?,
     );
@@ -159,16 +128,17 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
         "chromosome\tstart\tend\tavg_pos_cov\tavg_overlapping_pos_cov\tscaling_factor"
     )
     .context("writing TSV header")?;
-    for chr in chromosomes {
-        let bins = bins_by_chr
-            .get(&chr)
-            .with_context(|| format!("missing bins for chromosome: {}", chr))?;
 
-        for bin in bins.iter() {
+    for chromosome in chromosomes {
+        let bins = bins_by_chr
+            .get(&chromosome)
+            .with_context(|| format!("missing bins for chromosome: {}", chromosome))?;
+
+        for bin in bins {
             writeln!(
                 tsv_writer,
                 "{}\t{}\t{}\t{}\t{}\t{}",
-                chr,
+                chromosome,
                 bin.start(),
                 bin.end(),
                 bin.avg_coverage,
@@ -179,7 +149,7 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
         }
     }
 
-    // Print summary statistics and execution time
+    let global_counter = fcoverage_result.counters;
     let elapsed = start_time.elapsed();
     println!("  Total reads: {}", global_counter.base.total_reads);
     println!(
@@ -217,154 +187,165 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
     Ok(())
 }
 
-fn process_chrom(
-    chr: &str,
-    opt: &CoverageWeightsConfig,
-    blacklist_intervals: &[Interval<u64>],
-    gc_corrector_opt: Option<GCCorrector>,
-) -> anyhow::Result<(String, Vec<StrideBin>, CoverageWeightsCounters)> {
-    // Open a fresh BAM reader for this thread
-    let (mut reader, tid, chrom_len) = create_chromosome_reader(&opt.ioc.bam, chr)?;
+fn build_fcoverage_average_config(
+    opt: &ScalingWeightsArgs,
+    output_dir: &Path,
+    normalize_by_length: bool,
+) -> FCoverageConfig {
+    let mut cfg = FCoverageConfig::new(
+        crate::commands::cli_common::IOCArgs {
+            bam: opt.ioc.bam.clone(),
+            output_dir: output_dir.to_path_buf(),
+            n_threads: opt.ioc.n_threads,
+        },
+        opt.chromosomes.clone(),
+    );
 
-    // Initialize counters (default -> 0s)
-    let mut counter = CoverageWeightsCounters::default();
+    cfg.set_unpaired(opt.unpaired.clone());
+    cfg.set_normalize_by_length(normalize_by_length);
+    cfg.set_output_prefix(opt.output_prefix.clone());
+    cfg.set_decimals(FCOVERAGE_INTERMEDIATE_DECIMALS);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_windows(crate::commands::cli_common::WindowsArgs {
+        by_size: Some(opt.stride as u64),
+        by_bed: None,
+    });
+    cfg.set_fragment_lengths(opt.fragment_lengths.clone());
+    cfg.set_min_mapq(opt.min_mapq);
+    cfg.set_require_proper_pair(opt.require_proper_pair);
+    cfg.set_blacklist(opt.blacklist.clone());
+    cfg.set_gc(opt.gc.clone());
+    cfg.set_ref_2bit(opt.ref_2bit.clone());
+    cfg
+}
 
-    let mut bins: Vec<StrideBin> = {
-        let mut v = Vec::new();
-        let mut pos = 0u32;
-        while pos < chrom_len as u32 {
-            v.push(StrideBin {
-                interval: Interval::new(pos, pos.saturating_add(opt.stride).min(chrom_len as u32))?,
-                avg_coverage: 0.0,
+fn load_stride_bins_from_fcoverage_average_tsv(
+    fcoverage_result: &FCoverageRunResult,
+    chromosomes: &[String],
+) -> Result<FxHashMap<String, Vec<StrideBin>>> {
+    let path = &fcoverage_result.final_out_path;
+    let mut reader = open_text_reader(path)?;
+    let mut line = String::new();
+
+    line.clear();
+    if reader.read_line(&mut line)? == 0 {
+        bail!("{}: empty file; header required", path.display());
+    }
+    let header = line.trim_end();
+    ensure!(
+        header == "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+        "{}: unexpected fcoverage header: '{}'",
+        path.display(),
+        header
+    );
+
+    let mut bins_by_chr =
+        FxHashMap::with_capacity_and_hasher(chromosomes.len(), Default::default());
+
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            break;
+        }
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let cols: Vec<&str> = trimmed.split('\t').collect();
+        ensure!(
+            cols.len() == 5,
+            "{}: expected 5 tab-separated columns, got {} in line '{}'",
+            path.display(),
+            cols.len(),
+            trimmed
+        );
+
+        let chromosome = cols[0].to_string();
+        let start: u32 = cols[1]
+            .parse()
+            .with_context(|| format!("{}: invalid start '{}'", path.display(), cols[1]))?;
+        let end: u32 = cols[2]
+            .parse()
+            .with_context(|| format!("{}: invalid end '{}'", path.display(), cols[2]))?;
+        let avg_coverage: f32 = cols[3]
+            .parse()
+            .with_context(|| format!("{}: invalid avg_coverage '{}'", path.display(), cols[3]))?;
+        let _: u64 = cols[4].parse().with_context(|| {
+            format!(
+                "{}: invalid blacklisted_positions '{}'",
+                path.display(),
+                cols[4]
+            )
+        })?;
+
+        bins_by_chr
+            .entry(chromosome)
+            .or_insert_with(Vec::new)
+            .push(StrideBin {
+                interval: Interval::new(start, end)?,
+                avg_coverage,
                 avg_overlap_coverage: 0.0,
                 scaling_factor: 0.0,
             });
-            pos = pos.saturating_add(opt.stride);
+    }
+
+    for chromosome in chromosomes {
+        let bins = bins_by_chr
+            .get(chromosome)
+            .with_context(|| format!("{}: missing chromosome '{}'", path.display(), chromosome))?;
+        ensure!(
+            !bins.is_empty(),
+            "{}: chromosome '{}' had no stride bins",
+            path.display(),
+            chromosome
+        );
+        ensure!(
+            bins[0].start() == 0,
+            "{}: chromosome '{}' did not start at 0",
+            path.display(),
+            chromosome
+        );
+        for pair in bins.windows(2) {
+            ensure!(
+                pair[0].end() == pair[1].start(),
+                "{}: chromosome '{}' had non-contiguous stride bins at {}..{} and {}..{}",
+                path.display(),
+                chromosome,
+                pair[0].start(),
+                pair[0].end(),
+                pair[1].start(),
+                pair[1].end()
+            );
         }
-        v
-    };
-
-    reader
-        .fetch((tid, 0, chrom_len))
-        .context(format!("fetch {}", chr))?;
-
-    // Initialize coverage counter
-    let mut cp = Coverage::new(chrom_len as u32);
-    let gc_prefixes_opt = if gc_corrector_opt.is_some() {
-        let ref_2bit = match opt.ref_2bit.as_ref() {
-            Some(path) => path,
-            None => bail!("When GC correction is specified, --ref-2bit must also be specified"),
-        };
-        Some(build_gc_prefixes(&read_seq(ref_2bit, chr)?))
-    } else {
-        None
-    };
-
-    // Function for filtering fragments after pairing
-    // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
-    let fragment_filter = {
-        let lengths = opt.fragment_lengths.clone();
-        move |f: &Fragment| lengths.contains(f.len())
-    };
-    let gc_tag_bytes = opt.gc.gc_tag.as_deref().map(|tag| tag.as_bytes().to_vec());
-
-    // Create fragment iterator
-    let mut iter = if opt.unpaired.reads_are_fragments {
-        let min_mapq = opt.min_mapq;
-        let include_read_fn = move |r: &Record| default_include_read_unpaired(r, min_mapq);
-        fragments_from_bam(
-            reader.records().map(|r| r.map_err(anyhow::Error::from)),
-            include_read_fn,
-            gc_tag_bytes.as_deref(),
-            fragment_filter,
-            true,
-        )
-        .with_local_counters()
-    } else {
-        let min_mapq = opt.min_mapq;
-        let require_proper_pair = opt.require_proper_pair;
-        let include_read_fn =
-            move |r: &Record| default_include_read_paired_end(r, require_proper_pair, min_mapq);
-        fragments_from_bam(
-            reader.records().map(|r| r.map_err(anyhow::Error::from)),
-            include_read_fn,
-            gc_tag_bytes.as_deref(),
-            fragment_filter,
-            false,
-        )
-        .with_local_counters()
-    };
-
-    // Iterate fragments and add fragment to coverage
-    for fragment_res in iter.by_ref() {
-        let fragment = fragment_res.context("reading fragment")?;
-
-        let weight = if let Some(gc_corrector) = gc_corrector_opt.as_ref() {
-            let gc_prefixes = gc_prefixes_opt
-                .as_ref()
-                .context("GC prefix sums missing despite GC correction being enabled")?;
-            match gc_corrector.correct_fragment(fragment.interval.try_to_u64()?, gc_prefixes)? {
-                Some(weight) => weight as f32,
-                None => {
-                    counter.gc_failed_fragments += 1;
-                    if opt.gc.skip_invalid_gc {
-                        continue;
-                    } else {
-                        1.0
-                    }
-                }
-            }
-        } else if opt.gc.gc_tag.is_some() {
-            if fragment.gc_tag.had_invalid {
-                counter.gc_failed_fragments += 1;
-                if fragment.gc_tag.was_out_of_range {
-                    counter.gc_out_of_range_tags += 1;
-                }
-                if opt.gc.skip_invalid_gc {
-                    continue;
-                } else {
-                    1.0
-                }
-            } else if let Some(weight) = fragment.gc_tag.weight {
-                weight
-            } else {
-                counter.gc_failed_fragments += 1;
-                if opt.gc.skip_invalid_gc {
-                    continue;
-                } else {
-                    1.0
-                }
-            }
-        } else {
-            1.0
-        };
-
-        counter.base.counted_fragments += 1;
-        cp.add_fragment_weighted(fragment, weight)?;
     }
 
-    // Get counters from iterator
-    counter.add_from_snapshot(iter.counters_snapshot());
+    Ok(bins_by_chr)
+}
 
-    // Add blacklist
-    if !blacklist_intervals.is_empty() {
-        cp.set_blacklist_mask(blacklist_intervals)?;
+struct RemoveDirOnDrop {
+    path: PathBuf,
+}
+
+impl RemoveDirOnDrop {
+    fn new(path: PathBuf) -> Self {
+        Self { path }
     }
+}
 
-    // Get ready to extract average coverage per stride-bin
-    cp.finalize_coverage(true);
-    cp.build_indexes(true)?;
-
-    // Decide once whether to exclude blacklisted bases
-    let exclude_blacklisted = cp.blacklist_mask().is_some();
-
-    for bin in bins.iter_mut() {
-        // Calculate total coverage in bin
-        bin.avg_coverage = cp.avg_coverage(bin.interval, exclude_blacklisted)?;
+impl Drop for RemoveDirOnDrop {
+    fn drop(&mut self) {
+        if let Err(err) = std::fs::remove_dir_all(&self.path) {
+            eprintln!(
+                "warning: failed to remove temp dir {}: {}",
+                self.path.display(),
+                err
+            );
+        }
     }
+}
 
-    // Update the avg_overlap_coverage per bin
-    fill_triangular_overlap(&mut bins, opt.bin_size, opt.stride);
-
-    Ok((chr.to_string(), bins, counter))
+#[cfg(test)]
+mod tests {
+    include!("coverage_weights_tests.rs");
 }

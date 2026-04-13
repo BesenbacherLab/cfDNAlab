@@ -25,6 +25,10 @@ fn main() {
         Cmd::CoverageWeights(config) => {
             cfdnalab::commands::coverage_weights::coverage_weights::run(&config)
         }
+        #[cfg(feature = "cmd_fragment_count_weights")]
+        Cmd::FragmentCountWeights(config) => {
+            cfdnalab::commands::fragment_count_weights::fragment_count_weights::run(&config)
+        }
         #[cfg(feature = "cmd_ends")]
         Cmd::Ends(config) => cfdnalab::commands::ends::ends::run(&config),
         #[cfg(feature = "cmd_lengths")]

@@ -10,9 +10,9 @@ use cfdnalab::commands::gc_bias::{config::GCConfig, gc_bias::run as run_gc_bias}
 use cfdnalab::commands::ref_gc_bias::{
     config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias,
 };
+use cfdnalab::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 use cfdnalab::shared::reference::twobit_contig_lengths;
-use cfdnalab::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 use rust_htslib::bam::{self, header::HeaderRecord, record::Cigar, record::CigarString};
 use std::{
     fs::{File, OpenOptions},

@@ -26,9 +26,9 @@ use cfdnalab::shared::read::default_include_read_paired_end;
 use fixtures::{
     BamFixture, FragmentSpec, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, ReadSpec, bam_from_specs,
     bam_from_specs_strict_identity, build_real_neutral_gc_package,
-    build_real_neutral_gc_package_for_range,
-    build_real_non_neutral_gc_package, long_fragment_bam, paired_fragment, read_zst_to_string,
-    simple_inward_bam, simple_reference_twobit, write_bed, write_scaling_factors,
+    build_real_neutral_gc_package_for_range, build_real_non_neutral_gc_package, long_fragment_bam,
+    paired_fragment, read_zst_to_string, simple_inward_bam, simple_reference_twobit, write_bed,
+    write_scaling_factors,
 };
 use ndarray::Array2;
 use ndarray::array;
@@ -501,10 +501,7 @@ fn normalize_by_length_uses_counted_segment_length_for_gapped_fragments() -> Res
     ]));
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
-    assert_eq!(
-        lines,
-        vec!["chr1\t20\t40\t0.025", "chr1\t50\t70\t0.025"]
-    );
+    assert_eq!(lines, vec!["chr1\t20\t40\t0.025", "chr1\t50\t70\t0.025"]);
 
     Ok(())
 }
@@ -545,7 +542,10 @@ fn normalize_by_length_ignore_gap_renormalizes_over_remaining_counted_span() -> 
     let with_ignore_gap = run_with_ignore_gap(true)?;
 
     assert_eq!(without_ignore_gap, "chr1\t20\t80\t0.0167\n");
-    assert_eq!(with_ignore_gap, "chr1\t20\t40\t0.025\nchr1\t60\t80\t0.025\n");
+    assert_eq!(
+        with_ignore_gap,
+        "chr1\t20\t40\t0.025\nchr1\t60\t80\t0.025\n"
+    );
 
     Ok(())
 }
@@ -582,20 +582,16 @@ fn normalize_by_length_matches_between_paired_and_unpaired_for_same_span() -> Re
     run(&paired_cfg)?;
     run(&unpaired_cfg)?;
 
-    let paired_text = read_zst_to_string(
-        &paired_out.path().join(dot_join(&[
-            "paired",
-            "length_normalized",
-            "fcoverage.per_position.bedgraph.zst",
-        ])),
-    )?;
-    let unpaired_text = read_zst_to_string(
-        &unpaired_out.path().join(dot_join(&[
-            "unpaired",
-            "length_normalized",
-            "fcoverage.per_position.bedgraph.zst",
-        ])),
-    )?;
+    let paired_text = read_zst_to_string(&paired_out.path().join(dot_join(&[
+        "paired",
+        "length_normalized",
+        "fcoverage.per_position.bedgraph.zst",
+    ])))?;
+    let unpaired_text = read_zst_to_string(&unpaired_out.path().join(dot_join(&[
+        "unpaired",
+        "length_normalized",
+        "fcoverage.per_position.bedgraph.zst",
+    ])))?;
     let expected = "chr1\t20\t80\t0.0167\n";
     assert_eq!(paired_text, expected);
     assert_eq!(unpaired_text, expected);
@@ -719,10 +715,7 @@ fn normalize_by_length_uses_counted_segment_length_for_refskip_fragments() -> Re
     ]));
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
-    assert_eq!(
-        lines,
-        vec!["chr1\t20\t40\t0.025", "chr1\t50\t70\t0.025"]
-    );
+    assert_eq!(lines, vec!["chr1\t20\t40\t0.025", "chr1\t50\t70\t0.025"]);
 
     Ok(())
 }
@@ -2511,7 +2504,7 @@ fn real_coverage_weights_tsv_changes_fcoverage_per_base_not_by_fragment_average(
     // - If `fcoverage` incorrectly used full-fragment averaging like `midpoints` or the
     //   converters, this would instead collapse to one constant run with value 407/540.
     run_coverage_weights(&weights_cfg)?;
-    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+    let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
 
     let mut scale_genome = ScaleGenomeArgs::default();
     scale_genome.scaling_factors = Some(scaling_path);
@@ -2576,8 +2569,13 @@ fn real_ref_gc_bias_gc_bias_and_coverage_weights_chain_is_coherent_in_fcoverage(
     let weights_out_dir = out_dir.path().join("weights_out");
     std::fs::create_dir_all(&weights_out_dir)?;
     let mut weights_cfg = make_simple_coverage_weights_config(&weights_out_dir, &bam.bam);
-    let weights_gc_path =
-        build_real_neutral_gc_package_for_range(&bam.bam, &ref_twobit.path, out_dir.path(), 10, 200)?;
+    let weights_gc_path = build_real_neutral_gc_package_for_range(
+        &bam.bam,
+        &ref_twobit.path,
+        out_dir.path(),
+        10,
+        200,
+    )?;
     let gc_path = build_real_neutral_gc_package(&bam.bam, &ref_twobit.path, out_dir.path(), 60)?;
 
     weights_cfg.set_gc(ApplyGCArgs {
@@ -2588,7 +2586,7 @@ fn real_ref_gc_bias_gc_bias_and_coverage_weights_chain_is_coherent_in_fcoverage(
     weights_cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
     run_coverage_weights(&weights_cfg)?;
-    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+    let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
 
     let mut scale_genome = ScaleGenomeArgs::default();
     scale_genome.scaling_factors = Some(scaling_path);
@@ -2813,7 +2811,7 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_fcove
 
     // Act
     run_coverage_weights(&scaling_cfg)?;
-    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+    let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
 
     let mut cfg = FCoverageConfig::new(
         IOCArgs {

@@ -109,6 +109,8 @@ fn help_text_is_available_for_all_enabled_release_commands() -> Result<()> {
     release_commands.push("ref-gc-bias");
     #[cfg(feature = "cmd_coverage_weights")]
     release_commands.push("coverage-weights");
+    #[cfg(feature = "cmd_fragment_count_weights")]
+    release_commands.push("fragment-count-weights");
     #[cfg(feature = "cmd_lengths")]
     release_commands.push("lengths");
     #[cfg(feature = "cmd_fcoverage")]
@@ -292,7 +294,73 @@ fn coverage_weights_cli_minimal_invocation_writes_scaling_tsv() -> Result<()> {
     // Assert
     let scaling_path = out_dir
         .path()
-        .join(format!("{output_prefix}.scaling_factors.tsv"));
+        .join(format!("{output_prefix}.coverage.scaling_factors.tsv"));
+    assert!(scaling_path.exists(), "Expected {}", scaling_path.display());
+
+    let content = std::fs::read_to_string(&scaling_path)?;
+    let lines: Vec<&str> = content.lines().collect();
+    assert_eq!(
+        lines.first().copied().unwrap_or_default(),
+        "# gc_mode=uncorrected"
+    );
+    assert_eq!(
+        lines.get(1).copied().unwrap_or_default(),
+        "chromosome\tstart\tend\tavg_pos_cov\tavg_overlapping_pos_cov\tscaling_factor"
+    );
+    assert_eq!(
+        lines.len(),
+        12,
+        "Expected 1 metadata line + 1 header + 10 stride-bin rows for chr1 length 200 with stride 20"
+    );
+
+    Ok(())
+}
+
+#[cfg(feature = "cmd_fragment_count_weights")]
+#[test]
+fn fragment_count_weights_cli_minimal_invocation_writes_scaling_tsv() -> Result<()> {
+    // Human verification status: unverified
+    // Arrange: simple_inward_bam has chr1 length 200 and one fragment spanning [20,80).
+    // With stride 20 this yields exactly 10 stride bins -> 12 TSV lines including one metadata
+    // line and one header line.
+    let bam_fixture = fixtures::simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let output_prefix = "cli_smoke_fragcountweights";
+    let bam_path = path_text(&bam_fixture.bam);
+    let out_path = path_text(out_dir.path());
+
+    // Act
+    let output = command_output(
+        "fragment-count-weights",
+        &[
+            "--bam",
+            bam_path.as_str(),
+            "--output-dir",
+            out_path.as_str(),
+            "--chromosomes",
+            "chr1",
+            "--n-threads",
+            "1",
+            "--bin-size",
+            "40",
+            "--stride",
+            "20",
+            "--min-mapq",
+            "0",
+            "--min-fragment-length",
+            "10",
+            "--max-fragment-length",
+            "200",
+            "--output-prefix",
+            output_prefix,
+        ],
+    )?;
+    assert_success_with_logs(&output, "cfdna fragment-count-weights minimal invocation");
+
+    // Assert
+    let scaling_path = out_dir.path().join(format!(
+        "{output_prefix}.fragment_counts.scaling_factors.tsv"
+    ));
     assert!(scaling_path.exists(), "Expected {}", scaling_path.display());
 
     let content = std::fs::read_to_string(&scaling_path)?;

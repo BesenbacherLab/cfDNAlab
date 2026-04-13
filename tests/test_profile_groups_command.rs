@@ -1226,7 +1226,7 @@ fn coverage_weights_tsv_changes_midpoints_by_full_fragment_average_not_window_ov
 
     // Act
     run_coverage_weights(&scaling_cfg)?;
-    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+    let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
 
     let mut midpoints_cfg = MidpointsConfig::new(
         IOCArgs {
@@ -1382,7 +1382,7 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_midpo
 
     // Act
     run_coverage_weights(&scaling_cfg)?;
-    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+    let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
 
     let mut midpoints_cfg = MidpointsConfig::new(
         IOCArgs {
@@ -1557,7 +1557,7 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
         10,
         200,
     )?;
-    let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+    let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
     let gc_path = temp.path().join("constant_gc_pkg.npz");
     let bed_path = temp.path().join("windows.bed");
     write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;

@@ -9,6 +9,10 @@ use cfdnalab::commands::coverage_weights::coverage_weights::run;
 use cfdnalab::commands::coverage_weights::striding::{
     StrideBin, normalize_avg_overlap_by_global_mean,
 };
+#[cfg(feature = "cmd_fragment_count_weights")]
+use cfdnalab::commands::fragment_count_weights::{
+    config::FragmentCountWeightsConfig, fragment_count_weights::run as run_fragment_count_weights,
+};
 use cfdnalab::shared::interval::Interval;
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity, paired_fragment,
@@ -106,6 +110,32 @@ fn make_simple_coverage_weights_config(
     cfg
 }
 
+#[cfg(feature = "cmd_fragment_count_weights")]
+fn make_simple_fragment_count_weights_config(
+    out_dir: &std::path::Path,
+    bam: &std::path::Path,
+) -> FragmentCountWeightsConfig {
+    let mut cfg = FragmentCountWeightsConfig::new(
+        IOCArgs {
+            bam: bam.to_path_buf(),
+            output_dir: out_dir.to_path_buf(),
+            n_threads: 2,
+        },
+        base_chromosomes(&["chr1"]),
+    );
+    cfg.set_bin_size(40);
+    cfg.set_stride(20);
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    cfg.set_output_prefix("counts".to_string());
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 200;
+    }
+    cfg
+}
+
 fn single_read_fragment_bam(name: &str) -> Result<fixtures::BamFixture> {
     bam_from_specs(
         vec![("chr1".to_string(), 200)],
@@ -160,6 +190,21 @@ fn fragment_on_tid(mut fragment: FragmentSpec, tid: usize) -> FragmentSpec {
     fragment
 }
 
+#[cfg(feature = "cmd_fragment_count_weights")]
+fn mixed_length_fragment_bam(name: &str) -> Result<fixtures::BamFixture> {
+    // Two fragments on chr1:
+    // - one short fragment [0,20)
+    // - one long fragment [20,80)
+    //
+    // This makes the two weighting schemes diverge cleanly when bin_size == stride == 20.
+    bam_from_specs(
+        vec![("chr1".to_string(), 100)],
+        vec![paired_fragment(0, 20, 10), paired_fragment(20, 60, 10)],
+        Vec::new(),
+        name,
+    )
+}
+
 #[test]
 fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
     // Human verification status: unverified
@@ -170,7 +215,7 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
 
     run(&cfg)?;
 
-    let tsv_path = out_dir.path().join("coverage.scaling_factors.tsv");
+    let tsv_path = out_dir.path().join("coverage.coverage.scaling_factors.tsv");
     assert!(tsv_path.exists());
     let rows = parse_scaling_rows(&tsv_path)?;
     let expected_non_zero_rows = [
@@ -212,6 +257,39 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "cmd_fragment_count_weights")]
+#[test]
+fn fragment_count_scaling_written_with_expected_ranges() -> Result<()> {
+    // Human verification status: unverified
+    // Arrange: simple_inward_bam has chr1 length 200 and one fragment spanning [20,80).
+    // With stride 20 this yields exactly 10 stride bins in the written scaling TSV.
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+
+    let cfg = make_simple_fragment_count_weights_config(out_dir.path(), &bam.bam);
+
+    // Act
+    run_fragment_count_weights(&cfg)?;
+
+    // Assert
+    let tsv_path = out_dir
+        .path()
+        .join("counts.fragment_counts.scaling_factors.tsv");
+    assert!(tsv_path.exists());
+    let rows = parse_scaling_rows(&tsv_path)?;
+
+    assert_eq!(
+        rows.len(),
+        10,
+        "expected one stride bin per 20 bp across chr1"
+    );
+    assert_eq!(rows[0].chromosome, "chr1");
+    assert_eq!(rows[0].start, 0);
+    assert_eq!(rows.last().unwrap().end, 200);
+
+    Ok(())
+}
+
 #[test]
 fn given_simple_fragment_when_coverage_weights_run_then_output_bins_cover_chromosome_without_gaps()
 -> Result<()> {
@@ -223,7 +301,7 @@ fn given_simple_fragment_when_coverage_weights_run_then_output_bins_cover_chromo
 
     // Act
     run(&cfg)?;
-    let tsv_path = out_dir.path().join("coverage.scaling_factors.tsv");
+    let tsv_path = out_dir.path().join("coverage.coverage.scaling_factors.tsv");
     let rows = parse_scaling_rows(&tsv_path)?;
 
     // Assert
@@ -262,6 +340,147 @@ fn given_simple_fragment_when_coverage_weights_run_then_output_bins_cover_chromo
     Ok(())
 }
 
+#[cfg(feature = "cmd_fragment_count_weights")]
+#[test]
+fn fragment_count_weights_differs_from_coverage_weights_for_mixed_fragment_lengths() -> Result<()> {
+    // Human verification status: unverified
+    // Arrange
+    //
+    // We choose bin_size == stride == 20 so the smoothed value equals the raw stride-bin average.
+    // The BAM has two fragments on chr1:
+    // - short: [0,20), length 20
+    // - long:  [20,80), length 60
+    //
+    // Coverage weights:
+    // - each covered base gets weight 1.0
+    // - bins [0,20), [20,40), [40,60), [60,80) each get avg_pos_cov = 1.0
+    // - global mean over non-zero bins = 1.0
+    // - scaling_factor for each covered bin = 1.0
+    //
+    // Fragment-count weights:
+    // - short fragment contributes 1/20 per base in [0,20)       -> avg_pos_cov = 0.05
+    // - long fragment contributes 1/60 per base in [20,80)       -> avg_pos_cov = 1/60
+    // - global mean over the four non-zero bins is:
+    //     (0.05 + 3*(1/60)) / 4 = (0.05 + 0.05) / 4 = 0.025
+    // - scaling factors become:
+    //     short bin: 0.025 / 0.05    = 0.5
+    //     long bins: 0.025 / (1/60)  = 1.5
+    let bam = mixed_length_fragment_bam("weights_mixed_lengths")?;
+    let coverage_out = TempDir::new()?;
+    let counts_out = TempDir::new()?;
+
+    let mut coverage_cfg = CoverageWeightsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: coverage_out.path().to_path_buf(),
+            n_threads: 2,
+        },
+        base_chromosomes(&["chr1"]),
+    );
+    coverage_cfg.set_bin_size(20);
+    coverage_cfg.set_stride(20);
+    coverage_cfg.set_min_mapq(0);
+    coverage_cfg.set_require_proper_pair(false);
+    coverage_cfg.set_output_prefix("coverage".to_string());
+    {
+        let frag = coverage_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 100;
+    }
+
+    let mut counts_cfg = FragmentCountWeightsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: counts_out.path().to_path_buf(),
+            n_threads: 2,
+        },
+        base_chromosomes(&["chr1"]),
+    );
+    counts_cfg.set_bin_size(20);
+    counts_cfg.set_stride(20);
+    counts_cfg.set_min_mapq(0);
+    counts_cfg.set_require_proper_pair(false);
+    counts_cfg.set_output_prefix("counts".to_string());
+    {
+        let frag = counts_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 100;
+    }
+
+    // Act
+    run(&coverage_cfg)?;
+    run_fragment_count_weights(&counts_cfg)?;
+
+    let coverage_rows = parse_scaling_rows(
+        &coverage_out
+            .path()
+            .join("coverage.coverage.scaling_factors.tsv"),
+    )?;
+    let counts_rows = parse_scaling_rows(
+        &counts_out
+            .path()
+            .join("counts.fragment_counts.scaling_factors.tsv"),
+    )?;
+
+    // Assert
+    assert_eq!(coverage_rows.len(), 5);
+    assert_eq!(counts_rows.len(), 5);
+
+    // Covered bins stay at scaling factor 1.0 in coverage mode because all four
+    // non-zero bins have the same average support.
+    for row_index in 0..4 {
+        assert_approx(
+            coverage_rows[row_index].avg_pos_cov,
+            1.0,
+            1e-6,
+            "coverage avg_pos_cov",
+        );
+        assert_approx(
+            coverage_rows[row_index].scaling_factor,
+            1.0,
+            1e-6,
+            "coverage scaling_factor",
+        );
+    }
+    assert_eq!(coverage_rows[4].avg_pos_cov, 0.0);
+    assert_eq!(coverage_rows[4].scaling_factor, 0.0);
+
+    // In fragment-count mode the short fragment dominates its one bin less than a long
+    // fragment would in coverage mode, while the long fragment is spread across three bins.
+    assert_approx(
+        counts_rows[0].avg_pos_cov,
+        0.05,
+        1e-6,
+        "fragment-count short-bin avg_pos_cov",
+    );
+    for row_index in 1..4 {
+        assert_approx(
+            counts_rows[row_index].avg_pos_cov,
+            1.0 / 60.0,
+            1e-6,
+            "fragment-count long-bin avg_pos_cov",
+        );
+    }
+    assert_approx(
+        counts_rows[0].scaling_factor,
+        0.5,
+        1e-6,
+        "fragment-count short-bin scaling_factor",
+    );
+    for row_index in 1..4 {
+        assert_approx(
+            counts_rows[row_index].scaling_factor,
+            1.5,
+            1e-6,
+            "fragment-count long-bin scaling_factor",
+        );
+    }
+    assert_eq!(counts_rows[4].avg_pos_cov, 0.0);
+    assert_eq!(counts_rows[4].scaling_factor, 0.0);
+
+    Ok(())
+}
+
 #[test]
 fn given_simple_fragment_when_coverage_weights_run_then_scaling_values_match_hand_derivation()
 -> Result<()> {
@@ -287,7 +506,7 @@ fn given_simple_fragment_when_coverage_weights_run_then_scaling_values_match_han
 
     // Act
     run(&cfg)?;
-    let tsv_path = out_dir.path().join("coverage.scaling_factors.tsv");
+    let tsv_path = out_dir.path().join("coverage.coverage.scaling_factors.tsv");
     let rows = parse_scaling_rows(&tsv_path)?;
 
     // Assert
@@ -364,7 +583,7 @@ fn given_unpaired_read_fragment_when_coverage_weights_run_then_scaling_matches_s
 
     // Act
     run(&cfg)?;
-    let tsv_path = out_dir.path().join("coverage.scaling_factors.tsv");
+    let tsv_path = out_dir.path().join("coverage.coverage.scaling_factors.tsv");
     let rows = parse_scaling_rows(&tsv_path)?;
 
     // Assert
@@ -751,7 +970,7 @@ fn multi_chromosome_scaling_uses_one_shared_global_mean() -> Result<()> {
 
     // Act
     run(&cfg)?;
-    let rows = parse_scaling_rows(&out_dir.path().join("coverage.scaling_factors.tsv"))?;
+    let rows = parse_scaling_rows(&out_dir.path().join("coverage.coverage.scaling_factors.tsv"))?;
 
     // Assert
     let chr1_rows: Vec<_> = rows.iter().filter(|row| row.chromosome == "chr1").collect();
@@ -946,14 +1165,21 @@ fn coverage_weights_default_min_mapq_matches_explicit_thirty_and_differs_from_ex
     run(&explicit_zero_cfg)?;
 
     // Assert
-    let default_rows = parse_scaling_rows(&default_out.path().join("default.scaling_factors.tsv"))?;
+    let default_rows = parse_scaling_rows(
+        &default_out
+            .path()
+            .join("default.coverage.scaling_factors.tsv"),
+    )?;
     let explicit_thirty_rows = parse_scaling_rows(
         &explicit_thirty_out
             .path()
-            .join("thirty.scaling_factors.tsv"),
+            .join("thirty.coverage.scaling_factors.tsv"),
     )?;
-    let explicit_zero_rows =
-        parse_scaling_rows(&explicit_zero_out.path().join("zero.scaling_factors.tsv"))?;
+    let explicit_zero_rows = parse_scaling_rows(
+        &explicit_zero_out
+            .path()
+            .join("zero.coverage.scaling_factors.tsv"),
+    )?;
 
     assert_eq!(default_rows.len(), 10);
     assert_eq!(default_rows.len(), explicit_thirty_rows.len());
@@ -1094,7 +1320,7 @@ fn explicit_chromosome_order_controls_scaling_tsv_row_order() -> Result<()> {
 
     // Act
     run(&cfg)?;
-    let rows = parse_scaling_rows(&out_dir.path().join("coverage.scaling_factors.tsv"))?;
+    let rows = parse_scaling_rows(&out_dir.path().join("coverage.coverage.scaling_factors.tsv"))?;
 
     // Assert
     assert_eq!(
@@ -1142,7 +1368,7 @@ fn chromosomes_all_uses_bam_header_order_for_scaling_tsv_rows() -> Result<()> {
 
     // Act
     run(&cfg)?;
-    let rows = parse_scaling_rows(&out_dir.path().join("coverage.scaling_factors.tsv"))?;
+    let rows = parse_scaling_rows(&out_dir.path().join("coverage.coverage.scaling_factors.tsv"))?;
 
     // Assert
     assert_eq!(
@@ -1193,7 +1419,7 @@ fn blacklist_masking_changes_scaling_profile_and_excludes_zeroed_bins_from_globa
 
     // Act
     run(&cfg)?;
-    let rows = parse_scaling_rows(&out_dir.path().join("coverage.scaling_factors.tsv"))?;
+    let rows = parse_scaling_rows(&out_dir.path().join("coverage.coverage.scaling_factors.tsv"))?;
 
     // Assert
     let expected_avg_pos_cov = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];

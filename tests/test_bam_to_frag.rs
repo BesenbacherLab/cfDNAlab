@@ -1272,7 +1272,7 @@ mod tests_bam_to_frag {
         }
         run_coverage_weights(&weights_cfg)?;
 
-        let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+        let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
 
         // Manual expectations:
         // - `coverage-weights` on the simple fixture yields stride-bin scaling factors:
@@ -1424,7 +1424,7 @@ mod tests_bam_to_frag {
         }
         run_coverage_weights(&weights_cfg)?;
 
-        let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
+        let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
         let frag_out_dir = work.path().join("frag_real_multi_chr_scaling");
         std::fs::create_dir_all(&frag_out_dir)?;
         let mut frag_cfg = BamToFragConfig::new(

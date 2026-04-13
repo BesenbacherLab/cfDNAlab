@@ -20,6 +20,7 @@ default = [
     "cmd_coverage_weights",
     "cmd_ends",
     "cmd_fcoverage",
+    "cmd_fragment_count_weights",
     "cmd_frag_to_bam",
     "cmd_gc_bias",
     "cmd_lengths",
@@ -32,9 +33,10 @@ cmd_bam_to_bam = ["cmd_gc_bias"]
 cmd_bam_to_frag = ["cmd_gc_bias"]
 ends_experimental = []
 cmd_frag_to_bam = []
-cmd_coverage_weights = ["cmd_gc_bias"]
+cmd_coverage_weights = ["cmd_fcoverage"]
 cmd_ends = ["cmd_gc_bias"]
 cmd_fcoverage = ["cmd_gc_bias"]
+cmd_fragment_count_weights = ["cmd_fcoverage"]
 cmd_fragment_kmers = ["cmd_gc_bias"]
 cmd_fragment_kmers_tests = ["cmd_fragment_kmers"]
 cmd_gc_bias = ["cmd_ref_gc_bias"]

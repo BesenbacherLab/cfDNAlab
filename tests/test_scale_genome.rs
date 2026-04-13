@@ -528,7 +528,7 @@ mod tests_compute_window_scaling {
 mod tests_load_scaling_factors_tsv {
     use cfdnalab::shared::{
         bam::Contigs,
-        scale_genome::{load_scaling_factors_tsv, ScalingGCMode},
+        scale_genome::{ScalingGCMode, load_scaling_factors_tsv},
     };
     use fxhash::FxHashMap;
     use std::io::Write;
@@ -631,7 +631,8 @@ mod tests_load_scaling_factors_tsv {
                 .expect_err("duplicate gc_mode metadata should fail");
 
         assert!(
-            err.to_string().contains("duplicate scaling metadata key 'gc_mode'"),
+            err.to_string()
+                .contains("duplicate scaling metadata key 'gc_mode'"),
             "unexpected error: {err}"
         );
 
@@ -698,8 +699,7 @@ mod tests_load_scaling_factors_tsv {
     fn load_scaling_factors_tsv_rejects_short_data_row() -> anyhow::Result<()> {
         // A row missing the rightmost required field must fail with the line number and the
         // expected number of columns.
-        let file =
-            write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\n")?;
+        let file = write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\n")?;
 
         let err =
             load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
@@ -717,8 +717,7 @@ mod tests_load_scaling_factors_tsv {
     fn load_scaling_factors_tsv_rejects_invalid_interval() -> anyhow::Result<()> {
         // Row-level coordinate validation happens before chromosome-level contiguity checks, so a
         // zero-width interval [5,5) must fail immediately.
-        let file =
-            write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t5\t5\t1.0\n")?;
+        let file = write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t5\t5\t1.0\n")?;
 
         let err =
             load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
@@ -743,7 +742,8 @@ mod tests_load_scaling_factors_tsv {
                 .expect_err("negative scaling factor should fail");
 
         assert!(
-            err.to_string().contains("scaling_factor must be finite and >= 0"),
+            err.to_string()
+                .contains("scaling_factor must be finite and >= 0"),
             "unexpected error: {err}"
         );
 
@@ -794,9 +794,8 @@ mod tests_load_scaling_factors_tsv {
     {
         // Filtering out other chromosomes must not silently succeed when the requested chromosome
         // ends up with no bins at all.
-        let file = write_scaling_file(
-            "chromosome\tstart\tend\tscaling_factor\nchr2\t0\t10\t1.0\n",
-        )?;
+        let file =
+            write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr2\t0\t10\t1.0\n")?;
 
         let err =
             load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
@@ -875,15 +874,15 @@ mod tests_load_scaling_factors_tsv {
     fn load_scaling_factors_tsv_errors_when_bins_do_not_reach_contig_end() -> anyhow::Result<()> {
         // A single bin [0,8) on a 10 bp chromosome leaves the tail uncovered, so full-coverage
         // validation must reject it.
-        let file =
-            write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t0\t8\t1.0\n")?;
+        let file = write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t0\t8\t1.0\n")?;
 
         let err =
             load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
                 .expect_err("truncated chromosome coverage should fail");
 
         assert!(
-            err.to_string().contains("must end at chrom_len=10 (got end=8)"),
+            err.to_string()
+                .contains("must end at chrom_len=10 (got end=8)"),
             "unexpected error: {err}"
         );
 
@@ -914,8 +913,8 @@ mod tests_load_scaling_factors_tsv {
 #[cfg(test)]
 mod tests_scaling_gc_compatibility {
     use cfdnalab::shared::scale_genome::{
-        ensure_scaling_gc_compatibility, scaling_gc_mode_for_run, ScalingFactorsMetadata,
-        ScalingGCMode,
+        ScalingFactorsMetadata, ScalingGCMode, ensure_scaling_gc_compatibility,
+        scaling_gc_mode_for_run,
     };
     use std::path::Path;
 

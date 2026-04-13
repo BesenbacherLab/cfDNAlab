@@ -44,7 +44,17 @@ use fxhash::FxHashMap;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::io::Write;
+use std::path::PathBuf;
 use std::{sync::Arc, time::Instant};
+
+/// Result of an internal `fcoverage` run.
+///
+/// This is used by other commands that reuse the tiled counting and final by-size
+/// reduction without wanting `fcoverage`'s outer statistics wrapper.
+pub struct FCoverageRunResult {
+    pub counters: FCoverageCounters,
+    pub final_out_path: PathBuf,
+}
 
 /// Execute the fragment coverage pipeline end-to-end.
 ///
@@ -65,6 +75,57 @@ use std::{sync::Arc, time::Instant};
 ///   fails at any stage.
 pub fn run(opt: &FCoverageConfig) -> Result<()> {
     let start_time = Instant::now();
+
+    let run_result = run_inner(opt)?;
+    let global_counter = run_result.counters;
+
+    println!();
+    println!("Statistics");
+    println!("----------");
+    println!(
+        "  Note: A few reads/fragments may be counted twice in the statistics (only) around the parallelization tiles."
+    );
+
+    // Print summary statistics and execution time
+    let elapsed = start_time.elapsed();
+    println!("  Total reads: {}", global_counter.base.total_reads);
+    println!(
+        "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
+        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
+        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
+            / global_counter.base.total_reads as f64
+            * 100.0,
+        global_counter.base.accepted_forward,
+        global_counter.base.accepted_reverse
+    );
+    if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
+        let gc_fail_action = if opt.gc.skip_invalid_gc {
+            "fragment skipped"
+        } else {
+            "fragment counted with weight 1.0"
+        };
+        println!(
+            "  GC correction failures ({}): {}",
+            gc_fail_action, global_counter.gc_failed_fragments
+        );
+    }
+    if opt.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
+        println!(
+            "  GC tag values outside [0, {:.0}] treated as invalid: {}",
+            crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
+            global_counter.gc_out_of_range_tags
+        );
+    }
+    println!(
+        "  Fragments counted one or more times: {}",
+        global_counter.base.counted_fragments
+    );
+    println!("----------");
+    println!("Elapsed time: {:.2?}", elapsed);
+    Ok(())
+}
+
+pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
@@ -556,62 +617,18 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
 
     println!("Saved output to: {:?}", final_out_path);
 
-    let keep_temp = false; // TODO: Make cli arg behind a feature for dev purposes?
-    if !keep_temp {
-        if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-            eprintln!(
-                "warning: failed to remove temp dir {}: {}",
-                temp_dir.display(),
-                e
-            );
-        }
-    } else {
-        eprintln!("kept temp tiles in {}", temp_dir.display());
+    if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
+        eprintln!(
+            "warning: failed to remove temp dir {}: {}",
+            temp_dir.display(),
+            e
+        );
     }
-    println!();
-    println!("Statistics");
-    println!("----------");
-    println!(
-        "  Note: A few reads/fragments may be counted twice in the statistics (only) around the parallelization tiles."
-    );
 
-    // Print summary statistics and execution time
-    let elapsed = start_time.elapsed();
-    println!("  Total reads: {}", global_counter.base.total_reads);
-    println!(
-        "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
-        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
-            / global_counter.base.total_reads as f64
-            * 100.0,
-        global_counter.base.accepted_forward,
-        global_counter.base.accepted_reverse
-    );
-    if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
-        let gc_fail_action = if opt.gc.skip_invalid_gc {
-            "fragment skipped"
-        } else {
-            "fragment counted with weight 1.0"
-        };
-        println!(
-            "  GC correction failures ({}): {}",
-            gc_fail_action, global_counter.gc_failed_fragments
-        );
-    }
-    if opt.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
-        println!(
-            "  GC tag values outside [0, {:.0}] treated as invalid: {}",
-            crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
-            global_counter.gc_out_of_range_tags
-        );
-    }
-    println!(
-        "  Fragments counted one or more times: {}",
-        global_counter.base.counted_fragments
-    );
-    println!("----------");
-    println!("Elapsed time: {:.2?}", elapsed);
-    Ok(())
+    Ok(FCoverageRunResult {
+        counters: global_counter,
+        final_out_path,
+    })
 }
 
 /// Process one tile: pair reads, build coverage, and write outputs for this tile
@@ -1265,10 +1282,7 @@ fn calculate_base_weight(fragment: &FragmentWithSegments, opt: &FCoverageConfig)
     }
 
     let counted_length = if let Some(segments) = &fragment.segments {
-        segments
-            .iter()
-            .map(|segment| segment.len())
-            .sum::<u32>()
+        segments.iter().map(|segment| segment.len()).sum::<u32>()
     } else {
         fragment.len()
     };

@@ -97,81 +97,87 @@ fn shared_real_artifact_cache() -> Result<&'static SharedRealArtifactCache> {
     static CACHE: OnceLock<std::result::Result<SharedRealArtifactCache, String>> = OnceLock::new();
     let cache_result = CACHE.get_or_init(|| {
         (|| -> Result<SharedRealArtifactCache> {
-        let scaling_producer_bam = simple_inward_bam()?;
-        let consumer_bam = bam_from_specs(
-            vec![("chr1".to_string(), 200)],
-            vec![paired_fragment(20, 61, 20)],
-            Vec::new(),
-            "shared_real_artifacts_consumer",
-        )?;
-        let reference = simple_reference_twobit()?;
-        let fixture_root = TempDir::new()?;
-        let weights_out_dir = fixture_root.path().join("coverage_weights");
-        std::fs::create_dir_all(&weights_out_dir)?;
-        let scaling_gc_path = build_real_neutral_gc_package_for_range(
-            &scaling_producer_bam.bam,
-            &reference.path,
-            fixture_root.path(),
-            10,
-            200,
-        )?;
+            let scaling_producer_bam = simple_inward_bam()?;
+            let consumer_bam = bam_from_specs(
+                vec![("chr1".to_string(), 200)],
+                vec![paired_fragment(20, 61, 20)],
+                Vec::new(),
+                "shared_real_artifacts_consumer",
+            )?;
+            let reference = simple_reference_twobit()?;
+            let fixture_root = TempDir::new()?;
+            let weights_out_dir = fixture_root.path().join("coverage_weights");
+            std::fs::create_dir_all(&weights_out_dir)?;
+            let scaling_gc_path = build_real_neutral_gc_package_for_range(
+                &scaling_producer_bam.bam,
+                &reference.path,
+                fixture_root.path(),
+                10,
+                200,
+            )?;
 
-        // Shared fixture reasoning:
-        // - The scaling producer is the standard one-fragment fixture [20,80).
-        // - Its neutral real GC package is built from the same BAM and repeated ACGT reference with
-        //   the same length range that `coverage-weights` is configured to consume, 10..200.
-        // - Within that broader package, the only accepted 60 bp fragment still receives GC weight
-        //   1.0, so the coverage profile stays the same while the GC path is exercised honestly.
-        // - `coverage-weights --gc-file <neutral package>` with bin_size=40 and stride=20 therefore
-        //   writes the already hand-derived scaling profile:
-        //     [0,20):   37/20
-        //     [20,40):  37/45
-        //     [40,60):  37/60
-        //     [60,80):  37/45
-        //     [80,100): 37/15
-        // - The consumer is one 61 bp fragment [20,81) on the same repeated ACGT reference.
-        // - The real `ref-gc-bias -> gc-bias` chain is neutral for that consumer:
-        //   all GC-by-length mass lands in one shared cell, so the final GC weight is exactly 1.0.
-        // - Fragment-average consumers therefore see only the scaling average:
-        //     (20*(37/45) + 20*(37/60) + 20*(37/45) + 1*(37/15)) / 61 = 2146/2745.
-        let mut scaling_cfg =
-            make_real_scaling_config(&weights_out_dir, &scaling_producer_bam.bam);
-        scaling_cfg.set_gc(ApplyGCArgs {
-            gc_file: Some(scaling_gc_path),
-            gc_tag: None,
-            skip_invalid_gc: false,
-        });
-        scaling_cfg.set_ref_2bit(Some(reference.path.clone()));
-        run_coverage_weights(&scaling_cfg)?;
+            // Shared fixture reasoning:
+            // - The scaling producer is the standard one-fragment fixture [20,80).
+            // - Its neutral real GC package is built from the same BAM and repeated ACGT reference with
+            //   the same length range that `coverage-weights` is configured to consume, 10..200.
+            // - Within that broader package, the only accepted 60 bp fragment still receives GC weight
+            //   1.0, so the coverage profile stays the same while the GC path is exercised honestly.
+            // - `coverage-weights --gc-file <neutral package>` with bin_size=40 and stride=20 therefore
+            //   writes the already hand-derived scaling profile:
+            //     [0,20):   37/20
+            //     [20,40):  37/45
+            //     [40,60):  37/60
+            //     [60,80):  37/45
+            //     [80,100): 37/15
+            // - The consumer is one 61 bp fragment [20,81) on the same repeated ACGT reference.
+            // - The real `ref-gc-bias -> gc-bias` chain is neutral for that consumer:
+            //   all GC-by-length mass lands in one shared cell, so the final GC weight is exactly 1.0.
+            // - Fragment-average consumers therefore see only the scaling average:
+            //     (20*(37/45) + 20*(37/60) + 20*(37/45) + 1*(37/15)) / 61 = 2146/2745.
+            let mut scaling_cfg =
+                make_real_scaling_config(&weights_out_dir, &scaling_producer_bam.bam);
+            scaling_cfg.set_gc(ApplyGCArgs {
+                gc_file: Some(scaling_gc_path),
+                gc_tag: None,
+                skip_invalid_gc: false,
+            });
+            scaling_cfg.set_ref_2bit(Some(reference.path.clone()));
+            run_coverage_weights(&scaling_cfg)?;
 
-        let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
-        let gc_path =
-            build_real_neutral_gc_package(&consumer_bam.bam, &reference.path, fixture_root.path(), 61)?;
-        let bed_path = fixture_root.path().join("windows.bed");
-        write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
+            let scaling_path = weights_out_dir.join("coverage.coverage.scaling_factors.tsv");
+            let gc_path = build_real_neutral_gc_package(
+                &consumer_bam.bam,
+                &reference.path,
+                fixture_root.path(),
+                61,
+            )?;
+            let bed_path = fixture_root.path().join("windows.bed");
+            write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
 
-        Ok(SharedRealArtifactCache {
-            _producer_bam: scaling_producer_bam,
-            _consumer_bam_fixture: consumer_bam,
-            _reference_fixture: reference,
-            _fixture_root: fixture_root,
-            consumer_bam: PathBuf::new(),
-            reference_path: PathBuf::new(),
-            scaling_path,
-            gc_path,
-            bed_path,
-        })
-        .map(|mut cache| {
-            cache.consumer_bam = cache._consumer_bam_fixture.bam.clone();
-            cache.reference_path = cache._reference_fixture.path.clone();
-            cache
-        })
+            Ok(SharedRealArtifactCache {
+                _producer_bam: scaling_producer_bam,
+                _consumer_bam_fixture: consumer_bam,
+                _reference_fixture: reference,
+                _fixture_root: fixture_root,
+                consumer_bam: PathBuf::new(),
+                reference_path: PathBuf::new(),
+                scaling_path,
+                gc_path,
+                bed_path,
+            })
+            .map(|mut cache| {
+                cache.consumer_bam = cache._consumer_bam_fixture.bam.clone();
+                cache.reference_path = cache._reference_fixture.path.clone();
+                cache
+            })
         })()
         .map_err(|err| format!("{err:#}"))
     });
     match cache_result {
         Ok(cache) => Ok(cache),
-        Err(err) => Err(anyhow::anyhow!("failed to build shared real artifact cache: {err}")),
+        Err(err) => Err(anyhow::anyhow!(
+            "failed to build shared real artifact cache: {err}"
+        )),
     }
 }
 

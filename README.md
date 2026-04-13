@@ -44,11 +44,12 @@ The following commands are currently available:
 | **Feature extraction**               | Extract fragmentomics features                                                                                                                                                                                         |
 | `cfdna fcoverage`                    | Count *fragment* coverage per position or aggregated in windows                                                                                                                                                        |
 | `cfdna midpoints`                    | Count fragment *midpoint* coverage in fixed-size intervals, collapsed by groups across the genome<br />E.g. transcription factor binding sites, aggregated per transcription factor<br />Fast alternative to *Griffin* |
-| `cfdna end`                    | Count fragment end- and breakpoint-motifs                                                                                                                                                        |
+| `cfdna end`                          | Count fragment end- and breakpoint-motifs                                                                                                                                                                              |
 | `cfdna lengths`                      | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)` for inwardly directed pairs only                                                                                                               |
 | **Normalization**                    | Precompute normalization/correction factors to enable their use in the feature extraction commands                                                                                                                     |
 | `cfdna gc-bias`, `cfdna ref-gc-bias` | Calculate GC-bias for correcting a sample in the main commands                                                                                                                                                         |
-| `cfdna coverage-weights`             | Calculate scaling factors for normalizing/smoothing coverage across the genome                                                                                                                                         |
+| `cfdna coverage-weights`             | Calculate fragment coverage-based scaling factors for normalizing/smoothing coverage across the genome                                                                                                                 |
+| `cfdna fragment-count-weights`       | Calculate fragment count-based scaling factors for normalizing/smoothing fragment counts across the genome                                                                                                             |
 | **Conversion**                       | Convert BAM > frag > BAM or BAM > BAM                                                                                                                                                                                  |
 | `cfdna bam-to-bam`                   | Apply our filters and/or write GC correction and coverage weight tags to a BAM file                                                                                                                                    |
 | `cfdna bam-to-frag`                  | Write fragment coordinates to a "frag" file (bed-like tsv file)                                                                                                                                                        |
@@ -64,7 +65,7 @@ Planned: `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks
 
 - **Windowing**: Perform the command in genomic windows. Either a single global window (default), windows specified in a BED file, or via a fixed window size. Assign fragments to windows by how they overlap.
 
-- **Genomic smoothing**: Scale the contribution of fragments by their coverage in megabase-scale overlapping bins. This reduces the effect of amplifications and deletions.
+- **Genomic smoothing**: Scale the contribution of fragments by either their coverage or counts in megabase-scale overlapping bins. This reduces the effect of amplifications and deletions.
 
 ---
 

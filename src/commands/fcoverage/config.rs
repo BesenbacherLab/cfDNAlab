@@ -276,6 +276,14 @@ impl FCoverageConfig {
         self.output_prefix = prefix.into();
     }
 
+    pub fn set_unpaired(&mut self, unpaired: UnpairedArgs) {
+        self.unpaired = unpaired;
+    }
+
+    pub fn set_normalize_by_length(&mut self, normalize_by_length: bool) {
+        self.normalize_by_length = normalize_by_length;
+    }
+
     pub fn set_decimals(&mut self, decimals: u8) {
         self.decimals = decimals;
     }
@@ -308,12 +316,20 @@ impl FCoverageConfig {
         &mut self.fragment_lengths
     }
 
+    pub fn set_fragment_lengths(&mut self, fragment_lengths: FragmentLengthArgs) {
+        self.fragment_lengths = fragment_lengths;
+    }
+
     pub fn set_min_mapq(&mut self, min_mapq: u8) {
         self.min_mapq = min_mapq;
     }
 
     pub fn set_require_proper_pair(&mut self, require: bool) {
         self.require_proper_pair = require;
+    }
+
+    pub fn set_blacklist(&mut self, blacklist: Option<Vec<PathBuf>>) {
+        self.blacklist = blacklist;
     }
 
     pub fn set_gc(&mut self, gc: ApplyGCArgs) {
