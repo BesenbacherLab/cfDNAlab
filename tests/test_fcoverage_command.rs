@@ -310,6 +310,505 @@ fn per_position_outputs_basic_fragment() -> Result<()> {
 }
 
 #[test]
+fn normalize_by_length_keeps_fractional_positional_output_without_other_weights() -> Result<()> {
+    // Human verification status: unverified
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(4);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_keep_zero_runs(false);
+    cfg.normalize_by_length = true;
+
+    // Manual expectations:
+    // - The single fragment covers [20, 80), length 60.
+    // - With `--normalize-by-length`, each covered base gets weight 1 / 60.
+    // - No scaling or GC correction is applied, so the whole covered run stays constant.
+    // - Rounded to 4 decimals:
+    //     1 / 60 = 0.016666... -> 0.0167
+    run(&cfg)?;
+
+    let bedgraph = out_dir.path().join(dot_join(&[
+        "testcov",
+        "length_normalized",
+        "fcoverage.per_position.bedgraph.zst",
+    ]));
+    assert!(bedgraph.exists(), "expected positional bedgraph output");
+    let text = read_zst_to_string(&bedgraph)?;
+    assert_eq!(text, "chr1\t20\t80\t0.0167\n");
+
+    Ok(())
+}
+
+#[test]
+fn normalize_by_length_by_size_total_counts_each_fragment_as_one() -> Result<()> {
+    // Human verification status: unverified
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+
+    let mut windows = WindowsArgs::default();
+    windows.by_size = Some(200);
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_windows(windows);
+    cfg.normalize_by_length = true;
+
+    // Manual expectations:
+    // - The fragment spans 60 bases and contributes 1 / 60 to each covered base.
+    // - The only size window is [0, 200), which contains the full fragment.
+    // - Total coverage in that window is therefore:
+    //     60 * (1 / 60) = 1
+    // - This is the intended fragment-count interpretation of the total output.
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join(dot_join(&[
+        "testcov",
+        "length_normalized",
+        "fcoverage.total.tsv.zst",
+    ]));
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chr1\t0\t200\t1\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn normalize_by_length_and_gc_file_weights_multiply_per_position() -> Result<()> {
+    // Human verification status: unverified
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        vec![paired_fragment_on_tid(0, 20, 61, 20)],
+        Vec::new(),
+        "fcoverage_normalize_by_length_gc_file",
+    )?;
+    let ref_twobit = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let gc_path = out_dir.path().join("constant_gc_pkg.npz");
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 0,
+        length_edges: vec![61, 62],
+        gc_edges: vec![0, 101],
+        length_bin_frequencies: array![1.0_f64],
+        correction_matrix: array![[3.0_f64]],
+    };
+    package.write_npz(&gc_path)?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_keep_zero_runs(false);
+    cfg.normalize_by_length = true;
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        skip_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 61;
+        frag.max_fragment_length = 61;
+    }
+
+    // Manual expectations:
+    // - The fragment spans [20, 81), length 61.
+    // - `--normalize-by-length` gives each covered base weight 1 / 61.
+    // - The constant GC package multiplies every accepted fragment by 3.0.
+    // - Final per-base coverage is therefore 3 / 61 across the full span.
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join(dot_join(&[
+        "testcov",
+        "length_normalized",
+        "fcoverage.per_position.bedgraph.zst",
+    ]));
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(lines.len(), 1, "expected one constant bedGraph run");
+
+    let parts: Vec<_> = lines[0].split('\t').collect();
+    assert_eq!(parts.len(), 4, "unexpected bedGraph row: {}", lines[0]);
+    assert_eq!(parts[0], "chr1");
+    assert_eq!(parts[1].parse::<u64>()?, 20);
+    assert_eq!(parts[2].parse::<u64>()?, 81);
+    let value = parts[3].parse::<f64>()?;
+    let expected = 3.0_f64 / 61.0_f64;
+    assert!(
+        (value - expected).abs() <= 1e-6,
+        "expected value {expected} for row {}, got {value}",
+        lines[0]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn normalize_by_length_uses_counted_segment_length_for_gapped_fragments() -> Result<()> {
+    // Human verification status: unverified
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        Vec::new(),
+        vec![ReadSpec {
+            tid: 0,
+            pos: 20,
+            cigar: vec![('M', 20), ('D', 10), ('M', 20)],
+            seq: vec![b'A'; 40],
+            qual: 40,
+            is_reverse: false,
+            mapq: 60,
+            flags: 0,
+            mate_tid: None,
+            mate_pos: None,
+            insert_size: 0,
+        }],
+        "fcoverage_normalize_by_length_gapped_unpaired",
+    )?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(4);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_keep_zero_runs(false);
+    cfg.unpaired.reads_are_fragments = true;
+    cfg.normalize_by_length = true;
+
+    // Manual expectations:
+    // - The read spans [20, 70) on the reference with a 10 bp deletion in the middle.
+    // - `fcoverage` respects reference-supported segments, so the counted spans are:
+    //     [20, 40) and [50, 70)
+    // - Their total counted length is therefore 40 bp, not the outer span length 50 bp.
+    // - With `--normalize-by-length`, each counted base must get weight:
+    //     1 / 40 = 0.025
+    // - If the implementation incorrectly divided by the outer span length, this would instead be
+    //   1 / 50 = 0.02.
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join(dot_join(&[
+        "testcov",
+        "length_normalized",
+        "fcoverage.per_position.bedgraph.zst",
+    ]));
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec!["chr1\t20\t40\t0.025", "chr1\t50\t70\t0.025"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn normalize_by_length_ignore_gap_renormalizes_over_remaining_counted_span() -> Result<()> {
+    // Human verification status: unverified
+    let bam = simple_inward_bam()?;
+
+    let run_with_ignore_gap = |ignore_gap: bool| -> Result<String> {
+        let out_dir = TempDir::new()?;
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        cfg.set_decimals(4);
+        cfg.set_per_window(CoverageWindowAction::Average);
+        cfg.set_keep_zero_runs(false);
+        cfg.set_ignore_gap(ignore_gap);
+        cfg.normalize_by_length = true;
+
+        run(&cfg)?;
+
+        let output_path = out_dir.path().join(dot_join(&[
+            "testcov",
+            "length_normalized",
+            "fcoverage.per_position.bedgraph.zst",
+        ]));
+        read_zst_to_string(&output_path)
+    };
+
+    // Manual expectations:
+    // - The paired fragment has outer span [20, 80), length 60.
+    // - Without `--ignore-gap`, that whole span is counted, so each base gets:
+    //     1 / 60 = 0.016666... -> 0.0167
+    // - With `--ignore-gap`, only the read-covered segments remain:
+    //     [20, 40) and [60, 80)
+    //   Their total counted length is 40, so each counted base gets:
+    //     1 / 40 = 0.025
+    let without_ignore_gap = run_with_ignore_gap(false)?;
+    let with_ignore_gap = run_with_ignore_gap(true)?;
+
+    assert_eq!(without_ignore_gap, "chr1\t20\t80\t0.0167\n");
+    assert_eq!(with_ignore_gap, "chr1\t20\t40\t0.025\nchr1\t60\t80\t0.025\n");
+
+    Ok(())
+}
+
+#[test]
+fn normalize_by_length_matches_between_paired_and_unpaired_for_same_span() -> Result<()> {
+    // Human verification status: unverified
+    let paired_bam = simple_inward_bam()?;
+    let unpaired_bam = single_read_fragment_bam("fcoverage_normalize_by_length_unpaired_parity")?;
+    let paired_out = TempDir::new()?;
+    let unpaired_out = TempDir::new()?;
+
+    let mut paired_cfg = base_config(&paired_bam.bam, paired_out.path());
+    paired_cfg.set_decimals(4);
+    paired_cfg.set_per_window(CoverageWindowAction::Average);
+    paired_cfg.set_keep_zero_runs(false);
+    paired_cfg.set_output_prefix("paired");
+    paired_cfg.normalize_by_length = true;
+
+    let mut unpaired_cfg = base_config(&unpaired_bam.bam, unpaired_out.path());
+    unpaired_cfg.set_decimals(4);
+    unpaired_cfg.set_per_window(CoverageWindowAction::Average);
+    unpaired_cfg.set_keep_zero_runs(false);
+    unpaired_cfg.set_output_prefix("unpaired");
+    unpaired_cfg.unpaired.reads_are_fragments = true;
+    unpaired_cfg.normalize_by_length = true;
+
+    // Manual expectations:
+    // - Both inputs represent the same counted span [20, 80), length 60.
+    // - With `--normalize-by-length`, each counted base gets:
+    //     1 / 60 = 0.016666... -> 0.0167
+    // - Because there is no mate-gap exclusion or segment logic here, paired and unpaired modes
+    //   must therefore write identical normalized coverage over the same interval.
+    run(&paired_cfg)?;
+    run(&unpaired_cfg)?;
+
+    let paired_text = read_zst_to_string(
+        &paired_out.path().join(dot_join(&[
+            "paired",
+            "length_normalized",
+            "fcoverage.per_position.bedgraph.zst",
+        ])),
+    )?;
+    let unpaired_text = read_zst_to_string(
+        &unpaired_out.path().join(dot_join(&[
+            "unpaired",
+            "length_normalized",
+            "fcoverage.per_position.bedgraph.zst",
+        ])),
+    )?;
+    let expected = "chr1\t20\t80\t0.0167\n";
+    assert_eq!(paired_text, expected);
+    assert_eq!(unpaired_text, expected);
+
+    Ok(())
+}
+
+#[test]
+fn normalize_by_length_uses_paired_counted_segments_when_ignore_gap_is_on() -> Result<()> {
+    // Human verification status: unverified
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        vec![FragmentSpec {
+            forward: ReadSpec {
+                tid: 0,
+                pos: 20,
+                cigar: vec![('M', 20), ('D', 10), ('M', 20)],
+                seq: vec![b'A'; 40],
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: 0x40 | 0x20 | 0x2,
+                mate_tid: Some(0),
+                mate_pos: Some(60),
+                insert_size: 60,
+            },
+            reverse: ReadSpec {
+                tid: 0,
+                pos: 60,
+                cigar: vec![('M', 20)],
+                seq: vec![b'T'; 20],
+                qual: 40,
+                is_reverse: true,
+                mapq: 60,
+                flags: 0x80 | 0x2,
+                mate_tid: Some(0),
+                mate_pos: Some(20),
+                insert_size: -60,
+            },
+        }],
+        Vec::new(),
+        "fcoverage_normalize_by_length_paired_gapped_ignore_gap",
+    )?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(4);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_keep_zero_runs(false);
+    cfg.set_ignore_gap(true);
+    cfg.normalize_by_length = true;
+
+    // Manual expectations:
+    // - The fragment outer span is [20, 80), length 60.
+    // - The forward read has a 10 bp deletion, so its counted reference-supported segments are:
+    //     [20, 40) and [50, 70)
+    // - The reverse read contributes [60, 80).
+    // - With `--ignore-gap`, the inter-mate gap [40, 60) is not added.
+    // - Merging overlapping counted spans gives:
+    //     [20, 40) and [50, 80)
+    //   with total counted length 20 + 30 = 50.
+    // - With `--normalize-by-length`, each counted base must therefore get:
+    //     1 / 50 = 0.02
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join(dot_join(&[
+        "testcov",
+        "length_normalized",
+        "fcoverage.per_position.bedgraph.zst",
+    ]));
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(lines, vec!["chr1\t20\t40\t0.02", "chr1\t50\t80\t0.02"]);
+
+    Ok(())
+}
+
+#[test]
+fn normalize_by_length_uses_counted_segment_length_for_refskip_fragments() -> Result<()> {
+    // Human verification status: unverified
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        Vec::new(),
+        vec![ReadSpec {
+            tid: 0,
+            pos: 20,
+            cigar: vec![('M', 20), ('N', 10), ('M', 20)],
+            seq: vec![b'A'; 40],
+            qual: 40,
+            is_reverse: false,
+            mapq: 60,
+            flags: 0,
+            mate_tid: None,
+            mate_pos: None,
+            insert_size: 0,
+        }],
+        "fcoverage_normalize_by_length_refskip_unpaired",
+    )?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(4);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_keep_zero_runs(false);
+    cfg.unpaired.reads_are_fragments = true;
+    cfg.normalize_by_length = true;
+
+    // Manual expectations:
+    // - The read spans [20, 70) on the reference with a 10 bp ref-skip in the middle.
+    // - `fcoverage` treats that like counted reference segments:
+    //     [20, 40) and [50, 70)
+    // - Their total counted length is therefore 40 bp.
+    // - With `--normalize-by-length`, each counted base gets:
+    //     1 / 40 = 0.025
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join(dot_join(&[
+        "testcov",
+        "length_normalized",
+        "fcoverage.per_position.bedgraph.zst",
+    ]));
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec!["chr1\t20\t40\t0.025", "chr1\t50\t70\t0.025"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn normalize_by_length_segmented_fragment_still_multiplies_gc_and_scaling() -> Result<()> {
+    // Human verification status: unverified
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        Vec::new(),
+        vec![ReadSpec {
+            tid: 0,
+            pos: 20,
+            cigar: vec![('M', 20), ('D', 10), ('M', 20)],
+            seq: vec![b'A'; 40],
+            qual: 40,
+            is_reverse: false,
+            mapq: 60,
+            flags: 0,
+            mate_tid: None,
+            mate_pos: None,
+            insert_size: 0,
+        }],
+        "fcoverage_normalize_by_length_gapped_with_gc_and_scaling",
+    )?;
+    let ref_twobit = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let gc_path = out_dir.path().join("constant_gc_pkg.npz");
+    let scaling_path = out_dir.path().join("scaling.tsv");
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 0,
+        length_edges: vec![50, 51],
+        gc_edges: vec![0, 101],
+        length_bin_frequencies: array![1.0_f64],
+        correction_matrix: array![[2.0_f64]],
+    };
+    package.write_npz(&gc_path)?;
+    write_scaling_factors(&scaling_path, &[("chr1", 0, 200, 5.0)])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(4);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_keep_zero_runs(false);
+    cfg.unpaired.reads_are_fragments = true;
+    cfg.normalize_by_length = true;
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        skip_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+    {
+        let mut scale_genome = ScaleGenomeArgs::default();
+        scale_genome.scaling_factors = Some(scaling_path);
+        cfg.set_scale_genome(scale_genome);
+    }
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 50;
+        frag.max_fragment_length = 50;
+    }
+
+    // Manual expectations:
+    // - The read has counted segments [20, 40) and [50, 70), total counted length 40.
+    // - Intrinsic normalized base weight is therefore:
+    //     1 / 40 = 0.025
+    // - The GC package contributes a fragment weight of 2.0.
+    // - The scaling TSV contributes a per-base factor of 5.0 everywhere.
+    // - Final per-base coverage is therefore:
+    //     (1 / 40) * 2 * 5 = 0.25
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join(dot_join(&[
+        "testcov",
+        "length_normalized",
+        "fcoverage.per_position.bedgraph.zst",
+    ]));
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(lines, vec!["chr1\t20\t40\t0.25", "chr1\t50\t70\t0.25"]);
+
+    Ok(())
+}
+
+#[test]
 fn per_position_keep_zero_runs_toggles_zero_segments() -> Result<()> {
     // Human verification status: unverified
     let bam = simple_inward_bam()?;
@@ -2401,6 +2900,48 @@ fn gc_tag_weights_unpaired_positional_output() -> Result<()> {
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(lines, vec!["chr1\t20\t80\t2.5"]);
+
+    Ok(())
+}
+
+#[test]
+fn normalize_by_length_and_gc_tag_weights_multiply_per_position() -> Result<()> {
+    // Human verification status: unverified
+    let base_bam = single_read_fragment_bam("fcoverage_normalize_by_length_gc_tag_base")?;
+    let tagged_bam = bam_with_gc_tags(
+        &base_bam.bam,
+        "fcoverage_normalize_by_length_gc_tag_valid",
+        &[Some(2.5)],
+    )?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&tagged_bam.bam, out_dir.path());
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_decimals(4);
+    cfg.set_keep_zero_runs(false);
+    cfg.unpaired.reads_are_fragments = true;
+    cfg.normalize_by_length = true;
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: None,
+        gc_tag: Some("GC".to_string()),
+        skip_invalid_gc: false,
+    });
+
+    // Manual expectations:
+    // - The single read spans [20, 80), so the counted length is 60.
+    // - `--normalize-by-length` gives each counted base weight 1 / 60.
+    // - In unpaired mode, the GC tag weight 2.5 is applied directly to the fragment.
+    // - Final per-base coverage is therefore:
+    //     2.5 / 60 = 0.041666... -> 0.0417
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join(dot_join(&[
+        "testcov",
+        "length_normalized",
+        "fcoverage.per_position.bedgraph.zst",
+    ]));
+    let text = read_zst_to_string(&output_path)?;
+    assert_eq!(text, "chr1\t20\t80\t0.0417\n");
 
     Ok(())
 }

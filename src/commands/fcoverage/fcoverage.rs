@@ -147,7 +147,8 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     let masked = opt.blacklist.is_some();
     let has_scaling_or_correction = opt.scale_genome.scaling_factors.is_some()
         || opt.gc.gc_file.is_some()
-        || opt.gc.gc_tag.is_some();
+        || opt.gc.gc_tag.is_some()
+        || opt.normalize_by_length;
 
     // Some actions cannot be used with `--by-size`
     if matches!(window_opt, WindowSpec::Size(_))
@@ -196,11 +197,25 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     let partials_prefix = partials_prefix.as_str();
     let finals_prefix = finals_prefix.as_str();
 
+    let length_norm_prefix = if opt.normalize_by_length {
+        "length_normalized"
+    } else {
+        ""
+    };
+
     // Create filenames of final outputs
-    let final_bedgraph_pos_name = dot_join(&[prefix, "fcoverage.per_position.bedgraph.zst"]);
-    let final_tsv_pos_name = dot_join(&[prefix, "fcoverage.per_position_per_window.tsv.zst"]);
-    let final_avg_name = dot_join(&[prefix, "fcoverage.avg.tsv.zst"]);
-    let final_total_name = dot_join(&[prefix, "fcoverage.total.tsv.zst"]);
+    let final_bedgraph_pos_name = dot_join(&[
+        prefix,
+        length_norm_prefix,
+        "fcoverage.per_position.bedgraph.zst",
+    ]);
+    let final_tsv_pos_name = dot_join(&[
+        prefix,
+        length_norm_prefix,
+        "fcoverage.per_position_per_window.tsv.zst",
+    ]);
+    let final_avg_name = dot_join(&[prefix, length_norm_prefix, "fcoverage.avg.tsv.zst"]);
+    let final_total_name = dot_join(&[prefix, length_norm_prefix, "fcoverage.total.tsv.zst"]);
 
     // Get decimals to use
     let decimals_to_use: i32 = if windowed {
@@ -699,6 +714,7 @@ fn process_tile(
         let fetch_end = tile.fetch_end();
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
+            let base_weight = calculate_base_weight(&fragment, opt)?;
 
             if fragment.start() < fetch_start || fragment.end() > fetch_end {
                 // Fragment won't overlap the tile core (assuming correct max_fragment_length halo!)
@@ -711,7 +727,7 @@ fn process_tile(
                 .try_to_u64()?
                 .shift_left(fetch_start as u64)?;
 
-            let weight =
+            let gc_weight =
                 match gc_corrector.correct_fragment(fetch_relative_fragment, &gc_prefixes)? {
                     Some(weight) => weight,
                     None => {
@@ -725,8 +741,12 @@ fn process_tile(
                 };
 
             // Clip and add to tile core coverage (segments respected)
-            let was_counted =
-                add_fragment_clipped_to_core(&mut cp, &fragment, weight as f32, tile.core)?;
+            let was_counted = add_fragment_clipped_to_core(
+                &mut cp,
+                &fragment,
+                base_weight * gc_weight as f32,
+                tile.core,
+            )?;
 
             if was_counted {
                 counter.base.counted_fragments += 1;
@@ -735,6 +755,7 @@ fn process_tile(
     } else if gc_tag.is_some() {
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
+            let base_weight = calculate_base_weight(&fragment, opt)?;
 
             let gc_weight = if fragment.gc_tag.had_invalid {
                 counter.gc_failed_fragments += 1;
@@ -757,8 +778,12 @@ fn process_tile(
                 }
             };
 
-            let was_counted =
-                add_fragment_clipped_to_core(&mut cp, &fragment, gc_weight, tile.core)?;
+            let was_counted = add_fragment_clipped_to_core(
+                &mut cp,
+                &fragment,
+                base_weight * gc_weight,
+                tile.core,
+            )?;
 
             if was_counted {
                 counter.base.counted_fragments += 1;
@@ -767,9 +792,11 @@ fn process_tile(
     } else {
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
+            let base_weight = calculate_base_weight(&fragment, opt)?;
 
             // Clip and add to tile core coverage (segments respected)
-            let was_counted = add_fragment_clipped_to_core(&mut cp, &fragment, 1.0, tile.core)?;
+            let was_counted =
+                add_fragment_clipped_to_core(&mut cp, &fragment, base_weight, tile.core)?;
 
             if was_counted {
                 counter.base.counted_fragments += 1;
@@ -1199,4 +1226,55 @@ pub fn add_fragment_clipped_to_core(
         }
     }
     Ok(counted)
+}
+
+/// Compute the intrinsic per-base fragment weight before GC correction or genomic scaling.
+///
+/// By default, every counted base gets weight `1.0`, so longer fragments contribute more total
+/// mass because they cover more positions. With `--normalize-by-length`, each fragment should instead
+/// contribute a total mass of `1.0` across the positions that are actually counted by
+/// `fcoverage`.
+///
+/// Technical details:
+/// - Plain fragments use the full fragment span length `[start, end)`.
+/// - Segment-aware fragments use the summed length of their counted reference segments, so deleted
+///   or skipped reference bases do not dilute the fragment's total mass below `1.0`.
+/// - GC correction and genomic scaling are applied later as multiplicative factors on top of this
+///   base weight.
+///
+/// Parameters
+/// ----------
+/// - `fragment`:
+///     Fragment span and optional counted reference segments for this molecule.
+/// - `opt`:
+///     Command configuration that controls whether length normalization is enabled.
+///
+/// Returns
+/// -------
+/// - `weight`:
+///     Per-base weight to add before any GC or genomic weighting.
+///
+/// Errors
+/// ------
+/// Returns an error if `--normalize-by-length` is enabled but the fragment has zero countable
+/// length. That would indicate an internal inconsistency in the counted spans.
+#[inline]
+fn calculate_base_weight(fragment: &FragmentWithSegments, opt: &FCoverageConfig) -> Result<f32> {
+    if !opt.normalize_by_length {
+        return Ok(1.0);
+    }
+
+    let counted_length = if let Some(segments) = &fragment.segments {
+        segments
+            .iter()
+            .map(|segment| segment.len())
+            .sum::<u32>()
+    } else {
+        fragment.len()
+    };
+
+    if counted_length == 0 {
+        bail!("normalize-by-length encountered a fragment with zero countable length");
+    }
+    Ok(1.0 / counted_length as f32)
 }

@@ -87,6 +87,26 @@ pub struct FCoverageConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
 
+    /// Divide the contribution of each fragment by the number of countable bases [flag]
+    ///
+    /// By default, we count each fragment as `1.0` in each covered position (before correction/scaling).
+    /// That weights longer fragments higher than shorter fragments in the overall mass
+    /// as they are counted in more positions. If we want each fragment
+    /// to contribute the **same mass**, we can divide the per-position
+    /// `1.0` weight by the number of countable positions.
+    ///
+    /// **Interpretation**: Per-base fragment support after normalizing each fragment
+    /// to a total weight of `1.0` before correction/scaling.
+    /// For `--per-window total` this approximates fragment counts
+    /// (in sufficiently large windows).
+    ///
+    /// This flag is reflected in the output filenames.
+    ///
+    /// Blacklisted positions still count toward the normalization denominator
+    /// to avoid large values around blacklisted regions (edge effects).
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
+    pub normalize_by_length: bool,
+
     /// Optional prefix for output files (e.g., a sample name) `[string]`
     ///
     /// Leave empty to write filenames without a leading prefix.
@@ -229,6 +249,7 @@ impl FCoverageConfig {
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
+            normalize_by_length: false,
             output_prefix: String::new(),
             decimals: 2,
             keep_zero_runs: false,
