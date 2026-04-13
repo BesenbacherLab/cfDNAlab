@@ -23,10 +23,20 @@ use std::path::PathBuf;
 ///
 /// **Unpaired** where each read is a fragment: `[read.pos, read.end)`.
 ///
+/// ## GC correction
+///
+/// When downstream tools should use both genomic smoothing and GC-bias correction,
+/// you can build the smoothing weight off GC-corrected fragment coverage by supplying either
+/// `--gc-file` or `--gc-tag`. This avoids over-correction where the genomic smoothing scalars
+/// partly reflect large-scale GC bias.
+///
+/// The written TSV records whether GC correction was used so downstream commands can check
+/// whether the two transformations are used together consistently or not.
+///
 /// ## Smoothing
 ///
 /// Smoothing is performed as a triangular moving average, calculating
-/// a weighted average of coverages from all bins overlapping a stride.  
+/// a weighted average of coverages from all bins overlapping a stride.
 ///
 /// ### Example
 ///
@@ -175,6 +185,26 @@ pub struct CoverageWeightsConfig {
         )
     )]
     pub blacklist_strategy: BlacklistStrategy,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub gc: ApplyGCArgs,
+
+    /// Optional 2bit reference genome file [path]
+    ///
+    /// NOTE: Required for `--gc-file`, otherwise ignored.
+    ///
+    /// E.g., "hg38.2bit" from UCSC ( https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/hg38.2bit ).
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            short = 'r',
+            long,
+            value_parser,
+            required = false,
+            help_heading = "GC Correction"
+        )
+    )]
+    pub ref_2bit: Option<PathBuf>,
 }
 
 impl CoverageWeightsConfig {
@@ -194,6 +224,12 @@ impl CoverageWeightsConfig {
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::default(),
+            gc: ApplyGCArgs {
+                gc_file: None,
+                gc_tag: None,
+                skip_invalid_gc: false,
+            },
+            ref_2bit: None,
         }
     }
 
@@ -223,6 +259,14 @@ impl CoverageWeightsConfig {
 
     pub fn set_blacklist(&mut self, blacklist: Option<Vec<PathBuf>>) {
         self.blacklist = blacklist;
+    }
+
+    pub fn set_gc(&mut self, gc: ApplyGCArgs) {
+        self.gc = gc;
+    }
+
+    pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
+        self.ref_2bit = ref_2bit;
     }
 
     pub fn check_bin_sizes(&self) -> anyhow::Result<()> {

@@ -140,8 +140,12 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     if opt.scale_genome.scaling_factors.is_some() {
         println!("Start: Loading scaling factors");
     }
-    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
-        load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
+    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
+        &opt.scale_genome,
+        &chromosomes,
+        &contigs,
+        crate::shared::scale_genome::scaling_gc_mode_for_run(opt.gc.gc_file.is_some(), false),
+    )?;
 
     // Load GC correction package if specified
     if opt.gc.gc_file.is_some() {

@@ -523,3 +523,504 @@ mod tests_compute_window_scaling {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests_load_scaling_factors_tsv {
+    use cfdnalab::shared::{
+        bam::Contigs,
+        scale_genome::{load_scaling_factors_tsv, ScalingGCMode},
+    };
+    use fxhash::FxHashMap;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn contigs_for_chr1(len: u32) -> Contigs {
+        let mut contigs = FxHashMap::default();
+        contigs.insert("chr1".to_string(), (0, len));
+        Contigs { contigs }
+    }
+
+    fn contigs_for_lengths(entries: &[(&str, u32)]) -> Contigs {
+        let mut contigs = FxHashMap::default();
+        for (idx, (chromosome, len)) in entries.iter().enumerate() {
+            contigs.insert((*chromosome).to_string(), (idx as i32, *len));
+        }
+        Contigs { contigs }
+    }
+
+    fn write_scaling_file(contents: &str) -> anyhow::Result<NamedTempFile> {
+        let mut file = NamedTempFile::new()?;
+        file.write_all(contents.as_bytes())?;
+        Ok(file)
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_defaults_to_unknown_when_metadata_is_absent() -> anyhow::Result<()>
+    {
+        // The file has no metadata comments, so parsing should keep the GC mode as Unknown instead
+        // of guessing "uncorrected". The two bins still fully cover chr1: [0,5) and [5,10).
+        let file = write_scaling_file(
+            "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t5\t1.25\nchr1\t5\t10\t0.75\n",
+        )?;
+
+        let loaded =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))?;
+
+        assert_eq!(loaded.metadata.gc_mode, ScalingGCMode::Unknown);
+        assert_eq!(
+            loaded.bins_by_chromosome.get("chr1"),
+            Some(&vec![(0, 5, 1.25_f32), (5, 10, 0.75_f32)])
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_reads_explicit_gc_mode_before_header() -> anyhow::Result<()> {
+        // The file starts with one GC-mode line and one unrelated comment line, then a normal
+        // header and two bins that fully cover chr1: [0,5) and [5,10). The parser should keep the
+        // richer `corrected_tag` source information.
+        let file = write_scaling_file(
+            "# gc_mode=corrected_tag\n# generated_by=test\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t5\t1.25\nchr1\t5\t10\t0.75\n",
+        )?;
+
+        let loaded =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))?;
+
+        assert!(
+            matches!(loaded.metadata.gc_mode, ScalingGCMode::CorrectedFromTag),
+            "expected corrected_tag GC mode to be preserved"
+        );
+        assert_eq!(
+            loaded.bins_by_chromosome.get("chr1"),
+            Some(&vec![(0, 5, 1.25_f32), (5, 10, 0.75_f32)])
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_invalid_gc_mode_value() -> anyhow::Result<()> {
+        // `gc_mode` is enumerated metadata, so any other value should fail before row parsing.
+        let file = write_scaling_file(
+            "# gc_mode=maybe\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t1.0\n",
+        )?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("invalid metadata value should fail");
+
+        assert!(
+            err.to_string().contains("invalid value 'maybe'"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_duplicate_gc_mode_metadata() -> anyhow::Result<()> {
+        // Metadata keys should be unambiguous. Two `gc_mode` lines before the header would let the
+        // second one silently overwrite the first, so that input must fail during header parsing.
+        let file = write_scaling_file(
+            "# gc_mode=uncorrected\n# gc_mode=corrected_tag\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t1.0\n",
+        )?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("duplicate gc_mode metadata should fail");
+
+        assert!(
+            err.to_string().contains("duplicate scaling metadata key 'gc_mode'"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_blank_line_before_header() -> anyhow::Result<()> {
+        // The format allows metadata comments before the header, but a blank line there is
+        // ambiguous and should not be silently skipped when the header is required.
+        let file =
+            write_scaling_file("\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t1.0\n")?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("blank line before header should fail");
+
+        assert!(
+            err.to_string()
+                .contains("blank lines are not allowed before the scaling TSV header"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_matches_header_case_insensitively() -> anyhow::Result<()> {
+        // Column lookup should ignore case, so an uppercase header must still parse as the same
+        // required four fields.
+        let file =
+            write_scaling_file("CHROMOSOME\tSTART\tEND\tSCALING_FACTOR\nchr1\t0\t10\t1.5\n")?;
+
+        let loaded =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))?;
+
+        assert_eq!(
+            loaded.bins_by_chromosome.get("chr1"),
+            Some(&vec![(0, 10, 1.5_f32)])
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_missing_required_header_column() -> anyhow::Result<()> {
+        // Omitting `scaling_factor` from the header must fail before any row parsing starts.
+        let file = write_scaling_file("chromosome\tstart\tend\nchr1\t0\t10\n")?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("missing required header column should fail");
+
+        assert!(
+            err.to_string()
+                .contains("required column 'scaling_factor' not found in header"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_short_data_row() -> anyhow::Result<()> {
+        // A row missing the rightmost required field must fail with the line number and the
+        // expected number of columns.
+        let file =
+            write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\n")?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("short row should fail");
+
+        assert!(
+            err.to_string().contains("not enough columns"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_invalid_interval() -> anyhow::Result<()> {
+        // Row-level coordinate validation happens before chromosome-level contiguity checks, so a
+        // zero-width interval [5,5) must fail immediately.
+        let file =
+            write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t5\t5\t1.0\n")?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("empty interval should fail");
+
+        assert!(
+            err.to_string().contains("invalid interval [5..5)"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_negative_scaling_factor() -> anyhow::Result<()> {
+        // Scaling factors are multiplicative weights and must be finite and non-negative.
+        let file =
+            write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t-1.0\n")?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("negative scaling factor should fail");
+
+        assert!(
+            err.to_string().contains("scaling_factor must be finite and >= 0"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_sorts_requested_chromosome_bins_by_start() -> anyhow::Result<()> {
+        // The loader promises sorted bins per chromosome, so an out-of-order but otherwise valid
+        // file should still load as contiguous [0,5) then [5,10).
+        let file = write_scaling_file(
+            "chromosome\tstart\tend\tscaling_factor\nchr1\t5\t10\t0.75\nchr1\t0\t5\t1.25\n",
+        )?;
+
+        let loaded =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))?;
+
+        assert_eq!(
+            loaded.bins_by_chromosome.get("chr1"),
+            Some(&vec![(0, 5, 1.25_f32), (5, 10, 0.75_f32)])
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_ignores_unrequested_chromosomes() -> anyhow::Result<()> {
+        // Rows for other chromosomes should be filtered out before storage. Only the requested
+        // chromosome must remain in the returned map.
+        let file = write_scaling_file(
+            "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t1.0\nchr2\t0\t5\t2.0\nchr2\t5\t10\t3.0\n",
+        )?;
+
+        let loaded =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))?;
+
+        assert_eq!(loaded.bins_by_chromosome.len(), 1);
+        assert_eq!(
+            loaded.bins_by_chromosome.get("chr1"),
+            Some(&vec![(0, 10, 1.0_f32)])
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_errors_when_requested_chromosome_has_no_bins() -> anyhow::Result<()>
+    {
+        // Filtering out other chromosomes must not silently succeed when the requested chromosome
+        // ends up with no bins at all.
+        let file = write_scaling_file(
+            "chromosome\tstart\tend\tscaling_factor\nchr2\t0\t10\t1.0\n",
+        )?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("requested chromosome without bins should fail");
+
+        assert!(
+            err.to_string()
+                .contains("scaling TSV: no bins provided for chromosome 'chr1'"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_errors_when_bins_do_not_start_at_zero() -> anyhow::Result<()> {
+        // Full chromosome coverage must begin at 0, so a first bin [5,10) is invalid even if it
+        // would otherwise reach the contig end.
+        let file =
+            write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t5\t10\t1.0\n")?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("bins that start after 0 should fail");
+
+        assert!(
+            err.to_string()
+                .contains("scaling TSV: bins on 'chr1' must start at 0"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_errors_when_bins_have_a_gap() -> anyhow::Result<()> {
+        // Contiguous half-open bins [0,5) and [6,10) leave one uncovered base at position 5, so
+        // the chromosome-level sweep must reject them as non-contiguous.
+        let file = write_scaling_file(
+            "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t5\t1.0\nchr1\t6\t10\t1.0\n",
+        )?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("gapped bins should fail");
+
+        assert!(
+            err.to_string().contains("not contiguous"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_errors_when_bins_overlap() -> anyhow::Result<()> {
+        // Overlapping bins [0,6) and [5,10) break the same contiguity invariant from the other
+        // direction because the second bin starts before the previous one ended.
+        let file = write_scaling_file(
+            "chromosome\tstart\tend\tscaling_factor\nchr1\t0\t6\t1.0\nchr1\t5\t10\t1.0\n",
+        )?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("overlapping bins should fail");
+
+        assert!(
+            err.to_string().contains("not contiguous"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_errors_when_bins_do_not_reach_contig_end() -> anyhow::Result<()> {
+        // A single bin [0,8) on a 10 bp chromosome leaves the tail uncovered, so full-coverage
+        // validation must reject it.
+        let file =
+            write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t0\t8\t1.0\n")?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("truncated chromosome coverage should fail");
+
+        assert!(
+            err.to_string().contains("must end at chrom_len=10 (got end=8)"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_errors_when_requested_contig_metadata_is_missing()
+    -> anyhow::Result<()> {
+        // The loader validates full chromosome coverage against BAM contig lengths, so requesting a
+        // chromosome missing from `contigs` must fail even if the TSV rows themselves look valid.
+        let file =
+            write_scaling_file("chromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t1.0\n")?;
+        let contigs = contigs_for_lengths(&[("chr2", 10)]);
+
+        let err = load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs)
+            .expect_err("missing contig metadata should fail");
+
+        assert!(
+            err.to_string().contains("missing contig info for 'chr1'"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests_scaling_gc_compatibility {
+    use cfdnalab::shared::scale_genome::{
+        ensure_scaling_gc_compatibility, scaling_gc_mode_for_run, ScalingFactorsMetadata,
+        ScalingGCMode,
+    };
+    use std::path::Path;
+
+    #[test]
+    fn scaling_gc_compatibility_allows_unknown_scaling_gc_mode() -> anyhow::Result<()> {
+        let path = Path::new("/tmp/example.scaling_factors.tsv");
+        let metadata = ScalingFactorsMetadata {
+            gc_mode: ScalingGCMode::Unknown,
+        };
+
+        // Missing metadata should never block use, even when the current run uses GC correction.
+        ensure_scaling_gc_compatibility(path, metadata, scaling_gc_mode_for_run(true, false))?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn scaling_gc_compatibility_errors_when_uncorrected_scaling_meets_corrected_run() {
+        // This mismatch is now a hard error:
+        // - scaling file says uncorrected coverage
+        // - current run uses tag-based GC correction
+        let path = Path::new("/tmp/example.scaling_factors.tsv");
+        let metadata = ScalingFactorsMetadata {
+            gc_mode: ScalingGCMode::Uncorrected,
+        };
+
+        let err =
+            ensure_scaling_gc_compatibility(path, metadata, scaling_gc_mode_for_run(false, true))
+                .expect_err("known raw-vs-corrected mismatch should error");
+
+        assert!(
+            err.to_string().contains("no GC correction"),
+            "unexpected error text: {err}"
+        );
+        assert!(
+            err.to_string().contains("via --gc-tag"),
+            "unexpected error text: {err}"
+        );
+    }
+
+    #[test]
+    fn scaling_gc_compatibility_errors_when_corrected_scaling_meets_uncorrected_run() {
+        // This is the opposite known mismatch:
+        // - scaling file says corrected coverage from a tag
+        // - current run applies no GC correction
+        let path = Path::new("/tmp/example.scaling_factors.tsv");
+        let metadata = ScalingFactorsMetadata {
+            gc_mode: ScalingGCMode::CorrectedFromTag,
+        };
+
+        let err =
+            ensure_scaling_gc_compatibility(path, metadata, scaling_gc_mode_for_run(false, false))
+                .expect_err("known corrected-vs-raw mismatch should error");
+
+        assert!(
+            err.to_string().contains("via --gc-tag"),
+            "unexpected error text: {err}"
+        );
+        assert!(
+            err.to_string().contains("no GC correction"),
+            "unexpected error text: {err}"
+        );
+    }
+
+    #[test]
+    fn scaling_gc_compatibility_allows_corrected_file_scaling_with_corrected_tag_run()
+    -> anyhow::Result<()> {
+        // File-vs-tag is allowed because both sides are still GC-corrected:
+        // coverage-weights may have used `--gc-file`, while the later command uses tagged reads.
+        let path = Path::new("/tmp/example.scaling_factors.tsv");
+        let metadata = ScalingFactorsMetadata {
+            gc_mode: ScalingGCMode::CorrectedFromFile,
+        };
+
+        ensure_scaling_gc_compatibility(path, metadata, scaling_gc_mode_for_run(false, true))?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn scaling_gc_compatibility_allows_corrected_tag_scaling_with_corrected_file_run()
+    -> anyhow::Result<()> {
+        // The allowed file-vs-tag case must be symmetric. A scaling file built from tagged reads
+        // is still compatible with a later run that uses `--gc-file`.
+        let path = Path::new("/tmp/example.scaling_factors.tsv");
+        let metadata = ScalingFactorsMetadata {
+            gc_mode: ScalingGCMode::CorrectedFromTag,
+        };
+
+        ensure_scaling_gc_compatibility(path, metadata, scaling_gc_mode_for_run(true, false))?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn scaling_gc_compatibility_allows_uncorrected_scaling_with_uncorrected_run()
+    -> anyhow::Result<()> {
+        // The explicit `uncorrected` mode should only reject corrected runs, not another raw run.
+        let path = Path::new("/tmp/example.scaling_factors.tsv");
+        let metadata = ScalingFactorsMetadata {
+            gc_mode: ScalingGCMode::Uncorrected,
+        };
+
+        ensure_scaling_gc_compatibility(path, metadata, scaling_gc_mode_for_run(false, false))?;
+
+        Ok(())
+    }
+}

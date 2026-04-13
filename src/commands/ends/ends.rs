@@ -131,8 +131,15 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     if opt.scale_genome.scaling_factors.is_some() {
         println!("Start: Loading scaling factors");
     }
-    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> =
-        load_scaling_map(&opt.scale_genome, &chromosomes, &contigs)?;
+    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
+        &opt.scale_genome,
+        &chromosomes,
+        &contigs,
+        crate::shared::scale_genome::scaling_gc_mode_for_run(
+            opt.gc.gc_file.is_some(),
+            opt.gc.gc_tag.is_some(),
+        ),
+    )?;
 
     // Load GC correction package if specified
     if opt.gc.gc_file.is_some() {
@@ -355,18 +362,18 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     if !matches!(window_opt, WindowSpec::Global) {
         println!("Start: Writing window coordinates to disk");
         let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.tsv"]));
-        let mut tsv_writer = create_text_writer(&bins_path).context("Create bins TSV fail")?;
+        let mut tsv_writer = create_text_writer(&bins_path).context("creating bins TSV")?;
         writeln!(tsv_writer, "chrom\tstart\tend\tblacklisted_fraction")
-            .context("Write bins TSV header fail")?;
+            .context("writing bins TSV header")?;
         for (chr, start, end, _, blacklist_overlap_fraction) in &bin_info {
             writeln!(
                 tsv_writer,
                 "{}\t{}\t{}\t{}",
                 chr, start, end, blacklist_overlap_fraction
             )
-            .context("Write bins TSV row fail")?;
+            .context("writing bins TSV row")?;
         }
-        tsv_writer.finish().context("Finalize bins.tsv writer")?;
+        tsv_writer.finish().context("finalizing bins.tsv writer")?;
     }
 
     println!();

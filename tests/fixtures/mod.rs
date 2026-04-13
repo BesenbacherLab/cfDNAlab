@@ -10,6 +10,8 @@ use cfdnalab::commands::gc_bias::{config::GCConfig, gc_bias::run as run_gc_bias}
 use cfdnalab::commands::ref_gc_bias::{
     config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias,
 };
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+use cfdnalab::shared::reference::twobit_contig_lengths;
 use cfdnalab::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 use rust_htslib::bam::{self, header::HeaderRecord, record::Cigar, record::CigarString};
 use std::{
@@ -221,12 +223,32 @@ fn configure_gc_bias_common(gc_cfg: &mut GCConfig) {
 ///
 /// In other words, "neutral" here means "safe default real artifact for downstream consumers",
 /// not "mathematically forced to exactly weight 1.0 everywhere".
-pub fn build_real_neutral_gc_package(
+pub fn build_real_neutral_gc_package_for_range(
     bam_path: &Path,
     reference_path: &Path,
     out_dir: &Path,
-    fragment_length: u32,
+    min_fragment_length: u32,
+    max_fragment_length: u32,
 ) -> Result<PathBuf> {
+    let chromosomes = vec!["chr1".to_string()];
+    let chrom_lengths = twobit_contig_lengths(reference_path, &chromosomes)?;
+    let total_possible_starts: usize = chrom_lengths
+        .values()
+        .map(|&chrom_len| {
+            chrom_len
+                .checked_sub(max_fragment_length as usize)
+                .map(|remaining| remaining + 1)
+                .unwrap_or(0)
+        })
+        .sum();
+    let n_positions = total_possible_starts.min(100);
+    anyhow::ensure!(
+        n_positions > 0,
+        "neutral GC fixture has no valid reference start positions for fragment length range {}-{}",
+        min_fragment_length,
+        max_fragment_length
+    );
+
     let ref_gc_dir = TempDir::new()?;
     let ref_cfg = RefGCBiasConfig {
         ref_genome: Ref2BitRequiredArgs {
@@ -235,19 +257,18 @@ pub fn build_real_neutral_gc_package(
         output_dir: ref_gc_dir.path().to_path_buf(),
         output_prefix: String::new(),
         n_threads: 1,
-        // `simple_reference_twobit()` is 256 bp long. For the current neutral-package tests we
-        // only need a deterministic but valid sample of start positions, so 100 stays safely below
-        // both:
-        //   length 60 -> 256 - 60 + 1 = 197 valid starts
-        //   length 61 -> 256 - 61 + 1 = 196 valid starts
-        n_positions: 100,
+        // Use a deterministic but valid number of sampled starts, capped at 100 while still
+        // respecting the number of positions where the maximum fragment length fits in the
+        // reference. Wider fixture length ranges can make the old fixed sample count invalid on
+        // the tiny 256 bp test reference.
+        n_positions,
         seed: Some(7),
         windows: Default::default(),
         chromosomes: base_chromosomes(&["chr1"]),
         blacklist: None,
         fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
-            min_fragment_length: fragment_length,
-            max_fragment_length: fragment_length,
+            min_fragment_length,
+            max_fragment_length,
         },
         end_offset: 0,
         skip_interpolation: true,
@@ -258,7 +279,10 @@ pub fn build_real_neutral_gc_package(
     };
     run_ref_gc_bias(&ref_cfg)?;
 
-    let gc_out_dir = out_dir.join(format!("real_gc_bias_neutral_len_{fragment_length}"));
+    let gc_out_dir = out_dir.join(format!(
+        "real_gc_bias_neutral_len_{}-{}",
+        min_fragment_length, max_fragment_length
+    ));
     std::fs::create_dir_all(&gc_out_dir)?;
     let mut gc_cfg = GCConfig::new(
         IOCArgs {
@@ -271,9 +295,30 @@ pub fn build_real_neutral_gc_package(
         base_chromosomes(&["chr1"]),
     );
     configure_gc_bias_common(&mut gc_cfg);
+    // Keep sparse length ranges valid in tiny real-artifact fixtures. Tests that use this helper
+    // often exercise only a few observed lengths but still need the package to honestly cover a
+    // broader configured length range.
+    gc_cfg.set_min_length_bin_mass(0.0);
+    gc_cfg.set_min_length_bin_width(1);
     run_gc_bias(&gc_cfg)?;
 
     Ok(gc_out_dir.join("gc_bias_correction.npz"))
+}
+
+#[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
+pub fn build_real_neutral_gc_package(
+    bam_path: &Path,
+    reference_path: &Path,
+    out_dir: &Path,
+    fragment_length: u32,
+) -> Result<PathBuf> {
+    build_real_neutral_gc_package_for_range(
+        bam_path,
+        reference_path,
+        out_dir,
+        fragment_length,
+        fragment_length,
+    )
 }
 
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]

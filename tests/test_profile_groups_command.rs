@@ -17,8 +17,9 @@ use cfdnalab::commands::midpoints::config::MidpointsConfig;
 use cfdnalab::commands::midpoints::midpoints::run;
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity,
-    build_real_neutral_gc_package, build_real_non_neutral_gc_package, complex_bam_fixture,
-    simple_reference_twobit, twobit_from_sequences, write_bed,
+    build_real_neutral_gc_package, build_real_neutral_gc_package_for_range,
+    build_real_non_neutral_gc_package, complex_bam_fixture, simple_reference_twobit,
+    twobit_from_sequences, write_bed,
 };
 use ndarray::Array3;
 use ndarray::array;
@@ -1499,7 +1500,11 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
     // Arrange:
     // Producer BAM:
     // - `simple_inward_bam()` contains one fragment [20, 80) on chr1.
-    // - With `bin_size = stride = 20`, the written scaling TSV is the identity profile:
+    // - Run `coverage-weights` with a neutral real GC package over its full configured
+    //   fragment-length range so the written scaling TSV is GC-compatible with the consumer
+    //   command, but the numerical scaling profile stays unchanged.
+    // - With `bin_size = stride = 20`, the written scaling TSV is therefore still the identity
+    //   profile:
     //     [20,40): 1
     //     [40,60): 1
     //     [60,80): 1
@@ -1544,7 +1549,14 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
     let temp = TempDir::new()?;
     let weights_out_dir = temp.path().join("coverage_weights");
     std::fs::create_dir_all(&weights_out_dir)?;
-    let scaling_cfg = make_simple_coverage_weights_config(&weights_out_dir, &producer_bam.bam);
+    let mut scaling_cfg = make_simple_coverage_weights_config(&weights_out_dir, &producer_bam.bam);
+    let weights_gc_path = build_real_neutral_gc_package_for_range(
+        &producer_bam.bam,
+        &reference.path,
+        temp.path(),
+        10,
+        200,
+    )?;
     let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
     let gc_path = temp.path().join("constant_gc_pkg.npz");
     let bed_path = temp.path().join("windows.bed");
@@ -1559,6 +1571,12 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
         correction_matrix: array![[3.0_f64]],
     };
     package.write_npz(&gc_path)?;
+    scaling_cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(weights_gc_path),
+        gc_tag: None,
+        skip_invalid_gc: false,
+    });
+    scaling_cfg.set_ref_2bit(Some(reference.path.clone()));
 
     // Act
     run_coverage_weights(&scaling_cfg)?;

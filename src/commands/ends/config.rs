@@ -233,6 +233,8 @@ pub struct EndsConfig {
 
     /// Base-quality filter on the inside read bases `[string]`
     ///
+    /// Filter either the whole fragment or individual ends based on the base qualities in the **inside** read bases of the motifs.
+    ///
     /// Repeat `--bq-filter` to count only ends that pass all **end filters** and belong to fragments that pass all **fragment filters**.
     ///
     /// Examples:

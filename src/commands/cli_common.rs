@@ -441,6 +441,8 @@ pub struct ScaleGenomeArgs {
     ///
     /// `.tsv` file as produced by `cfdna coverage-weights` containing a scaling factor to *multiply* by per **scaling-bin**.
     ///
+    /// Files may start with comment metadata lines from `cfdna coverage-weights`, such as `# gc_mode=corrected_tag`.
+    ///
     /// The scaling-bin-overlapping parts of the fragments are counted as the scaling factor of the bin (`w=sf`).
     ///
     /// ## File Requirements
@@ -853,6 +855,8 @@ pub fn load_blacklist_map(
 /// Implementation details:
 /// - Uses `load_scaling_factors_tsv` to parse the command-line TSV into a
 ///   chromosome keyed map of `(start, end, factor)` tuples.
+/// - Checks scaling-file metadata so known raw-vs-corrected mismatches fail
+///   early instead of silently continuing.
 /// - Returns an empty map when no scaling factors were supplied, avoiding
 ///   unnecessary allocations inside the calling code.
 ///
@@ -860,6 +864,8 @@ pub fn load_blacklist_map(
 /// - `scale_args`: Normalisation argument bundle.
 /// - `chromosomes`: Chromosome ordering requested by the command.
 /// - `contigs`: BAM target metadata, used to validate the TSV content.
+/// - `current_gc_mode`: Whether the current command run uses raw coverage,
+///   file-based GC correction, or tag-based GC correction.
 ///
 /// Returns:
 /// - A scaling factor map ready for lookups by chromosome.
@@ -871,9 +877,17 @@ pub fn load_scaling_map(
     scale_args: &ScaleGenomeArgs,
     chromosomes: &[String],
     contigs: &Contigs,
+    current_gc_mode: crate::shared::scale_genome::ScalingGCMode,
 ) -> Result<FxHashMap<String, Vec<(u64, u64, f32)>>> {
     if let Some(path) = &scale_args.scaling_factors {
-        load_scaling_factors_tsv(path, chromosomes, contigs).context("load scaling factors")
+        let loaded =
+            load_scaling_factors_tsv(path, chromosomes, contigs).context("load scaling factors")?;
+        crate::shared::scale_genome::ensure_scaling_gc_compatibility(
+            path,
+            loaded.metadata,
+            current_gc_mode,
+        )?;
+        Ok(loaded.bins_by_chromosome)
     } else {
         Ok(FxHashMap::with_hasher(Default::default()))
     }

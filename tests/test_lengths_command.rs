@@ -25,7 +25,8 @@ mod tests_lengths_command {
     use cfdnalab::shared::{clip_mode::ClipMode, indel_mode::IndelMode};
     use fixtures::{
         BamFixture, FragmentSpec, ReadSpec, bam_from_specs, build_real_neutral_gc_package,
-        build_real_non_neutral_gc_package, simple_inward_bam, simple_reference_twobit, write_bed,
+        build_real_neutral_gc_package_for_range, build_real_non_neutral_gc_package,
+        simple_inward_bam, simple_reference_twobit, write_bed,
         write_scaling_factors,
     };
     use ndarray::Array2;
@@ -1566,8 +1567,11 @@ mod tests_lengths_command {
         // Arrange:
         // Producer BAM:
         // - `simple_inward_bam()` contains one fragment [20, 80) on chr1.
-        // - With `coverage-weights` run at `bin_size = stride = 20`, the written scaling profile
-        //   is the identity over the covered stride bins:
+        // - Run `coverage-weights` with a neutral real GC package over its full configured
+        //   fragment-length range so the written scaling TSV is GC-compatible with the consumer
+        //   command, but the numerical scaling profile stays unchanged.
+        // - With `bin_size = stride = 20`, the written scaling profile is therefore still the
+        //   identity over the covered stride bins:
         //     [20,40): 1
         //     [40,60): 1
         //     [60,80): 1
@@ -1609,7 +1613,15 @@ mod tests_lengths_command {
         let out_dir = TempDir::new()?;
         let weights_out_dir = out_dir.path().join("coverage_weights");
         std::fs::create_dir_all(&weights_out_dir)?;
-        let scaling_cfg = make_simple_coverage_weights_config(&weights_out_dir, &producer_bam.bam);
+        let mut scaling_cfg =
+            make_simple_coverage_weights_config(&weights_out_dir, &producer_bam.bam);
+        let weights_gc_path = build_real_neutral_gc_package_for_range(
+            &producer_bam.bam,
+            &ref_twobit.path,
+            out_dir.path(),
+            10,
+            200,
+        )?;
         let gc_path = out_dir.path().join("constant_gc_pkg.npz");
         let package = GCCorrectionPackage {
             version: GC_CORRECTION_SCHEMA_VERSION,
@@ -1620,6 +1632,12 @@ mod tests_lengths_command {
             correction_matrix: array![[3.0_f64]],
         };
         package.write_npz(&gc_path)?;
+        scaling_cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgs {
+            gc_file: Some(weights_gc_path),
+            gc_tag: None,
+            skip_invalid_gc: false,
+        });
+        scaling_cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
         // Act
         run_coverage_weights(&scaling_cfg)?;

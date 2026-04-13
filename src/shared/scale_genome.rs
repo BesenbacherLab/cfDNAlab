@@ -2,6 +2,74 @@ use crate::shared::{bam::Contigs, interval::Interval, overlaps::OverlappingWindo
 use anyhow::{Context, Result, bail};
 use fxhash::{FxHashMap, FxHashSet};
 use std::io::{BufRead, BufReader};
+use std::path::Path;
+
+/// GC correction mode for how scaling factors were built.
+///
+/// This is only used for compatibility checks. It must never affect how scaling
+/// factors are applied numerically.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ScalingGCMode {
+    /// No metadata was present, so we trust the user and skip compatibility checks.
+    #[default]
+    Unknown,
+    /// Scaling factors were built from uncorrected coverage.
+    Uncorrected,
+    /// Scaling factors were built with `--gc-file`.
+    CorrectedFromFile,
+    /// Scaling factors were built with `--gc-tag`.
+    CorrectedFromTag,
+}
+
+impl ScalingGCMode {
+    #[inline]
+    pub fn as_metadata_value(self) -> &'static str {
+        match self {
+            ScalingGCMode::Unknown => "unknown",
+            ScalingGCMode::Uncorrected => "uncorrected",
+            ScalingGCMode::CorrectedFromFile => "corrected_file",
+            ScalingGCMode::CorrectedFromTag => "corrected_tag",
+        }
+    }
+
+    #[inline]
+    pub fn describe(self) -> &'static str {
+        match self {
+            ScalingGCMode::Unknown => "unknown GC correction mode",
+            ScalingGCMode::Uncorrected => "no GC correction",
+            ScalingGCMode::CorrectedFromFile => "GC-corrected coverage via --gc-file",
+            ScalingGCMode::CorrectedFromTag => "GC-corrected coverage via --gc-tag",
+        }
+    }
+}
+
+/// Metadata embedded in a scaling-factors TSV.
+///
+/// Files may include leading comment lines with `# key=value` metadata before
+/// the header row. Unknown keys are ignored to keep the format extensible.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScalingFactorsMetadata {
+    /// Whether the source coverage used GC correction.
+    pub gc_mode: ScalingGCMode,
+}
+
+/// Parsed scaling factors together with their file metadata.
+#[derive(Debug, Clone)]
+pub struct LoadedScalingFactors {
+    pub bins_by_chromosome: FxHashMap<String, Vec<(u64, u64, f32)>>,
+    pub metadata: ScalingFactorsMetadata,
+}
+
+#[inline]
+pub fn scaling_gc_mode_for_run(gc_file_enabled: bool, gc_tag_enabled: bool) -> ScalingGCMode {
+    if gc_file_enabled {
+        ScalingGCMode::CorrectedFromFile
+    } else if gc_tag_enabled {
+        ScalingGCMode::CorrectedFromTag
+    } else {
+        ScalingGCMode::Uncorrected
+    }
+}
 
 /// Apply per-bin multiplicative scaling to the tile coverage in-place.
 /// Assumes bins are sorted, non-overlapping, and fully cover the chromosome.
@@ -196,6 +264,9 @@ fn avg_scaling_over_span(
 ///
 /// Requirements
 /// -----------
+/// - Leading comment lines starting with `#` are allowed before the header.
+/// - Blank lines are not allowed before the header.
+/// - Metadata comments can use `# key=value`, e.g. `# gc_mode=corrected_tag`.
 /// - The TSV **must** have a header. Column names are matched **case-insensitively**.
 /// - Required columns: `chromosome`, `start`, `end`, `scaling_factor`.
 /// - Coordinates are 0-based, half-open `[start, end)`.
@@ -208,21 +279,49 @@ fn avg_scaling_over_span(
 ///
 /// Returns
 /// -------
-/// A map `chr -> Vec<(start, end, scaling_factor)>`, with entries **sorted by start**.
+/// Parsed bins plus any metadata found in the leading comment block.
 pub fn load_scaling_factors_tsv(
-    path: &std::path::Path,
+    path: &Path,
     chromosomes: &[String],
     contigs: &Contigs,
-) -> anyhow::Result<FxHashMap<String, Vec<(u64, u64, f32)>>> {
+) -> anyhow::Result<LoadedScalingFactors> {
     let f = std::fs::File::open(path)
         .with_context(|| format!("opening scaling TSV {}", path.display()))?;
     let mut r = BufReader::new(f);
 
-    // Read and parse the header (required). We lower-case once to allow
-    // case-insensitive matching, but keep the original names for error messages.
+    // Read optional metadata comments, then parse the required header.
+    // We lower-case the final header once to allow case-insensitive matching,
+    // but keep the original names for error messages.
     let mut header = String::new();
-    if r.read_line(&mut header)? == 0 {
-        anyhow::bail!("{}: empty file; header required", path.display());
+    let mut metadata = ScalingFactorsMetadata::default();
+    let mut lineno = 0usize;
+    let mut saw_gc_mode_metadata = false;
+    loop {
+        header.clear();
+        if r.read_line(&mut header)? == 0 {
+            anyhow::bail!("{}: empty file; header required", path.display());
+        }
+        lineno += 1;
+
+        let trimmed = header.trim();
+        if trimmed.is_empty() {
+            anyhow::bail!(
+                "{}:{}: blank lines are not allowed before the scaling TSV header",
+                path.display(),
+                lineno
+            );
+        }
+        if let Some(comment_body) = trimmed.strip_prefix('#') {
+            parse_scaling_metadata_comment(
+                comment_body.trim(),
+                path,
+                lineno,
+                &mut metadata,
+                &mut saw_gc_mode_metadata,
+            )?;
+            continue;
+        }
+        break;
     }
     let cols: Vec<&str> = header.trim_end_matches('\n').split('\t').collect();
     let cols_lc: Vec<String> = cols.iter().map(|c| c.to_ascii_lowercase()).collect();
@@ -253,7 +352,6 @@ pub fn load_scaling_factors_tsv(
 
     // Stream rows; reuse `line` to avoid allocations per row
     let mut line = String::new();
-    let mut lineno = 1usize; // Header already read
     while {
         line.clear();
         r.read_line(&mut line)?
@@ -394,5 +492,94 @@ pub fn load_scaling_factors_tsv(
         }
     }
 
-    Ok(map)
+    Ok(LoadedScalingFactors {
+        bins_by_chromosome: map,
+        metadata,
+    })
+}
+
+fn parse_scaling_metadata_comment(
+    comment_body: &str,
+    path: &Path,
+    lineno: usize,
+    metadata: &mut ScalingFactorsMetadata,
+    saw_gc_mode_metadata: &mut bool,
+) -> Result<()> {
+    let Some((raw_key, raw_value)) = comment_body.split_once('=') else {
+        return Ok(());
+    };
+
+    let key = raw_key.trim().to_ascii_lowercase();
+    let value = raw_value.trim();
+    match key.as_str() {
+        "gc_mode" => {
+            if *saw_gc_mode_metadata {
+                bail!(
+                    "{}:{}: duplicate scaling metadata key 'gc_mode'",
+                    path.display(),
+                    lineno
+                );
+            }
+            metadata.gc_mode = parse_scaling_gc_mode(path, value)?;
+            *saw_gc_mode_metadata = true;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn parse_scaling_gc_mode(path: &Path, value: &str) -> Result<ScalingGCMode> {
+    match value.to_ascii_lowercase().as_str() {
+        "unknown" => Ok(ScalingGCMode::Unknown),
+        "uncorrected" => Ok(ScalingGCMode::Uncorrected),
+        "corrected_file" => Ok(ScalingGCMode::CorrectedFromFile),
+        "corrected_tag" => Ok(ScalingGCMode::CorrectedFromTag),
+        _ => bail!(
+            "{}: invalid value '{}' for scaling metadata key 'gc_mode'; expected one of 'unknown', 'uncorrected', 'corrected_file', or 'corrected_tag'",
+            path.display(),
+            value,
+        ),
+    }
+}
+
+/// Error on known scaling GC-mode mismatches.
+pub fn ensure_scaling_gc_compatibility(
+    path: &Path,
+    scaling_factor_metadata: ScalingFactorsMetadata,
+    command_gc_mode: ScalingGCMode,
+) -> Result<()> {
+    match (scaling_factor_metadata.gc_mode, command_gc_mode) {
+        // Unknown file metadata means we do not know how the scaling file was built.
+        // Warn so users know the check was skipped, then trust them to decide.
+        (ScalingGCMode::Unknown, _) => {
+            eprintln!(
+                "warning: scaling factors file {} has no gc_mode metadata, so GC compatibility could not be checked",
+                path.display()
+            );
+            Ok(())
+        }
+
+        // Known uncorrected/corrected mismatches should fail.
+        (
+            ScalingGCMode::Uncorrected,
+            ScalingGCMode::CorrectedFromFile | ScalingGCMode::CorrectedFromTag,
+        )
+        | (
+            ScalingGCMode::CorrectedFromFile | ScalingGCMode::CorrectedFromTag,
+            ScalingGCMode::Uncorrected,
+        ) => bail!(
+            "Scaling factors file {} is incompatible with this run: file GC mode is '{}', but current run uses '{}'. Use scaling factors built with matching GC-correction status for this analysis.",
+            path.display(),
+            scaling_factor_metadata.gc_mode.describe(),
+            command_gc_mode.describe(),
+        ),
+
+        // All other known combinations are acceptable:
+        // - uncorrected with uncorrected
+        // - file with file
+        // - tag with tag
+        // - file with tag
+        // - tag with file
+        _ => Ok(()),
+    }
 }

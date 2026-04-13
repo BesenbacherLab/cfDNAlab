@@ -37,7 +37,17 @@ struct ScalingRow {
 fn parse_scaling_rows(tsv_path: &std::path::Path) -> Result<Vec<ScalingRow>> {
     let content = std::fs::read_to_string(tsv_path)?;
     let mut lines = content.lines();
-    let header = lines.next().unwrap_or("");
+    let first_line = lines.next().unwrap_or("");
+    let header = if let Some(gc_mode) = first_line.strip_prefix("# gc_mode=") {
+        assert!(
+            !gc_mode.is_empty(),
+            "expected non-empty gc_mode metadata in {}",
+            tsv_path.display()
+        );
+        lines.next().unwrap_or("")
+    } else {
+        first_line
+    };
     assert_eq!(
         header,
         "chromosome\tstart\tend\tavg_pos_cov\tavg_overlapping_pos_cov\tscaling_factor"

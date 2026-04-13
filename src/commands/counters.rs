@@ -95,7 +95,7 @@ counter_struct!(FragmentKmersCounters;
 );
 
 #[cfg(feature = "cmd_coverage_weights")]
-counter_struct!(CoverageWeightsCounters;);
+counter_struct!(CoverageWeightsCounters; gc_failed_fragments: u64, gc_out_of_range_tags: u64);
 
 #[cfg(feature = "cmd_fcoverage")]
 counter_struct!(FCoverageCounters; gc_failed_fragments: u64, gc_out_of_range_tags: u64);

@@ -6,6 +6,10 @@ use crate::{
         coverage_weights::striding::{
             StrideBin, fill_triangular_overlap, normalize_avg_overlap_by_global_mean,
         },
+        gc_bias::{
+            correct::{GCCorrector, load_gc_corrector},
+            counting::build_gc_prefixes,
+        },
     },
     shared::{
         bam::create_chromosome_reader,
@@ -16,6 +20,7 @@ use crate::{
         io::dot_join,
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
+        reference::read_seq,
         thread_pool::init_global_pool,
     },
 };
@@ -82,6 +87,16 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads)?;
 
+    // Load GC correction package if specified
+    if opt.gc.gc_file.is_some() {
+        println!("Start: Loading GC correction matrix");
+    }
+    let gc_corrector = load_gc_corrector(
+        opt.gc.gc_file.as_ref(),
+        opt.fragment_lengths.min_fragment_length,
+        opt.fragment_lengths.max_fragment_length,
+    )?;
+
     // Prepare output containers
     let mut bins_by_chr =
         FxHashMap::with_capacity_and_hasher(chromosomes.len(), Default::default());
@@ -98,6 +113,7 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
                 chr,
                 opt,
                 blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
+                gc_corrector.clone(),
             )?;
             pb.inc(1);
             Ok(out)
@@ -126,13 +142,23 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
     println!("Start: Writing stride-bin coordinates and scaling factors to disk");
     let file_name = dot_join(&[opt.output_prefix.as_str(), "scaling_factors.tsv"]);
     let mut tsv_writer = BufWriter::new(
-        File::create(opt.ioc.output_dir.join(file_name)).context("Creating tsv failed")?,
+        File::create(opt.ioc.output_dir.join(file_name)).context("creating scaling-factors TSV")?,
     );
+    writeln!(
+        tsv_writer,
+        "# gc_mode={}",
+        crate::shared::scale_genome::scaling_gc_mode_for_run(
+            opt.gc.gc_file.is_some(),
+            opt.gc.gc_tag.is_some(),
+        )
+        .as_metadata_value()
+    )
+    .context("writing TSV metadata")?;
     writeln!(
         tsv_writer,
         "chromosome\tstart\tend\tavg_pos_cov\tavg_overlapping_pos_cov\tscaling_factor"
     )
-    .context("Write TSV header fail")?;
+    .context("writing TSV header")?;
     for chr in chromosomes {
         let bins = bins_by_chr
             .get(&chr)
@@ -149,7 +175,7 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
                 bin.avg_overlap_coverage,
                 bin.scaling_factor
             )
-            .context("Write TSV row fail")?;
+            .context("writing TSV row")?;
         }
     }
 
@@ -165,9 +191,24 @@ pub fn run(opt: &CoverageWeightsConfig) -> Result<()> {
         global_counter.base.accepted_forward,
         global_counter.base.accepted_reverse
     );
-    // if opt.gc.bin_by_gc {
-    //     println!("GC-excluded reads: {}", global_counter.base.gc_excl);
-    // }
+    if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
+        let gc_fail_action = if opt.gc.skip_invalid_gc {
+            "fragment skipped"
+        } else {
+            "fragment counted with weight 1.0"
+        };
+        println!(
+            "  GC correction failures ({}): {}",
+            gc_fail_action, global_counter.gc_failed_fragments
+        );
+    }
+    if opt.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
+        println!(
+            "  GC tag values outside [0, {:.0}] treated as invalid: {}",
+            crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
+            global_counter.gc_out_of_range_tags
+        );
+    }
     println!(
         "  Fragments counted one or more times: {}",
         global_counter.base.counted_fragments
@@ -180,6 +221,7 @@ fn process_chrom(
     chr: &str,
     opt: &CoverageWeightsConfig,
     blacklist_intervals: &[Interval<u64>],
+    gc_corrector_opt: Option<GCCorrector>,
 ) -> anyhow::Result<(String, Vec<StrideBin>, CoverageWeightsCounters)> {
     // Open a fresh BAM reader for this thread
     let (mut reader, tid, chrom_len) = create_chromosome_reader(&opt.ioc.bam, chr)?;
@@ -208,6 +250,15 @@ fn process_chrom(
 
     // Initialize coverage counter
     let mut cp = Coverage::new(chrom_len as u32);
+    let gc_prefixes_opt = if gc_corrector_opt.is_some() {
+        let ref_2bit = match opt.ref_2bit.as_ref() {
+            Some(path) => path,
+            None => bail!("When GC correction is specified, --ref-2bit must also be specified"),
+        };
+        Some(build_gc_prefixes(&read_seq(ref_2bit, chr)?))
+    } else {
+        None
+    };
 
     // Function for filtering fragments after pairing
     // Note: We need to own the data in the fn (not just pass `opt` that could disappear)
@@ -215,6 +266,7 @@ fn process_chrom(
         let lengths = opt.fragment_lengths.clone();
         move |f: &Fragment| lengths.contains(f.len())
     };
+    let gc_tag_bytes = opt.gc.gc_tag.as_deref().map(|tag| tag.as_bytes().to_vec());
 
     // Create fragment iterator
     let mut iter = if opt.unpaired.reads_are_fragments {
@@ -223,7 +275,7 @@ fn process_chrom(
         fragments_from_bam(
             reader.records().map(|r| r.map_err(anyhow::Error::from)),
             include_read_fn,
-            None,
+            gc_tag_bytes.as_deref(),
             fragment_filter,
             true,
         )
@@ -236,7 +288,7 @@ fn process_chrom(
         fragments_from_bam(
             reader.records().map(|r| r.map_err(anyhow::Error::from)),
             include_read_fn,
-            None,
+            gc_tag_bytes.as_deref(),
             fragment_filter,
             false,
         )
@@ -247,10 +299,48 @@ fn process_chrom(
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
 
-        counter.base.counted_fragments += 1;
+        let weight = if let Some(gc_corrector) = gc_corrector_opt.as_ref() {
+            let gc_prefixes = gc_prefixes_opt
+                .as_ref()
+                .context("GC prefix sums missing despite GC correction being enabled")?;
+            match gc_corrector.correct_fragment(fragment.interval.try_to_u64()?, gc_prefixes)? {
+                Some(weight) => weight as f32,
+                None => {
+                    counter.gc_failed_fragments += 1;
+                    if opt.gc.skip_invalid_gc {
+                        continue;
+                    } else {
+                        1.0
+                    }
+                }
+            }
+        } else if opt.gc.gc_tag.is_some() {
+            if fragment.gc_tag.had_invalid {
+                counter.gc_failed_fragments += 1;
+                if fragment.gc_tag.was_out_of_range {
+                    counter.gc_out_of_range_tags += 1;
+                }
+                if opt.gc.skip_invalid_gc {
+                    continue;
+                } else {
+                    1.0
+                }
+            } else if let Some(weight) = fragment.gc_tag.weight {
+                weight
+            } else {
+                counter.gc_failed_fragments += 1;
+                if opt.gc.skip_invalid_gc {
+                    continue;
+                } else {
+                    1.0
+                }
+            }
+        } else {
+            1.0
+        };
 
-        // Add to coverage prefix
-        cp.add_fragment(fragment)?;
+        counter.base.counted_fragments += 1;
+        cp.add_fragment_weighted(fragment, weight)?;
     }
 
     // Get counters from iterator

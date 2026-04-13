@@ -26,6 +26,7 @@ use cfdnalab::shared::read::default_include_read_paired_end;
 use fixtures::{
     BamFixture, FragmentSpec, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, ReadSpec, bam_from_specs,
     bam_from_specs_strict_identity, build_real_neutral_gc_package,
+    build_real_neutral_gc_package_for_range,
     build_real_non_neutral_gc_package, long_fragment_bam, paired_fragment, read_zst_to_string,
     simple_inward_bam, simple_reference_twobit, write_bed, write_scaling_factors,
 };
@@ -2075,8 +2076,17 @@ fn real_ref_gc_bias_gc_bias_and_coverage_weights_chain_is_coherent_in_fcoverage(
     let out_dir = TempDir::new()?;
     let weights_out_dir = out_dir.path().join("weights_out");
     std::fs::create_dir_all(&weights_out_dir)?;
-    let weights_cfg = make_simple_coverage_weights_config(&weights_out_dir, &bam.bam);
+    let mut weights_cfg = make_simple_coverage_weights_config(&weights_out_dir, &bam.bam);
+    let weights_gc_path =
+        build_real_neutral_gc_package_for_range(&bam.bam, &ref_twobit.path, out_dir.path(), 10, 200)?;
     let gc_path = build_real_neutral_gc_package(&bam.bam, &ref_twobit.path, out_dir.path(), 60)?;
+
+    weights_cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(weights_gc_path),
+        gc_tag: None,
+        skip_invalid_gc: false,
+    });
+    weights_cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
     run_coverage_weights(&weights_cfg)?;
     let scaling_path = weights_out_dir.join("coverage.scaling_factors.tsv");
