@@ -139,11 +139,22 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
     };
 
     // Load genomic scaling factors
-    if opt.scale_genome.scaling_factors.is_some() {
-        println!("Start: Loading scaling factors");
+    let coverage_scale_genome = opt.coverage_scale_genome_args();
+    if coverage_scale_genome.scaling_factors.is_some() {
+        println!("Start: Loading coverage scaling factors");
     }
-    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
-        &opt.scale_genome,
+    let coverage_scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
+        &coverage_scale_genome,
+        &chromosomes,
+        &contigs,
+        crate::shared::scale_genome::scaling_gc_mode_for_run(opt.gc.gc_file.is_some(), false),
+    )?;
+    let count_scale_genome = opt.count_scale_genome_args();
+    if count_scale_genome.scaling_factors.is_some() {
+        println!("Start: Loading count-based scaling factors");
+    }
+    let count_scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
+        &count_scale_genome,
         &chromosomes,
         &contigs,
         crate::shared::scale_genome::scaling_gc_mode_for_run(opt.gc.gc_file.is_some(), false),
@@ -186,7 +197,14 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
                     .as_ref()
                     .and_then(|m| m.get(chr).map(|v| v.as_slice())),
                 blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
-                scaling_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]),
+                coverage_scaling_map
+                    .get(chr)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]),
+                count_scaling_map
+                    .get(chr)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]),
                 gc_corrector.clone(),
                 &mut writer,
             )?;
@@ -212,7 +230,8 @@ fn process_chrom(
     opt: &BamToBamConfig,
     windows: Option<&[IndexedInterval<u64>]>,
     blacklist_intervals: &[Interval<u64>],
-    scaling_chr: &[(u64, u64, f32)],
+    coverage_scaling_chr: &[(u64, u64, f32)],
+    count_scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
     writer: &mut bam::Writer,
 ) -> anyhow::Result<BamToBamCounters> {
@@ -243,11 +262,15 @@ fn process_chrom(
     //
     // In BED mode, `find_overlapping_windows(...)` uses the scan position in this ordered slice as
     // `OverlappingWindow.idx`; it does not use `IndexedInterval.idx`. Because this temporary list
-    // is built in the same order as `scaling_chr`, those scan positions already match the
-    // chromosome-local indices needed for indexing back into `scaling_chr`.
+    // is built in the same order as the scaling bins, those scan positions already match the
+    // chromosome-local indices needed for indexing back into those bins.
     //
     // So the carried `IndexedInterval.idx` value is intentionally a placeholder.
-    let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
+    let coverage_scaling_with_bin_idx: Vec<IndexedInterval<u64>> = coverage_scaling_chr
+        .iter()
+        .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
+        .collect::<crate::Result<_>>()?;
+    let count_scaling_with_bin_idx: Vec<IndexedInterval<u64>> = count_scaling_chr
         .iter()
         .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
         .collect::<crate::Result<_>>()?;
@@ -315,7 +338,8 @@ fn process_chrom(
     // Streaming pointers
     let mut bl_ptr = 0; // Blacklist interval
     let mut wd_ptr = 0; // Genomic window
-    let mut sf_ptr = 0; // Scaling factor bin
+    let mut coverage_sf_ptr = 0; // Coverage scaling factor bin
+    let mut count_sf_ptr = 0; // Count-based scaling factor bin
 
     // Write using a bounded window sorter to ensure (start,end)-sorted output
     let mut sorter = WindowSorter::new(opt.fragment_lengths.max_fragment_length);
@@ -369,12 +393,12 @@ fn process_chrom(
 
         // Find all overlapping scaling-factor bins
         // And count up the weight
-        let scaling_weight = if !scaling_chr.is_empty() {
+        let coverage_weight = if !coverage_scaling_chr.is_empty() {
             // Find overlapping scaling-bins
             let overlapping_scaling_bins = find_overlapping_windows(
                 chrom_len,
-                &mut sf_ptr,
-                Some(&scaling_with_bin_idx),
+                &mut coverage_sf_ptr,
+                Some(&coverage_scaling_with_bin_idx),
                 None,
                 fragment.interval.try_to_u64()?, // Full fragment
                 1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
@@ -397,7 +421,7 @@ fn process_chrom(
                 fragment.interval.try_to_u64()?,
                 &overlapping_windows,
                 &overlapping_scaling_bin_indices,
-                scaling_chr,
+                coverage_scaling_chr,
             )?
             .pop()
             .map(|(_, w, _)| w)
@@ -407,11 +431,45 @@ fn process_chrom(
         } else {
             None
         };
+        let count_weight = if !count_scaling_chr.is_empty() {
+            let overlapping_scaling_bins = find_overlapping_windows(
+                chrom_len,
+                &mut count_sf_ptr,
+                Some(&count_scaling_with_bin_idx),
+                None,
+                fragment.interval.try_to_u64()?,
+                1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0),
+                opt.fragment_lengths.max_fragment_length.into(),
+            )
+            .with_context(|| format!("finding overlapping count-based scaling bins on chr {chr}"))?
+            .context("no overlapping count-based scaling bins found")?;
+
+            let overlapping_scaling_bin_indices: Vec<usize> = overlapping_scaling_bins
+                .windows
+                .iter()
+                .map(|w| w.idx)
+                .collect();
+
+            let scaling_weight = compute_window_scaling_over_fragment(
+                fragment.interval.try_to_u64()?,
+                &overlapping_windows,
+                &overlapping_scaling_bin_indices,
+                count_scaling_chr,
+            )?
+            .pop()
+            .map(|(_, w, _)| w)
+            .expect("no overlapping count-based scaling bins found");
+
+            Some(scaling_weight)
+        } else {
+            None
+        };
 
         let fragment_length = fragment.len();
         let tags = Arc::new(RecordTags {
             fragment_length,
-            coverage_weight: scaling_weight.map(|w| w as f32),
+            coverage_weight: coverage_weight.map(|w| w as f32),
+            fragment_count_weight: count_weight.map(|w| w as f32),
             gc_weight: gc_weight.map(|w| w as f32),
         });
 

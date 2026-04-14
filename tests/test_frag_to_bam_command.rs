@@ -78,7 +78,8 @@ struct BamRow {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct AuxTags {
     gc_weight: Option<f32>,
-    scaling_weight: Option<f32>,
+    coverage_scaling_weight: Option<f32>,
+    count_scaling_weight: Option<f32>,
     fragment_length: Option<u32>,
 }
 
@@ -243,7 +244,11 @@ fn read_aux_tags(path: &Path) -> Result<Vec<AuxTags>> {
             Ok(Aux::Float(value)) => Some(value),
             _ => None,
         };
-        let scaling_weight = match record.aux(b"COV") {
+        let coverage_scaling_weight = match record.aux(b"COV") {
+            Ok(Aux::Float(value)) => Some(value),
+            _ => None,
+        };
+        let count_scaling_weight = match record.aux(b"CNT") {
             Ok(Aux::Float(value)) => Some(value),
             _ => None,
         };
@@ -253,7 +258,8 @@ fn read_aux_tags(path: &Path) -> Result<Vec<AuxTags>> {
         };
         tags.push(AuxTags {
             gc_weight,
-            scaling_weight,
+            coverage_scaling_weight,
+            count_scaling_weight,
             fragment_length,
         });
     }
@@ -511,7 +517,8 @@ fn given_inline_header_with_unsupported_extra_column_when_run_then_returns_clear
     // Human verification status: unverified
     // Arrange:
     // The header contains one extra column `gc`.
-    // Only these extra names are supported: gc_weight, scaling_weight, flen.
+    // Only these extra names are supported: gc_weight, coverage_scaling_weight,
+    // count_scaling_weight, and flen.
     // Expected behavior is a validation error before conversion starts.
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
@@ -544,7 +551,7 @@ fn given_inline_header_with_unsupported_extra_column_when_run_then_returns_clear
         "unexpected error: {error}"
     );
     assert!(
-        error_text.contains("gc_weight, scaling_weight, or flen"),
+        error_text.contains("gc_weight, coverage_scaling_weight, count_scaling_weight, or flen"),
         "unexpected error: {error}"
     );
 
@@ -594,7 +601,7 @@ fn given_unsupported_extra_columns_and_ignore_extras_when_run_then_conversion_su
 
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
@@ -643,7 +650,7 @@ fn given_inline_header_with_unknown_extra_and_allow_unknown_extras_when_run_then
     assert_unpaired_full_match_record(&rows[0], "chr1", 10, 40, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
     assert_eq!(aux_tags[0].fragment_length, Some(30));
 
     Ok(())
@@ -666,7 +673,7 @@ fn given_supported_extra_column_names_when_run_then_gc_cov_and_flen_are_transfer
     write_frag_file(
         &frag_path,
         &[
-            "chromosome\tstart\tend\tmapq\tstrand\tgc_weight\tscaling_weight\tflen",
+            "chromosome\tstart\tend\tmapq\tstrand\tgc_weight\tcoverage_scaling_weight\tflen",
             "chr1\t0\t10\t60\t+\t0.25\t1.5\t10",
             "chr1\t20\t31\t40\t-\tna\t.\t11",
         ],
@@ -693,11 +700,119 @@ fn given_supported_extra_column_names_when_run_then_gc_cov_and_flen_are_transfer
 
     assert_eq!(aux_tags.len(), 2);
     assert_optional_f32_eq(aux_tags[0].gc_weight, Some(0.25), "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, Some(1.5), "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, Some(1.5), "COV");
     assert_eq!(aux_tags[0].fragment_length, Some(10));
     assert_optional_f32_eq(aux_tags[1].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[1].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "COV");
     assert_eq!(aux_tags[1].fragment_length, Some(11));
+
+    Ok(())
+}
+
+#[test]
+fn given_fragment_count_scaling_column_when_run_then_cnt_aux_tag_is_written() -> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // Header includes the new recognized fragment-count scaling column.
+    // Hand-derived tag expectations:
+    // Row 1 -> COV=1.5, CNT=0.5, FLEN=10
+    // Row 2 -> COV=None, CNT=2.0, FLEN=11
+    let input_dir = TempDir::new()?;
+    let output_dir = TempDir::new()?;
+    let frag_path = input_dir.path().join("input.frag.tsv");
+    let chrom_sizes_path = input_dir.path().join("chrom.sizes");
+
+    write_frag_file(
+        &frag_path,
+        &[
+            "chromosome\tstart\tend\tmapq\tstrand\tcoverage_scaling_weight\tcount_scaling_weight\tflen",
+            "chr1\t0\t10\t60\t+\t1.5\t0.5\t10",
+            "chr1\t20\t31\t40\t-\t.\t2.0\t11",
+        ],
+    )?;
+    write_chrom_sizes(&chrom_sizes_path, &[("chr1", 100)])?;
+
+    let config = make_config(
+        frag_path,
+        output_dir.path().to_path_buf(),
+        chrom_sizes_path,
+        base_chromosomes(&["chr1"]),
+    );
+
+    // Act
+    run_frag_to_bam(&config)?;
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
+    let rows = read_bam_rows(&output_bam_path)?;
+    let aux_tags = read_aux_tags(&output_bam_path)?;
+
+    // Assert
+    assert_eq!(rows.len(), 2);
+    assert_unpaired_full_match_record(&rows[0], "chr1", 0, 10, 60, '+', "fragment_1");
+    assert_unpaired_full_match_record(&rows[1], "chr1", 20, 31, 40, '-', "fragment_2");
+
+    assert_eq!(aux_tags.len(), 2);
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, Some(1.5), "COV");
+    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "CNT");
+    assert_eq!(aux_tags[0].fragment_length, Some(10));
+    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[1].count_scaling_weight, Some(2.0), "CNT");
+    assert_eq!(aux_tags[1].fragment_length, Some(11));
+
+    Ok(())
+}
+
+#[test]
+fn given_inline_header_with_only_count_scaling_when_run_then_only_cnt_aux_tag_is_written()
+-> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // Inline header defines only the count-scaling extra column.
+    // Hand-derived expectations:
+    // - Row 1 -> CNT=0.5
+    // - Row 2 -> CNT absent because value is "."
+    // - GC, COV, and FLEN remain absent for both rows
+    let input_dir = TempDir::new()?;
+    let output_dir = TempDir::new()?;
+    let frag_path = input_dir.path().join("input.frag.tsv");
+    let chrom_sizes_path = input_dir.path().join("chrom.sizes");
+
+    write_frag_file(
+        &frag_path,
+        &[
+            "chromosome\tstart\tend\tmapq\tstrand\tcount_scaling_weight",
+            "chr1\t0\t10\t60\t+\t0.5",
+            "chr1\t20\t31\t40\t-\t.",
+        ],
+    )?;
+    write_chrom_sizes(&chrom_sizes_path, &[("chr1", 100)])?;
+
+    let config = make_config(
+        frag_path,
+        output_dir.path().to_path_buf(),
+        chrom_sizes_path,
+        base_chromosomes(&["chr1"]),
+    );
+
+    // Act
+    run_frag_to_bam(&config)?;
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
+    let rows = read_bam_rows(&output_bam_path)?;
+    let aux_tags = read_aux_tags(&output_bam_path)?;
+
+    // Assert
+    assert_eq!(rows.len(), 2);
+    assert_unpaired_full_match_record(&rows[0], "chr1", 0, 10, 60, '+', "fragment_1");
+    assert_unpaired_full_match_record(&rows[1], "chr1", 20, 31, 40, '-', "fragment_2");
+
+    assert_eq!(aux_tags.len(), 2);
+    assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "CNT");
+    assert_eq!(aux_tags[0].fragment_length, None);
+    assert_optional_f32_eq(aux_tags[1].gc_weight, None, "GC");
+    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[1].count_scaling_weight, None, "CNT");
+    assert_eq!(aux_tags[1].fragment_length, None);
 
     Ok(())
 }
@@ -741,7 +856,7 @@ fn given_no_header_and_extra_columns_when_run_then_extra_columns_are_ignored_and
     assert_unpaired_full_match_record(&rows[0], "chr1", 10, 20, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
@@ -791,10 +906,10 @@ fn given_inline_header_with_only_flen_when_run_then_only_flen_aux_tag_is_written
 
     assert_eq!(aux_tags.len(), 2);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
     assert_eq!(aux_tags[0].fragment_length, Some(80));
     assert_optional_f32_eq(aux_tags[1].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[1].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "COV");
     assert_eq!(aux_tags[1].fragment_length, None);
 
     Ok(())
@@ -840,7 +955,7 @@ fn given_explicit_header_with_only_flen_when_run_then_only_flen_aux_tag_is_writt
     assert_unpaired_full_match_record(&rows[0], "chr1", 10, 60, 42, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
     assert_eq!(aux_tags[0].fragment_length, Some(50));
 
     Ok(())
@@ -884,7 +999,7 @@ fn given_explicit_header_with_unsupported_extra_column_when_run_then_returns_cle
         "unexpected error: {error}"
     );
     assert!(
-        error_text.contains("gc_weight, scaling_weight, or flen"),
+        error_text.contains("gc_weight, coverage_scaling_weight, count_scaling_weight, or flen"),
         "unexpected error: {error}"
     );
 
@@ -934,7 +1049,7 @@ fn given_explicit_header_with_unsupported_extra_column_and_ignore_extras_when_ru
     assert_unpaired_full_match_record(&rows[0], "chr1", 10, 20, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
@@ -982,7 +1097,7 @@ fn given_explicit_header_with_unknown_extra_and_allow_unknown_extras_when_run_th
     assert_unpaired_full_match_record(&rows[0], "chr1", 5, 35, 60, '-', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
     assert_eq!(aux_tags[0].fragment_length, Some(30));
 
     Ok(())
@@ -1029,8 +1144,56 @@ fn given_companion_header_with_only_flen_when_run_then_only_flen_aux_tag_is_writ
     assert_unpaired_full_match_record(&rows[0], "chr1", 20, 70, 39, '-', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
     assert_eq!(aux_tags[0].fragment_length, Some(50));
+
+    Ok(())
+}
+
+#[test]
+fn given_companion_header_with_only_count_scaling_when_run_then_only_cnt_aux_tag_is_written()
+-> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // No explicit header and no inline header. The companion header therefore defines the
+    // count-scaling column.
+    // Hand-derived expectations:
+    // - one fragment [20,70) gets CNT=0.5
+    // - GC, COV, and FLEN remain absent
+    let input_dir = TempDir::new()?;
+    let output_dir = TempDir::new()?;
+    let frag_path = input_dir.path().join("sample.frag.tsv");
+    let companion_header_path = input_dir.path().join("sample.frag.header.tsv");
+    let chrom_sizes_path = input_dir.path().join("chrom.sizes");
+
+    write_frag_file(&frag_path, &["chr1\t20\t70\t39\t-\t0.5"])?;
+    write_frag_file(
+        &companion_header_path,
+        &["chromosome\tstart\tend\tmapq\tstrand\tcount_scaling_weight"],
+    )?;
+    write_chrom_sizes(&chrom_sizes_path, &[("chr1", 500)])?;
+
+    let config = make_config(
+        frag_path,
+        output_dir.path().to_path_buf(),
+        chrom_sizes_path,
+        base_chromosomes(&["chr1"]),
+    );
+
+    // Act
+    run_frag_to_bam(&config)?;
+    let output_bam_path = output_bam_path(output_dir.path(), "restored");
+    let rows = read_bam_rows(&output_bam_path)?;
+    let aux_tags = read_aux_tags(&output_bam_path)?;
+
+    // Assert
+    assert_eq!(rows.len(), 1);
+    assert_unpaired_full_match_record(&rows[0], "chr1", 20, 70, 39, '-', "fragment_1");
+    assert_eq!(aux_tags.len(), 1);
+    assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "CNT");
+    assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
 }
@@ -1077,7 +1240,7 @@ fn given_companion_header_with_unsupported_extra_column_and_ignore_extras_when_r
     assert_unpaired_full_match_record(&rows[0], "chr1", 10, 20, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
@@ -1124,7 +1287,7 @@ fn given_companion_header_with_unknown_extra_and_allow_unknown_extras_when_run_t
     assert_unpaired_full_match_record(&rows[0], "chr1", 5, 35, 60, '-', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
     assert_eq!(aux_tags[0].fragment_length, Some(30));
 
     Ok(())
@@ -1167,7 +1330,7 @@ fn given_companion_header_with_unsupported_extra_column_when_run_then_returns_cl
         "unexpected error: {error}"
     );
     assert!(
-        error_text.contains("gc_weight, scaling_weight, or flen"),
+        error_text.contains("gc_weight, coverage_scaling_weight, count_scaling_weight, or flen"),
         "unexpected error: {error}"
     );
 
@@ -1272,7 +1435,7 @@ fn given_explicit_and_companion_headers_when_run_then_explicit_header_takes_prec
     assert_eq!(aux_tags.len(), 1);
     assert_eq!(aux_tags[0].fragment_length, Some(30));
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
 
     Ok(())
 }
@@ -2412,13 +2575,18 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_coverage_with_blacklist_then
 
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_bam_to_bam"))]
 #[test]
-fn given_bam_to_frag_then_frag_to_bam_when_running_bam_to_bam_then_roundtrip_preserves_fragment_tags_for_same_span()
--> Result<()> {
+fn bam_frag_bam_roundtrip_preserves_coverage_tags_for_same_span() -> Result<()> {
     // Human verification status: unverified
     // Arrange:
-    // `simple_inward_bam()` contains one paired fragment spanning [20, 80), length 60.
-    // The roundtrip helper converts that to one unpaired BAM record spanning the same [20, 80)
-    // interval in `reads_are_fragments` mode.
+    // This test compares the same physical fragment represented in two different ways:
+    // - the original paired BAM from `simple_inward_bam()`
+    // - a restored unpaired BAM after BAM -> FRAG -> BAM roundtrip
+    //
+    // We test this because FRAG does not preserve pair structure, so the restored BAM will have
+    // one unpaired record instead of two mates. Even so, downstream fragment-level tags should
+    // stay identical when the underlying span is the same.
+    //
+    // In both cases the fragment span is [20, 80), length 60.
     //
     // We then run `bam-to-bam` on both representations with a non-uniform scaling TSV:
     // - [0, 40)  factor 2.0  -> contributes 20 bp over [20, 40)
@@ -2455,7 +2623,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_running_bam_to_bam_then_roundtrip_pre
         base_chromosomes(&["chr1"]),
     );
     original_cfg.skip_chromosome_sort = true;
-    original_cfg.scale_genome.scaling_factors = Some(scaling_path.clone());
+    original_cfg.set_coverage_scaling_factors(Some(scaling_path.clone()));
     original_cfg.min_mapq = 0;
     {
         let fragment_lengths = original_cfg.fragment_lengths_mut();
@@ -2469,7 +2637,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_running_bam_to_bam_then_roundtrip_pre
         base_chromosomes(&["chr1"]),
     );
     restored_cfg.skip_chromosome_sort = true;
-    restored_cfg.scale_genome.scaling_factors = Some(scaling_path);
+    restored_cfg.set_coverage_scaling_factors(Some(scaling_path));
     restored_cfg.min_mapq = 0;
     restored_cfg.unpaired.reads_are_fragments = true;
     {
@@ -2490,13 +2658,115 @@ fn given_bam_to_frag_then_frag_to_bam_when_running_bam_to_bam_then_roundtrip_pre
     assert_eq!(original_tags.len(), 2);
     assert_eq!(restored_tags.len(), 1);
     for tags in &original_tags {
-        assert_optional_f32_eq(tags.scaling_weight, expected_cov, "paired COV");
+        assert_optional_f32_eq(tags.coverage_scaling_weight, expected_cov, "paired COV");
         assert_optional_f32_eq(tags.gc_weight, None, "paired GC");
         assert_eq!(tags.fragment_length, Some(60));
     }
     assert_optional_f32_eq(
-        restored_tags[0].scaling_weight,
+        restored_tags[0].coverage_scaling_weight,
         expected_cov,
+        "restored COV",
+    );
+    assert_optional_f32_eq(restored_tags[0].gc_weight, None, "restored GC");
+    assert_eq!(restored_tags[0].fragment_length, Some(60));
+
+    Ok(())
+}
+
+#[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_bam_to_bam"))]
+#[test]
+fn bam_frag_bam_roundtrip_preserves_count_tags_for_same_span() -> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // This is the count-scaling mirror of the coverage-scaling roundtrip test above.
+    // It again compares the same physical fragment represented as:
+    // - the original paired BAM
+    // - a restored unpaired BAM after BAM -> FRAG -> BAM
+    //
+    // We test this because FRAG roundtrips intentionally collapse pair structure, but count
+    // scaling in downstream `bam-to-bam` should still depend only on the fragment span itself.
+    //
+    // In both inputs the fragment span is [20, 80), length 60.
+    //
+    // Use a non-uniform count-scaling TSV:
+    // - [0, 40)  factor 2.0  -> contributes 20 bp over [20, 40)
+    // - [40, 80) factor 1.0  -> contributes 40 bp over [40, 80)
+    //
+    // Hand-derived full-fragment average over [20, 80):
+    //   (20 * 2.0 + 40 * 1.0) / 60 = 4/3
+    //
+    // The scientific contract is therefore:
+    // - original paired BAM -> 2 records, each with CNT = 4/3 and FLEN = 60
+    // - restored unpaired BAM -> 1 record, with CNT = 4/3 and FLEN = 60
+    // - COV stays absent in both outputs because only count scaling is configured
+    let (source_bam, _restored_dir, restored_bam_path) = roundtrip_simple_inward_to_unpaired_bam()?;
+    let work = TempDir::new()?;
+    let original_out = work.path().join("original_count_tagged.bam");
+    let restored_out = work.path().join("restored_count_tagged.bam");
+    let scaling_path = work.path().join("piecewise_count_scaling.tsv");
+    write_scaling_tsv(
+        &scaling_path,
+        &[
+            ("chr1", 0, 40, 2.0),
+            ("chr1", 40, 80, 1.0),
+            ("chr1", 80, 200, 1.0),
+        ],
+    )?;
+
+    let mut original_cfg = BamToBamConfig::new(
+        source_bam.bam.clone(),
+        original_out.clone(),
+        base_chromosomes(&["chr1"]),
+    );
+    original_cfg.skip_chromosome_sort = true;
+    original_cfg.set_count_scaling_factors(Some(scaling_path.clone()));
+    original_cfg.min_mapq = 0;
+    {
+        let fragment_lengths = original_cfg.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 10;
+        fragment_lengths.max_fragment_length = 100;
+    }
+
+    let mut restored_cfg = BamToBamConfig::new(
+        restored_bam_path,
+        restored_out.clone(),
+        base_chromosomes(&["chr1"]),
+    );
+    restored_cfg.skip_chromosome_sort = true;
+    restored_cfg.set_count_scaling_factors(Some(scaling_path));
+    restored_cfg.min_mapq = 0;
+    restored_cfg.unpaired.reads_are_fragments = true;
+    {
+        let fragment_lengths = restored_cfg.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 10;
+        fragment_lengths.max_fragment_length = 100;
+    }
+
+    // Act
+    run_bam_to_bam(&original_cfg)?;
+    run_bam_to_bam(&restored_cfg)?;
+
+    // Assert
+    let original_tags = read_aux_tags(&original_out)?;
+    let restored_tags = read_aux_tags(&restored_out)?;
+    let expected_cnt = Some(4.0_f32 / 3.0_f32);
+
+    assert_eq!(original_tags.len(), 2);
+    assert_eq!(restored_tags.len(), 1);
+    for tags in &original_tags {
+        assert_optional_f32_eq(tags.count_scaling_weight, expected_cnt, "paired CNT");
+        assert_optional_f32_eq(tags.coverage_scaling_weight, None, "paired COV");
+        assert_optional_f32_eq(tags.gc_weight, None, "paired GC");
+        assert_eq!(tags.fragment_length, Some(60));
+    }
+    assert_optional_f32_eq(
+        restored_tags[0].count_scaling_weight,
+        expected_cnt,
+        "restored CNT",
+    );
+    assert_optional_f32_eq(
+        restored_tags[0].coverage_scaling_weight,
+        None,
         "restored COV",
     );
     assert_optional_f32_eq(restored_tags[0].gc_weight, None, "restored GC");
@@ -2975,7 +3245,7 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
     // Hand-derived expectations:
     // - `bam-to-frag` writes exactly one FRAG row for [20, 80)
     // - the companion header must advertise both extra columns:
-    //     gc_weight, scaling_weight
+    //     gc_weight, coverage_scaling_weight
     // - `frag-to-bam` auto-detects that companion header and restores one unpaired BAM record
     //   with:
     //     GC   = 3.0
@@ -3012,9 +3282,7 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
     );
     bam_to_frag_cfg.set_output_prefix("weighted");
     bam_to_frag_cfg.set_min_mapq(0);
-    bam_to_frag_cfg.set_scale_genome(cfdnalab::commands::cli_common::ScaleGenomeArgs {
-        scaling_factors: Some(scaling_path),
-    });
+    bam_to_frag_cfg.set_coverage_scaling_factors(Some(scaling_path));
     bam_to_frag_cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
         skip_invalid_gc: false,
@@ -3054,13 +3322,97 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
     // Assert
     assert_eq!(
         header_text.trim(),
-        "chromosome\tstart\tend\tmin_mapq\tread1_strand\tgc_weight\tscaling_weight"
+        "chromosome\tstart\tend\tmin_mapq\tread1_strand\tgc_weight\tcoverage_scaling_weight"
     );
     assert_eq!(rows.len(), 1);
     assert_unpaired_full_match_record(&rows[0], "chr1", 20, 80, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, Some(3.0), "GC");
-    assert_optional_f32_eq(aux_tags[0].scaling_weight, Some(2.0), "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, Some(2.0), "COV");
+    assert_eq!(aux_tags[0].fragment_length, None);
+
+    Ok(())
+}
+
+#[cfg(feature = "cmd_bam_to_frag")]
+#[test]
+fn given_bam_to_frag_with_count_scaling_output_when_frag_to_bam_runs_then_companion_header_restores_cnt_aux_tag()
+-> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // `simple_inward_bam()` contains one paired fragment spanning [20, 80), length 60.
+    //
+    // We generate the FRAG input with the released producer `bam-to-frag` using only a
+    // chromosome-wide count-scaling TSV with factor 0.5.
+    //
+    // Hand-derived expectations:
+    // - `bam-to-frag` writes one FRAG row for [20, 80)
+    // - the companion header advertises `count_scaling_weight`
+    // - `frag-to-bam` auto-detects that companion header and restores one unpaired BAM record
+    //   with CNT = 0.5
+    // - GC, COV, and FLEN stay absent
+    let source_bam = fixtures::simple_inward_bam()?;
+    let bam_to_frag_out = TempDir::new()?;
+    let frag_to_bam_out = TempDir::new()?;
+    let work = TempDir::new()?;
+    let scaling_path = work.path().join("uniform_count_scaling.tsv");
+    let chrom_sizes_path = frag_to_bam_out.path().join("chrom.sizes");
+    write_chrom_sizes(&chrom_sizes_path, &[("chr1", 200)])?;
+    write_scaling_tsv(&scaling_path, &[("chr1", 0, 200, 0.5)])?;
+
+    let mut bam_to_frag_cfg = BamToFragConfig::new(
+        IOCArgs {
+            bam: source_bam.bam.clone(),
+            output_dir: bam_to_frag_out.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+    );
+    bam_to_frag_cfg.set_output_prefix("weighted");
+    bam_to_frag_cfg.set_min_mapq(0);
+    bam_to_frag_cfg.set_count_scaling_factors(Some(scaling_path));
+    {
+        let fragment_lengths = bam_to_frag_cfg.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 60;
+        fragment_lengths.max_fragment_length = 60;
+    }
+
+    // Act 1: real producer writes FRAG row plus companion header.
+    run_bam_to_frag(&bam_to_frag_cfg)?;
+    let frag_path = bam_to_frag_out.path().join("weighted.frag.tsv.gz");
+    let header_path = bam_to_frag_out.path().join("weighted.frag.header.tsv");
+    let header_text = fs::read_to_string(&header_path)?;
+
+    let mut frag_to_bam_cfg = make_config(
+        frag_path,
+        frag_to_bam_out.path().to_path_buf(),
+        chrom_sizes_path,
+        base_chromosomes(&["chr1"]),
+    );
+    frag_to_bam_cfg.set_min_mapq(0);
+    {
+        let fragment_lengths = frag_to_bam_cfg.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 60;
+        fragment_lengths.max_fragment_length = 60;
+    }
+
+    // Act 2: companion header is auto-detected and restored to BAM AUX tags.
+    run_frag_to_bam(&frag_to_bam_cfg)?;
+    let output_bam = output_bam_path(frag_to_bam_out.path(), "restored");
+    let rows = read_bam_rows(&output_bam)?;
+    let aux_tags = read_aux_tags(&output_bam)?;
+
+    // Assert
+    assert_eq!(
+        header_text.trim(),
+        "chromosome\tstart\tend\tmin_mapq\tread1_strand\tcount_scaling_weight"
+    );
+    assert_eq!(rows.len(), 1);
+    assert_unpaired_full_match_record(&rows[0], "chr1", 20, 80, 60, '+', "fragment_1");
+    assert_eq!(aux_tags.len(), 1);
+    assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "CNT");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())

@@ -15,15 +15,20 @@ use std::path::PathBuf;
 /// **NOTE**: This is **not** needed for running other `cfDNAlab` tools.
 /// Those tools will **not** automatically use the correction tags.
 ///
-/// ## Genomic smoothing (--scaling-factors)
-///
-/// The coverage weight that would normally be **multiplied** with the fragment's count value (`1.0`)
-/// is written as the AUX tag "`COV`" in the read(s).
-///
 /// ## GC bias correction
 ///
 /// The GC bias correction weight that would normally be **multiplied** with the fragment's count
-/// value (`1.0` or the smoothed value) is written as the AUX tag "`GC`" in the read(s).
+/// value (`1.0`) is written as the AUX tag "`GC`" in the read(s).
+///
+/// ## Coverage-based genomic smoothing (--coverage-scaling-factors)
+///
+/// The coverage-based weight that would normally be **multiplied** with the fragment's count value
+/// (`1.0` or the corrected value) is written as the AUX tag "`COV`" in the read(s).
+///
+/// ## Fragment count-based genomic smoothing (--count-scaling-factors)
+///
+/// The fragment-count-based weight that would normally be **multiplied** with the fragment's count
+/// value (`1.0` or the corrected value) is written as the AUX tag "`CNT`" in the read(s).
 ///
 /// ## Fragment length
 ///
@@ -82,10 +87,7 @@ pub struct BamToBamConfig {
     ///
     /// Reads that are part of a fragment that overlaps a window
     /// are considered for the new BAM file.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long = "by-bed", value_parser, help_heading = "Windows")
-    )]
+    #[cfg_attr(feature = "cli", clap(long, value_parser, help_heading = "Windows"))]
     pub by_bed: Option<PathBuf>,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
@@ -96,14 +98,26 @@ pub struct BamToBamConfig {
     /// Many tools expect BAM files to be sorted as `chr1, chr10, chr11, ...`. By default,
     /// we thus sort the specified chromosomes lexicographically. This is different to other
     /// commands in `cfDNAlab`, which use the passed order of chromosomes.
-    #[cfg_attr(
-        feature = "cli",
-        clap(long = "skip-chromosome-sort", help_heading = "Core")
-    )]
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub skip_chromosome_sort: bool,
 
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub scale_genome: ScaleGenomeArgs,
+    /// Optional path to coverage-based scaling factors `[path]`
+    ///
+    /// `.tsv` file as produced by `cfdna coverage-weights`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, value_parser, help_heading = "Normalization")
+    )]
+    pub coverage_scaling_factors: Option<PathBuf>,
+
+    /// Optional path to count-based scaling factors `[path]`
+    ///
+    /// `.tsv` file as produced by `cfdna fragment-count-weights`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, value_parser, help_heading = "Normalization")
+    )]
+    pub count_scaling_factors: Option<PathBuf>,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
@@ -189,7 +203,8 @@ impl BamToBamConfig {
             by_bed: None,
             chromosomes,
             skip_chromosome_sort: false,
-            scale_genome: ScaleGenomeArgs::default(),
+            coverage_scaling_factors: None,
+            count_scaling_factors: None,
             fragment_lengths: FragmentLengthArgs::default(),
             min_mapq: 0,
             require_proper_pair: false,
@@ -224,8 +239,24 @@ impl BamToBamConfig {
         &mut self.fragment_lengths
     }
 
-    pub fn set_scale_genome(&mut self, scale: ScaleGenomeArgs) {
-        self.scale_genome = scale;
+    pub fn set_coverage_scaling_factors(&mut self, coverage_scaling_factors: Option<PathBuf>) {
+        self.coverage_scaling_factors = coverage_scaling_factors;
+    }
+
+    pub fn set_count_scaling_factors(&mut self, count_scaling_factors: Option<PathBuf>) {
+        self.count_scaling_factors = count_scaling_factors;
+    }
+
+    pub fn coverage_scale_genome_args(&self) -> ScaleGenomeArgs {
+        ScaleGenomeArgs {
+            scaling_factors: self.coverage_scaling_factors.clone(),
+        }
+    }
+
+    pub fn count_scale_genome_args(&self) -> ScaleGenomeArgs {
+        ScaleGenomeArgs {
+            scaling_factors: self.count_scaling_factors.clone(),
+        }
     }
 
     pub fn set_min_mapq(&mut self, min_mapq: u8) {

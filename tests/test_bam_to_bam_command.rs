@@ -9,6 +9,10 @@ use anyhow::Result;
 use cfdnalab::commands::coverage_weights::{
     config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
 };
+#[cfg(feature = "cmd_fragment_count_weights")]
+use cfdnalab::commands::fragment_count_weights::{
+    config::FragmentCountWeightsConfig, fragment_count_weights::run as run_fragment_count_weights,
+};
 use cfdnalab::commands::{
     bam_to_bam::{bam_to_bam::run_inner, config::BamToBamConfig},
     cli_common::{ApplyGCArgFileOnly, ChromosomeArgs},
@@ -632,7 +636,7 @@ fn writes_coverage_weight_when_scaling_factors_provided() -> Result<()> {
     write_scaling_file(&scaling, "chr1", 500, 2.0)?;
 
     let mut cfg = base_config(&bam.bam, &out_bam);
-    cfg.scale_genome.scaling_factors = Some(scaling);
+    cfg.set_coverage_scaling_factors(Some(scaling));
 
     run_inner(&cfg)?;
     let weights = read_tag_values(&out_bam, b"COV")?;
@@ -641,6 +645,87 @@ fn writes_coverage_weight_when_scaling_factors_provided() -> Result<()> {
         vec![2.0f32, 2.0f32],
         "Both mates should emit the configured scaling factor"
     );
+
+    Ok(())
+}
+
+#[test]
+fn writes_count_weight_when_count_scaling_factors_provided() -> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // One paired fragment spanning [0, 100) and one chromosome-wide count-scaling factor 0.5.
+    //
+    // Expected:
+    // - both mates receive CNT = 0.5
+    // - no COV tags are written when only count scaling is configured
+    let fragment = paired_fragment(0, 100, 40);
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 500)],
+        vec![fragment],
+        Vec::new(),
+        "count_scaling_weights",
+    )?;
+
+    let work = tempdir()?;
+    let out_bam = work.path().join("count_scaling.bam");
+    let scaling = work.path().join("count_scaling.tsv");
+    write_scaling_file(&scaling, "chr1", 500, 0.5)?;
+
+    let mut cfg = base_config(&bam.bam, &out_bam);
+    cfg.set_count_scaling_factors(Some(scaling));
+
+    // Act
+    run_inner(&cfg)?;
+
+    // Assert
+    assert_eq!(read_tag_values(&out_bam, b"CNT")?, vec![0.5_f32, 0.5_f32]);
+    assert!(
+        read_tag_values(&out_bam, b"COV")?.is_empty(),
+        "COV tags should be absent when only count scaling is configured"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn writes_coverage_and_fragment_count_scaling_to_separate_aux_tags() -> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // Use one simple paired fragment spanning [0, 100) and provide two chromosome-wide scaling
+    // files with different constants:
+    // - coverage scaling       -> 2.0, expected on tag COV
+    // - count-based scaling -> 0.5, expected on tag CNT
+    //
+    // Both mates should carry both tags, so the per-record expectations are:
+    // - COV  = 2.0
+    // - CNT  = 0.5
+    // - FLEN = 100
+    let fragment = paired_fragment(0, 100, 40);
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 500)],
+        vec![fragment],
+        Vec::new(),
+        "dual_scaling_weights",
+    )?;
+
+    let work = tempdir()?;
+    let out_bam = work.path().join("dual_scaling.bam");
+    let coverage_scaling = work.path().join("coverage_scaling.tsv");
+    let fragment_count_scaling = work.path().join("fragment_count_scaling.tsv");
+    write_scaling_file(&coverage_scaling, "chr1", 500, 2.0)?;
+    write_scaling_file(&fragment_count_scaling, "chr1", 500, 0.5)?;
+
+    let mut cfg = base_config(&bam.bam, &out_bam);
+    cfg.set_coverage_scaling_factors(Some(coverage_scaling));
+    cfg.set_count_scaling_factors(Some(fragment_count_scaling));
+
+    // Act
+    run_inner(&cfg)?;
+
+    // Assert
+    assert_eq!(read_tag_values(&out_bam, b"COV")?, vec![2.0_f32, 2.0_f32]);
+    assert_eq!(read_tag_values(&out_bam, b"CNT")?, vec![0.5_f32, 0.5_f32]);
+    assert_eq!(read_fragment_lengths(&out_bam)?, vec![100_u32, 100_u32]);
 
     Ok(())
 }
@@ -701,7 +786,7 @@ chr1\t80\t200\t1.0\n",
     )?;
 
     let mut paired_cfg = base_config(&paired_bam.bam, &paired_out);
-    paired_cfg.scale_genome.scaling_factors = Some(scaling.clone());
+    paired_cfg.set_coverage_scaling_factors(Some(scaling.clone()));
     paired_cfg.set_min_mapq(0);
     {
         let frag = paired_cfg.fragment_lengths_mut();
@@ -710,7 +795,7 @@ chr1\t80\t200\t1.0\n",
     }
 
     let mut unpaired_cfg = base_config(&unpaired_bam.bam, &unpaired_out);
-    unpaired_cfg.scale_genome.scaling_factors = Some(scaling);
+    unpaired_cfg.set_coverage_scaling_factors(Some(scaling));
     unpaired_cfg.unpaired.reads_are_fragments = true;
     unpaired_cfg.set_min_mapq(0);
     {
@@ -742,6 +827,115 @@ chr1\t80\t200\t1.0\n",
         (unpaired_cov[0] - expected_cov).abs() <= 1e-6,
         "unpaired reads_are_fragments output should use the same full-fragment scaling 4/3, got {}",
         unpaired_cov[0]
+    );
+    assert_eq!(paired_flen, vec![60_u32, 60_u32]);
+    assert_eq!(unpaired_flen, vec![60_u32]);
+
+    Ok(())
+}
+
+#[test]
+fn paired_and_unpaired_fragment_modes_apply_same_full_fragment_count_scaling_for_same_span()
+-> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // Reuse the same physical fragment span [20, 80) in paired and unpaired modes and provide
+    // a non-uniform count-scaling TSV:
+    // - [0, 40)  factor 2.0  -> contributes 20 bp over [20, 40)
+    // - [40, 80) factor 1.0  -> contributes 40 bp over [40, 80)
+    //
+    // Full-fragment average over [20, 80):
+    //   (20 * 2.0 + 40 * 1.0) / 60 = 4/3
+    //
+    // Expected:
+    // - paired mode writes CNT = 4/3 on both mates
+    // - unpaired mode writes CNT = 4/3 on the single fragment record
+    // - COV is absent in both runs
+    let paired_bam = simple_inward_bam()?;
+    let unpaired_bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        Vec::new(),
+        vec![ReadSpec {
+            tid: 0,
+            pos: 20,
+            cigar: vec![('M', 60)],
+            seq: vec![b'A'; 60],
+            qual: 30,
+            is_reverse: false,
+            mapq: 40,
+            flags: 0,
+            mate_tid: None,
+            mate_pos: None,
+            insert_size: 0,
+        }],
+        "bam_to_bam_unpaired_fragment_count_scaling",
+    )?;
+    let work = tempdir()?;
+    let paired_out = work.path().join("paired_count_scaled.bam");
+    let unpaired_out = work.path().join("unpaired_count_scaled.bam");
+    let scaling = work.path().join("piecewise_count_scaling.tsv");
+    fs::write(
+        &scaling,
+        "chromosome\tstart\tend\tscaling_factor\n\
+chr1\t0\t40\t2.0\n\
+chr1\t40\t80\t1.0\n\
+chr1\t80\t200\t1.0\n",
+    )?;
+
+    let mut paired_cfg = base_config(&paired_bam.bam, &paired_out);
+    paired_cfg.set_count_scaling_factors(Some(scaling.clone()));
+    paired_cfg.set_min_mapq(0);
+    {
+        let frag = paired_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 100;
+    }
+
+    let mut unpaired_cfg = base_config(&unpaired_bam.bam, &unpaired_out);
+    unpaired_cfg.set_count_scaling_factors(Some(scaling));
+    unpaired_cfg.unpaired.reads_are_fragments = true;
+    unpaired_cfg.set_min_mapq(0);
+    {
+        let frag = unpaired_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 100;
+    }
+
+    // Act
+    run_inner(&paired_cfg)?;
+    run_inner(&unpaired_cfg)?;
+
+    // Assert
+    let paired_cnt = read_tag_values(&paired_out, b"CNT")?;
+    let unpaired_cnt = read_tag_values(&unpaired_out, b"CNT")?;
+    let paired_flen = read_fragment_lengths(&paired_out)?;
+    let unpaired_flen = read_fragment_lengths(&unpaired_out)?;
+    // The fragment spans [20,80), so it overlaps:
+    // - 20 bp of the [0,40) bin with factor 2.0
+    // - 40 bp of the [40,80) bin with factor 1.0
+    // Full-fragment average = (20*2 + 40*1) / 60 = 4/3.
+    let expected_cnt = 4.0_f32 / 3.0_f32;
+
+    assert_eq!(paired_cnt.len(), 2);
+    assert_eq!(unpaired_cnt.len(), 1);
+    for value in paired_cnt {
+        assert!(
+            (value - expected_cnt).abs() <= 1e-6,
+            "paired output should tag both mates with full-fragment count scaling 4/3, got {value}"
+        );
+    }
+    assert!(
+        (unpaired_cnt[0] - expected_cnt).abs() <= 1e-6,
+        "unpaired reads_are_fragments output should use the same full-fragment count scaling 4/3, got {}",
+        unpaired_cnt[0]
+    );
+    assert!(
+        read_tag_values(&paired_out, b"COV")?.is_empty(),
+        "paired count-scaling-only output should not write COV tags"
+    );
+    assert!(
+        read_tag_values(&unpaired_out, b"COV")?.is_empty(),
+        "unpaired count-scaling-only output should not write COV tags"
     );
     assert_eq!(paired_flen, vec![60_u32, 60_u32]);
     assert_eq!(unpaired_flen, vec![60_u32]);
@@ -865,7 +1059,7 @@ fn gc_file_and_scaling_factors_write_identical_gc_cov_and_flen_tags_on_both_mate
     write_scaling_file(&scaling_path, "chr1", 200, 4.0_f32 / 3.0_f32)?;
 
     let mut cfg = base_config(&bam.bam, &out_bam);
-    cfg.scale_genome.scaling_factors = Some(scaling_path);
+    cfg.set_coverage_scaling_factors(Some(scaling_path));
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
         skip_invalid_gc: false,
@@ -898,6 +1092,149 @@ fn gc_file_and_scaling_factors_write_identical_gc_cov_and_flen_tags_on_both_mate
         vec![4.0_f32 / 3.0_f32, 4.0_f32 / 3.0_f32]
     );
     assert_eq!(read_fragment_lengths(&out_bam)?, vec![60_u32, 60_u32]);
+
+    Ok(())
+}
+
+#[test]
+fn gc_file_and_count_scaling_factors_write_identical_gc_cnt_and_flen_tags_on_both_mates()
+-> Result<()> {
+    // Human verification status: unverified
+    let bam = simple_inward_bam()?;
+    let ref_twobit = simple_reference_twobit()?;
+    let work = tempdir()?;
+    let out_bam = work.path().join("gc_and_cnt.bam");
+    let gc_path = work.path().join("gc_pkg.npz");
+    let scaling_path = work.path().join("count_scaling.tsv");
+    build_gc_package(&gc_path, 0)?;
+    write_scaling_file(&scaling_path, "chr1", 200, 4.0_f32 / 3.0_f32)?;
+
+    let mut cfg = base_config(&bam.bam, &out_bam);
+    cfg.set_count_scaling_factors(Some(scaling_path));
+    cfg.set_gc(ApplyGCArgFileOnly {
+        gc_file: Some(gc_path),
+        skip_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 60;
+        frag.max_fragment_length = 60;
+    }
+
+    // Manual expectations:
+    // - same fragment and GC derivation as the matching coverage-based test
+    // - both mates must receive GC = 10 and CNT = 4/3
+    // - COV stays absent when only count scaling is configured
+    let counters = run_inner(&cfg)?;
+
+    assert_eq!(counters.base.counted_fragments, 1);
+    assert_eq!(read_tag_values(&out_bam, b"GC")?, vec![10.0_f32, 10.0_f32]);
+    assert_eq!(
+        read_tag_values(&out_bam, b"CNT")?,
+        vec![4.0_f32 / 3.0_f32, 4.0_f32 / 3.0_f32]
+    );
+    assert!(
+        read_tag_values(&out_bam, b"COV")?.is_empty(),
+        "COV tags should be absent when only count scaling is configured"
+    );
+    assert_eq!(read_fragment_lengths(&out_bam)?, vec![60_u32, 60_u32]);
+
+    Ok(())
+}
+
+#[cfg(feature = "cmd_fragment_count_weights")]
+#[test]
+fn real_fragment_count_weights_tsv_is_applied_per_fragment_in_bam_to_bam() -> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // Use the same mixed-length fixture as the normalize-genome test:
+    // - short fragment [0,20)
+    // - long  fragment [20,80)
+    //
+    // With bin_size == stride == 20, fragment-count-weights yields:
+    // - short covered bin scaling factor = 0.5
+    // - long covered bins scaling factor = 1.5
+    //
+    // `bam-to-bam` averages scaling over the full fragment span, so:
+    // - short fragment gets CNT = 0.5
+    // - long fragment gets CNT = 1.5
+    let bam = mixed_length_fragment_bam("bam_to_bam_real_count_weights")?;
+    let work = tempdir()?;
+    let weights_out_dir = work.path().join("weights_out");
+    fs::create_dir_all(&weights_out_dir)?;
+
+    let mut weights_cfg = FragmentCountWeightsConfig::new(
+        cfdnalab::commands::cli_common::IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: weights_out_dir.clone(),
+            n_threads: 2,
+        },
+        ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes_file: None,
+        },
+    );
+    weights_cfg.set_bin_size(20);
+    weights_cfg.set_stride(20);
+    weights_cfg.set_min_mapq(0);
+    weights_cfg.set_require_proper_pair(false);
+    weights_cfg.set_output_prefix("counts".to_string());
+    {
+        let frag = weights_cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 100;
+    }
+    run_fragment_count_weights(&weights_cfg)?;
+
+    let scaling_path = weights_out_dir.join("counts.fragment_counts.scaling_factors.tsv");
+    let out_bam = work.path().join("count_scaled_real.bam");
+    let mut cfg = base_config(&bam.bam, &out_bam);
+    cfg.set_count_scaling_factors(Some(scaling_path));
+    cfg.set_min_mapq(0);
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 10;
+        frag.max_fragment_length = 100;
+    }
+
+    // Act
+    run_inner(&cfg)?;
+
+    // Assert
+    let mut reader = bam::Reader::from_path(&out_bam)?;
+    let mut observed = Vec::new();
+    for record in reader.records() {
+        let record = record?;
+        let cnt = match record.aux(b"CNT") {
+            Ok(Aux::Float(value)) => value,
+            other => panic!("expected CNT float tag on every read, got {other:?}"),
+        };
+        let flen = match record.aux(b"FLEN") {
+            Ok(Aux::U32(value)) => value,
+            other => panic!("expected FLEN u32 tag on every read, got {other:?}"),
+        };
+        observed.push((flen, cnt));
+    }
+    observed.sort_by(|left, right| left.0.cmp(&right.0));
+
+    assert_eq!(observed.len(), 4);
+    for (idx, (flen, cnt)) in observed.iter().enumerate() {
+        let (expected_flen, expected_cnt) = if idx < 2 {
+            (20_u32, 0.5_f32)
+        } else {
+            (60_u32, 1.5_f32)
+        };
+        assert_eq!(*flen, expected_flen);
+        assert!(
+            (*cnt - expected_cnt).abs() <= 1e-6,
+            "unexpected CNT for FLEN {expected_flen}: expected {expected_cnt}, got {cnt}"
+        );
+    }
+    assert!(
+        read_tag_values(&out_bam, b"COV")?.is_empty(),
+        "COV tags should be absent when consuming fragment-count weights"
+    );
 
     Ok(())
 }
@@ -1062,7 +1399,7 @@ fn bed_blacklist_scaling_and_gc_together_keep_only_the_expected_tagged_fragment(
     fs::write(&blacklist_path, "chr1\t120\t130\n")?;
 
     let mut cfg = base_config(&bam.bam, &out_bam);
-    cfg.scale_genome.scaling_factors = Some(scaling_path);
+    cfg.set_coverage_scaling_factors(Some(scaling_path));
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
         skip_invalid_gc: false,
@@ -1187,7 +1524,7 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_t
         },
     );
     cfg.skip_chromosome_sort = true;
-    cfg.scale_genome.scaling_factors = Some(scaling_path);
+    cfg.set_coverage_scaling_factors(Some(scaling_path));
     cfg.min_mapq = 0;
     {
         let frag = cfg.fragment_lengths_mut();
@@ -1302,7 +1639,7 @@ fn scaling_tsv_must_cover_requested_chromosome_end_in_bam_to_bam() -> Result<()>
     write_scaling_file(&scaling_path, "chr1", 100, 2.0)?;
 
     let mut cfg = base_config(&bam.bam, &out_bam);
-    cfg.scale_genome.scaling_factors = Some(scaling_path);
+    cfg.set_coverage_scaling_factors(Some(scaling_path));
 
     // Act
     let err = run_inner(&cfg).expect_err("truncated scaling TSV should fail");
@@ -1313,6 +1650,80 @@ fn scaling_tsv_must_cover_requested_chromosome_end_in_bam_to_bam() -> Result<()>
     let msg = format!("{err:#}");
     assert!(
         msg.contains("scaling TSV: bins on 'chr1' must end at chrom_len=200 (got end=100)"),
+        "unexpected error message: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn count_scaling_tsv_must_cover_requested_chromosome_end_in_bam_to_bam() -> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // This mirrors the coverage-side truncated TSV regression, but through the separate
+    // `--count-scaling-factors` loader path. The artifact contract is the same: bins must cover
+    // the full requested chromosome even if the counted fragment lies entirely inside [0,100).
+    let bam = simple_inward_bam()?;
+    let work = tempdir()?;
+    let out_bam = work.path().join("count_scaling_truncated.bam");
+    let scaling_path = work.path().join("truncated_count_scaling.tsv");
+    write_scaling_file(&scaling_path, "chr1", 100, 2.0)?;
+
+    let mut cfg = base_config(&bam.bam, &out_bam);
+    cfg.set_count_scaling_factors(Some(scaling_path));
+
+    // Act
+    let err = run_inner(&cfg).expect_err("truncated count scaling TSV should fail");
+
+    // Assert
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("scaling TSV: bins on 'chr1' must end at chrom_len=200 (got end=100)"),
+        "unexpected error message: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn count_scaling_tsv_with_uncorrected_metadata_rejects_gc_corrected_bam_to_bam_run() -> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // The BAM run uses `--gc-file`, so the current run is explicitly GC-corrected.
+    // A count-scaling TSV marked `gc_mode=uncorrected` is therefore a known mismatch and should
+    // fail during scaling-map loading before any BAM records are written.
+    let bam = simple_inward_bam()?;
+    let ref_twobit = simple_reference_twobit()?;
+    let work = tempdir()?;
+    let out_bam = work.path().join("count_scaling_gc_mismatch.bam");
+    let scaling_path = work.path().join("uncorrected_count_scaling.tsv");
+    let gc_path = work.path().join("gc_pkg.npz");
+    build_gc_package(&gc_path, 0)?;
+    fs::write(
+        &scaling_path,
+        "# gc_mode=uncorrected\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t200\t1.0\n",
+    )?;
+
+    let mut cfg = base_config(&bam.bam, &out_bam);
+    cfg.set_count_scaling_factors(Some(scaling_path));
+    cfg.set_gc(ApplyGCArgFileOnly {
+        gc_file: Some(gc_path),
+        skip_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+
+    // Act
+    let err = run_inner(&cfg)
+        .expect_err("uncorrected count scaling must fail in a GC-corrected bam-to-bam run");
+
+    // Assert
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("no GC correction"),
+        "unexpected error message: {msg}"
+    );
+    assert!(
+        msg.contains("via --gc-file"),
         "unexpected error message: {msg}"
     );
 
@@ -1386,6 +1797,16 @@ fn fragment_on_tid(mut fragment: FragmentSpec, tid: usize) -> FragmentSpec {
     fragment.forward.mate_tid = Some(tid);
     fragment.reverse.mate_tid = Some(tid);
     fragment
+}
+
+#[cfg(feature = "cmd_fragment_count_weights")]
+fn mixed_length_fragment_bam(name: &str) -> Result<fixtures::BamFixture> {
+    bam_from_specs(
+        vec![("chr1".to_string(), 100)],
+        vec![paired_fragment(0, 20, 10), paired_fragment(20, 60, 10)],
+        Vec::new(),
+        name,
+    )
 }
 
 fn first_record_chrom(path: &Path) -> Result<String> {

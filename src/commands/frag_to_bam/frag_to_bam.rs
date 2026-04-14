@@ -46,7 +46,8 @@ struct ParsedFragment {
     mapq: u8,
     strand: char,
     gc_weight: Option<f32>,
-    scaling_weight: Option<f32>,
+    coverage_scaling_weight: Option<f32>,
+    count_scaling_weight: Option<f32>,
     flen: Option<u32>,
 }
 
@@ -58,7 +59,8 @@ struct FragColumnIndices {
     mapq: usize,
     strand: usize,
     gc_weight: Option<usize>,
-    scaling_weight: Option<usize>,
+    coverage_scaling_weight: Option<usize>,
+    count_scaling_weight: Option<usize>,
     flen: Option<usize>,
 }
 
@@ -293,14 +295,15 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
         };
         writeln!(
             writer,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             frag.chrom,
             frag.start,
             frag.end,
             frag.mapq,
             frag.strand,
             format_optional_f32(frag.gc_weight),
-            format_optional_f32(frag.scaling_weight),
+            format_optional_f32(frag.coverage_scaling_weight),
+            format_optional_f32(frag.count_scaling_weight),
             format_optional_u32(frag.flen),
         )
         .with_context(|| format!("Writing temp fragment for line {}", line_number))?;
@@ -439,10 +442,16 @@ fn parse_frag_line(
             "gc_weight",
             line_number,
         )?,
-        scaling_weight: parse_optional_f32_column(
+        coverage_scaling_weight: parse_optional_f32_column(
             &columns,
-            indices.scaling_weight,
-            "scaling_weight",
+            indices.coverage_scaling_weight,
+            "coverage_scaling_weight",
+            line_number,
+        )?,
+        count_scaling_weight: parse_optional_f32_column(
+            &columns,
+            indices.count_scaling_weight,
+            "count_scaling_weight",
             line_number,
         )?,
         flen: parse_optional_u32_column(&columns, indices.flen, "flen", line_number)?,
@@ -482,12 +491,22 @@ fn make_record(frag: &ParsedFragment, tid: i32, prefix: &str, idx: u64) -> Resul
                 )
             })?;
     }
-    if let Some(scaling_weight) = frag.scaling_weight {
+    if let Some(coverage_scaling_weight) = frag.coverage_scaling_weight {
         record
-            .push_aux(b"COV", Aux::Float(scaling_weight))
+            .push_aux(b"COV", Aux::Float(coverage_scaling_weight))
             .with_context(|| {
                 format!(
                     "Failed writing COV aux tag for fragment {}:{}-{}",
+                    frag.chrom, frag.start, frag.end
+                )
+            })?;
+    }
+    if let Some(count_scaling_weight) = frag.count_scaling_weight {
+        record
+            .push_aux(b"CNT", Aux::Float(count_scaling_weight))
+            .with_context(|| {
+                format!(
+                    "Failed writing CNT aux tag for fragment {}:{}-{}",
                     frag.chrom, frag.start, frag.end
                 )
             })?;
@@ -508,9 +527,9 @@ fn make_record(frag: &ParsedFragment, tid: i32, prefix: &str, idx: u64) -> Resul
 
 fn parse_temp_fragment_line(line: &str, line_number: u64) -> Result<ParsedFragment> {
     let columns: Vec<&str> = line.split('\t').collect();
-    if columns.len() != 8 {
+    if columns.len() != 9 {
         bail!(
-            "Invalid temporary fragment row at line {}. Expected 8 columns, got {}",
+            "Invalid temporary fragment row at line {}. Expected 9 columns, got {}",
             line_number,
             columns.len()
         );
@@ -522,8 +541,9 @@ fn parse_temp_fragment_line(line: &str, line_number: u64) -> Result<ParsedFragme
         mapq: 3,
         strand: 4,
         gc_weight: Some(5),
-        scaling_weight: Some(6),
-        flen: Some(7),
+        coverage_scaling_weight: Some(6),
+        count_scaling_weight: Some(7),
+        flen: Some(8),
     };
     parse_frag_line(line, line_number, &indices)
 }
@@ -741,10 +761,15 @@ fn resolve_indices_from_header(
     } else {
         find_column_index(columns, &["gc_weight"])
     };
-    let scaling_weight_index = if ignore_extras {
+    let coverage_scaling_weight_index = if ignore_extras {
         None
     } else {
-        find_column_index(columns, &["scaling_weight"])
+        find_column_index(columns, &["coverage_scaling_weight"])
+    };
+    let count_scaling_weight_index = if ignore_extras {
+        None
+    } else {
+        find_column_index(columns, &["count_scaling_weight"])
     };
     let flen_index = if ignore_extras {
         None
@@ -759,7 +784,8 @@ fn resolve_indices_from_header(
         mapq: mapq_index,
         strand: strand_index,
         gc_weight: gc_weight_index,
-        scaling_weight: scaling_weight_index,
+        coverage_scaling_weight: coverage_scaling_weight_index,
+        count_scaling_weight: count_scaling_weight_index,
         flen: flen_index,
     })
 }
@@ -772,7 +798,8 @@ fn resolve_default_indices(_ignore_extras: bool) -> FragColumnIndices {
         mapq: 3,
         strand: 4,
         gc_weight: None,
-        scaling_weight: None,
+        coverage_scaling_weight: None,
+        count_scaling_weight: None,
         flen: None,
     }
 }
@@ -793,13 +820,13 @@ fn validate_extra_column_names(columns: &[String], allow_unknown_extras: bool) -
 
     if allow_unknown_extras {
         eprintln!(
-            "Warning: Ignoring unsupported frag header column name(s): {}. Recognized extra columns are gc_weight, scaling_weight, and flen",
+            "Warning: Ignoring unsupported frag header column name(s): {}. Recognized extra columns are gc_weight, coverage_scaling_weight, count_scaling_weight, and flen",
             unsupported_columns.join(", ")
         );
         Ok(())
     } else {
         bail!(
-            "Unsupported frag header column name(s): {}. Extra columns must be named exactly gc_weight, scaling_weight, or flen. Use --ignore-extras to ignore all extra columns or --allow-unknown-extras to ignore only unknown names",
+            "Unsupported frag header column name(s): {}. Extra columns must be named exactly gc_weight, coverage_scaling_weight, count_scaling_weight, or flen. Use --ignore-extras to ignore all extra columns or --allow-unknown-extras to ignore only unknown names",
             unsupported_columns.join(", ")
         );
     }
@@ -821,7 +848,7 @@ fn collect_unsupported_extra_columns(columns: &[String]) -> Vec<String> {
         );
         let is_supported_extra = matches!(
             column_name.as_str(),
-            "gc_weight" | "scaling_weight" | "flen"
+            "gc_weight" | "coverage_scaling_weight" | "count_scaling_weight" | "flen"
         );
         if !is_core_column && !is_supported_extra {
             unsupported_columns.push(column_name.clone());

@@ -18,7 +18,9 @@ use std::path::PathBuf;
 ///
 /// - `gc_weight` -> `GC`
 ///
-/// - `scaling_weight` -> `COV`
+/// - `coverage_scaling_weight` -> `COV`
+///
+/// - `count_scaling_weight` -> `CNT`
 ///
 /// - `flen` -> `FLEN`
 ///
@@ -75,7 +77,7 @@ pub struct FragToBamConfig {
     /// Optional header file with tab-separated column names for the frag file [path]
     ///
     /// Supply this when you want to transfer extra columns
-    /// (`gc_weight`, `scaling_weight`, and/or `flen`) to AUX tags
+    /// (`gc_weight`, `coverage_scaling_weight`, `count_scaling_weight`, and/or `flen`) to AUX tags
     /// in the BAM file and the frag file has no inline header row.
     ///
     /// **Auto-detection**: The command also tries to auto-detect a companion header file
@@ -121,7 +123,7 @@ pub struct FragToBamConfig {
     /// By default, unknown extra columns cause an error to prevent silent mistakes.
     ///
     /// With this flag, unknown extra columns are ignored with a warning, while known
-    /// extra columns (`gc_weight`, `scaling_weight`, `flen`) are still transferred.
+    /// extra columns (`gc_weight`, `coverage_scaling_weight`, `count_scaling_weight`, `flen`) are still transferred.
     ///
     /// If you want to ignore all extras, use `--ignore-extras` instead.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]

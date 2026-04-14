@@ -253,7 +253,7 @@ fn bam_to_bam_consumes_shared_real_artifacts_with_expected_fragment_tags() -> Re
     cfg.skip_chromosome_sort = true;
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);
-    cfg.scale_genome.scaling_factors = Some(artifacts.scaling_path.clone());
+    cfg.set_coverage_scaling_factors(Some(artifacts.scaling_path.clone()));
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(artifacts.gc_path.clone()),
         skip_invalid_gc: false,

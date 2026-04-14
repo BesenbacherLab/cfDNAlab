@@ -19,15 +19,17 @@ use std::path::PathBuf;
 ///
 ///  - **Strand**: The strand alignment of read1
 ///
-/// AND, when either/both `--gc-file` and `--scaling-factors` are specified:
+/// AND, when one or more of `--gc-file`, `--coverage-scaling-factors`, and
+/// `--count-scaling-factors` are specified:
 ///
 ///  - **GC Weight**: The multiplicative weight needed to correct for GC bias.
 ///
-///  - **Scaling Weight**: The multiplicative weight needed to perform genomic smoothing.
+///  - **Coverage-based scaling weight**: The multiplicative weight needed to perform fragment coverage-based genomic smoothing.
 ///
-/// Note: When GC correction is not specified but genomic scaling is, the sixth column is the scaling weight.
+///  - **Count-based scaling weight**: The multiplicative weight needed to perform fragment count-based genomic smoothing.
 ///
-/// The accompanying `*.frag.header.tsv` file has the matching column names.
+/// The accompanying `*.frag.header.tsv` file has the matching column names:
+/// `gc_weight`, `coverage_scaling_weight`, and `count_scaling_weight`.
 ///
 /// Fragments are sorted by `(chromosome, start, end)`, using the chromosome order in `--chromosomes`.
 ///
@@ -66,17 +68,29 @@ pub struct BamToFragConfig {
     pub output_prefix: String,
 
     /// Intervals to keep overlapping fragments from `[path]`
-    #[cfg_attr(
-        feature = "cli",
-        clap(long = "by-bed", value_parser, help_heading = "Windows")
-    )]
+    #[cfg_attr(feature = "cli", clap(long, value_parser, help_heading = "Windows"))]
     pub by_bed: Option<PathBuf>,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub chromosomes: ChromosomeArgs,
 
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub scale_genome: ScaleGenomeArgs,
+    /// Optional path to coverage-based scaling factors `[path]`
+    ///
+    /// `.tsv` file as produced by `cfdna coverage-weights`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, value_parser, help_heading = "Normalization")
+    )]
+    pub coverage_scaling_factors: Option<PathBuf>,
+
+    /// Optional path to fragment count-based scaling factors `[path]`
+    ///
+    /// `.tsv` file as produced by `cfdna fragment-count-weights`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, value_parser, help_heading = "Normalization")
+    )]
+    pub count_scaling_factors: Option<PathBuf>,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
@@ -165,7 +179,8 @@ impl BamToFragConfig {
             output_prefix: String::new(),
             by_bed: None,
             chromosomes,
-            scale_genome: ScaleGenomeArgs::default(),
+            coverage_scaling_factors: None,
+            count_scaling_factors: None,
             fragment_lengths: FragmentLengthArgs::default(),
             min_mapq: 0,
             require_proper_pair: false,
@@ -197,8 +212,24 @@ impl BamToFragConfig {
         self.by_bed = by_bed;
     }
 
-    pub fn set_scale_genome(&mut self, scale_genome: ScaleGenomeArgs) {
-        self.scale_genome = scale_genome;
+    pub fn set_coverage_scaling_factors(&mut self, coverage_scaling_factors: Option<PathBuf>) {
+        self.coverage_scaling_factors = coverage_scaling_factors;
+    }
+
+    pub fn set_count_scaling_factors(&mut self, count_scaling_factors: Option<PathBuf>) {
+        self.count_scaling_factors = count_scaling_factors;
+    }
+
+    pub fn coverage_scale_genome_args(&self) -> ScaleGenomeArgs {
+        ScaleGenomeArgs {
+            scaling_factors: self.coverage_scaling_factors.clone(),
+        }
+    }
+
+    pub fn count_scale_genome_args(&self) -> ScaleGenomeArgs {
+        ScaleGenomeArgs {
+            scaling_factors: self.count_scaling_factors.clone(),
+        }
     }
 
     pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {

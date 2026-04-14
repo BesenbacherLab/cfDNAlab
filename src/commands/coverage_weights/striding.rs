@@ -3,6 +3,10 @@ use fxhash::FxHashMap;
 
 use crate::shared::interval::Interval;
 
+/// Treat support smaller than this as zero so tiny numerical residues do not participate
+/// in the global mean or blow up during inversion
+const SUPPORT_FLOOR: f64 = 1e-10;
+
 /// Represents a single stride bin with coverage and its overlapping mega-bin average coverage.
 #[derive(Debug, Clone, Copy)]
 pub struct StrideBin {
@@ -35,6 +39,11 @@ impl StrideBin {
     pub fn size(&self) -> u32 {
         self.interval.len()
     }
+}
+
+#[inline]
+fn is_effectively_zero(value: f64) -> bool {
+    value.abs() < SUPPORT_FLOOR
 }
 
 /// Build the triangular integer weights, centered in the kernel.
@@ -213,7 +222,7 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
 /// Calculate the `StrideBin::scaling_factor` by dividing `StrideBin::avg_overlap_coverage`
 /// across all chromosomes.
 ///
-/// Computes a global mean of `avg_overlap_coverage` across all non-zero bins in `bins_by_chr`
+/// Computes a global mean of `avg_overlap_coverage` across all supported bins in `bins_by_chr`
 /// and divides every bin's `avg_overlap_coverage` by that mean so the new global mean is ~1.0.
 /// Optionally weight the mean by bin length to better approximate a base-weighted genome mean.
 ///
@@ -243,8 +252,8 @@ pub fn normalize_avg_overlap_by_global_mean(
     for bins in bins_by_chr.values() {
         for b in bins {
             let v = b.avg_overlap_coverage as f64;
-            if !v.is_finite() || v == 0.0 {
-                continue; // Skip NaN/inf and zero-coverage
+            if !v.is_finite() || is_effectively_zero(v) {
+                continue; // Skip NaN/inf and bins without real support
             }
             let w = if length_weighted {
                 b.size() as f64
@@ -271,18 +280,19 @@ pub fn normalize_avg_overlap_by_global_mean(
 
     // Calculate the scaling factors
     let inv_mean = 1.0_f64 / mean;
-    let inverter = if invert {
-        |x: f64| match x {
-            0.0 => 0.0,
-            _ => 1. / x,
-        }
-    } else {
-        |x: f64| x
-    };
     for bins in bins_by_chr.values_mut() {
         for b in bins.iter_mut() {
             let v = b.avg_overlap_coverage as f64;
-            b.scaling_factor = inverter(v * inv_mean) as f32;
+            b.scaling_factor = if !v.is_finite() || is_effectively_zero(v) {
+                0.0
+            } else {
+                let normalized = v * inv_mean;
+                if invert {
+                    (1.0 / normalized) as f32
+                } else {
+                    normalized as f32
+                }
+            };
         }
     }
 

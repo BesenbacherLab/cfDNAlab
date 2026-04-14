@@ -296,3 +296,96 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_overlap_between_bins() ->
     assert!(err.to_string().contains("non-contiguous stride bins"));
     Ok(())
 }
+
+#[test]
+fn normalize_avg_overlap_by_global_mean_ignores_bins_below_support_floor() -> Result<()> {
+    // Arrange
+    let mut bins_by_chr = FxHashMap::default();
+    bins_by_chr.insert(
+        "chr1".to_string(),
+        vec![
+            StrideBin {
+                interval: Interval::new(0, 10)?,
+                avg_coverage: 1.0,
+                avg_overlap_coverage: 0.5,
+                scaling_factor: 0.0,
+            },
+            StrideBin {
+                interval: Interval::new(10, 20)?,
+                avg_coverage: 0.0,
+                avg_overlap_coverage: 5e-11,
+                scaling_factor: 0.0,
+            },
+        ],
+    );
+
+    // Act
+    let mean = normalize_avg_overlap_by_global_mean(&mut bins_by_chr, false, true)?;
+
+    // Assert
+    let chr1_bins = bins_by_chr.get("chr1").expect("chr1 bins should exist");
+    assert!((mean - 0.5).abs() <= 1e-10, "expected mean 0.5, got {mean}");
+    assert!(
+        (chr1_bins[0].scaling_factor - 1.0).abs() <= 1e-6,
+        "supported bin should normalize to 1.0, got {}",
+        chr1_bins[0].scaling_factor
+    );
+    assert_eq!(
+        chr1_bins[1].scaling_factor, 0.0,
+        "below-floor support should be treated as zero"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn normalize_avg_overlap_by_global_mean_keeps_bins_above_support_floor() -> Result<()> {
+    // Arrange
+    let mut bins_by_chr = FxHashMap::default();
+    bins_by_chr.insert(
+        "chr1".to_string(),
+        vec![
+            StrideBin {
+                interval: Interval::new(0, 10)?,
+                avg_coverage: 1.0,
+                avg_overlap_coverage: 1.0,
+                scaling_factor: 0.0,
+            },
+            StrideBin {
+                interval: Interval::new(10, 20)?,
+                avg_coverage: 0.0,
+                avg_overlap_coverage: 2e-9,
+                scaling_factor: 0.0,
+            },
+        ],
+    );
+
+    // Act
+    let mean = normalize_avg_overlap_by_global_mean(&mut bins_by_chr, false, true)?;
+
+    // Assert
+    let expected_mean = ((1.0 + 2e-9) / 2.0) as f32;
+    let expected_small_scaling = expected_mean / 2e-9;
+    let expected_large_scaling = expected_mean / 1.0;
+    let chr1_bins = bins_by_chr.get("chr1").expect("chr1 bins should exist");
+    assert!(
+        (mean - expected_mean).abs() <= 1e-12_f32,
+        "expected mean {expected_mean}, got {mean}"
+    );
+    assert!(
+        (chr1_bins[0].scaling_factor - expected_large_scaling).abs() <= 1e-6_f32,
+        "expected large-bin scaling close to {expected_large_scaling}, got {}",
+        chr1_bins[0].scaling_factor
+    );
+    assert!(
+        chr1_bins[1].scaling_factor > 0.0,
+        "above-floor support should remain non-zero"
+    );
+    assert!(
+        (chr1_bins[1].scaling_factor - expected_small_scaling).abs() <= 1.0_f32,
+        "expected small-bin scaling close to {expected_small_scaling}, got {}",
+        chr1_bins[1].scaling_factor
+    );
+
+    Ok(())
+}

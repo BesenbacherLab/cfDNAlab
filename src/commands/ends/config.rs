@@ -120,10 +120,7 @@ pub struct EndsConfig {
     pub ref_2bit: Option<PathBuf>,
 
     /// Number of bases to use from inside the fragment `[integer]`
-    #[cfg_attr(
-        feature = "cli",
-        clap(long = "k-inside", required = true, help_heading = "Motifs")
-    )]
+    #[cfg_attr(feature = "cli", clap(long, required = true, help_heading = "Motifs"))]
     pub k_inside: usize,
 
     /// Number of bases to use from outside the fragment `[integer]`
@@ -137,7 +134,7 @@ pub struct EndsConfig {
     #[cfg_attr(
         feature = "cli",
         clap(
-            long = "source-inside",
+            long,
             value_enum,
             default_value = "read",
             requires_if("reference", "ref_2bit"),
@@ -269,7 +266,7 @@ pub struct EndsConfig {
     #[cfg_attr(
         feature = "cli",
         clap(
-            long = "bq-filter",
+            long,
             value_parser,
             action = clap::ArgAction::Append,
             help_heading = "Filtering"

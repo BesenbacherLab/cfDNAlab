@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use rust_htslib::bam::{self, Record, record::Aux};
 
 const COVERAGE_WEIGHT_TAG: &[u8] = b"COV";
+const FRAGMENT_COUNT_WEIGHT_TAG: &[u8] = b"CNT";
 const FRAGMENT_LENGTH_TAG: &[u8] = b"FLEN";
 const GC_WEIGHT_TAG: &[u8] = b"GC";
 
@@ -15,6 +16,7 @@ const GC_WEIGHT_TAG: &[u8] = b"GC";
 pub struct RecordTags {
     pub fragment_length: u32,
     pub coverage_weight: Option<f32>,
+    pub fragment_count_weight: Option<f32>,
     pub gc_weight: Option<f32>,
 }
 
@@ -118,6 +120,7 @@ impl RecordEntry {
 ///     tags: Arc::new(RecordTags {
 ///         fragment_length: 50,
 ///         coverage_weight: None,
+///         fragment_count_weight: None,
 ///         gc_weight: None,
 ///     }),
 /// };
@@ -203,6 +206,11 @@ fn apply_aux_tags(record: &mut Record, tags: &RecordTags) -> Result<()> {
         record
             .push_aux(COVERAGE_WEIGHT_TAG, Aux::Float(weight))
             .context("setting coverage_weight aux tag")?;
+    }
+    if let Some(weight) = tags.fragment_count_weight {
+        record
+            .push_aux(FRAGMENT_COUNT_WEIGHT_TAG, Aux::Float(weight))
+            .context("setting fragment_count_weight aux tag")?;
     }
     if let Some(weight) = tags.gc_weight {
         record
