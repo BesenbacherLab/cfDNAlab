@@ -14,6 +14,10 @@ use crate::{
             config::MidpointsConfig, counting_by_group::ProfileGroupsCounts,
             windows::ensure_uniform_window_len,
         },
+        run_statistics::{
+            DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions, GCStatisticsSummary,
+            TILE_DOUBLE_COUNT_NOTE, print_fragment_run_statistics,
+        },
     },
     shared::{
         bam::create_chromosome_reader,
@@ -290,62 +294,34 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         eprintln!("kept temp tiles in {}", temp_dir.display());
     }
 
-    println!();
-    println!("Statistics");
-    println!("----------");
-    println!(
-        "  Note: A few reads/fragments may be counted twice in the statistics (only) around the parallelization tiles."
-    );
-
-    // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
-    println!("  Total reads: {}", global_counter.base.total_reads);
-    println!(
-        "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
-        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
-            / global_counter.base.total_reads as f64
-            * 100.0,
-        global_counter.base.accepted_forward,
-        global_counter.base.accepted_reverse
+    print_fragment_run_statistics(
+        &global_counter.base,
+        elapsed,
+        FragmentRunStatisticsOptions {
+            include_section_header: true,
+            notes: &[TILE_DOUBLE_COUNT_NOTE],
+            labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
+            blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
+            gc: (opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some()).then_some(
+                GCStatisticsSummary {
+                    neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
+                    failed_fragments: global_counter.gc_failed_fragments,
+                    missing_tags: opt
+                        .gc
+                        .gc_tag
+                        .is_some()
+                        .then_some(global_counter.gc_missing_tags),
+                    out_of_range_tags: opt
+                        .gc
+                        .gc_tag
+                        .is_some()
+                        .then_some(global_counter.gc_out_of_range_tags),
+                },
+            ),
+        },
+        std::iter::empty::<&str>(),
     );
-    println!(
-        "  Blacklist-excluded fragments: {}",
-        global_counter.blacklisted_fragments
-    );
-    if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
-        let gc_fail_action =
-            crate::shared::gc_tag::gc_failure_action_description(opt.gc.neutralize_invalid_gc);
-        println!(
-            "  GC correction failures ({}): {}",
-            gc_fail_action, global_counter.gc_failed_fragments
-        );
-        if opt.gc.gc_tag.is_some() && global_counter.gc_missing_tags > 0 {
-            let missing_action = if opt.gc.neutralize_invalid_gc {
-                "counted with weight 1.0 via --neutralize-invalid-gc"
-            } else {
-                "skipped by default"
-            };
-            println!(
-                "  Warning: fragments missing GC tags: {} ({})",
-                global_counter.gc_missing_tags, missing_action
-            );
-        }
-        if opt.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
-            println!(
-                "  Non-zero GC tag values outside the supported positive range [{:.0e}, {:.0e}] treated as invalid: {}",
-                crate::shared::gc_tag::MIN_REASONABLE_GC_WEIGHT,
-                crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
-                global_counter.gc_out_of_range_tags
-            );
-        }
-    }
-    println!(
-        "  Fragments counted one or more times: {}",
-        global_counter.base.counted_fragments
-    );
-    println!("----------");
-    println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
 }
 

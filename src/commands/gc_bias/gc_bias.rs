@@ -23,6 +23,10 @@ use crate::{
                 overlap_length, prepare_tile_windows, set_window_acgt_in_observed_interval,
             },
         },
+        run_statistics::{
+            DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions,
+            print_fragment_run_statistics,
+        },
     },
     shared::{
         bam::create_chromosome_reader,
@@ -709,49 +713,46 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         )?;
     }
 
-    println!();
-    println!("Statistics");
-    println!("----------");
-
-    // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
-    println!("  Total reads: {}", global_counter.base.total_reads);
-    println!(
-        "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-        global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
-        (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
-            / global_counter.base.total_reads as f64
-            * 100.0,
-        global_counter.base.accepted_forward,
-        global_counter.base.accepted_reverse
-    );
-    println!(
-        "  Fragments counted one or more times: {}",
-        global_counter.base.counted_fragments
-    );
-    println!(
-        "  Windows processed: {} total, {} with counts",
+    let mut extra_lines = vec![format!(
+        "Windows processed: {} total, {} with counts",
         total_windows, counted_windows
-    );
+    )];
     if !matches!(outlier_rule, OutlierRule::None) {
-        println!("  Outlier handling:");
-        println!("    > Limits estimated from reference-supported bins only");
-        println!(
-            "    Supported cells examined: {} (winsorized: {})",
+        extra_lines.push("Outlier handling:".to_string());
+        extra_lines.push("  > Limits estimated from reference-supported bins only".to_string());
+        extra_lines.push(format!(
+            "  Supported cells examined: {} (winsorized: {})",
             outlier_stats.total_examined, outlier_stats.total_outliers_handled
+        ));
+        extra_lines.push(
+            "  > 'supported' = bins the reference marks valid (used to set limits)".to_string(),
         );
-        println!("    > 'supported' = bins the reference marks valid (used to set limits)");
-        println!(
-            "    Unsupported cells examined: {} (winsorized: {})",
+        extra_lines.push(format!(
+            "  Unsupported cells examined: {} (winsorized: {})",
             outlier_stats.unsupported_examined, outlier_stats.unsupported_outliers_handled
+        ));
+        extra_lines.push(
+            "  > 'unsupported' = bins the reference masks out (winsorized after interpolation)"
+                .to_string(),
         );
-        println!(
-            "    > 'unsupported' = bins the reference masks out (winsorized after interpolation)"
-        );
-        println!("    Clamped to [0.1,10.0]: {}", outlier_stats.hard_clamped);
+        extra_lines.push(format!(
+            "  Clamped to [0.1,10.0]: {}",
+            outlier_stats.hard_clamped
+        ));
     }
-    println!("----------");
-    println!("Elapsed time: {:.2?}", elapsed);
+    print_fragment_run_statistics(
+        &global_counter.base,
+        elapsed,
+        FragmentRunStatisticsOptions {
+            include_section_header: true,
+            notes: &[],
+            labels: DEFAULT_FRAGMENT_STATISTICS_LABELS,
+            blacklist_excluded_fragments: None,
+            gc: None,
+        },
+        extra_lines.iter().map(String::as_str),
+    );
     Ok(())
 }
 

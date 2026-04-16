@@ -28,6 +28,10 @@ use crate::{
             correct::{GCCorrector, load_gc_corrector},
             counting::build_gc_prefixes,
         },
+        run_statistics::{
+            FragmentRunStatisticsOptions, FragmentStatisticsLabels, GCStatisticsSummary,
+            print_fragment_run_statistics,
+        },
     },
     shared::{
         bam::create_chromosome_reader,
@@ -378,72 +382,41 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         tsv_writer.finish().context("finalizing bins.tsv writer")?;
     }
 
-    println!();
-    println!("Statistics");
-    println!("----------");
-    println!("  Note: counts below cover only tiles with relevant output windows");
-
-    // Print summary statistics and execution time
     let elapsed = start_time.elapsed();
-    println!(
-        "  Observed reads in processed tiles: {}",
-        global_counter.base.total_reads
+    print_fragment_run_statistics(
+        &global_counter.base,
+        elapsed,
+        FragmentRunStatisticsOptions {
+            include_section_header: true,
+            notes: &["Note: counts below cover only tiles with relevant output windows"],
+            labels: FragmentStatisticsLabels {
+                total_reads: "Observed reads in processed tiles",
+                accepted_reads: "Initially accepted reads",
+                counted_fragments: "Fragments with one or more counted motifs",
+            },
+            blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
+            gc: (opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some()).then_some(
+                GCStatisticsSummary {
+                    neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
+                    failed_fragments: global_counter.gc_failed_fragments,
+                    missing_tags: opt
+                        .gc
+                        .gc_tag
+                        .is_some()
+                        .then_some(global_counter.gc_missing_tags),
+                    out_of_range_tags: opt
+                        .gc
+                        .gc_tag
+                        .is_some()
+                        .then_some(global_counter.gc_out_of_range_tags),
+                },
+            ),
+        },
+        [format!(
+            "Distinct counted end motifs across those fragments: {}",
+            global_counter.counted_motifs
+        )],
     );
-    let accepted_reads =
-        global_counter.base.accepted_forward + global_counter.base.accepted_reverse;
-    let accepted_pct = if global_counter.base.total_reads == 0 {
-        0.0
-    } else {
-        accepted_reads as f64 / global_counter.base.total_reads as f64 * 100.0
-    };
-    println!(
-        "  Initially accepted observed reads: {} ({:.2}%, forward: {}, reverse: {})",
-        accepted_reads,
-        accepted_pct,
-        global_counter.base.accepted_forward,
-        global_counter.base.accepted_reverse
-    );
-    println!(
-        "  Blacklist-excluded fragments: {}",
-        global_counter.blacklisted_fragments
-    );
-    if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
-        let gc_fail_action =
-            crate::shared::gc_tag::gc_failure_action_description(opt.gc.neutralize_invalid_gc);
-        println!(
-            "  GC correction failures ({}): {}",
-            gc_fail_action, global_counter.gc_failed_fragments
-        );
-    }
-    if opt.gc.gc_tag.is_some() && global_counter.gc_missing_tags > 0 {
-        let missing_action = if opt.gc.neutralize_invalid_gc {
-            "counted with weight 1.0 via --neutralize-invalid-gc"
-        } else {
-            "skipped by default"
-        };
-        println!(
-            "  Warning: fragments missing GC tags: {} ({})",
-            global_counter.gc_missing_tags, missing_action
-        );
-    }
-    if opt.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
-        println!(
-            "  Non-zero GC tag values outside the supported positive range [{:.0e}, {:.0e}] treated as invalid: {}",
-            crate::shared::gc_tag::MIN_REASONABLE_GC_WEIGHT,
-            crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
-            global_counter.gc_out_of_range_tags
-        );
-    }
-    println!(
-        "  Fragments with one or more counted motifs: {}",
-        global_counter.base.counted_fragments
-    );
-    println!(
-        "  Distinct counted end motifs across those fragments: {}",
-        global_counter.counted_motifs
-    );
-    println!("----------");
-    println!("Elapsed time: {:.2?}", elapsed);
     Ok(())
 }
 

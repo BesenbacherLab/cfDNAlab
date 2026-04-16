@@ -14,6 +14,10 @@ use crate::{
             correct::{GCCorrector, load_gc_corrector},
             counting::build_gc_prefixes,
         },
+        run_statistics::{
+            DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions,
+            FragmentStatisticsLabels, GCStatisticsSummary, print_fragment_run_statistics,
+        },
     },
     shared::{
         bam::create_chromosome_reader,
@@ -56,40 +60,27 @@ pub fn run(opt: &BamToFragConfig) -> Result<()> {
     let quiet = false;
 
     if !quiet {
-        println!();
-        println!("Statistics");
-        println!("----------");
-
-        // Print summary statistics and execution time
         let elapsed = start_time.elapsed();
-        println!("  Total reads: {}", global_counter.base.total_reads);
-        println!(
-            "  Initially accepted reads: {} ({:.2}%, forward: {}, reverse: {})",
-            global_counter.base.accepted_forward + global_counter.base.accepted_reverse,
-            (global_counter.base.accepted_forward + global_counter.base.accepted_reverse) as f64
-                / global_counter.base.total_reads as f64
-                * 100.0,
-            global_counter.base.accepted_forward,
-            global_counter.base.accepted_reverse
+        print_fragment_run_statistics(
+            &global_counter.base,
+            elapsed,
+            FragmentRunStatisticsOptions {
+                include_section_header: true,
+                notes: &[],
+                labels: FragmentStatisticsLabels {
+                    counted_fragments: "Fragments included",
+                    ..DEFAULT_FRAGMENT_STATISTICS_LABELS
+                },
+                blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
+                gc: opt.gc.gc_file.is_some().then_some(GCStatisticsSummary {
+                    neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
+                    failed_fragments: global_counter.gc_failed_fragments,
+                    missing_tags: None,
+                    out_of_range_tags: None,
+                }),
+            },
+            std::iter::empty::<&str>(),
         );
-        println!(
-            "  Blacklist-excluded fragments: {}",
-            global_counter.blacklisted_fragments
-        );
-        if opt.gc.gc_file.is_some() {
-            let gc_fail_action =
-                crate::shared::gc_tag::gc_failure_action_description(opt.gc.neutralize_invalid_gc);
-            println!(
-                "  GC correction failures ({}): {}",
-                gc_fail_action, global_counter.gc_failed_fragments
-            );
-        }
-        println!(
-            "  Fragments included: {}",
-            global_counter.base.counted_fragments
-        );
-        println!("----------");
-        println!("Elapsed time: {:.2?}", elapsed);
     }
     Ok(())
 }

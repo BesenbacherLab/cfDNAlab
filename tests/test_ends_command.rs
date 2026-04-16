@@ -1112,7 +1112,7 @@ fn cli_statistics_only_count_reads_from_tiles_with_relevant_windows() -> Result<
     let stdout = String::from_utf8(output.stdout).context("stdout is not valid UTF-8")?;
     assert!(stdout.contains("Note: counts below cover only tiles with relevant output windows"));
     assert!(stdout.contains("Observed reads in processed tiles: 2"));
-    assert!(stdout.contains("Initially accepted observed reads: 2"));
+    assert!(stdout.contains("Initially accepted reads: 2"));
     assert!(stdout.contains("Fragments with one or more counted motifs: 1"));
     assert!(stdout.contains("Distinct counted end motifs across those fragments: 2"));
     Ok(())
