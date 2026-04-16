@@ -35,6 +35,8 @@ use crate::commands::wps_peaks::config::WPSPeaksConfig;
 use clap::CommandFactory;
 use clap::builder::styling::{AnsiColor, Style, Styles};
 
+pub const CLI_SEPARATOR_WIDTH: usize = 48;
+
 #[cfg(all(
     feature = "cli",
     not(any(
@@ -116,7 +118,7 @@ pub fn build_terminal_command() -> clap::Command {
         .help_template("{name} {version}\n{about}\n\n{usage-heading} {usage}\n\n{all-args}\n")
         .styles(styles);
     command = sanitize_command(command);
-    let signature = make_signature();
+    let signature = terminal_signature();
     add_signature(command, &signature)
 }
 
@@ -315,12 +317,12 @@ fn sanitize_command(mut command: clap::Command) -> clap::Command {
     command
 }
 
-/// Build a first-line terminal signature
-fn make_signature() -> String {
+/// Build the branded terminal signature shown in CLI help and command banners.
+pub fn terminal_signature() -> String {
     let accent = Style::new().bold();
     let title = "cfDNAlab";
-    let bar1 = "_".repeat(48);
-    let bar2 = "─".repeat(48);
+    let bar1 = "_".repeat(CLI_SEPARATOR_WIDTH);
+    let bar2 = "─".repeat(CLI_SEPARATOR_WIDTH);
     format!("\n{accent}{bar1}\n\n  {title}\n\n{bar2}{accent:#}\n")
 }
 

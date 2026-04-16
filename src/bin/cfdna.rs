@@ -1,4 +1,13 @@
-use cfdnalab::cli_app::{Cli, Cmd, build_terminal_command};
+use cfdnalab::cli_app::{
+    CLI_SEPARATOR_WIDTH, Cli, Cmd, build_terminal_command, terminal_signature,
+};
+
+fn print_command_banner(command_name: &str) {
+    let separator = "─".repeat(CLI_SEPARATOR_WIDTH);
+    print!("{}", terminal_signature());
+    println!("Command: cfdna {}", command_name);
+    println!("{}", separator);
+}
 
 #[cfg(not(feature = "cli"))]
 fn main() {
@@ -12,8 +21,10 @@ fn main() {
 
     let command = build_terminal_command();
     let matches = command.clone().get_matches();
+    let command_name = matches.subcommand_name().unwrap_or("help").to_string();
     let cli = Cli::from_arg_matches(&matches).expect("parse");
 
+    print_command_banner(&command_name);
     let result: anyhow::Result<()> = match cli.cmd {
         #[cfg(feature = "cmd_gc_bias")]
         Cmd::GCBias(config) => cfdnalab::commands::gc_bias::gc_bias::run(&config),
@@ -60,6 +71,7 @@ fn main() {
         #[cfg(feature = "cmd_frag_to_bam")]
         Cmd::FragToBam(config) => cfdnalab::commands::frag_to_bam::frag_to_bam::run(&config),
     };
+    println!("{}", "─".repeat(CLI_SEPARATOR_WIDTH));
 
     if let Err(error) = result {
         eprintln!("{:#}", error);
