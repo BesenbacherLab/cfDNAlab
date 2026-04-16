@@ -362,7 +362,7 @@ impl EndsConfig {
             gc: ApplyGCArgs {
                 gc_file: None,
                 gc_tag: None,
-                skip_invalid_gc: false,
+                neutralize_invalid_gc: false,
             },
         }
     }

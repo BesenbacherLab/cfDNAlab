@@ -248,18 +248,28 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
         global_counter.blacklisted_fragments
     );
     if opt.shared_args.gc.gc_file.is_some() || opt.shared_args.gc.gc_tag.is_some() {
-        let gc_fail_action = if opt.shared_args.gc.skip_invalid_gc {
-            "fragment skipped"
-        } else {
-            "fragment counted with weight 1.0"
-        };
+        let gc_fail_action = crate::shared::gc_tag::gc_failure_action_description(
+            opt.shared_args.gc.neutralize_invalid_gc,
+        );
         println!(
             "  GC correction failures ({}): {}",
             gc_fail_action, global_counter.gc_failed_fragments
         );
+        if opt.shared_args.gc.gc_tag.is_some() && global_counter.gc_missing_tags > 0 {
+            let missing_action = if opt.shared_args.gc.neutralize_invalid_gc {
+                "counted with weight 1.0 via --neutralize-invalid-gc"
+            } else {
+                "skipped by default"
+            };
+            println!(
+                "  Warning: fragments missing GC tags: {} ({})",
+                global_counter.gc_missing_tags, missing_action
+            );
+        }
         if opt.shared_args.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
             println!(
-                "  GC tag values outside [0, {:.0}] treated as invalid: {}",
+                "  Non-zero GC tag values outside the supported positive range [{:.0e}, {:.0e}] treated as invalid: {}",
+                crate::shared::gc_tag::MIN_REASONABLE_GC_WEIGHT,
                 crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
                 global_counter.gc_out_of_range_tags
             );

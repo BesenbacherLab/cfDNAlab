@@ -119,6 +119,7 @@ pub struct PairingAdapter<I, P, R, F> {
     inner: I,
     pairer: Option<P>,
     stash: FxHashMap<Vec<u8>, R>,
+    last_bam_coord: Option<(i32, i64)>,
     fragment_filter: Option<Box<dyn Fn(&F) -> bool + Send + Sync>>,
     counters: Box<dyn FragmentCounters + Send>,
     bam_include_read: Option<Box<dyn Fn(&Record) -> bool + Send + Sync>>,
@@ -137,6 +138,7 @@ where
             inner,
             pairer,
             stash: FxHashMap::default(),
+            last_bam_coord: None,
             fragment_filter: None,
             counters: Box::new(NoopCounters),
             bam_include_read: None,
@@ -192,6 +194,33 @@ where
     }
 }
 
+#[inline]
+fn ensure_nondecreasing_bam_coordinates(
+    last_bam_coord: &mut Option<(i32, i64)>,
+    rec: &Record,
+) -> Result<()> {
+    let current = (rec.tid(), rec.pos());
+    if let Some(previous) = *last_bam_coord {
+        if current.0 != previous.0 {
+            return Err(anyhow!(
+                "BAM reader yielded records from multiple tids inside single-chromosome stream: observed tid {} after tid {}",
+                current.0,
+                previous.0
+            ));
+        }
+        if current.1 < previous.1 {
+            return Err(anyhow!(
+                "BAM records must be coordinate-sorted with nondecreasing read.pos within single-chromosome stream, but observed pos {} after {} on tid {}",
+                current.1,
+                previous.1,
+                current.0
+            ));
+        }
+    }
+    *last_bam_coord = Some(current);
+    Ok(())
+}
+
 // TODO: In tools like fcoverage where we use extra fetch halos, we might end up
 // counting (stats counters) fragments that *fall just outside the tile cores*
 // in multiple tiles! That means we cannot use the stats to say how many reads
@@ -222,6 +251,11 @@ where
                     return Some(Ok(f));
                 }
                 Ok(InputItem::BamRecord(rec)) => {
+                    if let Err(error) =
+                        ensure_nondecreasing_bam_coordinates(&mut self.last_bam_coord, &rec)
+                    {
+                        return Some(Err(error));
+                    }
                     // Count every incoming BAM record
                     self.counters.inc_incoming_reads();
                     // Apply include_read if configured
@@ -301,4 +335,9 @@ where
     fn counters_snapshot(&self) -> FragmentCounterSnapshot {
         PairingAdapter::counters_snapshot(self)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    include!("core_tests.rs");
 }

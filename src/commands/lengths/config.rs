@@ -344,7 +344,7 @@ impl LengthsConfig {
             blacklist_strategy: BlacklistStrategy::default(),
             gc: ApplyGCArgFileOnly {
                 gc_file: None,
-                skip_invalid_gc: false,
+                neutralize_invalid_gc: false,
             },
             gc_length_weighting: MarginalizeLengthsWeightingScheme::Equal,
             ref_2bit: None,

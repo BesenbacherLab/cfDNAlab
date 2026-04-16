@@ -944,7 +944,7 @@ chr1\t80\t200\t1.0\n",
 }
 
 #[test]
-fn gc_file_fallback_writes_gc_tag_one_on_both_mates() -> Result<()> {
+fn gc_file_neutralize_invalid_writes_gc_tag_one_on_both_mates() -> Result<()> {
     // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let ref_twobit = simple_reference_twobit()?;
@@ -956,7 +956,7 @@ fn gc_file_fallback_writes_gc_tag_one_on_both_mates() -> Result<()> {
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: true,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
     {
@@ -970,8 +970,8 @@ fn gc_file_fallback_writes_gc_tag_one_on_both_mates() -> Result<()> {
     // - The fixture contains one paired fragment spanning [20, 80), length 60.
     // - With end_offset=26, the GC-corrected span is only 8 bp long.
     // - The corrector requires at least 10 A/C/G/T bases, so GC lookup fails.
-    // - `bam-to-bam` follows the same fallback semantics as `bam-to-frag` here:
-    //   the fragment is kept, `gc_failed_fragments` increments once per fragment,
+    // - With `neutralize_invalid_gc=true`, `bam-to-bam` keeps the fragment,
+    //   `gc_failed_fragments` increments once per fragment,
     //   and both mates receive a `GC` AUX tag of 1.0.
     let counters = run_inner(&cfg)?;
 
@@ -982,7 +982,7 @@ fn gc_file_fallback_writes_gc_tag_one_on_both_mates() -> Result<()> {
     assert_eq!(
         gc_weights,
         vec![1.0_f32, 1.0_f32],
-        "both mates should receive the GC fallback weight"
+        "both mates should receive the neutralized GC weight"
     );
 
     let lengths = read_fragment_lengths(&out_bam)?;
@@ -996,7 +996,7 @@ fn gc_file_fallback_writes_gc_tag_one_on_both_mates() -> Result<()> {
 }
 
 #[test]
-fn gc_file_drop_invalid_skips_fragment_entirely() -> Result<()> {
+fn gc_file_default_behavior_skips_fragment_entirely() -> Result<()> {
     // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let ref_twobit = simple_reference_twobit()?;
@@ -1008,7 +1008,7 @@ fn gc_file_drop_invalid_skips_fragment_entirely() -> Result<()> {
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        skip_invalid_gc: true,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
     {
@@ -1023,8 +1023,8 @@ fn gc_file_drop_invalid_skips_fragment_entirely() -> Result<()> {
     // Manual expectations:
     // - one fragment is encountered
     // - GC lookup fails once for that fragment
-    // - with `skip_invalid_gc=true`, the command must skip the fragment instead of silently
-    //   falling back to weight 1.0
+    // - with the default GC behavior, the command must skip the fragment instead of silently
+    //   neutralizing it to weight 1.0
     // - therefore the output BAM must contain no records and no AUX tags at all
     let counters = run_inner(&cfg)?;
 
@@ -1062,7 +1062,7 @@ fn gc_file_and_scaling_factors_write_identical_gc_cov_and_flen_tags_on_both_mate
     cfg.set_coverage_scaling_factors(Some(scaling_path));
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
     {
@@ -1113,7 +1113,7 @@ fn gc_file_and_count_scaling_factors_write_identical_gc_cnt_and_flen_tags_on_bot
     cfg.set_count_scaling_factors(Some(scaling_path));
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
     {
@@ -1266,7 +1266,7 @@ fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
     {
@@ -1340,7 +1340,7 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_bam_to_bam_in_expected_directio
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
     {
@@ -1402,7 +1402,7 @@ fn bed_blacklist_scaling_and_gc_together_keep_only_the_expected_tagged_fragment(
     cfg.set_coverage_scaling_factors(Some(scaling_path));
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.by_bed = Some(bed_path);
@@ -1605,7 +1605,7 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
@@ -1708,7 +1708,7 @@ fn count_scaling_tsv_with_uncorrected_metadata_rejects_gc_corrected_bam_to_bam_r
     cfg.set_count_scaling_factors(Some(scaling_path));
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 

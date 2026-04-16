@@ -15,6 +15,7 @@ mod tests_bam_to_frag {
         record::{Cigar, CigarString, Record},
     };
     use std::{
+        collections::HashMap,
         fs::{self, File},
         io::Read as _,
         path::Path,
@@ -813,7 +814,7 @@ mod tests_bam_to_frag {
     }
 
     #[test]
-    fn bam_to_frag_gc_file_fallback_writes_weight_one_and_keeps_row() -> Result<()> {
+    fn bam_to_frag_gc_file_neutralize_invalid_writes_weight_one_and_keeps_row() -> Result<()> {
         // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
@@ -839,7 +840,7 @@ mod tests_bam_to_frag {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            skip_invalid_gc: false,
+            neutralize_invalid_gc: true,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         {
@@ -853,7 +854,7 @@ mod tests_bam_to_frag {
         // - The fixture contains one paired fragment spanning [20, 80), length 60.
         // - The GC package uses end_offset=26, leaving only 8 effective bases.
         // - The GC corrector requires at least 10 A/C/G/T bases, so the lookup fails.
-        // - `bam-to-frag` does not drop the fragment here; it writes `gc_weight=1.0`,
+        // - With `neutralize_invalid_gc=true`, `bam-to-frag` keeps the fragment and writes `gc_weight=1.0`,
         //   increments `gc_failed_fragments`, and still emits the GC column in the header.
         let counters = run_inner(&cfg)?;
 
@@ -865,6 +866,68 @@ mod tests_bam_to_frag {
         assert_eq!(frag_rows, vec!["chr1\t20\t80\t60\t+\t1"]);
 
         let header_path = out_dir.join("gc_fallback.frag.header.tsv");
+        let header_text = std::fs::read_to_string(&header_path)?;
+        assert_eq!(
+            header_text,
+            "chromosome\tstart\tend\tmin_mapq\tread1_strand\tgc_weight\n"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn bam_to_frag_gc_file_default_behavior_skips_invalid_fragment() -> Result<()> {
+        // Human verification status: unverified
+        let bam = simple_inward_bam()?;
+        let ref_twobit = simple_reference_twobit()?;
+        let work = tempdir().context("tempdir")?;
+        let out_dir = work.path().join("out_gc_default_skip");
+        std::fs::create_dir_all(&out_dir)?;
+
+        let gc_path = out_dir.join("gc_pkg.npz");
+        build_gc_package(&gc_path, 26)?;
+
+        let ioc = IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.clone(),
+            n_threads: 1,
+        };
+        let chromosomes = ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes_file: None,
+        };
+        let mut cfg = BamToFragConfig::new(ioc, chromosomes);
+        cfg.set_output_prefix("gc_default_skip");
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_gc(ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            neutralize_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 53;
+            frag.max_fragment_length = 200;
+        }
+
+        // Manual expectations:
+        // - The one fixture fragment again fails GC lookup because only 8 effective A/C/G/T bases remain.
+        // - With the default GC behavior, unusable GC information makes the fragment get skipped.
+        // - The converter still writes the header with the GC column because GC correction was requested.
+        let counters = run_inner(&cfg)?;
+
+        assert_eq!(counters.base.counted_fragments, 0);
+        assert_eq!(counters.gc_failed_fragments, 1);
+
+        let frag_path = out_dir.join("gc_default_skip.frag.tsv.gz");
+        let frag_rows = read_frag_gz(&frag_path)?;
+        assert!(
+            frag_rows.is_empty(),
+            "default GC handling should skip the only fragment"
+        );
+
+        let header_path = out_dir.join("gc_default_skip.frag.header.tsv");
         let header_text = std::fs::read_to_string(&header_path)?;
         assert_eq!(
             header_text,
@@ -916,7 +979,7 @@ mod tests_bam_to_frag {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            skip_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         {
@@ -977,7 +1040,7 @@ mod tests_bam_to_frag {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            skip_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
@@ -1023,7 +1086,7 @@ mod tests_bam_to_frag {
         cfg.set_require_proper_pair(false);
         cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_dir.clone()),
-            skip_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
 
         // Act
@@ -1337,7 +1400,7 @@ mod tests_bam_to_frag {
         frag_cfg.set_require_proper_pair(false);
         frag_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path.clone()),
-            skip_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         frag_cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         let mut frag_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
@@ -1356,7 +1419,7 @@ mod tests_bam_to_frag {
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            skip_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         bam_cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         let mut bam_scale = cfdnalab::commands::cli_common::ScaleGenomeArgs::default();
@@ -1542,7 +1605,14 @@ mod tests_bam_to_frag {
         // - short fragment count scaling = 0.5
         // - long  fragment count scaling = 1.5
         //
-        // Both transformers average over the full fragment span, so they should encode:
+        // Both transformers average over the full fragment span, so they should encode the same
+        // fragment-level count scaling for each fragment.
+        //
+        // We compare them at the fragment level:
+        // - `bam-to-frag` writes one row per fragment
+        // - `bam-to-bam` writes one tagged record per mate, so we must regroup mates by qname
+        //
+        // The hand-derived target values are:
         // - short -> 0.5
         // - long  -> 1.5
         let bam = mixed_length_fragment_bam("bam_to_frag_real_count_weights")?;
@@ -1591,6 +1661,11 @@ mod tests_bam_to_frag {
         frag_cfg.set_min_mapq(0);
         frag_cfg.set_require_proper_pair(false);
         frag_cfg.set_count_scaling_factors(Some(scaling_path.clone()));
+        {
+            let fragment_lengths = frag_cfg.fragment_lengths_mut();
+            fragment_lengths.min_fragment_length = 10;
+            fragment_lengths.max_fragment_length = 100;
+        }
 
         run_inner(&frag_cfg)?;
         let frag_rows = read_frag_gz(&frag_out_dir.join("scaled_real.frag.tsv.gz"))?;
@@ -1603,7 +1678,6 @@ mod tests_bam_to_frag {
             })
             .collect::<Result<_>>()?;
         parsed_rows.sort_by(|left, right| left.0.cmp(&right.0));
-        assert_eq!(parsed_rows, vec![(0_u64, 0.5_f64), (20_u64, 1.5_f64)]);
 
         let bam_out = work.path().join("scaled_real.bam");
         let mut bam_cfg = BamToBamConfig::new(bam.bam.clone(), bam_out.clone(), chroms);
@@ -1611,34 +1685,46 @@ mod tests_bam_to_frag {
         bam_cfg.set_min_mapq(0);
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_count_scaling_factors(Some(scaling_path));
+        {
+            let fragment_lengths = bam_cfg.fragment_lengths_mut();
+            fragment_lengths.min_fragment_length = 10;
+            fragment_lengths.max_fragment_length = 100;
+        }
 
         run_bam_to_bam(&bam_cfg)?;
-        let mut reader = rust_htslib::bam::Reader::from_path(&bam_out)?;
-        let mut observed_tags = Vec::new();
-        for record in reader.records() {
-            let record = record?;
-            let flen = match record.aux(b"FLEN") {
-                Ok(Aux::U32(value)) => value,
-                other => panic!("expected FLEN u32 tag on every mate, got {other:?}"),
-            };
-            let cnt = match record.aux(b"CNT") {
-                Ok(Aux::Float(value)) => value as f64,
-                other => panic!("expected CNT float tag on every mate, got {other:?}"),
-            };
-            observed_tags.push((flen, cnt));
-        }
-        observed_tags.sort_by(|left, right| left.0.cmp(&right.0));
-        assert_eq!(observed_tags.len(), 4);
-        for (idx, (flen, cnt)) in observed_tags.iter().enumerate() {
-            let (expected_flen, expected_cnt) = if idx < 2 {
-                (20_u32, 0.5_f64)
-            } else {
-                (60_u32, 1.5_f64)
-            };
-            assert_eq!(*flen, expected_flen);
+        let bam_fragment_cnts = read_fragment_level_cnts_from_bam(&bam_out)?;
+
+        assert_eq!(parsed_rows.len(), 2, "expected exactly two frag rows");
+        assert_eq!(
+            bam_fragment_cnts.len(),
+            2,
+            "expected exactly two grouped BAM fragments"
+        );
+
+        // The two converters should agree on the same fragment-level value, but we still allow
+        // a small tolerance because the shared scaling TSV is generated through `f32`-backed
+        // smoothing/normalization before either converter consumes it.
+        for ((frag_start, frag_cnt), (bam_start, bam_cnt)) in
+            parsed_rows.iter().zip(bam_fragment_cnts.iter())
+        {
+            assert_eq!(
+                frag_start, bam_start,
+                "fragment starts should match between frag and BAM outputs"
+            );
             assert!(
-                (*cnt - expected_cnt).abs() <= 1e-6,
-                "unexpected CNT for FLEN {expected_flen}: expected {expected_cnt}, got {cnt}"
+                (*frag_cnt - *bam_cnt).abs() <= 1e-6,
+                "fragment start {frag_start}: bam-to-frag and bam-to-bam should encode the same fragment-level CNT weight, got {frag_cnt} vs {bam_cnt}"
+            );
+        }
+
+        let expected = [(0_u64, 0.5_f64), (20_u64, 1.5_f64)];
+        // These are the hand-derived ideal values. The real scaling factors are produced through
+        // the shared `fragment-count-weights` pipeline, whose stride-bin state and normalization
+        // are currently stored as `f32`, so allow a small tolerance around the exact ideals.
+        for ((start, value), (_, expected_value)) in parsed_rows.iter().zip(expected.iter()) {
+            assert!(
+                (*value - *expected_value).abs() <= 1e-6,
+                "fragment start {start}: expected count scaling near {expected_value}, got {value}"
             );
         }
 
@@ -1842,7 +1928,7 @@ mod tests_bam_to_frag {
         frag_cfg.set_require_proper_pair(false);
         frag_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path.clone()),
-            skip_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         frag_cfg.set_ref_2bit(Some(reference.path.clone()));
         {
@@ -1858,7 +1944,7 @@ mod tests_bam_to_frag {
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            skip_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         bam_cfg.set_ref_2bit(Some(reference.path.clone()));
         {
@@ -1970,7 +2056,7 @@ mod tests_bam_to_frag {
         frag_cfg.set_require_proper_pair(false);
         frag_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path.clone()),
-            skip_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         frag_cfg.set_ref_2bit(Some(reference.path.clone()));
         {
@@ -1986,7 +2072,7 @@ mod tests_bam_to_frag {
         bam_cfg.set_require_proper_pair(false);
         bam_cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            skip_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         bam_cfg.set_ref_2bit(Some(reference.path.clone()));
         {
@@ -2183,7 +2269,7 @@ mod tests_bam_to_frag {
         cfg.set_count_scaling_factors(Some(scaling_path));
         cfg.set_gc(ApplyGCArgFileOnly {
             gc_file: Some(gc_path),
-            skip_invalid_gc: false,
+            neutralize_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
@@ -2225,6 +2311,58 @@ mod tests_bam_to_frag {
         gz.read_to_string(&mut s)?;
         let lines = s.lines().map(|l| l.to_string()).collect();
         Ok(lines)
+    }
+
+    #[cfg(feature = "cmd_bam_to_bam")]
+    fn read_fragment_level_cnts_from_bam(path: &Path) -> Result<Vec<(u64, f64)>> {
+        let mut reader = rust_htslib::bam::Reader::from_path(path)?;
+        let mut per_qname: HashMap<String, Vec<(u64, u32, f64)>> = HashMap::new();
+
+        for record in reader.records() {
+            let record = record?;
+            let qname = std::str::from_utf8(record.qname())
+                .expect("synthetic BAM qnames should be valid UTF-8")
+                .to_string();
+            let start = record.pos() as u64;
+            let flen = match record.aux(b"FLEN") {
+                Ok(Aux::U32(value)) => value,
+                other => panic!("expected FLEN u32 tag on every mate, got {other:?}"),
+            };
+            let cnt = match record.aux(b"CNT") {
+                Ok(Aux::Float(value)) => value as f64,
+                other => panic!("expected CNT float tag on every mate, got {other:?}"),
+            };
+            per_qname.entry(qname).or_default().push((start, flen, cnt));
+        }
+
+        let mut grouped = Vec::with_capacity(per_qname.len());
+        for (qname, entries) in per_qname {
+            assert_eq!(
+                entries.len(),
+                2,
+                "expected exactly two mate records per fragment for qname {qname}"
+            );
+
+            let fragment_start = entries.iter().map(|(start, _, _)| *start).min().unwrap();
+            let expected_flen = entries[0].1;
+            let expected_cnt = entries[0].2;
+
+            for (_, flen, cnt) in &entries[1..] {
+                assert_eq!(
+                    *flen, expected_flen,
+                    "mates should agree on FLEN for qname {qname}"
+                );
+                assert!(
+                    (*cnt - expected_cnt).abs() <= 1e-12,
+                    "mates should carry identical CNT tags for qname {qname}, got {expected_cnt} vs {cnt}"
+                );
+            }
+
+            grouped.push((fragment_start, expected_cnt));
+        }
+
+        grouped.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(grouped)
     }
 
     fn fixed_chromosome_args() -> ChromosomeArgs {

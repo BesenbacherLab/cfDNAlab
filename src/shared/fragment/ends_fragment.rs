@@ -7,7 +7,7 @@ use crate::{
         fragment::minimal_fragment::{
             PairOrientable, is_inwards_oriented, oriented_pair_from_read_info,
         },
-        gc_tag::{GcTagValue, combine_gc_tag_values, read_gc_tag_from_record},
+        gc_tag::{GCTagValue, combine_gc_tag_values, read_gc_tag_from_record},
         indel_mode::IndelMotifFilterPolicy,
         interval::Interval,
     },
@@ -42,7 +42,7 @@ pub struct FragmentWithEnds {
     pub interval: Interval<u32>,
     /// Boundary-adjusted interval used for window assignment when clip strategy changes the ends.
     pub assignment_interval: Interval<u32>,
-    pub gc_tag: GcTagValue,
+    pub gc_tag: GCTagValue,
     pub left_end: Option<ResolvedFragmentEnd>,
     pub right_end: Option<ResolvedFragmentEnd>,
 }
@@ -92,7 +92,7 @@ pub struct EndReadInfo {
     pub has_hard_clip: bool,
     pub seq: Vec<u8>,
     pub qualities: Option<Vec<u8>>,
-    pub gc_tag: GcTagValue,
+    pub gc_tag: GCTagValue,
 }
 
 impl EndReadInfo {

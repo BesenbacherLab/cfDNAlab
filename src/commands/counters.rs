@@ -91,17 +91,30 @@ counter_struct!(GCCounters;);
 counter_struct!(FragmentKmersCounters;
     blacklisted_fragments: u64,
     gc_failed_fragments: u64,
-    gc_out_of_range_tags: u64
+    gc_out_of_range_tags: u64,
+    gc_missing_tags: u64
 );
 
 #[cfg(feature = "cmd_fcoverage")]
-counter_struct!(FCoverageCounters; gc_failed_fragments: u64, gc_out_of_range_tags: u64);
+counter_struct!(FCoverageCounters;
+    gc_failed_fragments: u64,
+    gc_out_of_range_tags: u64,
+    gc_missing_tags: u64
+);
 
 #[cfg(feature = "cmd_wps")]
-counter_struct!(WPSCounters; gc_failed_fragments: u64, gc_out_of_range_tags: u64);
+counter_struct!(WPSCounters;
+    gc_failed_fragments: u64,
+    gc_out_of_range_tags: u64,
+    gc_missing_tags: u64
+);
 
 #[cfg(feature = "cmd_wps_peaks")]
-counter_struct!(WPSPeaksCounters; gc_failed_fragments: u64, gc_out_of_range_tags: u64);
+counter_struct!(WPSPeaksCounters;
+    gc_failed_fragments: u64,
+    gc_out_of_range_tags: u64,
+    gc_missing_tags: u64
+);
 
 #[cfg(feature = "cmd_wps_peaks")]
 impl From<WPSCounters> for WPSPeaksCounters {
@@ -110,6 +123,7 @@ impl From<WPSCounters> for WPSPeaksCounters {
             base: other.base,
             gc_failed_fragments: other.gc_failed_fragments,
             gc_out_of_range_tags: other.gc_out_of_range_tags,
+            gc_missing_tags: other.gc_missing_tags,
         }
     }
 }
@@ -124,6 +138,8 @@ counter_struct!(LengthsCounters;
 counter_struct!(EndsCounters;
     blacklisted_fragments: u64,
     gc_failed_fragments: u64,
+    gc_out_of_range_tags: u64,
+    gc_missing_tags: u64,
     counted_motifs: u64
 );
 
@@ -132,6 +148,7 @@ counter_struct!(ProfileGroupsCounters;
     blacklisted_fragments: u64,
     gc_failed_fragments: u64,
     gc_out_of_range_tags: u64,
+    gc_missing_tags: u64,
 );
 
 #[cfg(feature = "cmd_bam_to_bam")]

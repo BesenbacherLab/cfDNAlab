@@ -502,7 +502,8 @@ pub struct ApplyGCArgs {
     /// in a BAM file. They often assign a "GC" aux tag.
     ///
     /// The average per-read weight is used to count the fragment. When any of the reads have a zero-weight,
-    /// the fragment gets a zero-weight.
+    /// the fragment gets a zero-weight. If only one mate has a usable tag, that single usable
+    /// weight is reused for the fragment.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -514,16 +515,27 @@ pub struct ApplyGCArgs {
     )]
     pub gc_tag: Option<String>,
 
-    /// Whether to skip fragments where the GC correction could not be calculated `[flag]`
+    /// Keep fragments with unusable GC weights and weight them as `1.0` `[flag]`
     ///
-    /// If a GC correction weight could not be computed/retrieved for a fragment,
-    /// the default is to weight it as `1.0` (no correction). If you prefer to
-    /// exclude it instead, set this flag.
+    /// By default, fragments are skipped when the GC correction is missing, cannot be
+    /// computed, or resolves to an unusable value. Set this flag to keep them instead
+    /// and count them with neutral weight `1.0`.
     #[cfg_attr(
         feature = "cli",
         clap(long, help_heading = "GC Correction (select max. one source)")
     )]
-    pub skip_invalid_gc: bool,
+    pub neutralize_invalid_gc: bool,
+}
+
+impl ApplyGCArgs {
+    /// Validate combinations that clap already rejects on the CLI, so programmatic configs fail
+    /// the same way instead of depending on branch order deeper in the command logic.
+    pub fn validate(&self) -> Result<()> {
+        if self.gc_file.is_some() && self.gc_tag.is_some() {
+            bail!("--gc-file and --gc-tag cannot be used together");
+        }
+        Ok(())
+    }
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]
@@ -540,13 +552,13 @@ pub struct ApplyGCArgFileOnly {
     )]
     pub gc_file: Option<PathBuf>,
 
-    /// Whether to skip fragments where the GC correction could not be calculated `[flag]`
+    /// Keep fragments with unusable GC weights and weight them as `1.0` `[flag]`
     ///
-    /// If a GC correction weight could not be computed for a fragment,
-    /// the default is to weight it as `1.0` (no correction). If you prefer to
-    /// exclude it instead, set this flag.
+    /// By default, fragments are skipped when the GC correction cannot be
+    /// computed or resolves to an unusable value. Set this flag to keep them
+    /// instead and count them with neutral weight `1.0`.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "GC Correction"))]
-    pub skip_invalid_gc: bool,
+    pub neutralize_invalid_gc: bool,
 }
 
 // TODO: Is "nearest" clear enough in all usecases?

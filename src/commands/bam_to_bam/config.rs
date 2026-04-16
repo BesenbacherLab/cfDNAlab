@@ -216,7 +216,7 @@ impl BamToBamConfig {
             blacklist_strategy: BlacklistStrategy::Any,
             gc: ApplyGCArgFileOnly {
                 gc_file: None,
-                skip_invalid_gc: false,
+                neutralize_invalid_gc: false,
             },
             ref_2bit: None,
         }

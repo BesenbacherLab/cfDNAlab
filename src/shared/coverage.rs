@@ -20,7 +20,7 @@ enum Stage {
 /// ```rust
 /// use cfdnalab::shared::coverage::Coverage;
 /// use cfdnalab::shared::fragment::minimal_fragment::Fragment;
-/// use cfdnalab::shared::gc_tag::GcTagValue;
+/// use cfdnalab::shared::gc_tag::GCTagValue;
 /// use cfdnalab::shared::interval::Interval;
 ///
 /// # use anyhow::Result;
@@ -32,7 +32,7 @@ enum Stage {
 /// cp.add_fragment(Fragment {
 ///     tid: 0,
 ///     interval: Interval::new(100, 200)?,
-///     gc_tag: GcTagValue::default(),
+///     gc_tag: GCTagValue::default(),
 /// })?;
 ///
 /// // GC-weighted fragment
@@ -40,7 +40,7 @@ enum Stage {
 ///     Fragment {
 ///         tid: 0,
 ///         interval: Interval::new(150, 250)?,
-///         gc_tag: GcTagValue::default(),
+///         gc_tag: GCTagValue::default(),
 ///     },
 ///     0.87,
 /// )?;
@@ -76,6 +76,19 @@ pub struct Coverage {
     psum_unmasked_count: Option<Vec<u32>>, // Σ 1 over non-blacklisted positions
 
     cov_stage: Stage, // Lifecycle for coverage
+}
+
+/// Clamp finite coverage values below `floor` to exact zero.
+///
+/// Coverage is semantically nonnegative, so this also clamps any negative
+/// floating-point artefacts to `0.0`.
+pub(crate) fn clamp_finite_coverage_below_to_zero(values: &mut [f32], floor: f32) {
+    let floor = floor as f64;
+    for value in values.iter_mut() {
+        if value.is_finite() && (*value as f64) < floor {
+            *value = 0.0;
+        }
+    }
 }
 
 impl Coverage {
@@ -200,7 +213,7 @@ impl Coverage {
                 let base = Fragment {
                     tid: frag.tid,
                     interval: frag.interval,
-                    gc_tag: crate::shared::gc_tag::GcTagValue::default(),
+                    gc_tag: crate::shared::gc_tag::GCTagValue::default(),
                 };
                 self.add_fragment_weighted(base, weight)
             }
@@ -891,4 +904,9 @@ impl Coverage {
     pub fn has_blacklist(&self) -> bool {
         self.bl_mask.is_some()
     }
+}
+
+#[cfg(test)]
+mod tests {
+    include!("coverage_tests.rs");
 }

@@ -1,3 +1,4 @@
+use crate::shared::gc_tag::ClassifiedGCTagWeight;
 use crate::{
     commands::{
         cli_common::{
@@ -94,6 +95,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
             "`--clip-strategy raw-aligned-boundary` cannot be combined with `--source-inside reference`"
         );
     }
+    opt.gc.validate()?;
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
@@ -405,15 +407,31 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         "  Blacklist-excluded fragments: {}",
         global_counter.blacklisted_fragments
     );
-    if opt.gc.gc_file.is_some() {
-        let gc_fail_action = if opt.gc.skip_invalid_gc {
-            "fragment skipped"
-        } else {
-            "fragment counted with weight 1.0"
-        };
+    if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
+        let gc_fail_action =
+            crate::shared::gc_tag::gc_failure_action_description(opt.gc.neutralize_invalid_gc);
         println!(
             "  GC correction failures ({}): {}",
             gc_fail_action, global_counter.gc_failed_fragments
+        );
+    }
+    if opt.gc.gc_tag.is_some() && global_counter.gc_missing_tags > 0 {
+        let missing_action = if opt.gc.neutralize_invalid_gc {
+            "counted with weight 1.0 via --neutralize-invalid-gc"
+        } else {
+            "skipped by default"
+        };
+        println!(
+            "  Warning: fragments missing GC tags: {} ({})",
+            global_counter.gc_missing_tags, missing_action
+        );
+    }
+    if opt.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
+        println!(
+            "  Non-zero GC tag values outside the supported positive range [{:.0e}, {:.0e}] treated as invalid: {}",
+            crate::shared::gc_tag::MIN_REASONABLE_GC_WEIGHT,
+            crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
+            global_counter.gc_out_of_range_tags
         );
     }
     println!(
@@ -733,21 +751,47 @@ fn process_tile(
 
         // GC correction is fragment-level, so the same GC weight is reused for every window and
         // every end motif produced from this fragment.
-        let gc_weight_opt = get_gc_weight(&fragment)?;
-        let gc_weight = match (gc_weight_opt, correct_gc) {
-            (Some(w), true) => w,
-            (None, true) => {
-                // Tried but failed to make a GC correction weight for the current fragment
-                // Fall back to no correction or skip
-                counter.gc_failed_fragments += 1;
-                if opt.gc.skip_invalid_gc {
-                    continue;
-                } else {
-                    1.0
+        let gc_weight = if opt.gc.gc_tag.is_some() {
+            match fragment.gc_tag.classify()? {
+                ClassifiedGCTagWeight::Usable(weight) => weight as f64,
+                ClassifiedGCTagWeight::Missing => {
+                    counter.gc_failed_fragments += 1;
+                    counter.gc_missing_tags += 1;
+                    if opt.gc.neutralize_invalid_gc {
+                        1.0
+                    } else {
+                        continue;
+                    }
+                }
+                ClassifiedGCTagWeight::Invalid { out_of_range } => {
+                    counter.gc_failed_fragments += 1;
+                    if out_of_range {
+                        counter.gc_out_of_range_tags += 1;
+                    }
+                    if opt.gc.neutralize_invalid_gc {
+                        1.0
+                    } else {
+                        continue;
+                    }
                 }
             }
-            (None, false) => 1.0, // No correction
-            (Some(_), false) => bail!("unexpected GC weight when GC correction is disabled"),
+        } else {
+            let gc_weight_opt = get_gc_weight(&fragment)?;
+            match (gc_weight_opt, correct_gc) {
+                (Some(w), true) => w,
+                (None, true) => {
+                    // Tried but failed to make a GC correction weight for the current fragment
+                    if opt.gc.neutralize_invalid_gc {
+                        counter.gc_failed_fragments += 1;
+                        1.0
+                    } else {
+                        counter.gc_failed_fragments += 1;
+                        continue;
+                    }
+                }
+                (None, false) => 1.0, // No correction
+                (Some(_), false) => bail!("unexpected GC weight when GC correction is disabled"),
+            }
         };
         let mut counted_end_flags = CountedEndFlags::default();
 

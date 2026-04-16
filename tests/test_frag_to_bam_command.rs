@@ -2924,7 +2924,7 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
     bam_to_frag_cfg.set_min_mapq(0);
     bam_to_frag_cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path.clone()),
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     bam_to_frag_cfg.set_ref_2bit(Some(reference.path.clone()));
     {
@@ -2950,7 +2950,7 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
     original_midpoints_cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path.clone()),
         gc_tag: None,
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     original_midpoints_cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -2994,7 +2994,7 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
     restored_midpoints_cfg.set_gc(ApplyGCArgs {
         gc_file: None,
         gc_tag: Some("GC".to_string()),
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     run_midpoints(&restored_midpoints_cfg)?;
 
@@ -3120,7 +3120,7 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
     bam_to_frag_cfg.set_min_mapq(0);
     bam_to_frag_cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path.clone()),
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     bam_to_frag_cfg.set_ref_2bit(Some(reference.path.clone()));
     {
@@ -3146,7 +3146,7 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
     original_midpoints_cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path.clone()),
         gc_tag: None,
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     original_midpoints_cfg.set_ref_2bit(Some(reference.path.clone()));
 
@@ -3190,7 +3190,7 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
     restored_midpoints_cfg.set_gc(ApplyGCArgs {
         gc_file: None,
         gc_tag: Some("GC".to_string()),
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     run_midpoints(&restored_midpoints_cfg)?;
 
@@ -3285,7 +3285,7 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
     bam_to_frag_cfg.set_coverage_scaling_factors(Some(scaling_path));
     bam_to_frag_cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(gc_path),
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     bam_to_frag_cfg.set_ref_2bit(Some(reference.path.clone()));
     {

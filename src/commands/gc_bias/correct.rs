@@ -3,6 +3,7 @@ use crate::commands::gc_bias::{
     counting::{GCPrefixes, get_gc_integer_percentage_for_window},
     package::GCCorrectionPackage,
 };
+use crate::shared::gc_tag::{SanitizedGCWeight, sanitize_gc_weight};
 use crate::shared::interval::Interval;
 use anyhow::{Context, Result, anyhow, ensure};
 use ndarray::{Array1, Array2, Axis};
@@ -82,7 +83,12 @@ impl GCCorrector {
         } else {
             return Ok(None);
         };
-        Ok(Some(self.get_correction_weight(fragment_length, gc_bin)?))
+        Ok(
+            match sanitize_gc_weight(self.get_correction_weight(fragment_length, gc_bin)?) {
+                SanitizedGCWeight::Usable(weight) => Some(weight),
+                SanitizedGCWeight::Unusable { .. } => None,
+            },
+        )
     }
 
     /// Get the GC correction weight for a combination of fragment length and GC percentage.

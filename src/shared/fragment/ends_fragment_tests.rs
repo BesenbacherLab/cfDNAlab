@@ -1,6 +1,6 @@
 use super::*;
 use crate::commands::ends::config_structs::BaseQualityComparisonOp;
-use crate::shared::gc_tag::GcTagValue;
+use crate::shared::gc_tag::GCTagValue;
 use rust_htslib::bam::record::{Cigar, CigarString, Record};
 
 fn base_read_info(qualities: &[u8]) -> EndReadInfo {
@@ -23,7 +23,7 @@ fn base_read_info_with_clips(
         has_hard_clip: false,
         seq: vec![b'A'; qualities.len()],
         qualities: Some(qualities.to_vec()),
-        gc_tag: GcTagValue::default(),
+        gc_tag: GCTagValue::default(),
     }
 }
 

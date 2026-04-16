@@ -13,11 +13,14 @@ use crate::commands::fcoverage::writers::{
 };
 use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
 use crate::commands::gc_bias::counting::build_gc_prefixes;
-use crate::shared::coverage::Coverage;
+use crate::shared::coverage::{Coverage, clamp_finite_coverage_below_to_zero};
 use crate::shared::formatters::round_to;
 use crate::shared::fragment::minimal_fragment::Fragment;
 use crate::shared::fragment::segment_fragment::FragmentWithSegments;
 use crate::shared::fragment_iterators::fragments_with_segments_from_bam;
+use crate::shared::gc_tag::{
+    ClassifiedGCTagWeight, MIN_REASONABLE_GC_WEIGHT, gc_failure_action_description,
+};
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::dot_join;
 use crate::shared::progress::ProgressFactory;
@@ -99,19 +102,27 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
         global_counter.base.accepted_reverse
     );
     if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
-        let gc_fail_action = if opt.gc.skip_invalid_gc {
-            "fragment skipped"
-        } else {
-            "fragment counted with weight 1.0"
-        };
+        let gc_fail_action = gc_failure_action_description(opt.gc.neutralize_invalid_gc);
         println!(
             "  GC correction failures ({}): {}",
             gc_fail_action, global_counter.gc_failed_fragments
         );
     }
+    if opt.gc.gc_tag.is_some() && global_counter.gc_missing_tags > 0 {
+        let missing_action = if opt.gc.neutralize_invalid_gc {
+            "counted with weight 1.0 via --neutralize-invalid-gc"
+        } else {
+            "skipped by default"
+        };
+        println!(
+            "  Warning: fragments missing GC tags: {} ({})",
+            global_counter.gc_missing_tags, missing_action
+        );
+    }
     if opt.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
         println!(
-            "  GC tag values outside [0, {:.0}] treated as invalid: {}",
+            "  Non-zero GC tag values outside the supported positive range [{:.0e}, {:.0e}] treated as invalid: {}",
+            crate::shared::gc_tag::MIN_REASONABLE_GC_WEIGHT,
             crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
             global_counter.gc_out_of_range_tags
         );
@@ -126,6 +137,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
 }
 
 pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
+    opt.gc.validate()?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
@@ -749,10 +761,10 @@ fn process_tile(
                     Some(weight) => weight,
                     None => {
                         counter.gc_failed_fragments += 1;
-                        if opt.gc.skip_invalid_gc {
-                            continue;
-                        } else {
+                        if opt.gc.neutralize_invalid_gc {
                             1.0
+                        } else {
+                            continue;
                         }
                     }
                 };
@@ -774,24 +786,27 @@ fn process_tile(
             let fragment = fragment_res.context("reading fragment")?;
             let base_weight = calculate_base_weight(&fragment, opt)?;
 
-            let gc_weight = if fragment.gc_tag.had_invalid {
-                counter.gc_failed_fragments += 1;
-                if fragment.gc_tag.was_out_of_range {
-                    counter.gc_out_of_range_tags += 1;
+            let gc_weight = match fragment.gc_tag.classify()? {
+                ClassifiedGCTagWeight::Usable(weight) => weight,
+                ClassifiedGCTagWeight::Missing => {
+                    counter.gc_failed_fragments += 1;
+                    counter.gc_missing_tags += 1;
+                    if opt.gc.neutralize_invalid_gc {
+                        1.0
+                    } else {
+                        continue;
+                    }
                 }
-                if opt.gc.skip_invalid_gc {
-                    continue;
-                } else {
-                    1.0
-                }
-            } else if let Some(w) = fragment.gc_tag.weight {
-                w
-            } else {
-                counter.gc_failed_fragments += 1;
-                if opt.gc.skip_invalid_gc {
-                    continue;
-                } else {
-                    1.0
+                ClassifiedGCTagWeight::Invalid { out_of_range } => {
+                    counter.gc_failed_fragments += 1;
+                    if out_of_range {
+                        counter.gc_out_of_range_tags += 1;
+                    }
+                    if opt.gc.neutralize_invalid_gc {
+                        1.0
+                    } else {
+                        continue;
+                    }
                 }
             };
 
@@ -823,6 +838,13 @@ fn process_tile(
 
     // Finalize coverage
     cp.finalize_coverage(true);
+
+    // Clamp almost-zero coverages to zero to avoid any f32 roundoff error
+    // NOTE: Must come before scaling!
+    // NOTE: If we add other normalizations, we must consider its effect here!
+    if let Some(cov_mut) = cp.coverage_mut() {
+        clamp_finite_coverage_below_to_zero(cov_mut, internal_residual_coverage_floor(opt));
+    }
 
     // Apply per-bin scaling (in-place)
     if !scaling_chr.is_empty()
@@ -1291,4 +1313,51 @@ fn calculate_base_weight(fragment: &FragmentWithSegments, opt: &FCoverageConfig)
         bail!("normalize-by-length encountered a fragment with zero countable length");
     }
     Ok(1.0 / counted_length as f32)
+}
+
+/// Smallest positive intrinsic per-base weight a counted fragment base can have in this run.
+///
+/// This is evaluated before GC correction or genomic scaling.
+#[inline]
+fn minimum_positive_base_weight(opt: &FCoverageConfig) -> f32 {
+    if opt.normalize_by_length {
+        1.0 / opt.fragment_lengths.max_fragment_length as f32
+    } else {
+        1.0
+    }
+}
+
+/// Smallest positive GC multiplier that can be considered usable in this run.
+#[inline]
+fn minimum_positive_gc_weight(opt: &FCoverageConfig) -> f32 {
+    if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
+        MIN_REASONABLE_GC_WEIGHT
+    } else {
+        1.0
+    }
+}
+
+/// Smallest real positive pre-scaling support that one counted position can receive.
+///
+/// This must be updated whenever a new pre-scaling weighting or normalization can lower the
+/// per-position support below the current bound. The tests intentionally exercise the current
+/// GC and length-normalization combinations so future changes have to revisit this derivation.
+#[inline]
+fn minimum_positive_pre_scaling_support(opt: &FCoverageConfig) -> f32 {
+    minimum_positive_base_weight(opt) * minimum_positive_gc_weight(opt)
+}
+
+/// Internal cleanup floor for fake support created by floating-point add/subtract residue.
+///
+/// The floor stays strictly below the smallest real positive pre-scaling support for the active
+/// argument combination, so it can only remove values that should be impossible in exact
+/// arithmetic for this run.
+#[inline]
+fn internal_residual_coverage_floor(opt: &FCoverageConfig) -> f32 {
+    minimum_positive_pre_scaling_support(opt) / 2.0
+}
+
+#[cfg(test)]
+mod tests {
+    include!("fcoverage_tests.rs");
 }

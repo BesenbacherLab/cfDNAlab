@@ -1,3 +1,4 @@
+use crate::shared::gc_tag::ClassifiedGCTagWeight;
 use crate::{
     commands::{
         cli_common::{
@@ -69,6 +70,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
+    opt.gc.validate()?;
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let prefix = opt.output_prefix.trim();
@@ -312,18 +314,27 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         global_counter.blacklisted_fragments
     );
     if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
-        let gc_fail_action = if opt.gc.skip_invalid_gc {
-            "fragment skipped"
-        } else {
-            "fragment counted with weight 1.0"
-        };
+        let gc_fail_action =
+            crate::shared::gc_tag::gc_failure_action_description(opt.gc.neutralize_invalid_gc);
         println!(
             "  GC correction failures ({}): {}",
             gc_fail_action, global_counter.gc_failed_fragments
         );
+        if opt.gc.gc_tag.is_some() && global_counter.gc_missing_tags > 0 {
+            let missing_action = if opt.gc.neutralize_invalid_gc {
+                "counted with weight 1.0 via --neutralize-invalid-gc"
+            } else {
+                "skipped by default"
+            };
+            println!(
+                "  Warning: fragments missing GC tags: {} ({})",
+                global_counter.gc_missing_tags, missing_action
+            );
+        }
         if opt.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
             println!(
-                "  GC tag values outside [0, {:.0}] treated as invalid: {}",
+                "  Non-zero GC tag values outside the supported positive range [{:.0e}, {:.0e}] treated as invalid: {}",
+                crate::shared::gc_tag::MIN_REASONABLE_GC_WEIGHT,
                 crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
                 global_counter.gc_out_of_range_tags
             );
@@ -511,25 +522,27 @@ fn process_tile(
         // Get GC correction weight
         // NOTE: Must come after filtering for midpoints lying within the core!
         let gc_weight = if gc_tag.is_some() {
-            // Tag mode: trust tag if valid, otherwise treat as failure
-            if fragment.gc_tag.had_invalid {
-                counter.gc_failed_fragments += 1;
-                if fragment.gc_tag.was_out_of_range {
-                    counter.gc_out_of_range_tags += 1;
+            match fragment.gc_tag.classify()? {
+                ClassifiedGCTagWeight::Usable(weight) => weight as f64,
+                ClassifiedGCTagWeight::Missing => {
+                    counter.gc_failed_fragments += 1;
+                    counter.gc_missing_tags += 1;
+                    if opt.gc.neutralize_invalid_gc {
+                        1.0
+                    } else {
+                        continue;
+                    }
                 }
-                if opt.gc.skip_invalid_gc {
-                    continue;
-                } else {
-                    1.0
-                }
-            } else if let Some(tag_w) = fragment.gc_tag.weight {
-                tag_w as f64
-            } else {
-                counter.gc_failed_fragments += 1;
-                if opt.gc.skip_invalid_gc {
-                    continue;
-                } else {
-                    1.0
+                ClassifiedGCTagWeight::Invalid { out_of_range } => {
+                    counter.gc_failed_fragments += 1;
+                    if out_of_range {
+                        counter.gc_out_of_range_tags += 1;
+                    }
+                    if opt.gc.neutralize_invalid_gc {
+                        1.0
+                    } else {
+                        continue;
+                    }
                 }
             }
         } else {
@@ -539,10 +552,10 @@ fn process_tile(
                 (Some(w), true) => w,
                 (None, true) => {
                     counter.gc_failed_fragments += 1;
-                    if opt.gc.skip_invalid_gc {
-                        continue;
-                    } else {
+                    if opt.gc.neutralize_invalid_gc {
                         1.0
+                    } else {
+                        continue;
                     }
                 }
                 (None, false) => 1.0, // No correction

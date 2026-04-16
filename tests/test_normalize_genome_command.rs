@@ -768,30 +768,23 @@ fn normalize_avg_overlap_keeps_sparse_non_zero_scaling_finite() -> Result<()> {
 }
 
 #[test]
-fn normalize_avg_overlap_overflow_boundary_promotes_tiny_non_zero_bin_to_infinity() -> Result<()> {
+fn normalize_avg_overlap_support_floor_excludes_tiny_bin_from_mean_and_inversion() -> Result<()> {
     // Human verification status: unverified
     // Arrange:
     // Use three bins with unequal lengths on one chromosome:
-    // - one extremely tiny but still non-zero bin with avg-overlap coverage 1e-40
+    // - one extremely tiny bin with avg-overlap coverage 1e-40
     // - one ordinary covered bin with avg-overlap coverage 1.0 and 4x more genomic span
     // - one uncovered zero bin
     //
-    // With length-weighted normalization, the zero bin is ignored and the mean is:
-    //   mean = (10 * 1e-40 + 40 * 1.0) / (10 + 40)
-    //        ≈ 40 / 50
-    //        = 0.8
+    // The support floor now treats the tiny bin as zero-support before both global-mean
+    // accumulation and inversion. That means both the tiny bin and the explicit zero bin are
+    // excluded from the denominator, leaving only the ordinary covered bin:
+    //   mean = (40 * 1.0) / 40 = 1.0
     //
-    // With inversion enabled, the sparse-bin scaling in f64 is approximately:
-    //   1 / (1e-40 / 0.8) = 8e39
-    //
-    // `StrideBin::scaling_factor` stores the result as `f32`, whose maximum finite value is only
-    // about 3.4e38. So this specific case crosses the representable boundary:
-    // - the sparse non-zero bin must overflow to `+inf`
-    // - the ordinary covered bin must remain finite at exactly 0.8
-    // - the explicit zero-preserving branch must keep the zero bin at exactly 0
-    //
-    // Using unequal lengths also distinguishes the weighted mean from a wrong simple average
-    // (which would still be ~0.5).
+    // With inversion enabled, scaling becomes:
+    // - tiny bin     -> 0.0 because it is below the support floor
+    // - covered bin  -> 1 / (1.0 / 1.0) = 1.0
+    // - zero bin     -> 0.0 by explicit zero-preserving logic
     let mut bins_by_chr = FxHashMap::default();
     bins_by_chr.insert(
         "chr1".to_string(),
@@ -827,27 +820,26 @@ fn normalize_avg_overlap_overflow_boundary_promotes_tiny_non_zero_bin_to_infinit
     );
     assert_approx(
         mean as f64,
-        0.8,
+        1.0,
         1e-6,
-        "length-weighted global mean near overflow boundary",
+        "length-weighted global mean with tiny bin below support floor",
     );
     let bins = bins_by_chr
         .get("chr1")
         .expect("chr1 bins should remain present");
-    assert!(
-        bins[0].scaling_factor.is_infinite() && bins[0].scaling_factor.is_sign_positive(),
-        "extremely tiny non-zero bin should overflow to +inf, got {}",
-        bins[0].scaling_factor
+    assert_eq!(
+        bins[0].scaling_factor, 0.0,
+        "extremely tiny bins below the support floor should not be inverted"
     );
     assert_approx(
         bins[1].scaling_factor as f64,
-        0.8,
+        1.0,
         1e-6,
-        "ordinary covered-bin scaling factor near overflow boundary",
+        "ordinary covered-bin scaling factor with tiny bin excluded",
     );
     assert_eq!(
         bins[2].scaling_factor, 0.0,
-        "zero-overlap bins should remain zero even at the overflow boundary"
+        "zero-overlap bins should remain zero with support-floor exclusion"
     );
 
     Ok(())

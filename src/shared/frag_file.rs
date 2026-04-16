@@ -111,7 +111,7 @@ impl<R: BufRead> FragFileIter<R> {
             Ok(Fragment {
                 tid,
                 interval: Interval::new(start, end)?,
-                gc_tag: crate::shared::gc_tag::GcTagValue::default(),
+                gc_tag: crate::shared::gc_tag::GCTagValue::default(),
             })
         };
 

@@ -77,11 +77,8 @@ pub fn run(opt: &BamToFragConfig) -> Result<()> {
             global_counter.blacklisted_fragments
         );
         if opt.gc.gc_file.is_some() {
-            let gc_fail_action = if opt.gc.skip_invalid_gc {
-                "fragment skipped"
-            } else {
-                "fragment counted with weight 1.0"
-            };
+            let gc_fail_action =
+                crate::shared::gc_tag::gc_failure_action_description(opt.gc.neutralize_invalid_gc);
             println!(
                 "  GC correction failures ({}): {}",
                 gc_fail_action, global_counter.gc_failed_fragments
@@ -430,7 +427,11 @@ fn process_chrom(
             (Some(w), true) => Some(w),
             (None, true) => {
                 counter.gc_failed_fragments += 1;
-                Some(1.0)
+                if opt.gc.neutralize_invalid_gc {
+                    Some(1.0)
+                } else {
+                    continue;
+                }
             }
             (None, false) => None,
             (Some(_), false) => bail!("unexpected GC weight when GC correction is disabled"),

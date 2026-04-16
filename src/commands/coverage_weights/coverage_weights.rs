@@ -69,6 +69,7 @@ pub(crate) fn run_with_fcoverage(
     let (chromosomes, _contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     opt.check_bin_sizes()?;
+    opt.gc.validate()?;
 
     // Keep all intermediate files under the user-chosen output directory so disk usage stays
     // within the filesystem location the user already selected for results.
@@ -162,19 +163,28 @@ pub(crate) fn run_with_fcoverage(
         global_counter.base.accepted_reverse
     );
     if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
-        let gc_fail_action = if opt.gc.skip_invalid_gc {
-            "fragment skipped"
-        } else {
-            "fragment counted with weight 1.0"
-        };
+        let gc_fail_action =
+            crate::shared::gc_tag::gc_failure_action_description(opt.gc.neutralize_invalid_gc);
         println!(
             "  GC correction failures ({}): {}",
             gc_fail_action, global_counter.gc_failed_fragments
         );
     }
+    if opt.gc.gc_tag.is_some() && global_counter.gc_missing_tags > 0 {
+        let missing_action = if opt.gc.neutralize_invalid_gc {
+            "counted with weight 1.0 via --neutralize-invalid-gc"
+        } else {
+            "skipped by default"
+        };
+        println!(
+            "  Warning: fragments missing GC tags: {} ({})",
+            global_counter.gc_missing_tags, missing_action
+        );
+    }
     if opt.gc.gc_tag.is_some() && global_counter.gc_out_of_range_tags > 0 {
         println!(
-            "  GC tag values outside [0, {:.0}] treated as invalid: {}",
+            "  Non-zero GC tag values outside the supported positive range [{:.0e}, {:.0e}] treated as invalid: {}",
+            crate::shared::gc_tag::MIN_REASONABLE_GC_WEIGHT,
             crate::shared::gc_tag::MAX_REASONABLE_GC_WEIGHT,
             global_counter.gc_out_of_range_tags
         );

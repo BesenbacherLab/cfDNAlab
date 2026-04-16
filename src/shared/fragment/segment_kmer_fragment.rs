@@ -6,7 +6,7 @@ use crate::Result;
 use crate::shared::fragment::minimal_fragment::{
     PairOrientable, is_inwards_oriented, oriented_pair_from_read_info,
 };
-use crate::shared::gc_tag::{GcTagValue, combine_gc_tag_values, read_gc_tag_from_record};
+use crate::shared::gc_tag::{GCTagValue, combine_gc_tag_values, read_gc_tag_from_record};
 use crate::shared::indel_mode::IndelMode;
 use crate::shared::interval::{Interval, TouchingMergePolicy, merge_sorted_intervals};
 
@@ -16,7 +16,7 @@ pub struct FragmentWithKmerSegments {
     pub tid: i32,
     pub interval: Interval<u32>,
     pub segments: SmallVec<[Interval<u32>; 12]>,
-    pub gc_tag: GcTagValue,
+    pub gc_tag: GCTagValue,
 }
 
 impl FragmentWithKmerSegments {
@@ -54,7 +54,7 @@ pub struct KmerSegmentedReadInfo {
     pub leading_insertion: bool,
     pub trailing_insertion: bool,
     pub ref_mapped_segments: Vec<(u32, u32)>,
-    pub gc_tag: GcTagValue,
+    pub gc_tag: GCTagValue,
 }
 
 impl KmerSegmentedReadInfo {
@@ -233,7 +233,7 @@ fn collect_flat_fragment(
     end_offset: u32,
     span_start: u32,
     span_end: u32,
-    gc_tag: GcTagValue,
+    gc_tag: GCTagValue,
 ) -> Option<FragmentWithKmerSegments> {
     // Trim fixed offsets from both ends so k-mer contexts avoid edge artifacts.
     // `end_offset` is expected to be small (defaults to 0), so most spans dwarf it.

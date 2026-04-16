@@ -54,12 +54,41 @@ fn expected_collapsed_combined_2_plus_2_order() -> Vec<String> {
 
 #[test]
 fn ensure_dense_end_motif_output_size_accepts_small_matrix() {
+    let _guard = output_size_env_lock()
+        .lock()
+        .expect("env-var test lock should not be poisoned");
+
+    // Safety: this test needs the default byte budget, so it temporarily clears any override
+    // while holding the process-local env lock and restores it before releasing the lock.
+    let previous = std::env::var(MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV).ok();
+    unsafe {
+        std::env::remove_var(MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV);
+    }
+
     // Arrange / Act / Assert
     ensure_dense_end_motif_output_size(10, 20).expect("small dense matrix should be allowed");
+
+    // Safety: same reasoning as above; restore the previous override, if any, before unlocking.
+    unsafe {
+        if let Some(previous) = previous {
+            std::env::set_var(MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV, previous);
+        }
+    }
 }
 
 #[test]
 fn ensure_dense_end_motif_output_size_rejects_large_matrix() {
+    let _guard = output_size_env_lock()
+        .lock()
+        .expect("env-var test lock should not be poisoned");
+
+    // Safety: this test targets the default guard, so it temporarily clears any override while
+    // holding the process-local env lock and restores it before releasing the lock.
+    let previous = std::env::var(MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV).ok();
+    unsafe {
+        std::env::remove_var(MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV);
+    }
+
     // Arrange: just over the configured 5 GiB guard.
     let n_values = (DEFAULT_MAX_DENSE_END_MOTIF_OUTPUT_BYTES / 8) + 1;
 
@@ -67,8 +96,19 @@ fn ensure_dense_end_motif_output_size_rejects_large_matrix() {
     let err = ensure_dense_end_motif_output_size(1, n_values as usize)
         .expect_err("oversized dense matrix should be rejected");
 
+    // Safety: same reasoning as above; restore the previous override, if any, before unlocking.
+    unsafe {
+        if let Some(previous) = previous {
+            std::env::set_var(MAX_DENSE_END_MOTIF_OUTPUT_BYTES_ENV, previous);
+        }
+    }
+
     // Assert
-    assert!(err.to_string().contains("Dense end-motif output would require"));
+    assert!(
+        err.to_string()
+            .contains("Dense end-motif output would require"),
+        "unexpected error message: {err:#}"
+    );
 }
 
 #[test]

@@ -139,7 +139,7 @@ fn shared_real_artifact_cache() -> Result<&'static SharedRealArtifactCache> {
             scaling_cfg.set_gc(ApplyGCArgs {
                 gc_file: Some(scaling_gc_path),
                 gc_tag: None,
-                skip_invalid_gc: false,
+                neutralize_invalid_gc: false,
             });
             scaling_cfg.set_ref_2bit(Some(reference.path.clone()));
             run_coverage_weights(&scaling_cfg)?;
@@ -256,7 +256,7 @@ fn bam_to_bam_consumes_shared_real_artifacts_with_expected_fragment_tags() -> Re
     cfg.set_coverage_scaling_factors(Some(artifacts.scaling_path.clone()));
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(artifacts.gc_path.clone()),
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(artifacts.reference_path.clone()));
     {
@@ -311,7 +311,7 @@ fn lengths_consumes_shared_real_artifacts_with_expected_weighted_count() -> Resu
     cfg.set_scaling_factors(Some(artifacts.scaling_path.clone()));
     cfg.set_gc(ApplyGCArgFileOnly {
         gc_file: Some(artifacts.gc_path.clone()),
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(artifacts.reference_path.clone()));
     {
@@ -371,7 +371,7 @@ fn midpoints_consumes_shared_real_artifacts_with_expected_profile_mass() -> Resu
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(artifacts.gc_path.clone()),
         gc_tag: None,
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(artifacts.reference_path.clone()));
 
@@ -436,7 +436,7 @@ fn fcoverage_consumes_shared_real_artifacts_with_expected_per_base_profile() -> 
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(artifacts.gc_path.clone()),
         gc_tag: None,
-        skip_invalid_gc: false,
+        neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(artifacts.reference_path.clone()));
     {

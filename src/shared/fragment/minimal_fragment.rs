@@ -12,7 +12,7 @@ pub struct Fragment {
     /// Checked non-empty fragment span on the reference.
     pub interval: Interval<u32>,
     /// Optional GC weight from aux tag if provided
-    pub gc_tag: crate::shared::gc_tag::GcTagValue,
+    pub gc_tag: crate::shared::gc_tag::GCTagValue,
 }
 
 impl Fragment {
@@ -41,7 +41,7 @@ pub struct MinimalReadInfo {
     pub tid: i32,                // Contig id
     pub interval: Interval<u32>, // Aligned reference span [start: pos(), end: reference_end())
     pub is_reverse: bool,
-    pub gc_tag: crate::shared::gc_tag::GcTagValue,
+    pub gc_tag: crate::shared::gc_tag::GCTagValue,
 }
 
 impl MinimalReadInfo {
