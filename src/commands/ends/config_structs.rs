@@ -284,6 +284,11 @@ pub struct ClippingArgs {
     /// Clipping means the read contains terminal bases that the aligner did not align normally.
     /// The choice here is thus what sequence to count when that happens.
     ///
+    /// For extraction of **outside** bases, we suggest **skipping** fragments
+    /// with soft clipping, as it is very difficult to infer where on the
+    /// reference genome the actual fragment end was. We do provide two
+    /// "raw"-modes for this, but neither is perfect.
+    ///
     /// **NOTE**: Fragments with **hard**-clipping are always discarded.
     ///
     /// Possible values:

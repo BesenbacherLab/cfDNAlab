@@ -64,6 +64,29 @@ use tracing::{info, warn};
 
 const COMMAND_TARGET: &str = "ends";
 
+fn clip_strategy_name(strategy: ClipStrategy) -> &'static str {
+    match strategy {
+        ClipStrategy::Aligned => "aligned",
+        ClipStrategy::RawAlignedBoundary => "raw-aligned-boundary",
+        ClipStrategy::RawShiftedBoundary => "raw-shifted-boundary",
+        ClipStrategy::Skip => "skip",
+    }
+}
+
+fn outside_kmer_clip_strategy_warning(
+    k_outside: usize,
+    clip_strategy: ClipStrategy,
+) -> Option<String> {
+    if k_outside == 0 || matches!(clip_strategy, ClipStrategy::Skip) {
+        return None;
+    }
+
+    Some(format!(
+        "`--k-outside > 0` with `--clip-strategy {}` will likely add more noise than signal when soft clipping is present, as it is hard to determine where the outside motif actually lies on the reference. Prefer `--clip-strategy skip` for outside-base counting",
+        clip_strategy_name(clip_strategy)
+    ))
+}
+
 /// Execute the end-motif counting pipeline end-to-end.
 ///
 /// Parameters:
@@ -101,6 +124,11 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         bail!(
             "`--clip-strategy raw-aligned-boundary` cannot be combined with `--source-inside reference`"
         );
+    }
+    if let Some(warning_message) =
+        outside_kmer_clip_strategy_warning(opt.k_outside, opt.clip.clip_strategy)
+    {
+        warn!(target: COMMAND_TARGET, "{warning_message}");
     }
     opt.gc.validate()?;
     let (chromosomes, contigs) =
