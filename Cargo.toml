@@ -75,6 +75,8 @@ staged-sg-filter = { version = "0.2.3", optional = true }
 strum = "0.27.2"
 strum_macros = "0.27.2"
 tempfile = "3.20.0"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
 twobit = "0.2.2"
 zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
 zstd = { version = "0.13.3", features = ["zstdmt"] }

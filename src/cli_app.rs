@@ -320,10 +320,19 @@ fn sanitize_command(mut command: clap::Command) -> clap::Command {
 /// Build the branded terminal signature shown in CLI help and command banners.
 pub fn terminal_signature() -> String {
     let accent = Style::new().bold();
+    terminal_signature_with_bars(&format!("{accent}"), &format!("{accent:#}"))
+}
+
+/// Build the plain-text terminal signature for non-terminal sinks such as log files.
+pub fn plain_terminal_signature() -> String {
+    terminal_signature_with_bars("", "")
+}
+
+fn terminal_signature_with_bars(style_on: &str, style_off: &str) -> String {
     let title = "cfDNAlab";
     let bar1 = "_".repeat(CLI_SEPARATOR_WIDTH);
     let bar2 = "─".repeat(CLI_SEPARATOR_WIDTH);
-    format!("\n{accent}{bar1}\n\n  {title}\n\n{bar2}{accent:#}\n")
+    format!("\n{style_on}{bar1}\n\n  {title}\n\n{bar2}{style_off}\n")
 }
 
 /// Apply signature to command and all subcommands

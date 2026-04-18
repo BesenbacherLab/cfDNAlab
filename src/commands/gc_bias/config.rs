@@ -328,6 +328,9 @@ pub struct GCConfig {
     /// Whether to save key intermediate files for inspecting the correction process `[flag]`
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
     pub save_intermediates: bool,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl GCConfig {
@@ -362,6 +365,7 @@ impl GCConfig {
             outlier_quantiles: DEFAULT_OUTLIER_QUANTILES.to_vec(),
             outlier_k: DEFAULT_OUTLIER_K,
             save_intermediates: false,
+            logging: LoggingArgs::default(),
         }
     }
 

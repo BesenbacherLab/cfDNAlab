@@ -2,7 +2,7 @@ use crate::commands::cli_common::{
     ChromosomeArgs, FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs, WindowsArgs,
 };
 use crate::commands::fragment_kmers::config::FragmentKmersConfig;
-use crate::commands::fragment_kmers::fragment_kmers::run_inner;
+use crate::commands::fragment_kmers::fragment_kmers::run_inner_silent;
 use crate::commands::visualize_positions::config::VisualizePositionsConfig;
 use crate::commands::visualize_positions::model::{LengthVisualization, Style, VizConfig};
 use crate::commands::visualize_positions::select::ReadClamp;
@@ -446,9 +446,7 @@ fn run_fragment_kmers(
     let mut windows_args = WindowsArgs::default();
     windows_args.by_bed = Some(inputs.bed.clone());
     cfg.set_windows(windows_args);
-    cfg.set_quiet(true);
-
-    run_inner(&cfg).context("running fragment-kmers for visualize-positions")?;
+    run_inner_silent(&cfg).context("running fragment-kmers for visualize-positions")?;
     Ok(())
 }
 

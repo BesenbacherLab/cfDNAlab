@@ -29,8 +29,38 @@ use std::{
     path::{Path, PathBuf},
     time::Instant,
 };
+use tracing::{info, warn};
 
 const FCOVERAGE_INTERMEDIATE_DECIMALS: u8 = 12;
+
+#[derive(Clone, Copy)]
+pub(crate) enum ScalingWeightsCommand {
+    Coverage,
+    FragmentCount,
+}
+
+impl ScalingWeightsCommand {
+    fn output_file_name(self) -> &'static str {
+        match self {
+            Self::Coverage => "coverage.scaling_factors.tsv",
+            Self::FragmentCount => "fragment_counts.scaling_factors.tsv",
+        }
+    }
+
+    fn info(self, message: &str) {
+        match self {
+            Self::Coverage => info!(target: "coverage-weights", "{message}"),
+            Self::FragmentCount => info!(target: "fragment-count-weights", "{message}"),
+        }
+    }
+
+    fn warn(self, message: &str) {
+        match self {
+            Self::Coverage => warn!(target: "coverage-weights", "{message}"),
+            Self::FragmentCount => warn!(target: "fragment-count-weights", "{message}"),
+        }
+    }
+}
 
 /// Calculates weights for genomic smoothing using large bins and a stride.
 ///
@@ -57,7 +87,7 @@ const FCOVERAGE_INTERMEDIATE_DECIMALS: u8 = 12;
 /// - Returns an error if internal `fcoverage` fails, the intermediate TSV is malformed, or the
 ///   final scaling output cannot be written.
 pub fn run(opt: &crate::commands::coverage_weights::config::CoverageWeightsConfig) -> Result<()> {
-    run_with_fcoverage(&opt.shared, false, "coverage.scaling_factors.tsv")
+    run_with_fcoverage(&opt.shared, false, ScalingWeightsCommand::Coverage)
 }
 
 /// Shared implementation for coverage-based and count-normalized scaling weights.
@@ -67,7 +97,7 @@ pub fn run(opt: &crate::commands::coverage_weights::config::CoverageWeightsConfi
 pub(crate) fn run_with_fcoverage(
     opt: &ScalingWeightsArgs,
     normalize_by_length: bool,
-    output_file_name: &str,
+    command: ScalingWeightsCommand,
 ) -> Result<()> {
     let start_time = Instant::now();
     let (chromosomes, _contigs) =
@@ -83,17 +113,15 @@ pub(crate) fn run_with_fcoverage(
         &dot_join(&[opt.output_prefix.as_str(), "coverage_weights_source"]),
     )
     .context("creating internal fcoverage output directory")?;
-    let _fcoverage_output_cleanup = RemoveDirOnDrop::new(fcoverage_output_dir.clone());
+    let _fcoverage_output_cleanup = RemoveDirOnDrop::new(fcoverage_output_dir.clone(), command);
 
     let fcoverage_cfg =
         build_fcoverage_average_config(opt, &fcoverage_output_dir, normalize_by_length);
 
-    println!("Calling fcoverage");
-    println!("-----------------");
+    command.info("Calling internal fcoverage");
     let fcoverage_result =
         fcoverage_run_inner(&fcoverage_cfg).context("running internal fcoverage")?;
-    println!("-----------------");
-    println!("Reading fcoverage output");
+    command.info("Reading internal fcoverage output");
 
     let mut bins_by_chr =
         load_stride_bins_from_fcoverage_average_tsv(&fcoverage_result, chromosomes.as_slice())?;
@@ -108,16 +136,16 @@ pub(crate) fn run_with_fcoverage(
     let global_avg_overlap_coverage =
         normalize_avg_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
 
-    println!(
+    command.info(&format!(
         "Calculated the global average overlapping position-coverage: {}",
         global_avg_overlap_coverage
-    );
+    ));
 
-    println!("Start: Writing stride-bin coordinates and scaling factors to disk");
-    let file_name = dot_join(&[opt.output_prefix.as_str(), output_file_name]);
-    let mut tsv_writer = BufWriter::new(
-        File::create(opt.ioc.output_dir.join(file_name)).context("creating scaling-factors TSV")?,
-    );
+    command.info("Writing stride-bin coordinates and scaling factors to disk");
+    let file_name = dot_join(&[opt.output_prefix.as_str(), command.output_file_name()]);
+    let final_output_path = opt.ioc.output_dir.join(&file_name);
+    let mut tsv_writer =
+        BufWriter::new(File::create(&final_output_path).context("creating scaling-factors TSV")?);
     writeln!(
         tsv_writer,
         "# gc_mode={}",
@@ -153,6 +181,8 @@ pub(crate) fn run_with_fcoverage(
             .context("writing TSV row")?;
         }
     }
+
+    command.info(&format!("Saved output to: {}", final_output_path.display()));
 
     let global_counter = fcoverage_result.counters;
     let elapsed = start_time.elapsed();
@@ -324,22 +354,23 @@ fn load_stride_bins_from_fcoverage_average_tsv(
 
 struct RemoveDirOnDrop {
     path: PathBuf,
+    command: ScalingWeightsCommand,
 }
 
 impl RemoveDirOnDrop {
-    fn new(path: PathBuf) -> Self {
-        Self { path }
+    fn new(path: PathBuf, command: ScalingWeightsCommand) -> Self {
+        Self { path, command }
     }
 }
 
 impl Drop for RemoveDirOnDrop {
     fn drop(&mut self) {
         if let Err(err) = std::fs::remove_dir_all(&self.path) {
-            eprintln!(
-                "warning: failed to remove temp dir {}: {}",
+            self.command.warn(&format!(
+                "failed to remove temp dir {}: {}",
                 self.path.display(),
                 err
-            );
+            ));
         }
     }
 }

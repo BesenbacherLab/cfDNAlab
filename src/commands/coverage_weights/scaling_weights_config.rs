@@ -99,6 +99,9 @@ pub struct ScalingWeightsArgs {
         )
     )]
     pub ref_2bit: Option<PathBuf>,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl ScalingWeightsArgs {
@@ -108,6 +111,7 @@ impl ScalingWeightsArgs {
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
+            logging: LoggingArgs::default(),
             output_prefix: String::new(),
             bin_size: 5_000_000,
             stride: 500_000,

@@ -5,6 +5,7 @@ use crate::{
     },
     shared::{
         blacklist::is_blacklisted,
+        cli_output,
         interval::Interval,
         io::{dot_join, open_text_reader},
         reference::load_chrom_sizes_with_order,
@@ -26,6 +27,9 @@ use std::{
     path::{Path, PathBuf},
     time::Instant,
 };
+use tracing::warn;
+
+const COMMAND_TARGET: &str = "frag-to-bam";
 
 #[derive(Debug, Default)]
 struct FragToBamCounters {
@@ -85,23 +89,32 @@ pub fn run(opt: &FragToBamConfig) -> Result<()> {
     let start_time = Instant::now();
     let (counters, output_path) = run_inner(opt)?;
 
-    println!();
-    println!("Statistics");
-    println!("----------");
     let elapsed = start_time.elapsed();
-    println!("  Input lines: {}", counters.lines);
-    println!("  Parsed fragments: {}", counters.parsed_fragments);
-    println!(
+    cli_output::write_primary_line("");
+    cli_output::write_primary_line("Statistics");
+    cli_output::write_primary_line("----------");
+    cli_output::write_primary_line(&format!("  Input lines: {}", counters.lines));
+    cli_output::write_primary_line(&format!(
+        "  Parsed fragments: {}",
+        counters.parsed_fragments
+    ));
+    cli_output::write_primary_line(&format!(
         "  Rejected (chromosome filter): {}",
         counters.rejected_chromosome
-    );
-    println!("  Rejected (length): {}", counters.rejected_length);
-    println!("  Rejected (mapq): {}", counters.rejected_mapq);
-    println!("  Rejected (blacklist): {}", counters.rejected_blacklist);
-    println!("  Written to BAM: {}", counters.written);
-    println!("----------");
-    println!("Output BAM: {}", output_path.display());
-    println!("Elapsed time: {:.2?}", elapsed);
+    ));
+    cli_output::write_primary_line(&format!(
+        "  Rejected (length): {}",
+        counters.rejected_length
+    ));
+    cli_output::write_primary_line(&format!("  Rejected (mapq): {}", counters.rejected_mapq));
+    cli_output::write_primary_line(&format!(
+        "  Rejected (blacklist): {}",
+        counters.rejected_blacklist
+    ));
+    cli_output::write_primary_line(&format!("  Written to BAM: {}", counters.written));
+    cli_output::write_primary_line("----------");
+    cli_output::write_primary_line(&format!("Output BAM: {}", output_path.display()));
+    cli_output::write_primary_line(&format!("Elapsed time: {:.2?}", elapsed));
 
     Ok(())
 }
@@ -819,7 +832,8 @@ fn validate_extra_column_names(columns: &[String], allow_unknown_extras: bool) -
     }
 
     if allow_unknown_extras {
-        eprintln!(
+        warn!(
+            target: COMMAND_TARGET,
             "Warning: Ignoring unsupported frag header column name(s): {}. Recognized extra columns are gc_weight, coverage_scaling_weight, count_scaling_weight, and flen",
             unsupported_columns.join(", ")
         );

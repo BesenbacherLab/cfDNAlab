@@ -47,6 +47,9 @@ use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::io::Write;
 use std::{sync::Arc, time::Instant};
+use tracing::{info, warn};
+
+const COMMAND_TARGET: &str = "wps";
 
 /// Execute the windowed protection scores pipeline end-to-end.
 ///
@@ -107,7 +110,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;
 
     if opt.shared_args.blacklist.is_some() {
-        println!("Start: Loading blacklists");
+        info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     // We don't want WPS scores that were biased from neighbouring blacklisted regions
     // So we don't use positions where any fragments could also touch a blacklisted region
@@ -123,14 +126,17 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            println!("Start: Loading window coordinates");
+            info!(target: COMMAND_TARGET, "Loading window coordinates");
             let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             if matches!(
                 per_window_wps_action,
                 Some(CoverageWindowAction::OnlyIncludeThesePositionsUnique)
             ) {
                 // Merge in-place to avoid double memory-usage
-                println!("Start: Merging overlapping/touching windows");
+                info!(
+                    target: COMMAND_TARGET,
+                    "Merging overlapping/touching windows"
+                );
                 // Take ownership so we can remove entries by chromosome
                 let mut wds_owned: FxHashMap<String, crate::shared::bed::Windows> = wds;
                 let mut out: FxHashMap<String, crate::shared::bed::Windows> =
@@ -156,7 +162,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
 
     // Load genomic scaling factors
     if opt.shared_args.scale_genome.scaling_factors.is_some() {
-        println!("Start: Loading scaling factors");
+        info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
         &opt.shared_args.scale_genome,
@@ -170,7 +176,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
 
     // Load GC correction package if specified
     if opt.shared_args.gc.gc_file.is_some() {
-        println!("Start: Loading GC correction matrix");
+        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.shared_args.gc.gc_file.as_ref(),
@@ -284,7 +290,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
 
     let mut global_counter = WPSCounters::default();
 
-    println!("Start: Calculating WPS per tile");
+    info!(target: COMMAND_TARGET, "Calculating WPS per tile");
     pb.set_position(0);
 
     let tile_window_spans_for_threads = tile_window_spans.clone();
@@ -446,7 +452,10 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         global_counter += counter;
     }
 
-    println!("Start: Merging temporary tile files to final output");
+    info!(
+        target: COMMAND_TARGET,
+        "Merging temporary tile files to final output"
+    );
 
     // Merge temporary output files and
     // reduce windows present in multiple tiles
@@ -589,19 +598,24 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             final_bedgraph_pos_name.as_str(),
         )?
     };
-    println!("Saved output to: {:?}", final_out_path);
+    info!(
+        target: COMMAND_TARGET,
+        "Saved output to: {}",
+        final_out_path.display()
+    );
 
     let keep_temp = false; // TODO: Make cli arg behind a feature for dev purposes?
     if !keep_temp {
         if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-            eprintln!(
+            warn!(
+                target: COMMAND_TARGET,
                 "warning: failed to remove temp dir {}: {}",
                 temp_dir.display(),
                 e
             );
         }
     } else {
-        eprintln!("kept temp tiles in {}", temp_dir.display());
+        warn!(target: COMMAND_TARGET, "kept temp tiles in {}", temp_dir.display());
     }
     let elapsed = start_time.elapsed();
     print_fragment_run_statistics(

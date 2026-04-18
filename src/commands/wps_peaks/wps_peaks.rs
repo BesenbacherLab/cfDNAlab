@@ -37,8 +37,10 @@ use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::{info, warn};
 
 const EXTRA_PEAK_HALO_BP: u32 = 450;
+const COMMAND_TARGET: &str = "wps-peaks";
 
 /// Execute the Snyder-style peak calling pipeline on top of windowed protection scores.
 ///
@@ -94,7 +96,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;
 
     if opt.shared_args.blacklist.is_some() {
-        println!("Start: Loading blacklists");
+        info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     // Dilate blacklists so fragments that could reach them do not affect the WPS baseline
     let blacklist_halo =
@@ -115,14 +117,17 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            println!("Start: Loading window coordinates");
+            info!(target: COMMAND_TARGET, "Loading window coordinates");
             let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             if matches!(
                 opt.per_window,
                 Some(PeaksWindowAction::OnlyIncludeThesePositionsUnique)
             ) {
                 // Merge in-place to avoid double memory-usage
-                println!("Start: Merging overlapping/touching windows");
+                info!(
+                    target: COMMAND_TARGET,
+                    "Merging overlapping/touching windows"
+                );
                 // Take ownership so we can remove entries by chromosome
                 let mut wds_owned: FxHashMap<String, crate::shared::bed::Windows> = wds;
                 let mut out: FxHashMap<String, crate::shared::bed::Windows> =
@@ -148,7 +153,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
 
     // Load genomic scaling factors
     if opt.shared_args.scale_genome.scaling_factors.is_some() {
-        println!("Start: Loading scaling factors");
+        info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
         &opt.shared_args.scale_genome,
@@ -162,7 +167,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
 
     // Load GC correction package if specified
     if opt.shared_args.gc.gc_file.is_some() {
-        println!("Start: Loading GC correction matrix");
+        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.shared_args.gc.gc_file.as_ref(),
@@ -205,7 +210,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     let total_tiles = tiles.len();
     let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(total_tiles as u64));
-    println!("Start: Calling peaks per tile");
+    info!(target: COMMAND_TARGET, "Calling peaks per tile");
 
     // Configure global thread‐pool size
     init_global_pool(opt.shared_args.ioc.n_threads as usize)?;
@@ -368,7 +373,8 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     }
 
     if let Err(e) = remove_dir_all(&temp_dir) {
-        eprintln!(
+        warn!(
+            target: COMMAND_TARGET,
             "warning: failed to remove temp dir {}: {}",
             temp_dir.display(),
             e
@@ -427,7 +433,7 @@ impl GlobalWriter {
 
     fn finish(&mut self) -> Result<()> {
         self.writer.flush()?;
-        println!("Saved peaks to: {}", self.path.display());
+        info!(target: COMMAND_TARGET, "Saved peaks to: {}", self.path.display());
         Ok(())
     }
 }
@@ -877,9 +883,13 @@ impl WindowOutputWriter {
         self.writer.flush()?;
         match self.mode {
             WindowOutputMode::Stats => {
-                println!("Saved window stats to: {}", self.path.display());
+                info!(
+                    target: COMMAND_TARGET,
+                    "Saved window stats to: {}",
+                    self.path.display()
+                );
             }
-            _ => println!("Saved peaks to: {}", self.path.display()),
+            _ => info!(target: COMMAND_TARGET, "Saved peaks to: {}", self.path.display()),
         }
         Ok(())
     }

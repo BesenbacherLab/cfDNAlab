@@ -47,6 +47,9 @@ use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{path::PathBuf, sync::Arc, time::Instant};
+use tracing::{info, warn};
+
+const COMMAND_TARGET: &str = "midpoints";
 
 // Handle deletions?
 
@@ -84,7 +87,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
-        println!("Start: Loading blacklists");
+        info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
         opt.blacklist.as_ref(),
@@ -94,7 +97,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     )?;
 
     // Load sites from BED file
-    println!("Start: Loading fixed-size intervals");
+    info!(target: COMMAND_TARGET, "Loading fixed-size intervals");
     let (windows_map, group_idx_to_name) = load_grouped_windows_from_bed(
         opt.intervals.clone(),
         Some(chromosomes.as_slice()),
@@ -103,7 +106,8 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     )?;
     let num_groups = group_idx_to_name.len();
     let total_windows: usize = windows_map.values().map(|gw| gw.len()).sum();
-    println!(
+    info!(
+        target: COMMAND_TARGET,
         "       Num. chromosomes: {:?} | Num. windows: {:?} | Num. groups: {:?}",
         windows_map.keys().len(),
         total_windows,
@@ -126,7 +130,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
-        println!("Start: Loading scaling factors");
+        info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
         &opt.scale_genome,
@@ -140,7 +144,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
     // Load GC correction package if specified
     if opt.gc.gc_file.is_some() {
-        println!("Start: Loading GC correction matrix");
+        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
@@ -187,7 +191,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     // Prepare per-bin counts and metadata
     let mut global_counter = ProfileGroupsCounters::default();
 
-    println!("Start: Counting per chromosome");
+    info!(target: COMMAND_TARGET, "Counting per chromosome");
 
     pb.set_position(0);
 
@@ -251,25 +255,39 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         global_counter += counter;
     }
 
-    println!("Start: Merging temporary tile files to final output");
+    info!(
+        target: COMMAND_TARGET,
+        "Merging temporary tile files to final output"
+    );
 
     // Initialize count array and load+fill with tmp counts
     let mut all_counts = ProfileGroupsCounts::new(window_size, num_groups, length_bins.to_vec());
     all_counts.add_from_npy_1d_files_parallel(all_tmp_count_paths)?;
     let all_counts_3d_arr = all_counts.view_ndarray3_group_len_pos();
 
-    println!("Start: Writing final counts to: {:?}", &final_counts_path);
+    info!(
+        target: COMMAND_TARGET,
+        "Writing final counts to {}",
+        final_counts_path.display()
+    );
     // Write final counts to output_dir
     write_npy(&final_counts_path, &all_counts_3d_arr).context("Write final fail")?;
 
-    println!("Start: Writing group index to: {:?}", &map_path);
+    info!(
+        target: COMMAND_TARGET,
+        "Writing group index to {}",
+        map_path.display()
+    );
     write_group_idx_to_name_tsv(map_path, &group_idx_to_name)?;
 
     #[cfg(feature = "plotters")]
     {
         use crate::commands::midpoints::plotting::plot_midpoint_profiles;
 
-        println!("Start: Plotting selected groups' midpoint profiles");
+        info!(
+            target: COMMAND_TARGET,
+            "Plotting selected groups' midpoint profiles"
+        );
 
         plot_midpoint_profiles(
             prefix,
@@ -284,14 +302,15 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let keep_temp = false; // TODO: Make cli arg behind a feature for dev purposes?
     if !keep_temp {
         if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-            eprintln!(
+            warn!(
+                target: COMMAND_TARGET,
                 "warning: failed to remove temp dir {}: {}",
                 temp_dir.display(),
                 e
             );
         }
     } else {
-        eprintln!("kept temp tiles in {}", temp_dir.display());
+        warn!(target: COMMAND_TARGET, "kept temp tiles in {}", temp_dir.display());
     }
 
     let elapsed = start_time.elapsed();

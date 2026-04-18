@@ -3,6 +3,7 @@ use anyhow::{Context, Result, bail};
 use fxhash::{FxHashMap, FxHashSet};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+use tracing::warn;
 
 /// GC correction mode for how scaling factors were built.
 ///
@@ -552,7 +553,8 @@ pub fn ensure_scaling_gc_compatibility(
         // Unknown file metadata means we do not know how the scaling file was built.
         // Warn so users know the check was skipped, then trust them to decide.
         (ScalingGCMode::Unknown, _) => {
-            eprintln!(
+            warn!(
+                target: "scale-genome",
                 "warning: scaling factors file {} has no gc_mode metadata, so GC compatibility could not be checked",
                 path.display()
             );

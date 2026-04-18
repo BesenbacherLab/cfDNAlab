@@ -6,8 +6,9 @@ use crate::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 use crate::shared::scale_genome::load_scaling_factors_tsv;
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
-use std::path::Path;
-use std::{path::PathBuf, str::FromStr};
+use std::{path::Path, path::PathBuf, str::FromStr};
+
+pub use crate::shared::logging::{LogSpec, LoggingArgs};
 
 /// Minimum ACGT bases required when estimating GC fraction for sample reads.
 pub const MIN_ACGT_BASES_FOR_GC_FRACTION: u32 = 10;

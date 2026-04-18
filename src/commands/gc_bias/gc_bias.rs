@@ -52,6 +52,9 @@ use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{fs::create_dir_all, path::PathBuf, sync::Arc, time::Instant};
+use tracing::{info, warn};
+
+const COMMAND_TARGET: &str = "gc-bias";
 
 /// Get the GC count for a fragment after trimming ends.
 ///
@@ -240,7 +243,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     let mut intermediate_saver =
         IntermediateFileSaver::new(opt.save_intermediates, opt.ioc.output_dir.clone());
 
-    println!("Start: Loading reference GC bias");
+    info!(target: COMMAND_TARGET, "Loading reference GC bias");
     let ReferenceGCData {
         counts: reference_counts,
         unobservables_support_mask: reference_unobservables_support_mask,
@@ -264,7 +267,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            println!("Start: Loading window coordinates");
+            info!(target: COMMAND_TARGET, "Loading window coordinates");
             Some(load_windows_from_bed(
                 bed,
                 Some(chromosomes.as_slice()),
@@ -307,7 +310,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads)?;
 
-    println!("Start: Counting per tile");
+    info!(target: COMMAND_TARGET, "Counting per tile");
 
     pb.set_position(0);
 
@@ -379,7 +382,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     drop(windows_map);
     drop(blacklist_map);
 
-    println!("Start: Processing counts");
+    info!(target: COMMAND_TARGET, "Processing counts");
     if !windows_aligned_to_tiles && !matches!(window_opt, WindowSpec::Global) {
         let (cross_sum, cross_weight) = stream_crossing_files(
             reduce_state.crossing_files.clone(),
@@ -394,14 +397,15 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     let keep_temp = false;
     if !keep_temp {
         if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-            eprintln!(
+            warn!(
+                target: COMMAND_TARGET,
                 "warning: failed to remove temp dir {}: {}",
                 temp_dir.display(),
                 e
             );
         }
     } else {
-        eprintln!("kept temp tiles in {}", temp_dir.display());
+        warn!(target: COMMAND_TARGET, "kept temp tiles in {}", temp_dir.display());
     }
 
     let counted_windows = if matches!(window_opt, WindowSpec::Global) {
@@ -429,7 +433,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
     // Smoothe GC counts on counts-level for each fragment length
     if !reference_metadata.skip_smoothing {
-        println!("Start: Smoothing cfDNA GC counts");
+        info!(target: COMMAND_TARGET, "Smoothing cfDNA GC counts");
         avg_gc_counts.smooth_length_rows_in_place(
             reference_metadata.smoothing_sigma,
             reference_metadata.smoothing_radius,
@@ -437,7 +441,10 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     }
 
     // Convert GC counts to grid with lengths x GC percentage bins
-    println!("Start: Converting cfDNA GC counts to GC percentage bins");
+    info!(
+        target: COMMAND_TARGET,
+        "Converting cfDNA GC counts to GC percentage bins"
+    );
     let mut avg_gc_pct_counts = avg_gc_counts.to_gc_percent_grid(0, 100)?;
     drop(avg_gc_counts);
 
@@ -459,7 +466,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         "average cfDNA counts",
     )?;
 
-    println!("Start: Normalizing average counts");
+    info!(target: COMMAND_TARGET, "Normalizing average counts");
     // Normalize GC counts array by its mean (just to remove the weighting scaling)
     // Ignores unsupported elements when calculating the mean
     let mut norm_gc_counts =
@@ -474,7 +481,10 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
     // Interpolate counts for the unsupported cells
     if !reference_metadata.skip_interpolation {
-        println!("Start: Interpolating counts for unsupported cells (very low reference counts)");
+        info!(
+            target: COMMAND_TARGET,
+            "Interpolating counts for unsupported cells (very low reference counts)"
+        );
         for (row_idx, mut length_row) in norm_gc_counts.outer_iter_mut().enumerate() {
             // Rows are contiguous so we can safely borrow a mutable slice for interpolation
             let row_slice = length_row
@@ -502,7 +512,10 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     // Smoothe the *normalized* counts
     let do_smoothing = false;
     let smoothed_gc_counts = if do_smoothing {
-        println!("Start: Smoothing counts with 2D Gaussian kernel");
+        info!(
+            target: COMMAND_TARGET,
+            "Smoothing counts with 2D Gaussian kernel"
+        );
         // 5-element kernel (-2...+2)
         let radius: usize = 2;
         // Standard deviation (quite sharp so not too smoothed)
@@ -591,8 +604,9 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         mean_scale_per_length_array(&binned_ref_counts, 0., Some(&correction_support_mask));
 
     // Set extreme GC bins to 1.0 in both arrays to avoid zero-division etc.
-    println!(
-        "Start: Setting counts to 1.0 for up to 2x{} extreme GC bins and {} shortest-length bins",
+    info!(
+        target: COMMAND_TARGET,
+        "Setting counts to 1.0 for up to 2x{} extreme GC bins and {} shortest-length bins",
         opt.num_extreme_gc_bins, opt.num_short_length_bins
     );
     if correction_support_mask.iter().any(|&supported| !supported) {
@@ -630,15 +644,19 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             mean_scale_per_length_array(&raw_correction_matrix, 0., Some(&correction_support_mask));
 
         if correction_support_mask.iter().any(|&supported| !supported) {
-            println!(
-                "Start: Interpolating corrections for up to 2x{} extreme GC bins and {} shortest-length bins",
+            info!(
+                target: COMMAND_TARGET,
+                "Interpolating corrections for up to 2x{} extreme GC bins and {} shortest-length bins",
                 opt.num_extreme_gc_bins, opt.num_short_length_bins
             );
             interpolate_masked_corrections(&mut norm_correction_matrix, &correction_support_mask)?;
         }
 
         if !matches!(outlier_rule, OutlierRule::None) {
-            println!("Start: Applying outlier handling to correction matrix");
+            info!(
+                target: COMMAND_TARGET,
+                "Applying outlier handling to correction matrix"
+            );
             let support = Some(&correction_support_mask);
             outlier_stats = apply_outliers_to_matrix(
                 &mut norm_correction_matrix,
@@ -699,7 +717,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     {
         use crate::commands::gc_bias::plotting::plot_gc_bias;
 
-        println!("Start: Plotting GC bias");
+        info!(target: COMMAND_TARGET, "Plotting GC bias");
 
         plot_gc_bias(
             &opt.ioc.output_dir,
@@ -1377,7 +1395,7 @@ impl IntermediateFileSaver {
         S: Data<Elem = f64>,
     {
         if self.save_intermediates {
-            println!("Intermediate file: Saving {}", msg_tag);
+            info!(target: COMMAND_TARGET, "Intermediate file: Saving {}", msg_tag);
             write_npy(
                 self.out_dir.join(format!(
                     "gc_bias.{}.{}.npy",

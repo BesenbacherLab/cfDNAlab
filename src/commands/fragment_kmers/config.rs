@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use crate::{
     commands::cli_common::{
         ApplyGCArgs, BaseSelectionArgs, ChromosomeArgs, FragmentLengthArgs,
-        FragmentPositionSelectionArgs, IOCArgs, Ref2BitRequiredArgs, ScaleGenomeArgs, UnpairedArgs,
-        WindowsArgs,
+        FragmentPositionSelectionArgs, IOCArgs, LoggingArgs, Ref2BitRequiredArgs, ScaleGenomeArgs,
+        UnpairedArgs, WindowsArgs,
     },
     shared::{
         blacklist::BlacklistStrategy,
@@ -116,10 +116,6 @@ pub struct FragmentKmersSharedArgs {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub fragment_lengths: FragmentLengthArgs,
 
-    /// Suppress progress reporting and status messages. [internal]
-    #[cfg_attr(feature = "cli", clap(skip))]
-    pub quiet: bool,
-
     /// Minimum mapping quality to include `[integer]`
     #[cfg_attr(
         feature = "cli",
@@ -173,6 +169,9 @@ pub struct FragmentKmersSharedArgs {
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub gc: ApplyGCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl FragmentKmersSharedArgs {
@@ -205,7 +204,6 @@ impl FragmentKmersSharedArgs {
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
             fragment_lengths: FragmentLengthArgs::default(),
-            quiet: false,
             min_mapq: 30,
             require_proper_pair: false,
             blacklist: None,
@@ -216,6 +214,7 @@ impl FragmentKmersSharedArgs {
                 gc_tag: None,
                 neutralize_invalid_gc: false,
             },
+            logging: LoggingArgs::default(),
         }
     }
 
@@ -428,10 +427,6 @@ impl FragmentKmersConfig {
 
     pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
         self.shared_args.fragment_lengths_mut()
-    }
-
-    pub fn set_quiet(&mut self, quiet: bool) {
-        self.shared_args.quiet = quiet;
     }
 
     pub fn set_min_mapq(&mut self, min_mapq: u8) {

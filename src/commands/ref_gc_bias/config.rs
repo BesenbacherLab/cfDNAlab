@@ -158,6 +158,9 @@ pub struct RefGCBiasConfig {
         )
     )]
     pub tile_size: u32,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl RefGCBiasConfig {

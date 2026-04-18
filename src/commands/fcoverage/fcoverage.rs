@@ -51,6 +51,9 @@ use rust_htslib::bam::{Read, Record};
 use std::io::Write;
 use std::path::PathBuf;
 use std::{sync::Arc, time::Instant};
+use tracing::{info, warn};
+
+const COMMAND_TARGET: &str = "fcoverage";
 
 /// Result of an internal `fcoverage` run.
 ///
@@ -132,21 +135,21 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     ensure_output_dir(&opt.ioc.output_dir)?;
 
     if opt.blacklist.is_some() {
-        println!("Start: Loading blacklists");
+        info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, 0, &chromosomes)?;
 
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            println!("Start: Loading window coordinates");
+            info!(target: COMMAND_TARGET, "Loading window coordinates");
             let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             if matches!(
                 opt.per_window,
                 CoverageWindowAction::OnlyIncludeThesePositionsUnique
             ) {
                 // Merge in-place to avoid double memory-usage
-                println!("Start: Merging overlapping/touching windows");
+                info!(target: COMMAND_TARGET, "Merging overlapping/touching windows");
                 // Take ownership so we can remove entries by chromosome
                 let mut wds_owned: FxHashMap<String, crate::shared::bed::Windows> = wds;
                 let mut out: FxHashMap<String, crate::shared::bed::Windows> =
@@ -172,7 +175,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
-        println!("Start: Loading scaling factors");
+        info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
         &opt.scale_genome,
@@ -186,7 +189,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
 
     // Load GC correction package if specified
     if opt.gc.gc_file.is_some() {
-        println!("Start: Loading GC correction matrix");
+        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
@@ -301,7 +304,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
 
     let mut global_counter = FCoverageCounters::default();
 
-    println!("Start: Counting per tile");
+    info!(target: COMMAND_TARGET, "Counting per tile");
 
     pb.set_position(0);
 
@@ -461,7 +464,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
         global_counter += counter;
     }
 
-    println!("Start: Merging temporary tile files to final output");
+    info!(target: COMMAND_TARGET, "Merging temporary tile files to final output");
 
     // Merge temporary output files and
     // reduce windows present in multiple tiles
@@ -606,11 +609,16 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
         }
     };
 
-    println!("Saved output to: {:?}", final_out_path);
+    info!(
+        target: COMMAND_TARGET,
+        "Saved output to: {}",
+        final_out_path.display()
+    );
 
     if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-        eprintln!(
-            "warning: failed to remove temp dir {}: {}",
+        warn!(
+            target: COMMAND_TARGET,
+            "failed to remove temp dir {}: {}",
             temp_dir.display(),
             e
         );

@@ -60,6 +60,9 @@ use fxhash::FxHashMap;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{convert::TryInto, io::Write, path::Path, sync::Arc, time::Instant};
+use tracing::{info, warn};
+
+const COMMAND_TARGET: &str = "ends";
 
 /// Execute the end-motif counting pipeline end-to-end.
 ///
@@ -110,7 +113,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
-        println!("Start: Loading blacklists");
+        info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
         opt.blacklist.as_ref(),
@@ -122,7 +125,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            println!("Start: Loading window coordinates");
+            info!(target: COMMAND_TARGET, "Loading window coordinates");
             Some(load_windows_from_bed(
                 bed,
                 Some(chromosomes.as_slice()),
@@ -135,7 +138,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
-        println!("Start: Loading scaling factors");
+        info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
         &opt.scale_genome,
@@ -149,7 +152,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
 
     // Load GC correction package if specified
     if opt.gc.gc_file.is_some() {
-        println!("Start: Loading GC correction matrix");
+        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
@@ -202,7 +205,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     let inside_spec = build_optional_kmer_spec(opt.k_inside, "inside")?;
     let outside_spec = build_optional_kmer_spec(opt.k_outside, "outside")?;
 
-    println!("Start: Counting per tile");
+    info!(target: COMMAND_TARGET, "Counting per tile");
 
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads)?;
@@ -268,7 +271,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         global_counter += tile_out.counter;
     }
 
-    println!("Start: Reducing temporary tile files");
+    info!(target: COMMAND_TARGET, "Reducing temporary tile files");
 
     // Start from an all-empty output matrix shape, then fill only the windows that were actually
     // observed in the reduced sparse payloads.
@@ -352,21 +355,22 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     let keep_temp = false;
     if !keep_temp {
         if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-            eprintln!(
+            warn!(
+                target: COMMAND_TARGET,
                 "warning: failed to remove temp dir {}: {}",
                 temp_dir.display(),
                 e
             );
         }
     } else {
-        eprintln!("kept temp tiles in {}", temp_dir.display());
+        warn!(target: COMMAND_TARGET, "kept temp tiles in {}", temp_dir.display());
     }
 
     write_end_settings_json(&opt.ioc.output_dir, prefix, opt)?;
 
     // Write window coordinates plus overlap metadata as TSV to output_dir
     if !matches!(window_opt, WindowSpec::Global) {
-        println!("Start: Writing window coordinates to disk");
+        info!(target: COMMAND_TARGET, "Writing window coordinates to disk");
         let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.tsv"]));
         let mut tsv_writer = create_text_writer(&bins_path).context("creating bins TSV")?;
         writeln!(tsv_writer, "chrom\tstart\tend\tblacklisted_fraction")

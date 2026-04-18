@@ -158,7 +158,7 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
     };
     fk_cfg.set_output_prefix(prefix.to_string());
 
-    let global_counter = fragment_kmers::run_inner(&fk_cfg)?;
+    let global_counter = fragment_kmers::run_inner_silent(&fk_cfg)?;
 
     let counts_dir = fk_cfg.shared_args.ioc.output_dir.as_path();
     let final_dir = &opt.shared_args.ioc.output_dir;

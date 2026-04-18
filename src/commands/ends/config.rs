@@ -1,7 +1,7 @@
 use crate::{
     commands::{
         cli_common::{
-            ApplyGCArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs, ScaleGenomeArgs,
+            ApplyGCArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs,
             UnpairedArgs, WindowsArgs,
         },
         ends::config_structs::*,
@@ -321,6 +321,9 @@ pub struct EndsConfig {
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub gc: ApplyGCArgs,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl EndsConfig {
@@ -364,6 +367,7 @@ impl EndsConfig {
                 gc_tag: None,
                 neutralize_invalid_gc: false,
             },
+            logging: LoggingArgs::default(),
         }
     }
 

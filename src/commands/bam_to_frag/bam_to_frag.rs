@@ -42,6 +42,9 @@ use fxhash::FxHashMap;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{fs, io::Write, path::PathBuf, sync::Arc, time::Instant};
+use tracing::info;
+
+const COMMAND_TARGET: &str = "bam-to-frag";
 /// Execute the bam-to-frag conversion.
 ///
 /// Parameters:
@@ -56,32 +59,27 @@ use std::{fs, io::Write, path::PathBuf, sync::Arc, time::Instant};
 pub fn run(opt: &BamToFragConfig) -> Result<()> {
     let start_time = Instant::now();
     let global_counter = run_inner(opt)?;
-
-    let quiet = false;
-
-    if !quiet {
-        let elapsed = start_time.elapsed();
-        print_fragment_run_statistics(
-            &global_counter.base,
-            elapsed,
-            FragmentRunStatisticsOptions {
-                include_section_header: true,
-                notes: &[],
-                labels: FragmentStatisticsLabels {
-                    counted_fragments: "Fragments included",
-                    ..DEFAULT_FRAGMENT_STATISTICS_LABELS
-                },
-                blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
-                gc: opt.gc.gc_file.is_some().then_some(GCStatisticsSummary {
-                    neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
-                    failed_fragments: global_counter.gc_failed_fragments,
-                    missing_tags: None,
-                    out_of_range_tags: None,
-                }),
+    let elapsed = start_time.elapsed();
+    print_fragment_run_statistics(
+        &global_counter.base,
+        elapsed,
+        FragmentRunStatisticsOptions {
+            include_section_header: true,
+            notes: &[],
+            labels: FragmentStatisticsLabels {
+                counted_fragments: "Fragments included",
+                ..DEFAULT_FRAGMENT_STATISTICS_LABELS
             },
-            std::iter::empty::<&str>(),
-        );
-    }
+            blacklist_excluded_fragments: Some(global_counter.blacklisted_fragments),
+            gc: opt.gc.gc_file.is_some().then_some(GCStatisticsSummary {
+                neutralize_invalid_gc: opt.gc.neutralize_invalid_gc,
+                failed_fragments: global_counter.gc_failed_fragments,
+                missing_tags: None,
+                out_of_range_tags: None,
+            }),
+        },
+        std::iter::empty::<&str>(),
+    );
     Ok(())
 }
 
@@ -94,14 +92,12 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     let prefix = opt.output_prefix.trim();
     let window_opt = opt.resolve_windows();
 
-    let quiet = false;
-
     // Create output directory
     ensure_output_dir(&opt.ioc.output_dir)?;
 
     // Load blacklist intervals if provided
-    if opt.blacklist.is_some() && !quiet {
-        println!("Start: Loading blacklists");
+    if opt.blacklist.is_some() {
+        info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
         opt.blacklist.as_ref(),
@@ -113,7 +109,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            println!("Start: Loading window coordinates");
+            info!(target: COMMAND_TARGET, "Loading window coordinates");
             Some(load_windows_from_bed(
                 bed,
                 Some(chromosomes.as_slice()),
@@ -127,7 +123,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     // Load genomic scaling factors
     let coverage_scale_genome = opt.coverage_scale_genome_args();
     if coverage_scale_genome.scaling_factors.is_some() {
-        println!("Start: Loading coverage scaling factors");
+        info!(target: COMMAND_TARGET, "Loading coverage scaling factors");
     }
     let coverage_scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
         &coverage_scale_genome,
@@ -137,7 +133,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     )?;
     let count_scale_genome = opt.count_scale_genome_args();
     if count_scale_genome.scaling_factors.is_some() {
-        println!("Start: Loading count-based scaling factors");
+        info!(target: COMMAND_TARGET, "Loading count-based scaling factors");
     }
     let count_scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
         &count_scale_genome,
@@ -148,7 +144,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
 
     // Load GC correction package if specified
     if opt.gc.gc_file.is_some() {
-        println!("Start: Loading GC correction matrix");
+        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
@@ -165,15 +161,13 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
         .join(dot_join(&[prefix, "frag.header.tsv"]));
 
     // Create progress bar
-    let progress = ProgressFactory::with_enabled(!quiet);
+    let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(chromosomes.len() as u64));
 
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads)?;
 
-    if !quiet {
-        println!("Start: Converting per chromosome");
-    }
+    info!(target: COMMAND_TARGET, "Converting per chromosome");
 
     pb.set_position(0);
 
@@ -215,18 +209,17 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     }
 
     // Concatenate chromosome-wise temp files
-    if !quiet {
-        println!("Start: Concatenating chromosome-wise frag files");
-    }
+    info!(
+        target: COMMAND_TARGET,
+        "Concatenating chromosome-wise frag files"
+    );
     concat_frag_zst_to_gzip(&chromosome_paths, &output_file, false)?;
 
     // Remove temporary directory once final outputs are written
     fs::remove_dir_all(&temp_dir).context("remove temp directory")?;
 
     // Create text line
-    if !quiet {
-        println!("Start: Writing a header file");
-    }
+    info!(target: COMMAND_TARGET, "Writing a header file");
     let mut header = String::from("chromosome\tstart\tend\tmin_mapq\tread1_strand");
     for extra_column in [
         opt.gc.gc_file.is_some().then_some("gc_weight"),

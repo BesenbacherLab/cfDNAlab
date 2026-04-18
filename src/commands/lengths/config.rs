@@ -2,7 +2,7 @@ use crate::{
     commands::{
         cli_common::{
             ApplyGCArgFileOnly, AssignToWindowArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs,
-            ScaleGenomeArgs, UnpairedArgs, WindowsArgs,
+            LoggingArgs, ScaleGenomeArgs, UnpairedArgs, WindowsArgs,
         },
         gc_bias::correct::MarginalizeLengthsWeightingScheme,
     },
@@ -318,6 +318,9 @@ pub struct LengthsConfig {
         )
     )]
     pub ref_2bit: Option<PathBuf>,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl LengthsConfig {
@@ -348,6 +351,7 @@ impl LengthsConfig {
             },
             gc_length_weighting: MarginalizeLengthsWeightingScheme::Equal,
             ref_2bit: None,
+            logging: LoggingArgs::default(),
         }
     }
 

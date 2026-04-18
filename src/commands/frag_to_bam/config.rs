@@ -1,4 +1,4 @@
-use crate::commands::cli_common::{ChromosomeArgs, FragmentLengthArgs};
+use crate::commands::cli_common::{ChromosomeArgs, FragmentLengthArgs, LoggingArgs};
 use crate::shared::blacklist::BlacklistStrategy;
 use std::path::PathBuf;
 
@@ -163,6 +163,9 @@ pub struct FragToBamConfig {
         )
     )]
     pub blacklist_strategy: BlacklistStrategy,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl FragToBamConfig {
@@ -186,6 +189,7 @@ impl FragToBamConfig {
             blacklist: None,
             blacklist_min_size: 1,
             blacklist_strategy: BlacklistStrategy::Any,
+            logging: LoggingArgs::default(),
         }
     }
 

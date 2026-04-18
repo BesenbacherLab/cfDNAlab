@@ -1,5 +1,6 @@
 use crate::{
     commands::counters::BaseCounters,
+    shared::cli_output,
     shared::gc_tag::{
         MAX_REASONABLE_GC_WEIGHT, MIN_REASONABLE_GC_WEIGHT, gc_failure_action_description,
     },
@@ -58,13 +59,13 @@ pub(crate) fn print_fragment_run_statistics<I, S>(
     S: AsRef<str>,
 {
     if options.include_section_header {
-        println!();
-        println!("Statistics");
-        println!("----------");
+        cli_output::write_primary_line("");
+        cli_output::write_primary_line("Statistics");
+        cli_output::write_primary_line("----------");
     }
 
     for note in options.notes {
-        println!("  {}", note);
+        cli_output::write_primary_line(&format!("  {}", note));
     }
 
     let accepted_reads = base.accepted_forward + base.accepted_reverse;
@@ -74,26 +75,32 @@ pub(crate) fn print_fragment_run_statistics<I, S>(
         accepted_reads as f64 / base.total_reads as f64 * 100.0
     };
 
-    println!("  {}: {}", options.labels.total_reads, base.total_reads);
-    println!(
+    cli_output::write_primary_line(&format!(
+        "  {}: {}",
+        options.labels.total_reads, base.total_reads
+    ));
+    cli_output::write_primary_line(&format!(
         "  {}: {} ({:.2}%, forward: {}, reverse: {})",
         options.labels.accepted_reads,
         accepted_reads,
         accepted_pct,
         base.accepted_forward,
         base.accepted_reverse
-    );
+    ));
 
     if let Some(blacklisted_fragments) = options.blacklist_excluded_fragments {
-        println!("  Blacklist-excluded fragments: {}", blacklisted_fragments);
+        cli_output::write_primary_line(&format!(
+            "  Blacklist-excluded fragments: {}",
+            blacklisted_fragments
+        ));
     }
 
     if let Some(gc) = options.gc {
         let gc_fail_action = gc_failure_action_description(gc.neutralize_invalid_gc);
-        println!(
+        cli_output::write_primary_line(&format!(
             "  GC correction failures ({}): {}",
             gc_fail_action, gc.failed_fragments
-        );
+        ));
 
         if let Some(missing_tags) = gc.missing_tags
             && missing_tags > 0
@@ -103,33 +110,33 @@ pub(crate) fn print_fragment_run_statistics<I, S>(
             } else {
                 "skipped by default"
             };
-            println!(
+            cli_output::write_primary_line(&format!(
                 "  Warning: fragments missing GC tags: {} ({})",
                 missing_tags, missing_action
-            );
+            ));
         }
 
         if let Some(out_of_range_tags) = gc.out_of_range_tags
             && out_of_range_tags > 0
         {
-            println!(
+            cli_output::write_primary_line(&format!(
                 "  Non-zero GC tag values outside the supported positive range [{:.0e}, {:.0e}] treated as invalid: {}",
                 MIN_REASONABLE_GC_WEIGHT, MAX_REASONABLE_GC_WEIGHT, out_of_range_tags
-            );
+            ));
         }
     }
 
-    println!(
+    cli_output::write_primary_line(&format!(
         "  {}: {}",
         options.labels.counted_fragments, base.counted_fragments
-    );
+    ));
 
     for line in extra_lines {
-        println!("  {}", line.as_ref());
+        cli_output::write_primary_line(&format!("  {}", line.as_ref()));
     }
 
     if options.include_section_header {
-        println!("----------");
+        cli_output::write_primary_line("----------");
     }
-    println!("Elapsed time: {:.2?}", elapsed);
+    cli_output::write_primary_line(&format!("Elapsed time: {:.2?}", elapsed));
 }

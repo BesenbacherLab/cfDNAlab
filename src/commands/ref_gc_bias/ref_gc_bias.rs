@@ -63,6 +63,9 @@ use ndarray_npy::NpzWriter;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use rayon::prelude::*;
 use std::{sync::Arc, time::Instant};
+use tracing::info;
+
+const COMMAND_TARGET: &str = "ref-gc-bias";
 
 pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     let start_time = Instant::now();
@@ -87,16 +90,19 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
-        println!("Start: Loading blacklists");
+        info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, 0, &chromosomes)?;
 
     // Load windows from BED file and merge overlapping/touching intervals (unique positions)
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            println!("Start: Loading window coordinates");
+            info!(target: COMMAND_TARGET, "Loading window coordinates");
             let mut wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
-            println!("Start: Merging overlapping/touching windows");
+            info!(
+                target: COMMAND_TARGET,
+                "Merging overlapping/touching windows"
+            );
             let mut merged: FxHashMap<String, Windows> =
                 FxHashMap::with_capacity_and_hasher(wds.len(), Default::default());
             let mut next_idx = 0u64;
@@ -179,7 +185,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
 
     let tile_window_spans_for_threads = tile_window_spans.clone();
 
-    println!("Start: Counting in tiles");
+    info!(target: COMMAND_TARGET, "Counting in tiles");
 
     // Identity accumulator used by the reducer when no tiles have produced output yet
     let zero_counts = GCCounts::new(
@@ -247,7 +253,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     drop(windows_map);
     drop(blacklist_map);
 
-    println!("Start: Processing counts");
+    info!(target: COMMAND_TARGET, "Processing counts");
 
     let used_start_positions =
         total_counts.sum_for_length(opt.fragment_lengths.min_fragment_length as usize)?;
@@ -272,7 +278,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     .expect("support mask should be created");
 
     if !opt.skip_interpolation {
-        println!("Start: Interpolating missing counts");
+        info!(target: COMMAND_TARGET, "Interpolating missing counts");
         debug_assert_eq!(
             global_grid.dim(),
             outlier_support_mask.dim(),
@@ -332,15 +338,17 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     .context("Writing reference GC package failed")?;
 
     let elapsed = start_time.elapsed();
-    println!(
+    info!(
+        target: COMMAND_TARGET,
         "Windows covered {} total ACGT bases",
         total_covered_acgt_positions
     );
-    println!(
+    info!(
+        target: COMMAND_TARGET,
         "Used {:.0} start positions at length {}",
         used_start_positions, opt.fragment_lengths.min_fragment_length
     );
-    println!("Elapsed time: {:.2?}", elapsed);
+    info!(target: COMMAND_TARGET, "Elapsed time: {:.2?}", elapsed);
     Ok(())
 }
 

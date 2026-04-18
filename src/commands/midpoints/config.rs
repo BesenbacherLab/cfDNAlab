@@ -1,6 +1,7 @@
 use crate::{
     commands::cli_common::{
-        ApplyGCArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs, UnpairedArgs, parse_length_bins,
+        ApplyGCArgs, ChromosomeArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs, UnpairedArgs,
+        parse_length_bins,
     },
     shared::blacklist::BlacklistStrategy,
 };
@@ -202,6 +203,9 @@ pub struct MidpointsConfig {
         )
     )]
     pub plot_groups: Vec<usize>,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl MidpointsConfig {
@@ -229,6 +233,7 @@ impl MidpointsConfig {
             },
             ref_2bit: None,
             plot_groups: vec![0],
+            logging: LoggingArgs::default(),
         }
     }
 

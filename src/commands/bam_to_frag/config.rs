@@ -1,6 +1,6 @@
 use crate::commands::cli_common::{
-    ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, IOCArgs, ScaleGenomeArgs, UnpairedArgs,
-    WindowSpec,
+    ApplyGCArgFileOnly, ChromosomeArgs, FragmentLengthArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs,
+    UnpairedArgs, WindowSpec,
 };
 use crate::shared::blacklist::BlacklistStrategy;
 use std::path::PathBuf;
@@ -167,6 +167,9 @@ pub struct BamToFragConfig {
         )
     )]
     pub ref_2bit: Option<PathBuf>,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl BamToFragConfig {
@@ -192,6 +195,7 @@ impl BamToFragConfig {
                 neutralize_invalid_gc: false,
             },
             ref_2bit: None,
+            logging: LoggingArgs::default(),
         }
     }
 

@@ -1,4 +1,4 @@
-use crate::commands::cli_common::{ApplyGCArgs, ScaleGenomeArgs};
+use crate::commands::cli_common::{ApplyGCArgs, LoggingArgs, ScaleGenomeArgs};
 use crate::commands::cli_common::{ChromosomeArgs, IOCArgs, UnpairedArgs, WindowsArgs};
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use std::path::PathBuf;
@@ -230,6 +230,9 @@ pub struct WPSSharedConfig {
         )
     )]
     pub ref_2bit: Option<PathBuf>,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl WPSSharedConfig {
@@ -257,6 +260,7 @@ impl WPSSharedConfig {
                 neutralize_invalid_gc: false,
             },
             ref_2bit: None,
+            logging: LoggingArgs::default(),
         }
     }
 

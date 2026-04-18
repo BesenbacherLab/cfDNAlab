@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::commands::cli_common::{ApplyGCArgs, ScaleGenomeArgs};
 use crate::commands::cli_common::{
-    ChromosomeArgs, FragmentLengthArgs, IOCArgs, UnpairedArgs, WindowsArgs,
+    ChromosomeArgs, FragmentLengthArgs, IOCArgs, LoggingArgs, UnpairedArgs, WindowsArgs,
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 
@@ -240,6 +240,9 @@ pub struct FCoverageConfig {
         )
     )]
     pub ref_2bit: Option<PathBuf>,
+
+    #[cfg_attr(feature = "cli", clap(flatten))]
+    pub logging: LoggingArgs,
 }
 
 impl FCoverageConfig {
@@ -249,6 +252,7 @@ impl FCoverageConfig {
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
+            logging: LoggingArgs::default(),
             normalize_by_length: false,
             output_prefix: String::new(),
             decimals: 2,

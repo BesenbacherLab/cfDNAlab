@@ -48,6 +48,9 @@ use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{io::Write, path::Path, sync::Arc, time::Instant};
+use tracing::{info, warn};
+
+const COMMAND_TARGET: &str = "lengths";
 
 // Map orig_idx -> counts plus containment flag for this tile
 #[derive(Clone)]
@@ -130,7 +133,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
 
     // Load blacklist intervals if provided
     if opt.blacklist.is_some() {
-        println!("Start: Loading blacklists");
+        info!(target: COMMAND_TARGET, "Loading blacklists");
     }
     let blacklist_map = load_blacklist_map(
         opt.blacklist.as_ref(),
@@ -142,7 +145,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     // Load windows from BED file
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
-            println!("Start: Loading window coordinates");
+            info!(target: COMMAND_TARGET, "Loading window coordinates");
             Some(load_windows_from_bed(
                 bed,
                 Some(chromosomes.as_slice()),
@@ -155,7 +158,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
-        println!("Start: Loading scaling factors");
+        info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
     let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
         &opt.scale_genome,
@@ -166,7 +169,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
 
     // Load GC correction package if specified
     if opt.gc.gc_file.is_some() {
-        println!("Start: Loading GC correction matrix");
+        info!(target: COMMAND_TARGET, "Loading GC correction matrix");
     }
     let gc_corrector = load_length_agnostic_gc_corrector(
         opt.gc.gc_file.as_ref(),
@@ -224,7 +227,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     let partials_prefix = &dot_join(&[prefix, "part"]);
     let cross_prefix = &dot_join(&[prefix, "cross"]);
 
-    println!("Start: Counting per tile");
+    info!(target: COMMAND_TARGET, "Counting per tile");
 
     // Configure global thread‐pool size
     init_global_pool(opt.ioc.n_threads)?;
@@ -282,7 +285,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         global_counter += tile_out.counters;
     }
 
-    println!("Start: Reducing temporary tile files");
+    info!(target: COMMAND_TARGET, "Reducing temporary tile files");
 
     let mut all_bins: Vec<LengthCounts> = Vec::new();
 
@@ -383,7 +386,10 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
 
     // Sort by original index (when given a bed file)
     if matches!(window_opt, WindowSpec::Bed(_)) {
-        println!("Start: Reordering counts by original window index in BED file");
+        info!(
+            target: COMMAND_TARGET,
+            "Reordering counts by original window index in BED file"
+        );
 
         // Zip into a single Vec to allow sorting together
         let mut paired: Vec<_> = bin_info.into_iter().zip(all_bins).collect(); // (BinInfo, DecodedCounts)
@@ -398,14 +404,15 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     let keep_temp = false;
     if !keep_temp {
         if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-            eprintln!(
+            warn!(
+                target: COMMAND_TARGET,
                 "warning: failed to remove temp dir {}: {}",
                 temp_dir.display(),
                 e
             );
         }
     } else {
-        eprintln!("kept temp tiles in {}", temp_dir.display());
+        warn!(target: COMMAND_TARGET, "kept temp tiles in {}", temp_dir.display());
     }
 
     // Write final counts to output_dir
@@ -437,12 +444,15 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     // Plot the global fragment length distribution as a line plot for quick QC
     #[cfg(feature = "plotters")]
     {
-        println!("Start: Plotting overall length distribution");
+        info!(target: COMMAND_TARGET, "Plotting overall length distribution");
 
         use crate::shared::plotters::lineplot::write_line_plot_png;
 
         if all_bins.is_empty() {
-            println!("Skipping overall length plot because no bins were produced");
+            info!(
+                target: COMMAND_TARGET,
+                "Skipping overall length plot because no bins were produced"
+            );
         } else {
             let mut global_counts = vec![0f64; all_bins[0].counts.len()];
             for length_counts in &all_bins {
@@ -483,7 +493,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
 
     // Write window coordinates plus overlap metadata as TSV to output_dir
     if !matches!(window_opt, WindowSpec::Global) {
-        println!("Start: Writing window coordinates to disk");
+        info!(target: COMMAND_TARGET, "Writing window coordinates to disk");
         let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.tsv"]));
         let mut tsv_writer = create_text_writer(&bins_path).context("creating bins TSV")?;
         writeln!(tsv_writer, "chrom\tstart\tend\tblacklisted_fraction")

@@ -1,6 +1,7 @@
 use anyhow::{Result, bail};
 use rust_htslib::bam::record::{Aux, Record};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tracing::warn;
 
 /// GC weight extracted from an AUX tag together with validity status.
 #[derive(Debug, Clone, Copy, Default)]
@@ -51,12 +52,13 @@ pub enum ClassifiedGCTagWeight {
 fn warn_extreme_gc_weight(v: f32) {
     let seen = EXTREME_GC_WARNINGS.fetch_add(1, Ordering::Relaxed);
     if seen < MAX_GC_WARNINGS {
-        eprintln!(
+        warn!(
+            target: "gc-tag",
             "warning: GC tag weight {:.3e} is outside the supported positive range [{:.0e}, {:.0e}] (zero is valid); treating as invalid",
             v, MIN_REASONABLE_GC_WEIGHT, MAX_REASONABLE_GC_WEIGHT
         );
         if seen + 1 == MAX_GC_WARNINGS {
-            eprintln!("warning: suppressing further GC tag weight warnings");
+            warn!(target: "gc-tag", "warning: suppressing further GC tag weight warnings");
         }
     }
 }
