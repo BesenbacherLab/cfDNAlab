@@ -14,8 +14,8 @@ use anyhow::Result;
 use cfdnalab::commands::{
     bam_to_bam::{bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig},
     cli_common::{
-        ApplyGCArgFileOnly, ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs, IOCArgs,
-        ScaleGenomeArgs, WindowsArgs,
+        ApplyGCArgFileOnly, ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs,
+        DistributionWindowsArgs, IOCArgs, ScaleGenomeArgs,
     },
     coverage_weights::{
         config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
@@ -304,7 +304,7 @@ fn lengths_consumes_shared_real_artifacts_with_expected_weighted_count() -> Resu
         base_chromosomes(&["chr1"]),
     );
     cfg.set_indel_mode(IndelMode::Ignore);
-    cfg.set_windows(WindowsArgs::default());
+    cfg.set_windows(DistributionWindowsArgs::default());
     cfg.set_window_assignment(AssignToWindowArgs::default());
     cfg.set_min_mapq(0);
     cfg.set_require_proper_pair(false);

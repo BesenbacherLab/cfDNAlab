@@ -1111,7 +1111,7 @@ fn process_tile(
                 // Increment counter by 1.0 or by the overlap fraction
                 for overlapped_window in overlapping_windows.windows {
                     let count_weight = match opt.window_assignment.assign_by {
-                        WindowAssigner::CountOverlap => overlapped_window.overlap_fraction as f64,
+                        WindowAssigner::CountOverlap => overlapped_window.overlap_fraction,
                         _ => 1.0f64,
                     };
                     if let Some(state) = windows.get_mut(overlapped_window.idx) {

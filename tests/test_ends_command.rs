@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 #[cfg(feature = "cmd_gc_bias")]
 use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
 use cfdnalab::commands::{
-    cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, UnpairedArgs, WindowsArgs},
+    cli_common::{ApplyGCArgs, ChromosomeArgs, DistributionWindowsArgs, IOCArgs, UnpairedArgs},
     ends::{
         config::EndsConfig,
         config_structs::{
@@ -19,7 +19,7 @@ use cfdnalab::commands::{
 use cfdnalab::shared::{blacklist::BlacklistStrategy, indel_mode::IndelMotifFilterPolicy};
 use fixtures::{
     BamFixture, FragmentSpec, ReadSpec, bam_from_specs, paired_fragment, simple_reference_twobit,
-    single_read_bam_with_qualities, twobit_from_sequences, write_bed,
+    single_read_bam_with_qualities, twobit_from_sequences, write_bed, write_scaling_factors,
 };
 #[cfg(feature = "cmd_gc_bias")]
 use ndarray::array;
@@ -860,6 +860,44 @@ fn parse_json(text: &str) -> Value {
     serde_json::from_str(text).expect("settings sidecar should be valid JSON")
 }
 
+fn parse_group_index_rows(text: &str) -> Vec<(u64, String, f64)> {
+    let mut lines = text.lines();
+    let header = lines.next().expect("group index TSV must have a header");
+    assert_eq!(header, "group_idx\tgroup_name\tblacklisted_fraction");
+
+    lines
+        .map(|line| {
+            let mut fields = line.split('\t');
+            let group_idx = fields
+                .next()
+                .expect("group index row must contain group_idx")
+                .parse::<u64>()
+                .expect("group_idx must parse as u64");
+            let group_name = fields
+                .next()
+                .expect("group index row must contain group_name")
+                .to_string();
+            let blacklisted_fraction = fields
+                .next()
+                .expect("group index row must contain blacklisted_fraction")
+                .parse::<f64>()
+                .expect("blacklisted_fraction must parse as f64");
+            assert!(
+                fields.next().is_none(),
+                "group index row must contain exactly three columns"
+            );
+            (group_idx, group_name, blacklisted_fraction)
+        })
+        .collect()
+}
+
+fn parse_group_index_tsv(text: &str) -> Vec<(u64, String)> {
+    parse_group_index_rows(text)
+        .into_iter()
+        .map(|(group_idx, group_name, _)| (group_idx, group_name))
+        .collect()
+}
+
 fn expected_settings_json(
     source_inside: &str,
     clip_strategy: &str,
@@ -1551,9 +1589,10 @@ fn blacklist_gc_and_scaling_weights_combine_to_the_exact_expected_endpoint_count
     cfg.all_motifs = true;
     cfg.blacklist = Some(vec![blacklist_bed]);
     cfg.blacklist_strategy = BlacklistStrategy::All;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -1905,9 +1944,10 @@ fn outside_reference_lookup_uses_preloaded_tile_reference_when_the_motif_extends
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = false;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
@@ -1950,9 +1990,10 @@ fn endpoint_assigns_left_and_right_end_motifs_to_separate_windows() -> Result<()
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -1990,9 +2031,10 @@ fn midpoint_assigns_both_end_motifs_to_the_midpoint_window() -> Result<()> {
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Midpoint,
@@ -2029,9 +2071,10 @@ fn count_overlap_weights_both_end_motifs_by_the_fragment_overlap_fraction() -> R
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::CountOverlap,
@@ -2068,9 +2111,10 @@ fn cross_tile_fragment_is_counted_once_per_window_when_it_reaches_into_the_next_
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: Some(20),
         by_bed: None,
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Any,
@@ -2109,9 +2153,10 @@ fn all_requires_the_full_fragment_to_overlap_the_window() -> Result<()> {
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::All,
@@ -2145,9 +2190,10 @@ fn all_assignment_counts_the_fragment_when_the_window_fully_contains_it() -> Res
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::All,
@@ -2184,9 +2230,10 @@ fn proportion_assignment_counts_the_fragment_when_the_requested_fraction_is_met(
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Proportion(0.5),
@@ -2222,9 +2269,10 @@ fn proportion_assignment_rejects_the_fragment_when_the_requested_fraction_is_not
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Proportion(0.5),
@@ -2259,9 +2307,10 @@ fn any_assignment_counts_both_end_motifs_when_any_fragment_base_overlaps() -> Re
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Any,
@@ -2297,9 +2346,10 @@ fn endpoint_counts_both_end_motifs_when_one_window_contains_both_terminal_bases(
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -2370,9 +2420,10 @@ fn dense_all_motifs_output_enumerates_the_full_combined_1_plus_1_universe_withou
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -2467,9 +2518,10 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_1_plus_1_unive
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -2527,9 +2579,10 @@ fn dense_all_motifs_output_enumerates_the_full_combined_2_plus_2_universe_withou
     });
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -2624,9 +2677,10 @@ fn dense_all_motifs_output_enumerates_the_full_collapsed_combined_2_plus_2_unive
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
     cfg.collapse_complement = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -3012,9 +3066,10 @@ fn by_size_windowing_keeps_three_chromosome_rows_in_chromosome_order() -> Result
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: Some(200),
         by_bed: None,
+        by_grouped_bed: None,
     });
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -3094,9 +3149,10 @@ fn bed_windowing_preserves_bed_row_order_and_skips_selected_chromosomes_without_
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -3155,7 +3211,7 @@ fn by_size_and_bed_equivalent_full_chromosome_windows_match_across_three_chromos
         ],
     )?;
 
-    let make_cfg = |out_dir: &Path, windows: WindowsArgs| {
+    let make_cfg = |out_dir: &Path, windows: DistributionWindowsArgs| {
         let mut cfg = EndsConfig::new(
             IOCArgs {
                 bam: bam.bam.clone(),
@@ -3184,16 +3240,18 @@ fn by_size_and_bed_equivalent_full_chromosome_windows_match_across_three_chromos
 
     let by_size_cfg = make_cfg(
         by_size_out.path(),
-        WindowsArgs {
+        DistributionWindowsArgs {
             by_size: Some(200),
             by_bed: None,
+            by_grouped_bed: None,
         },
     );
     let bed_cfg = make_cfg(
         bed_out.path(),
-        WindowsArgs {
+        DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(windows_bed),
+            by_grouped_bed: None,
         },
     );
 
@@ -3454,9 +3512,10 @@ fn raw_shifted_boundary_endpoint_assignment_uses_the_shifted_assignment_boundari
     cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -3508,9 +3567,10 @@ fn raw_shifted_boundary_endpoint_assignment_keeps_a_left_window_that_only_raw_re
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -3561,9 +3621,10 @@ fn raw_shifted_boundary_endpoint_left_only_window_is_tile_size_invariant() -> Re
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(windows_bed),
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignMotifToWindowArgs {
             assign_by: WindowMotifAssigner::Endpoint,
@@ -3608,9 +3669,10 @@ fn raw_shifted_boundary_endpoint_assignment_does_not_count_a_window_ending_at_th
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -3655,9 +3717,10 @@ fn aligned_endpoint_assignment_ignores_raw_shifted_boundary_positions() -> Resul
     cfg.clip.clip_strategy = ClipStrategy::Aligned;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -3707,9 +3770,10 @@ fn raw_aligned_boundary_endpoint_assignment_uses_aligned_positions_with_raw_base
     cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -3761,9 +3825,10 @@ fn raw_aligned_boundary_endpoint_assignment_does_not_count_windows_at_shifted_po
     cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -3813,9 +3878,10 @@ fn raw_aligned_boundary_endpoint_left_only_window_outside_aligned_reach_is_tile_
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(windows_bed),
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignMotifToWindowArgs {
             assign_by: WindowMotifAssigner::Endpoint,
@@ -3860,9 +3926,10 @@ fn raw_aligned_boundary_endpoint_assignment_keeps_an_aligned_right_halo_window()
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -3907,9 +3974,10 @@ fn raw_aligned_boundary_endpoint_assignment_does_not_count_a_far_right_window_be
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -3955,9 +4023,10 @@ fn aligned_endpoint_assignment_keeps_a_right_halo_only_window_reached_by_an_owne
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -4008,9 +4077,10 @@ fn aligned_endpoint_assignment_mixed_core_and_right_halo_rows_count_only_the_tru
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -4048,9 +4118,10 @@ fn skip_endpoint_assignment_keeps_a_right_halo_only_window_when_no_end_is_soft_c
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -4278,9 +4349,10 @@ fn raw_aligned_boundary_blacklist_validation_ignores_inside_bases_without_refere
     cfg.all_motifs = false;
     cfg.blacklist = Some(vec![blacklist_bed]);
     cfg.blacklist_strategy = BlacklistStrategy::All;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -4455,9 +4527,10 @@ fn motif_labels_use_outside_inside_order_when_outside_bases_are_present() -> Res
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -4509,9 +4582,10 @@ fn right_end_motif_labels_use_outside_inside_order_when_outside_bases_are_presen
     });
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -4548,9 +4622,10 @@ fn outside_only_motifs_are_labeled_with_an_empty_inside_half() -> Result<()> {
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -4589,9 +4664,10 @@ fn left_edge_missing_outside_context_drops_the_left_endpoint_motif() -> Result<(
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -4629,9 +4705,10 @@ fn right_edge_missing_outside_context_drops_the_right_endpoint_motif() -> Result
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -4678,9 +4755,10 @@ fn raw_shifted_boundary_shifting_still_applies_when_only_outside_bases_are_count
     cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -4728,9 +4806,10 @@ fn raw_aligned_boundary_outside_only_motifs_use_the_aligned_boundary() -> Result
     cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = false;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -4781,9 +4860,10 @@ fn raw_shifted_boundary_endpoint_assignment_keeps_a_far_right_window_beyond_alig
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -4833,9 +4913,10 @@ fn raw_shifted_boundary_endpoint_far_right_only_window_is_tile_size_invariant() 
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(windows_bed),
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignMotifToWindowArgs {
             assign_by: WindowMotifAssigner::Endpoint,
@@ -4884,9 +4965,10 @@ fn raw_aligned_boundary_endpoint_far_right_only_window_is_tile_size_invariant() 
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(windows_bed),
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignMotifToWindowArgs {
             assign_by: WindowMotifAssigner::Endpoint,
@@ -4931,9 +5013,10 @@ fn raw_shifted_boundary_endpoint_assignment_does_not_count_a_window_starting_at_
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -4989,9 +5072,10 @@ fn raw_shifted_boundary_endpoint_assignment_must_not_shrink_fetch_to_unrelated_c
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -5050,9 +5134,10 @@ fn raw_shifted_boundary_endpoint_mixed_core_and_far_right_rows_are_tile_size_inv
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(windows_bed),
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignMotifToWindowArgs {
             assign_by: WindowMotifAssigner::Endpoint,
@@ -5109,9 +5194,10 @@ fn raw_aligned_boundary_endpoint_mixed_core_and_far_right_rows_are_tile_size_inv
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(windows_bed),
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignMotifToWindowArgs {
             assign_by: WindowMotifAssigner::Endpoint,
@@ -5158,9 +5244,10 @@ fn raw_shifted_boundary_endpoint_by_size_counts_the_previous_bin_reached_by_left
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: Some(10),
         by_bed: None,
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -5203,9 +5290,10 @@ fn raw_aligned_boundary_endpoint_by_size_keeps_both_ends_in_the_aligned_bin_with
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: Some(10),
         by_bed: None,
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -5249,9 +5337,10 @@ fn raw_shifted_boundary_endpoint_by_size_counts_the_next_bin_reached_by_right_ra
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: Some(10),
         by_bed: None,
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -5294,9 +5383,10 @@ fn raw_aligned_boundary_endpoint_by_size_keeps_both_ends_in_the_aligned_bin_with
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: Some(10),
         by_bed: None,
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -5346,9 +5436,10 @@ fn raw_shifted_boundary_endpoint_by_size_keeps_exact_half_open_boundary_bins_zer
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = 10;
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: Some(1),
             by_bed: None,
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignMotifToWindowArgs {
             assign_by: WindowMotifAssigner::Endpoint,
@@ -5398,9 +5489,10 @@ fn raw_shifted_boundary_endpoint_by_size_output_is_tile_size_invariant() -> Resu
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: Some(10),
             by_bed: None,
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignMotifToWindowArgs {
             assign_by: WindowMotifAssigner::Endpoint,
@@ -5446,9 +5538,10 @@ fn raw_aligned_boundary_endpoint_by_size_output_is_tile_size_invariant() -> Resu
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: Some(10),
             by_bed: None,
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignMotifToWindowArgs {
             assign_by: WindowMotifAssigner::Endpoint,
@@ -5667,9 +5760,10 @@ fn windowed_runs_write_bins_tsv_with_the_selected_windows() -> Result<()> {
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -5690,6 +5784,1019 @@ fn windowed_runs_write_bins_tsv_with_the_selected_windows() -> Result<()> {
     assert_eq!(rows[0], "chrom\tstart\tend\tblacklisted_fraction");
     assert!(rows[1].starts_with("chr1\t10\t11\t"));
     assert!(rows[2].starts_with("chr1\t19\t20\t"));
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_endpoint_outputs_group_rows_in_first_occurrence_order_and_writes_group_metadata()
+-> Result<()> {
+    // Arrange:
+    // - `simple_paired_fragment_bam(..., 10, 10, 4)` yields one fragment spanning [10,20).
+    // - With `k_inside=1`, `k_outside=0`, `source_inside=reference`, and endpoint assignment:
+    //     left endpoint at 10 contributes `_G`
+    //     right endpoint at 19 contributes `_A`
+    // - Grouped intervals:
+    //     [10,11) beta  -> counts left `_G`
+    //     [19,20) alpha -> counts right `_A`
+    //     [10,20) beta  -> counts both `_G` and `_A`
+    //     [30,31) gamma -> no counted fragments, but stays in metadata and output as a zero row
+    // - Group order must follow first occurrence in the BED scan: beta, alpha, gamma.
+    // - Expected grouped counts:
+    //     beta  -> `_G` = 2.0, `_A` = 1.0
+    //     alpha -> `_A` = 1.0
+    //     gamma -> all zeros
+    // - `group_index.tsv` must expose per-group blacklist fractions:
+    //     beta  -> 0
+    //     alpha -> 0
+    //     gamma -> 1
+    let bam = simple_paired_fragment_bam("ends_grouped_endpoint_metadata", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_windows.bed");
+    let blacklist_bed = out_dir.path().join("blacklist.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 10, 11, "beta"),
+            ("chr1", 19, 20, "alpha"),
+            ("chr1", 10, 20, "beta"),
+            ("chr1", 30, 31, "gamma"),
+        ],
+    )?;
+    write_bed(&blacklist_bed, &[("chr1", 30, 31, "masked_gamma")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    cfg.blacklist = Some(vec![blacklist_bed]);
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+    let group_index = read_text_file(&out_dir.path().join("ends.group_index.tsv"))?;
+
+    // Assert
+    assert_eq!(motifs, vec!["_A", "_C", "_G", "_T"]);
+    assert_eq!(matrix.shape(), &[3, 4]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 2.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_A"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_G"), 0.0);
+    assert_eq!(matrix.row(2).sum(), 0.0);
+    assert_eq!(matrix.sum(), 4.0);
+
+    assert_eq!(
+        parse_group_index_rows(&group_index),
+        vec![
+            (0, "beta".to_string(), 0.0),
+            (1, "alpha".to_string(), 0.0),
+            (2, "gamma".to_string(), 1.0),
+        ]
+    );
+    assert!(!out_dir.path().join("ends.bins.tsv").exists());
+    assert!(!out_dir.path().join("ends.grouped_windows.tsv").exists());
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_scaling_factors_weight_each_grouped_end_motif() -> Result<()> {
+    // Arrange:
+    // - fragment [10,20) contributes `_G` at the left endpoint and `_A` at the right endpoint
+    // - grouped windows keep that fragment in `beta` and one explicit zero row in `gamma`
+    // - a chromosome-wide scaling factor of 2.0 should double both grouped endpoint motifs
+    let bam = simple_paired_fragment_bam("ends_grouped_scaling", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_scaling.bed");
+    let scaling_path = out_dir.path().join("grouped_scaling.tsv");
+    write_bed(
+        &grouped_bed,
+        &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
+    )?;
+    write_scaling_factors(&scaling_path, &[("chr1", 0, 256, 2.0)])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    cfg.set_scaling_factors(Some(scaling_path));
+    set_exact_fragment_length(&mut cfg, 10);
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+    let group_index = read_text_file(&out_dir.path().join("ends.group_index.tsv"))?;
+
+    // Assert
+    assert_eq!(
+        parse_group_index_tsv(&group_index),
+        vec![(0, "beta".to_string()), (1, "gamma".to_string())]
+    );
+    assert_eq!(matrix.shape(), &[2, 4]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 2.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 2.0);
+    assert_eq!(matrix.row(1).sum(), 0.0);
+    assert_eq!(matrix.sum(), 4.0);
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_blacklist_filtering_drops_matching_fragments_before_grouping() -> Result<()> {
+    // Arrange:
+    // - fragment [10,20) would contribute `_G` and `_A` to `beta`
+    // - blacklisting [15,16) with `blacklist-strategy=any` must drop that fragment before any
+    //   grouped endpoint counting happens
+    // - grouped output must still preserve `gamma` as an explicit zero row
+    // - metadata still reflects the grouped BED geometry:
+    //     beta  -> 1 / 10 = 0.1 blacklisted
+    //     gamma -> 0
+    let bam = simple_paired_fragment_bam("ends_grouped_blacklist", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_blacklist.bed");
+    let blacklist_bed = out_dir.path().join("grouped_blacklist_mask.bed");
+    write_bed(
+        &grouped_bed,
+        &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
+    )?;
+    write_bed(&blacklist_bed, &[("chr1", 15, 16, "masked_beta")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    cfg.blacklist = Some(vec![blacklist_bed]);
+    cfg.blacklist_strategy = BlacklistStrategy::Any;
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    set_exact_fragment_length(&mut cfg, 10);
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+    let group_index = read_text_file(&out_dir.path().join("ends.group_index.tsv"))?;
+
+    // Assert
+    assert_eq!(
+        parse_group_index_rows(&group_index),
+        vec![
+            (0, "beta".to_string(), 0.1),
+            (1, "gamma".to_string(), 0.0),
+        ]
+    );
+    assert_eq!(matrix.shape(), &[2, 4]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 0.0);
+    assert_eq!(matrix.row(1).sum(), 0.0);
+    assert_eq!(matrix.sum(), 0.0);
+    Ok(())
+}
+
+#[cfg(feature = "cmd_gc_bias")]
+#[test]
+fn grouped_bed_gc_correction_weights_each_grouped_end_motif() -> Result<()> {
+    // Arrange:
+    // - fragment [10,20) on the simple ACGT reference has GC%=50 over 10 bp
+    // - the package below therefore assigns weight 3.0 to both grouped endpoint motifs
+    // - grouped windows keep `beta` as the counted row and preserve `gamma` as an explicit
+    //   zero row
+    let bam = simple_paired_fragment_bam("ends_grouped_gc", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_gc.bed");
+    let gc_path = out_dir.path().join("grouped_gc_package.npz");
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 0,
+        length_edges: vec![10, 11, 20],
+        gc_edges: vec![0, 51, 100],
+        length_bin_frequencies: array![1.0_f64, 1.0_f64],
+        correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
+    };
+    package.write_npz(&gc_path)?;
+    write_bed(
+        &grouped_bed,
+        &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        neutralize_invalid_gc: false,
+    });
+    set_exact_fragment_length(&mut cfg, 10);
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+    let group_index = read_text_file(&out_dir.path().join("ends.group_index.tsv"))?;
+
+    // Assert
+    assert_eq!(
+        parse_group_index_tsv(&group_index),
+        vec![(0, "beta".to_string()), (1, "gamma".to_string())]
+    );
+    assert_eq!(matrix.shape(), &[2, 4]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 3.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 3.0);
+    assert_eq!(matrix.row(1).sum(), 0.0);
+    assert_eq!(matrix.sum(), 6.0);
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_count_overlap_sums_same_group_window_weights_above_one() -> Result<()> {
+    // Arrange:
+    // - The same fragment spans [10,20) and contributes motifs `_G` (left) and `_A` (right).
+    // - With `assign-by=count-overlap`, each qualifying window gets both end motifs weighted by
+    //   the fragment-overlap fraction.
+    // - Grouped intervals:
+    //     [10,15) beta  -> overlap 5/10 = 0.5
+    //     [12,18) beta  -> overlap 6/10 = 0.6
+    //     [15,20) alpha -> overlap 5/10 = 0.5
+    //     [30,35) gamma -> zero row
+    // - Therefore the grouped rows must be:
+    //     beta  -> `_G` = 1.1, `_A` = 1.1
+    //     alpha -> `_G` = 0.5, `_A` = 0.5
+    //     gamma -> all zeros
+    // This test fails if grouped mode mistakenly unions same-group windows or normalizes them
+    // back to one fragment's total mass.
+    let bam = simple_paired_fragment_bam("ends_grouped_count_overlap", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_overlap.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 10, 15, "beta"),
+            ("chr1", 12, 18, "beta"),
+            ("chr1", 15, 20, "alpha"),
+            ("chr1", 30, 35, "gamma"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::CountOverlap,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+    let group_index = read_text_file(&out_dir.path().join("ends.group_index.tsv"))?;
+
+    // Assert
+    assert_eq!(
+        parse_group_index_tsv(&group_index),
+        vec![
+            (0, "beta".to_string()),
+            (1, "alpha".to_string()),
+            (2, "gamma".to_string()),
+        ]
+    );
+    assert_eq!(matrix.shape(), &[3, 4]);
+    assert!((motif_count(&matrix, &motifs, 0, "_G") - 1.1).abs() < 1e-9);
+    assert!((motif_count(&matrix, &motifs, 0, "_A") - 1.1).abs() < 1e-9);
+    assert!((motif_count(&matrix, &motifs, 1, "_G") - 0.5).abs() < 1e-9);
+    assert!((motif_count(&matrix, &motifs, 1, "_A") - 0.5).abs() < 1e-9);
+    assert_eq!(matrix.row(2).sum(), 0.0);
+    assert!((matrix.sum() - 3.2).abs() < 1e-9);
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_endpoint_aggregates_shared_groups_across_chromosomes() -> Result<()> {
+    // Arrange:
+    // The three-chrom fixture contributes these full-chromosome endpoint motifs:
+    // - chr1 -> `_A` = 1, `_T` = 1
+    // - chr2 -> `_C` = 1, `_G` = 1
+    // - chr3 -> `_C` = 1, `_T` = 1
+    //
+    // Grouped windows intentionally reuse `beta` across two chromosomes and place `alpha`
+    // second in the BED so row order must be:
+    // - row 0 / beta  = chr2 + chr3 = `_C` = 2, `_G` = 1, `_T` = 1
+    // - row 1 / alpha = chr1        = `_A` = 1, `_T` = 1
+    // - row 2 / gamma = zero row
+    let (bam, reference) = three_chrom_reference_end_fixture("ends_grouped_three_chr")?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_three_chr.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr2", 0, 200, "beta"),
+            ("chr1", 0, 200, "alpha"),
+            ("chr3", 0, 200, "beta"),
+            ("chr1", 150, 160, "gamma"),
+        ],
+    )?;
+
+    let mut cfg = EndsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1", "chr2", "chr3"]),
+        1,
+        0,
+    );
+    cfg.output_prefix = "ends".to_string();
+    cfg.tile_size = 50;
+    cfg.min_mapq = 0;
+    cfg.require_proper_pair = false;
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 60;
+        lengths.max_fragment_length = 100;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+    let group_index = read_text_file(&out_dir.path().join("ends.group_index.tsv"))?;
+
+    // Assert
+    assert_eq!(
+        parse_group_index_rows(&group_index),
+        vec![
+            (0, "beta".to_string(), 0.0),
+            (1, "alpha".to_string(), 0.0),
+            (2, "gamma".to_string(), 0.0),
+        ]
+    );
+    assert_eq!(motifs, vec!["_A", "_C", "_G", "_T"]);
+    assert_eq!(matrix.shape(), &[3, 4]);
+
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_C"), 2.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_T"), 1.0);
+
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_A"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_C"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_G"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_T"), 1.0);
+
+    assert_eq!(matrix.row(2).sum(), 0.0);
+    assert_eq!(matrix.sum(), 6.0);
+
+    assert!(!out_dir.path().join("ends.bins.tsv").exists());
+    assert!(!out_dir.path().join("ends.grouped_windows.tsv").exists());
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_scaling_factors_aggregate_shared_groups_across_chromosomes() -> Result<()> {
+    // Arrange:
+    // The three-chrom fixture contributes these full-chromosome endpoint motifs:
+    // - chr1 -> `_A` = 1, `_T` = 1
+    // - chr2 -> `_C` = 1, `_G` = 1
+    // - chr3 -> `_C` = 1, `_T` = 1
+    //
+    // Grouped windows intentionally reuse `beta` across chr2 and chr3 and place `alpha`
+    // second in the BED. Per-chromosome scaling factors are:
+    // - chr1 -> 1.5
+    // - chr2 -> 2.0
+    // - chr3 -> 3.0
+    //
+    // So grouped output must be:
+    // - row 0 / beta  -> `_C` = 5.0, `_G` = 2.0, `_T` = 3.0
+    // - row 1 / alpha -> `_A` = 1.5, `_T` = 1.5
+    // - row 2 / gamma -> all zeros
+    let (bam, reference) = three_chrom_reference_end_fixture("ends_grouped_three_chr_scaling")?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_three_chr_scaling.bed");
+    let scaling_path = out_dir.path().join("grouped_three_chr_scaling.tsv");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr2", 0, 200, "beta"),
+            ("chr1", 0, 200, "alpha"),
+            ("chr3", 0, 200, "beta"),
+            ("chr1", 150, 160, "gamma"),
+        ],
+    )?;
+    write_scaling_factors(
+        &scaling_path,
+        &[
+            ("chr1", 0, 200, 1.5),
+            ("chr2", 0, 200, 2.0),
+            ("chr3", 0, 200, 3.0),
+        ],
+    )?;
+
+    let mut cfg = EndsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1", "chr2", "chr3"]),
+        1,
+        0,
+    );
+    cfg.output_prefix = "ends".to_string();
+    cfg.tile_size = 50;
+    cfg.min_mapq = 0;
+    cfg.require_proper_pair = false;
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    cfg.set_scaling_factors(Some(scaling_path));
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 60;
+        lengths.max_fragment_length = 100;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+    let group_index = read_text_file(&out_dir.path().join("ends.group_index.tsv"))?;
+
+    // Assert
+    assert_eq!(
+        parse_group_index_rows(&group_index),
+        vec![
+            (0, "beta".to_string(), 0.0),
+            (1, "alpha".to_string(), 0.0),
+            (2, "gamma".to_string(), 0.0),
+        ]
+    );
+    assert_eq!(motifs, vec!["_A", "_C", "_G", "_T"]);
+    assert_eq!(matrix.shape(), &[3, 4]);
+
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_C"), 5.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 2.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_T"), 3.0);
+
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_A"), 1.5);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_C"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_G"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_T"), 1.5);
+
+    assert_eq!(matrix.row(2).sum(), 0.0);
+    assert_eq!(matrix.sum(), 13.0);
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_endpoint_aggregates_shared_groups_across_tiles_on_same_chromosome() -> Result<()> {
+    // Arrange:
+    // - two fragments both have length 10 and start in different tiles when `tile_size=50`:
+    //     [10,20) in tile [0,50)   -> `_G` on the left and `_A` on the right
+    //     [60,70) in tile [50,100) -> `_A` on the left and `_G` on the right
+    // - grouped intervals place the same group on both tiles:
+    //     [10,20) beta
+    //     [60,70) beta
+    //     [120,130) gamma
+    // - grouped endpoint output must therefore aggregate to:
+    //     beta  -> `_A` = 2.0, `_G` = 2.0
+    //     gamma -> all zeros
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 256)],
+        vec![paired_fragment(10, 10, 4), paired_fragment(60, 10, 4)],
+        Vec::new(),
+        "ends_grouped_same_chr_tiles",
+    )?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_same_chr_tiles.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 10, 20, "beta"),
+            ("chr1", 60, 70, "beta"),
+            ("chr1", 120, 130, "gamma"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.tile_size = 50;
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    set_exact_fragment_length(&mut cfg, 10);
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+    let group_index = read_text_file(&out_dir.path().join("ends.group_index.tsv"))?;
+
+    // Assert
+    assert_eq!(
+        parse_group_index_tsv(&group_index),
+        vec![(0, "beta".to_string()), (1, "gamma".to_string())]
+    );
+    assert_eq!(matrix.shape(), &[2, 4]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 2.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 2.0);
+    assert_eq!(matrix.row(1).sum(), 0.0);
+    assert_eq!(matrix.sum(), 4.0);
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_sparse_output_keeps_zero_group_rows_and_only_observed_motifs() -> Result<()> {
+    // Arrange:
+    // - fragment [10,20) contributes `_G` at the left endpoint and `_A` at the right endpoint
+    // - grouped intervals isolate those two endpoints into separate groups and keep one zero group
+    // - sparse output must therefore keep the zero row in shape even though only two motifs are
+    //   observed overall
+    let bam = simple_paired_fragment_bam("ends_grouped_sparse", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_sparse.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 10, 11, "beta"),
+            ("chr1", 19, 20, "alpha"),
+            ("chr1", 30, 31, "gamma"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = false;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    set_exact_fragment_length(&mut cfg, 10);
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_sparse_output(out_dir.path())?;
+    let group_index = read_text_file(&out_dir.path().join("ends.group_index.tsv"))?;
+
+    // Assert
+    assert!(!dense_output_paths(out_dir.path()).0.exists());
+    assert!(sparse_output_paths(out_dir.path()).0.exists());
+    assert_eq!(
+        parse_group_index_tsv(&group_index),
+        vec![
+            (0, "beta".to_string()),
+            (1, "alpha".to_string()),
+            (2, "gamma".to_string()),
+        ]
+    );
+    assert_eq!(motifs, vec!["_A", "_G"]);
+    assert_eq!(matrix.shape(), &[3, 2]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 0.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_A"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_G"), 0.0);
+    assert_eq!(matrix.row(2).sum(), 0.0);
+    assert_eq!(matrix.sum(), 2.0);
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_any_counts_same_group_intervals_separately() -> Result<()> {
+    // Arrange:
+    // - fragment [10,20) contributes `_G` and `_A`
+    // - under `assign-by=any`, each overlapping interval gets both end motifs in full
+    // - grouped intervals:
+    //     [10,15) beta
+    //     [12,18) beta
+    //     [15,20) alpha
+    //     [30,35) gamma
+    // - expected grouped counts:
+    //     beta  -> `_G` = 2.0, `_A` = 2.0
+    //     alpha -> `_G` = 1.0, `_A` = 1.0
+    //     gamma -> 0.0
+    let bam = simple_paired_fragment_bam("ends_grouped_any", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_any.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 10, 15, "beta"),
+            ("chr1", 12, 18, "beta"),
+            ("chr1", 15, 20, "alpha"),
+            ("chr1", 30, 35, "gamma"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Any,
+    });
+    set_exact_fragment_length(&mut cfg, 10);
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+    let group_index = read_text_file(&out_dir.path().join("ends.group_index.tsv"))?;
+
+    // Assert
+    assert_eq!(
+        parse_group_index_tsv(&group_index),
+        vec![
+            (0, "beta".to_string()),
+            (1, "alpha".to_string()),
+            (2, "gamma".to_string()),
+        ]
+    );
+    assert_eq!(matrix.shape(), &[3, 4]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 2.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 2.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_A"), 1.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_G"), 1.0);
+    assert_eq!(matrix.row(2).sum(), 0.0);
+    assert_eq!(matrix.sum(), 6.0);
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_writes_prefixed_group_sidecars_and_suppresses_unprefixed_paths() -> Result<()> {
+    // Arrange
+    let bam = simple_paired_fragment_bam("ends_grouped_prefix", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_prefix.bed");
+    write_bed(&grouped_bed, &[("chr1", 10, 20, "beta")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.output_prefix = "sampleA".to_string();
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    set_exact_fragment_length(&mut cfg, 10);
+
+    // Act
+    run(&cfg)?;
+
+    // Assert
+    assert!(out_dir.path().join("sampleA.end_motifs.npy").exists());
+    assert!(out_dir.path().join("sampleA.end_motifs.txt").exists());
+    assert!(out_dir.path().join("sampleA.group_index.tsv").exists());
+    assert!(!out_dir.path().join("sampleA.grouped_windows.tsv").exists());
+    assert!(!out_dir.path().join("end_motifs.npy").exists());
+    assert!(!out_dir.path().join("end_motifs.txt").exists());
+    assert!(!out_dir.path().join("group_index.tsv").exists());
+    assert!(!out_dir.path().join("grouped_windows.tsv").exists());
+    assert!(!out_dir.path().join("sampleA.bins.tsv").exists());
+    assert!(!out_dir.path().join("bins.tsv").exists());
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_assign_when_all_counts_each_containing_window_in_group() -> Result<()> {
+    // Arrange:
+    // - fragment [10,20) contributes `_G` and `_A`
+    // - under `assign-by=all`, a window counts only if it fully contains the fragment
+    // - grouped intervals:
+    //     [10,20) beta  -> contains the fragment
+    //     [0,20)  beta  -> also contains the fragment
+    //     [10,19) alpha -> does not fully contain the fragment
+    //     [30,40) gamma -> zero row
+    // - expected grouped counts:
+    //     beta  -> `_G` = 2.0, `_A` = 2.0
+    //     alpha -> 0.0
+    //     gamma -> 0.0
+    let bam = simple_paired_fragment_bam("ends_grouped_all", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_all.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 10, 20, "beta"),
+            ("chr1", 0, 20, "beta"),
+            ("chr1", 10, 19, "alpha"),
+            ("chr1", 30, 40, "gamma"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::All,
+    });
+    set_exact_fragment_length(&mut cfg, 10);
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+    let group_index = read_text_file(&out_dir.path().join("ends.group_index.tsv"))?;
+
+    // Assert
+    assert_eq!(
+        parse_group_index_tsv(&group_index),
+        vec![
+            (0, "beta".to_string()),
+            (1, "alpha".to_string()),
+            (2, "gamma".to_string()),
+        ]
+    );
+    assert_eq!(matrix.shape(), &[3, 4]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 2.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 2.0);
+    assert_eq!(matrix.row(1).sum(), 0.0);
+    assert_eq!(matrix.row(2).sum(), 0.0);
+    assert_eq!(matrix.sum(), 4.0);
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_errors_when_group_name_column_is_missing() -> Result<()> {
+    // Arrange:
+    // - grouped BED mode requires a fourth column naming the group
+    // - a three-column BED row is therefore invalid and should fail loudly
+    let bam = simple_paired_fragment_bam("ends_grouped_missing_group_name", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_missing_name.bed");
+    std::fs::write(&grouped_bed, "chr1\t10\t20\n")?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    set_exact_fragment_length(&mut cfg, 10);
+
+    // Act
+    let err = run(&cfg).expect_err("grouped BED without a group column should fail");
+
+    // Assert
+    assert!(err.to_string().contains("missing group name"));
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_errors_when_no_windows_survive_selected_chromosomes() -> Result<()> {
+    // Arrange:
+    // - grouped BED contains a valid group, but only on chr2
+    // - the run is restricted to chr1, so grouped mode has no usable groups at all
+    let bam = simple_paired_fragment_bam("ends_grouped_empty_after_filtering", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_wrong_chr.bed");
+    write_bed(&grouped_bed, &[("chr2", 10, 20, "beta")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    set_exact_fragment_length(&mut cfg, 10);
+
+    // Act
+    let err = run(&cfg).expect_err("grouped BED with no selected-chromosome windows should fail");
+
+    // Assert
+    assert!(
+        err.to_string()
+            .contains("grouped BED file did not contain any valid windows on the selected chromosomes")
+    );
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_assign_when_midpoint_counts_exactly_one_adjacent_group_at_boundary() -> Result<()> {
+    // Arrange:
+    // - fragment [10,20) has even midpoint 14 or 15
+    // - grouped windows split that seam into adjacent groups:
+    //     [14,15) alpha
+    //     [15,16) beta
+    // - endpoint-only windows are added as negative controls and must stay zero in midpoint mode
+    // - exactly one of alpha/beta must receive both end motifs, never both
+    let bam = simple_paired_fragment_bam("ends_grouped_midpoint_boundary", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_midpoint_boundary.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 10, 11, "left_endpoint"),
+            ("chr1", 14, 15, "alpha"),
+            ("chr1", 15, 16, "beta"),
+            ("chr1", 19, 20, "right_endpoint"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Midpoint,
+    });
+    set_exact_fragment_length(&mut cfg, 10);
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[4, 4]);
+    assert_eq!(matrix.row(0).sum(), 0.0);
+    assert_eq!(matrix.row(3).sum(), 0.0);
+
+    let alpha_is_hot = motif_count(&matrix, &motifs, 1, "_A") == 1.0
+        && motif_count(&matrix, &motifs, 1, "_G") == 1.0
+        && matrix.row(2).sum() == 0.0;
+    let beta_is_hot = motif_count(&matrix, &motifs, 2, "_A") == 1.0
+        && motif_count(&matrix, &motifs, 2, "_G") == 1.0
+        && matrix.row(1).sum() == 0.0;
+    assert!(
+        alpha_is_hot || beta_is_hot,
+        "midpoint seam must count exactly one of the adjacent groups, got rows {:?} and {:?}",
+        matrix.row(1).to_vec(),
+        matrix.row(2).to_vec()
+    );
+    assert_eq!(matrix.sum(), 2.0);
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_assign_when_proportion_counts_only_groups_meeting_threshold() -> Result<()> {
+    // Arrange:
+    // - fragment [10,20) contributes `_G` and `_A`
+    // - with `proportion=0.5`, windows with at least 5 of 10 fragment bp qualify
+    // - grouped intervals:
+    //     [10,15) beta  -> 5/10, counts
+    //     [15,20) beta  -> 5/10, counts
+    //     [10,14) alpha -> 4/10, rejected
+    //     [30,40) gamma -> zero row
+    // - expected grouped counts:
+    //     beta  -> `_G` = 2.0, `_A` = 2.0
+    //     alpha -> 0.0
+    //     gamma -> 0.0
+    let bam = simple_paired_fragment_bam("ends_grouped_proportion", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_proportion.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 10, 15, "beta"),
+            ("chr1", 15, 20, "beta"),
+            ("chr1", 10, 14, "alpha"),
+            ("chr1", 30, 40, "gamma"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Proportion(0.5),
+    });
+    set_exact_fragment_length(&mut cfg, 10);
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+    let group_index = read_text_file(&out_dir.path().join("ends.group_index.tsv"))?;
+
+    // Assert
+    assert_eq!(
+        parse_group_index_tsv(&group_index),
+        vec![
+            (0, "beta".to_string()),
+            (1, "alpha".to_string()),
+            (2, "gamma".to_string()),
+        ]
+    );
+    assert_eq!(matrix.shape(), &[3, 4]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 2.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 2.0);
+    assert_eq!(matrix.row(1).sum(), 0.0);
+    assert_eq!(matrix.row(2).sum(), 0.0);
+    assert_eq!(matrix.sum(), 4.0);
     Ok(())
 }
 
@@ -5897,9 +7004,10 @@ fn default_window_assignment_is_endpoint() -> Result<()> {
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = true;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(windows_bed),
+        by_grouped_bed: None,
     });
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -5930,9 +7038,10 @@ fn by_size_windowing_writes_bins_tsv() -> Result<()> {
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: Some(20),
         by_bed: None,
+        by_grouped_bed: None,
     });
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -5964,9 +7073,10 @@ fn output_prefix_is_applied_to_bins_tsv_for_windowed_runs() -> Result<()> {
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: Some(20),
         by_bed: None,
+        by_grouped_bed: None,
     });
     {
         let lengths = cfg.fragment_lengths_mut();
@@ -6059,9 +7169,10 @@ fn empty_output_prefix_writes_unprefixed_bins_tsv_for_windowed_runs() -> Result<
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: Some(20),
         by_bed: None,
+        by_grouped_bed: None,
     });
     {
         let lengths = cfg.fragment_lengths_mut();

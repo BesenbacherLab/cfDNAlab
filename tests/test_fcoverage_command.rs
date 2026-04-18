@@ -8,7 +8,8 @@ use cfdnalab::commands::bam_to_bam::{
     bam_to_bam::run_inner as run_bam_to_bam, config::BamToBamConfig,
 };
 use cfdnalab::commands::cli_common::{
-    ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs, IOCArgs, ScaleGenomeArgs, WindowsArgs,
+    ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs, IOCArgs,
+    ScaleGenomeArgs, WindowsArgs,
 };
 #[cfg(feature = "cmd_coverage_weights")]
 use cfdnalab::commands::coverage_weights::{
@@ -1356,7 +1357,7 @@ fn fcoverage_and_lengths_agree_on_the_single_fragment_that_survives_mapq_filteri
         base_chromosomes(&["chr1"]),
     );
     lengths_cfg.set_indel_mode(IndelMode::Ignore);
-    lengths_cfg.set_windows(WindowsArgs::default());
+    lengths_cfg.set_windows(DistributionWindowsArgs::default());
     lengths_cfg.set_window_assignment(AssignToWindowArgs::default());
     lengths_cfg.set_min_mapq(30);
     lengths_cfg.set_require_proper_pair(false);

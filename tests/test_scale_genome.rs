@@ -260,12 +260,12 @@ mod tests_compute_window_scaling {
         overlaps.windows.push(OverlappingWindow::new(
             0,
             Interval::new(0, 50)?,
-            30.0_f32 / 61.0_f32,
+            30.0 / 61.0,
         )?);
         overlaps.windows.push(OverlappingWindow::new(
             1,
             Interval::new(50, 100)?,
-            31.0_f32 / 61.0_f32,
+            31.0 / 61.0,
         )?);
         Ok(overlaps)
     }

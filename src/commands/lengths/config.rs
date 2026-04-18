@@ -1,8 +1,8 @@
 use crate::{
     commands::{
         cli_common::{
-            ApplyGCArgFileOnly, AssignToWindowArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs,
-            LoggingArgs, ScaleGenomeArgs, UnpairedArgs, WindowsArgs,
+            ApplyGCArgFileOnly, AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs,
+            FragmentLengthArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs, UnpairedArgs,
         },
         gc_bias::correct::MarginalizeLengthsWeightingScheme,
     },
@@ -200,7 +200,7 @@ pub struct LengthsConfig {
     pub tile_size: u32,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub windows: WindowsArgs,
+    pub windows: DistributionWindowsArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub window_assignment: AssignToWindowArgs,
@@ -331,7 +331,7 @@ impl LengthsConfig {
             indel_mode: IndelMode::Ignore,
             clip_mode: ClipMode::Aligned,
             max_soft_clips: DEFAULT_MAX_SOFT_CLIPS,
-            windows: WindowsArgs::default(),
+            windows: DistributionWindowsArgs::default(),
             window_assignment: AssignToWindowArgs::default(),
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
@@ -359,7 +359,7 @@ impl LengthsConfig {
         self.indel_mode = mode;
     }
 
-    pub fn set_windows(&mut self, windows: WindowsArgs) {
+    pub fn set_windows(&mut self, windows: DistributionWindowsArgs) {
         self.windows = windows;
     }
 

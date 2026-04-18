@@ -166,7 +166,7 @@ pub fn compute_window_scaling_over_overlap(
             scaling_bin_indices,
             scaling_chr,
         )?;
-        per_window_scaling.push((window.idx, avg_scaling, window.overlap_fraction as f64));
+        per_window_scaling.push((window.idx, avg_scaling, window.overlap_fraction));
     }
 
     Ok(per_window_scaling)

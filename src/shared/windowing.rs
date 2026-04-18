@@ -2,13 +2,15 @@ use crate::{
     commands::cli_common::WindowSpec,
     shared::{
         bam::Contigs,
-        bed::Windows,
+        bed::{GroupedWindows, Windows},
         blacklist::compute_blacklist_overlap,
         interval::{IndexedInterval, Interval},
+        io::create_text_writer,
     },
 };
 use anyhow::{Context, Result};
 use fxhash::FxHashMap;
+use std::{io::Write, path::Path};
 
 /// Lightweight view into the window configuration for a given tile.
 ///
@@ -187,6 +189,101 @@ pub fn build_bin_info(
             Ok(out)
         }
     }
+}
+
+/// Write ordinary window metadata to a TSV next to matrix outputs.
+///
+/// Output has header `chrom\tstart\tend\tblacklisted_fraction`.
+pub fn write_bin_info_tsv(
+    output_path: impl AsRef<Path>,
+    bin_info: &[(String, u64, u64, u64, f64)],
+) -> Result<()> {
+    let mut writer = create_text_writer(output_path.as_ref()).context("creating bins TSV")?;
+    writeln!(writer, "chrom\tstart\tend\tblacklisted_fraction")
+        .context("writing bins TSV header")?;
+    for (chr, start, end, _, blacklist_overlap_fraction) in bin_info {
+        writeln!(
+            writer,
+            "{chr}\t{start}\t{end}\t{blacklist_overlap_fraction}"
+        )
+        .context("writing bins TSV row")?;
+    }
+    writer.finish().context("finalizing bins.tsv writer")?;
+    Ok(())
+}
+
+/// Write grouped distribution row metadata to a TSV next to grouped outputs.
+///
+/// Output has header `group_idx\tgroup_name\tblacklisted_fraction`.
+///
+/// The blacklist fraction is aggregated across all intervals assigned to the group, weighting by
+/// interval width. That is:
+///
+/// `sum(interval_blacklisted_bp) / sum(interval_bp)`
+///
+/// Intervals are counted exactly as loaded, so overlapping intervals in the same group contribute
+/// separately to both the numerator and denominator.
+pub fn write_group_index_with_blacklist_tsv(
+    output_path: impl AsRef<Path>,
+    group_idx_to_name: &FxHashMap<u64, String>,
+    chromosomes: &[String],
+    grouped_windows_map: &FxHashMap<String, GroupedWindows>,
+    blacklist_map: &FxHashMap<String, Vec<Interval<u64>>>,
+) -> Result<()> {
+    let mut total_group_bp: FxHashMap<u64, u64> = FxHashMap::default();
+    let mut blacklisted_group_bp: FxHashMap<u64, f64> = FxHashMap::default();
+
+    for chr in chromosomes {
+        let windows = grouped_windows_map
+            .get(chr)
+            .map(|windows| windows.as_slice())
+            .unwrap_or(&[]);
+        let blacklist_intervals = blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]);
+        let mut blacklist_ptr = 0usize;
+        for window in windows {
+            let (start, end, group_idx) = window.as_tuple();
+            let window_bp = end
+                .checked_sub(start)
+                .context("grouped window end must be >= start")?;
+            let blacklist_overlap_fraction = compute_blacklist_overlap(
+                blacklist_intervals,
+                Interval::new(start, end)?,
+                0,
+                &mut blacklist_ptr,
+            );
+            *total_group_bp.entry(group_idx).or_insert(0) += window_bp;
+            *blacklisted_group_bp.entry(group_idx).or_insert(0.0) +=
+                blacklist_overlap_fraction * window_bp as f64;
+        }
+    }
+
+    let mut writer =
+        create_text_writer(output_path.as_ref()).context("creating grouped group-index TSV")?;
+    writeln!(writer, "group_idx\tgroup_name\tblacklisted_fraction")
+        .context("writing grouped group-index TSV header")?;
+
+    let mut entries: Vec<(u64, &str)> = group_idx_to_name
+        .iter()
+        .map(|(idx, name)| (*idx, name.as_str()))
+        .collect();
+    entries.sort_unstable_by_key(|(idx, _)| *idx);
+
+    for (group_idx, group_name) in entries {
+        let total_bp = *total_group_bp.get(&group_idx).unwrap_or(&0);
+        let blacklisted_fraction = if total_bp == 0 {
+            0.0
+        } else {
+            blacklisted_group_bp.get(&group_idx).copied().unwrap_or(0.0) / total_bp as f64
+        };
+        let group_name = group_name.replace('\t', "    ").replace('\n', " ");
+        writeln!(writer, "{group_idx}\t{group_name}\t{blacklisted_fraction}")
+            .context("writing grouped group-index TSV row")?;
+    }
+
+    writer
+        .finish()
+        .context("finalizing grouped group-index TSV writer")?;
+    Ok(())
 }
 
 #[cfg(test)]

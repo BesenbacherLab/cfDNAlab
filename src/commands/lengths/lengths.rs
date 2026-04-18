@@ -1,8 +1,8 @@
 use crate::{
     commands::{
         cli_common::{
-            WindowAssigner, WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
-            resolve_chromosomes_and_contigs,
+            DistributionWindowSpec, WindowAssigner, ensure_output_dir, load_blacklist_map,
+            load_scaling_map, resolve_chromosomes_and_contigs,
         },
         counters::LengthsCounters,
         gc_bias::{
@@ -21,7 +21,7 @@ use crate::{
     },
     shared::{
         bam::create_chromosome_reader,
-        bed::load_windows_from_bed,
+        bed::{load_grouped_windows_from_bed, load_windows_from_bed},
         blacklist::is_blacklisted,
         clip_mode::ClipMode,
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
@@ -39,7 +39,10 @@ use crate::{
             Tile, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
         },
         window_fetch::{BedFetchPolicy, fetch_span_for_tile},
-        windowing::{build_bin_info, compute_window_offsets},
+        windowing::{
+            build_bin_info, compute_window_offsets, write_bin_info_tsv,
+            write_group_index_with_blacklist_tsv,
+        },
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -63,6 +66,7 @@ struct TileCounts {
 struct TileOutputs {
     counters: LengthsCounters,
     global_counts: Option<(String, LengthCounts)>,
+    grouped_counts: Option<FxHashMap<u64, LengthCounts>>,
 }
 
 /// Build the scaling-overlap view for `CountOverlap` under `clip_mode=adjust`.
@@ -126,6 +130,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
+    let fetch_window_opt = window_opt.as_fetch_window_spec();
     let prefix = opt.output_prefix.trim();
 
     // Create output directory
@@ -144,7 +149,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
 
     // Load windows from BED file
     let windows_map = match &window_opt {
-        WindowSpec::Bed(bed) => {
+        DistributionWindowSpec::Bed(bed) => {
             info!(target: COMMAND_TARGET, "Loading window coordinates");
             Some(load_windows_from_bed(
                 bed,
@@ -155,6 +160,35 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         }
         _ => None,
     };
+    let (grouped_windows_map, group_idx_to_name) = match &window_opt {
+        DistributionWindowSpec::GroupedBed(bed) => {
+            info!(target: COMMAND_TARGET, "Loading grouped window coordinates");
+            let (windows_map, group_idx_to_name) =
+                load_grouped_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            ensure!(
+                !group_idx_to_name.is_empty(),
+                "grouped BED file did not contain any valid windows on the selected chromosomes"
+            );
+            (Some(windows_map), Some(group_idx_to_name))
+        }
+        _ => (None, None),
+    };
+    let indexed_windows_map: Option<FxHashMap<String, Vec<IndexedInterval<u64>>>> =
+        if let Some(windows_map) = windows_map.as_ref() {
+            Some(
+                windows_map
+                    .iter()
+                    .map(|(chr, windows)| (chr.clone(), windows.as_slice().to_vec()))
+                    .collect(),
+            )
+        } else {
+            grouped_windows_map.as_ref().map(|windows_map| {
+                windows_map
+                    .iter()
+                    .map(|(chr, windows)| (chr.clone(), windows.as_slice().to_vec()))
+                    .collect()
+            })
+        };
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
@@ -185,7 +219,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         0
     };
     let align_bp = match &window_opt {
-        WindowSpec::Size(bp) => Some(*bp),
+        DistributionWindowSpec::Size(bp) => Some(*bp),
         _ => None,
     };
 
@@ -201,7 +235,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(tiles.len() as u64));
 
-    let windows_lookup = windows_map.as_ref();
+    let windows_lookup = indexed_windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
         &tiles,
         |chr| {
@@ -239,7 +273,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<TileOutputs> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
-            let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
+            let windows_chr: Option<&[IndexedInterval<u64>]> = indexed_windows_map
                 .as_ref()
                 .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
             let blacklist_chr: &[Interval<u64>] = blacklist_map
@@ -285,12 +319,19 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         global_counter += tile_out.counters;
     }
 
-    info!(target: COMMAND_TARGET, "Reducing temporary tile files");
+    match &window_opt {
+        DistributionWindowSpec::GroupedBed(_) => {
+            info!(target: COMMAND_TARGET, "Merging grouped counts across tiles");
+        }
+        _ => {
+            info!(target: COMMAND_TARGET, "Reducing temporary tile files");
+        }
+    }
 
     let mut all_bins: Vec<LengthCounts> = Vec::new();
 
     match &window_opt {
-        WindowSpec::Global => {
+        DistributionWindowSpec::Global => {
             let mut counts_by_chr: FxHashMap<String, LengthCounts> = FxHashMap::default();
             for tile_out in &tile_results {
                 if let Some((chr, counts)) = &tile_out.global_counts {
@@ -308,7 +349,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
             }
             all_bins = vec![LengthCounts::collapse(&all_bins)?];
         }
-        WindowSpec::Size(window_bp) => {
+        DistributionWindowSpec::Size(window_bp) => {
             for chr in &chromosomes {
                 let chrom_len = contigs
                     .contigs
@@ -334,7 +375,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 all_bins.extend(counts);
             }
         }
-        WindowSpec::Bed(_) => {
+        DistributionWindowSpec::Bed(_) => {
             let win_map = windows_map
                 .as_ref()
                 .context("windows_map missing for BED mode")?;
@@ -364,28 +405,50 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 all_bins.extend(counts);
             }
         }
+        DistributionWindowSpec::GroupedBed(_) => {
+            let num_groups = group_idx_to_name
+                .as_ref()
+                .context("group_idx_to_name missing for grouped BED mode")?
+                .len();
+            all_bins = (0..num_groups)
+                .map(|_| template_counts.zeroed_like())
+                .collect();
+            for tile_out in &tile_results {
+                let Some(grouped_counts) = &tile_out.grouped_counts else {
+                    continue;
+                };
+                for (group_idx, counts) in grouped_counts {
+                    let entry = all_bins.get_mut(*group_idx as usize).with_context(|| {
+                        format!("group index {group_idx} outside allocated grouped output")
+                    })?;
+                    entry.merge_from(counts)?;
+                }
+            }
+        }
     }
 
-    let mut bin_info: Vec<(String, u64, u64, u64, f64)> =
-        if matches!(window_opt, WindowSpec::Global) {
-            Vec::new()
-        } else {
-            let (_total_windows, chr_offsets) =
-                compute_window_offsets(&window_opt, &chromosomes, &contigs, windows_map.as_ref())?;
+    let mut bin_info: Vec<(String, u64, u64, u64, f64)> = match &window_opt {
+        DistributionWindowSpec::Global | DistributionWindowSpec::GroupedBed(_) => Vec::new(),
+        _ => {
+            let (_total_windows, chr_offsets) = compute_window_offsets(
+                &fetch_window_opt,
+                &chromosomes,
+                &contigs,
+                windows_map.as_ref(),
+            )?;
             build_bin_info(
-                &window_opt,
+                &fetch_window_opt,
                 &chromosomes,
                 &contigs,
                 windows_map.as_ref(),
                 &blacklist_map,
                 &chr_offsets,
             )?
-        };
-
-    drop(blacklist_map);
+        }
+    };
 
     // Sort by original index (when given a bed file)
-    if matches!(window_opt, WindowSpec::Bed(_)) {
+    if matches!(&window_opt, DistributionWindowSpec::Bed(_)) {
         info!(
             target: COMMAND_TARGET,
             "Reordering counts by original window index in BED file"
@@ -492,22 +555,36 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     }
 
     // Write window coordinates plus overlap metadata as TSV to output_dir
-    if !matches!(window_opt, WindowSpec::Global) {
-        info!(target: COMMAND_TARGET, "Writing window coordinates to disk");
-        let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.tsv"]));
-        let mut tsv_writer = create_text_writer(&bins_path).context("creating bins TSV")?;
-        writeln!(tsv_writer, "chrom\tstart\tend\tblacklisted_fraction")
-            .context("writing bins TSV header")?;
-        for (chr, start, end, _, blacklist_overlap_fraction) in &bin_info {
-            writeln!(
-                tsv_writer,
-                "{}\t{}\t{}\t{}",
-                chr, start, end, blacklist_overlap_fraction
-            )
-            .context("writing bins TSV row")?;
+    match &window_opt {
+        DistributionWindowSpec::GroupedBed(_) => {
+            info!(target: COMMAND_TARGET, "Writing group metadata to disk");
+            let group_idx_to_name = group_idx_to_name
+                .as_ref()
+                .context("group_idx_to_name missing when writing grouped outputs")?;
+            let grouped_windows_map = grouped_windows_map
+                .as_ref()
+                .context("grouped windows missing when writing grouped outputs")?;
+            let group_index_path = opt
+                .ioc
+                .output_dir
+                .join(dot_join(&[prefix, "group_index.tsv"]));
+            write_group_index_with_blacklist_tsv(
+                group_index_path,
+                group_idx_to_name,
+                &chromosomes,
+                grouped_windows_map,
+                &blacklist_map,
+            )?;
         }
-        tsv_writer.finish().context("finalizing bins.tsv writer")?;
+        DistributionWindowSpec::Global => {}
+        _ => {
+            info!(target: COMMAND_TARGET, "Writing window coordinates to disk");
+            let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.tsv"]));
+            write_bin_info_tsv(bins_path, &bin_info)?;
+        }
     }
+
+    drop(blacklist_map);
 
     let elapsed = start_time.elapsed();
     print_fragment_run_statistics(
@@ -535,7 +612,7 @@ fn process_tile(
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
     windows_chr: Option<&[IndexedInterval<u64>]>,
-    window_opt: &WindowSpec,
+    window_opt: &DistributionWindowSpec,
     blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<LengthAgnosticGCCorrector>,
@@ -544,6 +621,7 @@ fn process_tile(
     partials_prefix: &str,
     cross_prefix: &str,
 ) -> Result<TileOutputs> {
+    let fetch_window_opt = window_opt.as_fetch_window_spec();
     // One BAM reader per tile
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
     debug_assert_eq!(_tid_check, tile.tid as u32);
@@ -573,7 +651,7 @@ fn process_tile(
         tile,
         tile_window_span,
         windows_chr,
-        window_opt,
+        &fetch_window_opt,
         chrom_len,
         opt.fragment_lengths.max_fragment_length as u64,
         BedFetchPolicy::CandidateWindowExtent,
@@ -583,6 +661,7 @@ fn process_tile(
         return Ok(TileOutputs {
             counters: counter,
             global_counts: None,
+            grouped_counts: None,
         });
     };
     let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
@@ -609,7 +688,7 @@ fn process_tile(
         Vec<Option<TileCounts>>,
     ) = match window_opt {
         // Global mode has exactly one window covering the chromosome
-        WindowSpec::Global => (
+        DistributionWindowSpec::Global => (
             0,
             1,
             vec![Some(TileCounts {
@@ -619,7 +698,7 @@ fn process_tile(
         ),
 
         // Fixed-size mode: allocate only the bins that a fragment from this tile can reach
-        WindowSpec::Size(window_bp) => {
+        DistributionWindowSpec::Size(window_bp) => {
             // Total bins on the chromosome
             let chrom_bin_count = chrom_len.div_ceil(*window_bp) as usize;
             // Leftmost bin whose start is at or before the core start
@@ -654,7 +733,7 @@ fn process_tile(
 
         // BED mode: reuse the precomputed span and skip only windows that still sit fully outside
         // the clip-adjusted left reach
-        WindowSpec::Bed(_) => {
+        DistributionWindowSpec::Bed(_) => {
             let span = tile_window_span.context(
                 "BED length counting requires a cached tile window span after fetch-span selection",
             )?;
@@ -682,7 +761,9 @@ fn process_tile(
             }
             (span.first_idx, span.last_idx_exclusive, counts)
         }
+        DistributionWindowSpec::GroupedBed(_) => (0, 0, Vec::new()),
     };
+    let mut counts_by_group: FxHashMap<u64, LengthCounts> = FxHashMap::default();
 
     // Fraction of a fragment that must overlap with a window to assign to that window
     let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
@@ -819,7 +900,7 @@ fn process_tile(
             | WindowAssigner::CountOverlap => assignment_interval,
         };
         let by_size = match window_opt {
-            WindowSpec::Size(bp) => Some(*bp),
+            DistributionWindowSpec::Size(bp) => Some(*bp),
             _ => None,
         };
         let overlapping_windows = find_overlapping_windows(
@@ -914,44 +995,86 @@ fn process_tile(
             for (overlapped_window_idx, scaling_weight, overlap_fraction_to_count) in
                 overlap_weights
             {
-                let vec_idx = overlapped_window_idx - counts_start_idx;
-                if vec_idx >= counts_by_idx.len() {
-                    bail!(
-                        "Overlapping window idx {} outside [{}..{}) on {}",
-                        overlapped_window_idx,
-                        counts_start_idx,
-                        counts_end_idx_exclusive,
-                        tile.chr
-                    );
-                }
-                if let Some(entry) = counts_by_idx[vec_idx].as_mut() {
-                    entry.counts.incr_weighted(
-                        fragment_length as usize,
-                        overlap_fraction_to_count * scaling_weight * gc_weight,
-                    );
+                let count_weight = overlap_fraction_to_count * scaling_weight * gc_weight;
+                match window_opt {
+                    DistributionWindowSpec::GroupedBed(_) => {
+                        let windows_chr = windows_chr
+                            .context("grouped BED length counting requires loaded windows")?;
+                        let group_idx = windows_chr
+                            .get(overlapped_window_idx)
+                            .with_context(|| {
+                                format!(
+                                    "missing grouped window {} in chromosome-local window slice for {}",
+                                    overlapped_window_idx, tile.chr
+                                )
+                            })?
+                            .idx();
+                        counts_by_group
+                            .entry(group_idx)
+                            .or_insert_with(|| template.zeroed_like())
+                            .incr_weighted(fragment_length as usize, count_weight);
+                    }
+                    _ => {
+                        let vec_idx = overlapped_window_idx - counts_start_idx;
+                        if vec_idx >= counts_by_idx.len() {
+                            bail!(
+                                "Overlapping window idx {} outside [{}..{}) on {}",
+                                overlapped_window_idx,
+                                counts_start_idx,
+                                counts_end_idx_exclusive,
+                                tile.chr
+                            );
+                        }
+                        if let Some(entry) = counts_by_idx[vec_idx].as_mut() {
+                            entry
+                                .counts
+                                .incr_weighted(fragment_length as usize, count_weight);
+                        }
+                    }
                 }
             }
         } else {
             // When no scaling, increment counter by 1.0 or by the overlap fraction
             for overlapped_window in overlapping_windows.windows {
-                let vec_idx = overlapped_window.idx - counts_start_idx;
-                if vec_idx >= counts_by_idx.len() {
-                    bail!(
-                        "Overlapping window idx {} outside [{}..{}) on {}",
-                        overlapped_window.idx,
-                        counts_start_idx,
-                        counts_end_idx_exclusive,
-                        tile.chr
-                    );
-                }
-                if let Some(entry) = counts_by_idx[vec_idx].as_mut() {
-                    let count_weight = match opt.window_assignment.assign_by {
-                        WindowAssigner::CountOverlap => overlapped_window.overlap_fraction as f64,
-                        _ => 1.0f64,
-                    };
-                    entry
-                        .counts
-                        .incr_weighted(fragment_length as usize, count_weight * gc_weight);
+                let count_weight = match opt.window_assignment.assign_by {
+                    WindowAssigner::CountOverlap => overlapped_window.overlap_fraction,
+                    _ => 1.0f64,
+                } * gc_weight;
+                match window_opt {
+                    DistributionWindowSpec::GroupedBed(_) => {
+                        let windows_chr = windows_chr
+                            .context("grouped BED length counting requires loaded windows")?;
+                        let group_idx = windows_chr
+                            .get(overlapped_window.idx)
+                            .with_context(|| {
+                                format!(
+                                    "missing grouped window {} in chromosome-local window slice for {}",
+                                    overlapped_window.idx, tile.chr
+                                )
+                            })?
+                            .idx();
+                        counts_by_group
+                            .entry(group_idx)
+                            .or_insert_with(|| template.zeroed_like())
+                            .incr_weighted(fragment_length as usize, count_weight);
+                    }
+                    _ => {
+                        let vec_idx = overlapped_window.idx - counts_start_idx;
+                        if vec_idx >= counts_by_idx.len() {
+                            bail!(
+                                "Overlapping window idx {} outside [{}..{}) on {}",
+                                overlapped_window.idx,
+                                counts_start_idx,
+                                counts_end_idx_exclusive,
+                                tile.chr
+                            );
+                        }
+                        if let Some(entry) = counts_by_idx[vec_idx].as_mut() {
+                            entry
+                                .counts
+                                .incr_weighted(fragment_length as usize, count_weight);
+                        }
+                    }
                 }
             }
         }
@@ -981,7 +1104,7 @@ fn process_tile(
         }
     }
 
-    if matches!(window_opt, WindowSpec::Global) {
+    if matches!(window_opt, DistributionWindowSpec::Global) {
         debug_assert_eq!(counts.len(), 1);
         let chr_counts = counts
             .into_iter()
@@ -990,6 +1113,15 @@ fn process_tile(
         return Ok(TileOutputs {
             counters: counter,
             global_counts: Some((tile.chr.clone(), chr_counts)),
+            grouped_counts: None,
+        });
+    }
+
+    if matches!(window_opt, DistributionWindowSpec::GroupedBed(_)) {
+        return Ok(TileOutputs {
+            counters: counter,
+            global_counts: None,
+            grouped_counts: Some(counts_by_group),
         });
     }
 
@@ -1013,5 +1145,6 @@ fn process_tile(
     Ok(TileOutputs {
         counters: counter,
         global_counts: None,
+        grouped_counts: None,
     })
 }

@@ -1,8 +1,8 @@
 use crate::{
     commands::{
         cli_common::{
-            ApplyGCArgs, ChromosomeArgs, FragmentLengthArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs,
-            UnpairedArgs, WindowsArgs,
+            ApplyGCArgs, ChromosomeArgs, DistributionWindowsArgs, FragmentLengthArgs, IOCArgs,
+            LoggingArgs, ScaleGenomeArgs, UnpairedArgs,
         },
         ends::config_structs::*,
     },
@@ -184,7 +184,7 @@ pub struct EndsConfig {
     pub tile_size: u32,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
-    pub windows: WindowsArgs,
+    pub windows: DistributionWindowsArgs,
 
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub window_assignment: AssignMotifToWindowArgs,
@@ -347,7 +347,7 @@ impl EndsConfig {
             indel_filter: IndelMotifFilterPolicy::Auto,
             all_motifs: false,
             collapse_complement: false,
-            windows: WindowsArgs::default(),
+            windows: DistributionWindowsArgs::default(),
             window_assignment: AssignMotifToWindowArgs::default(),
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
@@ -375,7 +375,7 @@ impl EndsConfig {
         self.indel_filter = filter;
     }
 
-    pub fn set_windows(&mut self, windows: WindowsArgs) {
+    pub fn set_windows(&mut self, windows: DistributionWindowsArgs) {
         self.windows = windows;
     }
 

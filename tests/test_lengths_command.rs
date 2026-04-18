@@ -8,7 +8,8 @@ mod tests_lengths_command {
 
     use anyhow::Result;
     use cfdnalab::commands::cli_common::{
-        AssignToWindowArgs, ChromosomeArgs, IOCArgs, UnpairedArgs, WindowAssigner, WindowsArgs,
+        AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs, IOCArgs, UnpairedArgs,
+        WindowAssigner,
     };
     #[cfg(feature = "cmd_coverage_weights")]
     use cfdnalab::commands::coverage_weights::{
@@ -32,6 +33,44 @@ mod tests_lengths_command {
     use ndarray::array;
     use ndarray_npy::read_npy;
     use tempfile::TempDir;
+
+    fn parse_group_index_rows(text: &str) -> Vec<(u64, String, f64)> {
+        let mut lines = text.lines();
+        let header = lines.next().expect("group index TSV must have a header");
+        assert_eq!(header, "group_idx\tgroup_name\tblacklisted_fraction");
+
+        lines
+            .map(|line| {
+                let mut fields = line.split('\t');
+                let group_idx = fields
+                    .next()
+                    .expect("group index row must contain group_idx")
+                    .parse::<u64>()
+                    .expect("group_idx must parse as u64");
+                let group_name = fields
+                    .next()
+                    .expect("group index row must contain group_name")
+                    .to_string();
+                let blacklisted_fraction = fields
+                    .next()
+                    .expect("group index row must contain blacklisted_fraction")
+                    .parse::<f64>()
+                    .expect("blacklisted_fraction must parse as f64");
+                assert!(
+                    fields.next().is_none(),
+                    "group index row must contain exactly three columns"
+                );
+                (group_idx, group_name, blacklisted_fraction)
+            })
+            .collect()
+    }
+
+    fn parse_group_index_tsv(text: &str) -> Vec<(u64, String)> {
+        parse_group_index_rows(text)
+            .into_iter()
+            .map(|(group_idx, group_name, _)| (group_idx, group_name))
+            .collect()
+    }
 
     fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
         ChromosomeArgs {
@@ -158,7 +197,7 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -206,9 +245,10 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: Some(500),
             by_bed: None,
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
@@ -263,9 +303,10 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: Some(10),
             by_bed: None,
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
@@ -324,9 +365,10 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(bed_path.clone()),
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
@@ -384,9 +426,10 @@ mod tests_lengths_command {
             reads_are_fragments: true,
         });
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(bed_path),
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignToWindowArgs {
             assign_by: WindowAssigner::Any,
@@ -440,9 +483,10 @@ mod tests_lengths_command {
             reads_are_fragments: true,
         });
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(bed_path),
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignToWindowArgs {
             assign_by: WindowAssigner::Any,
@@ -503,9 +547,10 @@ mod tests_lengths_command {
             reads_are_fragments: true,
         });
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(bed_path),
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignToWindowArgs {
             assign_by: WindowAssigner::Any,
@@ -565,9 +610,10 @@ mod tests_lengths_command {
                 reads_are_fragments: true,
             });
             cfg.set_indel_mode(IndelMode::Ignore);
-            cfg.set_windows(WindowsArgs {
+            cfg.set_windows(DistributionWindowsArgs {
                 by_size: None,
                 by_bed: Some(bed_path),
+                by_grouped_bed: None,
             });
             cfg.set_window_assignment(AssignToWindowArgs {
                 assign_by: WindowAssigner::Any,
@@ -631,9 +677,10 @@ mod tests_lengths_command {
                 reads_are_fragments: true,
             });
             cfg.set_indel_mode(IndelMode::Ignore);
-            cfg.set_windows(WindowsArgs {
+            cfg.set_windows(DistributionWindowsArgs {
                 by_size: None,
                 by_bed: Some(bed_path),
+                by_grouped_bed: None,
             });
             cfg.set_window_assignment(AssignToWindowArgs {
                 assign_by: WindowAssigner::Any,
@@ -691,9 +738,10 @@ mod tests_lengths_command {
                 reads_are_fragments: true,
             });
             cfg.set_indel_mode(IndelMode::Ignore);
-            cfg.set_windows(WindowsArgs {
+            cfg.set_windows(DistributionWindowsArgs {
                 by_size: None,
                 by_bed: Some(bed_path),
+                by_grouped_bed: None,
             });
             cfg.set_window_assignment(AssignToWindowArgs {
                 assign_by: WindowAssigner::Any,
@@ -749,7 +797,7 @@ mod tests_lengths_command {
         let bed_path = by_bed_out.path().join("whole_chr_window.bed");
         fixtures::write_bed(&bed_path, &[("chr1", 0, 200, "whole_chr")])?;
 
-        let make_cfg = |out_dir: &std::path::Path, windows: WindowsArgs| {
+        let make_cfg = |out_dir: &std::path::Path, windows: DistributionWindowsArgs| {
             let mut cfg = LengthsConfig::new(
                 IOCArgs {
                     bam: bam.bam.clone(),
@@ -771,19 +819,21 @@ mod tests_lengths_command {
             cfg
         };
 
-        let global_cfg = make_cfg(global_out.path(), WindowsArgs::default());
+        let global_cfg = make_cfg(global_out.path(), DistributionWindowsArgs::default());
         let by_size_cfg = make_cfg(
             by_size_out.path(),
-            WindowsArgs {
+            DistributionWindowsArgs {
                 by_size: Some(200),
                 by_bed: None,
+                by_grouped_bed: None,
             },
         );
         let by_bed_cfg = make_cfg(
             by_bed_out.path(),
-            WindowsArgs {
+            DistributionWindowsArgs {
                 by_size: None,
                 by_bed: Some(bed_path),
+                by_grouped_bed: None,
             },
         );
 
@@ -859,7 +909,7 @@ mod tests_lengths_command {
             );
             cfg.output_prefix = prefix.to_string();
             cfg.set_indel_mode(IndelMode::Ignore);
-            cfg.set_windows(WindowsArgs::default());
+            cfg.set_windows(DistributionWindowsArgs::default());
             cfg.set_window_assignment(AssignToWindowArgs::default());
             cfg.set_require_proper_pair(false);
             {
@@ -925,7 +975,7 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1", "chr2", "chr3"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -994,7 +1044,7 @@ mod tests_lengths_command {
                 base_chromosomes(&["chr1"]),
             );
             cfg.set_indel_mode(IndelMode::Ignore);
-            cfg.set_windows(WindowsArgs::default());
+            cfg.set_windows(DistributionWindowsArgs::default());
             cfg.set_window_assignment(AssignToWindowArgs::default());
             cfg.set_min_mapq(0);
             cfg.set_require_proper_pair(false);
@@ -1049,9 +1099,10 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1", "chr2", "chr3"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: Some(200),
             by_bed: None,
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
@@ -1116,9 +1167,10 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1", "chr2", "chr3"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(bed_path),
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
@@ -1181,7 +1233,7 @@ mod tests_lengths_command {
             ],
         )?;
 
-        let make_cfg = |output_dir: &std::path::Path, windows: WindowsArgs| {
+        let make_cfg = |output_dir: &std::path::Path, windows: DistributionWindowsArgs| {
             let mut cfg = LengthsConfig::new(
                 IOCArgs {
                     bam: bam.bam.clone(),
@@ -1206,16 +1258,18 @@ mod tests_lengths_command {
 
         let by_size_cfg = make_cfg(
             by_size_out.path(),
-            WindowsArgs {
+            DistributionWindowsArgs {
                 by_size: Some(200),
                 by_bed: None,
+                by_grouped_bed: None,
             },
         );
         let bed_cfg = make_cfg(
             bed_out.path(),
-            WindowsArgs {
+            DistributionWindowsArgs {
                 by_size: None,
                 by_bed: Some(bed_path),
+                by_grouped_bed: None,
             },
         );
 
@@ -1255,7 +1309,7 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -1299,7 +1353,7 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -1366,7 +1420,7 @@ mod tests_lengths_command {
                 base_chromosomes(&["chr1"]),
             );
             cfg.set_indel_mode(IndelMode::Ignore);
-            cfg.set_windows(WindowsArgs::default());
+            cfg.set_windows(DistributionWindowsArgs::default());
             cfg.set_window_assignment(AssignToWindowArgs::default());
             cfg.set_min_mapq(0);
             cfg.set_require_proper_pair(false);
@@ -1431,7 +1485,7 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -1525,7 +1579,7 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -1651,7 +1705,7 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -1724,7 +1778,7 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -1782,7 +1836,7 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -1822,7 +1876,7 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -1865,7 +1919,7 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -1908,7 +1962,7 @@ mod tests_lengths_command {
             },
             base_chromosomes(&["chr1"]),
         );
-        base_cfg.set_windows(WindowsArgs::default());
+        base_cfg.set_windows(DistributionWindowsArgs::default());
         base_cfg.set_window_assignment(AssignToWindowArgs::default());
         base_cfg.set_min_mapq(0);
         base_cfg.set_require_proper_pair(false);
@@ -1986,7 +2040,7 @@ mod tests_lengths_command {
             cfg.set_unpaired(UnpairedArgs {
                 reads_are_fragments: true,
             });
-            cfg.set_windows(WindowsArgs::default());
+            cfg.set_windows(DistributionWindowsArgs::default());
             cfg.set_window_assignment(AssignToWindowArgs::default());
             cfg.set_min_mapq(0);
             cfg.set_require_proper_pair(false);
@@ -2075,9 +2129,10 @@ mod tests_lengths_command {
             cfg.set_unpaired(UnpairedArgs {
                 reads_are_fragments: true,
             });
-            cfg.set_windows(WindowsArgs {
+            cfg.set_windows(DistributionWindowsArgs {
                 by_size: Some(10),
                 by_bed: None,
+                by_grouped_bed: None,
             });
             cfg.set_window_assignment(AssignToWindowArgs {
                 assign_by: WindowAssigner::CountOverlap,
@@ -2167,7 +2222,7 @@ mod tests_lengths_command {
         cfg.set_unpaired(UnpairedArgs {
             reads_are_fragments: true,
         });
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -2246,9 +2301,10 @@ mod tests_lengths_command {
         cfg.set_unpaired(UnpairedArgs {
             reads_are_fragments: true,
         });
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(bed_path),
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
@@ -2307,7 +2363,7 @@ mod tests_lengths_command {
             cfg.set_unpaired(UnpairedArgs {
                 reads_are_fragments: true,
             });
-            cfg.set_windows(WindowsArgs::default());
+            cfg.set_windows(DistributionWindowsArgs::default());
             cfg.set_window_assignment(AssignToWindowArgs::default());
             cfg.set_min_mapq(0);
             cfg.set_require_proper_pair(false);
@@ -2369,7 +2425,7 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Adjust);
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -2418,7 +2474,7 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Adjust);
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -2463,7 +2519,7 @@ mod tests_lengths_command {
             },
             base_chromosomes(&["chr1"]),
         );
-        base_cfg.set_windows(WindowsArgs::default());
+        base_cfg.set_windows(DistributionWindowsArgs::default());
         base_cfg.set_window_assignment(AssignToWindowArgs::default());
         base_cfg.set_min_mapq(0);
         base_cfg.set_require_proper_pair(false);
@@ -2575,7 +2631,7 @@ mod tests_lengths_command {
         cfg.set_indel_mode(IndelMode::Ignore);
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         {
             let frag = cfg.fragment_lengths_mut();
@@ -2682,9 +2738,10 @@ mod tests_lengths_command {
         cfg.set_tile_size(30); // force multiple tiles per chromosome
         cfg.set_indel_mode(IndelMode::Ignore);
         // Use a large size bin so each chromosome produces exactly one window, avoiding global collapse
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: Some(200),
             by_bed: None,
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignToWindowArgs::default());
         {
@@ -2727,9 +2784,10 @@ mod tests_lengths_command {
                 base_chromosomes(&["chr1"]),
             );
             cfg.set_indel_mode(IndelMode::Ignore);
-            cfg.set_windows(WindowsArgs {
+            cfg.set_windows(DistributionWindowsArgs {
                 by_size: Some(window_bp),
                 by_bed: None,
+                by_grouped_bed: None,
             });
             cfg.set_window_assignment(AssignToWindowArgs { assign_by });
             cfg.set_min_mapq(0);
@@ -2810,9 +2868,10 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(bed_path),
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignToWindowArgs {
             assign_by: WindowAssigner::Midpoint,
@@ -2872,7 +2931,7 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs::default());
+        cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
@@ -2961,9 +3020,10 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.set_indel_mode(IndelMode::Ignore);
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(bed_path),
+            by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignToWindowArgs {
             assign_by: WindowAssigner::CountOverlap,
@@ -2986,10 +3046,9 @@ mod tests_lengths_command {
         let arr: Array2<f64> = read_npy(&npy_path)?;
         assert_eq!(arr.shape(), &[1, 1]);
 
-        // `count-overlap` stores overlap fractions as `f32` before they are promoted back to
-        // `f64` in the lengths accumulator, so the stable contract here is the rounded `f32`
-        // value rather than ideal `f64` arithmetic on 11 / 61.
-        let expected = (11.0_f32 / 61.0_f32) as f64;
+        // `count-overlap` keeps overlap fractions as `f64`, so the stable contract here is the
+        // direct `f64` arithmetic for 11 / 61.
+        let expected = 11.0_f64 / 61.0_f64;
         assert!(
             (arr[(0, 0)] - expected).abs() <= 1e-12,
             "expected weighted count {expected}, got {}",
@@ -3031,9 +3090,10 @@ mod tests_lengths_command {
             base_chromosomes(&["chr1"]),
         );
         cfg.output_prefix = "sampleA".to_string();
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(windows_bed),
+            by_grouped_bed: None,
         });
         cfg.blacklist = Some(vec![blacklist_bed]);
         cfg.set_min_mapq(0);
@@ -3057,6 +3117,1220 @@ mod tests_lengths_command {
                 "chr1\t10\t20\t0.5\n",
                 "chr1\t20\t30\t0\n"
             )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_count_overlap_uses_first_group_occurrence_keeps_zero_rows_and_writes_group_metadata()
+    -> Result<()> {
+        // Arrange:
+        // - one unpaired fragment spans [10,20) with exact fragment length 10
+        // - grouped intervals use mixed widths on purpose:
+        //     [10,15) beta  -> overlap 5/10 = 0.5
+        //     [40,50) beta  -> contributes no counts, but 5/10 of the group's bp are blacklisted
+        //     [15,20) alpha -> overlap 5/10 = 0.5
+        //     [30,35) gamma -> zero-count group, fully blacklisted in metadata
+        // - first group occurrence order in the BED scan is beta, alpha, gamma
+        // - grouped `count-overlap` therefore yields:
+        //     beta  -> 0.5 in the lone length-10 column
+        //     alpha -> 0.5
+        //     gamma -> 0.0
+        // - group-level blacklist fractions are width-weighted across loaded intervals:
+        //     beta  -> 5 / (5 + 10) = 1/3
+        //     alpha -> 0
+        //     gamma -> 1
+        let bam = single_read_fragment_bam("lengths_grouped_count_overlap", 10, 10)?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_windows.bed");
+        let blacklist_bed = out_dir.path().join("blacklist.bed");
+        write_bed(
+            &grouped_bed,
+            &[
+                ("chr1", 10, 15, "beta"),
+                ("chr1", 40, 50, "beta"),
+                ("chr1", 15, 20, "alpha"),
+                ("chr1", 30, 35, "gamma"),
+            ],
+        )?;
+        write_bed(
+            &blacklist_bed,
+            &[
+                ("chr1", 45, 50, "masked_beta"),
+                ("chr1", 30, 35, "masked_gamma"),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.output_prefix = "sampleA".to_string();
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.blacklist = Some(vec![blacklist_bed]);
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::CountOverlap,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+        let counts_path = out_dir
+            .path()
+            .join(dot_join(&["sampleA", "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let group_index = std::fs::read_to_string(
+            out_dir
+                .path()
+                .join(dot_join(&["sampleA", "group_index.tsv"])),
+        )?;
+
+        // Assert
+        assert_eq!(arr.shape(), &[3, 1]);
+        assert!((arr[(0, 0)] - 0.5).abs() < 1e-12);
+        assert!((arr[(1, 0)] - 0.5).abs() < 1e-12);
+        assert_eq!(arr[(2, 0)], 0.0);
+        assert!((arr.sum() - 1.0).abs() < 1e-12);
+
+        assert_eq!(
+            parse_group_index_rows(&group_index),
+            vec![
+                (0, "beta".to_string(), 1.0 / 3.0),
+                (1, "alpha".to_string(), 0.0),
+                (2, "gamma".to_string(), 1.0),
+            ]
+        );
+        assert!(!out_dir.path().join("sampleA.bins.tsv").exists());
+        assert!(!out_dir.path().join("sampleA.grouped_windows.tsv").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_count_overlap_sums_same_group_window_weights_above_one() -> Result<()> {
+        // Arrange:
+        // - one unpaired fragment spans [10,20) with exact fragment length 10
+        // - grouped intervals:
+        //     [10,15) beta  -> overlap 5/10 = 0.5
+        //     [12,18) beta  -> overlap 6/10 = 0.6
+        //     [15,20) alpha -> overlap 5/10 = 0.5
+        //     [30,35) gamma -> zero row
+        // - grouped `count-overlap` must therefore yield:
+        //     beta  -> 1.1 in the lone length-10 column
+        //     alpha -> 0.5
+        //     gamma -> 0.0
+        // This fails if grouped mode unions same-group windows or normalizes their combined
+        // overlap mass back down to one fragment.
+        let bam = single_read_fragment_bam("lengths_grouped_count_overlap_above_one", 10, 10)?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_windows_overlap_mass.bed");
+        write_bed(
+            &grouped_bed,
+            &[
+                ("chr1", 10, 15, "beta"),
+                ("chr1", 12, 18, "beta"),
+                ("chr1", 15, 20, "alpha"),
+                ("chr1", 30, 35, "gamma"),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::CountOverlap,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+        let counts_path = out_dir.path().join("length_counts.npy");
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+
+        // Assert
+        assert_eq!(
+            parse_group_index_tsv(&group_index),
+            vec![
+                (0, "beta".to_string()),
+                (1, "alpha".to_string()),
+                (2, "gamma".to_string()),
+            ]
+        );
+        assert_eq!(arr.shape(), &[3, 1]);
+        assert!((arr[(0, 0)] - 1.1).abs() < 1e-12);
+        assert!((arr[(1, 0)] - 0.5).abs() < 1e-12);
+        assert_eq!(arr[(2, 0)], 0.0);
+        assert!((arr.sum() - 1.6).abs() < 1e-12);
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_any_counts_same_group_intervals_separately() -> Result<()> {
+        // Arrange:
+        // - one unpaired fragment spans [10,20) with length 10
+        // - under `assign-by=any`, every overlapping interval gets the full fragment count
+        // - grouped intervals:
+        //     [10,15) beta
+        //     [12,18) beta
+        //     [15,20) alpha
+        //     [30,35) gamma
+        // - expected grouped counts:
+        //     beta  -> 2.0
+        //     alpha -> 1.0
+        //     gamma -> 0.0
+        // This fails if grouped mode unions same-group intervals or divides by the number of
+        // windows in a group.
+        let bam = single_read_fragment_bam("lengths_grouped_any", 10, 10)?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_windows_any.bed");
+        write_bed(
+            &grouped_bed,
+            &[
+                ("chr1", 10, 15, "beta"),
+                ("chr1", 12, 18, "beta"),
+                ("chr1", 15, 20, "alpha"),
+                ("chr1", 30, 35, "gamma"),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Any,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+        let counts_path = out_dir.path().join("length_counts.npy");
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+
+        // Assert
+        assert_eq!(
+            parse_group_index_tsv(&group_index),
+            vec![
+                (0, "beta".to_string()),
+                (1, "alpha".to_string()),
+                (2, "gamma".to_string()),
+            ]
+        );
+        assert_eq!(arr.shape(), &[3, 1]);
+        assert_eq!(arr[(0, 0)], 2.0);
+        assert_eq!(arr[(1, 0)], 1.0);
+        assert_eq!(arr[(2, 0)], 0.0);
+        assert_eq!(arr.sum(), 3.0);
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_any_aggregates_shared_groups_across_chromosomes_and_uses_prefixed_sidecars()
+    -> Result<()> {
+        // Arrange:
+        // The three-chrom fixture contributes exactly one fragment per chromosome:
+        // - chr1 -> length 60
+        // - chr2 -> length 80
+        // - chr3 -> length 100
+        //
+        // Grouped windows intentionally place `beta` first, reuse it on chr3, and keep `gamma`
+        // empty, so row order and exact grouped counts must be:
+        // - row 0 / beta  -> lengths 80 and 100
+        // - row 1 / alpha -> length 60
+        // - row 2 / gamma -> all zeros
+        let bam = three_chrom_length_fixture("lengths_grouped_three_chr")?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_three_chr.bed");
+        write_bed(
+            &grouped_bed,
+            &[
+                ("chr2", 0, 200, "beta"),
+                ("chr1", 0, 200, "alpha"),
+                ("chr3", 0, 200, "beta"),
+                ("chr1", 150, 160, "gamma"),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1", "chr2", "chr3"]),
+        );
+        cfg.output_prefix = "sampleA".to_string();
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Any,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 120;
+        }
+
+        // Act
+        run(&cfg)?;
+        let counts_path = out_dir
+            .path()
+            .join(dot_join(&["sampleA", "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let group_index = std::fs::read_to_string(
+            out_dir
+                .path()
+                .join(dot_join(&["sampleA", "group_index.tsv"])),
+        )?;
+        // Assert
+        assert_eq!(
+            parse_group_index_rows(&group_index),
+            vec![
+                (0, "beta".to_string(), 0.0),
+                (1, "alpha".to_string(), 0.0),
+                (2, "gamma".to_string(), 0.0),
+            ]
+        );
+        assert_eq!(arr.shape(), &[3, 111]);
+        assert_eq!(arr[(0, 80 - 10)], 1.0);
+        assert_eq!(arr[(0, 100 - 10)], 1.0);
+        assert_eq!(arr.row(0).sum(), 2.0);
+        assert_eq!(arr[(1, 60 - 10)], 1.0);
+        assert_eq!(arr.row(1).sum(), 1.0);
+        assert_eq!(arr.row(2).sum(), 0.0);
+        assert_eq!(arr.sum(), 3.0);
+
+        assert!(out_dir.path().join("sampleA.group_index.tsv").exists());
+        assert!(!out_dir.path().join("sampleA.grouped_windows.tsv").exists());
+        assert!(!out_dir.path().join("group_index.tsv").exists());
+        assert!(!out_dir.path().join("grouped_windows.tsv").exists());
+        assert!(!out_dir.path().join("sampleA.bins.tsv").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_scaling_factors_aggregate_shared_groups_across_chromosomes() -> Result<()> {
+        // Arrange:
+        // The three-chrom fixture contributes exactly one fragment per chromosome:
+        // - chr1 -> length 60
+        // - chr2 -> length 80
+        // - chr3 -> length 100
+        //
+        // Grouped windows intentionally reuse `beta` across chr2 and chr3 and place `alpha`
+        // second in the BED. Per-chromosome scaling factors are:
+        // - chr1 -> 1.5
+        // - chr2 -> 2.0
+        // - chr3 -> 3.0
+        //
+        // So grouped output must be:
+        // - row 0 / beta  -> length 80 = 2.0, length 100 = 3.0
+        // - row 1 / alpha -> length 60 = 1.5
+        // - row 2 / gamma -> all zeros
+        let bam = three_chrom_length_fixture("lengths_grouped_three_chr_scaling")?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_three_chr_scaling.bed");
+        let scaling_path = out_dir.path().join("grouped_three_chr_scaling.tsv");
+        write_bed(
+            &grouped_bed,
+            &[
+                ("chr2", 0, 200, "beta"),
+                ("chr1", 0, 200, "alpha"),
+                ("chr3", 0, 200, "beta"),
+                ("chr1", 150, 160, "gamma"),
+            ],
+        )?;
+        write_scaling_factors(
+            &scaling_path,
+            &[
+                ("chr1", 0, 200, 1.5),
+                ("chr2", 0, 200, 2.0),
+                ("chr3", 0, 200, 3.0),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1", "chr2", "chr3"]),
+        );
+        cfg.output_prefix = "sampleA".to_string();
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_tile_size(50);
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Any,
+        });
+        cfg.set_scaling_factors(Some(scaling_path));
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 120;
+        }
+
+        // Act
+        run(&cfg)?;
+        let counts_path = out_dir
+            .path()
+            .join(dot_join(&["sampleA", "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let group_index = std::fs::read_to_string(
+            out_dir
+                .path()
+                .join(dot_join(&["sampleA", "group_index.tsv"])),
+        )?;
+
+        // Assert
+        assert_eq!(
+            parse_group_index_rows(&group_index),
+            vec![
+                (0, "beta".to_string(), 0.0),
+                (1, "alpha".to_string(), 0.0),
+                (2, "gamma".to_string(), 0.0),
+            ]
+        );
+        assert_eq!(arr.shape(), &[3, 111]);
+        assert_eq!(arr[(0, 80 - 10)], 2.0);
+        assert_eq!(arr[(0, 100 - 10)], 3.0);
+        assert_eq!(arr.row(0).sum(), 5.0);
+        assert_eq!(arr[(1, 60 - 10)], 1.5);
+        assert_eq!(arr.row(1).sum(), 1.5);
+        assert_eq!(arr.row(2).sum(), 0.0);
+        assert_eq!(arr.sum(), 6.5);
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_any_aggregates_shared_groups_across_tiles_on_same_chromosome() -> Result<()> {
+        // Arrange:
+        // - two unpaired fragments both have length 10 and start in different tiles when
+        //   `tile_size=50`:
+        //     [10,20) in tile [0,50)
+        //     [60,70) in tile [50,100)
+        // - grouped intervals place the same group on both tiles:
+        //     [10,20) beta
+        //     [60,70) beta
+        //     [120,130) gamma
+        // - under `assign-by=any`, each fragment contributes exactly 1.0 to its overlapping
+        //   window, so grouped output must aggregate to:
+        //     beta  -> 2.0 in the lone length-10 column
+        //     gamma -> 0.0
+        let bam = bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            Vec::new(),
+            vec![
+                ReadSpec {
+                    tid: 0,
+                    pos: 10,
+                    cigar: vec![('M', 10)],
+                    seq: vec![b'A'; 10],
+                    qual: 40,
+                    is_reverse: false,
+                    mapq: 60,
+                    flags: 0,
+                    mate_tid: None,
+                    mate_pos: None,
+                    insert_size: 0,
+                },
+                ReadSpec {
+                    tid: 0,
+                    pos: 60,
+                    cigar: vec![('M', 10)],
+                    seq: vec![b'A'; 10],
+                    qual: 40,
+                    is_reverse: false,
+                    mapq: 60,
+                    flags: 0,
+                    mate_tid: None,
+                    mate_pos: None,
+                    insert_size: 0,
+                },
+            ],
+            "lengths_grouped_same_chr_tiles",
+        )?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_same_chr_tiles.bed");
+        write_bed(
+            &grouped_bed,
+            &[
+                ("chr1", 10, 20, "beta"),
+                ("chr1", 60, 70, "beta"),
+                ("chr1", 120, 130, "gamma"),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_tile_size(50);
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Any,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+        let counts_path = out_dir.path().join("length_counts.npy");
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+
+        // Assert
+        assert_eq!(
+            parse_group_index_tsv(&group_index),
+            vec![(0, "beta".to_string()), (1, "gamma".to_string())]
+        );
+        assert_eq!(arr.shape(), &[2, 1]);
+        assert_eq!(arr[(0, 0)], 2.0);
+        assert_eq!(arr[(1, 0)], 0.0);
+        assert_eq!(arr.sum(), 2.0);
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_scaling_factors_weight_each_grouped_count() -> Result<()> {
+        // Arrange:
+        // - one unpaired fragment spans [10,20) with length 10
+        // - grouped windows keep that fragment in `beta` and one explicit zero row in `gamma`
+        // - a chromosome-wide scaling factor of 2.0 should double the grouped count mass
+        let bam = single_read_fragment_bam("lengths_grouped_scaling", 10, 10)?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_scaling.bed");
+        let scaling_path = out_dir.path().join("grouped_scaling.tsv");
+        write_bed(
+            &grouped_bed,
+            &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
+        )?;
+        write_scaling_factors(&scaling_path, &[("chr1", 0, 200, 2.0)])?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Any,
+        });
+        cfg.set_scaling_factors(Some(scaling_path));
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+        let counts_path = out_dir.path().join("length_counts.npy");
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+
+        // Assert
+        assert_eq!(
+            parse_group_index_tsv(&group_index),
+            vec![(0, "beta".to_string()), (1, "gamma".to_string())]
+        );
+        assert_eq!(arr.shape(), &[2, 1]);
+        assert_eq!(arr[(0, 0)], 2.0);
+        assert_eq!(arr[(1, 0)], 0.0);
+        assert_eq!(arr.sum(), 2.0);
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_blacklist_filtering_drops_matching_fragments_before_grouping() -> Result<()> {
+        // Arrange:
+        // - one unpaired fragment spans [10,20) with length 10
+        // - grouped windows keep `beta` as the only would-be hit and preserve `gamma` as a zero row
+        // - blacklisting [15,16) with `blacklist-strategy=any` must drop the fragment entirely
+        //   before any grouped counting happens
+        // - metadata still reflects the grouped BED geometry:
+        //     beta  -> 1 / 10 = 0.1 blacklisted
+        //     gamma -> 0
+        let bam = single_read_fragment_bam("lengths_grouped_blacklist", 10, 10)?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_blacklist.bed");
+        let blacklist_bed = out_dir.path().join("grouped_blacklist_mask.bed");
+        write_bed(
+            &grouped_bed,
+            &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
+        )?;
+        write_bed(&blacklist_bed, &[("chr1", 15, 16, "masked_beta")])?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.blacklist = Some(vec![blacklist_bed]);
+        cfg.blacklist_strategy = BlacklistStrategy::Any;
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Any,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+        let counts_path = out_dir.path().join("length_counts.npy");
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+
+        // Assert
+        assert_eq!(
+            parse_group_index_rows(&group_index),
+            vec![
+                (0, "beta".to_string(), 0.1),
+                (1, "gamma".to_string(), 0.0),
+            ]
+        );
+        assert_eq!(arr.shape(), &[2, 1]);
+        assert_eq!(arr[(0, 0)], 0.0);
+        assert_eq!(arr[(1, 0)], 0.0);
+        assert_eq!(arr.sum(), 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_gc_correction_weights_each_grouped_count() -> Result<()> {
+        // Arrange:
+        // - one unpaired fragment spans [10,20) with length 10 on the simple ACGT reference
+        // - that fragment has GC%=50
+        // - `lengths` uses the length-agnostic GC corrector, which averages the two length rows
+        //   in the package below with the default `equal` weighting:
+        //     GC bin [0,51): (3.0 + 1.0) / 2 = 2.0
+        // - grouped windows keep `beta` as the counted row and preserve `gamma` as an explicit
+        //   zero row
+        let bam = single_read_fragment_bam("lengths_grouped_gc", 10, 10)?;
+        let reference = simple_reference_twobit()?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_gc.bed");
+        let gc_path = out_dir.path().join("grouped_gc_package.npz");
+        let package = GCCorrectionPackage {
+            version: GC_CORRECTION_SCHEMA_VERSION,
+            end_offset: 0,
+            length_edges: vec![10, 11, 20],
+            gc_edges: vec![0, 51, 100],
+            length_bin_frequencies: array![1.0_f64, 1.0_f64],
+            correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
+        };
+        package.write_npz(&gc_path)?;
+        write_bed(
+            &grouped_bed,
+            &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Any,
+        });
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            neutralize_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(reference.path.clone()));
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+        let counts_path = out_dir.path().join("length_counts.npy");
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+
+        // Assert
+        assert_eq!(
+            parse_group_index_tsv(&group_index),
+            vec![(0, "beta".to_string()), (1, "gamma".to_string())]
+        );
+        assert_eq!(arr.shape(), &[2, 1]);
+        assert_eq!(arr[(0, 0)], 2.0);
+        assert_eq!(arr[(1, 0)], 0.0);
+        assert_eq!(arr.sum(), 2.0);
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_assign_when_all_counts_each_containing_window_in_group() -> Result<()> {
+        // Arrange:
+        // - one unpaired fragment spans [10,20) with length 10
+        // - under `assign-by=all`, a window counts only if it fully contains the fragment
+        // - grouped intervals:
+        //     [10,20) beta  -> contains the fragment
+        //     [0,20)  beta  -> also contains the fragment
+        //     [10,19) alpha -> does not fully contain the fragment
+        //     [30,40) gamma -> zero row
+        // - expected grouped counts:
+        //     beta  -> 2.0
+        //     alpha -> 0.0
+        //     gamma -> 0.0
+        let bam = single_read_fragment_bam("lengths_grouped_all", 10, 10)?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_all.bed");
+        write_bed(
+            &grouped_bed,
+            &[
+                ("chr1", 10, 20, "beta"),
+                ("chr1", 0, 20, "beta"),
+                ("chr1", 10, 19, "alpha"),
+                ("chr1", 30, 40, "gamma"),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::All,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+        let counts_path = out_dir.path().join("length_counts.npy");
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+
+        // Assert
+        assert_eq!(
+            parse_group_index_tsv(&group_index),
+            vec![
+                (0, "beta".to_string()),
+                (1, "alpha".to_string()),
+                (2, "gamma".to_string()),
+            ]
+        );
+        assert_eq!(arr.shape(), &[3, 1]);
+        assert_eq!(arr[(0, 0)], 2.0);
+        assert_eq!(arr[(1, 0)], 0.0);
+        assert_eq!(arr[(2, 0)], 0.0);
+        assert_eq!(arr.sum(), 2.0);
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_keeps_zero_group_rows_when_only_filtered_fragments_would_match() -> Result<()> {
+        // Arrange:
+        // The three-chrom fixture has one fragment per chromosome with lengths 60, 80, and 100.
+        // Restricting the allowed range to length 100 should therefore keep only the chr3 group,
+        // while chr1 and chr2 still remain as explicit zero rows in grouped mode.
+        let bam = three_chrom_length_fixture("lengths_grouped_filtered_zero_rows")?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_filtered_zero_rows.bed");
+        write_bed(
+            &grouped_bed,
+            &[
+                ("chr1", 0, 200, "alpha"),
+                ("chr2", 0, 200, "beta"),
+                ("chr3", 0, 200, "gamma"),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1", "chr2", "chr3"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Any,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 100;
+            frag.max_fragment_length = 100;
+        }
+
+        // Act
+        run(&cfg)?;
+        let counts_path = out_dir.path().join("length_counts.npy");
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+
+        // Assert
+        assert_eq!(
+            parse_group_index_tsv(&group_index),
+            vec![
+                (0, "alpha".to_string()),
+                (1, "beta".to_string()),
+                (2, "gamma".to_string()),
+            ]
+        );
+        assert_eq!(arr.shape(), &[3, 1]);
+        assert_eq!(arr[(0, 0)], 0.0);
+        assert_eq!(arr[(1, 0)], 0.0);
+        assert_eq!(arr[(2, 0)], 1.0);
+        assert_eq!(arr.sum(), 1.0);
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_assign_when_midpoint_counts_exactly_one_adjacent_group_at_boundary() -> Result<()>
+    {
+        // Arrange:
+        // - unpaired fragment [40,50) has even midpoint 44 or 45
+        // - grouped windows split that seam into adjacent groups:
+        //     [44,45) alpha
+        //     [45,46) beta
+        // - endpoint-only control groups must stay zero in midpoint mode
+        // - exactly one of alpha/beta must receive the fragment
+        let bam = single_read_fragment_bam("lengths_grouped_midpoint_boundary", 40, 10)?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_midpoint_boundary.bed");
+        write_bed(
+            &grouped_bed,
+            &[
+                ("chr1", 40, 41, "left_endpoint"),
+                ("chr1", 44, 45, "alpha"),
+                ("chr1", 45, 46, "beta"),
+                ("chr1", 49, 50, "right_endpoint"),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Midpoint,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+        let counts_path = out_dir.path().join("length_counts.npy");
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+
+        // Assert
+        assert_eq!(arr.shape(), &[4, 1]);
+        assert_eq!(arr[(0, 0)], 0.0);
+        assert_eq!(arr[(3, 0)], 0.0);
+        let alpha_hot = (arr[(1, 0)] - 1.0).abs() < 1e-12 && arr[(2, 0)].abs() < 1e-12;
+        let beta_hot = arr[(1, 0)].abs() < 1e-12 && (arr[(2, 0)] - 1.0).abs() < 1e-12;
+        assert!(
+            alpha_hot || beta_hot,
+            "midpoint seam must count exactly one adjacent group, got [{}, {}]",
+            arr[(1, 0)],
+            arr[(2, 0)]
+        );
+        assert_eq!(arr.sum(), 1.0);
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_assign_when_midpoint_counts_only_midpoint_group_not_endpoint_groups()
+    -> Result<()> {
+        // Arrange:
+        // - unpaired fragment [10,20) has midpoint 14 or 15, both inside [14,16)
+        // - endpoint-only groups are added as negative controls
+        // - midpoint mode must therefore count only the midpoint group
+        let bam = single_read_fragment_bam("lengths_grouped_midpoint_only_mid", 10, 10)?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_midpoint_only_mid.bed");
+        write_bed(
+            &grouped_bed,
+            &[
+                ("chr1", 10, 11, "left_endpoint"),
+                ("chr1", 14, 16, "mid"),
+                ("chr1", 19, 20, "right_endpoint"),
+                ("chr1", 30, 31, "gamma"),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Midpoint,
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+        let counts_path = out_dir.path().join("length_counts.npy");
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+
+        // Assert
+        assert_eq!(
+            parse_group_index_tsv(&group_index),
+            vec![
+                (0, "left_endpoint".to_string()),
+                (1, "mid".to_string()),
+                (2, "right_endpoint".to_string()),
+                (3, "gamma".to_string()),
+            ]
+        );
+        assert_eq!(arr.shape(), &[4, 1]);
+        assert_eq!(arr[(0, 0)], 0.0);
+        assert_eq!(arr[(1, 0)], 1.0);
+        assert_eq!(arr[(2, 0)], 0.0);
+        assert_eq!(arr[(3, 0)], 0.0);
+        assert_eq!(arr.sum(), 1.0);
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_assign_when_proportion_counts_only_groups_meeting_threshold() -> Result<()> {
+        // Arrange:
+        // - one unpaired fragment spans [10,20) with length 10
+        // - with `proportion=0.5`, windows with at least 5 fragment bp qualify
+        // - grouped intervals:
+        //     [10,15) beta  -> 5/10, counts
+        //     [15,20) beta  -> 5/10, counts
+        //     [10,14) alpha -> 4/10, rejected
+        //     [30,40) gamma -> zero row
+        // - expected grouped counts:
+        //     beta  -> 2.0
+        //     alpha -> 0.0
+        //     gamma -> 0.0
+        let bam = single_read_fragment_bam("lengths_grouped_proportion", 10, 10)?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_proportion.bed");
+        write_bed(
+            &grouped_bed,
+            &[
+                ("chr1", 10, 15, "beta"),
+                ("chr1", 15, 20, "beta"),
+                ("chr1", 10, 14, "alpha"),
+                ("chr1", 30, 40, "gamma"),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Proportion(0.5),
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+        let counts_path = out_dir.path().join("length_counts.npy");
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+
+        // Assert
+        assert_eq!(
+            parse_group_index_tsv(&group_index),
+            vec![
+                (0, "beta".to_string()),
+                (1, "alpha".to_string()),
+                (2, "gamma".to_string()),
+            ]
+        );
+        assert_eq!(arr.shape(), &[3, 1]);
+        assert_eq!(arr[(0, 0)], 2.0);
+        assert_eq!(arr[(1, 0)], 0.0);
+        assert_eq!(arr[(2, 0)], 0.0);
+        assert_eq!(arr.sum(), 2.0);
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_errors_when_group_name_column_is_missing() -> Result<()> {
+        // Arrange:
+        // - grouped BED mode requires a fourth column naming the group
+        // - a three-column BED row is therefore invalid and should fail loudly
+        let bam = single_read_fragment_bam("lengths_grouped_missing_group_name", 10, 10)?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_missing_name.bed");
+        std::fs::write(&grouped_bed, "chr1\t10\t20\n")?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        let err = run(&cfg).expect_err("grouped BED without a group column should fail");
+
+        // Assert
+        assert!(err.to_string().contains("missing group name"));
+        Ok(())
+    }
+
+    #[test]
+    fn grouped_bed_errors_when_no_windows_survive_selected_chromosomes() -> Result<()> {
+        // Arrange:
+        // - grouped BED contains a valid group, but only on chr2
+        // - the run is restricted to chr1, so grouped mode has no usable groups at all
+        let bam = single_read_fragment_bam("lengths_grouped_empty_after_filtering", 10, 10)?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_wrong_chr.bed");
+        write_bed(&grouped_bed, &[("chr2", 10, 20, "beta")])?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        let err = run(&cfg).expect_err("grouped BED with no selected-chromosome windows should fail");
+
+        // Assert
+        assert!(
+            err.to_string()
+                .contains("grouped BED file did not contain any valid windows on the selected chromosomes")
         );
         Ok(())
     }

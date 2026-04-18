@@ -2,7 +2,7 @@ use crate::shared::gc_tag::ClassifiedGCTagWeight;
 use crate::{
     commands::{
         cli_common::{
-            WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
+            DistributionWindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
             resolve_chromosomes_and_contigs,
         },
         counters::EndsCounters,
@@ -35,12 +35,12 @@ use crate::{
     },
     shared::{
         bam::create_chromosome_reader,
-        bed::load_windows_from_bed,
+        bed::{load_grouped_windows_from_bed, load_windows_from_bed},
         blacklist::is_blacklisted,
         fragment::ends_fragment::FragmentWithEnds,
         fragment_iterators::fragments_with_ends_from_bam,
         interval::{IndexedInterval, Interval},
-        io::{create_text_writer, dot_join},
+        io::dot_join,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
@@ -52,14 +52,17 @@ use crate::{
             Tile, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
         },
         window_fetch::{BedFetchPolicy, fetch_span_for_tile},
-        windowing::{WindowContext, build_bin_info, compute_window_offsets},
+        windowing::{
+            WindowContext, build_bin_info, compute_window_offsets, write_bin_info_tsv,
+            write_group_index_with_blacklist_tsv,
+        },
     },
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{convert::TryInto, io::Write, path::Path, sync::Arc, time::Instant};
+use std::{convert::TryInto, path::Path, sync::Arc, time::Instant};
 use tracing::{info, warn};
 
 const COMMAND_TARGET: &str = "ends";
@@ -134,6 +137,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();
+    let fetch_window_opt = window_opt.as_fetch_window_spec();
     let prefix = opt.output_prefix.trim();
 
     // Create output directory
@@ -152,7 +156,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
 
     // Load windows from BED file
     let windows_map = match &window_opt {
-        WindowSpec::Bed(bed) => {
+        DistributionWindowSpec::Bed(bed) => {
             info!(target: COMMAND_TARGET, "Loading window coordinates");
             Some(load_windows_from_bed(
                 bed,
@@ -163,6 +167,35 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         }
         _ => None,
     };
+    let (grouped_windows_map, group_idx_to_name) = match &window_opt {
+        DistributionWindowSpec::GroupedBed(bed) => {
+            info!(target: COMMAND_TARGET, "Loading grouped window coordinates");
+            let (windows_map, group_idx_to_name) =
+                load_grouped_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            ensure!(
+                !group_idx_to_name.is_empty(),
+                "grouped BED file did not contain any valid windows on the selected chromosomes"
+            );
+            (Some(windows_map), Some(group_idx_to_name))
+        }
+        _ => (None, None),
+    };
+    let indexed_windows_map: Option<FxHashMap<String, Vec<IndexedInterval<u64>>>> =
+        if let Some(windows_map) = windows_map.as_ref() {
+            Some(
+                windows_map
+                    .iter()
+                    .map(|(chr, windows)| (chr.clone(), windows.as_slice().to_vec()))
+                    .collect(),
+            )
+        } else {
+            grouped_windows_map.as_ref().map(|windows_map| {
+                windows_map
+                    .iter()
+                    .map(|(chr, windows)| (chr.clone(), windows.as_slice().to_vec()))
+                    .collect()
+            })
+        };
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
@@ -190,7 +223,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
 
     let halo_bp = opt.fragment_lengths.max_fragment_length;
     let align_bp = match &window_opt {
-        WindowSpec::Size(bp) => Some(*bp),
+        DistributionWindowSpec::Size(bp) => Some(*bp),
         _ => None,
     };
 
@@ -207,7 +240,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     };
     let tile_span_right_halo = opt.fragment_lengths.max_fragment_length as u64;
 
-    let windows_lookup = windows_map.as_ref();
+    let windows_lookup = indexed_windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
         &tiles,
         |chr| {
@@ -223,8 +256,21 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     // Window rows are global across chromosomes. For fixed-size windows we therefore need a
     // per-chromosome row offset to turn chromosome-local overlap indices into global output rows.
     // BED windows already carry their own original indices, so their offsets stay at zero.
-    let (total_windows, chr_offsets_map) =
-        compute_window_offsets(&window_opt, &chromosomes, &contigs, windows_map.as_ref())?;
+    let (total_windows, chr_offsets_map): (u64, FxHashMap<String, u64>) = match &window_opt {
+        DistributionWindowSpec::GroupedBed(_) => (
+            group_idx_to_name
+                .as_ref()
+                .context("group_idx_to_name missing for grouped BED mode")?
+                .len() as u64,
+            chromosomes.iter().map(|chr| (chr.clone(), 0_u64)).collect(),
+        ),
+        _ => compute_window_offsets(
+            &fetch_window_opt,
+            &chromosomes,
+            &contigs,
+            windows_map.as_ref(),
+        )?,
+    };
     let chr_offsets = Arc::new(chr_offsets_map);
     let chr_offsets_for_threads = chr_offsets.clone();
 
@@ -245,7 +291,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<Option<TileResult>> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
-            let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
+            let windows_chr: Option<&[IndexedInterval<u64>]> = indexed_windows_map
                 .as_ref()
                 .and_then(|m| m.get(&tile.chr).map(|v| v.as_slice()));
             let blacklist_chr: &[Interval<u64>] = blacklist_map
@@ -344,14 +390,18 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         all_bins[idx] = decoded;
     }
 
-    let bin_info = build_bin_info(
-        &window_opt,
-        &chromosomes,
-        &contigs,
-        windows_map.as_ref(),
-        &blacklist_map,
-        chr_offsets.as_ref(),
-    )?;
+    let bin_info = if matches!(&window_opt, DistributionWindowSpec::GroupedBed(_)) {
+        Vec::new()
+    } else {
+        build_bin_info(
+            &fetch_window_opt,
+            &chromosomes,
+            &contigs,
+            windows_map.as_ref(),
+            &blacklist_map,
+            chr_offsets.as_ref(),
+        )?
+    };
     // `all_motifs` switches the final output from "observed motifs only" to a dense fixed motif
     // universe. The dense size checks happen before we allocate or enumerate that full universe.
     if opt.all_motifs {
@@ -378,8 +428,6 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         write_dense_output,
     )?;
 
-    drop(blacklist_map);
-
     let keep_temp = false;
     if !keep_temp {
         if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
@@ -397,22 +445,36 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     write_end_settings_json(&opt.ioc.output_dir, prefix, opt)?;
 
     // Write window coordinates plus overlap metadata as TSV to output_dir
-    if !matches!(window_opt, WindowSpec::Global) {
-        info!(target: COMMAND_TARGET, "Writing window coordinates to disk");
-        let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.tsv"]));
-        let mut tsv_writer = create_text_writer(&bins_path).context("creating bins TSV")?;
-        writeln!(tsv_writer, "chrom\tstart\tend\tblacklisted_fraction")
-            .context("writing bins TSV header")?;
-        for (chr, start, end, _, blacklist_overlap_fraction) in &bin_info {
-            writeln!(
-                tsv_writer,
-                "{}\t{}\t{}\t{}",
-                chr, start, end, blacklist_overlap_fraction
-            )
-            .context("writing bins TSV row")?;
+    match &window_opt {
+        DistributionWindowSpec::GroupedBed(_) => {
+            info!(target: COMMAND_TARGET, "Writing group metadata to disk");
+            let group_idx_to_name = group_idx_to_name
+                .as_ref()
+                .context("group_idx_to_name missing when writing grouped outputs")?;
+            let grouped_windows_map = grouped_windows_map
+                .as_ref()
+                .context("grouped windows missing when writing grouped outputs")?;
+            let group_index_path = opt
+                .ioc
+                .output_dir
+                .join(dot_join(&[prefix, "group_index.tsv"]));
+            write_group_index_with_blacklist_tsv(
+                group_index_path,
+                group_idx_to_name,
+                &chromosomes,
+                grouped_windows_map,
+                &blacklist_map,
+            )?;
         }
-        tsv_writer.finish().context("finalizing bins.tsv writer")?;
+        DistributionWindowSpec::Global => {}
+        _ => {
+            info!(target: COMMAND_TARGET, "Writing window coordinates to disk");
+            let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.tsv"]));
+            write_bin_info_tsv(bins_path, &bin_info)?;
+        }
     }
+
+    drop(blacklist_map);
 
     let elapsed = start_time.elapsed();
     print_fragment_run_statistics(
@@ -517,7 +579,7 @@ fn process_tile(
     tile_window_span: Option<&TileWindowSpan>,
     windows_chr: Option<&[IndexedInterval<u64>]>,
     chr_window_idx_offset: u64,
-    window_opt: &WindowSpec,
+    window_opt: &DistributionWindowSpec,
     blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
@@ -526,6 +588,7 @@ fn process_tile(
     inside_spec: Option<&crate::shared::kmers::kmer_codec::KmerSpec>,
     outside_spec: Option<&crate::shared::kmers::kmer_codec::KmerSpec>,
 ) -> Result<Option<TileResult>> {
+    let fetch_window_opt = window_opt.as_fetch_window_spec();
     // One BAM reader per tile
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
     debug_assert_eq!(_tid_check, tile.tid as u32);
@@ -566,7 +629,7 @@ fn process_tile(
         tile,
         tile_window_span,
         windows_chr,
-        window_opt,
+        &fetch_window_opt,
         chrom_len,
         bed_fetch_halo_bp,
         BedFetchPolicy::CandidateWindowExtent,
@@ -593,7 +656,7 @@ fn process_tile(
         outside_spec,
     )?;
     let window_context = WindowContext {
-        spec: window_opt,
+        spec: &fetch_window_opt,
         windows: windows_chr,
         chr_idx_offset: chr_window_idx_offset,
     };
@@ -736,7 +799,7 @@ fn process_tile(
             | WindowMotifAssigner::Endpoint => fragment.assignment_interval.try_to_u64()?,
         };
         let by_size = match window_opt {
-            WindowSpec::Size(bp) => Some(*bp),
+            DistributionWindowSpec::Size(bp) => Some(*bp),
             _ => None,
         };
         let overlapping_windows = find_overlapping_windows(
@@ -877,7 +940,7 @@ fn process_tile(
             for overlapped_window in overlapping_windows.windows {
                 let original_idx = window_context.original_idx(overlapped_window.idx);
                 let count_weight = match opt.window_assignment.assign_by {
-                    WindowMotifAssigner::CountOverlap => overlapped_window.overlap_fraction as f64,
+                    WindowMotifAssigner::CountOverlap => overlapped_window.overlap_fraction,
                     _ => 1.0f64,
                 } * gc_weight;
                 counted_end_flags.merge(count_fragment_in_window(

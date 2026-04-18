@@ -208,6 +208,100 @@ impl WindowsArgs {
     }
 }
 
+/// The windowing options including a GroupedBed variant `[ENUM]`
+///
+/// Whether to perform a command globally (1 overall genomic window)
+/// or in windows specified with a BED file or a fixed window size.
+#[derive(Debug, Clone)]
+pub enum DistributionWindowSpec {
+    Global,
+    Size(u64),
+    Bed(PathBuf),
+    GroupedBed(PathBuf),
+}
+
+#[cfg_attr(feature = "cli", derive(clap::Args))]
+#[cfg_attr(
+    feature = "cli",
+    clap(
+        // At most one of the three flags. If none -> Global in `resolve()`
+        group = clap::ArgGroup::new("windows")
+            .args(&["by_size", "by_bed", "by_grouped_bed"])
+            .multiple(false)
+    )
+)]
+#[derive(Debug, Clone, Default)]
+pub struct DistributionWindowsArgs {
+    /// Window definition: a fixed window size `[integer]`
+    ///
+    /// Default is one global window.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_parser,
+            group = "windows",
+            help_heading = "Windows (select max. one arg.)"
+        )
+    )]
+    pub by_size: Option<u64>,
+
+    /// Window definition: a BED file of windows `[path]`
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_parser,
+            group = "windows",
+            help_heading = "Windows (select max. one arg.)"
+        )
+    )]
+    pub by_bed: Option<PathBuf>,
+
+    /// Window definition: a BED file of grouped windows `[path]`
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_parser,
+            group = "windows",
+            help_heading = "Windows (select max. one arg.)"
+        )
+    )]
+    pub by_grouped_bed: Option<PathBuf>,
+}
+
+impl DistributionWindowsArgs {
+    /// If neither flag is set, default to `Global`.
+    pub fn resolve_windows(&self) -> DistributionWindowSpec {
+        if let Some(n) = self.by_size {
+            DistributionWindowSpec::Size(n)
+        } else if let Some(p) = self.by_bed.clone() {
+            DistributionWindowSpec::Bed(p)
+        } else if let Some(p) = self.by_grouped_bed.clone() {
+            DistributionWindowSpec::GroupedBed(p)
+        } else {
+            DistributionWindowSpec::Global
+        }
+    }
+}
+
+impl DistributionWindowSpec {
+    /// Convert grouped-distribution window selection into the fetch/indexing geometry helpers use.
+    ///
+    /// Grouped BED behaves like ordinary BED coordinates for fetch narrowing and overlap lookup;
+    /// only the downstream row identity changes from window index to group index.
+    pub fn as_fetch_window_spec(&self) -> WindowSpec {
+        match self {
+            DistributionWindowSpec::Global => WindowSpec::Global,
+            DistributionWindowSpec::Size(bp) => WindowSpec::Size(*bp),
+            DistributionWindowSpec::Bed(path) | DistributionWindowSpec::GroupedBed(path) => {
+                WindowSpec::Bed(path.clone())
+            }
+        }
+    }
+}
+
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[cfg_attr(
     feature = "cli",
