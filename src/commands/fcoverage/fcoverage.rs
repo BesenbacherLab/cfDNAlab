@@ -823,6 +823,9 @@ fn process_tile(
         }
     }
 
+    // Clear up memory before finalizing coverage
+    drop(gc_prefixes_opt);
+
     // Finalize coverage
     cp.finalize_coverage(true);
 

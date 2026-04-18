@@ -3,7 +3,9 @@
 use anyhow::{Context, Result, anyhow};
 use cfdnalab::commands::cli_common::{BaseSelectionArgs, FragmentPositionSelectionArgs};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
-use cfdnalab::commands::cli_common::{ChromosomeArgs, GCWindowsArgs, IOCArgs, Ref2BitRequiredArgs};
+use cfdnalab::commands::cli_common::{
+    ChromosomeArgs, GCWindowsArgs, IOCArgs, LoggingArgs, Ref2BitRequiredArgs,
+};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
 use cfdnalab::commands::gc_bias::{config::GCConfig, gc_bias::run as run_gc_bias};
 #[cfg(all(feature = "cmd_gc_bias", feature = "cmd_ref_gc_bias"))]
@@ -276,6 +278,7 @@ pub fn build_real_neutral_gc_package_for_range(
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
     run_ref_gc_bias(&ref_cfg)?;
 
@@ -374,6 +377,7 @@ pub fn build_real_non_neutral_gc_package(
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
     run_ref_gc_bias(&ref_cfg)?;
 

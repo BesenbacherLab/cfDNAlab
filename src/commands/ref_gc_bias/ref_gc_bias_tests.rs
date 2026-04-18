@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::commands::cli_common::{FragmentLengthArgs, Ref2BitRequiredArgs};
+use crate::commands::cli_common::{FragmentLengthArgs, LoggingArgs, Ref2BitRequiredArgs};
 use anyhow::anyhow;
 use std::{
     fs::File,
@@ -73,6 +73,7 @@ fn base_test_config(ref_2bit: PathBuf) -> RefGCBiasConfig {
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 10,
+        logging: LoggingArgs::default(),
     }
 }
 

@@ -11,7 +11,7 @@ mod tests_gc_bias {
     use tempfile::{TempDir, tempdir};
 
     use cfdnalab::commands::{
-        cli_common::{ChromosomeArgs, GCWindowsArgs, IOCArgs, Ref2BitRequiredArgs},
+        cli_common::{ChromosomeArgs, GCWindowsArgs, IOCArgs, LoggingArgs, Ref2BitRequiredArgs},
         gc_bias::{
             GC_CORRECTION_SCHEMA_VERSION,
             binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
@@ -374,6 +374,7 @@ mod tests_gc_bias {
             smoothing_radius: 2,
             skip_smoothing: true,
             tile_size: 1_000_000,
+            logging: LoggingArgs::default(),
         };
         run_ref_gc_bias(&cfg)
     }
@@ -1145,6 +1146,7 @@ mod tests_gc_bias {
             smoothing_radius: 2,
             skip_smoothing: true,
             tile_size: 1_000_000,
+            logging: LoggingArgs::default(),
         };
         run_ref_gc_bias(&ref_cfg)?;
 
@@ -1579,6 +1581,7 @@ mod tests_gc_bias {
             smoothing_radius: 2,
             skip_smoothing: true,
             tile_size: 1_000_000,
+            logging: LoggingArgs::default(),
         };
 
         let out_dir = TempDir::new()?;
@@ -1722,6 +1725,7 @@ mod tests_gc_bias {
             smoothing_radius: 1,
             skip_smoothing: false,
             tile_size: 1_000_000,
+            logging: LoggingArgs::default(),
         };
 
         let out_dir = TempDir::new()?;
@@ -1848,6 +1852,7 @@ mod tests_gc_bias {
             smoothing_radius: 2,
             skip_smoothing: true,
             tile_size: 1_000_000,
+            logging: LoggingArgs::default(),
         };
 
         let out_dir = TempDir::new()?;

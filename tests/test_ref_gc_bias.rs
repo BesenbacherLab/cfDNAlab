@@ -7,7 +7,7 @@ use std::path::Path;
 use tempfile::TempDir;
 
 use cfdnalab::{
-    commands::cli_common::ChromosomeArgs,
+    commands::cli_common::{ChromosomeArgs, LoggingArgs},
     commands::gc_bias::counting::{
         GCCounts, build_gc_prefixes, count_reference_gc_and_length_by_window,
         get_gc_integer_percentage_for_window,
@@ -299,6 +299,7 @@ fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Res
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
     cfg.check_smoothing_settings()?;
 
@@ -495,6 +496,7 @@ fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -629,6 +631,7 @@ fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -777,6 +780,7 @@ fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> 
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -911,6 +915,7 @@ fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Re
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -1055,6 +1060,7 @@ fn ref_gc_bias_run_smoothing_enabled_spreads_three_gc_anchors_by_known_kernel() 
         smoothing_radius: 1,
         skip_smoothing: false,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -1171,6 +1177,7 @@ fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors()
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -1241,6 +1248,7 @@ fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run(
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     // Manual expectations:
@@ -1335,6 +1343,7 @@ fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_r
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 80,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -1407,6 +1416,7 @@ fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 80,
+        logging: LoggingArgs::default(),
     };
     let make_bed_cfg = |output_dir: &Path| RefGCBiasConfig {
         windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
@@ -1490,6 +1500,7 @@ fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() ->
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 80,
+        logging: LoggingArgs::default(),
     };
     let make_bed_cfg = |output_dir: &Path| RefGCBiasConfig {
         windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
@@ -1577,6 +1588,7 @@ fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_b
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 80,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -1647,6 +1659,7 @@ fn rejects_n_positions_when_sampling_density_would_exceed_one() -> Result<()> {
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 1_000_000,
+        logging: LoggingArgs::default(),
     };
 
     let err = run(&cfg).expect_err("sampling density above 1.0 should fail");
@@ -1691,6 +1704,7 @@ fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 80,
+        logging: LoggingArgs::default(),
     };
 
     // Manual expectations:
@@ -1770,6 +1784,7 @@ fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() 
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 80,
+        logging: LoggingArgs::default(),
     };
 
     // Act
@@ -1827,6 +1842,7 @@ fn fixed_seed_ref_gc_bias_is_deterministic_for_same_tile_size() -> Result<()> {
         smoothing_radius: 2,
         skip_smoothing: true,
         tile_size: 80,
+        logging: LoggingArgs::default(),
     };
 
     // Manual expectations:
