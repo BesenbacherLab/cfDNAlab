@@ -144,7 +144,7 @@ pub struct FCoverageConfig {
     /// Chromosomes are processed in tiles of this size to reduce memory usage.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
+        clap(long, default_value = "10000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
     pub tile_size: u32,
 
     /// What to return per window `[string]`
@@ -257,7 +257,7 @@ impl FCoverageConfig {
             output_prefix: String::new(),
             decimals: 2,
             keep_zero_runs: false,
-            tile_size: 20_000_000,
+            tile_size: 10_000_000,
             per_window: CoverageWindowAction::Average,
             ignore_gap: false,
             windows: WindowsArgs::default(),

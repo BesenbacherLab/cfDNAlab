@@ -16,7 +16,7 @@ fn build_zero_sum_delta_stress_coverage() -> Vec<f32> {
 
     // Build 10k additions/subtractions against a small delta array so every slot is
     // mathematically zero at the end, while floating-point roundoff still accumulates in
-    // the f32 delta entries before coverage finalization.
+    // the mixed-sign delta entries before coverage finalization.
     let mut ops = Vec::<(usize, f32)>::with_capacity(10_000);
     for _ in 0..5_000 {
         let slot = 1 + (next_u32(&mut seed) as usize % 8);
@@ -31,7 +31,7 @@ fn build_zero_sum_delta_stress_coverage() -> Vec<f32> {
     }
 
     for (slot, delta) in ops {
-        cp.delta[slot] += delta;
+        cp.delta[slot] += delta as f64;
     }
 
     cp.finalize_coverage(true).to_vec()
@@ -74,7 +74,7 @@ fn finalize_current_f32_delta_coverage(spans: &[WeightedSpan], length: u32) -> V
                 interval: Interval::new(span.start, span.end).expect("valid deterministic span"),
                 gc_tag: GCTagValue::default(),
             },
-            span.weight,
+            span.weight as f64,
         )
         .expect("deterministic weighted span should be accepted");
     }
@@ -100,13 +100,9 @@ fn max_abs_suffix(values: &[f32], suffix_start: usize) -> f32 {
 }
 
 #[test]
-#[ignore = "known regression until rolling local f64 coverage accumulation replaces global f32 deltas"]
 fn regression_tail_zero_region_should_survive_theoretical_cleanup_floor() {
     // Human verification status: unverified
-    // This fixes a deterministic fixture for the planned f64 accumulation rewrite.
-    //
-    // Run:
-    // cargo test --lib --features cli,plotters shared::coverage::tests::regression_tail_zero_region_should_survive_theoretical_cleanup_floor -- --ignored --exact --nocapture
+    // This fixes a deterministic fixture for the current delta accumulation path.
     //
     // Setup:
     // - `--normalize-by-length` with max fragment length 1000 and minimum usable GC weight 1e-3
@@ -115,16 +111,10 @@ fn regression_tail_zero_region_should_survive_theoretical_cleanup_floor() {
     // - all generated spans end before position 3000, so the suffix [3000, 4096) is
     //   mathematically exact zero
     //
-    // Current behavior:
-    // - mixed-sign f32 delta accumulation leaves fake suffix support around 3.66e-4 for this seed
-    // - the theoretical cleanup floor cannot remove that residue because doing so safely only
-    //   allows removal below 5e-7
-    //
-    // Planned behavior:
-    // - rolling local f64 direct coverage should leave the untouched suffix exactly zero
-    //
-    // Keep this ignored until the accumulation rewrite lands. Then unignore it and require the
-    // clamped suffix to be all zeros.
+    // Required behavior:
+    // - the mathematically untouched suffix must accumulate less residue than the run-specific
+    //   theoretical cleanup floor
+    // - cleanup can then safely clamp that suffix to exact zero
     let cleanup_floor = 5.0e-7_f32;
     let spans = deterministic_tail_zero_spans(0, 200_000);
 
@@ -135,8 +125,8 @@ fn regression_tail_zero_region_should_survive_theoretical_cleanup_floor() {
     let raw_residue = max_abs_suffix(&current, 3000);
 
     assert!(
-        raw_residue > cleanup_floor,
-        "seeded fixture no longer exceeds the theoretical cleanup floor; raw suffix residue was {raw_residue}"
+        raw_residue < cleanup_floor,
+        "regression: raw suffix residue {raw_residue} exceeded the theoretical cleanup floor {cleanup_floor}"
     );
     assert!(
         reference[3000..].iter().all(|value| *value == 0.0),
@@ -144,7 +134,7 @@ fn regression_tail_zero_region_should_survive_theoretical_cleanup_floor() {
     );
     assert!(
         clamped_current[3000..].iter().all(|value| *value == 0.0),
-        "regression: theoretical cleanup floor was not enough for current f32 delta accumulation; max raw suffix residue was {raw_residue}"
+        "regression: theoretical cleanup floor was not enough for the current delta accumulation path; max raw suffix residue was {raw_residue}"
     );
 }
 

@@ -760,7 +760,7 @@ fn process_tile(
             let was_counted = add_fragment_clipped_to_core(
                 &mut cp,
                 &fragment,
-                base_weight * gc_weight as f32,
+                base_weight * gc_weight,
                 tile.core,
             )?;
 
@@ -774,7 +774,7 @@ fn process_tile(
             let base_weight = calculate_base_weight(&fragment, opt)?;
 
             let gc_weight = match fragment.gc_tag.classify()? {
-                ClassifiedGCTagWeight::Usable(weight) => weight,
+                ClassifiedGCTagWeight::Usable(weight) => weight as f64,
                 ClassifiedGCTagWeight::Missing => {
                     counter.gc_failed_fragments += 1;
                     counter.gc_missing_tags += 1;
@@ -1213,7 +1213,7 @@ fn add_clipped_blacklist_to_cp(
 pub fn add_fragment_clipped_to_core(
     cp: &mut Coverage,
     fragment: &FragmentWithSegments,
-    weight: f32,
+    weight: f64,
     core_interval: Interval<u32>,
 ) -> Result<bool> {
     // Use explicit segments if present
@@ -1288,7 +1288,7 @@ pub fn add_fragment_clipped_to_core(
 /// Returns an error if `--normalize-by-length` is enabled but the fragment has zero countable
 /// length. That would indicate an internal inconsistency in the counted spans.
 #[inline]
-fn calculate_base_weight(fragment: &FragmentWithSegments, opt: &FCoverageConfig) -> Result<f32> {
+fn calculate_base_weight(fragment: &FragmentWithSegments, opt: &FCoverageConfig) -> Result<f64> {
     if !opt.normalize_by_length {
         return Ok(1.0);
     }
@@ -1302,16 +1302,16 @@ fn calculate_base_weight(fragment: &FragmentWithSegments, opt: &FCoverageConfig)
     if counted_length == 0 {
         bail!("normalize-by-length encountered a fragment with zero countable length");
     }
-    Ok(1.0 / counted_length as f32)
+    Ok(1.0 / counted_length as f64)
 }
 
 /// Smallest positive intrinsic per-base weight a counted fragment base can have in this run.
 ///
 /// This is evaluated before GC correction or genomic scaling.
 #[inline]
-fn minimum_positive_base_weight(opt: &FCoverageConfig) -> f32 {
+fn minimum_positive_base_weight(opt: &FCoverageConfig) -> f64 {
     if opt.normalize_by_length {
-        1.0 / opt.fragment_lengths.max_fragment_length as f32
+        1.0 / opt.fragment_lengths.max_fragment_length as f64
     } else {
         1.0
     }
@@ -1319,9 +1319,9 @@ fn minimum_positive_base_weight(opt: &FCoverageConfig) -> f32 {
 
 /// Smallest positive GC multiplier that can be considered usable in this run.
 #[inline]
-fn minimum_positive_gc_weight(opt: &FCoverageConfig) -> f32 {
+fn minimum_positive_gc_weight(opt: &FCoverageConfig) -> f64 {
     if opt.gc.gc_file.is_some() || opt.gc.gc_tag.is_some() {
-        MIN_REASONABLE_GC_WEIGHT
+        MIN_REASONABLE_GC_WEIGHT as f64
     } else {
         1.0
     }
@@ -1333,7 +1333,7 @@ fn minimum_positive_gc_weight(opt: &FCoverageConfig) -> f32 {
 /// per-position support below the current bound. The tests intentionally exercise the current
 /// GC and length-normalization combinations so future changes have to revisit this derivation.
 #[inline]
-fn minimum_positive_pre_scaling_support(opt: &FCoverageConfig) -> f32 {
+fn minimum_positive_pre_scaling_support(opt: &FCoverageConfig) -> f64 {
     minimum_positive_base_weight(opt) * minimum_positive_gc_weight(opt)
 }
 
@@ -1344,7 +1344,7 @@ fn minimum_positive_pre_scaling_support(opt: &FCoverageConfig) -> f32 {
 /// arithmetic for this run.
 #[inline]
 fn internal_residual_coverage_floor(opt: &FCoverageConfig) -> f32 {
-    minimum_positive_pre_scaling_support(opt) / 2.0
+    (minimum_positive_pre_scaling_support(opt) / 2.0) as f32
 }
 
 #[cfg(test)]
