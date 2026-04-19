@@ -10,7 +10,7 @@ readme = "README.md"
 repository = "https://github.com/BesenbacherLab/cfDNAlab"
 homepage = "https://BesenbacherLab.github.io/cfdnalab/"
 documentation = "https://BesenbacherLab.github.io/cfdnalab/docs"
-keywords = ["cfdna", "cell-free-dna", "fragmentomics", "fragmentation", "bioinformatics", "genomics", "sequencing", "cli"]
+keywords = ["bioinformatics", "cfdna", "cell-free-dna", "fragmentomics", "genomics"]
 categories = ["command-line-utilities", "science"]
 
 [features]

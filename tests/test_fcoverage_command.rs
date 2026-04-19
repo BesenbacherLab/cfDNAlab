@@ -3658,3 +3658,162 @@ fn indexed_positions_repeat_window_index_for_each_run_and_duplicate_overlap() ->
 
     Ok(())
 }
+
+// ─── CoreOverlap double-counting guard tests ─────────────────────────────────
+//
+// fcoverage uses the CoreOverlap model: a tile only emits coverage for BED
+// windows that overlap its core region. If someone accidentally switched to a
+// fragment-reach model (like `lengths` uses), a fragment spanning a tile
+// boundary could cause a halo-only window to be counted by the wrong tile,
+// inflating coverage. These tests pin the correct behavior.
+
+#[test]
+fn by_bed_total_halo_only_window_is_not_double_counted_across_tiles() -> Result<()> {
+    // Scenario:
+    //
+    //   Chromosome:  0         10        20        30
+    //                |---------|---------|---------|
+    //   Tile cores:  [  tile0  )[  tile1  )[  tile2  )   (tile_size = 10)
+    //
+    //   Fragment:         [=========)                     unpaired read [5, 25)
+    //
+    //   BED windows:      [-----)                        window A: [5, 10)
+    //                              [-----)               window B: [15, 20)
+    //                                    [-----)         window C: [20, 25)
+    //
+    // Fragment [5, 25) physically covers all three windows.
+    //
+    // Tile 0 core [0, 10): overlaps window A [5, 10). Fetches the fragment
+    //   (fragment starts at 5 which is in the core). Counts coverage in A only.
+    //   Window B [15, 20) is outside tile 0's core — must NOT be counted here.
+    //
+    // Tile 1 core [10, 20): overlaps window B [15, 20). The fragment is fetched
+    //   via the halo (it starts at 5, before the core). Counts coverage in B only.
+    //   Window C [20, 25) is outside tile 1's core — must NOT be counted here.
+    //
+    // Tile 2 core [20, 30): overlaps window C [20, 25). The fragment is fetched
+    //   via the halo. Counts coverage in C only.
+    //
+    // Correct output: each window gets total = 5 (5 positions × depth 1,
+    //   contributed by exactly one tile).
+    // Regression (fragment-reach model): windows B and/or C could get total = 10
+    //   because tile 0 or tile 1 would also count them.
+
+    let bam = single_read_fragment_bam_at("fcoverage_core_overlap_guard", 5, 20)?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("core_overlap_guard.bed");
+    write_bed(
+        &bed_path,
+        &[
+            ("chr1", 5, 10, "window_a"),
+            ("chr1", 15, 20, "window_b"),
+            ("chr1", 20, 25, "window_c"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.unpaired.reads_are_fragments = true;
+    cfg.set_decimals(0);
+    cfg.set_tile_size(10);
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+    });
+    {
+        let fl = cfg.fragment_lengths_mut();
+        fl.min_fragment_length = 10;
+        fl.max_fragment_length = 30;
+    }
+
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join("testcov.fcoverage.total.tsv.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chr1\t5\t10\t5\t0",  // 5 positions covered, each with coverage 1
+            "chr1\t15\t20\t5\t0", // same: 5 positions, coverage 1 each
+            "chr1\t20\t25\t5\t0", // same
+        ],
+        "Each window must be counted exactly once. Double-counting from a \
+         fragment-reach model would produce totals > 5."
+    );
+
+    Ok(())
+}
+
+#[test]
+fn by_bed_avg_halo_only_window_is_counted_once_regardless_of_tile_size() -> Result<()> {
+    // Same fragment/window setup as the total test above, but we verify
+    // tile-size invariance of the average output. This catches the
+    // double-counting regression from a different angle: if a halo-only
+    // window is counted by two tiles, the reduced average would change
+    // when tile_size changes (because the duplicate contribution only
+    // appears in the small-tile run).
+
+    let bam = single_read_fragment_bam_at("fcoverage_core_overlap_tsi", 5, 20)?;
+    let tile_sizes = [10_u32, 100_u32];
+    let mut outputs = Vec::new();
+
+    for tile_size in tile_sizes {
+        let out_dir = TempDir::new()?;
+        let bed_path = out_dir
+            .path()
+            .join(format!("core_overlap_tsi_{tile_size}.bed"));
+        write_bed(
+            &bed_path,
+            &[
+                ("chr1", 5, 10, "window_a"),
+                ("chr1", 15, 20, "window_b"),
+                ("chr1", 20, 25, "window_c"),
+            ],
+        )?;
+
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        cfg.unpaired.reads_are_fragments = true;
+        cfg.set_decimals(2);
+        cfg.set_tile_size(tile_size);
+        cfg.set_per_window(CoverageWindowAction::Average);
+        cfg.set_windows(WindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+        });
+        {
+            let fl = cfg.fragment_lengths_mut();
+            fl.min_fragment_length = 10;
+            fl.max_fragment_length = 30;
+        }
+
+        run(&cfg)?;
+
+        let output_path = out_dir.path().join("testcov.fcoverage.avg.tsv.zst");
+        outputs.push(read_zst_to_string(&output_path)?);
+    }
+
+    assert_eq!(
+        outputs[0], outputs[1],
+        "BED average output must be identical for tile_size={} and tile_size={}. \
+         A difference indicates that a halo-only window was counted by an \
+         additional tile in the small-tile run (double-counting regression).",
+        tile_sizes[0], tile_sizes[1]
+    );
+
+    // Also verify the values are correct: each window has 5 positions,
+    // all with coverage 1, so average = 1.00
+    let lines: Vec<_> = outputs[0].lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chr1\t5\t10\t1\t0",
+            "chr1\t15\t20\t1\t0",
+            "chr1\t20\t25\t1\t0",
+        ]
+    );
+
+    Ok(())
+}

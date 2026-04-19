@@ -44,16 +44,16 @@ Users landing on the GitHub page will see unfinished sentences:
 
 **Action:** Fill in or remove every TODO. Change line 9 to release-ready language. Add the missing end-motifs recipe or remove the placeholder section.
 
-### B2. Two source modules carry "unvalidated AI-generated code" warnings
+### B2. Source module carries "unvalidated AI-generated code" warning
 
 | File | Warning |
 | ---- | ------- |
 | `src/commands/gc_bias/interpolation.rs:1` | `"TODO: Validate that it's correct"` |
-| `src/shared/frag_file.rs:1` | `"Just generated but chatty doesn't know frag files (finaledb) so it invents stuff"` |
+| ~~`src/shared/frag_file.rs:1`~~ | ~~Removed~~ |
 
-These comments will be visible to anyone inspecting the source and are damaging for a tool targeting scientific credibility. Even if the code is now correct, the warnings must be removed or replaced with validation notes before release.
+The `interpolation.rs` comment will be visible to anyone inspecting the source and is damaging for a tool targeting scientific credibility. Even if the code is now correct, the warning must be removed or replaced with a validation note before release.
 
-**Action:** Validate both modules (or confirm they've already been validated) and remove or rewrite the warning comments.
+**Action:** Validate `interpolation.rs` (or confirm it's already been validated) and remove or rewrite the warning comment.
 
 ### B3. `keywords` in Cargo.toml exceeds the crates.io limit
 
@@ -88,17 +88,11 @@ The CHANGELOG currently:
 
 **Action:** Rewrite the CHANGELOG release notes for 0.1.0 to be professional and confident. Remove the "won't work" language.
 
-### S3. Release notes and README disagree on public command count
+### S3. Website intro doesn't mention `ends` or `fragment-count-weights`
 
-The README commands table lists 12 commands (including `ends` and `fragment-count-weights`). The older reviews only audited 9. The CHANGELOG lists 11 (adds `ends`).
+The [intro.md](website/docs/intro.md) says cfDNAlab extracts "fragment coverage, midpoint coverage, and fragment lengths" — it omits **fragment end- and breakpoint motifs**.
 
-**Action:** Decide the exact set of public commands for 0.1.0 and make README, CHANGELOG, and release notes consistent.
-
-### S4. Website intro doesn't mention `ends` or `fragment-count-weights`
-
-The [intro.md](website/docs/intro.md) says cfDNAlab extracts "fragment coverage, midpoint coverage, and fragment lengths" — it omits end-motifs and fragment count weights.
-
-**Action:** Update the intro to mention the full command set.
+**Action:** Add end-motifs to the intro feature list, matching the README.
 
 ### S5. `delfi_features_guide.md` has 5 unresolved TODOs
 
@@ -115,13 +109,9 @@ This is not user-facing but looks sloppy in source review.
 
 **Action:** Remove the dead branches or implement `--keep-temp` behind a dev feature.
 
-### S7. Commented-out code in `src/lib.rs` and `src/shared/bam.rs`
+### ~~S6. Commented-out code~~ — RESOLVED
 
-- `src/lib.rs:10-11` — commented-out `pub use` statements
-- `src/shared/bam.rs:37+` — commented-out function `bam_header_contigs_with_len`
-- `src/shared/frag_file.rs:16` — commented-out `use std::sync::Arc`
-
-**Action:** Remove. It's in git history if ever needed.
+Commented-out functions in `bam.rs` and `striding.rs` removed by user. `frag_file.rs` warning removed. `lib.rs` re-exports are intentional (future API curation).
 
 ---
 
@@ -164,7 +154,7 @@ These areas have been resolved since the earlier reviews and are now release-rea
 3. **LICENSE file:** MIT license present with correct copyright.
 
 4. **CI infrastructure:** Three GitHub Actions workflows exist:
-   - `rust.yml` — build + test (needs feature flag fix)
+   - `rust.yml` — build + test with `--all-features`
    - `code_cov.yml` — Codecov coverage with `--all-features`
    - `docs.yml` — generates CLI docs, builds and deploys Docusaurus site to GitHub Pages
 
@@ -185,15 +175,14 @@ These areas have been resolved since the earlier reviews and are now release-rea
 ### Before tagging 0.1.0
 
 - [ ] Remove all README TODOs (B1)
-- [ ] Remove/rewrite AI-generated-code warnings in `interpolation.rs` and `frag_file.rs` (B2)
-- [ ] Reduce Cargo.toml keywords to 5 (B3)
-- [ ] Update `rust.yml` CI to build+test with `--features cli,plotters` (S1)
-- [ ] Rewrite CHANGELOG to be release-quality (S2)
-- [ ] Decide and align the public command set across README, CHANGELOG, and release notes (S3)
-- [ ] Update website intro (S4)
-- [ ] Fix or remove DELFI guide TODOs (S5)
-- [ ] Remove dead `keep_temp` branches (S6)
-- [ ] Remove commented-out code (S7)
+- [ ] Remove/rewrite AI-generated-code warnings in `interpolation.rs` (B2)
+- [X] Reduce Cargo.toml keywords to 5 (B3)
+- [X] Update `rust.yml` CI to build+test with `--features cli,plotters` (S1)
+- [X] Rewrite CHANGELOG to be release-quality (S2)
+- [X] Update website intro (S3)
+- [ ] Fix or remove DELFI guide TODOs (S4)
+- [ ] Remove dead `keep_temp` branches (S5)
+- [X] Remove commented-out code (S6)
 
 ### Before `cargo publish`
 
@@ -220,36 +209,6 @@ Reviewed `--help` output for all 12 commands listed in the README plus the top-l
 |---|---------|----------|----------|
 | C8 | **`--output-prefix` examples inconsistent.** `coverage-weights` and `fragment-count-weights` show no example output filenames. Other commands do. | `coverage-weights`, `fragment-count-weights` | LOW |
 | C9 | **`--require-proper-pair` wording differs.** `fcoverage` uses a shorter version without the "trims the tails" explanation. Others include it. Minor, but noticeable when comparing help text. | `fcoverage` vs others | LOW |
-
-### Per-command issues
-
-#### Top-level `cfdna --help`
-
-| # | Finding | Severity |
-|---|---------|----------|
-| C11 | **No description.** Shows only `cfdna 0.1.0` with no tagline. Should show the one-liner from Cargo.toml: "Ultra-fast command-line tools for cell-free DNA fragmentomics analysis". | MEDIUM |
-
-#### `cfdna coverage-weights` / `cfdna fragment-count-weights`
-
-| # | Finding | Severity |
-|---|---------|----------|
-| C16 | **`--bin-size` and `--stride` are placed under the "Filtering:" group.** These are windowing/smoothing parameters, not filters. The group name is misleading. | LOW |
-
-### Summary
-
-| Severity | Count | Key themes |
-|----------|-------|------------|
-| HIGH     | 2     | README recipe errors (wrong command name, non-existent flags) |
-| MEDIUM   | 4     | Implicit behavior undocumented, missing top-level description |
-| LOW      | 9     | Inconsistent wording, minor typos, group naming |
-
-**Most impactful fixes** (by effort-to-value ratio):
-
-1. **Fix README `cfdna end` → `cfdna ends`** (C1) — one character, high trust impact
-2. **Fix README gc-bias recipe** (C2) — remove the non-existent flags or add a note about fragment length range
-3. **Add top-level `cfdna` description** (C11) — one line in clap config
-4. **Document that `--length-bins` controls fragment length range in `midpoints`** (C15) — a sentence in the help text
-5. **Note in `gc-bias` help where fragment length range comes from** (C14) — a sentence in the description
 
 ---
 

@@ -172,53 +172,6 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
     }
 }
 
-// /// Get depth normalization scalar for the overlapping megabin
-// /// Updates start idx for the chromosome
-// pub fn get_overlapping_normalization<'a>(
-//     normalization_depths_per_chromosome: &'a Option<FxHashMap<String, Vec<StrideBin>>>,
-//     normalization_start_indices: &mut Option<FxHashMap<String, usize>>,
-//     chrom: &str,
-//     midpoint: u32,
-//     max_fragment_length: u32,
-// ) -> Result<Option<f32>, Box<dyn Error>> {
-//     if let (Some(depths_map), Some(indices_map)) = (
-//         normalization_depths_per_chromosome.as_ref(),
-//         normalization_start_indices.as_mut(),
-//     ) {
-//         // Get normalization depths for the current chromosome
-//         let normalization_depths = depths_map
-//             .get(chrom)
-//             .ok_or_else(|| format!("Chromosome '{}' not found in normalization depths!", chrom))?;
-
-//         // Get the start index for the current chromosome
-//         let start_idx = indices_map.get(chrom).copied().unwrap_or(0);
-
-//         // Find overlapping normalization depths
-//         let (overlapping_bins, new_start_idx) = get_overlapping_sites(
-//             normalization_depths,
-//             midpoint,
-//             start_idx,
-//             max_fragment_length,
-//         );
-
-//         // Update the start index for the chromosome
-//         indices_map.insert(chrom.to_string(), new_start_idx);
-
-//         // Return the first overlapping normalization bin, if it exists
-//         if let Some(bin) = overlapping_bins.get(0) {
-//             return Ok(Some(bin.avg_overlap_coverage));
-//         } else {
-//             println!(
-//                 "get_overlapping_normalization error: chrom: {}, midpoint: {}, start_idx: {}, new_start_idx: {}",
-//                 chrom, midpoint, start_idx, new_start_idx
-//             );
-//             return Err("No overlapping normalization bin found!".into());
-//         }
-//     }
-
-//     Ok(None) // No normalization logic is applied
-// }
-
 /// Calculate the `StrideBin::scaling_factor` by dividing `StrideBin::avg_overlap_coverage`
 /// across all chromosomes.
 ///

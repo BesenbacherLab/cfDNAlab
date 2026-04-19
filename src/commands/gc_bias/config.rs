@@ -62,7 +62,7 @@ pub enum OutlierScopeArg {
 ///
 /// **Unpaired** where each read is a fragment: `end(read) - start(read)`.
 ///
-/// The utilized fragment length range is inherited from the 
+/// The utilized fragment length range is inherited from the
 /// `--ref-gc-file` to ensure consistency.
 ///
 /// ## Windowing

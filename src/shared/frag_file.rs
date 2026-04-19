@@ -1,5 +1,3 @@
-// TODO: Fix this. Just generated but chatty doesn't know frag files (finaledb) so it invents stuff
-
 // ========================= frag file -> Fragment iterator (anyhow) =========================
 //
 // This module provides a streaming iterator over a "frag" file that yields `Fragment`.
