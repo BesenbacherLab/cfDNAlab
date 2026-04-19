@@ -17,6 +17,7 @@ const sidebars = {
         'guides/correct_gc_bias_guide',
         'guides/genomic_smoothing_guide',
         'guides/fragment_coverage_guide',
+        'guides/fragment_ends_guide',
         'guides/fragment_lengths_guide',
         'guides/fragment_midpoints_guide'
       ]

@@ -93,7 +93,7 @@ Planned: `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks
   - Most commands accept `--reads-are-fragments`. Each read is then assumed to represent a full fragment.
 
 - How did you use LLMs (AI) in this project?
-  - OpenAI's codex models were used for pair programming to speed up development and testing. All code for the released commands have been designed and validated by us.
+  - OpenAI's codex models were used for pair programming to speed up development and testing. Claude Code provided code reviews. All code for the released commands have been designed and validated by us.
 
 ---
 

@@ -137,10 +137,6 @@ The README recipes partially cover some of these. For a first release, the READM
 
 The generated CLI docs in `website/docs/generated/cli/` cover 10 commands but are missing `ends` and `fragment-count-weights`. The doc generation script likely needs updating.
 
-### N4. LLM acknowledgement in FAQ could be updated
-
-The FAQ says "OpenAI's codex models were used for pair programming." If Anthropic's Claude was also used, this should be updated for accuracy. The phrasing "All code for the released commands have been designed and validated by us" is important to keep.
-
 ---
 
 ## WHAT'S IN GOOD SHAPE
@@ -166,7 +162,7 @@ These areas have been resolved since the earlier reviews and are now release-rea
 
 8. **Website documentation:** Docusaurus site with auto-generated CLI reference, user guides, and installation instructions. Deployed via GitHub Pages.
 
-9. **Tile/window refactor:** The April 2 refactor (BedFetchPolicy, candidate window spans) is architecturally sound. Boundary logic has been manually verified. The main risk (fcoverage double-counting from wrong model) is a test gap rather than a code bug.
+9. **Tile/window refactor:** The April 2 refactor (BedFetchPolicy, candidate window spans) is architecturally sound. Boundary logic has been manually verified. The main risk (fcoverage double-counting from wrong model) is now tested.
 
 ---
 

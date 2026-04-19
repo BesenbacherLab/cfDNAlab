@@ -22,8 +22,7 @@ const ENDS_LONG_ABOUT: &str = concat!(
     "The following shows the counting for aligned fragment ends:\n\n",
     r#"For `--k-inside 2 --k-outside 2`:
 
----
-
+```text
 Reference 5' >>>>>>>>>>>>>>> 3'
              ATCGTTTTTTTCATC
 Fragment     --|---------|--
@@ -33,11 +32,11 @@ Forward     5' |>>>>>>>| 3'
 Reverse      3' |<<<<<<<<| 5'
   Inside                CA
   Outside                 TC
+```
 
 Reverse (`CATC`) is reverse complemented to `GATG`
 
 Counts (`<outside>_<inside>`): `AT_CG: 1`, `GA_TG: 1`
----
 "#,
     "\n",
     "## Output files\n\n",
@@ -45,7 +44,7 @@ Counts (`<outside>_<inside>`): `AT_CG: 1`, `GA_TG: 1`
     "- a dense `.npy` matrix with shape `(# windows, # motifs)` when `--all-motifs` is enabled\n\n",
     "- or a sparse `.npz` matrix otherwise\n\n",
     "along with a text file with the matching motif labels.\n\n",
-    "Motif labels are saved as \"<outside>_<inside>\".\n\n",
+    "Motif labels are saved as `<outside>_<inside>`.\n\n",
     "## GC correction\n\n",
     "Weight the contribution of each fragment based on their GC contents per fragment length.\n\n",
     "## Genomic smoothing (--scaling-factors)\n\n",
