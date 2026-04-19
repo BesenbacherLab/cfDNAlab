@@ -62,6 +62,9 @@ pub enum OutlierScopeArg {
 ///
 /// **Unpaired** where each read is a fragment: `end(read) - start(read)`.
 ///
+/// The utilized fragment length range is inherited from the 
+/// `--ref-gc-file` to ensure consistency.
+///
 /// ## Windowing
 ///
 /// Technical GC bias is assumed to be a "global" bias. To control how each region of the genome
@@ -79,8 +82,6 @@ pub enum OutlierScopeArg {
 ///   --ref-2bit {PATH}/hg38.2bit \ # Or some other assembly
 ///
 ///   --ref-gc-file {REFERENCE_GC_FILE} \
-///
-///   --min-fragment-length 30 --max-fragment-length 1000 \
 ///
 ///   --blacklist {PATH}/encode_blacklist.bed # Or some other blacklist(s)
 ///
@@ -186,7 +187,7 @@ pub struct GCConfig {
     )]
     pub min_gc_bin_mass: f32,
 
-    /// Number of extreme GC bins (`--min_gc_bin_mass`) from each side to interpolate from neighbouring corrections `[float]`
+    /// Number of extreme GC bins (`--min_gc_bin_mass`) from each side to interpolate from neighbouring corrections `[integer]`
     ///
     /// The most extreme GC fractions are very sparsely observed. This can lead to extreme corrections.
     /// Set the number of bins from each side where we interpolate a correction based on the neighbouring corrections.
@@ -203,7 +204,7 @@ pub struct GCConfig {
     )]
     pub num_extreme_gc_bins: u8,
 
-    /// Number of the **shortest** fragment length bins (`--min_length_bin_mass`) to interpolate from neighbouring corrections `[float]`
+    /// Number of the **shortest** fragment length bins (`--min_length_bin_mass`) to interpolate from neighbouring corrections `[integer]`
     ///
     /// The shortest fragment lengths can be very sparsely observed. This can lead to extreme corrections.
     /// Set the number of short-length bins where we interpolate a correction based on the neighbouring corrections.

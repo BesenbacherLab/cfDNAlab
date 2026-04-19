@@ -44,7 +44,7 @@ The following commands are currently available:
 | **Feature extraction**               | Extract fragmentomics features                                                                                                                                                                                         |
 | `cfdna fcoverage`                    | Count *fragment* coverage per position or aggregated in windows                                                                                                                                                        |
 | `cfdna midpoints`                    | Count fragment *midpoint* coverage in fixed-size intervals, collapsed by groups across the genome<br />E.g. transcription factor binding sites, aggregated per transcription factor<br />Fast alternative to *Griffin* |
-| `cfdna end`                          | Count fragment end- and breakpoint-motifs                                                                                                                                                                              |
+| `cfdna ends`                         | Count fragment end- and breakpoint-motifs                                                                                                                                                                              |
 | `cfdna lengths`                      | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)` for inwardly directed pairs only                                                                                                               |
 | **Normalization**                    | Precompute normalization/correction factors to enable their use in the feature extraction commands                                                                                                                     |
 | `cfdna gc-bias`, `cfdna ref-gc-bias` | Calculate GC-bias for correcting a sample in the main commands                                                                                                                                                         |
@@ -331,6 +331,7 @@ cfdna midpoints \
   # OPTIONS:
 
   # Separate counts per 10bp lengths (last edge is exclusive, 1000bp is excluded)
+  # This also defines the min and max fragment lengths
   --length-bins {30..1000..10} \
 
   # Add GC correction and / or genomic smoothing (see above)
@@ -369,7 +370,7 @@ MINLENGTH=30
 MAXLENGTH=1000
 
 # GC bias correction matrix
-cfdna gc-bias --bam $BAM --output-dir $OUT/gc_bias --ref-2bit $ASSEMBLY --ref-gc-file $REF_GC --blacklist $BLACKLIST --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --n-threads $THREADS 
+cfdna gc-bias --bam $BAM --output-dir $OUT/gc_bias --ref-2bit $ASSEMBLY --ref-gc-file $REF_GC --blacklist $BLACKLIST --n-threads $THREADS 
 
 # Coverage weights for genomic smoothing
 cfdna coverage-weights --bam $BAM --output-dir $OUT/coverage_weights --output-prefix $SAMPLE_NAME --blacklist $BLACKLIST --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --n-threads $THREADS 

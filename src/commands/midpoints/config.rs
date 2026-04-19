@@ -23,6 +23,8 @@ use std::path::PathBuf;
 ///
 /// **Unpaired** where each read is a fragment: `[read.pos, read.end)`.
 ///
+/// The utilized fragment length range is specified via `--length-bins`.
+///
 /// ## Always-on exclusion criteria
 ///
 /// The following criteria always exclude a read:
@@ -80,6 +82,8 @@ pub struct MidpointsConfig {
     pub intervals: PathBuf,
 
     /// Edges of fragment length bins to count in `[string(s)]`
+    ///
+    /// This also defines the min and max fragment lengths.
     ///
     /// Accepted forms:
     ///

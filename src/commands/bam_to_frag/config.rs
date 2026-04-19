@@ -60,7 +60,7 @@ pub struct BamToFragConfig {
     /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
     ///
     /// Examples produce files like:
-    ///   `<prefix>.frag.tsv.gz`,
+    ///   `<prefix>.frag.tsv.gz`
     #[cfg_attr(
         feature = "cli",
         clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")

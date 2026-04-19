@@ -42,7 +42,7 @@ pub struct ScalingWeightsArgs {
     /// and then calculate the overlap with a triangular weighting scheme.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "5000000", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
+        clap(long, default_value = "5000000", value_parser = clap::value_parser!(u32).range(1..), help_heading="Core"))]
     pub bin_size: u32,
 
     /// Size (bp) of stride [integer]
@@ -56,7 +56,7 @@ pub struct ScalingWeightsArgs {
     /// and take longer to compute.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "500000", value_parser = clap::value_parser!(u32).range(1..), help_heading="Filtering"))]
+        clap(long, default_value = "500000", value_parser = clap::value_parser!(u32).range(1..), help_heading="Core"))]
     pub stride: u32,
 
     #[cfg_attr(feature = "cli", clap(flatten))]

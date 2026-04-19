@@ -640,7 +640,7 @@ impl ApplyGCArgs {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
 pub struct ApplyGCArgFileOnly {
-    /// Optional path to GC correction file *made from the same BAM file* with `gc-bias` `[path]`
+    /// Optional path to GC correction file *made from the same BAM file* with `cfdna gc-bias` `[path]`
     ///
     /// The file is usually called `gc_bias_correction.npz`.
     ///

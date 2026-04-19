@@ -210,6 +210,49 @@ These areas have been resolved since the earlier reviews and are now release-rea
 
 ---
 
+## CLI DOCS REVIEW
+
+Reviewed `--help` output for all 12 commands listed in the README plus the top-level `cfdna --help`. Findings are organized by severity.
+
+### Inconsistencies across commands
+
+| # | Finding | Commands | Severity |
+|---|---------|----------|----------|
+| C8 | **`--output-prefix` examples inconsistent.** `coverage-weights` and `fragment-count-weights` show no example output filenames. Other commands do. | `coverage-weights`, `fragment-count-weights` | LOW |
+| C9 | **`--require-proper-pair` wording differs.** `fcoverage` uses a shorter version without the "trims the tails" explanation. Others include it. Minor, but noticeable when comparing help text. | `fcoverage` vs others | LOW |
+
+### Per-command issues
+
+#### Top-level `cfdna --help`
+
+| # | Finding | Severity |
+|---|---------|----------|
+| C11 | **No description.** Shows only `cfdna 0.1.0` with no tagline. Should show the one-liner from Cargo.toml: "Ultra-fast command-line tools for cell-free DNA fragmentomics analysis". | MEDIUM |
+
+#### `cfdna coverage-weights` / `cfdna fragment-count-weights`
+
+| # | Finding | Severity |
+|---|---------|----------|
+| C16 | **`--bin-size` and `--stride` are placed under the "Filtering:" group.** These are windowing/smoothing parameters, not filters. The group name is misleading. | LOW |
+
+### Summary
+
+| Severity | Count | Key themes |
+|----------|-------|------------|
+| HIGH     | 2     | README recipe errors (wrong command name, non-existent flags) |
+| MEDIUM   | 4     | Implicit behavior undocumented, missing top-level description |
+| LOW      | 9     | Inconsistent wording, minor typos, group naming |
+
+**Most impactful fixes** (by effort-to-value ratio):
+
+1. **Fix README `cfdna end` → `cfdna ends`** (C1) — one character, high trust impact
+2. **Fix README gc-bias recipe** (C2) — remove the non-existent flags or add a note about fragment length range
+3. **Add top-level `cfdna` description** (C11) — one line in clap config
+4. **Document that `--length-bins` controls fragment length range in `midpoints`** (C15) — a sentence in the help text
+5. **Note in `gc-bias` help where fragment length range comes from** (C14) — a sentence in the description
+
+---
+
 ## DOCUMENTS SUPERSEDED BY THIS REPORT
 
 The following documents are consolidated into this report and should be removed:
