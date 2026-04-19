@@ -62,7 +62,7 @@ pub const CLI_SEPARATOR_WIDTH: usize = 48;
 compile_error!("Building the CLI requires enabling at least one cmd_* feature.");
 
 #[cfg_attr(feature = "cli", derive(clap::Parser))]
-#[command(name = "cfdna", version)]
+#[command(name = "cfdna", version, about = env!("CARGO_PKG_DESCRIPTION"))]
 pub struct Cli {
     #[command(subcommand)]
     pub cmd: Cmd,
