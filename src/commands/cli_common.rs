@@ -258,6 +258,11 @@ pub struct DistributionWindowsArgs {
     pub by_bed: Option<PathBuf>,
 
     /// Window definition: a BED file of grouped windows `[path]`
+    ///
+    /// Requires a fourth BED column with the group name.
+    ///
+    /// Windows with the same group name are aggregated together in the final output.
+    /// The exact per-group output shape depends on the command.
     #[cfg_attr(
         feature = "cli",
         clap(
