@@ -121,7 +121,7 @@ fn end_scope_bq_filter_drops_only_the_failing_end() -> Result<()> {
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.all_motifs = true;
     set_exact_fragment_length(&mut cfg, 10);
-    cfg.bq_filters = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
+    cfg.bq_filter = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
 
     // Act
     run(&baseline_cfg)?;
@@ -169,7 +169,7 @@ fn fragment_scope_bq_filter_drops_the_full_fragment_when_it_fails() -> Result<()
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.all_motifs = true;
     set_exact_fragment_length(&mut cfg, 10);
-    cfg.bq_filters = vec![
+    cfg.bq_filter = vec![
         "mean in fragment >= 30"
             .parse::<BaseQualityFilter>()
             .unwrap(),
@@ -216,7 +216,7 @@ fn fragment_scope_bq_filters_apply_before_end_scope_filters_remove_one_end() -> 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.all_motifs = true;
     set_exact_fragment_length(&mut cfg, 10);
-    cfg.bq_filters = vec![
+    cfg.bq_filter = vec![
         "min in end >= 30".parse::<BaseQualityFilter>().unwrap(),
         "mean in fragment >= 30"
             .parse::<BaseQualityFilter>()
@@ -263,7 +263,7 @@ fn fragment_scope_bq_filter_can_pass_while_end_scope_filter_drops_one_end() -> R
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.all_motifs = true;
     set_exact_fragment_length(&mut cfg, 10);
-    cfg.bq_filters = vec![
+    cfg.bq_filter = vec![
         "mean in fragment >= 30"
             .parse::<BaseQualityFilter>()
             .unwrap(),
@@ -320,7 +320,7 @@ fn fragment_scope_bq_filter_can_pass_while_end_scope_filters_drop_both_ends() ->
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.all_motifs = true;
     set_exact_fragment_length(&mut cfg, 10);
-    cfg.bq_filters = vec![
+    cfg.bq_filter = vec![
         "mean in fragment >= 20"
             .parse::<BaseQualityFilter>()
             .unwrap(),
@@ -361,7 +361,7 @@ fn reads_are_fragments_supports_combined_end_and_fragment_bq_filters() -> Result
         reads_are_fragments: true,
     });
     cfg.all_motifs = true;
-    cfg.bq_filters = vec![
+    cfg.bq_filter = vec![
         "mean in fragment >= 25"
             .parse::<BaseQualityFilter>()
             .unwrap(),
@@ -406,7 +406,7 @@ fn reads_are_fragments_drop_the_fragment_when_fragment_filter_passes_but_both_en
         reads_are_fragments: true,
     });
     cfg.all_motifs = true;
-    cfg.bq_filters = vec![
+    cfg.bq_filter = vec![
         "mean in fragment >= 20"
             .parse::<BaseQualityFilter>()
             .unwrap(),
@@ -450,7 +450,7 @@ fn aligned_bq_filter_uses_aligned_inside_qualities_for_k_inside_gt_one() -> Resu
     cfg.clip.clip_strategy = ClipStrategy::Aligned;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
-    cfg.bq_filters = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
+    cfg.bq_filter = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
     {
         let lengths = cfg.fragment_lengths_mut();
         lengths.min_fragment_length = 10;
@@ -489,7 +489,7 @@ fn raw_aligned_boundary_bq_filter_uses_raw_inside_qualities_for_k_inside_gt_one(
     cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
-    cfg.bq_filters = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
+    cfg.bq_filter = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
     {
         let lengths = cfg.fragment_lengths_mut();
         lengths.min_fragment_length = 10;
@@ -524,7 +524,7 @@ fn raw_shifted_boundary_bq_filter_uses_raw_inside_qualities_for_k_inside_gt_one(
     cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
-    cfg.bq_filters = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
+    cfg.bq_filter = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
     {
         let lengths = cfg.fragment_lengths_mut();
         lengths.min_fragment_length = 14;
@@ -549,7 +549,7 @@ fn bq_filter_rejects_reference_backed_inside_bases_with_descriptive_error() -> R
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
     cfg.source_inside = KmerSource::Reference;
-    cfg.bq_filters = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
+    cfg.bq_filter = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
 
     // Act
     let err = run(&cfg).expect_err("reference-backed inside bases should reject BQ filters");
@@ -567,7 +567,7 @@ fn bq_filter_rejects_zero_inside_bases_with_descriptive_error() -> Result<()> {
     let bam = simple_paired_fragment_bam("ends_bq_k_inside_zero_error", 10, 10, 4)?;
     let out_dir = TempDir::new()?;
     let mut cfg = base_config(&bam.bam, out_dir.path(), 0, 1);
-    cfg.bq_filters = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
+    cfg.bq_filter = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
 
     // Act
     let err = run(&cfg).expect_err("BQ filters without inside bases should fail");
@@ -596,7 +596,7 @@ fn bq_filter_rejects_missing_base_qualities_with_descriptive_error() -> Result<(
         reads_are_fragments: true,
     });
     cfg.all_motifs = true;
-    cfg.bq_filters = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
+    cfg.bq_filter = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
     {
         let lengths = cfg.fragment_lengths_mut();
         lengths.min_fragment_length = 10;
@@ -619,7 +619,7 @@ fn settings_json_includes_bq_filters_in_command_output() -> Result<()> {
     let bam = simple_paired_fragment_bam("ends_bq_settings", 10, 10, 4)?;
     let out_dir = TempDir::new()?;
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
-    cfg.bq_filters = vec![
+    cfg.bq_filter = vec![
         "min in end >= 30".parse::<BaseQualityFilter>().unwrap(),
         "max in fragment < 20".parse::<BaseQualityFilter>().unwrap(),
     ];

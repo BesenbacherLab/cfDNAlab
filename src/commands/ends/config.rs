@@ -52,7 +52,7 @@ Counts (`<outside>_<inside>`): `AT_CG: 1`, `GA_TG: 1`
     "Weight how genomic regions contribute to the count distribution(s), e.g., to reduce the ",
     "influence of copy number alterations (if that is meaningful to your analysis). ",
     "This weights the contribution of each fragment by region-wise precomputed scaling factors.\n\n",
-    "Can be precomputed with `cfdna coverage-weights`.\n\n",
+    "Can be precomputed with `cfdna coverage-weights` or `cfdna fragment-count-weights`.\n\n",
     "## Window assignment\n\n",
     "By default, a motif is counted in the window the fragment end falls in with the weight 1.0 (before correction/scaling).\n\n",
     "With `--clip-strategy raw-shifted-boundary`, that endpoint can move outside the aligned span by the soft-clipped length.\n\n",
@@ -61,8 +61,8 @@ Counts (`<outside>_<inside>`): `AT_CG: 1`, `GA_TG: 1`
     "we can count both end motifs of a fragment if the *fragment midpoint* or a given ",
     "*proportion* of positions overlaps the window.\n\n",
     "## Blacklisting\n\n",
-    "Ignores fragments that overlap blacklisted regions with a given proportion.\n\n",
-    "Motifs overlapping blacklisted regions are skipped.\n\n",
+    "1) Ignores fragments that overlap blacklisted regions with a given proportion.\n\n",
+    "2) Motifs overlapping blacklisted regions are skipped.\n\n",
     "With `--clip-strategy raw-aligned-boundary`, motif-level blacklist validation only checks the part of the inside motif that still overlaps reference coordinates.\n\n",
     "## Always-on exclusion criteria\n\n",
     "The following criteria always exclude a read:\n\n",
@@ -129,6 +129,14 @@ pub struct EndsConfig {
 
     /// Whether to get the inside-fragment bases from the read or the reference `[string]`
     ///
+    /// Possible values:
+    ///
+    /// - `"read"`:
+    ///   Use the read sequence for bases inside the fragment.
+    ///
+    /// - `"reference"`:
+    ///   Use the reference genome for bases inside the fragment.
+    ///
     /// `--source-inside reference` cannot be combined with
     /// `--clip-strategy raw-aligned-boundary`.
     #[cfg_attr(
@@ -136,6 +144,7 @@ pub struct EndsConfig {
         clap(
             long,
             value_enum,
+            hide_possible_values = true,
             default_value = "read",
             requires_if("reference", "ref_2bit"),
             help_heading = "Motifs"
@@ -236,11 +245,11 @@ pub struct EndsConfig {
     ///
     /// Examples:
     ///
-    /// - `--bq-filter "min in end >= 30"`
+    /// - `--bq-filter "min in end >= 30"` (for "all bases have decent quality")
     ///
-    /// - `--bq-filter "mean in fragment < 25"`
+    /// - `--bq-filter "mean in fragment >= 30"` (for "average bases have decent quality")
     ///
-    /// - `--bq-filter "max in fragment < 20"`
+    /// - `--bq-filter "max in fragment < 20"` (for "no bases have decent quality")
     ///
     /// Each expression must use:
     ///
@@ -272,7 +281,7 @@ pub struct EndsConfig {
             help_heading = "Filtering"
         )
     )]
-    pub bq_filters: Vec<BaseQualityFilter>,
+    pub bq_filter: Vec<BaseQualityFilter>,
 
     /// Only count properly paired reads `[flag]`
     ///
@@ -357,7 +366,7 @@ impl EndsConfig {
             },
             tile_size: 20000000,
             min_mapq: 30,
-            bq_filters: Vec::new(),
+            bq_filter: Vec::new(),
             require_proper_pair: false,
             blacklist: None,
             blacklist_min_size: 1,

@@ -63,8 +63,7 @@ pub struct UnpairedArgs {
     /// The input has one read per fragment and the **read spans exactly the full fragment** (e.g. Nanopore) `[flag]`
     ///
     /// Each aligned read is treated as a fragment spanning its aligned reference interval
-    /// `[pos, reference_end)`. This uses the mapped span only
-    /// (soft clips excluded).
+    /// `[pos, reference_end)`. Some commands allow expanding this to include soft clipped bases.
     ///
     /// Cannot be combined with `--require-proper-pair` (when available).
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
@@ -534,9 +533,9 @@ impl ChromosomeArgs {
 pub struct ScaleGenomeArgs {
     /// Optional path to *non-negative* scaling factors for normalizing/smoothing the genome `[path]`
     ///
-    /// `.tsv` file as produced by `cfdna coverage-weights` containing a scaling factor to *multiply* by per **scaling-bin**.
+    /// `.tsv` file as produced by `cfdna coverage-weights` or `cfdna fragment-count-weights` containing a scaling factor to *multiply* by per **scaling-bin**.
     ///
-    /// Files may start with comment metadata lines from `cfdna coverage-weights`, such as `# gc_mode=corrected_tag`.
+    /// Files may start with comment metadata lines from `cfdna coverage-weights/fragment-count-weights`, such as `# gc_mode=corrected_tag`.
     ///
     /// The scaling-bin-overlapping parts of the fragments are counted as the scaling factor of the bin (`w=sf`).
     ///
@@ -548,7 +547,7 @@ pub struct ScaleGenomeArgs {
     ///
     /// Coordinates are 0-based, half-open `[start, end)`.
     ///
-    /// `scaling_factor` must be finite and strictly >= 0.
+    /// Scaling factors must be finite and non-negative.
     ///
     /// Bins are filtered to the provided `chromosomes`.
     ///

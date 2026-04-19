@@ -293,6 +293,10 @@ pub struct ClippingArgs {
     ///
     /// Possible values:
     ///
+    /// - `"skip"`:
+    ///   Skip motifs when their fragment end is soft-clipped.
+    ///   Hard-clipping always discards the full fragment.
+    ///
     /// - `"aligned"`:
     ///   Use the aligned start and end positions (the usual `cfDNAlab` fragment definition).
     ///   This trusts the aligner's choice and ignores clipped bases in the read sequences.
@@ -316,19 +320,23 @@ pub struct ClippingArgs {
     ///
     ///   This shifted boundary is used for outside-base lookup,
     ///   window assignment, and motif-level blacklist validation.
-    ///
-    /// - `"skip"`:
-    ///   Skip motifs when their fragment end is soft-clipped.
-    ///   Hard-clipping always discards the full fragment.
     #[cfg_attr(
         feature = "cli",
-        clap(long, value_enum, default_value = "skip", help_heading = "Clipping")
+        clap(
+            long,
+            value_enum,
+            hide_possible_values = true,
+            default_value = "skip",
+            help_heading = "Clipping"
+        )
     )]
     pub clip_strategy: ClipStrategy,
 
     /// Skip motifs whose relevant end has more soft-clipped bases than this `[integer]`
     ///
     /// This limit is applied independently to each fragment end.
+    /// 
+    /// Fragment length filtering is applied after soft clip expansion.
     ///
     /// Use `--clip-strategy skip` to discard all soft-clipped motifs.
     #[cfg_attr(

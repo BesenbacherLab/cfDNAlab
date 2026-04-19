@@ -111,7 +111,7 @@ fn write_end_settings_json_includes_base_quality_filters_when_present() {
     // which ends and fragments contribute to the output counts.
     let out_dir = TempDir::new().expect("tempdir");
     let mut cfg = minimal_config(out_dir.path());
-    cfg.bq_filters = vec![
+    cfg.bq_filter = vec![
         "min in end >= 30"
             .parse::<BaseQualityFilter>()
             .expect("valid end filter"),

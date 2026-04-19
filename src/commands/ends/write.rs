@@ -104,7 +104,7 @@ pub fn write_end_settings_json(output_dir: &Path, prefix: &str, opt: &EndsConfig
         ),
     ]
     .into_iter()
-    .chain(base_quality_filter_settings_entry(&opt.bq_filters))
+    .chain(base_quality_filter_settings_entry(&opt.bq_filter))
     .chain(collapse_complement_settings_entry(opt))
     .collect();
 
