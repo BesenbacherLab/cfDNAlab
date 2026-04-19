@@ -60,7 +60,7 @@ pub struct IOCArgs {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone)]
 pub struct UnpairedArgs {
-    /// The input has one read per fragment and the **read spans exactly the full fragment** (e.g. Nanopore) `[flag]`
+    /// The input has one read per fragment and the **read spans the full aligned fragment** (e.g. Nanopore) `[flag]`
     ///
     /// Each aligned read is treated as a fragment spanning its aligned reference interval
     /// `[pos, reference_end)`. Some commands allow expanding this to include soft clipped bases.
