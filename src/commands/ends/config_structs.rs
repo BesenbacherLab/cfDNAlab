@@ -282,10 +282,10 @@ pub struct ClippingArgs {
     /// How to extract a motif when its fragment end is clipped `[string]`
     ///
     /// Clipping means the read contains terminal bases that the aligner did not align normally.
-    /// The choice here is thus what sequence to count when that happens.
+    /// The choice here is thus what positions to count when that happens.
     ///
     /// For extraction of **outside** bases, we suggest **skipping** fragments
-    /// with soft clipping, as it is very difficult to infer where on the
+    /// with soft clipping, as it is difficult to infer where on the
     /// reference genome the actual fragment end was. We do provide two
     /// "raw"-modes for this, but neither is perfect.
     ///
@@ -295,7 +295,6 @@ pub struct ClippingArgs {
     ///
     /// - `"skip"`:
     ///   Skip motifs when their fragment end is soft-clipped.
-    ///   Hard-clipping always discards the full fragment.
     ///
     /// - `"aligned"`:
     ///   Use the aligned start and end positions (the usual `cfDNAlab` fragment definition).
@@ -335,7 +334,7 @@ pub struct ClippingArgs {
     /// Skip motifs whose relevant end has more soft-clipped bases than this `[integer]`
     ///
     /// This limit is applied independently to each fragment end.
-    /// 
+    ///
     /// Fragment length filtering is applied after soft clip expansion.
     ///
     /// Use `--clip-strategy skip` to discard all soft-clipped motifs.

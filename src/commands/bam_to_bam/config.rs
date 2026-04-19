@@ -134,7 +134,7 @@ pub struct BamToBamConfig {
     ///
     /// This is **NOT** recommended by default, as it trims the tails of the length distribution.
     ///
-    /// Note, that we only keep inward-directed fragments within a specified length range, so
+    /// Note, that we only keep inward-directed fragments within the specified length range, so
     /// there's no real need for proper-pair filtering.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,

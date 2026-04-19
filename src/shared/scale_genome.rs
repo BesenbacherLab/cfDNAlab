@@ -274,7 +274,7 @@ fn avg_scaling_over_span(
 /// - `scaling_factor` must be finite and strictly >= 0.
 /// - Bins are filtered to the provided `chromosomes`.
 /// - For every chromosome in `chromosomes`, bins must:
-///   * start at 0,
+///   * start at the 0-coordinate,
 ///   * be perfectly contiguous (no gaps, no overlaps),
 ///   * end exactly at that chromosome's length (from `contigs`).
 ///

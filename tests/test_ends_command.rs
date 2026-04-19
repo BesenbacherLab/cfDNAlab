@@ -5967,10 +5967,7 @@ fn grouped_bed_blacklist_filtering_drops_matching_fragments_before_grouping() ->
     // Assert
     assert_eq!(
         parse_group_index_rows(&group_index),
-        vec![
-            (0, "beta".to_string(), 0.1),
-            (1, "gamma".to_string(), 0.0),
-        ]
+        vec![(0, "beta".to_string(), 0.1), (1, "gamma".to_string(), 0.0),]
     );
     assert_eq!(matrix.shape(), &[2, 4]);
     assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 0.0);
@@ -6666,10 +6663,9 @@ fn grouped_bed_errors_when_no_windows_survive_selected_chromosomes() -> Result<(
     let err = run(&cfg).expect_err("grouped BED with no selected-chromosome windows should fail");
 
     // Assert
-    assert!(
-        err.to_string()
-            .contains("grouped BED file did not contain any valid windows on the selected chromosomes")
-    );
+    assert!(err.to_string().contains(
+        "grouped BED file did not contain any valid windows on the selected chromosomes"
+    ));
     Ok(())
 }
 

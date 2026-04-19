@@ -3794,10 +3794,7 @@ mod tests_lengths_command {
         // Assert
         assert_eq!(
             parse_group_index_rows(&group_index),
-            vec![
-                (0, "beta".to_string(), 0.1),
-                (1, "gamma".to_string(), 0.0),
-            ]
+            vec![(0, "beta".to_string(), 0.1), (1, "gamma".to_string(), 0.0),]
         );
         assert_eq!(arr.shape(), &[2, 1]);
         assert_eq!(arr[(0, 0)], 0.0);
@@ -4325,13 +4322,13 @@ mod tests_lengths_command {
         }
 
         // Act
-        let err = run(&cfg).expect_err("grouped BED with no selected-chromosome windows should fail");
+        let err =
+            run(&cfg).expect_err("grouped BED with no selected-chromosome windows should fail");
 
         // Assert
-        assert!(
-            err.to_string()
-                .contains("grouped BED file did not contain any valid windows on the selected chromosomes")
-        );
+        assert!(err.to_string().contains(
+            "grouped BED file did not contain any valid windows on the selected chromosomes"
+        ));
         Ok(())
     }
 }

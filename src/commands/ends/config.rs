@@ -61,8 +61,8 @@ Counts (`<outside>_<inside>`): `AT_CG: 1`, `GA_TG: 1`
     "we can count both end motifs of a fragment if the *fragment midpoint* or a given ",
     "*proportion* of positions overlaps the window.\n\n",
     "## Blacklisting\n\n",
-    "1) Ignores fragments that overlap blacklisted regions with a given proportion.\n\n",
-    "2) Motifs overlapping blacklisted regions are skipped.\n\n",
+    "1) Skips fragments that overlap blacklisted regions with a given proportion.\n\n",
+    "2) Skips motifs overlapping blacklisted regions.\n\n",
     "With `--clip-strategy raw-aligned-boundary`, motif-level blacklist validation only checks the part of the inside motif that still overlaps reference coordinates.\n\n",
     "## Always-on exclusion criteria\n\n",
     "The following criteria always exclude a read:\n\n",
@@ -136,9 +136,6 @@ pub struct EndsConfig {
     ///
     /// - `"reference"`:
     ///   Use the reference genome for bases inside the fragment.
-    ///
-    /// `--source-inside reference` cannot be combined with
-    /// `--clip-strategy raw-aligned-boundary`.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -257,7 +254,7 @@ pub struct EndsConfig {
     ///
     /// With the following values:
     ///
-    /// - with `<agg>` in `min`, `mean`, or `max`
+    /// - with `<agg>` in `min`, `max`, or `mean`
     ///
     /// - with `<scope>` in `end` or `fragment`
     ///
@@ -286,6 +283,9 @@ pub struct EndsConfig {
     /// Only count properly paired reads `[flag]`
     ///
     /// This is **NOT** recommended by default as it trims the tails of the length distribution.
+    ///
+    /// Note, that we only keep inward-directed fragments within the specified length range, so
+    /// there's no real need for proper-pair filtering.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "Filtering"))]
     pub require_proper_pair: bool,
 

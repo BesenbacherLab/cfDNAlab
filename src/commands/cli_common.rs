@@ -169,7 +169,7 @@ pub enum WindowSpec {
 pub struct WindowsArgs {
     /// Window definition: a fixed window size `[integer]`
     ///
-    /// Default is one global window.
+    /// When no windowing is specified, the default is one global window.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -233,7 +233,7 @@ pub enum DistributionWindowSpec {
 pub struct DistributionWindowsArgs {
     /// Window definition: a fixed window size `[integer]`
     ///
-    /// Default is one global window.
+    /// When no windowing is specified, the default is one global window.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -531,7 +531,7 @@ impl ChromosomeArgs {
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone, Default)]
 pub struct ScaleGenomeArgs {
-    /// Optional path to *non-negative* scaling factors for normalizing/smoothing the genome `[path]`
+    /// Optional path to non-negative scaling factors for normalizing/smoothing the genome `[path]`
     ///
     /// `.tsv` file as produced by `cfdna coverage-weights` or `cfdna fragment-count-weights` containing a scaling factor to *multiply* by per **scaling-bin**.
     ///
@@ -553,7 +553,7 @@ pub struct ScaleGenomeArgs {
     ///
     /// For every chromosome in `chromosomes`, bins must:
     ///
-    ///   - start at 0
+    ///   - start at the 0-coordinate
     ///
     ///   - be perfectly contiguous (no gaps, no overlaps)
     ///
