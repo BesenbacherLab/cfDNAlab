@@ -135,7 +135,7 @@ pub struct LengthsConfig {
             long,
             default_value = "ignore",
             ignore_case = true,
-            help_heading = "Core"
+            help_heading = "Indels and clipping"
         )
     )]
     pub indel_mode: IndelMode,
@@ -172,7 +172,7 @@ pub struct LengthsConfig {
             long,
             default_value = "aligned",
             ignore_case = true,
-            help_heading = "Clipping"
+            help_heading = "Indels and clipping"
         )
     )]
     pub clip_mode: ClipMode,
@@ -186,7 +186,7 @@ pub struct LengthsConfig {
             long,
             default_value_t = DEFAULT_MAX_SOFT_CLIPS,
             value_parser = clap::value_parser!(u16).range(0..=MAX_MAX_SOFT_CLIPS as i64),
-            help_heading = "Clipping"
+            help_heading = "Indels and clipping"
         )
     )]
     pub max_soft_clips: u16,
