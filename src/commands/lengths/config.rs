@@ -172,7 +172,7 @@ pub struct LengthsConfig {
             long,
             default_value = "aligned",
             ignore_case = true,
-            help_heading = "Core"
+            help_heading = "Clipping"
         )
     )]
     pub clip_mode: ClipMode,
