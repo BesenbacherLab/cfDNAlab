@@ -103,7 +103,7 @@ pub struct EndsConfig {
 
     /// 2bit reference genome file [path]
     ///
-    /// NOTE: Required when using reference bases or specifying `--gc-file`.
+    /// NOTE: Required when using reference bases, blacklist filtering, or specifying `--gc-file`.
     ///
     /// E.g., "hg38.2bit" from UCSC (https://hgdownload.cse.ucsc.edu/goldenpath/hg38/bigZips/hg38.2bit).
     #[cfg_attr(

@@ -129,6 +129,26 @@ pub(crate) fn build_optional_kmer_spec(k: usize, label: &str) -> Result<Option<K
     Ok(specs.remove(&k_u8))
 }
 
+/// Return whether `ends` needs reference access to validate or encode motifs.
+///
+/// Reference access is required in three cases:
+/// - outside bases are requested
+/// - inside bases come from the reference
+/// - blacklists are used, because inside motifs are then validated against masked reference bases
+pub(crate) fn motif_extraction_requires_reference(
+    opt: &EndsConfig,
+    has_blacklist: bool,
+) -> bool {
+    opt.k_outside > 0
+        || matches!(opt.source_inside, KmerSource::Reference)
+        || (opt.k_inside > 0 && has_blacklist)
+}
+
+/// Explain why `ends` requires `--ref-2bit` for motif extraction in the current run.
+pub(crate) fn motif_extraction_ref_2bit_requirement_message() -> &'static str {
+    "Motif extraction requires `--ref-2bit` when `--k-outside > 0`, `--source-inside reference`, or `--blacklist` is specified."
+}
+
 /// Compute the preloaded motif-reference span for one tile.
 ///
 /// BAM fetch narrowing is independent of motif reference preload. For motif
@@ -201,10 +221,8 @@ pub(crate) fn build_tile_motif_context<'a>(
         );
     }
 
-    let needs_reference_bases = outside_spec.is_some()
-        || (inside_spec.is_some()
-            && (matches!(opt.source_inside, KmerSource::Reference)
-                || !blacklist_intervals.is_empty()));
+    let needs_reference_bases = motif_extraction_requires_reference(opt, !blacklist_intervals.is_empty())
+        && (inside_spec.is_some() || outside_spec.is_some());
     let (reference_start, reference_end) = reference_span.as_tuple();
 
     if !needs_reference_bases {
@@ -223,7 +241,7 @@ pub(crate) fn build_tile_motif_context<'a>(
     let ref_2bit = opt
         .ref_2bit
         .as_ref()
-        .context("Reference-backed motif extraction requires --ref-2bit")?;
+        .context(motif_extraction_ref_2bit_requirement_message())?;
     let mut reference_bases = read_seq_in_range(
         ref_2bit,
         &tile.chr,

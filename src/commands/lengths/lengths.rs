@@ -574,6 +574,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 &chromosomes,
                 grouped_windows_map,
                 &blacklist_map,
+                opt.blacklist.is_some(),
             )?;
         }
         DistributionWindowSpec::Global => {}

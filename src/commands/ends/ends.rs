@@ -12,7 +12,8 @@ use crate::{
             counting::{EndCountsByWindow, decode_end_motif_counts},
             motifs::{
                 CountedEndFlags, build_optional_kmer_spec, build_tile_motif_context,
-                count_fragment_in_window, motif_reference_span_for_tile,
+                count_fragment_in_window, motif_extraction_ref_2bit_requirement_message,
+                motif_extraction_requires_reference, motif_reference_span_for_tile,
             },
             output::{
                 build_all_end_motif_order, collect_end_motif_order,
@@ -127,6 +128,9 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         bail!(
             "`--clip-strategy raw-aligned-boundary` cannot be combined with `--source-inside reference`"
         );
+    }
+    if opt.ref_2bit.is_none() && motif_extraction_requires_reference(opt, opt.blacklist.is_some()) {
+        bail!(motif_extraction_ref_2bit_requirement_message());
     }
     if let Some(warning_message) =
         outside_kmer_clip_strategy_warning(opt.k_outside, opt.clip.clip_strategy)
@@ -464,6 +468,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                 &chromosomes,
                 grouped_windows_map,
                 &blacklist_map,
+                opt.blacklist.is_some(),
             )?;
         }
         DistributionWindowSpec::Global => {}

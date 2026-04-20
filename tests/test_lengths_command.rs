@@ -66,9 +66,28 @@ mod tests_lengths_command {
     }
 
     fn parse_group_index_tsv(text: &str) -> Vec<(u64, String)> {
-        parse_group_index_rows(text)
-            .into_iter()
-            .map(|(group_idx, group_name, _)| (group_idx, group_name))
+        let mut lines = text.lines();
+        let header = lines.next().expect("group index TSV must have a header");
+        let expected_column_count = match header {
+            "group_idx\tgroup_name" => 2,
+            "group_idx\tgroup_name\tblacklisted_fraction" => 3,
+            _ => panic!("unexpected group index TSV header: {header}"),
+        };
+
+        lines
+            .map(|line| {
+                let fields: Vec<&str> = line.split('\t').collect();
+                assert_eq!(
+                    fields.len(),
+                    expected_column_count,
+                    "group index row must match the header column count"
+                );
+                let group_idx = fields[0]
+                    .parse::<u64>()
+                    .expect("group_idx must parse as u64");
+                let group_name = fields[1].to_string();
+                (group_idx, group_name)
+            })
             .collect()
     }
 
@@ -3301,6 +3320,62 @@ mod tests_lengths_command {
     }
 
     #[test]
+    fn grouped_bed_group_index_omits_blacklisted_fraction_without_blacklist() -> Result<()> {
+        // Arrange:
+        // - grouped output without any blacklist input should describe only the group index mapping
+        // - the metadata file should therefore have exactly two columns:
+        //     group_idx, group_name
+        // - it should not include a synthetic zero-filled blacklist column
+        let bam = single_read_fragment_bam("lengths_grouped_group_index_no_blacklist", 10, 10)?;
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join("grouped_windows_no_blacklist.bed");
+        write_bed(
+            &grouped_bed,
+            &[("chr1", 10, 20, "beta"), ("chr1", 30, 40, "gamma")],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 10;
+            frag.max_fragment_length = 10;
+        }
+
+        // Act
+        run(&cfg)?;
+        let group_index = std::fs::read_to_string(out_dir.path().join("group_index.tsv"))?;
+
+        // Assert
+        let rows: Vec<&str> = group_index.lines().collect();
+        assert_eq!(rows[0], "group_idx\tgroup_name");
+        assert_eq!(rows[1], "0\tbeta");
+        assert_eq!(rows[2], "1\tgamma");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(
+            parse_group_index_tsv(&group_index),
+            vec![(0, "beta".to_string()), (1, "gamma".to_string())]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn grouped_bed_any_counts_same_group_intervals_separately() -> Result<()> {
         // Arrange:
         // - one unpaired fragment spans [10,20) with length 10
@@ -3445,11 +3520,11 @@ mod tests_lengths_command {
         )?;
         // Assert
         assert_eq!(
-            parse_group_index_rows(&group_index),
+            parse_group_index_tsv(&group_index),
             vec![
-                (0, "beta".to_string(), 0.0),
-                (1, "alpha".to_string(), 0.0),
-                (2, "gamma".to_string(), 0.0),
+                (0, "beta".to_string()),
+                (1, "alpha".to_string()),
+                (2, "gamma".to_string()),
             ]
         );
         assert_eq!(arr.shape(), &[3, 111]);
@@ -3551,11 +3626,11 @@ mod tests_lengths_command {
 
         // Assert
         assert_eq!(
-            parse_group_index_rows(&group_index),
+            parse_group_index_tsv(&group_index),
             vec![
-                (0, "beta".to_string(), 0.0),
-                (1, "alpha".to_string(), 0.0),
-                (2, "gamma".to_string(), 0.0),
+                (0, "beta".to_string()),
+                (1, "alpha".to_string()),
+                (2, "gamma".to_string()),
             ]
         );
         assert_eq!(arr.shape(), &[3, 111]);
