@@ -909,4 +909,5 @@ impl Coverage {
 #[cfg(test)]
 mod tests {
     include!("coverage_tests.rs");
+    include!("test_coverage_correlation.rs");
 }
