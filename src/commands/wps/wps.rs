@@ -7,7 +7,7 @@ use crate::commands::fcoverage::tiling::{
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::{
-    emit_bedgraph_runs, emit_windowed_runs, write_final_row,
+    write_bedgraph_runs, write_final_row, write_windowed_runs,
 };
 use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
 use crate::commands::gc_bias::counting::build_gc_prefixes;
@@ -105,6 +105,19 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     opt.shared_args.gc.validate()?;
 
     let per_window_wps_action = opt.per_window;
+
+    if let Some(action) = per_window_wps_action {
+        ensure!(
+            matches!(
+                action,
+                CoverageWindowAction::Average
+                    | CoverageWindowAction::Total
+                    | CoverageWindowAction::OnlyIncludeThesePositionsUnique
+                    | CoverageWindowAction::OnlyIncludeThesePositionsIndexed
+            ),
+            "for WPS, --per-window can only be 'average', 'total', 'unique-positions', or 'indexed-positions'"
+        );
+    }
 
     // Create output directory
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;
@@ -246,7 +259,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     // Create filenames of final outputs
     let final_bedgraph_pos_name = dot_join(&[prefix, "wps.per_position.bedgraph.zst"]);
     let final_tsv_pos_name = dot_join(&[prefix, "wps.per_position_per_window.tsv.zst"]);
-    let final_avg_name = dot_join(&[prefix, "wps.avg.tsv.zst"]);
+    let final_average_name = dot_join(&[prefix, "wps.average.tsv.zst"]);
     let final_total_name = dot_join(&[prefix, "wps.total.tsv.zst"]);
 
     let per_window_action = if windowed {
@@ -269,6 +282,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     0
                 }
             }
+            _ => unreachable!("unsupported WPS per-window action must be rejected during validation"),
         },
         None => {
             if has_scaling_or_correction {
@@ -333,6 +347,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                         CoverageWindowAction::Average | CoverageWindowAction::Total => {
                             (partials_prefix, "tsv.zst")
                         }
+                        _ => unreachable!("unsupported WPS per-window action must be rejected during validation"),
                     }
                 } else {
                     // Whole positional coverage
@@ -485,14 +500,14 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             CoverageWindowAction::Average | CoverageWindowAction::Total => {
                 // Per-chrom reduce of partials into final aggregates
                 let final_path = opt.shared_args.ioc.output_dir.join(match action {
-                    CoverageWindowAction::Average => final_avg_name.as_str(),
+                    CoverageWindowAction::Average => final_average_name.as_str(),
                     CoverageWindowAction::Total => final_total_name.as_str(),
                     _ => unreachable!(),
                 });
 
                 // Header value-column name
                 let value_col = match action {
-                    CoverageWindowAction::Average => "avg_coverage",
+                    CoverageWindowAction::Average => "average_coverage",
                     CoverageWindowAction::Total => "total_coverage",
                     _ => unreachable!(),
                 };
@@ -541,7 +556,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                                 &chromosomes,
                                 finals_prefix,
                                 match action {
-                                    CoverageWindowAction::Average => final_avg_name.as_str(),
+                                    CoverageWindowAction::Average => final_average_name.as_str(),
                                     CoverageWindowAction::Total => final_total_name.as_str(),
                                     _ => unreachable!(),
                                 },
@@ -587,6 +602,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
 
                 final_path
             }
+            _ => unreachable!("unsupported WPS per-window action must be rejected during validation"),
         }
     } else {
         // Whole-genome positional coverage
@@ -930,7 +946,7 @@ pub fn wps_for_tile(
 
             match windows {
                 None => {
-                    emit_bedgraph_runs(
+                    write_bedgraph_runs(
                         &tile.chr,
                         &wps_values,
                         mask_slice,
@@ -961,7 +977,7 @@ pub fn wps_for_tile(
                         };
 
                         if indexed {
-                            emit_windowed_runs(
+                            write_windowed_runs(
                                 &tile.chr,
                                 &wps_values,
                                 mask_slice,
@@ -974,7 +990,7 @@ pub fn wps_for_tile(
                                 &mut positional_writer,
                             )?;
                         } else {
-                            emit_windowed_runs(
+                            write_windowed_runs(
                                 &tile.chr,
                                 &wps_values,
                                 mask_slice,

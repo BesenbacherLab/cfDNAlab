@@ -105,7 +105,7 @@ pub fn concat_aligned_size_tile_finals(
     out_dir: &std::path::Path,
     chromosomes: &[String],
     per_tile_prefix: &str, // e.g., "<prefix>.fin"
-    final_name: &str,      // e.g., "<prefix>.avg.tsv.zst"
+    final_name: &str,      // e.g., "<prefix>.average.tsv.zst"
     header_line: &str,     // single header line without trailing newline
 ) -> Result<std::path::PathBuf> {
     let final_path = out_dir.join(final_name);

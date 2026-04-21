@@ -37,9 +37,9 @@ fn load_stride_bins_from_fcoverage_average_tsv_reads_contiguous_bins_from_zstd()
     let tempdir = TempDir::new()?;
     let path = write_zstd_tsv(
         &tempdir,
-        "coverage.avg.tsv.zst",
+        "coverage.average.tsv.zst",
         &[
-            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
             "chr1\t0\t10\t1.25\t0",
             "chr1\t10\t20\t2.5\t3",
             "chr2\t0\t5\t0\t0",
@@ -57,18 +57,18 @@ fn load_stride_bins_from_fcoverage_average_tsv_reads_contiguous_bins_from_zstd()
     assert_eq!(chr1_bins.len(), 2);
     assert_eq!(chr1_bins[0].start(), 0);
     assert_eq!(chr1_bins[0].end(), 10);
-    assert_eq!(chr1_bins[0].avg_coverage, 1.25);
+    assert_eq!(chr1_bins[0].average_coverage, 1.25);
     assert_eq!(chr1_bins[1].start(), 10);
     assert_eq!(chr1_bins[1].end(), 20);
-    assert_eq!(chr1_bins[1].avg_coverage, 2.5);
-    assert_eq!(chr1_bins[1].avg_overlap_coverage, 0.0);
+    assert_eq!(chr1_bins[1].average_coverage, 2.5);
+    assert_eq!(chr1_bins[1].average_overlap_coverage, 0.0);
     assert_eq!(chr1_bins[1].scaling_factor, 0.0);
 
     let chr2_bins = bins_by_chr.get("chr2").expect("chr2 bins should exist");
     assert_eq!(chr2_bins.len(), 1);
     assert_eq!(chr2_bins[0].start(), 0);
     assert_eq!(chr2_bins[0].end(), 5);
-    assert_eq!(chr2_bins[0].avg_coverage, 0.0);
+    assert_eq!(chr2_bins[0].average_coverage, 0.0);
 
     Ok(())
 }
@@ -77,7 +77,7 @@ fn load_stride_bins_from_fcoverage_average_tsv_reads_contiguous_bins_from_zstd()
 fn load_stride_bins_from_fcoverage_average_tsv_rejects_empty_file() -> Result<()> {
     // Arrange
     let tempdir = TempDir::new()?;
-    let path = write_plain_tsv(&tempdir, "coverage.avg.tsv", &[])?;
+    let path = write_plain_tsv(&tempdir, "coverage.average.tsv", &[])?;
 
     // Act
     let err = load_stride_bins_from_fcoverage_average_tsv(
@@ -97,7 +97,7 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_unexpected_header() -> Re
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
         &tempdir,
-        "coverage.avg.tsv",
+        "coverage.average.tsv",
         &[
             "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
             "chr1\t0\t10\t1.25\t0",
@@ -122,9 +122,9 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_short_rows() -> Result<()
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
         &tempdir,
-        "coverage.avg.tsv",
+        "coverage.average.tsv",
         &[
-            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
             "chr1\t0\t10\t1.25",
         ],
     )?;
@@ -147,9 +147,9 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_invalid_start() -> Result
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
         &tempdir,
-        "coverage.avg.tsv",
+        "coverage.average.tsv",
         &[
-            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
             "chr1\tzero\t10\t1.25\t0",
         ],
     )?;
@@ -172,9 +172,9 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_invalid_interval() -> Res
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
         &tempdir,
-        "coverage.avg.tsv",
+        "coverage.average.tsv",
         &[
-            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
             "chr1\t10\t10\t1.25\t0",
         ],
     )?;
@@ -201,9 +201,9 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_missing_requested_chromos
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
         &tempdir,
-        "coverage.avg.tsv",
+        "coverage.average.tsv",
         &[
-            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
             "chr1\t0\t10\t1.25\t0",
         ],
     )?;
@@ -226,9 +226,9 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_first_bin_not_starting_at
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
         &tempdir,
-        "coverage.avg.tsv",
+        "coverage.average.tsv",
         &[
-            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
             "chr1\t5\t10\t1.25\t0",
         ],
     )?;
@@ -251,9 +251,9 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_gap_between_bins() -> Res
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
         &tempdir,
-        "coverage.avg.tsv",
+        "coverage.average.tsv",
         &[
-            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
             "chr1\t0\t10\t1.0\t0",
             "chr1\t12\t20\t2.0\t0",
         ],
@@ -277,9 +277,9 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_overlap_between_bins() ->
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
         &tempdir,
-        "coverage.avg.tsv",
+        "coverage.average.tsv",
         &[
-            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
             "chr1\t0\t10\t1.0\t0",
             "chr1\t8\t20\t2.0\t0",
         ],
@@ -298,7 +298,7 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_overlap_between_bins() ->
 }
 
 #[test]
-fn normalize_avg_overlap_by_global_mean_ignores_bins_below_support_floor() -> Result<()> {
+fn normalize_average_overlap_by_global_mean_ignores_bins_below_support_floor() -> Result<()> {
     // Arrange
     let mut bins_by_chr = FxHashMap::default();
     bins_by_chr.insert(
@@ -306,21 +306,21 @@ fn normalize_avg_overlap_by_global_mean_ignores_bins_below_support_floor() -> Re
         vec![
             StrideBin {
                 interval: Interval::new(0, 10)?,
-                avg_coverage: 1.0,
-                avg_overlap_coverage: 0.5,
+                average_coverage: 1.0,
+                average_overlap_coverage: 0.5,
                 scaling_factor: 0.0,
             },
             StrideBin {
                 interval: Interval::new(10, 20)?,
-                avg_coverage: 0.0,
-                avg_overlap_coverage: 5e-11,
+                average_coverage: 0.0,
+                average_overlap_coverage: 5e-11,
                 scaling_factor: 0.0,
             },
         ],
     );
 
     // Act
-    let mean = normalize_avg_overlap_by_global_mean(&mut bins_by_chr, false, true)?;
+    let mean = normalize_average_overlap_by_global_mean(&mut bins_by_chr, false, true)?;
 
     // Assert
     let chr1_bins = bins_by_chr.get("chr1").expect("chr1 bins should exist");
@@ -339,7 +339,7 @@ fn normalize_avg_overlap_by_global_mean_ignores_bins_below_support_floor() -> Re
 }
 
 #[test]
-fn normalize_avg_overlap_by_global_mean_keeps_bins_above_support_floor() -> Result<()> {
+fn normalize_average_overlap_by_global_mean_keeps_bins_above_support_floor() -> Result<()> {
     // Arrange
     let mut bins_by_chr = FxHashMap::default();
     bins_by_chr.insert(
@@ -347,21 +347,21 @@ fn normalize_avg_overlap_by_global_mean_keeps_bins_above_support_floor() -> Resu
         vec![
             StrideBin {
                 interval: Interval::new(0, 10)?,
-                avg_coverage: 1.0,
-                avg_overlap_coverage: 1.0,
+                average_coverage: 1.0,
+                average_overlap_coverage: 1.0,
                 scaling_factor: 0.0,
             },
             StrideBin {
                 interval: Interval::new(10, 20)?,
-                avg_coverage: 0.0,
-                avg_overlap_coverage: 2e-9,
+                average_coverage: 0.0,
+                average_overlap_coverage: 2e-9,
                 scaling_factor: 0.0,
             },
         ],
     );
 
     // Act
-    let mean = normalize_avg_overlap_by_global_mean(&mut bins_by_chr, false, true)?;
+    let mean = normalize_average_overlap_by_global_mean(&mut bins_by_chr, false, true)?;
 
     // Assert
     let expected_mean = ((1.0 + 2e-9) / 2.0) as f32;

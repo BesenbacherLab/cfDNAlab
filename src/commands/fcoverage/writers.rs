@@ -50,7 +50,7 @@ pub struct SummaryStatsRow {
     pub nonzero_positions: u64,
     pub coverage_sum: f64,
     pub coverage_sum_of_squares: f64,
-    pub mean_coverage: f64,
+    pub average_coverage: f64,
     pub total_coverage: f64,
     pub variance_coverage: f64,
     pub sd_coverage: f64,
@@ -126,7 +126,7 @@ pub fn derive_summary_stats(
             nonzero_positions,
             coverage_sum: total_coverage,
             coverage_sum_of_squares,
-            mean_coverage: f64::NAN,
+            average_coverage: f64::NAN,
             total_coverage,
             variance_coverage: f64::NAN,
             sd_coverage: f64::NAN,
@@ -136,15 +136,15 @@ pub fn derive_summary_stats(
     }
 
     let eligible_positions_f64 = eligible_positions as f64;
-    let mean_coverage = coverage_sum / eligible_positions_f64;
+    let average_coverage = coverage_sum / eligible_positions_f64;
     let variance_coverage = derive_nonnegative_variance_coverage(
         eligible_positions,
         coverage_sum_of_squares,
-        mean_coverage,
+        average_coverage,
     )?;
     let sd_coverage = variance_coverage.sqrt();
     let coefficient_of_variation_coverage =
-        derive_coefficient_of_variation_coverage(mean_coverage, sd_coverage);
+        derive_coefficient_of_variation_coverage(average_coverage, sd_coverage);
     let covered_fraction = nonzero_positions as f64 / eligible_positions_f64;
 
     Ok(SummaryStatsRow {
@@ -154,7 +154,7 @@ pub fn derive_summary_stats(
         nonzero_positions,
         coverage_sum,
         coverage_sum_of_squares,
-        mean_coverage,
+        average_coverage,
         total_coverage,
         variance_coverage,
         sd_coverage,
@@ -172,11 +172,11 @@ pub fn derive_summary_stats(
 /// This helper does not cap large finite CV values. It preserves the real numeric result and
 /// leaves the `>1e6` presentation policy to the dedicated display wrapper used only when
 /// writing the TSV rows.
-fn derive_coefficient_of_variation_coverage(mean_coverage: f64, sd_coverage: f64) -> f64 {
-    if !mean_coverage.is_finite() || mean_coverage.abs() <= ZEROISH_COVERAGE_MEAN_F64 {
+fn derive_coefficient_of_variation_coverage(average_coverage: f64, sd_coverage: f64) -> f64 {
+    if !average_coverage.is_finite() || average_coverage.abs() <= ZEROISH_COVERAGE_MEAN_F64 {
         f64::NAN
     } else {
-        sd_coverage / mean_coverage
+        sd_coverage / average_coverage
     }
 }
 
@@ -200,10 +200,10 @@ fn derive_coefficient_of_variation_coverage(mean_coverage: f64, sd_coverage: f64
 fn derive_nonnegative_variance_coverage(
     eligible_positions: u64,
     coverage_sum_of_squares: f64,
-    mean_coverage: f64,
+    average_coverage: f64,
 ) -> Result<f64> {
     let eligible_positions_f64 = eligible_positions as f64;
-    let raw_variance = coverage_sum_of_squares / eligible_positions_f64 - mean_coverage.powi(2);
+    let raw_variance = coverage_sum_of_squares / eligible_positions_f64 - average_coverage.powi(2);
 
     if raw_variance.is_finite() && raw_variance < 0.0 {
         // Tiny negative variance is a known cancellation artifact from `E[x^2] - E[x]^2`
@@ -214,12 +214,12 @@ fn derive_nonnegative_variance_coverage(
         }
 
         bail!(
-            "derived a negative variance_coverage {} below the allowed cancellation tolerance {}. eligible_positions={}, coverage_sum_of_squares={}, mean_coverage={}",
+            "derived a negative variance_coverage {} below the allowed cancellation tolerance {}. eligible_positions={}, coverage_sum_of_squares={}, average_coverage={}",
             raw_variance,
             ZEROISH_F32_TOLERANCE,
             eligible_positions,
             coverage_sum_of_squares,
-            mean_coverage,
+            average_coverage,
         );
     }
 
@@ -275,7 +275,7 @@ pub fn write_summary_stats_row<W: Write>(
             decimals
         },
         CompactNumber {
-            v: stats.mean_coverage,
+            v: stats.average_coverage,
             decimals
         },
         CompactNumber {
@@ -348,7 +348,7 @@ pub fn write_grouped_summary_stats_row<W: Write>(
             decimals
         },
         CompactNumber {
-            v: stats.mean_coverage,
+            v: stats.average_coverage,
             decimals
         },
         CompactNumber {
@@ -378,7 +378,7 @@ pub fn write_grouped_summary_stats_row<W: Write>(
 fn aggregate_value_header(action: CoverageWindowAction) -> &'static str {
     match action {
         CoverageWindowAction::Average | CoverageWindowAction::AverageOnUniqueBases => {
-            "mean_coverage"
+            "average_coverage"
         }
         CoverageWindowAction::Total | CoverageWindowAction::TotalOnUniqueBases => "total_coverage",
         CoverageWindowAction::SummaryStats | CoverageWindowAction::SummaryStatsOnUniqueBases => {
@@ -392,11 +392,11 @@ fn aggregate_value_header(action: CoverageWindowAction) -> &'static str {
 }
 
 pub(crate) fn summary_stats_header() -> &'static str {
-    "chromosome\tstart\tend\tspan_positions\tblacklisted_positions\teligible_positions\tnonzero_positions\tcoverage_sum\tcoverage_sum_of_squares\tmean_coverage\ttotal_coverage\tvariance_coverage\tsd_coverage\tcoefficient_of_variation_coverage\tcovered_fraction"
+    "chromosome\tstart\tend\tspan_positions\tblacklisted_positions\teligible_positions\tnonzero_positions\tcoverage_sum\tcoverage_sum_of_squares\taverage_coverage\ttotal_coverage\tvariance_coverage\tsd_coverage\tcoefficient_of_variation_coverage\tcovered_fraction"
 }
 
 fn grouped_summary_stats_header() -> &'static str {
-    "group_idx\tspan_positions\tblacklisted_positions\teligible_positions\tnonzero_positions\tcoverage_sum\tcoverage_sum_of_squares\tmean_coverage\ttotal_coverage\tvariance_coverage\tsd_coverage\tcoefficient_of_variation_coverage\tcovered_fraction"
+    "group_idx\tspan_positions\tblacklisted_positions\teligible_positions\tnonzero_positions\tcoverage_sum\tcoverage_sum_of_squares\taverage_coverage\ttotal_coverage\tvariance_coverage\tsd_coverage\tcoefficient_of_variation_coverage\tcovered_fraction"
 }
 
 /// Write one final BED aggregate output file across all requested chromosomes.

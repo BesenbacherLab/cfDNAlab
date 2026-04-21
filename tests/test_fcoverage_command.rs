@@ -106,7 +106,7 @@ fn pearson_r_from_vectors(coverage: &[f64], mask: &[f64]) -> f64 {
     let n = coverage.len();
     assert!(n > 0, "cannot compute Pearson R on empty vectors");
 
-    let mean_coverage = coverage.iter().sum::<f64>() / n as f64;
+    let average_coverage = coverage.iter().sum::<f64>() / n as f64;
     let mean_mask = mask.iter().sum::<f64>() / n as f64;
 
     let mut covariance_numerator = 0.0;
@@ -114,7 +114,7 @@ fn pearson_r_from_vectors(coverage: &[f64], mask: &[f64]) -> f64 {
     let mut mask_variance_numerator = 0.0;
 
     for (&coverage_value, &mask_value) in coverage.iter().zip(mask.iter()) {
-        let centered_coverage = coverage_value - mean_coverage;
+        let centered_coverage = coverage_value - average_coverage;
         let centered_mask = mask_value - mean_mask;
         covariance_numerator += centered_coverage * centered_mask;
         coverage_variance_numerator += centered_coverage * centered_coverage;
@@ -1569,13 +1569,13 @@ fn blacklist_average_uses_only_unmasked_positions_in_denominator() -> Result<()>
     // - Remaining windows: 0
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.fcoverage.avg.tsv.zst");
+    let output_path = out_dir.path().join("testcov.fcoverage.average.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
         lines,
         vec![
-            "chromosome\tstart\tend\tmean_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
             "chr1\t0\t40\t0.429\t5",
             "chr1\t40\t80\t1\t0",
             "chr1\t80\t120\t0\t0",
@@ -1988,13 +1988,13 @@ fn by_size_average_reduces_across_non_aligned_tiles() -> Result<()> {
     // - tile_size=55 forces the non-aligned reducer path, but should not change values.
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.fcoverage.avg.tsv.zst");
+    let output_path = out_dir.path().join("testcov.fcoverage.average.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
         lines,
         vec![
-            "chromosome\tstart\tend\tmean_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
             "chr1\t0\t40\t0.5\t0",
             "chr1\t40\t80\t1\t0",
             "chr1\t80\t120\t0\t0",
@@ -2165,13 +2165,13 @@ fn by_bed_average_matches_manual_window_means() -> Result<()> {
     // - Window [70, 90): covered length 10 of 20 -> average 0.5
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.fcoverage.avg.tsv.zst");
+    let output_path = out_dir.path().join("testcov.fcoverage.average.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
         lines,
         vec![
-            "chromosome\tstart\tend\tmean_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
             "chr1\t0\t40\t0.5\t0",
             "chr1\t20\t80\t1\t0",
             "chr1\t70\t90\t0.5\t0",
@@ -2228,13 +2228,13 @@ fn by_bed_average_handles_three_chromosomes_with_global_window_indices() -> Resu
     // - chr3 fragment spans [40, 90), so window [50, 100) has 40 covered bases -> 40 / 50 = 0.8.
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.fcoverage.avg.tsv.zst");
+    let output_path = out_dir.path().join("testcov.fcoverage.average.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
         lines,
         vec![
-            "chromosome\tstart\tend\tmean_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
             "chr1\t0\t40\t0.5\t0",
             "chr2\t0\t40\t0.75\t0",
             "chr3\t50\t100\t0.8\t0",
@@ -2254,7 +2254,7 @@ fn by_bed_average_skips_chromosomes_without_windows_and_keeps_later_chromosomes(
             paired_fragment_on_tid(1, 10, 40, 20),
         ],
         Vec::new(),
-        "fcoverage_bed_avg_skip_empty_chr",
+        "fcoverage_bed_average_skip_empty_chr",
     )?;
     let out_dir = TempDir::new()?;
     let bed_path = out_dir.path().join("aggregate_windows_chr2_only.bed");
@@ -2275,13 +2275,13 @@ fn by_bed_average_skips_chromosomes_without_windows_and_keeps_later_chromosomes(
     //   30 bases and the mean coverage is 30 / 40 = 0.75.
     run(&cfg)?;
 
-    let output_path = out_dir.path().join("testcov.fcoverage.avg.tsv.zst");
+    let output_path = out_dir.path().join("testcov.fcoverage.average.tsv.zst");
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(
         lines,
         vec![
-            "chromosome\tstart\tend\tmean_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
             "chr2\t0\t40\t0.75\t0",
         ]
     );
@@ -2813,7 +2813,7 @@ fn real_ref_gc_bias_gc_bias_and_coverage_weights_chain_is_coherent_in_fcoverage(
 fn near_zero_scaling_tsv_stays_finite_and_correct_in_fcoverage() -> Result<()> {
     // Human verification status: unverified
     // Arrange:
-    // `normalize_avg_overlap_keeps_sparse_non_zero_scaling_finite` already pins the helper-level
+    // `normalize_average_overlap_keeps_sparse_non_zero_scaling_finite` already pins the helper-level
     // normalization result for the near-zero regime:
     // - sparse bin factor   = 5000.5
     // - ordinary covered bin factor = 0.50005
@@ -2920,7 +2920,7 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_fcove
     // = (3 + 1/20 + 6 + 1/10) / 8
     // = 183/160.
     //
-    // Written scaling factors = mean / avg_pos_cov:
+    // Written scaling factors = mean / average_pos_coverage:
     // - chr1 [20,80):  (183/160) / 1    = 183/160
     // - chr1 [80,100): (183/160) / 1/20 = 183/8
     // - chr2 [20,80):  (183/160) / 2    = 183/320
@@ -3955,7 +3955,7 @@ fn by_bed_total_halo_only_window_is_not_double_counted_across_tiles() -> Result<
 }
 
 #[test]
-fn by_bed_avg_halo_only_window_is_counted_once_regardless_of_tile_size() -> Result<()> {
+fn by_bed_average_halo_only_window_is_counted_once_regardless_of_tile_size() -> Result<()> {
     // Same fragment/window setup as the total test above, but we verify
     // tile-size invariance of the average output. This catches the
     // double-counting regression from a different angle: if a halo-only
@@ -3999,7 +3999,7 @@ fn by_bed_avg_halo_only_window_is_counted_once_regardless_of_tile_size() -> Resu
 
         run(&cfg)?;
 
-        let output_path = out_dir.path().join("testcov.fcoverage.avg.tsv.zst");
+        let output_path = out_dir.path().join("testcov.fcoverage.average.tsv.zst");
         outputs.push(read_zst_to_string(&output_path)?);
     }
 
@@ -4017,7 +4017,7 @@ fn by_bed_avg_halo_only_window_is_counted_once_regardless_of_tile_size() -> Resu
     assert_eq!(
         lines,
         vec![
-            "chromosome\tstart\tend\tmean_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
             "chr1\t5\t10\t1\t0",
             "chr1\t15\t20\t1\t0",
             "chr1\t20\t25\t1\t0",
@@ -4228,10 +4228,10 @@ fn grouped_bed_average_on_unique_bases_merges_same_group_overlaps() -> Result<()
     // - Group `beta` has [20, 50) and [40, 80). Under `average-on-unique-bases`,
     //   same-group overlaps collapse to the union [20, 80), so:
     //     span_positions = eligible_positions = 60
-    //     mean_coverage = 60 / 60 = 1
+    //     average_coverage = 60 / 60 = 1
     // - `gamma` covers [0, 20) with no fragment support, so:
     //     span_positions = eligible_positions = 20
-    //     mean_coverage = 0
+    //     average_coverage = 0
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_unique_bases_avg.bed");
@@ -4258,7 +4258,7 @@ fn grouped_bed_average_on_unique_bases_merges_same_group_overlaps() -> Result<()
     let output = read_zst_to_string(
         &out_dir
             .path()
-            .join("testcov.fcoverage.avg_on_unique_bases.tsv.zst"),
+            .join("testcov.fcoverage.average_on_unique_bases.tsv.zst"),
     )?;
     let rows = parse_tsv(&output);
 
@@ -4270,7 +4270,7 @@ fn grouped_bed_average_on_unique_bases_merges_same_group_overlaps() -> Result<()
                 "span_positions",
                 "blacklisted_positions",
                 "eligible_positions",
-                "mean_coverage",
+                "average_coverage",
             ],
             vec!["0", "60", "0", "60", "1"],
             vec!["1", "20", "0", "20", "0"],
@@ -4428,13 +4428,13 @@ fn grouped_bed_average_on_unique_bases_with_blacklist_uses_only_eligible_positio
     //     blacklisted_positions = 5
     //     eligible_positions = 55
     //     total eligible covered bases = 55
-    //     mean_coverage = 55 / 55 = 1
+    //     average_coverage = 55 / 55 = 1
     // - Group `delta` is [0, 40):
     //     span_positions = 40
     //     blacklisted_positions = 5
     //     eligible_positions = 35
     //     covered eligible bases are [20, 30) and [35, 40), so total_coverage = 15
-    //     mean_coverage = 15 / 35 = 3 / 7
+    //     average_coverage = 15 / 35 = 3 / 7
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let grouped_bed = out_dir.path().join("grouped_unique_bases_blacklist_avg.bed");
@@ -4446,7 +4446,7 @@ fn grouped_bed_average_on_unique_bases_with_blacklist_uses_only_eligible_positio
             ("chr1", 0, 40, "delta"),
         ],
     )?;
-    let blacklist_bed = out_dir.path().join("grouped_unique_bases_blacklist_avg_mask.bed");
+    let blacklist_bed = out_dir.path().join("grouped_unique_bases_blacklist_average_mask.bed");
     write_bed(&blacklist_bed, &[("chr1", 30, 35, "masked")])?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -4464,7 +4464,7 @@ fn grouped_bed_average_on_unique_bases_with_blacklist_uses_only_eligible_positio
     let output = read_zst_to_string(
         &out_dir
             .path()
-            .join("testcov.fcoverage.avg_on_unique_bases.tsv.zst"),
+            .join("testcov.fcoverage.average_on_unique_bases.tsv.zst"),
     )?;
     let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
     let rows_by_name = grouped_rows_by_name(&output, &sidecar);
@@ -4779,7 +4779,7 @@ fn by_size_summary_stats_writes_expected_raw_and_derived_values() -> Result<()> 
             "nonzero_positions",
             "coverage_sum",
             "coverage_sum_of_squares",
-            "mean_coverage",
+            "average_coverage",
             "total_coverage",
             "variance_coverage",
             "sd_coverage",
@@ -4875,7 +4875,7 @@ fn by_size_summary_stats_is_invariant_when_windows_cross_tile_boundaries() -> Re
             "nonzero_positions",
             "coverage_sum",
             "coverage_sum_of_squares",
-            "mean_coverage",
+            "average_coverage",
             "total_coverage",
             "variance_coverage",
             "sd_coverage",
@@ -5098,7 +5098,7 @@ fn grouped_summary_stats_on_unique_bases_writes_expected_rows() -> Result<()> {
             "nonzero_positions",
             "coverage_sum",
             "coverage_sum_of_squares",
-            "mean_coverage",
+            "average_coverage",
             "total_coverage",
             "variance_coverage",
             "sd_coverage",

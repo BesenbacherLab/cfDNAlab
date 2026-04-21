@@ -13,9 +13,9 @@ pub struct StrideBin {
     /// Checked genomic span of the stride-bin
     pub interval: Interval<u32>,
     /// Average fragment coverage for the stride-bin
-    pub avg_coverage: f32,
+    pub average_coverage: f32,
     /// Average coverage of overlapping mega-bins
-    pub avg_overlap_coverage: f32,
+    pub average_overlap_coverage: f32,
     /// Scaling factor for normalizing coverage
     /// across the genome. Normalized across
     /// all stride-bins for a mean of 1.0.
@@ -70,7 +70,7 @@ fn triangular_weights(half_window: usize) -> Vec<usize> {
     weights
 }
 
-/// Fill `bins[i].avg_overlap_coverage` with a *triangularly weighted* average
+/// Fill `bins[i].average_overlap_coverage` with a *triangularly weighted* average
 /// of neighboring stride-bin averages around `i`.
 ///
 /// Goal: For each stride-bin `i`, approximate the average coverage of all overlapping
@@ -99,13 +99,13 @@ fn triangular_weights(half_window: usize) -> Vec<usize> {
 /// 1) Pick the slice of bins we can actually use: `[start_i .. end_i)`
 /// 2) Compute `w_start`, the index into `weights` that aligns the first usable bin with
 ///    the correct kernel position (so the kernel's center still targets `i`).
-/// 3) Accumulate `sum( avg_coverage[j] * weight[j] )` and `sum(weights)`
-/// 4) Normalize: `avg_overlap_coverage[i] = weighted_sum / sum_weights`.
+/// 3) Accumulate `sum( average_coverage[j] * weight[j] )` and `sum(weights)`
+/// 4) Normalize: `average_overlap_coverage[i] = weighted_sum / sum_weights`.
 ///
 /// Parameters
 /// ----------
 /// - bins:
-///     Stride bins with `avg_coverage` set to per-base averages (mask-adjusted if desired).
+///     Stride bins with `average_coverage` set to per-base averages (mask-adjusted if desired).
 /// - bin_size:
 ///     Large window size; used only to derive the kernel radius.
 /// - stride:
@@ -117,7 +117,7 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
     if half_window == 0 {
         // No overlap region: each bin's average = its coverage
         for b in bins.iter_mut() {
-            b.avg_overlap_coverage = b.avg_coverage;
+            b.average_overlap_coverage = b.average_coverage;
         }
         return;
     }
@@ -156,15 +156,15 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
         let mut sum_cov = 0.0_f32; // Weighted sum of coverage densities
         let mut sum_w = 0usize; // Sum of integer weights actually used
 
-        // Sum avg_coverage * weight, and the weights
+        // Sum average_coverage * weight, and the weights
         for j in 0..slice_len {
             let w = weights[w_start + j];
             // Last stride-bin may be shorter, so weight by length (most == 1.0)
             let len_ratio = (bin_slice[j].size() as f32) / (stride as f32);
-            sum_cov += bin_slice[j].avg_coverage * (w as f32) * len_ratio;
+            sum_cov += bin_slice[j].average_coverage * (w as f32) * len_ratio;
             sum_w += w;
         }
-        bins[i].avg_overlap_coverage = if sum_w > 0 {
+        bins[i].average_overlap_coverage = if sum_w > 0 {
             sum_cov / (sum_w as f32)
         } else {
             0.0
@@ -172,11 +172,11 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
     }
 }
 
-/// Calculate the `StrideBin::scaling_factor` by dividing `StrideBin::avg_overlap_coverage`
+/// Calculate the `StrideBin::scaling_factor` by dividing `StrideBin::average_overlap_coverage`
 /// across all chromosomes.
 ///
-/// Computes a global mean of `avg_overlap_coverage` across all supported bins in `bins_by_chr`
-/// and divides every bin's `avg_overlap_coverage` by that mean so the new global mean is ~1.0.
+/// Computes a global mean of `average_overlap_coverage` across all supported bins in `bins_by_chr`
+/// and divides every bin's `average_overlap_coverage` by that mean so the new global mean is ~1.0.
 /// Optionally weight the mean by bin length to better approximate a base-weighted genome mean.
 ///
 /// Parameters
@@ -193,7 +193,7 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
 /// -------
 /// - mean_before:
 ///     The global mean used for normalization (before scaling)
-pub fn normalize_avg_overlap_by_global_mean(
+pub fn normalize_average_overlap_by_global_mean(
     bins_by_chr: &mut FxHashMap<String, Vec<StrideBin>>,
     length_weighted: bool,
     invert: bool,
@@ -204,7 +204,7 @@ pub fn normalize_avg_overlap_by_global_mean(
     // Compute global mean over all chromosomes
     for bins in bins_by_chr.values() {
         for b in bins {
-            let v = b.avg_overlap_coverage as f64;
+            let v = b.average_overlap_coverage as f64;
             if !v.is_finite() || is_effectively_zero(v) {
                 continue; // Skip NaN/inf and bins without real support
             }
@@ -235,7 +235,7 @@ pub fn normalize_avg_overlap_by_global_mean(
     let inv_mean = 1.0_f64 / mean;
     for bins in bins_by_chr.values_mut() {
         for b in bins.iter_mut() {
-            let v = b.avg_overlap_coverage as f64;
+            let v = b.average_overlap_coverage as f64;
             b.scaling_factor = if !v.is_finite() || is_effectively_zero(v) {
                 0.0
             } else {

@@ -42,10 +42,10 @@ impl CoverageWindowAction {
 
     pub fn action_file_stem(self) -> &'static str {
         match self {
-            Self::Average => "avg",
+            Self::Average => "average",
             Self::Total => "total",
             Self::SummaryStats => "summary_stats",
-            Self::AverageOnUniqueBases => "avg_on_unique_bases",
+            Self::AverageOnUniqueBases => "average_on_unique_bases",
             Self::TotalOnUniqueBases => "total_on_unique_bases",
             Self::SummaryStatsOnUniqueBases => "summary_stats_on_unique_bases",
             Self::OnlyIncludeThesePositionsUnique => "per_position",
@@ -202,10 +202,10 @@ pub fn compute_window_outputs(
                 .iter()
                 .map(|window| Interval::new(window.start() as u32, window.end() as u32))
                 .collect::<std::result::Result<_, _>>()?;
-            let avgs = cp.bulk_avg_coverage(&spans, nan_blacklisted, false)?;
+            let average_values = cp.bulk_avg_coverage(&spans, nan_blacklisted, false)?;
 
             let mut results = Vec::with_capacity(windows.len());
-            for (window, &avg) in windows.iter().zip(avgs.iter()) {
+            for (window, &avg) in windows.iter().zip(average_values.iter()) {
                 let bl = cp.blacklist_mask().map(|mask| {
                     let a = window.start() as usize;
                     let b = window.end() as usize;

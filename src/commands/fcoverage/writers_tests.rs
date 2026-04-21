@@ -20,7 +20,7 @@ fn derive_summary_stats_returns_nan_fields_when_no_positions_are_eligible() {
     assert_eq!(stats.coverage_sum, 0.0);
     assert_eq!(stats.coverage_sum_of_squares, 0.0);
     assert_eq!(stats.total_coverage, 0.0);
-    assert!(stats.mean_coverage.is_nan());
+    assert!(stats.average_coverage.is_nan());
     assert!(stats.variance_coverage.is_nan());
     assert!(stats.sd_coverage.is_nan());
     assert!(stats.coefficient_of_variation_coverage.is_nan());
@@ -33,12 +33,12 @@ fn derive_nonnegative_variance_coverage_snaps_tiny_negative_cancellation_to_zero
     // Use a mean of 1.0 and choose `coverage_sum_of_squares` so the raw variance becomes
     // `-ZEROISH_F32_TOLERANCE / 2`. That value is mathematically impossible, but small enough
     // that we intentionally classify it as a cancellation residue from `E[x^2] - E[x]^2`
-    let mean_coverage = 1.0_f64;
+    let average_coverage = 1.0_f64;
     let tiny_negative_variance = -(ZEROISH_F32_TOLERANCE as f64) / 2.0;
     let coverage_sum_of_squares = 1.0 + tiny_negative_variance;
 
     // Act
-    let variance = derive_nonnegative_variance_coverage(1, coverage_sum_of_squares, mean_coverage)
+    let variance = derive_nonnegative_variance_coverage(1, coverage_sum_of_squares, average_coverage)
         .expect("tiny negative variance should be repaired");
 
     // Assert
@@ -50,12 +50,12 @@ fn derive_nonnegative_variance_coverage_errors_on_material_negative_values() {
     // Arrange
     // Push the raw variance well beyond the allowed tolerance so this is treated as a real
     // invariant violation rather than recoverable floating-point residue
-    let mean_coverage = 1.0_f64;
+    let average_coverage = 1.0_f64;
     let material_negative_variance = -10.0 * ZEROISH_F32_TOLERANCE as f64;
     let coverage_sum_of_squares = 1.0 + material_negative_variance;
 
     // Act
-    let err = derive_nonnegative_variance_coverage(1, coverage_sum_of_squares, mean_coverage)
+    let err = derive_nonnegative_variance_coverage(1, coverage_sum_of_squares, average_coverage)
         .expect_err("materially negative variance should fail");
 
     // Assert
@@ -87,7 +87,7 @@ fn derive_summary_stats_keeps_tiny_positive_variance_and_finite_sd() {
     // For SD, the strongest behavior-level check is not "does it equal the idealized decimal
     // sqrt(1e-9) bit-for-bit", but "is it the square root of the variance that this function
     // actually produced"
-    assert_eq!(stats.mean_coverage, 1.0);
+    assert_eq!(stats.average_coverage, 1.0);
     assert!(
         (stats.variance_coverage - expected_variance).abs() <= variance_tolerance,
         "expected variance within {variance_tolerance}, got {} vs {}",
@@ -149,7 +149,7 @@ fn write_summary_stats_row_marks_extreme_finite_cv_as_greater_than_one_e6() {
         nonzero_positions: 1,
         coverage_sum: 1.0,
         coverage_sum_of_squares: 2.0,
-        mean_coverage: 0.1,
+        average_coverage: 0.1,
         total_coverage: 1.0,
         variance_coverage: 0.01,
         sd_coverage: 0.1,

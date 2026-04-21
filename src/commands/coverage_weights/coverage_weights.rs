@@ -3,7 +3,7 @@ use crate::{
         cli_common::{ensure_output_dir, resolve_chromosomes_and_contigs},
         coverage_weights::scaling_weights_config::ScalingWeightsArgs,
         coverage_weights::striding::{
-            StrideBin, fill_triangular_overlap, normalize_avg_overlap_by_global_mean,
+            StrideBin, fill_triangular_overlap, normalize_average_overlap_by_global_mean,
         },
         fcoverage::{
             config::FCoverageConfig,
@@ -133,12 +133,12 @@ pub(crate) fn run_with_fcoverage(
         fill_triangular_overlap(bins, opt.bin_size, opt.stride);
     }
 
-    let global_avg_overlap_coverage =
-        normalize_avg_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
+    let global_average_overlap_coverage =
+        normalize_average_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
 
     command.info(&format!(
         "Calculated the global average overlapping position-coverage: {}",
-        global_avg_overlap_coverage
+        global_average_overlap_coverage
     ));
 
     command.info("Writing stride-bin coordinates and scaling factors to disk");
@@ -158,7 +158,7 @@ pub(crate) fn run_with_fcoverage(
     .context("writing TSV metadata")?;
     writeln!(
         tsv_writer,
-        "chromosome\tstart\tend\tavg_pos_cov\tavg_overlapping_pos_cov\tscaling_factor"
+        "chromosome\tstart\tend\taverage_pos_coverage\taverage_overlapping_pos_coverage\tscaling_factor"
     )
     .context("writing TSV header")?;
 
@@ -174,8 +174,8 @@ pub(crate) fn run_with_fcoverage(
                 chromosome,
                 bin.start(),
                 bin.end(),
-                bin.avg_coverage,
-                bin.avg_overlap_coverage,
+                bin.average_coverage,
+                bin.average_overlap_coverage,
                 bin.scaling_factor
             )
             .context("writing TSV row")?;
@@ -263,7 +263,7 @@ fn load_stride_bins_from_fcoverage_average_tsv(
     }
     let header = line.trim_end();
     ensure!(
-        header == "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+        header == "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
         "{}: unexpected fcoverage header: '{}'",
         path.display(),
         header
@@ -298,9 +298,9 @@ fn load_stride_bins_from_fcoverage_average_tsv(
         let end: u32 = cols[2]
             .parse()
             .with_context(|| format!("{}: invalid end '{}'", path.display(), cols[2]))?;
-        let avg_coverage: f32 = cols[3]
+        let average_coverage: f32 = cols[3]
             .parse()
-            .with_context(|| format!("{}: invalid avg_coverage '{}'", path.display(), cols[3]))?;
+            .with_context(|| format!("{}: invalid average_coverage '{}'", path.display(), cols[3]))?;
         let _: u64 = cols[4].parse().with_context(|| {
             format!(
                 "{}: invalid blacklisted_positions '{}'",
@@ -314,8 +314,8 @@ fn load_stride_bins_from_fcoverage_average_tsv(
             .or_insert_with(Vec::new)
             .push(StrideBin {
                 interval: Interval::new(start, end)?,
-                avg_coverage,
-                avg_overlap_coverage: 0.0,
+                average_coverage,
+                average_overlap_coverage: 0.0,
                 scaling_factor: 0.0,
             });
     }

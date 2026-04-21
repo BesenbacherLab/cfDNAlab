@@ -118,7 +118,7 @@ pub struct FCoverageConfig {
     /// Examples produce files like:
     ///   `<prefix>.fcoverage.per_position.bedgraph.zst`,
     ///   `<prefix>.fcoverage.per_position_per_window.tsv.zst`,
-    ///   `<prefix>.fcoverage.avg.tsv.zst`,
+    ///   `<prefix>.fcoverage.average.tsv.zst`,
     ///   `<prefix>.fcoverage.total.tsv.zst`, or
     ///   `<prefix>.fcoverage.summary_stats.tsv.zst`.
     #[cfg_attr(

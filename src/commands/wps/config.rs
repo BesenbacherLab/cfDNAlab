@@ -138,7 +138,7 @@ pub struct WPSSharedConfig {
     /// Examples produce files like:
     ///   `<prefix>.wps.per_position.bedgraph.zst`,
     ///   `<prefix>.wps.per_position_per_window.tsv.zst`,
-    ///   `<prefix>.wps.avg.tsv.zst`, or
+    ///   `<prefix>.wps.average.tsv.zst`, or
     ///   `<prefix>.wps.total.tsv.zst`.
     #[cfg_attr(
         feature = "cli",
