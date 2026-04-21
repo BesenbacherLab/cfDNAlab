@@ -13,8 +13,45 @@ pub enum CoverageWindowAction {
     #[default]
     Average,
     Total,
+    SummaryStats,
+    AverageOnUniqueBases,
+    TotalOnUniqueBases,
+    SummaryStatsOnUniqueBases,
     OnlyIncludeThesePositionsUnique,
     OnlyIncludeThesePositionsIndexed,
+}
+
+impl CoverageWindowAction {
+    pub fn is_positional(self) -> bool {
+        matches!(
+            self,
+            Self::OnlyIncludeThesePositionsUnique | Self::OnlyIncludeThesePositionsIndexed
+        )
+    }
+
+    pub fn is_summary_stats(self) -> bool {
+        matches!(self, Self::SummaryStats | Self::SummaryStatsOnUniqueBases)
+    }
+
+    pub fn is_unique_base_grouped_action(self) -> bool {
+        matches!(
+            self,
+            Self::AverageOnUniqueBases | Self::TotalOnUniqueBases | Self::SummaryStatsOnUniqueBases
+        )
+    }
+
+    pub fn action_file_stem(self) -> &'static str {
+        match self {
+            Self::Average => "avg",
+            Self::Total => "total",
+            Self::SummaryStats => "summary_stats",
+            Self::AverageOnUniqueBases => "avg_on_unique_bases",
+            Self::TotalOnUniqueBases => "total_on_unique_bases",
+            Self::SummaryStatsOnUniqueBases => "summary_stats_on_unique_bases",
+            Self::OnlyIncludeThesePositionsUnique => "per_position",
+            Self::OnlyIncludeThesePositionsIndexed => "per_position_per_window",
+        }
+    }
 }
 
 // For the CLI
@@ -25,12 +62,25 @@ impl FromStr for CoverageWindowAction {
             Ok(CoverageWindowAction::Average)
         } else if s == "total" {
             Ok(CoverageWindowAction::Total)
+        } else if s == "summary-stats" {
+            Ok(CoverageWindowAction::SummaryStats)
+        } else if s == "average-on-unique-bases" {
+            Ok(CoverageWindowAction::AverageOnUniqueBases)
+        } else if s == "total-on-unique-bases" {
+            Ok(CoverageWindowAction::TotalOnUniqueBases)
+        } else if s == "summary-stats-on-unique-bases" {
+            Ok(CoverageWindowAction::SummaryStatsOnUniqueBases)
         } else if s == "unique-positions" {
             Ok(CoverageWindowAction::OnlyIncludeThesePositionsUnique)
         } else if s == "indexed-positions" {
             Ok(CoverageWindowAction::OnlyIncludeThesePositionsIndexed)
         } else {
-            Err("Use 'average', 'total', 'indexed-positions', or 'unique-positions'".into())
+            Err(
+                "Use 'average', 'total', 'summary-stats', 'average-on-unique-bases', \
+'total-on-unique-bases', 'summary-stats-on-unique-bases', 'indexed-positions', or \
+'unique-positions'"
+                    .into(),
+            )
         }
     }
 }
@@ -144,7 +194,7 @@ pub fn compute_window_outputs(
     }
 
     match action {
-        CoverageWindowAction::Average => {
+        CoverageWindowAction::Average | CoverageWindowAction::AverageOnUniqueBases => {
             // Build (or reuse) indexes explicitly for clarity
             cp.build_indexes(true)?;
 
@@ -170,7 +220,7 @@ pub fn compute_window_outputs(
 
             Ok(CoverageOutput::PerWindow { action, results })
         }
-        CoverageWindowAction::Total => {
+        CoverageWindowAction::Total | CoverageWindowAction::TotalOnUniqueBases => {
             cp.build_indexes(true)?;
             let spans: Vec<Interval<u32>> = windows
                 .iter()
@@ -193,6 +243,12 @@ pub fn compute_window_outputs(
             }
 
             Ok(CoverageOutput::PerWindow { action, results })
+        }
+        CoverageWindowAction::SummaryStats | CoverageWindowAction::SummaryStatsOnUniqueBases => {
+            anyhow::bail!(
+                "compute_window_outputs() does not support the aggregate action {:?}; use the tiled reducer path instead",
+                action
+            )
         }
         CoverageWindowAction::OnlyIncludeThesePositionsUnique
         | CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {

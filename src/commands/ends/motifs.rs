@@ -135,10 +135,7 @@ pub(crate) fn build_optional_kmer_spec(k: usize, label: &str) -> Result<Option<K
 /// - outside bases are requested
 /// - inside bases come from the reference
 /// - blacklists are used, because inside motifs are then validated against masked reference bases
-pub(crate) fn motif_extraction_requires_reference(
-    opt: &EndsConfig,
-    has_blacklist: bool,
-) -> bool {
+pub(crate) fn motif_extraction_requires_reference(opt: &EndsConfig, has_blacklist: bool) -> bool {
     opt.k_outside > 0
         || matches!(opt.source_inside, KmerSource::Reference)
         || (opt.k_inside > 0 && has_blacklist)
@@ -221,8 +218,9 @@ pub(crate) fn build_tile_motif_context<'a>(
         );
     }
 
-    let needs_reference_bases = motif_extraction_requires_reference(opt, !blacklist_intervals.is_empty())
-        && (inside_spec.is_some() || outside_spec.is_some());
+    let needs_reference_bases =
+        motif_extraction_requires_reference(opt, !blacklist_intervals.is_empty())
+            && (inside_spec.is_some() || outside_spec.is_some());
     let (reference_start, reference_end) = reference_span.as_tuple();
 
     if !needs_reference_bases {

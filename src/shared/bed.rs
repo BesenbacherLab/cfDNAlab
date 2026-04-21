@@ -1,4 +1,6 @@
-use crate::shared::interval::{IndexedInterval, ScoredInterval, Span};
+use crate::shared::interval::{
+    IndexedInterval, Interval, ScoredInterval, Span, TouchingMergePolicy, push_merged_interval,
+};
 use crate::shared::io::open_text_reader;
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
@@ -753,6 +755,171 @@ impl GroupedWindows {
     }
 }
 
+/// Segment layout used when grouped BED rows need unique internal identities for reduction.
+///
+/// Each stored segment carries a stable `segment_idx` in the `IndexedInterval`, while the
+/// `segment_idx_to_group_idx` map preserves the grouped row identity.
+#[derive(Debug, Clone)]
+pub struct GroupedCoverageLayout {
+    pub segments_by_chr: FxHashMap<String, Windows>,
+    pub segment_idx_to_group_idx: FxHashMap<u64, u64>,
+    pub group_span_positions: FxHashMap<u64, u64>,
+    pub group_idx_to_name: FxHashMap<u64, String>,
+}
+
+/// Build a grouped coverage layout for grouped `fcoverage` outputs.
+///
+/// Plain grouped actions keep every loaded interval as its own segment, while unique-base grouped
+/// actions merge same-group overlaps and touches before assigning new internal segment indices.
+///
+/// Parameters
+/// ----------
+/// - `grouped_windows_by_chr`:
+///     Grouped BED coordinates keyed by chromosome.
+/// - `group_idx_to_name`:
+///     Stable `group_idx -> group_name` mapping from the grouped BED loader.
+/// - `chromosomes`:
+///     Chromosome order used to assign deterministic segment indices.
+/// - `unique_bases`:
+///     Merge same-group overlaps and touches before indexing.
+///
+/// Returns
+/// -------
+/// - `layout`:
+///     Per-chromosome segments plus stable maps back to the grouped row identity.
+pub fn build_grouped_coverage_layout(
+    grouped_windows_by_chr: &FxHashMap<String, GroupedWindows>,
+    group_idx_to_name: &FxHashMap<u64, String>,
+    chromosomes: &[String],
+    unique_bases: bool,
+) -> Result<GroupedCoverageLayout> {
+    // Output shape:
+    // - `segments_by_chr` is what downstream coverage code iterates over
+    // - `segment_idx_to_group_idx` lets reducers recover the original grouped BED row identity
+    // - `group_span_positions` tracks the total number of positions represented by each group
+    let mut segments_by_chr: FxHashMap<String, Windows> =
+        FxHashMap::with_capacity_and_hasher(grouped_windows_by_chr.len(), Default::default());
+    let mut segment_idx_to_group_idx: FxHashMap<u64, u64> = FxHashMap::default();
+    let mut group_span_positions: FxHashMap<u64, u64> = FxHashMap::default();
+    let mut next_segment_idx: u64 = 0;
+
+    // Follow the requested chromosome order so segment indices are deterministic.
+    // Missing chromosomes are skipped without consuming indices.
+    for chromosome in chromosomes {
+        let Some(grouped_windows) = grouped_windows_by_chr.get(chromosome) else {
+            continue;
+        };
+
+        // Build the chromosome-local segments that coverage will be summed over:
+        // - raw mode keeps every original grouped BED interval as its own segment
+        // - unique-base mode first merges overlaps and touching intervals within each group
+        let mut chromosome_segments: Vec<(Interval<u64>, u64)> = if unique_bases {
+            merged_group_segments(grouped_windows.as_slice())?
+        } else {
+            grouped_windows
+                .as_slice()
+                .iter()
+                .map(|window| Ok((Interval::new(window.start(), window.end())?, window.idx())))
+                .collect::<Result<Vec<_>>>()?
+        };
+
+        // Sort before assigning fresh `segment_idx` values so the internal identifiers stay
+        // stable and predictable for tests, reducers, and sidecar mappings.
+        chromosome_segments.sort_unstable_by_key(|(interval, group_idx)| {
+            (interval.start(), interval.end(), *group_idx)
+        });
+
+        let mut indexed_segments: Vec<IndexedInterval<u64>> =
+            Vec::with_capacity(chromosome_segments.len());
+        for (interval, group_idx) in chromosome_segments {
+            // Each segment gets a new internal identity that is unique across all chromosomes.
+            // That identity is what the BED reducer writes into partial rows.
+            let segment_idx = next_segment_idx;
+            next_segment_idx += 1;
+
+            // The grouped output still needs group-level totals and names, so keep both:
+            // - total represented span per group
+            // - reverse mapping from internal segment id back to grouped BED row id
+            *group_span_positions.entry(group_idx).or_insert(0) += interval.len();
+            segment_idx_to_group_idx.insert(segment_idx, group_idx);
+
+            // Store the segment with its fresh internal index. Downstream code only sees these
+            // segment rows and later collapses them back to grouped rows via the reverse map.
+            indexed_segments.push(IndexedInterval::new(
+                interval.start(),
+                interval.end(),
+                segment_idx,
+            )?);
+        }
+
+        // `Windows::new` re-checks start sorting and caches the chromosome span for fast overlap
+        // queries in the tiled coverage path.
+        segments_by_chr.insert(chromosome.clone(), Windows::new(indexed_segments));
+    }
+
+    Ok(GroupedCoverageLayout {
+        segments_by_chr,
+        segment_idx_to_group_idx,
+        group_span_positions,
+        group_idx_to_name: group_idx_to_name.clone(),
+    })
+}
+
+fn merged_group_segments(
+    grouped_windows: &[IndexedInterval<u64>],
+) -> Result<Vec<(Interval<u64>, u64)>> {
+    // First regroup the chromosome-local windows by their original grouped BED row id.
+    // We only merge within a group. Different groups must stay separate even if they overlap.
+    //
+    // After this regrouping step, each hashmap entry can be processed independently as:
+    //   "all intervals that belong to one grouped BED row on this chromosome".
+    let mut intervals_by_group: FxHashMap<u64, Vec<Interval<u64>>> = FxHashMap::default();
+
+    for window in grouped_windows {
+        intervals_by_group
+            .entry(window.idx())
+            .or_default()
+            .push(Interval::new(window.start(), window.end())?);
+    }
+
+    let mut merged_segments: Vec<(Interval<u64>, u64)> = Vec::new();
+    for (group_idx, mut intervals) in intervals_by_group {
+        // `push_merged_interval` assumes start-sorted input, so sort once per group before
+        // collapsing intervals.
+        intervals.sort_unstable_by_key(|interval| (interval.start(), interval.end()));
+
+        // This mutable accumulator is the current merged representation for one group.
+        // We feed intervals into it from left to right. `push_merged_interval` either:
+        // - extends the last merged interval in-place when the new interval overlaps or touches it
+        // - or appends a brand-new merged interval when there is a gap
+        //
+        // That is why the argument is `&mut merged_for_group`: the helper updates the current
+        // merged state directly instead of returning a new vector at every step.
+        let mut merged_for_group: Vec<Interval<u64>> = Vec::with_capacity(intervals.len());
+        for interval in intervals {
+            // Unique-base grouped coverage treats touching intervals as one continuous covered span.
+            // Example: [10, 20) and [20, 30) become [10, 30).
+            push_merged_interval(
+                &mut merged_for_group,
+                interval,
+                TouchingMergePolicy::MergeTouching,
+            );
+        }
+
+        // Preserve the originating group id next to each merged segment so the caller can later
+        // assign fresh segment ids while still knowing which grouped BED row each segment belongs to.
+        // At this point, `merged_for_group` contains the minimal non-touching interval list for
+        // this one group on this one chromosome.
+        merged_segments.extend(
+            merged_for_group
+                .into_iter()
+                .map(|interval| (interval, group_idx)),
+        );
+    }
+
+    Ok(merged_segments)
+}
+
 /// Write a TSV mapping from `group_idx` -> `group_name`.
 ///
 /// - Output has a header: `group_idx\tgroup_name`
@@ -1146,4 +1313,9 @@ pub fn detect_header(path: &Path, separator: char) -> Result<bool> {
         }
         return Ok(line_looks_like_header(&line, separator));
     }
+}
+
+#[cfg(test)]
+mod tests {
+    include!("bed_tests.rs");
 }

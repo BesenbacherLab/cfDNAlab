@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use crate::{
     commands::cli_common::WindowSpec,
     commands::fcoverage::window_results::CoverageWindowAction,
+    shared::coverage::Coverage,
     shared::interval::Interval,
     shared::tiled_run::{
         Tile, TileMode, TileWindowSpan, clamp_fetch_to_window_span, parse_tile_index,
@@ -290,6 +291,157 @@ pub fn coverage_sum_and_counts(
     (sum, allowed, blacklisted)
 }
 
+/// Prefix arrays used to derive summary statistics over coverage slices.
+#[derive(Debug, Clone)]
+pub struct CoverageSummaryPrefixes {
+    pub sum_of_squares_all: Vec<f64>,
+    pub sum_of_squares_unmasked: Option<Vec<f64>>,
+    pub nonzero_all: Vec<u64>,
+    pub nonzero_unmasked: Option<Vec<u64>>,
+}
+
+pub fn build_summary_prefixes(cp: &Coverage) -> Result<CoverageSummaryPrefixes> {
+    let coverage = cp.coverage().ok_or_else(|| {
+        anyhow::anyhow!("coverage must remain available while building summary-stat prefixes")
+    })?;
+    let mask = cp.blacklist_mask();
+
+    let mut sum_of_squares_all = Vec::with_capacity(coverage.len() + 1);
+    let mut nonzero_all = Vec::with_capacity(coverage.len() + 1);
+    let mut sum_of_squares_unmasked = None;
+    let mut nonzero_unmasked = None;
+
+    sum_of_squares_all.push(0.0);
+    nonzero_all.push(0);
+
+    let mut running_sum_of_squares_all = 0.0;
+    let mut running_nonzero_all = 0u64;
+
+    if let Some(mask) = mask {
+        let mut sum_of_squares_unmasked_prefix = Vec::with_capacity(coverage.len() + 1);
+        let mut nonzero_unmasked_prefix = Vec::with_capacity(coverage.len() + 1);
+        sum_of_squares_unmasked_prefix.push(0.0);
+        nonzero_unmasked_prefix.push(0);
+
+        let mut running_sum_of_squares_unmasked = 0.0;
+        let mut running_nonzero_unmasked = 0u64;
+
+        for (index, &value_f32) in coverage.iter().enumerate() {
+            let value = value_f32 as f64;
+            let squared_value = value * value;
+            let is_nonzero = value > 0.0;
+
+            running_sum_of_squares_all += squared_value;
+            if is_nonzero {
+                running_nonzero_all += 1;
+            }
+
+            if mask[index] == 0 {
+                running_sum_of_squares_unmasked += squared_value;
+                if is_nonzero {
+                    running_nonzero_unmasked += 1;
+                }
+            }
+
+            sum_of_squares_all.push(running_sum_of_squares_all);
+            nonzero_all.push(running_nonzero_all);
+            sum_of_squares_unmasked_prefix.push(running_sum_of_squares_unmasked);
+            nonzero_unmasked_prefix.push(running_nonzero_unmasked);
+        }
+
+        sum_of_squares_unmasked = Some(sum_of_squares_unmasked_prefix);
+        nonzero_unmasked = Some(nonzero_unmasked_prefix);
+    } else {
+        for &value_f32 in coverage {
+            let value = value_f32 as f64;
+            let squared_value = value * value;
+
+            running_sum_of_squares_all += squared_value;
+            if value > 0.0 {
+                running_nonzero_all += 1;
+            }
+
+            sum_of_squares_all.push(running_sum_of_squares_all);
+            nonzero_all.push(running_nonzero_all);
+        }
+    }
+
+    Ok(CoverageSummaryPrefixes {
+        sum_of_squares_all,
+        sum_of_squares_unmasked,
+        nonzero_all,
+        nonzero_unmasked,
+    })
+}
+
+/// Raw summary statistics over one tile-local slice.
+#[derive(Debug, Clone, Copy)]
+pub struct CoverageSummarySliceStats {
+    pub coverage_sum: f64,
+    pub eligible_positions: u64,
+    pub blacklisted_positions: u64,
+    pub nonzero_positions: u64,
+    pub coverage_sum_of_squares: f64,
+}
+
+/// Compute raw summary statistics over a tile-local range.
+///
+/// This extends `coverage_sum_and_counts` with the second raw moment and the count of eligible
+/// nonzero bases so later reducers can derive variance, SD, coverage fraction, and grouped
+/// correlations without revisiting per-base coverage.
+#[inline]
+pub fn coverage_summary_and_counts(
+    local_start_idx: usize,
+    local_end_idx: usize,
+    masked: bool,
+    ps_all: &[f64],
+    ps_allow: Option<&[f64]>,
+    cnt_allow: Option<&[u32]>,
+    mask: Option<&[u8]>,
+    summary_prefixes: &CoverageSummaryPrefixes,
+) -> CoverageSummarySliceStats {
+    let (coverage_sum, eligible_positions, blacklisted_positions) = coverage_sum_and_counts(
+        local_start_idx,
+        local_end_idx,
+        masked,
+        ps_all,
+        ps_allow,
+        cnt_allow,
+        mask,
+    );
+
+    let coverage_sum_of_squares = if masked {
+        if let Some(prefix) = summary_prefixes.sum_of_squares_unmasked.as_ref() {
+            prefix[local_end_idx] - prefix[local_start_idx]
+        } else {
+            summary_prefixes.sum_of_squares_all[local_end_idx]
+                - summary_prefixes.sum_of_squares_all[local_start_idx]
+        }
+    } else {
+        summary_prefixes.sum_of_squares_all[local_end_idx]
+            - summary_prefixes.sum_of_squares_all[local_start_idx]
+    };
+
+    let nonzero_positions = if masked {
+        if let Some(prefix) = summary_prefixes.nonzero_unmasked.as_ref() {
+            prefix[local_end_idx] - prefix[local_start_idx]
+        } else {
+            summary_prefixes.nonzero_all[local_end_idx]
+                - summary_prefixes.nonzero_all[local_start_idx]
+        }
+    } else {
+        summary_prefixes.nonzero_all[local_end_idx] - summary_prefixes.nonzero_all[local_start_idx]
+    };
+
+    CoverageSummarySliceStats {
+        coverage_sum,
+        eligible_positions,
+        blacklisted_positions,
+        nonzero_positions,
+        coverage_sum_of_squares,
+    }
+}
+
 /// Converts accumulated coverage statistics into a final window value.
 ///
 /// Depending on the requested action the result is either an average (over allowed or full span)
@@ -313,7 +465,7 @@ pub fn finalize_value(
     mode: &CoverageWindowAction,
 ) -> f64 {
     match mode {
-        CoverageWindowAction::Average => {
+        CoverageWindowAction::Average | CoverageWindowAction::AverageOnUniqueBases => {
             if masked {
                 if allowed_positions == 0 {
                     0.0
@@ -328,7 +480,10 @@ pub fn finalize_value(
                 }
             }
         }
-        CoverageWindowAction::Total => sum,
+        CoverageWindowAction::Total | CoverageWindowAction::TotalOnUniqueBases => sum,
+        CoverageWindowAction::SummaryStats | CoverageWindowAction::SummaryStatsOnUniqueBases => {
+            unreachable!("summary-stats uses raw aggregate rows instead of finalize_value()")
+        }
         _ => unreachable!(),
     }
 }
@@ -370,4 +525,9 @@ pub fn clip_interval_to_core_and_localize(
         local_end_idx,
         clipped_abs_interval,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    include!("tiling_tests.rs");
 }

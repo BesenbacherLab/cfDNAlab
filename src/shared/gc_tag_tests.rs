@@ -1,13 +1,14 @@
 use super::{
-    ClassifiedGCTagWeight, GCTagValue, SanitizedGCWeight, ZEROISH_GC_WEIGHT_TOLERANCE,
-    combine_gc_tag_values, sanitize_gc_weight,
+    ClassifiedGCTagWeight, GCTagValue, SanitizedGCWeight, combine_gc_tag_values,
+    sanitize_gc_weight,
 };
+use crate::shared::base::ZEROISH_F32_TOLERANCE;
 
 #[test]
 fn sanitize_gc_weight_snaps_small_negative_values_to_zero() {
     // Arrange
     // A small negative residue should be treated the same as a small positive one
-    let small_negative = -(ZEROISH_GC_WEIGHT_TOLERANCE as f64) / 2.0;
+    let small_negative = -(ZEROISH_F32_TOLERANCE as f64) / 2.0;
 
     // Act
     let sanitized = sanitize_gc_weight(small_negative);
@@ -128,7 +129,7 @@ fn combine_gc_tag_values_treats_positive_zero_snap_threshold_as_zero_precedence(
     // The inclusive positive snap boundary should collapse to explicit zero
     // before any averaging happens
     let zeroish_tag = GCTagValue {
-        weight: Some(ZEROISH_GC_WEIGHT_TOLERANCE),
+        weight: Some(ZEROISH_F32_TOLERANCE),
         was_missing: false,
         had_invalid: false,
         was_out_of_range: false,
@@ -156,7 +157,7 @@ fn combine_gc_tag_values_treats_negative_zero_snap_threshold_as_zero_precedence(
     // The snap window is symmetric around zero. More negative values are covered
     // by the invalid/out-of-range tests above.
     let zeroish_tag = GCTagValue {
-        weight: Some(-ZEROISH_GC_WEIGHT_TOLERANCE),
+        weight: Some(-ZEROISH_F32_TOLERANCE),
         was_missing: false,
         had_invalid: false,
         was_out_of_range: false,

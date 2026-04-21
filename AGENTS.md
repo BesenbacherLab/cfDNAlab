@@ -18,6 +18,8 @@ This file is the authoritative entry point for repo-specific agent instructions.
 - Read the Interval and IndexedInterval API and default to using the helpers when working on interval-logic.
 - The minimum allowed fragment length possible is 10bp. Do not use smaller values than that in test fixtures. Note that commands often set a minimum fragment length inclusion filter of 30bp, so check up on that. In general, check argument constraints before setting them in fixtures.
 
+Always read [.AI/collaboration.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/collaboration.md) to avoid annoying sycophanting. I want truth not praise.
+
 ## Read These Files When Relevant
 
 - For code style, comments, docstrings, CLI help, clap, and formatting-related rules, read [.AI/writing_style.md](/Users/au547627/Documents/Development/rust/cfDNAlab/.AI/writing_style.md)

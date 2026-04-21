@@ -9,14 +9,14 @@ use cfdnalab::commands::bam_to_bam::{
 };
 use cfdnalab::commands::cli_common::{
     ApplyGCArgs, AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs, IOCArgs,
-    ScaleGenomeArgs, WindowsArgs,
+    ScaleGenomeArgs,
 };
 #[cfg(feature = "cmd_coverage_weights")]
 use cfdnalab::commands::coverage_weights::{
     config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
 };
 use cfdnalab::commands::fcoverage::config::FCoverageConfig;
-use cfdnalab::commands::fcoverage::fcoverage::run;
+use cfdnalab::commands::fcoverage::fcoverage::{run, run_inner};
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
 use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
 use cfdnalab::commands::lengths::{config::LengthsConfig, lengths::run as run_lengths};
@@ -82,6 +82,100 @@ fn base_config(bam_path: &Path, output_dir: &Path) -> FCoverageConfig {
         frag.max_fragment_length = 200;
     }
     cfg
+}
+
+fn parse_tsv(text: &str) -> Vec<Vec<&str>> {
+    text.lines()
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .collect()
+}
+
+fn assert_close(observed: f64, expected: f64, tolerance: f64) {
+    assert!(
+        (observed - expected).abs() <= tolerance,
+        "expected {expected}, got {observed}"
+    );
+}
+
+fn pearson_r_from_vectors(coverage: &[f64], mask: &[f64]) -> f64 {
+    assert_eq!(
+        coverage.len(),
+        mask.len(),
+        "coverage and mask must have the same length"
+    );
+    let n = coverage.len();
+    assert!(n > 0, "cannot compute Pearson R on empty vectors");
+
+    let mean_coverage = coverage.iter().sum::<f64>() / n as f64;
+    let mean_mask = mask.iter().sum::<f64>() / n as f64;
+
+    let mut covariance_numerator = 0.0;
+    let mut coverage_variance_numerator = 0.0;
+    let mut mask_variance_numerator = 0.0;
+
+    for (&coverage_value, &mask_value) in coverage.iter().zip(mask.iter()) {
+        let centered_coverage = coverage_value - mean_coverage;
+        let centered_mask = mask_value - mean_mask;
+        covariance_numerator += centered_coverage * centered_mask;
+        coverage_variance_numerator += centered_coverage * centered_coverage;
+        mask_variance_numerator += centered_mask * centered_mask;
+    }
+
+    let denominator = (coverage_variance_numerator * mask_variance_numerator).sqrt();
+    if denominator == 0.0 {
+        f64::NAN
+    } else {
+        covariance_numerator / denominator
+    }
+}
+
+fn pearson_r_from_summary_stats_rows(global_row: &[String], group_row: &[String]) -> Result<f64> {
+    let global_eligible_positions = global_row[3].parse::<f64>()?;
+    let global_coverage_sum = global_row[5].parse::<f64>()?;
+    let global_coverage_sum_of_squares = global_row[6].parse::<f64>()?;
+    let group_eligible_positions = group_row[3].parse::<f64>()?;
+    let group_coverage_sum = group_row[5].parse::<f64>()?;
+
+    let coverage_term =
+        global_eligible_positions * global_coverage_sum_of_squares - global_coverage_sum.powi(2);
+    let mask_term =
+        global_eligible_positions * group_eligible_positions - group_eligible_positions.powi(2);
+    let denominator = (coverage_term * mask_term).sqrt();
+
+    if denominator == 0.0 {
+        Ok(f64::NAN)
+    } else {
+        Ok((global_eligible_positions * group_coverage_sum
+            - global_coverage_sum * group_eligible_positions)
+            / denominator)
+    }
+}
+
+fn grouped_rows_by_name(
+    output_text: &str,
+    sidecar_text: &str,
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    let output_rows = parse_tsv(output_text);
+    let sidecar_rows = parse_tsv(sidecar_text);
+
+    let mut idx_to_name = std::collections::BTreeMap::new();
+    for row in sidecar_rows.into_iter().skip(1) {
+        idx_to_name.insert(row[0].to_string(), row[1].to_string());
+    }
+
+    let mut rows_by_name = std::collections::BTreeMap::new();
+    for row in output_rows.into_iter().skip(1) {
+        let group_name = idx_to_name
+            .get(row[0])
+            .expect("group_idx in output must exist in sidecar")
+            .clone();
+        rows_by_name.insert(
+            group_name,
+            row.into_iter().map(|value| value.to_string()).collect(),
+        );
+    }
+
+    rows_by_name
 }
 
 fn overlapping_fragment_bam() -> Result<fixtures::BamFixture> {
@@ -348,7 +442,7 @@ fn normalize_by_length_by_size_total_counts_each_fragment_as_one() -> Result<()>
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
 
-    let mut windows = WindowsArgs::default();
+    let mut windows = DistributionWindowsArgs::default();
     windows.by_size = Some(200);
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -1188,7 +1282,7 @@ fn blacklist_reduces_by_size_totals_and_reports_blacklisted_positions() -> Resul
     let blacklist_path = out_dir.path().join("blacklist.bed");
     write_bed(&blacklist_path, &[("chr1", 30, 35, "masked")])?;
 
-    let mut windows = WindowsArgs::default();
+    let mut windows = DistributionWindowsArgs::default();
     windows.by_size = Some(40);
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -1268,9 +1362,10 @@ fn fcoverage_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_
         );
         cfg.set_output_prefix(prefix);
         cfg.set_per_window(CoverageWindowAction::Total);
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: Some(200),
             by_bed: None,
+            by_grouped_bed: None,
         });
         cfg.set_decimals(0);
         cfg.set_require_proper_pair(false);
@@ -1410,7 +1505,7 @@ fn blacklist_crossing_tile_boundary_keeps_same_by_size_output() -> Result<()> {
         let blacklist_path = out_dir.path().join("blacklist_cross_tile.bed");
         write_bed(&blacklist_path, &[("chr1", 30, 35, "masked")])?;
 
-        let mut windows = WindowsArgs::default();
+        let mut windows = DistributionWindowsArgs::default();
         windows.by_size = Some(40);
 
         let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -1456,7 +1551,7 @@ fn blacklist_average_uses_only_unmasked_positions_in_denominator() -> Result<()>
     let blacklist_path = out_dir.path().join("blacklist_average.bed");
     write_bed(&blacklist_path, &[("chr1", 30, 35, "masked")])?;
 
-    let mut windows = WindowsArgs::default();
+    let mut windows = DistributionWindowsArgs::default();
     windows.by_size = Some(40);
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -1480,7 +1575,7 @@ fn blacklist_average_uses_only_unmasked_positions_in_denominator() -> Result<()>
     assert_eq!(
         lines,
         vec![
-            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\tmean_coverage\tblacklisted_positions",
             "chr1\t0\t40\t0.429\t5",
             "chr1\t40\t80\t1\t0",
             "chr1\t80\t120\t0\t0",
@@ -1546,7 +1641,7 @@ fn per_position_and_by_size_totals_conserve_total_covered_bases() -> Result<()> 
         positional_totals.push(positional_total);
 
         let by_size_out_dir = TempDir::new()?;
-        let mut by_size_windows = WindowsArgs::default();
+        let mut by_size_windows = DistributionWindowsArgs::default();
         by_size_windows.by_size = Some(500);
 
         let mut by_size_cfg = base_config(&bam.bam, by_size_out_dir.path());
@@ -1627,17 +1722,19 @@ fn global_positional_output_matches_single_full_chromosome_window_totals() -> Re
     let mut by_size_cfg = base_config(&bam.bam, by_size_out.path());
     by_size_cfg.set_decimals(0);
     by_size_cfg.set_per_window(CoverageWindowAction::Total);
-    by_size_cfg.set_windows(WindowsArgs {
+    by_size_cfg.set_windows(DistributionWindowsArgs {
         by_size: Some(200),
         by_bed: None,
+        by_grouped_bed: None,
     });
 
     let mut by_bed_cfg = base_config(&bam.bam, by_bed_out.path());
     by_bed_cfg.set_decimals(0);
     by_bed_cfg.set_per_window(CoverageWindowAction::Total);
-    by_bed_cfg.set_windows(WindowsArgs {
+    by_bed_cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(bed_path),
+        by_grouped_bed: None,
     });
 
     // Act
@@ -1702,7 +1799,7 @@ fn by_bed_total_is_invariant_when_windows_cross_tile_boundaries() -> Result<()> 
             ],
         )?;
 
-        let mut windows = WindowsArgs::default();
+        let mut windows = DistributionWindowsArgs::default();
         windows.by_bed = Some(bed_path);
 
         let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -1765,9 +1862,10 @@ fn by_bed_total_mixed_core_and_downstream_windows_is_tile_size_invariant() -> Re
         cfg.unpaired.reads_are_fragments = true;
         cfg.set_decimals(0);
         cfg.set_per_window(CoverageWindowAction::Total);
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(bed_path),
+            by_grouped_bed: None,
         });
         cfg.set_tile_size(tile_size);
         {
@@ -1806,7 +1904,7 @@ fn by_bed_total_handles_window_spanning_more_than_two_tiles() -> Result<()> {
             .join(format!("aggregate_large_window_{tile_size}.bed"));
         write_bed(&bed_path, &[("chr1", 0, 100, "wide_window")])?;
 
-        let mut windows = WindowsArgs::default();
+        let mut windows = DistributionWindowsArgs::default();
         windows.by_bed = Some(bed_path);
 
         let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -1842,7 +1940,7 @@ fn by_size_total_counts_covered_bases_per_window() -> Result<()> {
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
 
-    let mut windows = WindowsArgs::default();
+    let mut windows = DistributionWindowsArgs::default();
     windows.by_size = Some(40);
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -1857,19 +1955,12 @@ fn by_size_total_counts_covered_bases_per_window() -> Result<()> {
     assert!(totals.exists(), "expected per-window totals output");
     let text = read_zst_to_string(&totals)?;
     let mut lines = text.lines();
-    let _header = lines.next().unwrap_or("");
-    let first = lines.next().unwrap_or("");
-    assert!(first.starts_with("chr1\t0\t40"));
-    assert!(
-        first.ends_with("20\t0"),
-        "expected total coverage 20, got: {first}"
+    assert_eq!(
+        lines.next().unwrap_or(""),
+        "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions"
     );
-    let second = lines.next().unwrap_or("");
-    assert!(second.starts_with("chr1\t40\t80"));
-    assert!(
-        second.ends_with("40\t0"),
-        "expected total coverage 40, got: {second}"
-    );
+    assert_eq!(lines.next().unwrap_or(""), "chr1\t0\t40\t20\t0");
+    assert_eq!(lines.next().unwrap_or(""), "chr1\t40\t80\t40\t0");
 
     Ok(())
 }
@@ -1880,7 +1971,7 @@ fn by_size_average_reduces_across_non_aligned_tiles() -> Result<()> {
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
 
-    let mut windows = WindowsArgs::default();
+    let mut windows = DistributionWindowsArgs::default();
     windows.by_size = Some(40);
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -1903,9 +1994,58 @@ fn by_size_average_reduces_across_non_aligned_tiles() -> Result<()> {
     assert_eq!(
         lines,
         vec![
-            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\tmean_coverage\tblacklisted_positions",
             "chr1\t0\t40\t0.5\t0",
             "chr1\t40\t80\t1\t0",
+            "chr1\t80\t120\t0\t0",
+            "chr1\t120\t160\t0\t0",
+            "chr1\t160\t200\t0\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn by_size_total_keeps_full_bin_coordinates_when_bins_cross_tile_boundaries() -> Result<()> {
+    // Human verification status: unverified
+    // Manual expectations:
+    // - One fragment covers [20, 80) with coverage 1.
+    // - We request 40 bp bins on a 200 bp chromosome:
+    //     [0, 40), [40, 80), [80, 120), [120, 160), [160, 200)
+    // - With tile_size=33, both covered bins cross tile boundaries:
+    //     [0, 40) overlaps tiles [0,33) and [33,66)
+    //     [40, 80) overlaps tiles [33,66) and [66,99)
+    // - The partial rows must still preserve the full bin coordinates, because the reducer merges
+    //   by `bin_start`. If tile-local clipped coordinates leaked into the partial rows, the final
+    //   output would split these into extra rows such as [0,33), [33,40), [40,66), [66,80).
+    // - The correct final output therefore still has exactly one row per 40 bp bin:
+    //     [0, 40) -> total 20
+    //     [40, 80) -> total 40
+    //     remaining bins -> total 0
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+
+    let mut windows = DistributionWindowsArgs::default();
+    windows.by_size = Some(40);
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(0);
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_windows(windows);
+    cfg.set_tile_size(33);
+
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join("testcov.fcoverage.total.tsv.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chr1\t0\t40\t20\t0",
+            "chr1\t40\t80\t40\t0",
             "chr1\t80\t120\t0\t0",
             "chr1\t120\t160\t0\t0",
             "chr1\t160\t200\t0\t0",
@@ -1943,7 +2083,7 @@ fn by_size_total_aligned_fast_path_matches_general_path_with_blacklist_scaling_a
         let mut scale_genome = ScaleGenomeArgs::default();
         scale_genome.scaling_factors = Some(scaling_path);
 
-        let mut windows = WindowsArgs::default();
+        let mut windows = DistributionWindowsArgs::default();
         windows.by_size = Some(40);
 
         let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -2010,7 +2150,7 @@ fn by_bed_average_matches_manual_window_means() -> Result<()> {
         ],
     )?;
 
-    let mut windows = WindowsArgs::default();
+    let mut windows = DistributionWindowsArgs::default();
     windows.by_bed = Some(bed_path);
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -2031,7 +2171,7 @@ fn by_bed_average_matches_manual_window_means() -> Result<()> {
     assert_eq!(
         lines,
         vec![
-            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\tmean_coverage\tblacklisted_positions",
             "chr1\t0\t40\t0.5\t0",
             "chr1\t20\t80\t1\t0",
             "chr1\t70\t90\t0.5\t0",
@@ -2069,7 +2209,7 @@ fn by_bed_average_handles_three_chromosomes_with_global_window_indices() -> Resu
         ],
     )?;
 
-    let mut windows = WindowsArgs::default();
+    let mut windows = DistributionWindowsArgs::default();
     windows.by_bed = Some(bed_path);
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -2094,7 +2234,7 @@ fn by_bed_average_handles_three_chromosomes_with_global_window_indices() -> Resu
     assert_eq!(
         lines,
         vec![
-            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\tmean_coverage\tblacklisted_positions",
             "chr1\t0\t40\t0.5\t0",
             "chr2\t0\t40\t0.75\t0",
             "chr3\t50\t100\t0.8\t0",
@@ -2120,7 +2260,7 @@ fn by_bed_average_skips_chromosomes_without_windows_and_keeps_later_chromosomes(
     let bed_path = out_dir.path().join("aggregate_windows_chr2_only.bed");
     write_bed(&bed_path, &[("chr2", 0, 40, "chr2_window")])?;
 
-    let mut windows = WindowsArgs::default();
+    let mut windows = DistributionWindowsArgs::default();
     windows.by_bed = Some(bed_path);
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -2141,7 +2281,7 @@ fn by_bed_average_skips_chromosomes_without_windows_and_keeps_later_chromosomes(
     assert_eq!(
         lines,
         vec![
-            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\tmean_coverage\tblacklisted_positions",
             "chr2\t0\t40\t0.75\t0",
         ]
     );
@@ -2207,7 +2347,7 @@ fn by_size_total_handles_three_chromosomes() -> Result<()> {
     )?;
     let out_dir = TempDir::new()?;
 
-    let mut windows = WindowsArgs::default();
+    let mut windows = DistributionWindowsArgs::default();
     windows.by_size = Some(200);
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -2249,7 +2389,7 @@ fn by_bed_total_matches_manual_window_sums() -> Result<()> {
         ],
     )?;
 
-    let mut windows = WindowsArgs::default();
+    let mut windows = DistributionWindowsArgs::default();
     windows.by_bed = Some(bed_path);
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -2295,7 +2435,7 @@ fn by_bed_unique_positions_merge_overlapping_windows() -> Result<()> {
         ],
     )?;
 
-    let mut windows = WindowsArgs::default();
+    let mut windows = DistributionWindowsArgs::default();
     windows.by_bed = Some(bed_path);
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -2337,7 +2477,7 @@ fn by_bed_indexed_positions_keep_window_indices_and_overlap_duplicates() -> Resu
         ],
     )?;
 
-    let mut windows = WindowsArgs::default();
+    let mut windows = DistributionWindowsArgs::default();
     windows.by_bed = Some(bed_path);
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -2382,7 +2522,7 @@ fn by_size_rejects_positional_per_window_modes() -> Result<()> {
         CoverageWindowAction::OnlyIncludeThesePositionsUnique,
         CoverageWindowAction::OnlyIncludeThesePositionsIndexed,
     ] {
-        let mut windows = WindowsArgs::default();
+        let mut windows = DistributionWindowsArgs::default();
         windows.by_size = Some(40);
 
         let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -2392,10 +2532,39 @@ fn by_size_rejects_positional_per_window_modes() -> Result<()> {
         let err = run(&cfg).expect_err("by-size positional window mode should fail");
         let err_text = err.to_string();
         assert!(
-            err_text.contains("in --by-size mode, --per-window can only be 'average' or 'total'"),
+            err_text.contains(
+                "in --by-size mode, --per-window can only be 'average', 'total', or 'summary-stats'"
+            ),
             "unexpected error for {action:?}: {err_text}"
         );
     }
+
+    Ok(())
+}
+
+#[test]
+fn global_mode_rejects_total_per_window_choice() -> Result<()> {
+    // Human verification status: unverified
+    // Manual expectations:
+    // - Without `--by-size`, `--by-bed`, or `--by-grouped-bed`, `fcoverage` writes positional
+    //   coverage, not reduced per-window aggregates.
+    // - `--per-window total` therefore reads like a meaningful aggregation choice but would be
+    //   ignored in global mode.
+    // - The command should fail fast instead of accepting a silent no-op.
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_per_window(CoverageWindowAction::Total);
+
+    let err = run(&cfg).expect_err("global mode should reject --per-window total");
+    let err_text = err.to_string();
+    assert!(
+        err_text.contains(
+            "without windowing, --per-window total is not supported because fcoverage writes positional coverage"
+        ),
+        "unexpected error: {err_text}"
+    );
 
     Ok(())
 }
@@ -3100,17 +3269,33 @@ fn gc_tag_paired_edge_cases_follow_fragment_combination_rules() -> Result<()> {
             true,
             false,
             vec!["chr1\t20\t80\t1"],
+            1_u64,
+            1_u64,
+            1_u64,
         ),
         (
-            "zero_mate_forces_zero_weight",
+            "zero_mate_counts_with_zero_weight",
             &[Some(0.0), Some(4.0)][..],
             false,
             true,
             vec!["chr1\t0\t200\t0"],
+            0_u64,
+            0_u64,
+            1_u64,
         ),
     ];
 
-    for (name, tags, neutralize_invalid_gc, keep_zero_runs, expected_lines) in scenarios {
+    for (
+        name,
+        tags,
+        neutralize_invalid_gc,
+        keep_zero_runs,
+        expected_lines,
+        expected_gc_failed_fragments,
+        expected_gc_out_of_range_tags,
+        expected_counted_fragments,
+    ) in scenarios
+    {
         let base_bam = simple_inward_bam()?;
         let tagged_bam =
             bam_with_gc_tags(&base_bam.bam, &format!("fcoverage_gc_tag_{name}"), tags)?;
@@ -3127,13 +3312,23 @@ fn gc_tag_paired_edge_cases_follow_fragment_combination_rules() -> Result<()> {
 
         // Manual expectations:
         // - Scenario invalid_mate_neutralized:
-        //   mate tags 2.0 and 2000.0 make the fragment GC tag invalid.
+        //   mate tags 2.0 and 2000.0 average to 1001.0 at the fragment level, which is above the
+        //   supported GC-tag range.
         //   With neutralize_invalid_gc=true, fcoverage keeps the fragment with neutral weight 1.0
         //   -> [20, 80) with value 1.
-        // - Scenario zero_mate_forces_zero_weight:
-        //   mate tags 0.0 and 4.0 combine to fragment weight 0.0.
-        //   With keep_zero_runs=true, the whole chromosome is a single zero-coverage segment.
-        run(&cfg)?;
+        //   Because the fragment-level GC tag is invalid and out of range:
+        //     gc_failed_fragments = 1
+        //     gc_out_of_range_tags = 1
+        //     counted_fragments = 1 after neutralization
+        // - Scenario zero_mate_counts_with_zero_weight:
+        //   an explicit zero on either mate takes precedence in `combine_gc_tag_values`, so the
+        //   fragment-level GC tag is `Usable(0.0)`, not missing or invalid.
+        //   The fragment still overlaps the tile core and is therefore counted as a fragment, but
+        //   it adds zero coverage everywhere:
+        //     gc_failed_fragments = 0
+        //     gc_out_of_range_tags = 0
+        //     counted_fragments = 1
+        let run_result = run_inner(&cfg)?;
 
         let output_path = out_dir
             .path()
@@ -3143,6 +3338,18 @@ fn gc_tag_paired_edge_cases_follow_fragment_combination_rules() -> Result<()> {
         assert_eq!(
             lines, expected_lines,
             "unexpected lines for scenario {name}"
+        );
+        assert_eq!(
+            run_result.counters.gc_failed_fragments, expected_gc_failed_fragments,
+            "unexpected gc_failed_fragments for scenario {name}"
+        );
+        assert_eq!(
+            run_result.counters.gc_out_of_range_tags, expected_gc_out_of_range_tags,
+            "unexpected gc_out_of_range_tags for scenario {name}"
+        );
+        assert_eq!(
+            run_result.counters.base.counted_fragments, expected_counted_fragments,
+            "unexpected counted_fragments for scenario {name}"
         );
     }
 
@@ -3575,7 +3782,7 @@ fn unique_positions_split_one_merged_window_into_multiple_runs() -> Result<()> {
         &[("chr1", 15, 45, "window_a"), ("chr1", 45, 85, "window_b")],
     )?;
 
-    let mut windows = WindowsArgs::default();
+    let mut windows = DistributionWindowsArgs::default();
     windows.by_bed = Some(bed_path);
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -3619,7 +3826,7 @@ fn indexed_positions_repeat_window_index_for_each_run_and_duplicate_overlap() ->
         &[("chr1", 15, 75, "window_a"), ("chr1", 25, 85, "window_b")],
     )?;
 
-    let mut windows = WindowsArgs::default();
+    let mut windows = DistributionWindowsArgs::default();
     windows.by_bed = Some(bed_path);
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
@@ -3716,9 +3923,10 @@ fn by_bed_total_halo_only_window_is_not_double_counted_across_tiles() -> Result<
     cfg.set_decimals(0);
     cfg.set_tile_size(10);
     cfg.set_per_window(CoverageWindowAction::Total);
-    cfg.set_windows(WindowsArgs {
+    cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
         by_bed: Some(bed_path),
+        by_grouped_bed: None,
     });
     {
         let fl = cfg.fragment_lengths_mut();
@@ -3778,9 +3986,10 @@ fn by_bed_avg_halo_only_window_is_counted_once_regardless_of_tile_size() -> Resu
         cfg.set_decimals(2);
         cfg.set_tile_size(tile_size);
         cfg.set_per_window(CoverageWindowAction::Average);
-        cfg.set_windows(WindowsArgs {
+        cfg.set_windows(DistributionWindowsArgs {
             by_size: None,
             by_bed: Some(bed_path),
+            by_grouped_bed: None,
         });
         {
             let fl = cfg.fragment_lengths_mut();
@@ -3808,12 +4017,1405 @@ fn by_bed_avg_halo_only_window_is_counted_once_regardless_of_tile_size() -> Resu
     assert_eq!(
         lines,
         vec![
-            "chromosome\tstart\tend\tavg_coverage\tblacklisted_positions",
+            "chromosome\tstart\tend\tmean_coverage\tblacklisted_positions",
             "chr1\t5\t10\t1\t0",
             "chr1\t15\t20\t1\t0",
             "chr1\t20\t25\t1\t0",
         ]
     );
+
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_total_uses_site_weighted_group_semantics() -> Result<()> {
+    // Human verification status: unverified
+    // Manual expectations:
+    // - The single fragment covers [20, 80) with per-base coverage 1.
+    // - Group `beta` has two same-group intervals:
+    //     [20, 50) -> 30 covered bases
+    //     [40, 80) -> 40 covered bases
+    //   Plain grouped totals keep loaded intervals separate, so:
+    //     span_positions = 30 + 40 = 70
+    //     total_coverage = 30 + 40 = 70
+    // - Group `alpha` has [20, 40), so total_coverage = 20.
+    // - Group `gamma` has [0, 10), outside the fragment, so total_coverage = 0.
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_site_weighted.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 20, 50, "beta"),
+            ("chr1", 20, 40, "alpha"),
+            ("chr1", 40, 80, "beta"),
+            ("chr1", 0, 10, "gamma"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(0);
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(&out_dir.path().join("testcov.fcoverage.total.tsv.zst"))?;
+    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let output_rows = parse_tsv(&output);
+    let sidecar_rows = parse_tsv(&sidecar);
+
+    assert_eq!(
+        output_rows,
+        vec![
+            vec![
+                "group_idx",
+                "span_positions",
+                "blacklisted_positions",
+                "eligible_positions",
+                "total_coverage",
+            ],
+            vec!["0", "70", "0", "70", "70"],
+            vec!["1", "20", "0", "20", "20"],
+            vec!["2", "10", "0", "10", "0"],
+        ]
+    );
+    assert_eq!(
+        sidecar_rows,
+        vec![
+            vec!["group_idx", "group_name"],
+            vec!["0", "beta"],
+            vec!["1", "alpha"],
+            vec!["2", "gamma"],
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_ignores_groups_on_filtered_out_chromosomes() -> Result<()> {
+    // Human verification status: unverified
+    // Manual expectations:
+    // - The BAM contains one 60 bp fragment on each of `chr1` and `chr2`.
+    // - The command explicitly selects only `chr1`.
+    // - The grouped BED contains:
+    //     `alpha` on `chr1` with span [0, 100)
+    //     `beta` on `chr2` with span [0, 120)
+    // - Only the `chr1` chromosome should participate in grouped loading and counting.
+    //   Therefore:
+    //     sidecar contains only `alpha`
+    //     output contains only one grouped row
+    //     `alpha` has span_positions = eligible_positions = 100 and total_coverage = 60
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200), ("chr2".to_string(), 200)],
+        vec![
+            paired_fragment_on_tid(0, 20, 60, 20),
+            paired_fragment_on_tid(1, 40, 60, 20),
+        ],
+        Vec::new(),
+        "grouped_filtered_chromosomes",
+    )?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_filtered_chromosomes.bed");
+    write_bed(
+        &grouped_bed,
+        &[("chr1", 0, 100, "alpha"), ("chr2", 0, 120, "beta")],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(0);
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(&out_dir.path().join("testcov.fcoverage.total.tsv.zst"))?;
+    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+
+    assert_eq!(
+        parse_tsv(&output),
+        vec![
+            vec![
+                "group_idx",
+                "span_positions",
+                "blacklisted_positions",
+                "eligible_positions",
+                "total_coverage",
+            ],
+            vec!["0", "100", "0", "100", "60"],
+        ]
+    );
+    assert_eq!(
+        parse_tsv(&sidecar),
+        vec![vec!["group_idx", "group_name"], vec!["0", "alpha"]]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_total_on_unique_bases_merges_same_group_overlaps() -> Result<()> {
+    // Human verification status: unverified
+    // Manual expectations:
+    // - The fragment again covers [20, 80).
+    // - Group `beta` has [20, 50) and [40, 80). Under `total-on-unique-bases`,
+    //   same-group overlaps collapse to the union [20, 80), so:
+    //     span_positions = 60
+    //     total_coverage = 60
+    // - `gamma` stays a zero row.
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_unique_bases.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 20, 50, "beta"),
+            ("chr1", 40, 80, "beta"),
+            ("chr1", 0, 10, "gamma"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(0);
+    cfg.set_per_window(CoverageWindowAction::TotalOnUniqueBases);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(
+        &out_dir
+            .path()
+            .join("testcov.fcoverage.total_on_unique_bases.tsv.zst"),
+    )?;
+    let rows = parse_tsv(&output);
+
+    assert_eq!(
+        rows,
+        vec![
+            vec![
+                "group_idx",
+                "span_positions",
+                "blacklisted_positions",
+                "eligible_positions",
+                "total_coverage",
+            ],
+            vec!["0", "60", "0", "60", "60"],
+            vec!["1", "10", "0", "10", "0"],
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_average_on_unique_bases_merges_same_group_overlaps() -> Result<()> {
+    // Human verification status: unverified
+    // Manual expectations:
+    // - The fragment covers [20, 80) with per-base coverage 1.
+    // - Group `beta` has [20, 50) and [40, 80). Under `average-on-unique-bases`,
+    //   same-group overlaps collapse to the union [20, 80), so:
+    //     span_positions = eligible_positions = 60
+    //     mean_coverage = 60 / 60 = 1
+    // - `gamma` covers [0, 20) with no fragment support, so:
+    //     span_positions = eligible_positions = 20
+    //     mean_coverage = 0
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_unique_bases_avg.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 20, 50, "beta"),
+            ("chr1", 40, 80, "beta"),
+            ("chr1", 0, 20, "gamma"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::AverageOnUniqueBases);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(
+        &out_dir
+            .path()
+            .join("testcov.fcoverage.avg_on_unique_bases.tsv.zst"),
+    )?;
+    let rows = parse_tsv(&output);
+
+    assert_eq!(
+        rows,
+        vec![
+            vec![
+                "group_idx",
+                "span_positions",
+                "blacklisted_positions",
+                "eligible_positions",
+                "mean_coverage",
+            ],
+            vec!["0", "60", "0", "60", "1"],
+            vec!["1", "20", "0", "20", "0"],
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_total_with_blacklist_uses_site_weighted_group_semantics() -> Result<()> {
+    // Human verification status: unverified
+    // Manual expectations:
+    // - The fragment covers [20, 80) with per-base coverage 1.
+    // - The blacklist masks [45, 55), so masked positions must not contribute to coverage.
+    // - Group `beta` keeps its two loaded intervals separate in plain grouped mode:
+    //     [20, 50) contributes 25 eligible covered bases and 5 blacklisted bases
+    //     [40, 80) contributes 30 eligible covered bases and 10 blacklisted bases
+    //   Therefore:
+    //     span_positions = 30 + 40 = 70
+    //     blacklisted_positions = 5 + 10 = 15
+    //     eligible_positions = 25 + 30 = 55
+    //     total_coverage = 25 + 30 = 55
+    // - Group `alpha` is [20, 40), fully outside the blacklist:
+    //     span_positions = eligible_positions = total_coverage = 20
+    // - Group `gamma` is [0, 10), so it stays a zero row with no blacklisted positions.
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_site_weighted_blacklist.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 20, 50, "beta"),
+            ("chr1", 20, 40, "alpha"),
+            ("chr1", 40, 80, "beta"),
+            ("chr1", 0, 10, "gamma"),
+        ],
+    )?;
+    let blacklist_bed = out_dir.path().join("grouped_site_weighted_blacklist_mask.bed");
+    write_bed(&blacklist_bed, &[("chr1", 45, 55, "masked")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(0);
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_blacklist(Some(vec![blacklist_bed]));
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(&out_dir.path().join("testcov.fcoverage.total.tsv.zst"))?;
+    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+
+    assert_eq!(
+        rows_by_name["beta"]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["0", "70", "15", "55", "55"]
+    );
+    assert_eq!(
+        rows_by_name["alpha"]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["1", "20", "0", "20", "20"]
+    );
+    assert_eq!(
+        rows_by_name["gamma"]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["2", "10", "0", "10", "0"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_total_on_unique_bases_with_blacklist_merges_same_group_overlap_once() -> Result<()> {
+    // Human verification status: unverified
+    // Manual expectations:
+    // - The fragment covers [20, 80).
+    // - Group `beta` merges [20, 50) and [40, 80) to the union [20, 80).
+    // - The blacklist masks [45, 55) once inside that union, so:
+    //     span_positions = 60
+    //     blacklisted_positions = 10
+    //     eligible_positions = 50
+    //     total_coverage = 50
+    // - Group `gamma` is [0, 10), so it remains a zero row.
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_unique_bases_blacklist_total.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 20, 50, "beta"),
+            ("chr1", 40, 80, "beta"),
+            ("chr1", 0, 10, "gamma"),
+        ],
+    )?;
+    let blacklist_bed = out_dir.path().join("grouped_unique_bases_blacklist_total_mask.bed");
+    write_bed(&blacklist_bed, &[("chr1", 45, 55, "masked")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(0);
+    cfg.set_per_window(CoverageWindowAction::TotalOnUniqueBases);
+    cfg.set_blacklist(Some(vec![blacklist_bed]));
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(
+        &out_dir
+            .path()
+            .join("testcov.fcoverage.total_on_unique_bases.tsv.zst"),
+    )?;
+    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+
+    assert_eq!(
+        rows_by_name["beta"]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["0", "60", "10", "50", "50"]
+    );
+    assert_eq!(
+        rows_by_name["gamma"]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["1", "10", "0", "10", "0"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_average_on_unique_bases_with_blacklist_uses_only_eligible_positions() -> Result<()> {
+    // Human verification status: unverified
+    // Manual expectations:
+    // - The fragment covers [20, 80) with per-base coverage 1.
+    // - The blacklist masks [30, 35).
+    // - Group `beta` merges to [20, 80):
+    //     span_positions = 60
+    //     blacklisted_positions = 5
+    //     eligible_positions = 55
+    //     total eligible covered bases = 55
+    //     mean_coverage = 55 / 55 = 1
+    // - Group `delta` is [0, 40):
+    //     span_positions = 40
+    //     blacklisted_positions = 5
+    //     eligible_positions = 35
+    //     covered eligible bases are [20, 30) and [35, 40), so total_coverage = 15
+    //     mean_coverage = 15 / 35 = 3 / 7
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_unique_bases_blacklist_avg.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 20, 50, "beta"),
+            ("chr1", 40, 80, "beta"),
+            ("chr1", 0, 40, "delta"),
+        ],
+    )?;
+    let blacklist_bed = out_dir.path().join("grouped_unique_bases_blacklist_avg_mask.bed");
+    write_bed(&blacklist_bed, &[("chr1", 30, 35, "masked")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::AverageOnUniqueBases);
+    cfg.set_blacklist(Some(vec![blacklist_bed]));
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(
+        &out_dir
+            .path()
+            .join("testcov.fcoverage.avg_on_unique_bases.tsv.zst"),
+    )?;
+    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+
+    assert_eq!(
+        rows_by_name["beta"][0..4]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["0", "60", "5", "55"]
+    );
+    assert_close(rows_by_name["beta"][4].parse::<f64>()?, 1.0, 1e-9);
+
+    assert_eq!(
+        rows_by_name["delta"][0..4]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["1", "40", "5", "35"]
+    );
+    assert_close(rows_by_name["delta"][4].parse::<f64>()?, 3.0 / 7.0, 1e-6);
+
+    Ok(())
+}
+
+#[test]
+fn grouped_summary_stats_on_unique_bases_with_blacklist_excludes_masked_positions_from_raw_and_derived_stats()
+-> Result<()> {
+    // Human verification status: unverified
+    // Manual expectations:
+    // - The fragment covers [20, 80) with per-base coverage 1.
+    // - The blacklist masks [30, 35).
+    // - Group `beta` merges to [20, 80):
+    //     span_positions = 60
+    //     blacklisted_positions = 5
+    //     eligible_positions = nonzero_positions = coverage_sum = coverage_sum_of_squares = 55
+    //     mean = 55 / 55 = 1
+    //     variance = sd = cv = 0
+    //     covered_fraction = 1
+    // - Group `delta` is [0, 40):
+    //     span_positions = 40
+    //     blacklisted_positions = 5
+    //     eligible_positions = 35
+    //     nonzero_positions = 15
+    //     coverage_sum = coverage_sum_of_squares = 15
+    //     mean = 15 / 35 = 3 / 7
+    //     variance = 15 / 35 - (3 / 7)^2 = 12 / 49
+    //     sd = sqrt(12 / 49) = sqrt(12) / 7
+    //     cv = (sqrt(12) / 7) / (3 / 7) = sqrt(12) / 3
+    //     covered_fraction = 15 / 35 = 3 / 7
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_unique_bases_blacklist_summary.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 20, 50, "beta"),
+            ("chr1", 40, 80, "beta"),
+            ("chr1", 0, 40, "delta"),
+        ],
+    )?;
+    let blacklist_bed = out_dir
+        .path()
+        .join("grouped_unique_bases_blacklist_summary_mask.bed");
+    write_bed(&blacklist_bed, &[("chr1", 30, 35, "masked")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::SummaryStatsOnUniqueBases);
+    cfg.set_blacklist(Some(vec![blacklist_bed]));
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(
+        &out_dir
+            .path()
+            .join("testcov.fcoverage.summary_stats_on_unique_bases.tsv.zst"),
+    )?;
+    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+
+    assert_eq!(
+        rows_by_name["beta"][0..5]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["0", "60", "5", "55", "55"]
+    );
+    assert_close(rows_by_name["beta"][5].parse::<f64>()?, 55.0, 1e-9);
+    assert_close(rows_by_name["beta"][6].parse::<f64>()?, 55.0, 1e-9);
+    assert_close(rows_by_name["beta"][7].parse::<f64>()?, 1.0, 1e-9);
+    assert_close(rows_by_name["beta"][8].parse::<f64>()?, 55.0, 1e-9);
+    assert_close(rows_by_name["beta"][9].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["beta"][10].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["beta"][11].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["beta"][12].parse::<f64>()?, 1.0, 1e-9);
+
+    assert_eq!(
+        rows_by_name["delta"][0..5]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["1", "40", "5", "35", "15"]
+    );
+    assert_close(rows_by_name["delta"][5].parse::<f64>()?, 15.0, 1e-9);
+    assert_close(rows_by_name["delta"][6].parse::<f64>()?, 15.0, 1e-9);
+    assert_close(rows_by_name["delta"][7].parse::<f64>()?, 3.0 / 7.0, 1e-6);
+    assert_close(rows_by_name["delta"][8].parse::<f64>()?, 15.0, 1e-9);
+    assert_close(rows_by_name["delta"][9].parse::<f64>()?, 12.0 / 49.0, 1e-6);
+    assert_close(rows_by_name["delta"][10].parse::<f64>()?, (12.0_f64).sqrt() / 7.0, 1e-6);
+    assert_close(rows_by_name["delta"][11].parse::<f64>()?, (12.0_f64).sqrt() / 3.0, 1e-6);
+    assert_close(rows_by_name["delta"][12].parse::<f64>()?, 3.0 / 7.0, 1e-6);
+
+    Ok(())
+}
+
+#[test]
+fn grouped_summary_stats_with_blacklist_is_invariant_when_plain_group_segments_cross_tiles()
+-> Result<()> {
+    // Human verification status: unverified
+    // Manual expectations:
+    // - One fragment covers [20, 80) with per-base coverage 1.
+    // - The blacklist masks [45, 55).
+    // - Group `beta` keeps its two loaded intervals separate in plain grouped mode:
+    //     [20, 50) contributes 25 eligible covered bases and 5 blacklisted bases
+    //     [40, 80) contributes 30 eligible covered bases and 10 blacklisted bases
+    //   Therefore:
+    //     span_positions = 30 + 40 = 70
+    //     blacklisted_positions = 5 + 10 = 15
+    //     eligible_positions = nonzero_positions = coverage_sum = coverage_sum_of_squares = 55
+    //     mean = 55 / 55 = 1
+    //     variance = sd = cv = 0
+    //     covered_fraction = 1
+    // - Group `delta` is a single interval [0, 60):
+    //     span_positions = 60
+    //     blacklisted_positions = 10
+    //     eligible_positions = 50
+    //     nonzero_positions = coverage_sum = coverage_sum_of_squares = 30
+    //     mean = 30 / 50 = 3 / 5
+    //     variance = 30 / 50 - (3 / 5)^2 = 6 / 25
+    //     sd = sqrt(6 / 25) = sqrt(6) / 5
+    //     cv = (sqrt(6) / 5) / (3 / 5) = sqrt(6) / 3
+    //     covered_fraction = 30 / 50 = 3 / 5
+    // - Group `gamma` is [0, 10), so:
+    //     span_positions = eligible_positions = 10
+    //     blacklisted_positions = nonzero_positions = coverage_sum = coverage_sum_of_squares = 0
+    //     mean = variance = sd = covered_fraction = 0
+    //     cv = NaN because the mean is zero
+    // - `tile_size=33` forces the group segments above to cross tile boundaries, while
+    //   `tile_size=1000` keeps them inside one tile. The final grouped summary-stats output
+    //   must still match exactly
+    let bam = simple_inward_bam()?;
+    let tile_sizes = [33_u32, 1_000_u32];
+    let mut outputs = Vec::new();
+    let mut sidecars = Vec::new();
+
+    for tile_size in tile_sizes {
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir
+            .path()
+            .join(format!("grouped_plain_summary_blacklist_{tile_size}.bed"));
+        write_bed(
+            &grouped_bed,
+            &[
+                ("chr1", 20, 50, "beta"),
+                ("chr1", 40, 80, "beta"),
+                ("chr1", 0, 60, "delta"),
+                ("chr1", 0, 10, "gamma"),
+            ],
+        )?;
+        let blacklist_bed = out_dir
+            .path()
+            .join(format!("grouped_plain_summary_blacklist_mask_{tile_size}.bed"));
+        write_bed(&blacklist_bed, &[("chr1", 45, 55, "masked")])?;
+
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        cfg.set_tile_size(tile_size);
+        cfg.set_decimals(6);
+        cfg.set_per_window(CoverageWindowAction::SummaryStats);
+        cfg.set_blacklist(Some(vec![blacklist_bed]));
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+
+        run(&cfg)?;
+
+        outputs.push(read_zst_to_string(
+            &out_dir
+                .path()
+                .join("testcov.fcoverage.summary_stats.tsv.zst"),
+        )?);
+        sidecars.push(std::fs::read_to_string(
+            out_dir.path().join("testcov.group_index.tsv"),
+        )?);
+    }
+
+    assert_eq!(
+        outputs[0], outputs[1],
+        "plain grouped summary-stats output should not depend on tile size"
+    );
+    assert_eq!(
+        sidecars[0], sidecars[1],
+        "group sidecar should not depend on tile size"
+    );
+
+    let rows_by_name = grouped_rows_by_name(&outputs[0], &sidecars[0]);
+
+    assert_eq!(
+        rows_by_name["beta"][0..5]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["0", "70", "15", "55", "55"]
+    );
+    assert_close(rows_by_name["beta"][5].parse::<f64>()?, 55.0, 1e-9);
+    assert_close(rows_by_name["beta"][6].parse::<f64>()?, 55.0, 1e-9);
+    assert_close(rows_by_name["beta"][7].parse::<f64>()?, 1.0, 1e-9);
+    assert_close(rows_by_name["beta"][8].parse::<f64>()?, 55.0, 1e-9);
+    assert_close(rows_by_name["beta"][9].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["beta"][10].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["beta"][11].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["beta"][12].parse::<f64>()?, 1.0, 1e-9);
+
+    assert_eq!(
+        rows_by_name["delta"][0..5]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["1", "60", "10", "50", "30"]
+    );
+    assert_close(rows_by_name["delta"][5].parse::<f64>()?, 30.0, 1e-9);
+    assert_close(rows_by_name["delta"][6].parse::<f64>()?, 30.0, 1e-9);
+    assert_close(rows_by_name["delta"][7].parse::<f64>()?, 3.0 / 5.0, 1e-6);
+    assert_close(rows_by_name["delta"][8].parse::<f64>()?, 30.0, 1e-9);
+    assert_close(rows_by_name["delta"][9].parse::<f64>()?, 6.0 / 25.0, 1e-6);
+    assert_close(rows_by_name["delta"][10].parse::<f64>()?, 6.0_f64.sqrt() / 5.0, 1e-6);
+    assert_close(rows_by_name["delta"][11].parse::<f64>()?, 6.0_f64.sqrt() / 3.0, 1e-6);
+    assert_close(rows_by_name["delta"][12].parse::<f64>()?, 3.0 / 5.0, 1e-6);
+
+    assert_eq!(
+        rows_by_name["gamma"][0..5]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["2", "10", "0", "10", "0"]
+    );
+    assert_close(rows_by_name["gamma"][5].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["gamma"][6].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["gamma"][7].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["gamma"][8].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["gamma"][9].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["gamma"][10].parse::<f64>()?, 0.0, 1e-9);
+    assert!(rows_by_name["gamma"][11].parse::<f64>()?.is_nan());
+    assert_close(rows_by_name["gamma"][12].parse::<f64>()?, 0.0, 1e-9);
+
+    Ok(())
+}
+
+#[test]
+fn by_size_summary_stats_writes_expected_raw_and_derived_values() -> Result<()> {
+    // Human verification status: unverified
+    // Manual expectations:
+    // - One fragment covers [20, 80) inside the only size window [0, 200).
+    // - Raw stats:
+    //     span_positions = eligible_positions = 200
+    //     nonzero_positions = 60
+    //     coverage_sum = 60
+    //     coverage_sum_of_squares = 60
+    // - Derived stats:
+    //     mean = 60 / 200 = 0.3
+    //     variance = 60 / 200 - 0.3^2 = 0.21
+    //     sd = sqrt(0.21)
+    //     cv = sd / 0.3
+    //     covered_fraction = 60 / 200 = 0.3
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::SummaryStats);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: Some(200),
+        by_bed: None,
+        by_grouped_bed: None,
+    });
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(
+        &out_dir
+            .path()
+            .join("testcov.fcoverage.summary_stats.tsv.zst"),
+    )?;
+    let rows = parse_tsv(&output);
+
+    assert_eq!(
+        rows[0],
+        vec![
+            "chromosome",
+            "start",
+            "end",
+            "span_positions",
+            "blacklisted_positions",
+            "eligible_positions",
+            "nonzero_positions",
+            "coverage_sum",
+            "coverage_sum_of_squares",
+            "mean_coverage",
+            "total_coverage",
+            "variance_coverage",
+            "sd_coverage",
+            "coefficient_of_variation_coverage",
+            "covered_fraction",
+        ]
+    );
+    assert_eq!(rows[1][0..7], ["chr1", "0", "200", "200", "0", "200", "60"]);
+    assert_close(rows[1][7].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows[1][8].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows[1][9].parse::<f64>()?, 0.3, 1e-6);
+    assert_close(rows[1][10].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows[1][11].parse::<f64>()?, 0.21, 1e-6);
+    assert_close(rows[1][12].parse::<f64>()?, 0.21_f64.sqrt(), 1e-6);
+    assert_close(rows[1][13].parse::<f64>()?, 0.21_f64.sqrt() / 0.3, 1e-6);
+    assert_close(rows[1][14].parse::<f64>()?, 0.3, 1e-6);
+
+    Ok(())
+}
+
+#[test]
+fn by_size_summary_stats_is_invariant_when_windows_cross_tile_boundaries() -> Result<()> {
+    // Human verification status: unverified
+    // Manual expectations:
+    // - One fragment covers [20, 80) with per-base coverage 1.
+    // - We request 40 bp windows on a 200 bp chromosome, giving:
+    //   [0, 40), [40, 80), [80, 120), [120, 160), [160, 200)
+    // - Window [0, 40):
+    //     20 zeros + 20 ones
+    //     span_positions = eligible_positions = 40
+    //     nonzero_positions = 20
+    //     coverage_sum = coverage_sum_of_squares = 20
+    //     mean = 20 / 40 = 0.5
+    //     variance = 20 / 40 - 0.5^2 = 0.25
+    //     sd = 0.5
+    //     cv = 1
+    //     covered_fraction = 20 / 40 = 0.5
+    // - Window [40, 80):
+    //     40 ones
+    //     span_positions = eligible_positions = 40
+    //     nonzero_positions = 40
+    //     coverage_sum = coverage_sum_of_squares = 40
+    //     mean = total = 1
+    //     variance = sd = cv = 0
+    //     covered_fraction = 1
+    // - Remaining windows contain only zeros:
+    //     nonzero_positions = 0
+    //     coverage_sum = coverage_sum_of_squares = 0
+    //     mean = total = variance = sd = covered_fraction = 0
+    //     cv = NaN because the mean is exactly zero
+    // - `tile_size=33` forces cross-tile reduction for several windows, while `tile_size=1000`
+    //   keeps the whole chromosome in one tile. The final summary-stats output must still match
+    let bam = simple_inward_bam()?;
+    let tile_sizes = [33_u32, 1_000_u32];
+    let mut outputs = Vec::new();
+
+    for tile_size in tile_sizes {
+        let out_dir = TempDir::new()?;
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        cfg.set_tile_size(tile_size);
+        cfg.set_decimals(6);
+        cfg.set_per_window(CoverageWindowAction::SummaryStats);
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: Some(40),
+            by_bed: None,
+            by_grouped_bed: None,
+        });
+
+        run(&cfg)?;
+
+        outputs.push(read_zst_to_string(
+            &out_dir
+                .path()
+                .join("testcov.fcoverage.summary_stats.tsv.zst"),
+        )?);
+    }
+
+    assert_eq!(
+        outputs[0], outputs[1],
+        "summary-stats output should not depend on tile size"
+    );
+
+    let rows = parse_tsv(&outputs[0]);
+    assert_eq!(
+        rows[0],
+        vec![
+            "chromosome",
+            "start",
+            "end",
+            "span_positions",
+            "blacklisted_positions",
+            "eligible_positions",
+            "nonzero_positions",
+            "coverage_sum",
+            "coverage_sum_of_squares",
+            "mean_coverage",
+            "total_coverage",
+            "variance_coverage",
+            "sd_coverage",
+            "coefficient_of_variation_coverage",
+            "covered_fraction",
+        ]
+    );
+
+    assert_eq!(rows[1][0..7], ["chr1", "0", "40", "40", "0", "40", "20"]);
+    assert_close(rows[1][7].parse::<f64>()?, 20.0, 1e-9);
+    assert_close(rows[1][8].parse::<f64>()?, 20.0, 1e-9);
+    assert_close(rows[1][9].parse::<f64>()?, 0.5, 1e-9);
+    assert_close(rows[1][10].parse::<f64>()?, 20.0, 1e-9);
+    assert_close(rows[1][11].parse::<f64>()?, 0.25, 1e-9);
+    assert_close(rows[1][12].parse::<f64>()?, 0.5, 1e-9);
+    assert_close(rows[1][13].parse::<f64>()?, 1.0, 1e-9);
+    assert_close(rows[1][14].parse::<f64>()?, 0.5, 1e-9);
+
+    assert_eq!(rows[2][0..7], ["chr1", "40", "80", "40", "0", "40", "40"]);
+    assert_close(rows[2][7].parse::<f64>()?, 40.0, 1e-9);
+    assert_close(rows[2][8].parse::<f64>()?, 40.0, 1e-9);
+    assert_close(rows[2][9].parse::<f64>()?, 1.0, 1e-9);
+    assert_close(rows[2][10].parse::<f64>()?, 40.0, 1e-9);
+    assert_close(rows[2][11].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[2][12].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[2][13].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[2][14].parse::<f64>()?, 1.0, 1e-9);
+
+    let expected_zero_windows = [("80", "120"), ("120", "160"), ("160", "200")];
+    for (row, (start, end)) in rows[3..].iter().zip(expected_zero_windows) {
+        assert_eq!(row[0], "chr1");
+        assert_eq!(row[1], start);
+        assert_eq!(row[2], end);
+        assert_eq!(row[3], "40");
+        assert_eq!(row[4], "0");
+        assert_eq!(row[5], "40");
+        assert_eq!(row[6], "0");
+        assert_close(row[7].parse::<f64>()?, 0.0, 1e-9);
+        assert_close(row[8].parse::<f64>()?, 0.0, 1e-9);
+        assert_close(row[9].parse::<f64>()?, 0.0, 1e-9);
+        assert_close(row[10].parse::<f64>()?, 0.0, 1e-9);
+        assert_close(row[11].parse::<f64>()?, 0.0, 1e-9);
+        assert_close(row[12].parse::<f64>()?, 0.0, 1e-9);
+        assert!(row[13].parse::<f64>()?.is_nan());
+        assert_close(row[14].parse::<f64>()?, 0.0, 1e-9);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn by_bed_summary_stats_derives_variance_from_overlapping_fragments() -> Result<()> {
+    // Human verification status: unverified
+    // Manual expectations:
+    // - Fragment 1 covers [20, 80) with coverage 1.
+    // - Fragment 2 covers [30, 70) with coverage 1 on top of fragment 1.
+    // - Window [0, 100) therefore sees:
+    //     [0, 20)   -> 0 for 20 bp
+    //     [20, 30)  -> 1 for 10 bp
+    //     [30, 70)  -> 2 for 40 bp
+    //     [70, 80)  -> 1 for 10 bp
+    //     [80, 100) -> 0 for 20 bp
+    // - Raw stats:
+    //     span_positions = eligible_positions = 100
+    //     nonzero_positions = 60
+    //     coverage_sum = 10*1 + 40*2 + 10*1 = 100
+    //     coverage_sum_of_squares = 10*1^2 + 40*2^2 + 10*1^2 = 180
+    // - Derived stats:
+    //     mean = 100 / 100 = 1
+    //     variance = 180 / 100 - 1^2 = 0.8
+    //     sd = sqrt(0.8)
+    //     cv = sqrt(0.8) / 1 = sqrt(0.8)
+    //     covered_fraction = 60 / 100 = 0.6
+    let bam = overlapping_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("overlapping_summary_window.bed");
+    write_bed(&bed_path, &[("chr1", 0, 100, "variance_window")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::SummaryStats);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+        by_grouped_bed: None,
+    });
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(
+        &out_dir
+            .path()
+            .join("testcov.fcoverage.summary_stats.tsv.zst"),
+    )?;
+    let rows = parse_tsv(&output);
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[1][0..7], ["chr1", "0", "100", "100", "0", "100", "60"]);
+    assert_close(rows[1][7].parse::<f64>()?, 100.0, 1e-9);
+    assert_close(rows[1][8].parse::<f64>()?, 180.0, 1e-9);
+    assert_close(rows[1][9].parse::<f64>()?, 1.0, 1e-9);
+    assert_close(rows[1][10].parse::<f64>()?, 100.0, 1e-9);
+    assert_close(rows[1][11].parse::<f64>()?, 0.8, 1e-9);
+    assert_close(rows[1][12].parse::<f64>()?, 0.8_f64.sqrt(), 1e-6);
+    assert_close(rows[1][13].parse::<f64>()?, 0.8_f64.sqrt(), 1e-6);
+    assert_close(rows[1][14].parse::<f64>()?, 0.6, 1e-9);
+
+    Ok(())
+}
+
+#[test]
+fn by_bed_total_keeps_coordinate_sorted_output_when_same_start_windows_cross_tiles() -> Result<()>
+{
+    // Human verification status: unverified
+    // Manual expectations:
+    // - One fragment covers [20, 80) with coverage 1.
+    // - The BED input deliberately lists the wider window before the narrower one:
+    //     line 0 -> [0, 100)
+    //     line 1 -> [0, 40)
+    // - `load_windows_from_bed` preserves those original indices, but `Windows::new` then sorts
+    //   by `(start, end)`, so tile processing sees:
+    //     [0, 40)  with orig_idx 1
+    //     [0, 100) with orig_idx 0
+    // - Raw totals are:
+    //     [0, 40)  -> 20
+    //     [0, 100) -> 60
+    // - With `tile_size=33`, both windows cross tile boundaries. This test pins that reduction
+    //   still succeeds and that final output stays in coordinate order rather than original BED
+    //   line order
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("same_start_reverse_bed_order.bed");
+    write_bed(
+        &bed_path,
+        &[("chr1", 0, 100, "wide"), ("chr1", 0, 40, "narrow")],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_tile_size(33);
+    cfg.set_decimals(0);
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+        by_grouped_bed: None,
+    });
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(&out_dir.path().join("testcov.fcoverage.total.tsv.zst"))?;
+    let lines: Vec<_> = output.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chr1\t0\t40\t20\t0",
+            "chr1\t0\t100\t60\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn grouped_summary_stats_on_unique_bases_writes_expected_rows() -> Result<()> {
+    // Human verification status: unverified
+    // Manual expectations:
+    // - `beta` merges to [20, 80), so:
+    //     span = eligible = 60
+    //     nonzero = 60
+    //     coverage_sum = coverage_sum_of_squares = 60
+    //     mean = total / eligible = 1
+    //     variance = sd = 0
+    //     cv = 0
+    //     covered_fraction = 1
+    // - `gamma` is [0, 10) with no coverage, so:
+    //     span = eligible = 10
+    //     nonzero = 0
+    //     coverage_sum = coverage_sum_of_squares = 0
+    //     mean = variance = sd = 0
+    //     cv = NaN because mean is zero
+    //     covered_fraction = 0
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_summary_unique.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 20, 50, "beta"),
+            ("chr1", 40, 80, "beta"),
+            ("chr1", 0, 10, "gamma"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::SummaryStatsOnUniqueBases);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(
+        &out_dir
+            .path()
+            .join("testcov.fcoverage.summary_stats_on_unique_bases.tsv.zst"),
+    )?;
+    let rows = parse_tsv(&output);
+
+    assert_eq!(
+        rows[0],
+        vec![
+            "group_idx",
+            "span_positions",
+            "blacklisted_positions",
+            "eligible_positions",
+            "nonzero_positions",
+            "coverage_sum",
+            "coverage_sum_of_squares",
+            "mean_coverage",
+            "total_coverage",
+            "variance_coverage",
+            "sd_coverage",
+            "coefficient_of_variation_coverage",
+            "covered_fraction",
+        ]
+    );
+    assert_eq!(rows[1][0..5], ["0", "60", "0", "60", "60"]);
+    assert_close(rows[1][5].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows[1][6].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows[1][7].parse::<f64>()?, 1.0, 1e-9);
+    assert_close(rows[1][8].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows[1][9].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[1][10].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[1][11].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[1][12].parse::<f64>()?, 1.0, 1e-9);
+
+    assert_eq!(rows[2][0..5], ["1", "10", "0", "10", "0"]);
+    assert_close(rows[2][5].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[2][6].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[2][7].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[2][8].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[2][9].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[2][10].parse::<f64>()?, 0.0, 1e-9);
+    assert!(rows[2][11].parse::<f64>()?.is_nan());
+    assert_close(rows[2][12].parse::<f64>()?, 0.0, 1e-9);
+
+    Ok(())
+}
+
+#[test]
+fn grouped_summary_stats_with_global_row_treats_global_as_ordinary_site_weighted_row() -> Result<()>
+{
+    // Human verification status: unverified
+    // Manual expectations:
+    // - The fragment covers [20, 80) with per-base coverage 1.
+    // - Group `beta` is loaded twice as [20, 50) and [40, 80). Plain grouped summary stats keep
+    //   those intervals separate, so:
+    //     span_positions = eligible_positions = 30 + 40 = 70
+    //     nonzero_positions = 30 + 40 = 70
+    //     coverage_sum = coverage_sum_of_squares = 70
+    //     mean = total / eligible = 1
+    // - Group `global` covers [0, 200):
+    //     span_positions = eligible_positions = 200
+    //     nonzero_positions = 60
+    //     coverage_sum = coverage_sum_of_squares = 60
+    //     mean = 60 / 200 = 0.3
+    // - `global` is just another site-weighted grouped row here. It does not trigger any extra
+    //   `fcoverage`-level correlation output.
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_summary_sites_with_global.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 20, 50, "beta"),
+            ("chr1", 40, 80, "beta"),
+            ("chr1", 0, 200, "global"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::SummaryStats);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(
+        &out_dir
+            .path()
+            .join("testcov.fcoverage.summary_stats.tsv.zst"),
+    )?;
+    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+
+    assert_eq!(
+        rows_by_name
+            .get("beta")
+            .expect("beta row")
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()[0..5],
+        ["0", "70", "0", "70", "70"]
+    );
+    assert_close(rows_by_name["beta"][5].parse::<f64>()?, 70.0, 1e-9);
+    assert_close(rows_by_name["beta"][6].parse::<f64>()?, 70.0, 1e-9);
+    assert_close(rows_by_name["beta"][7].parse::<f64>()?, 1.0, 1e-9);
+    assert_close(rows_by_name["beta"][8].parse::<f64>()?, 70.0, 1e-9);
+    assert_close(rows_by_name["beta"][9].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["beta"][10].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["beta"][11].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["beta"][12].parse::<f64>()?, 1.0, 1e-9);
+
+    assert_eq!(
+        rows_by_name
+            .get("global")
+            .expect("global row")
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()[0..5],
+        ["1", "200", "0", "200", "60"]
+    );
+    assert_close(rows_by_name["global"][5].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows_by_name["global"][6].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows_by_name["global"][7].parse::<f64>()?, 0.3, 1e-6);
+    assert_close(rows_by_name["global"][8].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows_by_name["global"][9].parse::<f64>()?, 0.21, 1e-6);
+    assert_close(
+        rows_by_name["global"][10].parse::<f64>()?,
+        0.21_f64.sqrt(),
+        1e-6,
+    );
+    assert_close(
+        rows_by_name["global"][11].parse::<f64>()?,
+        0.21_f64.sqrt() / 0.3,
+        1e-6,
+    );
+    assert_close(rows_by_name["global"][12].parse::<f64>()?, 0.3, 1e-6);
+
+    Ok(())
+}
+
+#[test]
+fn grouped_summary_stats_on_unique_bases_supports_downstream_pearson_with_gc_scaling_and_three_chromosomes()
+-> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // Build three 200 bp chromosomes with the repeating reference pattern "ACGT". Every 60 bp
+    // fragment on that reference has exactly 50% GC, so the synthetic GC package below applies the
+    // same correction weight 10.0 on all three chromosomes.
+    //
+    // One 60 bp fragment is placed at [20, 80) on each chromosome, and genomic scaling factors are
+    // set to:
+    // - chr1: 1.0
+    // - chr2: 2.0
+    // - chr3: 3.0
+    //
+    // Therefore the final per-base coverage is:
+    // - chr1 [20,80): 10
+    // - chr2 [20,80): 20
+    // - chr3 [20,80): 30
+    //
+    // Group rows:
+    // - `open` is [20, 50) on each chromosome, so under unique-base semantics:
+    //     eligible_positions = 3 * 30 = 90
+    //     coverage_sum = 30 * (10 + 20 + 30) = 1800
+    //     coverage_sum_of_squares = 30 * (10^2 + 20^2 + 30^2) = 42000
+    // - `global` is [0, 200) on each chromosome:
+    //     eligible_positions = 3 * 200 = 600
+    //     nonzero_positions = 3 * 60 = 180
+    //     coverage_sum = 60 * (10 + 20 + 30) = 3600
+    //     coverage_sum_of_squares = 60 * (10^2 + 20^2 + 30^2) = 84000
+    //
+    // `fcoverage` itself now stops at the summary statistics above. The test then derives Pearson R
+    // downstream from the written `global` and `open` rows and checks that this matches the
+    // ordinary direct positional formula over an explicit 600-position coverage vector and a 0/1
+    // mask vector for the `open` row.
+    let reference = fixtures::twobit_from_sequences(
+        "fcoverage_grouped_summary_three_chr_reference",
+        vec![
+            ("chr1".to_string(), "ACGT".repeat(50)),
+            ("chr2".to_string(), "ACGT".repeat(50)),
+            ("chr3".to_string(), "ACGT".repeat(50)),
+        ],
+    )?;
+    let bam = bam_from_specs(
+        vec![
+            ("chr1".to_string(), 200),
+            ("chr2".to_string(), 200),
+            ("chr3".to_string(), 200),
+        ],
+        vec![
+            paired_fragment_on_tid(0, 20, 60, 20),
+            paired_fragment_on_tid(1, 20, 60, 20),
+            paired_fragment_on_tid(2, 20, 60, 20),
+        ],
+        Vec::new(),
+        "fcoverage_grouped_summary_three_chr",
+    )?;
+    let out_dir = TempDir::new()?;
+    let gc_path = out_dir.path().join("three_chr_gc_pkg.npz");
+    build_gc_package(&gc_path, 0)?;
+    let scaling_path = out_dir.path().join("three_chr_scaling.tsv");
+    write_scaling_factors(
+        &scaling_path,
+        &[
+            ("chr1", 0, 200, 1.0),
+            ("chr2", 0, 200, 2.0),
+            ("chr3", 0, 200, 3.0),
+        ],
+    )?;
+    let grouped_bed = out_dir.path().join("grouped_summary_three_chr.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 20, 50, "open"),
+            ("chr2", 20, 50, "open"),
+            ("chr3", 20, 50, "open"),
+            ("chr1", 0, 200, "global"),
+            ("chr2", 0, 200, "global"),
+            ("chr3", 0, 200, "global"),
+        ],
+    )?;
+
+    let mut cfg = FCoverageConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1", "chr2", "chr3"]),
+    );
+    cfg.set_output_prefix("testcov");
+    cfg.set_tile_size(1_000);
+    cfg.set_ignore_gap(false);
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::SummaryStatsOnUniqueBases);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        neutralize_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.set_scale_genome(ScaleGenomeArgs {
+        scaling_factors: Some(scaling_path),
+    });
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 60;
+        frag.max_fragment_length = 60;
+    }
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(
+        &out_dir
+            .path()
+            .join("testcov.fcoverage.summary_stats_on_unique_bases.tsv.zst"),
+    )?;
+    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+
+    let mut direct_coverage = vec![0.0_f64; 600];
+    let mut direct_mask = vec![0.0_f64; 600];
+    for (chromosome_offset, scaled_coverage) in [(0_usize, 10.0_f64), (200, 20.0), (400, 30.0)] {
+        for position in 20..80 {
+            direct_coverage[chromosome_offset + position] = scaled_coverage;
+        }
+        for position in 20..50 {
+            direct_mask[chromosome_offset + position] = 1.0;
+        }
+    }
+    let expected_pearson = pearson_r_from_vectors(&direct_coverage, &direct_mask);
+
+    assert_eq!(
+        rows_by_name["open"][0..5]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["0", "90", "0", "90", "90"]
+    );
+    assert_close(rows_by_name["open"][5].parse::<f64>()?, 1800.0, 1e-9);
+    assert_close(rows_by_name["open"][6].parse::<f64>()?, 42000.0, 1e-6);
+    assert_close(rows_by_name["open"][7].parse::<f64>()?, 20.0, 1e-9);
+    assert_close(rows_by_name["open"][8].parse::<f64>()?, 1800.0, 1e-9);
+    assert_close(rows_by_name["open"][9].parse::<f64>()?, 200.0 / 3.0, 1e-6);
+    assert_close(
+        rows_by_name["open"][10].parse::<f64>()?,
+        (200.0_f64 / 3.0_f64).sqrt(),
+        1e-6,
+    );
+    assert_close(
+        rows_by_name["open"][11].parse::<f64>()?,
+        (200.0_f64 / 3.0_f64).sqrt() / 20.0,
+        1e-6,
+    );
+    assert_close(rows_by_name["open"][12].parse::<f64>()?, 1.0, 1e-9);
+
+    assert_eq!(
+        rows_by_name["global"][0..5]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["1", "600", "0", "600", "180"]
+    );
+    assert_close(rows_by_name["global"][5].parse::<f64>()?, 3600.0, 1e-9);
+    assert_close(rows_by_name["global"][6].parse::<f64>()?, 84000.0, 1e-6);
+    assert_close(rows_by_name["global"][7].parse::<f64>()?, 6.0, 1e-9);
+    assert_close(rows_by_name["global"][8].parse::<f64>()?, 3600.0, 1e-9);
+    assert_close(rows_by_name["global"][9].parse::<f64>()?, 104.0, 1e-9);
+    assert_close(
+        rows_by_name["global"][10].parse::<f64>()?,
+        104.0_f64.sqrt(),
+        1e-6,
+    );
+    assert_close(
+        rows_by_name["global"][11].parse::<f64>()?,
+        104.0_f64.sqrt() / 6.0,
+        1e-6,
+    );
+    assert_close(rows_by_name["global"][12].parse::<f64>()?, 0.3, 1e-9);
+
+    let derived_pearson =
+        pearson_r_from_summary_stats_rows(&rows_by_name["global"], &rows_by_name["open"])?;
+    assert_close(derived_pearson, expected_pearson, 1e-6);
 
     Ok(())
 }

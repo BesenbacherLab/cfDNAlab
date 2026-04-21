@@ -6,9 +6,10 @@ mod test_gc_tag_values {
     };
     use rust_htslib::bam::record::{Aux, Record};
 
+    use cfdnalab::shared::base::ZEROISH_F32_TOLERANCE;
     use cfdnalab::shared::gc_tag::{
-        ClassifiedGCTagWeight, GCTagValue, MIN_REASONABLE_GC_WEIGHT, ZEROISH_GC_WEIGHT_TOLERANCE,
-        combine_gc_tag_values, read_gc_tag_from_record,
+        ClassifiedGCTagWeight, GCTagValue, MIN_REASONABLE_GC_WEIGHT, combine_gc_tag_values,
+        read_gc_tag_from_record,
     };
     #[cfg(feature = "cmd_gc_bias")]
     use cfdnalab::shared::interval::Interval;
@@ -65,7 +66,7 @@ mod test_gc_tag_values {
         // Arrange: tiny positive values near zero are snapped to zero.
         let mut rec_tiny = Record::new();
         rec_tiny
-            .push_aux(b"GC", Aux::Float(ZEROISH_GC_WEIGHT_TOLERANCE))
+            .push_aux(b"GC", Aux::Float(ZEROISH_F32_TOLERANCE))
             .expect("set GC tag");
         let tiny = read_gc_tag_from_record(&rec_tiny, b"GC");
         assert_eq!(tiny.weight, Some(0.0));
@@ -75,7 +76,7 @@ mod test_gc_tag_values {
         // Arrange: the zero-snap window is symmetric around zero.
         let mut rec_tiny_negative = Record::new();
         rec_tiny_negative
-            .push_aux(b"GC", Aux::Float(-ZEROISH_GC_WEIGHT_TOLERANCE))
+            .push_aux(b"GC", Aux::Float(-ZEROISH_F32_TOLERANCE))
             .expect("set GC tag");
         let tiny_negative = read_gc_tag_from_record(&rec_tiny_negative, b"GC");
         assert_eq!(tiny_negative.weight, Some(0.0));
@@ -237,12 +238,12 @@ mod test_gc_tag_values {
             ("negative_below_snap_window_is_unusable", -3.0_f64, None),
             (
                 "tiny_negative_becomes_zero",
-                -(ZEROISH_GC_WEIGHT_TOLERANCE as f64),
+                -(ZEROISH_F32_TOLERANCE as f64),
                 Some(0.0_f64),
             ),
             (
                 "tiny_positive_becomes_zero",
-                ZEROISH_GC_WEIGHT_TOLERANCE as f64,
+                ZEROISH_F32_TOLERANCE as f64,
                 Some(0.0_f64),
             ),
             (

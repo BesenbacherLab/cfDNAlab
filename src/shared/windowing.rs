@@ -242,7 +242,8 @@ pub fn write_group_index_with_blacklist_tsv(
     entries.sort_unstable_by_key(|(idx, _)| *idx);
 
     if !include_blacklisted_fraction {
-        writeln!(writer, "group_idx\tgroup_name").context("writing grouped group-index TSV header")?;
+        writeln!(writer, "group_idx\tgroup_name")
+            .context("writing grouped group-index TSV header")?;
         for (group_idx, group_name) in entries {
             let group_name = group_name.replace('\t', "    ").replace('\n', " ");
             writeln!(writer, "{group_idx}\t{group_name}")

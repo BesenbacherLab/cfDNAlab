@@ -1,3 +1,4 @@
+use crate::shared::base::ZEROISH_F32_TOLERANCE;
 use anyhow::{Result, bail};
 use rust_htslib::bam::record::{Aux, Record};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -16,9 +17,6 @@ pub struct GCTagValue {
     /// True when the tag value was outside the supported positive range.
     pub was_out_of_range: bool,
 }
-
-/// Values at or below this threshold are treated as exact zero.
-pub const ZEROISH_GC_WEIGHT_TOLERANCE: f32 = 2.0 * f32::EPSILON;
 
 /// Smallest supported positive GC weight.
 pub const MIN_REASONABLE_GC_WEIGHT: f32 = 1.0e-3;
@@ -66,14 +64,14 @@ fn warn_extreme_gc_weight(v: f32) {
 #[inline]
 fn is_gc_weight_out_of_range(v: f32) -> bool {
     (!v.is_finite() && !v.is_nan())
-        || (v < -ZEROISH_GC_WEIGHT_TOLERANCE)
-        || (v > ZEROISH_GC_WEIGHT_TOLERANCE
+        || (v < -ZEROISH_F32_TOLERANCE)
+        || (v > ZEROISH_F32_TOLERANCE
             && (v < MIN_REASONABLE_GC_WEIGHT || v > MAX_REASONABLE_GC_WEIGHT))
 }
 
 #[inline]
 fn is_zeroish_gc_weight(weight: Option<f32>) -> bool {
-    matches!(weight, Some(value) if value.abs() <= ZEROISH_GC_WEIGHT_TOLERANCE)
+    matches!(weight, Some(value) if value.abs() <= ZEROISH_F32_TOLERANCE)
 }
 
 /// Describe how unusable GC information is handled for user-facing logs.
@@ -89,9 +87,9 @@ pub fn gc_failure_action_description(neutralize_invalid_gc: bool) -> &'static st
 ///
 /// Rules:
 /// - `NaN` -> unusable, not counted as out-of-range
-/// - `abs(v) <= 2 * f32::EPSILON` -> exact zero
-/// - negative values below `-2 * f32::EPSILON` -> unusable
-/// - positive values in `(2 * eps, 1e-3)` -> unusable
+/// - `abs(v) <= ZEROISH_F32_TOLERANCE` -> exact zero
+/// - negative values below `-ZEROISH_F32_TOLERANCE` -> unusable
+/// - positive values in `(ZEROISH_F32_TOLERANCE, 1e-3)` -> unusable
 /// - positive values in `[1e-3, 1e3]` -> usable
 /// - positive values above `1e3` and infinities -> unusable
 pub fn sanitize_gc_weight(v: f64) -> SanitizedGCWeight {
@@ -103,10 +101,10 @@ pub fn sanitize_gc_weight(v: f64) -> SanitizedGCWeight {
     if !v.is_finite() {
         return SanitizedGCWeight::Unusable { out_of_range: true };
     }
-    if v.abs() <= ZEROISH_GC_WEIGHT_TOLERANCE as f64 {
+    if v.abs() <= ZEROISH_F32_TOLERANCE as f64 {
         return SanitizedGCWeight::Usable(0.0);
     }
-    if v < -(ZEROISH_GC_WEIGHT_TOLERANCE as f64) {
+    if v < -(ZEROISH_F32_TOLERANCE as f64) {
         return SanitizedGCWeight::Unusable { out_of_range: true };
     }
     if v < MIN_REASONABLE_GC_WEIGHT as f64 || v > MAX_REASONABLE_GC_WEIGHT as f64 {

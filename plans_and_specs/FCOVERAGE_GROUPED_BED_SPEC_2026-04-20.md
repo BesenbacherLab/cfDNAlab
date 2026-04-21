@@ -12,7 +12,7 @@ The main goals are:
 - define lightweight and summary aggregate modes for grouped BED under both site-weighted and
   unique-base semantics
 - define a `summary-stats` aggregate mode that also works for `--by-size` and `--by-bed`
-- keep grouped behavior exact for binary-mask correlation workflows
+- keep grouped behavior exact for downstream binary-mask correlation workflows
 - keep grouped implementation aligned with the existing `fcoverage` tile and reducer model
 - avoid cluttering `fcoverage` docs with modes that are not actually useful here
 
@@ -21,14 +21,13 @@ Initial scope includes:
 - grouped aggregate outputs
 - grouped sidecar row metadata
 - grouped lightweight aggregate modes under unique-base semantics
-- an exact grouped summary-statistics mode for downstream analysis, including Pearson correlation to
-  binary masks
+- an exact grouped summary-statistics mode for downstream analysis
 - matching summary-statistics support for `--by-size` and `--by-bed`
 
 Explicitly out of scope for this spec:
 
 - grouped positional outputs
-- a direct `cfdna correlation` command
+- a direct `cfdna correlation` command or helper script
 - any "outside all groups" synthetic mode
 - changing existing grouped-BED semantics in other commands
 
@@ -69,8 +68,8 @@ Definitions:
 - `*-on-unique-bases` grouped actions
   - same-group overlaps and touches are merged before counting
   - grouped rows represent unique bases within each group
-  - these are the only grouped actions that support exact binary-mask interpretation and Pearson
-    correlation to a universe row
+  - these are the only grouped actions that support exact binary-mask interpretation for
+    downstream correlation against a `global` row
 
 ### Global is just another group
 
@@ -89,10 +88,10 @@ If the grouped BED contains full-chromosome windows assigned to a group such as 
 This keeps the semantics auditable and removes any risk of drift between "global" and
 "non-global" counting.
 
-In grouped summary outputs, Pearson correlation is only meaningful when:
+In grouped summary outputs, downstream binary-mask correlation is only meaningful when:
 
 - the selected action is `summary-stats-on-unique-bases`
-- one grouped row is designated as the full analysis universe
+- one grouped row is named `global` and represents the full analysis background
 
 ### Why grouped positional output is out of scope
 
@@ -174,24 +173,6 @@ Invalid combinations must fail with direct error messages:
 - `--per-window total-on-unique-bases` without `--by-grouped-bed`
 - `--per-window summary-stats-on-unique-bases` without `--by-grouped-bed`
 
-### Universe row selection for Pearson
-
-If grouped `summary-stats` should include Pearson correlation to a binary group mask, the run must
-explicitly identify which grouped row is the full analysis universe.
-
-Working CLI shape:
-
-```text
---summary-stats-universe-group <group_name>
-```
-
-Rules:
-
-- only valid with `--by-grouped-bed --per-window summary-stats-on-unique-bases`
-- Pearson values are derived from the raw stats written for that designated group row
-- if the option is omitted, the run still writes full summary stats but does not compute valid
-  Pearson values
-
 ## Summary-stats as a shared aggregate mode
 
 ### Purpose
@@ -222,13 +203,13 @@ metrics without revisiting the coverage track:
 - `eligible_positions`
 - `nonzero_positions`
 - `coverage_sum`
-- `coverage_sumsq`
+- `coverage_sum_of_squares`
 
 Definitions:
 
 - `nonzero_positions` counts eligible positions with final coverage strictly greater than zero
 - `coverage_sum = Σx`
-- `coverage_sumsq = Σx²`
+- `coverage_sum_of_squares = Σx²`
 
 ### Derived statistics required
 
@@ -239,16 +220,16 @@ in the final output:
 - `total_coverage`
 - `variance_coverage`
 - `sd_coverage`
-- `cv_coverage`
+- `coefficient_of_variation_coverage`
 - `covered_fraction`
 
 Definitions:
 
 - `mean_coverage = coverage_sum / eligible_positions`
 - `total_coverage = coverage_sum`
-- `variance_coverage = coverage_sumsq / eligible_positions - mean_coverage^2`
+- `variance_coverage = coverage_sum_of_squares / eligible_positions - mean_coverage^2`
 - `sd_coverage = sqrt(variance_coverage)`
-- `cv_coverage = sd_coverage / mean_coverage`
+- `coefficient_of_variation_coverage = sd_coverage / mean_coverage`
 - `covered_fraction = nonzero_positions / eligible_positions`
 
 Numerics:
@@ -261,7 +242,7 @@ Numerics:
 - when a derived metric cannot be computed, it should be `NaN`
 - when `eligible_positions == 0`, derived coverage metrics should be `NaN` except
   `total_coverage`, which stays `0.0`
-- when `mean_coverage == 0`, `cv_coverage` should be `NaN`
+- when `mean_coverage == 0`, `coefficient_of_variation_coverage` should be `NaN`
 
 Clamping rules:
 
@@ -270,23 +251,22 @@ Clamping rules:
   `nonzero_positions`
 - do not clamp nonzero finite values to one another, only to exact zero
 
-### Pearson correlation in grouped summary-stats
+### Downstream correlation from grouped summary-stats
 
-Grouped `summary-stats` may additionally include:
+Grouped `summary-stats` should not write a Pearson column.
 
-- `pearson_r_to_universe_binary_mask`
-
-This column is valid only when:
+Instead, downstream tools can derive Pearson correlation from the raw stats already present in the
+output when:
 
 - the selected action is `summary-stats-on-unique-bases`
-- `--summary-stats-universe-group` identifies a row that represents the full analysis universe
+- one grouped row is named `global` and represents the full analysis background
 
-The column must be computed from the raw stats already present in the final output:
+Use:
 
-- from the designated universe row:
+- from the `global` row:
   - `n = eligible_positions`
   - `S = coverage_sum`
-  - `Q = coverage_sumsq`
+  - `Q = coverage_sum_of_squares`
 - from each target grouped row:
   - `n1 = eligible_positions`
   - `S1 = coverage_sum`
@@ -297,13 +277,8 @@ Then:
 r = (n*S1 - S*n1) / sqrt((n*Q - S^2) * (n*n1 - n1^2))
 ```
 
-Behavior:
-
-- if the selected action is plain `summary-stats`, `pearson_r_to_universe_binary_mask` must be
-  `NaN`
-- if no universe row is designated, `pearson_r_to_universe_binary_mask` must be `NaN`
-- the universe row itself should get `NaN`, because the binary mask is all ones and the variance is
-  zero
+This is intentionally downstream work so `fcoverage` stays focused on coverage summaries rather
+than mixing in one specialized correlation output.
 
 ## Grouped BED semantics
 
@@ -332,8 +307,8 @@ That means:
 - merged segments inside one group are counted once
 - same-group overlaps must not double-count coverage or eligible positions
 
-These are the only grouped actions where the grouped row means unique bases and where Pearson to a
-binary mask is valid.
+These are the only grouped actions where the grouped row means unique bases and where downstream
+Pearson to a binary mask is valid.
 
 Implementation note:
 
@@ -465,7 +440,7 @@ mode semantics.
 Header:
 
 ```text
-chromosome	start	end	span_positions	blacklisted_positions	eligible_positions	nonzero_positions	coverage_sum	coverage_sumsq	mean_coverage	total_coverage	variance_coverage	sd_coverage	cv_coverage	covered_fraction
+chromosome	start	end	span_positions	blacklisted_positions	eligible_positions	nonzero_positions	coverage_sum	coverage_sum_of_squares	mean_coverage	total_coverage	variance_coverage	sd_coverage	coefficient_of_variation_coverage	covered_fraction
 ```
 
 ### Grouped `summary-stats`
@@ -473,13 +448,12 @@ chromosome	start	end	span_positions	blacklisted_positions	eligible_positions	non
 Header:
 
 ```text
-group_idx	span_positions	blacklisted_positions	eligible_positions	nonzero_positions	coverage_sum	coverage_sumsq	mean_coverage	total_coverage	variance_coverage	sd_coverage	cv_coverage	covered_fraction	pearson_r_to_universe_binary_mask
+group_idx	span_positions	blacklisted_positions	eligible_positions	nonzero_positions	coverage_sum	coverage_sum_of_squares	mean_coverage	total_coverage	variance_coverage	sd_coverage	coefficient_of_variation_coverage	covered_fraction
 ```
 
-For plain grouped `summary-stats`, `pearson_r_to_universe_binary_mask` must be `NaN`.
-
-For grouped `summary-stats-on-unique-bases`, the global row does not get special columns. It is
-just the row for whichever grouped BED label represents the full analysis universe.
+For grouped `summary-stats-on-unique-bases`, the `global` row is still just the row for whichever
+grouped BED label represents the full analysis background. Downstream tools may then derive
+binary-mask Pearson from the raw summary columns when needed.
 
 ### Group index sidecar
 
@@ -557,7 +531,7 @@ Per-segment counting must retain enough information to compute:
 
 - `nonzero_positions`
 - `coverage_sum`
-- `coverage_sumsq`
+- `coverage_sum_of_squares`
 - `blacklisted_positions`
 - `eligible_positions`
 
@@ -575,11 +549,9 @@ unique-base segments before those raw statistics are accumulated.
 The implementation should error if:
 
 - the grouped BED has no valid rows on selected chromosomes
-- `--summary-stats-universe-group` is requested outside grouped `summary-stats-on-unique-bases`
-  mode
 - grouped positional output is requested
 - the reducer sees duplicate internal segment ids within one chromosome mapping
-- a grouped row expected from the BED metadata is missing from the final output universe
+- a grouped row expected from the BED metadata is missing from the final grouped output
 
 It should not error merely because:
 
@@ -602,8 +574,8 @@ Website docs should only add one compact subsection to the fragment coverage gui
 
 - grouped and non-grouped `summary-stats`
 - one short example with a synthetic `global` group
-- one short note explaining that Pearson is only valid for `summary-stats-on-unique-bases` with a
-  designated universe row
+- one short note explaining that downstream correlation is only meaningful for
+  `summary-stats-on-unique-bases` with a `global` row
 
 Do not create a separate long-form guide unless a later command consumes this output directly.
 
@@ -618,9 +590,9 @@ Tests must cover:
 - grouped average denominator with blacklist masking
 - grouped total over unique bases
 - grouped reduction across tile boundaries
-- exact `coverage_sum`, `coverage_sumsq`, and `nonzero_positions` for `summary-stats`
+- exact `coverage_sum`, `coverage_sum_of_squares`, and `nonzero_positions` for `summary-stats`
 - exact derived statistics from raw summary-stats output
-- Pearson derivation from the designated universe row in grouped `summary-stats-on-unique-bases`
+- downstream Pearson derivation from the `global` row in grouped `summary-stats-on-unique-bases`
 - NaN behavior for undefined derived metrics
 - close-to-zero clamping for floating-point derived metrics only
 - distinct filenames for plain grouped outputs versus `*-on-unique-bases` outputs

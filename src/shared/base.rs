@@ -1,6 +1,50 @@
 /// The 5 bases: `A, C, G, T, N`
 pub const BASES: [char; 5] = ['A', 'C', 'G', 'T', 'N'];
 
+/// Shared zeroish tolerance for values that originate from `f32` arithmetic.
+pub const ZEROISH_F32_TOLERANCE: f32 = 2.0 * f32::EPSILON;
+
+/// Shared zeroish tolerance for values that originate from `f64` arithmetic.
+pub const ZEROISH_F64_TOLERANCE: f64 = 2.0 * f64::EPSILON;
+
+/// Clamp tiny finite `f32` values to exact zero using the shared `f32` tolerance.
+///
+/// This keeps reported derived statistics stable when arithmetic leaves behind
+/// very small positive or negative roundoff residues.
+#[inline]
+pub fn clamp_close_to_zero_f32(value: f32) -> f32 {
+    if value.is_finite() && value.abs() <= ZEROISH_F32_TOLERANCE {
+        0.0
+    } else {
+        value
+    }
+}
+
+/// Clamp tiny finite `f64` values to exact zero using the shared `f64` tolerance.
+///
+/// This is the right helper when the value itself originates from `f64` arithmetic.
+#[inline]
+pub fn clamp_close_to_zero_f64(value: f64) -> f64 {
+    if value.is_finite() && value.abs() <= ZEROISH_F64_TOLERANCE {
+        0.0
+    } else {
+        value
+    }
+}
+
+/// Clamp tiny finite `f64` values to exact zero using the shared `f32` tolerance.
+///
+/// Use this when the reported `f64` value is derived from `f32`-originating coverage and should
+/// therefore keep the same zeroish threshold as the underlying coverage representation.
+#[inline]
+pub fn clamp_close_to_zero_f64_with_f32_threshold(value: f64) -> f64 {
+    if value.is_finite() && value.abs() <= ZEROISH_F32_TOLERANCE as f64 {
+        0.0
+    } else {
+        value
+    }
+}
+
 /// Encode a single nucleotide into its base‑5 digit.
 ///
 /// - A or a -> 0  

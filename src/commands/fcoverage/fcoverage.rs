@@ -1,15 +1,14 @@
 use crate::commands::fcoverage::config::FCoverageConfig;
-use crate::commands::fcoverage::reducer::{
-    reduce_aggregates_by_size_with_cross_index_for_chr, reduce_bed_with_cross_index_for_chr,
-};
 use crate::commands::fcoverage::tiling::{
-    adapt_fetch_to_extreme_windows, clip_interval_to_core_and_localize,
-    concat_aligned_size_tile_finals, coverage_sum_and_counts, finalize_value,
-    merge_positional_tiles,
+    adapt_fetch_to_extreme_windows, build_summary_prefixes, clip_interval_to_core_and_localize,
+    coverage_sum_and_counts, coverage_summary_and_counts, finalize_value, merge_positional_tiles,
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::{
-    emit_bedgraph_runs, emit_windowed_runs, write_final_row,
+    derive_summary_stats, write_bed_aggregate_output, write_bedgraph_runs,
+    write_windowed_runs,
+    write_final_row, write_grouped_bed_aggregate_output, write_size_aggregate_output,
+    write_summary_stats_row,
 };
 use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
 use crate::commands::gc_bias::counting::build_gc_prefixes;
@@ -29,10 +28,9 @@ use crate::shared::tiled_run::{
     Tile, TileMode, TileWindowSpan, build_tiles, make_temp_dir, overlapping_windows_for_tile,
     precompute_tile_window_spans,
 };
-use crate::shared::writers::open_zstd_auto_writer;
 use crate::{
     commands::cli_common::{
-        WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
+        DistributionWindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
         resolve_chromosomes_and_contigs,
     },
     commands::counters::FCoverageCounters,
@@ -41,7 +39,13 @@ use crate::{
         TILE_DOUBLE_COUNT_NOTE, print_fragment_run_statistics,
     },
     shared::{
-        bam::create_chromosome_reader, bed::load_windows_from_bed, thread_pool::init_global_pool,
+        bam::create_chromosome_reader,
+        bed::{
+            GroupedCoverageLayout, build_grouped_coverage_layout, load_grouped_windows_from_bed,
+            load_windows_from_bed, write_group_idx_to_name_tsv,
+        },
+        thread_pool::init_global_pool,
+        writers::open_zstd_auto_writer,
     },
 };
 use anyhow::{Context, Result, bail};
@@ -139,39 +143,108 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     }
     let blacklist_map = load_blacklist_map(opt.blacklist.as_ref(), 1, 0, &chromosomes)?;
 
-    // Load windows from BED file
-    let windows_map = match &window_opt {
-        WindowSpec::Bed(bed) => {
+    let grouped_windowed = matches!(window_opt, DistributionWindowSpec::GroupedBed(_));
+    let unique_base_grouped = opt.per_window.is_unique_base_grouped_action();
+    match (&window_opt, opt.per_window) {
+        (
+            DistributionWindowSpec::Size(_),
+            CoverageWindowAction::OnlyIncludeThesePositionsUnique
+            | CoverageWindowAction::OnlyIncludeThesePositionsIndexed
+            | CoverageWindowAction::AverageOnUniqueBases
+            | CoverageWindowAction::TotalOnUniqueBases
+            | CoverageWindowAction::SummaryStatsOnUniqueBases,
+        ) => {
+            bail!(
+                "in --by-size mode, --per-window can only be 'average', 'total', or 'summary-stats'"
+            );
+        }
+        (
+            DistributionWindowSpec::Bed(_),
+            CoverageWindowAction::AverageOnUniqueBases
+            | CoverageWindowAction::TotalOnUniqueBases
+            | CoverageWindowAction::SummaryStatsOnUniqueBases,
+        ) => {
+            bail!(
+                "'*-on-unique-bases' actions require --by-grouped-bed because they change grouped row semantics"
+            );
+        }
+        (
+            DistributionWindowSpec::GroupedBed(_),
+            CoverageWindowAction::OnlyIncludeThesePositionsUnique
+            | CoverageWindowAction::OnlyIncludeThesePositionsIndexed,
+        ) => {
+            bail!("grouped BED supports only aggregate outputs in fcoverage");
+        }
+        (DistributionWindowSpec::Global, CoverageWindowAction::Total) => {
+            bail!(
+                "without windowing, --per-window total is not supported because fcoverage writes positional coverage; use --by-size, --by-bed, or --by-grouped-bed"
+            );
+        }
+        (
+            DistributionWindowSpec::Global,
+            CoverageWindowAction::SummaryStats
+            | CoverageWindowAction::AverageOnUniqueBases
+            | CoverageWindowAction::TotalOnUniqueBases
+            | CoverageWindowAction::SummaryStatsOnUniqueBases,
+        ) => {
+            bail!("the requested --per-window mode requires windowed or grouped inputs");
+        }
+        _ => {}
+    }
+    // Load the selected windows
+    let mut windows_map: Option<FxHashMap<String, crate::shared::bed::Windows>> = None;
+    let mut grouped_layout: Option<GroupedCoverageLayout> = None;
+
+    match &window_opt {
+        DistributionWindowSpec::Bed(bed) => {
             info!(target: COMMAND_TARGET, "Loading window coordinates");
             let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
             if matches!(
                 opt.per_window,
                 CoverageWindowAction::OnlyIncludeThesePositionsUnique
             ) {
-                // Merge in-place to avoid double memory-usage
+                // Merge in-place to avoid double memory usage
                 info!(target: COMMAND_TARGET, "Merging overlapping/touching windows");
                 // Take ownership so we can remove entries by chromosome
-                let mut wds_owned: FxHashMap<String, crate::shared::bed::Windows> = wds;
-                let mut out: FxHashMap<String, crate::shared::bed::Windows> =
+                let mut wds_owned = wds;
+                let mut flattened_windows =
                     FxHashMap::with_capacity_and_hasher(wds_owned.len(), Default::default());
-                let mut next_idx: u64 = 0;
 
-                // Use the user-provided `chromosomes` order to assign indices deterministically
-                for chr in &chromosomes {
-                    if let Some(ws) = wds_owned.remove(chr) {
+                let mut next_idx: u64 = 0;
+                // Use the user-provided chromosome order to assign indices deterministically
+                for chromosome in &chromosomes {
+                    if let Some(windows_for_chr) = wds_owned.remove(chromosome) {
                         // Flatten in-place
-                        let (flat, next) = ws.into_flattened_reindexed(next_idx);
+                        let (flattened, next) = windows_for_chr.into_flattened_reindexed(next_idx);
                         next_idx = next;
-                        out.insert(chr.clone(), flat);
+                        flattened_windows.insert(chromosome.clone(), flattened);
                     }
                 }
-                Some(out)
+                windows_map = Some(flattened_windows);
             } else {
-                Some(wds)
+                windows_map = Some(wds);
             }
         }
-        _ => None,
-    };
+        DistributionWindowSpec::GroupedBed(bed) => {
+            info!(target: COMMAND_TARGET, "Loading grouped window coordinates");
+            let (grouped_windows_by_chr, group_idx_to_name) =
+                load_grouped_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            grouped_layout = Some(build_grouped_coverage_layout(
+                &grouped_windows_by_chr,
+                &group_idx_to_name,
+                &chromosomes,
+                unique_base_grouped,
+            )?);
+            windows_map = Some(
+                grouped_layout
+                    .as_ref()
+                    .expect("grouped coverage layout must exist")
+                    .segments_by_chr
+                    .clone(),
+            );
+        }
+        DistributionWindowSpec::Size(_) | DistributionWindowSpec::Global => {}
+    }
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
@@ -198,30 +271,24 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     )?;
 
     // Decide mode once
-    let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
+    let windowed = matches!(
+        window_opt,
+        DistributionWindowSpec::Bed(_)
+            | DistributionWindowSpec::Size(_)
+            | DistributionWindowSpec::GroupedBed(_)
+    );
     let masked = opt.blacklist.is_some();
     let has_scaling_or_correction = opt.scale_genome.scaling_factors.is_some()
         || opt.gc.gc_file.is_some()
         || opt.gc.gc_tag.is_some()
         || opt.normalize_by_length;
 
-    // Some actions cannot be used with `--by-size`
-    if matches!(window_opt, WindowSpec::Size(_))
-        && matches!(
-            opt.per_window,
-            CoverageWindowAction::OnlyIncludeThesePositionsUnique
-                | CoverageWindowAction::OnlyIncludeThesePositionsIndexed
-        )
-    {
-        anyhow::bail!("in --by-size mode, --per-window can only be 'average' or 'total'");
-    }
-
     // Build temporary directory
     let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
 
     // Window size when --by-size (otherwise None)
     let by_size_bp: Option<u64> = match &window_opt {
-        WindowSpec::Size(bp) => Some(*bp),
+        DistributionWindowSpec::Size(bp) => Some(*bp),
         _ => None,
     };
 
@@ -269,13 +336,21 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
         length_norm_prefix,
         "fcoverage.per_position_per_window.tsv.zst",
     ]);
-    let final_avg_name = dot_join(&[prefix, length_norm_prefix, "fcoverage.avg.tsv.zst"]);
-    let final_total_name = dot_join(&[prefix, length_norm_prefix, "fcoverage.total.tsv.zst"]);
+    let final_aggregate_name = dot_join(&[
+        prefix,
+        length_norm_prefix,
+        &format!("fcoverage.{}.tsv.zst", opt.per_window.action_file_stem()),
+    ]);
 
     // Get decimals to use
     let decimals_to_use: i32 = if windowed {
         match opt.per_window {
-            CoverageWindowAction::Average | CoverageWindowAction::Total => opt.decimals as i32,
+            CoverageWindowAction::Average
+            | CoverageWindowAction::Total
+            | CoverageWindowAction::SummaryStats
+            | CoverageWindowAction::AverageOnUniqueBases
+            | CoverageWindowAction::TotalOnUniqueBases
+            | CoverageWindowAction::SummaryStatsOnUniqueBases => opt.decimals as i32,
             CoverageWindowAction::OnlyIncludeThesePositionsUnique
             | CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
                 if has_scaling_or_correction {
@@ -328,9 +403,12 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
 
-            let counter = if matches!(window_opt, WindowSpec::Bed(_))
-                && windows_chr.map_or(true, |windows| windows.is_empty())
+            let counter = if matches!(
+                window_opt,
+                DistributionWindowSpec::Bed(_) | DistributionWindowSpec::GroupedBed(_)
+            ) && windows_chr.map_or(true, |windows| windows.is_empty())
             {
+                // Skip this no-window tile and just return an empty counter
                 FCoverageCounters::default()
             } else {
                 // Decide tile mode and filename
@@ -342,7 +420,12 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                         CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
                             (positional_prefix, "bedgraph.zst")
                         }
-                        CoverageWindowAction::Average | CoverageWindowAction::Total => {
+                        CoverageWindowAction::Average
+                        | CoverageWindowAction::Total
+                        | CoverageWindowAction::SummaryStats
+                        | CoverageWindowAction::AverageOnUniqueBases
+                        | CoverageWindowAction::TotalOnUniqueBases
+                        | CoverageWindowAction::SummaryStatsOnUniqueBases => {
                             (partials_prefix, "tsv.zst")
                         }
                     }
@@ -387,7 +470,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                 } else {
                     match (&window_opt, opt.per_window) {
                         (
-                            WindowSpec::Bed(_),
+                            DistributionWindowSpec::Bed(_),
                             CoverageWindowAction::OnlyIncludeThesePositionsUnique,
                         ) => TileMode::Positional {
                             windows: windows_chr,
@@ -395,7 +478,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                             indexed: false,
                         },
                         (
-                            WindowSpec::Bed(_),
+                            DistributionWindowSpec::Bed(_),
                             CoverageWindowAction::OnlyIncludeThesePositionsIndexed,
                         ) => TileMode::Positional {
                             windows: windows_chr,
@@ -403,8 +486,13 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                             indexed: true,
                         },
                         (
-                            WindowSpec::Bed(_),
-                            CoverageWindowAction::Average | CoverageWindowAction::Total,
+                            DistributionWindowSpec::Bed(_) | DistributionWindowSpec::GroupedBed(_),
+                            CoverageWindowAction::Average
+                            | CoverageWindowAction::Total
+                            | CoverageWindowAction::SummaryStats
+                            | CoverageWindowAction::AverageOnUniqueBases
+                            | CoverageWindowAction::TotalOnUniqueBases
+                            | CoverageWindowAction::SummaryStatsOnUniqueBases,
                         ) => TileMode::AggregatesByBed {
                             windows: windows_chr.context(
                                 "BED aggregate tile reached processing without any windows",
@@ -414,8 +502,10 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                             cross_idx_out,
                         },
                         (
-                            WindowSpec::Size(size),
-                            CoverageWindowAction::Average | CoverageWindowAction::Total,
+                            DistributionWindowSpec::Size(size),
+                            CoverageWindowAction::Average
+                            | CoverageWindowAction::Total
+                            | CoverageWindowAction::SummaryStats,
                         ) => TileMode::AggregatesBySize {
                             window_bp: *size,
                             masked,
@@ -500,108 +590,70 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                     final_tsv_pos_name.as_str(),
                 )?
             }
-            CoverageWindowAction::Average | CoverageWindowAction::Total => {
-                // Per-chrom reduce of partials into final aggregates
-                let final_path = opt.ioc.output_dir.join(match opt.per_window {
-                    CoverageWindowAction::Average => final_avg_name.as_str(),
-                    CoverageWindowAction::Total => final_total_name.as_str(),
-                    _ => bail!("unexpected per-window mode for aggregate fcoverage output"),
-                });
+            CoverageWindowAction::Average
+            | CoverageWindowAction::Total
+            | CoverageWindowAction::SummaryStats
+            | CoverageWindowAction::AverageOnUniqueBases
+            | CoverageWindowAction::TotalOnUniqueBases
+            | CoverageWindowAction::SummaryStatsOnUniqueBases => {
+                let final_path = opt.ioc.output_dir.join(final_aggregate_name.as_str());
 
-                // Header value-column name
-                let value_col = match opt.per_window {
-                    CoverageWindowAction::Average => "avg_coverage",
-                    CoverageWindowAction::Total => "total_coverage",
-                    _ => bail!("unexpected per-window mode for aggregate fcoverage output"),
-                };
-
-                let header = format!(
-                    "chromosome\tstart\tend\t{}\tblacklisted_positions",
-                    value_col
-                );
-
-                // Reduce by window source
                 match &window_opt {
-                    WindowSpec::Bed(_) => {
-                        let mut w =
-                            open_zstd_auto_writer(&final_path, 3, Some(opt.ioc.n_threads as u32))?;
-
-                        // Write header
-                        writeln!(w, "{}", header)?;
-
-                        let win_map = windows_map
+                    DistributionWindowSpec::Bed(_) => write_bed_aggregate_output(
+                        &final_path,
+                        &temp_dir,
+                        partials_prefix,
+                        windows_map
                             .as_ref()
-                            .context("BED aggregate reduction requires loaded windows")?;
-                        for chr in &chromosomes {
-                            if let Some(wchr) = win_map.get(chr) {
-                                reduce_bed_with_cross_index_for_chr(
-                                    chr,
-                                    &temp_dir,
-                                    partials_prefix,
-                                    wchr.as_slice(),
-                                    masked,
-                                    opt.per_window,
-                                    decimals_to_use,
-                                    &mut w,
-                                )?;
-                            }
-                        }
-                        w.flush()?;
+                            .context("BED aggregate reduction requires loaded windows")?,
+                        &chromosomes,
+                        masked,
+                        opt.per_window,
+                        decimals_to_use,
+                        opt.ioc.n_threads,
+                    )?,
+                    DistributionWindowSpec::GroupedBed(_) => write_grouped_bed_aggregate_output(
+                        &final_path,
+                        &temp_dir,
+                        partials_prefix,
+                        grouped_layout
+                            .as_ref()
+                            .context("grouped aggregate reduction requires grouped layout")?,
+                        &chromosomes,
+                        opt.per_window,
+                        decimals_to_use,
+                        opt.ioc.n_threads,
+                    )?,
+                    DistributionWindowSpec::Size(_) => write_size_aggregate_output(
+                        &final_path,
+                        &temp_dir,
+                        partials_prefix,
+                        finals_prefix,
+                        &chromosomes,
+                        &contigs,
+                        masked,
+                        opt.per_window,
+                        decimals_to_use,
+                        opt.ioc.n_threads,
+                        tile_and_window_boundaries_align,
+                    )?,
+                    DistributionWindowSpec::Global => {
+                        bail!("unexpected global aggregate path in windowed fcoverage output")
                     }
-                    WindowSpec::Size(_) => {
-                        if tile_and_window_boundaries_align {
-                            let _ = concat_aligned_size_tile_finals(
-                                &temp_dir,
-                                &opt.ioc.output_dir,
-                                &chromosomes,
-                                finals_prefix,
-                                match opt.per_window {
-                                    CoverageWindowAction::Average => final_avg_name.as_str(),
-                                    CoverageWindowAction::Total => final_total_name.as_str(),
-                                    _ => {
-                                        bail!(
-                                            "unexpected per-window mode for aligned aggregate fcoverage output"
-                                        )
-                                    }
-                                },
-                                &header,
-                            )?;
-                        } else {
-                            let mut w = open_zstd_auto_writer(
-                                &final_path,
-                                3,
-                                Some(opt.ioc.n_threads as u32),
-                            )?;
+                }
 
-                            // Write header
-                            writeln!(w, "{}", header)?;
-
-                            for chr in &chromosomes {
-                                let chrom_len = contigs
-                                    .contigs
-                                    .get(chr)
-                                    .map(|&(_, len)| len as u64)
-                                    .ok_or_else(|| {
-                                        anyhow::anyhow!(
-                                            "Chromosome '{}' not found in contig map",
-                                            chr
-                                        )
-                                    })?;
-                                reduce_aggregates_by_size_with_cross_index_for_chr(
-                                    chr,
-                                    &temp_dir,
-                                    partials_prefix,
-                                    masked,
-                                    opt.per_window,
-                                    chrom_len,
-                                    decimals_to_use,
-                                    &mut w,
-                                )?;
-                            }
-                            w.flush()?;
-                        }
-                    }
-                    _ => bail!("unexpected window specification for aggregate fcoverage output"),
+                if grouped_windowed {
+                    let group_index_path = opt
+                        .ioc
+                        .output_dir
+                        .join(dot_join(&[prefix, "group_index.tsv"]));
+                    write_group_idx_to_name_tsv(
+                        group_index_path,
+                        &grouped_layout
+                            .as_ref()
+                            .context("grouped outputs require group index metadata")?
+                            .group_idx_to_name,
+                    )?;
                 }
 
                 final_path
@@ -869,7 +921,7 @@ fn process_tile(
             match windows {
                 None => {
                     // Whole positional coverage for the tile core
-                    emit_bedgraph_runs(
+                    write_bedgraph_runs(
                         &tile.chr,
                         cov,
                         mask,
@@ -901,7 +953,7 @@ fn process_tile(
                         };
 
                         if indexed {
-                            emit_windowed_runs(
+                            write_windowed_runs(
                                 &tile.chr,
                                 cov,
                                 mask,
@@ -914,7 +966,7 @@ fn process_tile(
                                 &mut w,
                             )?;
                         } else {
-                            emit_windowed_runs(
+                            write_windowed_runs(
                                 &tile.chr,
                                 cov,
                                 mask,
@@ -942,7 +994,7 @@ fn process_tile(
         } => {
             // Add blacklist (clipped) and build indexes once
             add_clipped_blacklist_to_cp(&mut cp, tile, masked, blacklist_chr)?;
-            cp.build_indexes(true)?;
+            cp.build_indexes(false)?;
 
             // Borrow indexes and mask once
             let psum_all = cp
@@ -951,6 +1003,12 @@ fn process_tile(
             let psum_unmasked = cp.psum_unmasked_ref();
             let psum_cnt_unmasked = cp.psum_unmasked_count_ref();
             let mask: Option<&[u8]> = cp.blacklist_mask();
+            let wants_summary_stats = opt.per_window.is_summary_stats();
+            let summary_prefixes = if wants_summary_stats {
+                Some(build_summary_prefixes(&cp)?)
+            } else {
+                None
+            };
 
             // Writers: compressed partials and cross sidecar
             let mut w_part = open_zstd_auto_writer(&partials_out, 3, None)?;
@@ -980,21 +1038,54 @@ fn process_tile(
                 let crosses_boundary =
                     !(window_start_abs >= core_start_abs && window_end_abs <= core_end_abs);
 
-                // Sum coverage, respecting masked mode
-                let (sum, allowed, blacklisted) = coverage_sum_and_counts(
-                    local_overlap.local_start_idx,
-                    local_overlap.local_end_idx,
-                    masked,
-                    psum_all,
-                    psum_unmasked,
-                    psum_cnt_unmasked,
-                    mask,
-                );
-
-                // Always write a partial row; reducer will emit in orig_idx order
+                // Always write a partial row. The reducer merges contributions by `orig_idx`, but
+                // ordinary BED windows preserve their original file indices, so callers should not
+                // assume the final row order is increasing `orig_idx` unless the windows were
+                // explicitly reindexed into coordinate order upstream
                 // Internal windows won't appear in the cross-index -> reducer expects 1 contribution
                 // Boundary windows will appear in each crossed tile's cross-index -> reducer expects N
-                writeln!(w_part, "{}\t{}\t{}\t{}", idx, sum, allowed, blacklisted)?;
+                if wants_summary_stats {
+                    let raw_stats = coverage_summary_and_counts(
+                        local_overlap.local_start_idx,
+                        local_overlap.local_end_idx,
+                        masked,
+                        psum_all,
+                        psum_unmasked,
+                        psum_cnt_unmasked,
+                        mask,
+                        summary_prefixes
+                            .as_ref()
+                            .expect("summary prefixes must exist for summary-stats"),
+                    );
+                    writeln!(
+                        w_part,
+                        "{}\t{}\t{}\t{}\t{}\t{}",
+                        idx,
+                        raw_stats.coverage_sum,
+                        raw_stats.eligible_positions,
+                        raw_stats.blacklisted_positions,
+                        raw_stats.nonzero_positions,
+                        raw_stats.coverage_sum_of_squares
+                    )?;
+                } else {
+                    // Average/total reducers only need the first raw moment plus position counts,
+                    // so keep the per-tile partials narrow in the common non-summary path.
+                    let (coverage_sum, eligible_positions, blacklisted_positions) =
+                        coverage_sum_and_counts(
+                            local_overlap.local_start_idx,
+                            local_overlap.local_end_idx,
+                            masked,
+                            psum_all,
+                            psum_unmasked,
+                            psum_cnt_unmasked,
+                            mask,
+                        );
+                    writeln!(
+                        w_part,
+                        "{}\t{}\t{}\t{}",
+                        idx, coverage_sum, eligible_positions, blacklisted_positions
+                    )?;
+                }
                 if crosses_boundary {
                     // Cross-index lists the window's orig_idx for the reducer
                     writeln!(w_cross, "{}", idx)?;
@@ -1018,7 +1109,7 @@ fn process_tile(
             add_clipped_blacklist_to_cp(&mut cp, tile, masked, blacklist_chr)?;
 
             // Build prefix-sum indexes for fast per-window queries
-            cp.build_indexes(true)?;
+            cp.build_indexes(false)?;
 
             // Own copies of the prefix arrays and optional mask to avoid long-lived borrows
             let psum_all = cp
@@ -1027,6 +1118,12 @@ fn process_tile(
             let psum_unmasked = cp.psum_unmasked_ref();
             let psum_cnt_unmasked = cp.psum_unmasked_count_ref();
             let mask: Option<&[u8]> = cp.blacklist_mask();
+            let wants_summary_stats = opt.per_window.is_summary_stats();
+            let summary_prefixes = if wants_summary_stats {
+                Some(build_summary_prefixes(&cp)?)
+            } else {
+                None
+            };
 
             // Determine the fixed-size windows that overlap the tile core
             let core_start_abs = tile.core_start() as u64;
@@ -1036,7 +1133,9 @@ fn process_tile(
 
             if guaranteed_aligned {
                 // FAST PATH: Every bin that touches the core is fully contained in this core
-                // We compute the FINAL value here and write it once. No reducer later
+                // so there is no cross-tile reduction later. Scalar actions can write their
+                // final value immediately, while summary-stats can write their final derived row
+                // immediately from the exact raw aggregates for that bin
 
                 let mut w_fin = open_zstd_auto_writer(&finals_out, 3, None)?;
 
@@ -1057,34 +1156,69 @@ fn process_tile(
                         continue;
                     };
 
-                    // Sum coverage, respecting masked mode
-                    let (sum, allowed, blacklisted) = coverage_sum_and_counts(
-                        local_overlap.local_start_idx,
-                        local_overlap.local_end_idx,
-                        masked,
-                        psum_all,
-                        psum_unmasked,
-                        psum_cnt_unmasked,
-                        mask,
-                    );
-
-                    // Compute final value now
-                    let unmasked_span_bp = local_overlap.clipped_abs_interval.len();
-                    let value =
-                        finalize_value(sum, allowed, unmasked_span_bp, masked, &opt.per_window);
-                    let value = round_to(value, decimals);
-
-                    // Emit the logical bin, not the clipped tile-local piece
-                    // Aligned tiles guarantee one final row per bin, but the final bin on a
+                    // Write the full bin coordinates, not just the overlap inside this tile core.
+                    // Aligned tiles guarantee one final row per bin, but the last bin on a
                     // chromosome may still need clipping at the chromosome end
-                    write_final_row(
-                        &mut w_fin,
-                        &tile.chr,
-                        Interval::new(bin_start, bin_end.min(core_end_abs))?,
-                        value,
-                        blacklisted,
-                        decimals,
-                    )?;
+                    let bin_interval = Interval::new(bin_start, bin_end.min(core_end_abs))?;
+
+                    if wants_summary_stats {
+                        let raw_stats = coverage_summary_and_counts(
+                            local_overlap.local_start_idx,
+                            local_overlap.local_end_idx,
+                            masked,
+                            psum_all,
+                            psum_unmasked,
+                            psum_cnt_unmasked,
+                            mask,
+                            summary_prefixes
+                                .as_ref()
+                                .expect("summary prefixes must exist for summary-stats"),
+                        );
+                        let stats = derive_summary_stats(
+                            bin_interval.len(),
+                            raw_stats.blacklisted_positions,
+                            raw_stats.eligible_positions,
+                            raw_stats.nonzero_positions,
+                            raw_stats.coverage_sum,
+                            raw_stats.coverage_sum_of_squares,
+                        )?;
+                        write_summary_stats_row(
+                            &mut w_fin,
+                            &tile.chr,
+                            bin_interval,
+                            stats,
+                            decimals,
+                        )?;
+                    } else {
+                        let (coverage_sum, eligible_positions, blacklisted_positions) =
+                            coverage_sum_and_counts(
+                                local_overlap.local_start_idx,
+                                local_overlap.local_end_idx,
+                                masked,
+                                psum_all,
+                                psum_unmasked,
+                                psum_cnt_unmasked,
+                                mask,
+                            );
+                        let unmasked_span_bp = local_overlap.clipped_abs_interval.len();
+                        let value = finalize_value(
+                            coverage_sum,
+                            eligible_positions,
+                            unmasked_span_bp,
+                            masked,
+                            &opt.per_window,
+                        );
+                        let value = round_to(value, decimals);
+
+                        write_final_row(
+                            &mut w_fin,
+                            &tile.chr,
+                            bin_interval,
+                            value,
+                            blacklisted_positions,
+                            decimals,
+                        )?;
+                    }
                 }
 
                 w_fin.flush()?;
@@ -1109,26 +1243,57 @@ fn process_tile(
                         continue;
                     };
 
-                    // Sum coverage, respecting masked mode
-                    let (sum, allowed, blacklisted) = coverage_sum_and_counts(
-                        local_overlap.local_start_idx,
-                        local_overlap.local_end_idx,
-                        masked,
-                        psum_all,
-                        psum_unmasked,
-                        psum_cnt_unmasked,
-                        mask,
-                    );
-
-                    // PARTIAL row: start  end  sum  allowed  blacklisted
-                    // Use the logical bin bounds plus this tile's contribution
-                    // The reducer groups by bin_start from the cross-index sidecar, so we must
-                    // keep the logical bin identity here instead of writing the clipped piece
-                    writeln!(
-                        w_part,
-                        "{}\t{}\t{}\t{}\t{}",
-                        bin_start, bin_end, sum, allowed, blacklisted
-                    )?;
+                    // Write the full bin start/end, not just this tile's overlap.
+                    // The reducer merges partial rows by `bin_start` from the cross-index sidecar,
+                    // so this row must keep the original bin coordinates even when this tile only
+                    // contributes part of that bin.
+                    if wants_summary_stats {
+                        let raw_stats = coverage_summary_and_counts(
+                            local_overlap.local_start_idx,
+                            local_overlap.local_end_idx,
+                            masked,
+                            psum_all,
+                            psum_unmasked,
+                            psum_cnt_unmasked,
+                            mask,
+                            summary_prefixes
+                                .as_ref()
+                                .expect("summary prefixes must exist for summary-stats"),
+                        );
+                        writeln!(
+                            w_part,
+                            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                            bin_start,
+                            bin_end,
+                            raw_stats.coverage_sum,
+                            raw_stats.eligible_positions,
+                            raw_stats.blacklisted_positions,
+                            raw_stats.nonzero_positions,
+                            raw_stats.coverage_sum_of_squares
+                        )?;
+                    } else {
+                        // Keep non-summary by-size partials to the fields the scalar reducer
+                        // actually consumes so large runs do not write dead summary-stat columns.
+                        let (coverage_sum, eligible_positions, blacklisted_positions) =
+                            coverage_sum_and_counts(
+                                local_overlap.local_start_idx,
+                                local_overlap.local_end_idx,
+                                masked,
+                                psum_all,
+                                psum_unmasked,
+                                psum_cnt_unmasked,
+                                mask,
+                            );
+                        writeln!(
+                            w_part,
+                            "{}\t{}\t{}\t{}\t{}",
+                            bin_start,
+                            bin_end,
+                            coverage_sum,
+                            eligible_positions,
+                            blacklisted_positions
+                        )?;
+                    }
 
                     // Mark cross-boundary bins (not fully inside the core) so reducer expects >1 contributions
                     let fully_inside = (bin_start >= core_start_abs) && (bin_end <= core_end_abs);

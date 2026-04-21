@@ -235,9 +235,10 @@ fn build_fcoverage_average_config(
     cfg.set_output_prefix(opt.output_prefix.clone());
     cfg.set_decimals(FCOVERAGE_INTERMEDIATE_DECIMALS);
     cfg.set_per_window(CoverageWindowAction::Average);
-    cfg.set_windows(crate::commands::cli_common::WindowsArgs {
+    cfg.set_windows(crate::commands::cli_common::DistributionWindowsArgs {
         by_size: Some(opt.stride as u64),
         by_bed: None,
+        by_grouped_bed: None,
     });
     cfg.set_fragment_lengths(opt.fragment_lengths.clone());
     cfg.set_min_mapq(opt.min_mapq);

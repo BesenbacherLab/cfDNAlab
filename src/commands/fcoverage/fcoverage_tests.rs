@@ -81,6 +81,10 @@ fn minimum_positive_support_uses_gc_lower_bound_for_gc_tag_runs() {
         minimum_positive_pre_scaling_support(&opt),
         MIN_REASONABLE_GC_WEIGHT as f64
     );
+    assert_eq!(
+        internal_residual_coverage_floor(&opt),
+        MIN_REASONABLE_GC_WEIGHT / 2.0
+    );
 }
 
 #[test]

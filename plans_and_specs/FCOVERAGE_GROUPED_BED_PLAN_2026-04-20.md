@@ -34,7 +34,6 @@ Validation rules to add:
   - `total-on-unique-bases`
   - `summary-stats-on-unique-bases`
 - `--by-size` still only allows `average`, `total`, and `summary-stats`
-- `--summary-stats-universe-group` requires grouped `summary-stats-on-unique-bases`
 
 ## Phase 2: Grouped BED preprocessing
 
@@ -122,7 +121,7 @@ Raw per-row stats required:
 - `eligible_positions`
 - `nonzero_positions`
 - `coverage_sum`
-- `coverage_sumsq`
+- `coverage_sum_of_squares`
 
 Derived per-row stats required:
 
@@ -130,7 +129,7 @@ Derived per-row stats required:
 - `total_coverage`
 - `variance_coverage`
 - `sd_coverage`
-- `cv_coverage`
+- `coefficient_of_variation_coverage`
 - `covered_fraction`
 
 The final reducer should derive these columns from the raw finalized stats, not by rescanning
@@ -166,11 +165,11 @@ view.
 Add summary-stats tile support that also tracks:
 
 - `nonzero_positions`
-- `coverage_sumsq`
+- `coverage_sum_of_squares`
 
 Two reasonable implementation choices:
 
-- extend the existing aggregate partial row format with optional `sumsq`
+- extend the existing aggregate partial row format with optional `sum_of_squares`
 - add dedicated summary-stats partial formats and reducers
 
 Preferred choice:
@@ -218,7 +217,7 @@ For `average` and `total`, per-group accumulators need:
 For `summary-stats`, per-group accumulators additionally need:
 
 - `nonzero_positions`
-- `coverage_sumsq`
+- `coverage_sum_of_squares`
 
 ### 14. Derive final statistics from raw summary-stats output
 
@@ -228,12 +227,8 @@ After raw row stats are finalized, compute:
 - `total_coverage`
 - `variance_coverage`
 - `sd_coverage`
-- `cv_coverage`
+- `coefficient_of_variation_coverage`
 - `covered_fraction`
-
-For grouped `summary-stats-on-unique-bases` with a designated universe row, also compute:
-
-- `pearson_r_to_universe_binary_mask`
 
 These must be derived from the raw finalized row values, not from any other output mode.
 
@@ -291,7 +286,7 @@ Test grouped final reduction for:
 - close-to-zero cleanup behavior for floating-point derived metrics
 - filename separation between plain grouped and `*-on-unique-bases` outputs
 
-### 17. Add end-to-end `fcoverage` tests
+### 19. Add end-to-end `fcoverage` tests
 
 Cover:
 
@@ -303,18 +298,18 @@ Cover:
 - grouped `average-on-unique-bases`
 - grouped `total-on-unique-bases`
 - grouped `summary-stats-on-unique-bases`
-- grouped `summary-stats-on-unique-bases` Pearson using a designated universe group
 - grouped mode with blacklist
 - grouped mode with `global` as just another group
 - invalid CLI combinations
 - coexistence of plain grouped and `*-on-unique-bases` outputs in one output directory
-- at least one direct implementation test beyond the standalone mathematical proof
+- at least one direct implementation test beyond the standalone mathematical proof, including
+  downstream Pearson derivation from `summary-stats-on-unique-bases`
 
 Keep fixtures small and use exact expected outputs.
 
 ## Phase 6: Docs
 
-### 15. Keep CLI help short
+### 20. Keep CLI help short
 
 In `fcoverage/config.rs`:
 
@@ -324,7 +319,7 @@ In `fcoverage/config.rs`:
 - document that grouped mode does not support positional outputs
 - document `summary-stats` in one short block, including which windowing modes support it
 
-### 16. Keep website docs minimal
+### 21. Keep website docs minimal
 
 Update only `website/docs/guides/fragment_coverage_guide.md`.
 
@@ -337,6 +332,8 @@ Add one compact subsection:
 - how undefined metrics appear as `NaN`
 
 Do not add a separate guide unless a later command consumes the output directly.
+
+NOTE: Only humans update guides.
 
 ## Suggested implementation order
 
@@ -384,6 +381,76 @@ That metadata would silently disagree with the grouped rows.
 
 Do not let grouped support expand into a long matrix of every possible mode. The docs should guide
 users toward grouped aggregate coverage and stop there.
+
+## Corrective follow-up
+
+The first implementation pass introduced a few shortcuts that should be removed rather than
+accepted as permanent structure.
+
+### 1. Unify summary-stats with the existing per-window computation path
+
+`SummaryStats` for ordinary BED and fixed-size windows should not live on an unnecessary parallel
+path when the same per-window coverage math already exists.
+
+Follow-up work:
+
+- extend `WindowValue` with a summary-stats payload
+- make `compute_window_outputs()` support `SummaryStats`
+- keep `AverageOnUniqueBases` and `TotalOnUniqueBases` as aliases of `Average` and `Total` at that
+  layer once the input windows have already been merged upstream
+- reserve the grouped-only extra logic for grouped row construction and grouped writing, not for a
+  separate copy of the window math
+
+### 2. Add the aligned fast path for `--by-size summary-stats`
+
+When tile boundaries and fixed-size window boundaries align, `summary-stats` should use the same
+“write final rows directly per tile” pattern as `average` and `total`, just with the wider summary
+payload.
+
+Follow-up work:
+
+- add a size-aligned direct writer for raw and derived summary-stats rows
+- keep the general reducer path only for non-aligned `--by-size` runs
+- add a dedicated regression test that aligned and non-aligned `summary-stats` produce identical
+  output under blacklist, GC correction, and genomic scaling
+
+### 3. Keep `fcoverage` correlation-free
+
+Pearson should stay outside `fcoverage`. The only contract inside `fcoverage` is that
+`summary-stats-on-unique-bases` writes the exact raw inputs needed for downstream correlation.
+
+Follow-up work:
+
+- keep the `global` row as ordinary grouped output with no special correlation column
+- document the downstream formula separately from the `fcoverage` output contract
+- add one direct regression test that derives Pearson from written summary rows and matches the
+  explicit positional formula
+
+### 4. Reduce duplicated aggregate output plumbing where possible
+
+The final aggregate writers should differ because the output shapes differ, but the raw summary
+statistic computation and derivation rules should be shared rather than copied.
+
+Follow-up work:
+
+- keep one shared summary-stats derivation path
+- keep one shared definition of close-to-zero cleanup and undefined-metric handling
+- only branch where row semantics genuinely differ:
+  - ordinary per-window rows
+  - grouped site-weighted rows
+  - grouped unique-base rows
+
+### 5. Remove any clutter
+
+Follow-up work:
+
+- remove stale names from the plan and spec so they match the code:
+  - `coverage_sum_of_squares`
+  - `coefficient_of_variation_coverage`
+- remove duplicated section numbering and other stale plan text
+- remove dead code and helpers left behind by refactors instead of carrying unused parallel paths
+- keep `fcoverage.rs` as orchestration, `writers.rs` as final-output plumbing, and avoid letting
+  helper placement drift again
 
 ## Done criteria
 
