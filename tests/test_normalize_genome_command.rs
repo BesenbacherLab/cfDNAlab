@@ -768,7 +768,8 @@ fn normalize_average_overlap_keeps_sparse_non_zero_scaling_finite() -> Result<()
 }
 
 #[test]
-fn normalize_average_overlap_support_floor_excludes_tiny_bin_from_mean_and_inversion() -> Result<()> {
+fn normalize_average_overlap_support_floor_excludes_tiny_bin_from_mean_and_inversion() -> Result<()>
+{
     // Human verification status: unverified
     // Arrange:
     // Use three bins with unequal lengths on one chromosome:

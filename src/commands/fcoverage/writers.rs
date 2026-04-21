@@ -8,9 +8,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::commands::fcoverage::reducer::{
-    reduce_aggregates_by_size_with_cross_index_for_chr,
-    reduce_bed_basic_with_cross_index_for_chr_rows,
-    reduce_aggregates_by_size_with_cross_index_for_chr_rows, reduce_bed_with_cross_index_for_chr,
+    ReducedAggregateRow, reduce_aggregates_by_size_with_cross_index_for_chr,
+    reduce_aggregates_by_size_with_cross_index_for_chr_rows,
+    reduce_bed_basic_with_cross_index_for_chr_rows, reduce_bed_with_cross_index_for_chr,
     reduce_bed_with_cross_index_for_chr_rows,
 };
 use crate::commands::fcoverage::tiling::concat_aligned_size_tile_finals;
@@ -42,6 +42,47 @@ struct GroupedAggregateAccum {
     coverage_sum_of_squares: f64,
 }
 
+/// Fold one reduced segment row into its owning grouped BED accumulator.
+///
+/// This is intentionally writer-side logic rather than reducer logic. By the time this helper runs,
+/// the reducer has already rebuilt exact per-segment raw rows. Grouping is a second stage that:
+/// - looks up `segment_idx -> group_idx`
+/// - adds the reduced segment's raw fields into the group's totals
+/// - keeps `span_positions` owned by the grouped layout rather than by the reducer
+fn fold_reduced_segment_into_group(
+    grouped_layout: &GroupedCoverageLayout,
+    grouped_accums: &mut FxHashMap<u64, GroupedAggregateAccum>,
+    row: ReducedAggregateRow,
+) -> Result<()> {
+    let group_idx = *grouped_layout
+        .segment_idx_to_group_idx
+        .get(&row.idx)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "grouped reducer is missing a group mapping for segment_idx {}",
+                row.idx
+            )
+        })?;
+    let group_accum = grouped_accums.get_mut(&group_idx).ok_or_else(|| {
+        anyhow::anyhow!("missing grouped accumulator for group_idx {}", group_idx)
+    })?;
+
+    // Reduced segment rows already have stable identity and exact additive raw fields.
+    // Group folding should therefore stay as simple field-wise addition, regardless of whether
+    // the source reducer came from basic or summary temp files.
+    group_accum.blacklisted_positions += row.blacklisted_positions;
+    group_accum.eligible_positions += row.eligible_positions;
+    group_accum.nonzero_positions += row.nonzero_positions;
+    group_accum.coverage_sum += row.coverage_sum;
+    group_accum.coverage_sum_of_squares += row.coverage_sum_of_squares;
+    Ok(())
+}
+
+/// Exact raw and derived summary statistics for one final output row.
+///
+/// The struct keeps both layers together on purpose:
+/// - exact additive raw fields, which are needed for grouped folding and auditing
+/// - final derived values, which are needed for TSV output
 #[derive(Debug, Clone, Copy)]
 pub struct SummaryStatsRow {
     pub span_positions: u64,
@@ -226,42 +267,19 @@ fn derive_nonnegative_variance_coverage(
     Ok(raw_variance)
 }
 
-/// Write a final aggregate row: `chromosome  start  end  value  blacklisted_positions`
-#[inline]
-pub fn write_final_row<W: Write>(
+/// Write the shared summary-stat payload columns that follow the row identity columns.
+///
+/// BED/fixed-size rows and grouped rows differ only in their leading identity fields. The
+/// scientific payload after that is identical, so this helper keeps the formatting logic in one
+/// place without hiding which writer owns which leading columns.
+fn write_summary_stats_fields<W: Write>(
     w: &mut W,
-    chr: &str,
-    interval: Interval<u64>,
-    value: f64,
-    blacklisted_positions: u64,
-    decimals: i32,
-) -> anyhow::Result<()> {
-    writeln!(
-        w,
-        "{}\t{}\t{}\t{}\t{}",
-        chr,
-        interval.start(),
-        interval.end(),
-        CompactNumber { v: value, decimals },
-        blacklisted_positions
-    )?;
-    Ok(())
-}
-
-/// Write a headerless summary-stats row for BED or fixed-size outputs.
-pub fn write_summary_stats_row<W: Write>(
-    w: &mut W,
-    chr: &str,
-    interval: Interval<u64>,
     stats: SummaryStatsRow,
     decimals: i32,
 ) -> Result<()> {
-    writeln!(
+    write!(
         w,
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        chr,
-        interval.start(),
-        interval.end(),
+        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
         stats.span_positions,
         stats.blacklisted_positions,
         stats.eligible_positions,
@@ -299,6 +317,64 @@ pub fn write_summary_stats_row<W: Write>(
             decimals
         },
     )?;
+    Ok(())
+}
+
+/// Derive summary statistics from one reduced raw row and write the final TSV row.
+///
+/// Reducers intentionally stop at exact additive raw values. This helper keeps the writer-side
+/// summary path compact while preserving that separation: derive the human-facing statistics only
+/// once the full reduced row is known, then write them in the public output schema.
+fn write_reduced_summary_stats_row<W: Write>(
+    w: &mut W,
+    chr: &str,
+    row: ReducedAggregateRow,
+    decimals: i32,
+) -> Result<()> {
+    let stats = derive_summary_stats(
+        row.interval.len(),
+        row.blacklisted_positions,
+        row.eligible_positions,
+        row.nonzero_positions,
+        row.coverage_sum,
+        row.coverage_sum_of_squares,
+    )?;
+    write_summary_stats_row(w, chr, row.interval, stats, decimals)
+}
+
+/// Write a final aggregate row: `chromosome  start  end  value  blacklisted_positions`
+#[inline]
+pub fn write_final_row<W: Write>(
+    w: &mut W,
+    chr: &str,
+    interval: Interval<u64>,
+    value: f64,
+    blacklisted_positions: u64,
+    decimals: i32,
+) -> anyhow::Result<()> {
+    writeln!(
+        w,
+        "{}\t{}\t{}\t{}\t{}",
+        chr,
+        interval.start(),
+        interval.end(),
+        CompactNumber { v: value, decimals },
+        blacklisted_positions
+    )?;
+    Ok(())
+}
+
+/// Write a headerless summary-stats row for BED or fixed-size outputs.
+pub fn write_summary_stats_row<W: Write>(
+    w: &mut W,
+    chr: &str,
+    interval: Interval<u64>,
+    stats: SummaryStatsRow,
+    decimals: i32,
+) -> Result<()> {
+    write!(w, "{}\t{}\t{}\t", chr, interval.start(), interval.end(),)?;
+    write_summary_stats_fields(w, stats, decimals)?;
+    writeln!(w)?;
     Ok(())
 }
 
@@ -331,47 +407,9 @@ pub fn write_grouped_summary_stats_row<W: Write>(
     stats: SummaryStatsRow,
     decimals: i32,
 ) -> Result<()> {
-    writeln!(
-        w,
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        group_idx,
-        stats.span_positions,
-        stats.blacklisted_positions,
-        stats.eligible_positions,
-        stats.nonzero_positions,
-        CompactNumber {
-            v: stats.coverage_sum,
-            decimals
-        },
-        CompactNumber {
-            v: stats.coverage_sum_of_squares,
-            decimals
-        },
-        CompactNumber {
-            v: stats.average_coverage,
-            decimals
-        },
-        CompactNumber {
-            v: stats.total_coverage,
-            decimals
-        },
-        CompactNumber {
-            v: stats.variance_coverage,
-            decimals
-        },
-        CompactNumber {
-            v: stats.sd_coverage,
-            decimals
-        },
-        CoverageCoefficientOfVariation {
-            value: stats.coefficient_of_variation_coverage,
-            decimals,
-        },
-        CompactNumber {
-            v: stats.covered_fraction,
-            decimals
-        },
-    )?;
+    write!(w, "{}\t", group_idx)?;
+    write_summary_stats_fields(w, stats, decimals)?;
+    writeln!(w)?;
     Ok(())
 }
 
@@ -397,6 +435,40 @@ pub(crate) fn summary_stats_header() -> &'static str {
 
 fn grouped_summary_stats_header() -> &'static str {
     "group_idx\tspan_positions\tblacklisted_positions\teligible_positions\tnonzero_positions\tcoverage_sum\tcoverage_sum_of_squares\taverage_coverage\ttotal_coverage\tvariance_coverage\tsd_coverage\tcoefficient_of_variation_coverage\tcovered_fraction"
+}
+
+/// Convert one grouped raw accumulator into the final non-summary reported value.
+///
+/// Group folding keeps exact additive raw totals until the very end. This helper makes the final
+/// `average` vs `total` policy explicit in one place and keeps the grouped write loop focused on
+/// output order and formatting.
+fn finalize_grouped_value(action: CoverageWindowAction, accum: GroupedAggregateAccum) -> f64 {
+    match action {
+        CoverageWindowAction::Average | CoverageWindowAction::AverageOnUniqueBases => {
+            if accum.eligible_positions == 0 {
+                0.0
+            } else {
+                accum.coverage_sum / accum.eligible_positions as f64
+            }
+        }
+        CoverageWindowAction::Total | CoverageWindowAction::TotalOnUniqueBases => {
+            accum.coverage_sum
+        }
+        _ => unreachable!("summary-stats handled separately"),
+    }
+}
+
+/// Look up one chromosome length from the contig map and convert it to `u64`.
+///
+/// Fixed-size reduction needs the true chromosome end so the final bin can be clipped after
+/// cross-tile reduction. Keeping the lookup here avoids repeating the same error handling in each
+/// writer branch.
+fn chromosome_length_u64(contigs: &crate::shared::bam::Contigs, chromosome: &str) -> Result<u64> {
+    contigs
+        .contigs
+        .get(chromosome)
+        .map(|&(_, len)| len as u64)
+        .ok_or_else(|| anyhow::anyhow!("Chromosome '{}' not found in contig map", chromosome))
 }
 
 /// Write one final BED aggregate output file across all requested chromosomes.
@@ -458,23 +530,7 @@ pub(crate) fn write_bed_aggregate_output(
                     temp_dir,
                     partials_prefix,
                     windows_for_chr.as_slice(),
-                    |row| {
-                        let stats = derive_summary_stats(
-                            row.interval.len(),
-                            row.blacklisted_positions,
-                            row.eligible_positions,
-                            row.nonzero_positions,
-                            row.coverage_sum,
-                            row.coverage_sum_of_squares,
-                        )?;
-                        write_summary_stats_row(
-                            &mut writer,
-                            chromosome,
-                            row.interval,
-                            stats,
-                            decimals,
-                        )
-                    },
+                    |row| write_reduced_summary_stats_row(&mut writer, chromosome, row, decimals),
                 )?;
             }
         }
@@ -567,70 +623,30 @@ pub(crate) fn write_grouped_bed_aggregate_output(
         );
     }
 
-    if action.is_summary_stats() {
-        // First reduce segment-level summary rows, then fold those raw moments into the owning
-        // group. This keeps the segment reducer and grouped writer responsibilities cleanly split.
-        for chromosome in chromosomes {
-            if let Some(windows_for_chr) = grouped_layout.segments_by_chr.get(chromosome) {
-                reduce_bed_with_cross_index_for_chr_rows(
-                    chromosome,
-                    temp_dir,
-                    partials_prefix,
-                    windows_for_chr.as_slice(),
-                    |row| {
-                        let group_idx = *grouped_layout
-                            .segment_idx_to_group_idx
-                            .get(&row.idx)
-                            .ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "grouped reducer is missing a group mapping for segment_idx {}",
-                                    row.idx
-                                )
-                            })?;
-                        let group_accum = grouped_accums.get_mut(&group_idx).ok_or_else(|| {
-                            anyhow::anyhow!("missing grouped accumulator for group_idx {}", group_idx)
-                        })?;
-                        // Summary-stats fields are additive across the group's reduced segments.
-                        group_accum.blacklisted_positions += row.blacklisted_positions;
-                        group_accum.eligible_positions += row.eligible_positions;
-                        group_accum.nonzero_positions += row.nonzero_positions;
-                        group_accum.coverage_sum += row.coverage_sum;
-                        group_accum.coverage_sum_of_squares += row.coverage_sum_of_squares;
-                        Ok(())
-                    },
-                )?;
-            }
-        }
-    } else {
-        // The lighter grouped path folds only the fields needed for `average` and `total`.
-        for chromosome in chromosomes {
-            if let Some(windows_for_chr) = grouped_layout.segments_by_chr.get(chromosome) {
-                reduce_bed_basic_with_cross_index_for_chr_rows(
-                    chromosome,
-                    temp_dir,
-                    partials_prefix,
-                    windows_for_chr.as_slice(),
-                    |row| {
-                        let group_idx = *grouped_layout
-                            .segment_idx_to_group_idx
-                            .get(&row.idx)
-                            .ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "grouped reducer is missing a group mapping for segment_idx {}",
-                                    row.idx
-                                )
-                            })?;
-                        let group_accum = grouped_accums.get_mut(&group_idx).ok_or_else(|| {
-                            anyhow::anyhow!("missing grouped accumulator for group_idx {}", group_idx)
-                        })?;
-                        // Non-summary grouped outputs never need the summary-only raw moments.
-                        group_accum.blacklisted_positions += row.blacklisted_positions;
-                        group_accum.eligible_positions += row.eligible_positions;
-                        group_accum.coverage_sum += row.coverage_sum;
-                        Ok(())
-                    },
-                )?;
-            }
+    // First reduce chromosome-level segment rows back to exact raw values, then fold those
+    // reduced segments into their owning groups. The accumulation logic is identical for basic
+    // and summary outputs because basic reducers already zero the summary-only fields in memory.
+    for chromosome in chromosomes {
+        let Some(windows_for_chr) = grouped_layout.segments_by_chr.get(chromosome) else {
+            continue;
+        };
+
+        if action.is_summary_stats() {
+            reduce_bed_with_cross_index_for_chr_rows(
+                chromosome,
+                temp_dir,
+                partials_prefix,
+                windows_for_chr.as_slice(),
+                |row| fold_reduced_segment_into_group(grouped_layout, &mut grouped_accums, row),
+            )?;
+        } else {
+            reduce_bed_basic_with_cross_index_for_chr_rows(
+                chromosome,
+                temp_dir,
+                partials_prefix,
+                windows_for_chr.as_slice(),
+                |row| fold_reduced_segment_into_group(grouped_layout, &mut grouped_accums, row),
+            )?;
         }
     }
 
@@ -667,19 +683,7 @@ pub(crate) fn write_grouped_bed_aggregate_output(
             let accum = grouped_accums.get(&group_idx).copied().unwrap_or_default();
             // Group-level `average` and `total` are derived only after all reduced segments have
             // been folded into the group accumulator.
-            let value = match action {
-                CoverageWindowAction::Average | CoverageWindowAction::AverageOnUniqueBases => {
-                    if accum.eligible_positions == 0 {
-                        0.0
-                    } else {
-                        accum.coverage_sum / accum.eligible_positions as f64
-                    }
-                }
-                CoverageWindowAction::Total | CoverageWindowAction::TotalOnUniqueBases => {
-                    accum.coverage_sum
-                }
-                _ => unreachable!("summary-stats handled above"),
-            };
+            let value = finalize_grouped_value(action, accum);
             write_grouped_value_row(
                 &mut writer,
                 group_idx,
@@ -782,13 +786,7 @@ pub(crate) fn write_size_aggregate_output(
     if action.is_summary_stats() {
         writeln!(writer, "{}", summary_stats_header())?;
         for chromosome in chromosomes {
-            let chrom_len = contigs
-                .contigs
-                .get(chromosome)
-                .map(|&(_, len)| len as u64)
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Chromosome '{}' not found in contig map", chromosome)
-                })?;
+            let chrom_len = chromosome_length_u64(contigs, chromosome)?;
             // Summary-stats keeps the reducer focused on exact raw moments, then derives the final
             // metrics here once the full bin row is known.
             reduce_aggregates_by_size_with_cross_index_for_chr_rows(
@@ -796,17 +794,7 @@ pub(crate) fn write_size_aggregate_output(
                 temp_dir,
                 partials_prefix,
                 chrom_len,
-                |row| {
-                    let stats = derive_summary_stats(
-                        row.interval.len(),
-                        row.blacklisted_positions,
-                        row.eligible_positions,
-                        row.nonzero_positions,
-                        row.coverage_sum,
-                        row.coverage_sum_of_squares,
-                    )?;
-                    write_summary_stats_row(&mut writer, chromosome, row.interval, stats, decimals)
-                },
+                |row| write_reduced_summary_stats_row(&mut writer, chromosome, row, decimals),
             )?;
         }
     } else {
@@ -816,13 +804,7 @@ pub(crate) fn write_size_aggregate_output(
             aggregate_value_header(action)
         )?;
         for chromosome in chromosomes {
-            let chrom_len = contigs
-                .contigs
-                .get(chromosome)
-                .map(|&(_, len)| len as u64)
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Chromosome '{}' not found in contig map", chromosome)
-                })?;
+            let chrom_len = chromosome_length_u64(contigs, chromosome)?;
             // `average` and `total` can use the lighter reducer because they do not need the
             // summary-only raw moments.
             reduce_aggregates_by_size_with_cross_index_for_chr(

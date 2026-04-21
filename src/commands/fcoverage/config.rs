@@ -175,7 +175,7 @@ pub struct FCoverageConfig {
     ///   Depending on your needs, sort downstream.
     ///
     /// For `--by-grouped-bed` only, three further `"-on-unique-bases"` options, where we
-    /// merge overlapping or touching windows within each group windows before calculating 
+    /// merge overlapping or touching windows within each group windows before calculating
     /// the statistics:
     ///
     /// - `"average-on-unique-bases"`: Get the average coverage across merged within-group windows.

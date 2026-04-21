@@ -282,7 +282,9 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     0
                 }
             }
-            _ => unreachable!("unsupported WPS per-window action must be rejected during validation"),
+            _ => {
+                unreachable!("unsupported WPS per-window action must be rejected during validation")
+            }
         },
         None => {
             if has_scaling_or_correction {
@@ -347,7 +349,9 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                         CoverageWindowAction::Average | CoverageWindowAction::Total => {
                             (partials_prefix, "tsv.zst")
                         }
-                        _ => unreachable!("unsupported WPS per-window action must be rejected during validation"),
+                        _ => unreachable!(
+                            "unsupported WPS per-window action must be rejected during validation"
+                        ),
                     }
                 } else {
                     // Whole positional coverage
@@ -602,7 +606,9 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
 
                 final_path
             }
-            _ => unreachable!("unsupported WPS per-window action must be rejected during validation"),
+            _ => {
+                unreachable!("unsupported WPS per-window action must be rejected during validation")
+            }
         }
     } else {
         // Whole-genome positional coverage

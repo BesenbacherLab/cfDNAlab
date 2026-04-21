@@ -5,10 +5,9 @@ use crate::commands::fcoverage::tiling::{
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::{
-    derive_summary_stats, write_bed_aggregate_output, write_bedgraph_runs,
+    derive_summary_stats, write_bed_aggregate_output, write_bedgraph_runs, write_final_row,
+    write_grouped_bed_aggregate_output, write_size_aggregate_output, write_summary_stats_row,
     write_windowed_runs,
-    write_final_row, write_grouped_bed_aggregate_output, write_size_aggregate_output,
-    write_summary_stats_row,
 };
 use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
 use crate::commands::gc_bias::counting::build_gc_prefixes;

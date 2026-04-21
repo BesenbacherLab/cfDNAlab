@@ -298,9 +298,9 @@ fn load_stride_bins_from_fcoverage_average_tsv(
         let end: u32 = cols[2]
             .parse()
             .with_context(|| format!("{}: invalid end '{}'", path.display(), cols[2]))?;
-        let average_coverage: f32 = cols[3]
-            .parse()
-            .with_context(|| format!("{}: invalid average_coverage '{}'", path.display(), cols[3]))?;
+        let average_coverage: f32 = cols[3].parse().with_context(|| {
+            format!("{}: invalid average_coverage '{}'", path.display(), cols[3])
+        })?;
         let _: u64 = cols[4].parse().with_context(|| {
             format!(
                 "{}: invalid blacklisted_positions '{}'",
