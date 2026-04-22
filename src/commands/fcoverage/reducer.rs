@@ -11,8 +11,8 @@ use crate::commands::fcoverage::tiling::finalize_value;
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::write_final_row;
 use crate::shared::formatters::round_to;
-use crate::shared::io::open_text_reader;
 use crate::shared::interval::{IndexedInterval, Interval};
+use crate::shared::io::open_text_reader;
 
 type StreamHeap = BinaryHeap<Reverse<(u64, usize)>>;
 

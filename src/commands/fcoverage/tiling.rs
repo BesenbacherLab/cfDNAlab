@@ -32,7 +32,10 @@ fn sorted_tile_files_for_chromosome(
         if !path.is_file() {
             continue;
         }
-        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
         if file_name.starts_with(per_tile_prefix)
             && file_name.contains(&format!(".{chromosome}."))
             && let Some(tile_index) = parse_tile_index(file_name)
@@ -141,7 +144,11 @@ pub fn merge_scaled_positional_tiles(
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("Missing value column in {}", path.display()))?;
                 let value = value_col.parse::<f64>().with_context(|| {
-                    format!("Parsing positional value '{}' in {}", value_col, path.display())
+                    format!(
+                        "Parsing positional value '{}' in {}",
+                        value_col,
+                        path.display()
+                    )
                 })?;
                 let scaled_value = round_to(value * multiplier, decimals);
 
@@ -188,7 +195,8 @@ pub fn merge_scaled_positional_tiles(
         }
     }
 
-    out.flush().context("Flushing scaled merged positional output")?;
+    out.flush()
+        .context("Flushing scaled merged positional output")?;
     Ok(final_path)
 }
 

@@ -165,6 +165,11 @@ fn assert_close(observed: f64, expected: f64, tolerance: f64) {
     );
 }
 
+fn assert_close_to_written_precision(observed: f64, expected: f64, decimals: i32) {
+    let tolerance = 0.5 * 10_f64.powi(-decimals) + 2e-6;
+    assert_close(observed, expected, tolerance);
+}
+
 fn pearson_r_from_vectors(coverage: &[f64], mask: &[f64]) -> f64 {
     assert_eq!(
         coverage.len(),
@@ -482,7 +487,7 @@ fn normalize_by_length_keeps_fractional_positional_output_without_other_weights(
     cfg.set_decimals(4);
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
-    cfg.set_normalize_by_length_bool(true);
+    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - The single fragment covers [20, 80), length 60.
@@ -514,10 +519,10 @@ fn normalize_by_length_by_size_total_counts_each_fragment_as_one() -> Result<()>
     windows.by_size = Some(200);
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
-    cfg.set_decimals(6);
+    cfg.set_decimals(5);
     cfg.set_per_window(CoverageWindowAction::Total);
     cfg.set_windows(windows);
-    cfg.set_normalize_by_length_bool(true);
+    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - The fragment spans 60 bases and contributes 1 / 60 to each covered base.
@@ -571,7 +576,7 @@ fn normalize_by_length_and_gc_file_weights_multiply_per_position() -> Result<()>
     cfg.set_decimals(6);
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
-    cfg.set_normalize_by_length_bool(true);
+    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
@@ -644,7 +649,7 @@ fn normalize_by_length_uses_counted_segment_length_for_gapped_fragments() -> Res
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.set_normalize_by_length_bool(true);
+    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - The read spans [20, 70) on the reference with a 10 bp deletion in the middle.
@@ -681,7 +686,7 @@ fn normalize_by_length_ignore_gap_renormalizes_over_remaining_counted_span() -> 
         cfg.set_per_window(CoverageWindowAction::Average);
         cfg.set_keep_zero_runs(false);
         cfg.set_ignore_gap(ignore_gap);
-        cfg.set_normalize_by_length_bool(true);
+        cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
 
         run(&cfg)?;
 
@@ -726,7 +731,7 @@ fn normalize_by_length_matches_between_paired_and_unpaired_for_same_span() -> Re
     paired_cfg.set_per_window(CoverageWindowAction::Average);
     paired_cfg.set_keep_zero_runs(false);
     paired_cfg.set_output_prefix("paired");
-    paired_cfg.set_normalize_by_length_bool(true);
+    paired_cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
 
     let mut unpaired_cfg = base_config(&unpaired_bam.bam, unpaired_out.path());
     unpaired_cfg.set_decimals(4);
@@ -734,7 +739,7 @@ fn normalize_by_length_matches_between_paired_and_unpaired_for_same_span() -> Re
     unpaired_cfg.set_keep_zero_runs(false);
     unpaired_cfg.set_output_prefix("unpaired");
     unpaired_cfg.unpaired.reads_are_fragments = true;
-    unpaired_cfg.set_normalize_by_length_bool(true);
+    unpaired_cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - Both inputs represent the same counted span [20, 80), length 60.
@@ -805,7 +810,7 @@ fn normalize_by_length_uses_paired_counted_segments_when_ignore_gap_is_on() -> R
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.set_ignore_gap(true);
-    cfg.set_normalize_by_length_bool(true);
+    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - The fragment outer span is [20, 80), length 60.
@@ -860,7 +865,7 @@ fn normalize_by_length_uses_counted_segment_length_for_refskip_fragments() -> Re
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.set_normalize_by_length_bool(true);
+    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
 
     // Manual expectations:
     // - The read spans [20, 70) on the reference with a 10 bp ref-skip in the middle.
@@ -924,7 +929,7 @@ fn normalize_by_length_segmented_fragment_still_multiplies_gc_and_scaling() -> R
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.set_normalize_by_length_bool(true);
+    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
@@ -996,7 +1001,7 @@ fn restore_mean_positional_output_uses_mean_normalization_length_for_mixed_fragm
             .final_out_path
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.contains("length_normalized_with_restored_mean")),
+            .is_some_and(|name| name.contains("length_normalized.restored_mean")),
         "restore-mean output path should include the restore-mean marker, got {}",
         result.final_out_path.display()
     );
@@ -1271,7 +1276,7 @@ fn restore_mean_by_size_summary_stats_derives_scaled_raw_and_derived_values() ->
     let bam = mixed_length_fragment_bam()?;
     let out_dir = TempDir::new()?;
     let mut cfg = base_config(&bam.bam, out_dir.path());
-    cfg.set_decimals(6);
+    cfg.set_decimals(5);
     cfg.set_per_window(CoverageWindowAction::SummaryStats);
     cfg.set_windows(DistributionWindowsArgs {
         by_size: Some(200),
@@ -1308,18 +1313,18 @@ fn restore_mean_by_size_summary_stats_derives_scaled_raw_and_derived_values() ->
         rows[1][0..7],
         ["chr1", "0", "200", "200", "0", "200", "120"]
     );
-    assert_close(rows[1][7].parse::<f64>()?, 120.0, 1e-9);
-    assert_close(rows[1][8].parse::<f64>()?, 135.0, 1e-9);
-    assert_close(rows[1][9].parse::<f64>()?, 0.6, 1e-9);
-    assert_close(rows[1][10].parse::<f64>()?, 120.0, 1e-9);
-    assert_close(rows[1][11].parse::<f64>()?, 0.315, 1e-9);
-    assert_close(rows[1][12].parse::<f64>()?, 0.315_f64.sqrt(), 1e-9);
+    assert_close_to_written_precision(rows[1][7].parse::<f64>()?, 120.0, 5);
+    assert_close_to_written_precision(rows[1][8].parse::<f64>()?, 135.0, 5);
+    assert_close_to_written_precision(rows[1][9].parse::<f64>()?, 0.6, 5);
+    assert_close_to_written_precision(rows[1][10].parse::<f64>()?, 120.0, 5);
+    assert_close_to_written_precision(rows[1][11].parse::<f64>()?, 0.315, 5);
+    assert_close_to_written_precision(rows[1][12].parse::<f64>()?, 0.315_f64.sqrt(), 5);
     assert_close(
         rows[1][13].parse::<f64>()?,
         0.315_f64.sqrt() / 0.6_f64,
-        1e-9,
+        1e-5,
     );
-    assert_close(rows[1][14].parse::<f64>()?, 0.6, 1e-9);
+    assert_close_to_written_precision(rows[1][14].parse::<f64>()?, 0.6, 5);
 
     Ok(())
 }
@@ -1510,7 +1515,7 @@ fn restore_mean_grouped_total_on_unique_bases_merges_same_group_overlaps_after_s
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
-    cfg.set_decimals(6);
+    cfg.set_decimals(5);
     cfg.set_per_window(CoverageWindowAction::TotalOnUniqueBases);
     cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
@@ -1571,7 +1576,7 @@ fn restore_mean_grouped_summary_stats_on_unique_bases_writes_scaled_rows() -> Re
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
-    cfg.set_decimals(6);
+    cfg.set_decimals(5);
     cfg.set_per_window(CoverageWindowAction::SummaryStatsOnUniqueBases);
     cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
@@ -1585,22 +1590,22 @@ fn restore_mean_grouped_summary_stats_on_unique_bases_writes_scaled_rows() -> Re
     let rows = parse_tsv(&text);
 
     assert_eq!(rows[1][0..5], ["0", "120", "0", "120", "120"]);
-    assert_close(rows[1][5].parse::<f64>()?, 120.0, 1e-9);
-    assert_close(rows[1][6].parse::<f64>()?, 135.0, 1e-9);
-    assert_close(rows[1][7].parse::<f64>()?, 1.0, 1e-9);
-    assert_close(rows[1][8].parse::<f64>()?, 120.0, 1e-9);
-    assert_close(rows[1][9].parse::<f64>()?, 0.125, 1e-9);
-    assert_close(rows[1][10].parse::<f64>()?, 0.125_f64.sqrt(), 1e-9);
-    assert_close(rows[1][11].parse::<f64>()?, 0.125_f64.sqrt(), 1e-9);
-    assert_close(rows[1][12].parse::<f64>()?, 1.0, 1e-9);
+    assert_close_to_written_precision(rows[1][5].parse::<f64>()?, 120.0, 5);
+    assert_close_to_written_precision(rows[1][6].parse::<f64>()?, 135.0, 5);
+    assert_close_to_written_precision(rows[1][7].parse::<f64>()?, 1.0, 5);
+    assert_close_to_written_precision(rows[1][8].parse::<f64>()?, 120.0, 5);
+    assert_close_to_written_precision(rows[1][9].parse::<f64>()?, 0.125, 5);
+    assert_close_to_written_precision(rows[1][10].parse::<f64>()?, 0.125_f64.sqrt(), 5);
+    assert_close_to_written_precision(rows[1][11].parse::<f64>()?, 0.125_f64.sqrt(), 5);
+    assert_close_to_written_precision(rows[1][12].parse::<f64>()?, 1.0, 5);
 
     assert_eq!(rows[2][0..5], ["1", "10", "0", "10", "0"]);
-    assert_close(rows[2][5].parse::<f64>()?, 0.0, 1e-9);
-    assert_close(rows[2][6].parse::<f64>()?, 0.0, 1e-9);
-    assert_close(rows[2][7].parse::<f64>()?, 0.0, 1e-9);
-    assert_close(rows[2][8].parse::<f64>()?, 0.0, 1e-9);
+    assert_close_to_written_precision(rows[2][5].parse::<f64>()?, 0.0, 5);
+    assert_close_to_written_precision(rows[2][6].parse::<f64>()?, 0.0, 5);
+    assert_close_to_written_precision(rows[2][7].parse::<f64>()?, 0.0, 5);
+    assert_close_to_written_precision(rows[2][8].parse::<f64>()?, 0.0, 5);
     assert!(rows[2][11].eq_ignore_ascii_case("NaN"));
-    assert_close(rows[2][12].parse::<f64>()?, 0.0, 1e-9);
+    assert_close_to_written_precision(rows[2][12].parse::<f64>()?, 0.0, 5);
 
     Ok(())
 }
@@ -1636,7 +1641,7 @@ fn restore_mean_grouped_plain_summary_stats_writes_scaled_rows() -> Result<()> {
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
-    cfg.set_decimals(6);
+    cfg.set_decimals(5);
     cfg.set_per_window(CoverageWindowAction::SummaryStats);
     cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
@@ -1657,22 +1662,22 @@ fn restore_mean_grouped_plain_summary_stats_writes_scaled_rows() -> Result<()> {
             .collect::<Vec<_>>(),
         vec!["0", "90", "0", "90", "90"]
     );
-    assert_close(rows_by_name["beta"][5].parse::<f64>()?, 90.0, 1e-9);
-    assert_close(rows_by_name["beta"][6].parse::<f64>()?, 101.25, 1e-9);
-    assert_close(rows_by_name["beta"][7].parse::<f64>()?, 1.0, 1e-9);
-    assert_close(rows_by_name["beta"][8].parse::<f64>()?, 90.0, 1e-9);
-    assert_close(rows_by_name["beta"][9].parse::<f64>()?, 0.125, 1e-9);
+    assert_close_to_written_precision(rows_by_name["beta"][5].parse::<f64>()?, 90.0, 5);
+    assert_close_to_written_precision(rows_by_name["beta"][6].parse::<f64>()?, 101.25, 5);
+    assert_close_to_written_precision(rows_by_name["beta"][7].parse::<f64>()?, 1.0, 5);
+    assert_close_to_written_precision(rows_by_name["beta"][8].parse::<f64>()?, 90.0, 5);
+    assert_close_to_written_precision(rows_by_name["beta"][9].parse::<f64>()?, 0.125, 5);
     assert_close(
         rows_by_name["beta"][10].parse::<f64>()?,
         0.125_f64.sqrt(),
-        1e-9,
+        1e-5,
     );
     assert_close(
         rows_by_name["beta"][11].parse::<f64>()?,
         0.125_f64.sqrt(),
-        1e-9,
+        1e-5,
     );
-    assert_close(rows_by_name["beta"][12].parse::<f64>()?, 1.0, 1e-9);
+    assert_close_to_written_precision(rows_by_name["beta"][12].parse::<f64>()?, 1.0, 5);
 
     assert_eq!(
         rows_by_name["gamma"][0..5]
@@ -1681,14 +1686,14 @@ fn restore_mean_grouped_plain_summary_stats_writes_scaled_rows() -> Result<()> {
             .collect::<Vec<_>>(),
         vec!["1", "10", "0", "10", "0"]
     );
-    assert_close(rows_by_name["gamma"][5].parse::<f64>()?, 0.0, 1e-9);
-    assert_close(rows_by_name["gamma"][6].parse::<f64>()?, 0.0, 1e-9);
-    assert_close(rows_by_name["gamma"][7].parse::<f64>()?, 0.0, 1e-9);
-    assert_close(rows_by_name["gamma"][8].parse::<f64>()?, 0.0, 1e-9);
-    assert_close(rows_by_name["gamma"][9].parse::<f64>()?, 0.0, 1e-9);
-    assert_close(rows_by_name["gamma"][10].parse::<f64>()?, 0.0, 1e-9);
+    assert_close_to_written_precision(rows_by_name["gamma"][5].parse::<f64>()?, 0.0, 5);
+    assert_close_to_written_precision(rows_by_name["gamma"][6].parse::<f64>()?, 0.0, 5);
+    assert_close_to_written_precision(rows_by_name["gamma"][7].parse::<f64>()?, 0.0, 5);
+    assert_close_to_written_precision(rows_by_name["gamma"][8].parse::<f64>()?, 0.0, 5);
+    assert_close_to_written_precision(rows_by_name["gamma"][9].parse::<f64>()?, 0.0, 5);
+    assert_close_to_written_precision(rows_by_name["gamma"][10].parse::<f64>()?, 0.0, 5);
     assert!(rows_by_name["gamma"][11].eq_ignore_ascii_case("NaN"));
-    assert_close(rows_by_name["gamma"][12].parse::<f64>()?, 0.0, 1e-9);
+    assert_close_to_written_precision(rows_by_name["gamma"][12].parse::<f64>()?, 0.0, 5);
 
     Ok(())
 }
@@ -2002,7 +2007,7 @@ fn restore_mean_by_bed_summary_stats_is_invariant_when_windows_cross_tiles() -> 
         )?;
 
         let mut cfg = base_config(&bam.bam, out_dir.path());
-        cfg.set_decimals(6);
+        cfg.set_decimals(5);
         cfg.set_per_window(CoverageWindowAction::SummaryStats);
         cfg.set_tile_size(tile_size);
         cfg.set_windows(DistributionWindowsArgs {
@@ -2019,24 +2024,24 @@ fn restore_mean_by_bed_summary_stats_is_invariant_when_windows_cross_tiles() -> 
     assert_eq!(outputs[0], outputs[1]);
     let rows = parse_tsv(&outputs[0]);
     assert_eq!(rows[1][0..7], ["chr1", "0", "80", "80", "0", "80", "40"]);
-    assert_close(rows[1][7].parse::<f64>()?, 60.0, 1e-9);
-    assert_close(rows[1][8].parse::<f64>()?, 90.0, 1e-9);
-    assert_close(rows[1][9].parse::<f64>()?, 0.75, 1e-9);
-    assert_close(rows[1][10].parse::<f64>()?, 60.0, 1e-9);
-    assert_close(rows[1][11].parse::<f64>()?, 0.5625, 1e-9);
-    assert_close(rows[1][12].parse::<f64>()?, 0.75, 1e-9);
-    assert_close(rows[1][13].parse::<f64>()?, 1.0, 1e-9);
-    assert_close(rows[1][14].parse::<f64>()?, 0.5, 1e-9);
+    assert_close_to_written_precision(rows[1][7].parse::<f64>()?, 60.0, 5);
+    assert_close_to_written_precision(rows[1][8].parse::<f64>()?, 90.0, 5);
+    assert_close_to_written_precision(rows[1][9].parse::<f64>()?, 0.75, 5);
+    assert_close_to_written_precision(rows[1][10].parse::<f64>()?, 60.0, 5);
+    assert_close_to_written_precision(rows[1][11].parse::<f64>()?, 0.5625, 5);
+    assert_close_to_written_precision(rows[1][12].parse::<f64>()?, 0.75, 5);
+    assert_close_to_written_precision(rows[1][13].parse::<f64>()?, 1.0, 5);
+    assert_close_to_written_precision(rows[1][14].parse::<f64>()?, 0.5, 5);
 
     assert_eq!(rows[2][0..7], ["chr1", "100", "180", "80", "0", "80", "80"]);
-    assert_close(rows[2][7].parse::<f64>()?, 60.0, 1e-9);
-    assert_close(rows[2][8].parse::<f64>()?, 45.0, 1e-9);
-    assert_close(rows[2][9].parse::<f64>()?, 0.75, 1e-9);
-    assert_close(rows[2][10].parse::<f64>()?, 60.0, 1e-9);
-    assert_close(rows[2][11].parse::<f64>()?, 0.0, 1e-9);
-    assert_close(rows[2][12].parse::<f64>()?, 0.0, 1e-9);
-    assert_close(rows[2][13].parse::<f64>()?, 0.0, 1e-9);
-    assert_close(rows[2][14].parse::<f64>()?, 1.0, 1e-9);
+    assert_close_to_written_precision(rows[2][7].parse::<f64>()?, 60.0, 5);
+    assert_close_to_written_precision(rows[2][8].parse::<f64>()?, 45.0, 5);
+    assert_close_to_written_precision(rows[2][9].parse::<f64>()?, 0.75, 5);
+    assert_close_to_written_precision(rows[2][10].parse::<f64>()?, 60.0, 5);
+    assert_close_to_written_precision(rows[2][11].parse::<f64>()?, 0.0, 5);
+    assert_close_to_written_precision(rows[2][12].parse::<f64>()?, 0.0, 5);
+    assert_close_to_written_precision(rows[2][13].parse::<f64>()?, 0.0, 5);
+    assert_close_to_written_precision(rows[2][14].parse::<f64>()?, 1.0, 5);
 
     Ok(())
 }
@@ -2163,7 +2168,7 @@ fn restore_mean_grouped_bed_total_uses_site_weighted_group_semantics() -> Result
     )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
-    cfg.set_decimals(6);
+    cfg.set_decimals(5);
     cfg.set_per_window(CoverageWindowAction::Total);
     cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
@@ -2255,8 +2260,8 @@ fn restore_mean_grouped_bed_ignores_groups_on_filtered_out_chromosomes() -> Resu
     //
     // Manual expectations:
     // - We count only `chr1`.
-    // - `alpha` on chr1 covers [0,100) and sees the 40 bp fragment at restored value 1.5:
-    //     total_coverage = 60
+    // - Only the 40 bp chr1 fragment is counted, so the observed mean normalization length is 40.
+    //   `alpha` on chr1 covers [0,100) and therefore gets total_coverage = 40.
     // - `beta` on chr2 must not appear because chr2 is filtered out.
     let bam = mixed_length_three_chromosome_bam()?;
     let out_dir = TempDir::new()?;
@@ -2268,7 +2273,7 @@ fn restore_mean_grouped_bed_ignores_groups_on_filtered_out_chromosomes() -> Resu
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.chromosomes = base_chromosomes(&["chr1"]);
-    cfg.set_decimals(6);
+    cfg.set_decimals(5);
     cfg.set_per_window(CoverageWindowAction::Total);
     cfg.set_windows(DistributionWindowsArgs {
         by_size: None,
@@ -2288,7 +2293,7 @@ fn restore_mean_grouped_bed_ignores_groups_on_filtered_out_chromosomes() -> Resu
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        vec!["0", "100", "0", "100", "60"]
+        vec!["0", "100", "0", "100", "40"]
     );
 
     Ok(())
@@ -4572,7 +4577,7 @@ fn normalize_by_length_and_gc_tag_weights_multiply_per_position() -> Result<()> 
     cfg.set_decimals(4);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.set_normalize_by_length_bool(true);
+    cfg.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
     cfg.set_gc(ApplyGCArgs {
         gc_file: None,
         gc_tag: Some("GC".to_string()),

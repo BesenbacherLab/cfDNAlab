@@ -191,20 +191,28 @@ Important:
 - this should reflect the same fragment population that contributes to the
   output
 - excluded fragments must not contribute
-- the sum must only increase when `was_counted` is true, matching the existing
-  `counted_fragments` counter semantics
+- the sum must only increase when a counted fragment is owned by the current
+  tile for normalization statistics
+- ownership should be assigned once per fragment, by fragment start landing in
+  exactly one tile core under the current contiguous non-overlapping core
+  layout
+- this intentionally differs from `counted_fragments`, which can be larger
+  because tile halos may make one fragment visible in multiple tiles for
+  coverage statistics
 - fragments that passed early filters but never contributed to the tile core
   must not affect the mean
 
 Suggested names:
 
-- `sum_counted_length`
+- `tile_owned_normalization_length_sum`
+- `tile_owned_normalization_fragments`
 - `mean_normalization_length`
 
 Implementation note:
 
 - `FCoverageCounters` already carries `counted_fragments`
-- only one new additive field is needed for `sum_counted_length`
+- the normalization-length accumulator should keep its own tile-owned fragment
+  count so the mean is defined from the same once-per-fragment sample it sums
 
 ### 3b. Zero-count edge case
 
@@ -447,7 +455,8 @@ behaviors are covered explicitly.
 - the optional scalar sidecar, if implemented, writes the expected key/value
 - `mean_normalization_length` uses the same denominator semantics as
   `--normalize-by-length`
-- the accumulator advances only for fragments where `was_counted == true`
+- the accumulator advances only for tile-owned counted fragments, so each
+  fragment contributes once even when tile halos make it visible more than once
 - zero counted fragments leave output unchanged and emit the documented warning
 
 ### Denominator semantics

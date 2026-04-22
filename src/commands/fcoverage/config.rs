@@ -124,7 +124,8 @@ pub struct FCoverageConfig {
     /// **Modes**:
     ///
     /// - `unit-mass`: Specifying `--normalize-by-length` or `--normalize-by-length=unit-mass`
-    /// uses the described "all fragments contribute a mass of 1" mode.
+    /// uses the described "all fragments contribute a mass of 1" mode. **TIP**: In this mode,
+    /// we suggest setting `--decimals 3`.
     ///
     /// - `restore-mean`: Specifying `--normalize-by-length=restore-mean` restores the global mean
     /// by multiplying the final output by the observed mean normalization length (the countable bases)
@@ -132,7 +133,7 @@ pub struct FCoverageConfig {
     ///
     /// This setting is reflected in the output filenames:
     /// `length_normalized` for `unit-mass`,
-    /// `length_normalized_with_restored_mean` for `restore-mean`.
+    /// `length_normalized.restored_mean` for `restore-mean`.
     ///
     /// Blacklisted positions still count toward the normalization denominator
     /// to avoid large values around blacklisted regions (edge effects).
@@ -141,6 +142,7 @@ pub struct FCoverageConfig {
         clap(
             long,
             value_enum,
+            hide_possible_values = true,
             default_value_t = LengthNormalizationMode::Off,
             default_missing_value = "unit-mass",
             num_args = 0..=1,
@@ -337,14 +339,6 @@ impl FCoverageConfig {
 
     pub fn set_unpaired(&mut self, unpaired: UnpairedArgs) {
         self.unpaired = unpaired;
-    }
-
-    pub fn set_normalize_by_length_bool(&mut self, normalize_by_length: bool) {
-        self.normalize_by_length_mode = if normalize_by_length {
-            LengthNormalizationMode::UnitMass
-        } else {
-            LengthNormalizationMode::Off
-        };
     }
 
     pub fn set_normalize_by_length_mode(

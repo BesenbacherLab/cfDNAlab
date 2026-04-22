@@ -254,6 +254,7 @@ fn merge_scaled_positional_tiles_orders_tiles_and_scales_values() -> Result<()> 
     let temp_dir = TempDir::new()?;
     let out_dir = TempDir::new()?;
     // Intentionally write tiles out of index order and across two chromosomes.
+    // Within each tile the rows stay coordinate-sorted, matching the real positional writers.
     write_zstd_lines(
         &temp_dir,
         "cov.pos.chr2.1.bedgraph.zst",
@@ -262,12 +263,12 @@ fn merge_scaled_positional_tiles_orders_tiles_and_scales_values() -> Result<()> 
     write_zstd_lines(
         &temp_dir,
         "cov.pos.chr1.1.bedgraph.zst",
-        &["chr1\t5\t10\t0.5"],
+        &["chr1\t10\t15\t0.5"],
     )?;
     write_zstd_lines(
         &temp_dir,
         "cov.pos.chr1.0.bedgraph.zst",
-        &["chr1\t0\t5\t0.3333", "", "chr1\t10\t15\t2"],
+        &["chr1\t0\t5\t0.3333", "", "chr1\t5\t10\t2"],
     )?;
     write_zstd_lines(
         &temp_dir,
@@ -294,8 +295,8 @@ fn merge_scaled_positional_tiles_orders_tiles_and_scales_values() -> Result<()> 
         text.lines().collect::<Vec<_>>(),
         vec![
             "chr1\t0\t5\t1",
-            "chr1\t10\t15\t6",
-            "chr1\t5\t10\t1.5",
+            "chr1\t5\t10\t6",
+            "chr1\t10\t15\t1.5",
             "chr2\t0\t10\t0.75",
             "chr2\t10\t20\t3.75",
         ]

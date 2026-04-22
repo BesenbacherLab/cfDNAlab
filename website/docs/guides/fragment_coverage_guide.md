@@ -16,6 +16,7 @@ cfdna fcoverage \
   --n-threads 12 \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed \
+  # Get average coverage in 1Mb windows (remove for positional output)
   --by-size 1000000 \
   --per-window 'average'
 ```
@@ -35,9 +36,15 @@ cfdna fcoverage \
   --blacklist <path>/hg38-blacklist.v2.bed \
   --blacklist <path>/<another_blacklist>.bed \
   --by-size 1000000 \
-  --per-window 'average' \
-  --normalize-by-length  # Normalize by countable bases
+  # Normalize by countable bases
+  --normalize-by-length \
+  # "total" gives us the fragment count scale in larger windows
+  --per-window 'total' \
+  # Additional precision in the output
+  --decimals 3
 ```
+
+If you want positional values on the same scale as the regular coverage tracks, you can use `--normalize-by-length=restore-mean`. This multiplies each coverage value by the mean `num_countable_bases` from all the counted fragments. This makes interpretation of positional values *closer* to "how many fragments overlap this position". For windows, this pairs better with `--per-window average` (**NOTE**: rescaling can lead to longer runtime, so for "fragment counts per window", the `--normalize-by-length --per-window 'total'` path is better).
 
 ## GC-bias correction example
 

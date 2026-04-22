@@ -334,7 +334,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
             "length_normalized"
         }
         crate::commands::fcoverage::config::LengthNormalizationMode::RestoreMean => {
-            "length_normalized_with_restored_mean"
+            "length_normalized.restored_mean"
         }
     };
 
@@ -379,12 +379,6 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
         } else {
             0
         }
-    };
-
-    let tile_output_decimals = if opt.restores_mean_after_length_normalization() {
-        decimals_to_use.max(12)
-    } else {
-        decimals_to_use
     };
 
     let total_tiles = tiles.len();
@@ -541,6 +535,17 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                     }
                 };
 
+                let tile_output_decimals = match &mode {
+                    TileMode::Positional { .. }
+                        if opt.restores_mean_after_length_normalization() =>
+                    {
+                        // Positional tile files are re-read and scaled during the late
+                        // restore-mean merge, so keep extra precision here only
+                        decimals_to_use.max(12)
+                    }
+                    _ => decimals_to_use,
+                };
+
                 process_tile(
                     opt,
                     tile,
@@ -573,12 +578,25 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
         global_counter += counter;
     }
 
+    if opt.uses_length_normalization() {
+        debug_assert!(
+            global_counter.tile_owned_normalization_fragments
+                <= global_counter.base.counted_fragments,
+            "tile-owned normalization fragments must not exceed counted_fragments"
+        );
+        debug_assert_eq!(
+            global_counter.base.counted_fragments == 0,
+            global_counter.tile_owned_normalization_fragments == 0,
+            "counted_fragments and tile-owned normalization fragments should agree on zero/non-zero"
+        );
+    }
+
     let mean_normalization_length = if opt.uses_length_normalization()
-        && global_counter.restore_mean_tile_owned_fragments > 0
+        && global_counter.tile_owned_normalization_fragments > 0
     {
         Some(
-            global_counter.restore_mean_tile_owned_normalization_length_sum as f64
-                / global_counter.restore_mean_tile_owned_fragments as f64,
+            global_counter.tile_owned_normalization_length_sum as f64
+                / global_counter.tile_owned_normalization_fragments as f64,
         )
     } else {
         None
@@ -588,7 +606,8 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     } else {
         None
     };
-    if opt.restores_mean_after_length_normalization() && mean_normalization_length.is_none() {
+    if opt.restores_mean_after_length_normalization() && global_counter.base.counted_fragments == 0
+    {
         warn!(
             target: COMMAND_TARGET,
             "restore-mean requested, but mean_normalization_length was undefined because no fragments were counted; leaving the output in unit-mass scale"
@@ -877,11 +896,10 @@ fn process_tile(
             if was_counted {
                 counter.base.counted_fragments += 1;
                 if let Some(normalization_length) = normalization_length
-                    && fragment_is_owned_by_tile_for_restore_mean_stats(&fragment, tile)
+                    && fragment_is_owned_by_tile_for_normalization_stats(&fragment, tile)
                 {
-                    counter.restore_mean_tile_owned_fragments += 1;
-                    counter.restore_mean_tile_owned_normalization_length_sum +=
-                        normalization_length as u64;
+                    counter.tile_owned_normalization_fragments += 1;
+                    counter.tile_owned_normalization_length_sum += normalization_length as u64;
                 }
             }
         }
@@ -925,11 +943,10 @@ fn process_tile(
             if was_counted {
                 counter.base.counted_fragments += 1;
                 if let Some(normalization_length) = normalization_length
-                    && fragment_is_owned_by_tile_for_restore_mean_stats(&fragment, tile)
+                    && fragment_is_owned_by_tile_for_normalization_stats(&fragment, tile)
                 {
-                    counter.restore_mean_tile_owned_fragments += 1;
-                    counter.restore_mean_tile_owned_normalization_length_sum +=
-                        normalization_length as u64;
+                    counter.tile_owned_normalization_fragments += 1;
+                    counter.tile_owned_normalization_length_sum += normalization_length as u64;
                 }
             }
         }
@@ -946,11 +963,10 @@ fn process_tile(
             if was_counted {
                 counter.base.counted_fragments += 1;
                 if let Some(normalization_length) = normalization_length
-                    && fragment_is_owned_by_tile_for_restore_mean_stats(&fragment, tile)
+                    && fragment_is_owned_by_tile_for_normalization_stats(&fragment, tile)
                 {
-                    counter.restore_mean_tile_owned_fragments += 1;
-                    counter.restore_mean_tile_owned_normalization_length_sum +=
-                        normalization_length as u64;
+                    counter.tile_owned_normalization_fragments += 1;
+                    counter.tile_owned_normalization_length_sum += normalization_length as u64;
                 }
             }
         }
@@ -1400,14 +1416,18 @@ fn process_tile(
     Ok(counter)
 }
 
-/// Return whether this fragment is owned by the current tile for restore-mean bookkeeping.
+/// Return whether this fragment is owned by the current tile for normalization statistics.
 ///
-/// Coverage itself still uses every overlapping tile core contribution. This helper is only for
-/// the tile-owned restore-mean denominator statistics, so those values count each fragment once
-/// even when fetch halos make it visible in neighboring tiles. It must not be reused as a generic
-/// fragment-counting rule without re-checking the scientific model.
+/// Coverage still uses every overlapping tile core contribution. This helper is only for the
+/// run-level normalization-length statistics, where each fragment must be counted once even when
+/// fetch halos make it visible in neighboring tiles. We assign ownership by fragment start because
+/// the current tile builder partitions each chromosome into contiguous, non-overlapping cores, so a
+/// counted fragment start belongs to exactly one tile core.
+///
+/// It must not be reused as a generic fragment-counting rule without re-checking that tiling
+/// invariant and the scientific model.
 #[inline]
-fn fragment_is_owned_by_tile_for_restore_mean_stats(
+fn fragment_is_owned_by_tile_for_normalization_stats(
     fragment: &FragmentWithSegments,
     tile: &Tile,
 ) -> bool {
