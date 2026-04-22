@@ -1,7 +1,8 @@
 use crate::commands::fcoverage::config::FCoverageConfig;
 use crate::commands::fcoverage::tiling::{
     adapt_fetch_to_extreme_windows, build_summary_prefixes, clip_interval_to_core_and_localize,
-    coverage_sum_and_counts, coverage_summary_and_counts, finalize_value, merge_positional_tiles,
+    coverage_sum_and_counts, coverage_summary_and_counts, finalize_value,
+    merge_positional_tiles_with_optional_scaling,
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::{
@@ -64,6 +65,7 @@ const COMMAND_TARGET: &str = "fcoverage";
 /// reduction without wanting `fcoverage`'s outer statistics wrapper.
 pub struct FCoverageRunResult {
     pub counters: FCoverageCounters,
+    pub mean_normalization_length: Option<f64>,
     pub final_out_path: PathBuf,
 }
 
@@ -91,6 +93,14 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
     let global_counter = run_result.counters;
 
     let elapsed = start_time.elapsed();
+    let mut extra_statistics = Vec::new();
+    if let Some(mean_normalization_length) = run_result.mean_normalization_length {
+        extra_statistics.push(format!(
+            "Mean normalization length: {}",
+            mean_normalization_length
+        ));
+    }
+
     print_fragment_run_statistics(
         &global_counter.base,
         elapsed,
@@ -116,7 +126,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
                 },
             ),
         },
-        std::iter::empty::<&str>(),
+        extra_statistics.iter().map(String::as_str),
     );
     Ok(())
 }
@@ -280,7 +290,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     let has_scaling_or_correction = opt.scale_genome.scaling_factors.is_some()
         || opt.gc.gc_file.is_some()
         || opt.gc.gc_tag.is_some()
-        || opt.normalize_by_length;
+        || opt.uses_length_normalization();
 
     // Build temporary directory
     let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
@@ -318,10 +328,14 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     let partials_prefix = partials_prefix.as_str();
     let finals_prefix = finals_prefix.as_str();
 
-    let length_norm_prefix = if opt.normalize_by_length {
-        "length_normalized"
-    } else {
-        ""
+    let length_norm_prefix = match opt.normalize_by_length_mode {
+        crate::commands::fcoverage::config::LengthNormalizationMode::Off => "",
+        crate::commands::fcoverage::config::LengthNormalizationMode::UnitMass => {
+            "length_normalized"
+        }
+        crate::commands::fcoverage::config::LengthNormalizationMode::RestoreMean => {
+            "length_normalized_with_restored_mean"
+        }
     };
 
     // Create filenames of final outputs
@@ -365,6 +379,12 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
         } else {
             0
         }
+    };
+
+    let tile_output_decimals = if opt.restores_mean_after_length_normalization() {
+        decimals_to_use.max(12)
+    } else {
+        decimals_to_use
     };
 
     let total_tiles = tiles.len();
@@ -530,7 +550,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                     gc_corrector.clone(), // Quite small memory footprint
                     gc_tag,
                     mode,
-                    decimals_to_use,
+                    tile_output_decimals,
                 )?
             };
             pb.inc(1);
@@ -553,6 +573,28 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
         global_counter += counter;
     }
 
+    let mean_normalization_length = if opt.uses_length_normalization()
+        && global_counter.restore_mean_tile_owned_fragments > 0
+    {
+        Some(
+            global_counter.restore_mean_tile_owned_normalization_length_sum as f64
+                / global_counter.restore_mean_tile_owned_fragments as f64,
+        )
+    } else {
+        None
+    };
+    let restore_mean_multiplier = if opt.restores_mean_after_length_normalization() {
+        mean_normalization_length
+    } else {
+        None
+    };
+    if opt.restores_mean_after_length_normalization() && mean_normalization_length.is_none() {
+        warn!(
+            target: COMMAND_TARGET,
+            "restore-mean requested, but mean_normalization_length was undefined because no fragments were counted; leaving the output in unit-mass scale"
+        );
+    }
+
     info!(target: COMMAND_TARGET, "Merging temporary tile files to final output");
 
     // Merge temporary output files and
@@ -560,33 +602,45 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
 
     let final_out_path = if !windowed {
         // Whole-genome positional coverage
-        merge_positional_tiles(
+        merge_positional_tiles_with_optional_scaling(
             &temp_dir,
             &opt.ioc.output_dir,
             &chromosomes,
             positional_prefix,
             final_bedgraph_pos_name.as_str(),
+            restore_mean_multiplier,
+            false,
+            decimals_to_use,
+            opt.ioc.n_threads,
         )?
     } else {
         match opt.per_window {
             CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
                 // Windowed positional (unique and non-indexed)
-                merge_positional_tiles(
+                merge_positional_tiles_with_optional_scaling(
                     &temp_dir,
                     &opt.ioc.output_dir,
                     &chromosomes,
                     positional_prefix,
                     final_bedgraph_pos_name.as_str(),
+                    restore_mean_multiplier,
+                    false,
+                    decimals_to_use,
+                    opt.ioc.n_threads,
                 )?
             }
             CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
                 // Windowed positional with orig_idx column
-                merge_positional_tiles(
+                merge_positional_tiles_with_optional_scaling(
                     &temp_dir,
                     &opt.ioc.output_dir,
                     &chromosomes,
                     positional_prefix,
                     final_tsv_pos_name.as_str(),
+                    restore_mean_multiplier,
+                    true,
+                    decimals_to_use,
+                    opt.ioc.n_threads,
                 )?
             }
             CoverageWindowAction::Average
@@ -610,6 +664,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                         opt.per_window,
                         decimals_to_use,
                         opt.ioc.n_threads,
+                        restore_mean_multiplier,
                     )?,
                     DistributionWindowSpec::GroupedBed(_) => write_grouped_bed_aggregate_output(
                         &final_path,
@@ -622,6 +677,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                         opt.per_window,
                         decimals_to_use,
                         opt.ioc.n_threads,
+                        restore_mean_multiplier,
                     )?,
                     DistributionWindowSpec::Size(_) => write_size_aggregate_output(
                         &final_path,
@@ -635,6 +691,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                         decimals_to_use,
                         opt.ioc.n_threads,
                         tile_and_window_boundaries_align,
+                        restore_mean_multiplier,
                     )?,
                     DistributionWindowSpec::Global => {
                         bail!("unexpected global aggregate path in windowed fcoverage output")
@@ -677,6 +734,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
 
     Ok(FCoverageRunResult {
         counters: global_counter,
+        mean_normalization_length,
         final_out_path,
     })
 }
@@ -781,7 +839,8 @@ fn process_tile(
         let fetch_end = tile.fetch_end();
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
-            let base_weight = calculate_base_weight(&fragment, opt)?;
+            let normalization_length = normalization_length_for_fragment(&fragment, opt)?;
+            let base_weight = calculate_base_weight(normalization_length);
 
             if fragment.start() < fetch_start || fragment.end() > fetch_end {
                 // Fragment won't overlap the tile core (assuming correct max_fragment_length halo!)
@@ -817,12 +876,20 @@ fn process_tile(
 
             if was_counted {
                 counter.base.counted_fragments += 1;
+                if let Some(normalization_length) = normalization_length
+                    && fragment_is_owned_by_tile_for_restore_mean_stats(&fragment, tile)
+                {
+                    counter.restore_mean_tile_owned_fragments += 1;
+                    counter.restore_mean_tile_owned_normalization_length_sum +=
+                        normalization_length as u64;
+                }
             }
         }
     } else if gc_tag.is_some() {
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
-            let base_weight = calculate_base_weight(&fragment, opt)?;
+            let normalization_length = normalization_length_for_fragment(&fragment, opt)?;
+            let base_weight = calculate_base_weight(normalization_length);
 
             let gc_weight = match fragment.gc_tag.classify()? {
                 ClassifiedGCTagWeight::Usable(weight) => weight as f64,
@@ -857,12 +924,20 @@ fn process_tile(
 
             if was_counted {
                 counter.base.counted_fragments += 1;
+                if let Some(normalization_length) = normalization_length
+                    && fragment_is_owned_by_tile_for_restore_mean_stats(&fragment, tile)
+                {
+                    counter.restore_mean_tile_owned_fragments += 1;
+                    counter.restore_mean_tile_owned_normalization_length_sum +=
+                        normalization_length as u64;
+                }
             }
         }
     } else {
         for fragment_res in iter.by_ref() {
             let fragment = fragment_res.context("reading fragment")?;
-            let base_weight = calculate_base_weight(&fragment, opt)?;
+            let normalization_length = normalization_length_for_fragment(&fragment, opt)?;
+            let base_weight = calculate_base_weight(normalization_length);
 
             // Clip and add to tile core coverage (segments respected)
             let was_counted =
@@ -870,6 +945,13 @@ fn process_tile(
 
             if was_counted {
                 counter.base.counted_fragments += 1;
+                if let Some(normalization_length) = normalization_length
+                    && fragment_is_owned_by_tile_for_restore_mean_stats(&fragment, tile)
+                {
+                    counter.restore_mean_tile_owned_fragments += 1;
+                    counter.restore_mean_tile_owned_normalization_length_sum +=
+                        normalization_length as u64;
+                }
             }
         }
     }
@@ -1130,7 +1212,7 @@ fn process_tile(
             let first_bin_idx = core_start_abs / window_bp;
             let last_bin_idx = (core_end_abs.saturating_sub(1)) / window_bp;
 
-            if guaranteed_aligned {
+            if guaranteed_aligned && !opt.restores_mean_after_length_normalization() {
                 // FAST PATH: Every bin that touches the core is fully contained in this core
                 // so there is no cross-tile reduction later. Scalar actions can write their
                 // final value immediately, while summary-stats can write their final derived row
@@ -1223,7 +1305,11 @@ fn process_tile(
                 w_fin.flush()?;
             } else {
                 let mut w_part = open_zstd_auto_writer(&partials_out, 3, None)?;
-                let mut w_cross = open_zstd_auto_writer(&cross_idx_out, 3, None)?;
+                let mut w_cross = if guaranteed_aligned {
+                    None
+                } else {
+                    Some(open_zstd_auto_writer(&cross_idx_out, 3, None)?)
+                };
 
                 for bin_idx in first_bin_idx..=last_bin_idx {
                     let bin_start = bin_idx * window_bp;
@@ -1297,16 +1383,36 @@ fn process_tile(
                     // Mark cross-boundary bins (not fully inside the core) so reducer expects >1 contributions
                     let fully_inside = (bin_start >= core_start_abs) && (bin_end <= core_end_abs);
                     if !fully_inside {
+                        let w_cross = w_cross.as_mut().context(
+                            "guaranteed_aligned by-size partial writing encountered a cross-boundary bin without a cross-index writer",
+                        )?;
                         writeln!(w_cross, "{}", bin_start)?;
                     }
                 }
                 w_part.flush()?;
-                w_cross.flush()?;
+                if let Some(mut w_cross) = w_cross {
+                    w_cross.flush()?;
+                }
             }
         }
     }
 
     Ok(counter)
+}
+
+/// Return whether this fragment is owned by the current tile for restore-mean bookkeeping.
+///
+/// Coverage itself still uses every overlapping tile core contribution. This helper is only for
+/// the tile-owned restore-mean denominator statistics, so those values count each fragment once
+/// even when fetch halos make it visible in neighboring tiles. It must not be reused as a generic
+/// fragment-counting rule without re-checking the scientific model.
+#[inline]
+fn fragment_is_owned_by_tile_for_restore_mean_stats(
+    fragment: &FragmentWithSegments,
+    tile: &Tile,
+) -> bool {
+    let fragment_start = fragment.start();
+    fragment_start >= tile.core_start() && fragment_start < tile.core_end()
 }
 
 /// Add blacklist clipped to tile coordinates to the coverage prefix object
@@ -1421,19 +1527,14 @@ pub fn add_fragment_clipped_to_core(
     Ok(counted)
 }
 
-/// Compute the intrinsic per-base fragment weight before GC correction or genomic scaling.
-///
-/// By default, every counted base gets weight `1.0`, so longer fragments contribute more total
-/// mass because they cover more positions. With `--normalize-by-length`, each fragment should instead
-/// contribute a total mass of `1.0` across the positions that are actually counted by
-/// `fcoverage`.
+/// Compute the intrinsic normalization length for one fragment when length normalization is active.
 ///
 /// Technical details:
 /// - Plain fragments use the full fragment span length `[start, end)`.
 /// - Segment-aware fragments use the summed length of their counted reference segments, so deleted
 ///   or skipped reference bases do not dilute the fragment's total mass below `1.0`.
-/// - GC correction and genomic scaling are applied later as multiplicative factors on top of this
-///   base weight.
+/// - GC correction and genomic scaling are applied later as multiplicative factors on top of the
+///   resulting base weight.
 ///
 /// Parameters
 /// ----------
@@ -1444,29 +1545,38 @@ pub fn add_fragment_clipped_to_core(
 ///
 /// Returns
 /// -------
-/// - `weight`:
-///     Per-base weight to add before any GC or genomic weighting.
+/// - `normalization_length`:
+///     `Some(denominator)` when length normalization is active, otherwise `None`.
 ///
 /// Errors
 /// ------
 /// Returns an error if `--normalize-by-length` is enabled but the fragment has zero countable
 /// length. That would indicate an internal inconsistency in the counted spans.
 #[inline]
-fn calculate_base_weight(fragment: &FragmentWithSegments, opt: &FCoverageConfig) -> Result<f64> {
-    if !opt.normalize_by_length {
-        return Ok(1.0);
+fn normalization_length_for_fragment(
+    fragment: &FragmentWithSegments,
+    opt: &FCoverageConfig,
+) -> Result<Option<u32>> {
+    if !opt.uses_length_normalization() {
+        return Ok(None);
     }
 
-    let counted_length = if let Some(segments) = &fragment.segments {
+    let normalization_length = if let Some(segments) = &fragment.segments {
         segments.iter().map(|segment| segment.len()).sum::<u32>()
     } else {
         fragment.len()
     };
 
-    if counted_length == 0 {
+    if normalization_length == 0 {
         bail!("normalize-by-length encountered a fragment with zero countable length");
     }
-    Ok(1.0 / counted_length as f64)
+    Ok(Some(normalization_length))
+}
+
+/// Compute the intrinsic per-base fragment weight before GC correction or genomic scaling.
+#[inline]
+fn calculate_base_weight(normalization_length: Option<u32>) -> f64 {
+    normalization_length.map_or(1.0, |length| 1.0 / length as f64)
 }
 
 /// Smallest positive intrinsic per-base weight a counted fragment base can have in this run.
@@ -1474,7 +1584,7 @@ fn calculate_base_weight(fragment: &FragmentWithSegments, opt: &FCoverageConfig)
 /// This is evaluated before GC correction or genomic scaling.
 #[inline]
 fn minimum_positive_base_weight(opt: &FCoverageConfig) -> f64 {
-    if opt.normalize_by_length {
+    if opt.uses_length_normalization() {
         1.0 / opt.fragment_lengths.max_fragment_length as f64
     } else {
         1.0

@@ -1,4 +1,4 @@
-use std::io::{BufWriter, Write};
+use std::io::{BufRead, BufWriter, Write};
 
 use anyhow::{Context, Result};
 
@@ -6,7 +6,9 @@ use crate::{
     commands::cli_common::WindowSpec,
     commands::fcoverage::window_results::CoverageWindowAction,
     shared::coverage::Coverage,
+    shared::formatters::{CompactNumber, round_to},
     shared::interval::Interval,
+    shared::io::open_text_reader,
     shared::tiled_run::{
         Tile, TileMode, TileWindowSpan, clamp_fetch_to_window_span, parse_tile_index,
     },
@@ -14,7 +16,33 @@ use crate::{
         BedFetchPolicy, fetch_span_for_tile, full_tile_fetch_span,
         window_derived_fetch_extent_for_core_overlap,
     },
+    shared::writers::open_zstd_auto_writer,
 };
+
+fn sorted_tile_files_for_chromosome(
+    temp_dir: &std::path::Path,
+    chromosome: &str,
+    per_tile_prefix: &str,
+) -> Result<Vec<(u32, std::path::PathBuf)>> {
+    let mut chromosome_files = Vec::new();
+    for entry in std::fs::read_dir(temp_dir)
+        .with_context(|| format!("Listing temp_dir: {}", temp_dir.display()))?
+    {
+        let path = entry?.path();
+        if !path.is_file() {
+            continue;
+        }
+        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        if file_name.starts_with(per_tile_prefix)
+            && file_name.contains(&format!(".{chromosome}."))
+            && let Some(tile_index) = parse_tile_index(file_name)
+        {
+            chromosome_files.push((tile_index, path));
+        }
+    }
+    chromosome_files.sort_by_key(|(tile_index, _)| *tile_index);
+    Ok(chromosome_files)
+}
 
 /// Concatenates per-tile positional files into a single merged output.
 ///
@@ -45,27 +73,7 @@ pub fn merge_positional_tiles(
     );
 
     for chr in chromosomes {
-        // Collect tile files for this chromosome from temp_dir
-        let mut chr_files: Vec<(u32, std::path::PathBuf)> = Vec::new();
-        for entry in std::fs::read_dir(temp_dir)
-            .with_context(|| format!("Listing temp_dir: {}", temp_dir.display()))?
-        {
-            let path = entry?.path();
-            if !path.is_file() {
-                continue;
-            }
-            let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-            // Expect "{per_tile_prefix}.{chr}.{index}.tsv"
-            if fname.starts_with(per_tile_prefix)
-                && fname.contains(&format!(".{chr}."))
-                && let Some(idx) = parse_tile_index(fname)
-            {
-                chr_files.push((idx, path));
-            }
-        }
-
-        // Sort by tile index to preserve genomic order within chr
-        chr_files.sort_by_key(|(i, _)| *i);
+        let chr_files = sorted_tile_files_for_chromosome(temp_dir, chr, per_tile_prefix)?;
 
         // Stream copy each tile into the final file
         for (_idx, path) in chr_files {
@@ -83,6 +91,137 @@ pub fn merge_positional_tiles(
 
     out.flush().context("Flushing merged output")?;
     Ok(final_path)
+}
+
+/// Concatenate positional tile outputs while scaling the value column on the fly.
+///
+/// This is used by `restore-mean`, where the final multiplier is only known after all tiles were
+/// counted. Row identity and ordering stay identical to the ordinary positional merge.
+pub fn merge_scaled_positional_tiles(
+    temp_dir: &std::path::Path,
+    out_dir: &std::path::Path,
+    chromosomes: &[String],
+    per_tile_prefix: &str,
+    final_name: &str,
+    multiplier: f64,
+    indexed: bool,
+    decimals: i32,
+    n_threads: usize,
+) -> Result<std::path::PathBuf> {
+    let final_path = out_dir.join(final_name);
+    let mut out = open_zstd_auto_writer(&final_path, 3, Some(n_threads as u32))?;
+    let mut line = String::new();
+
+    for chr in chromosomes {
+        let chr_files = sorted_tile_files_for_chromosome(temp_dir, chr, per_tile_prefix)?;
+        for (_idx, path) in chr_files {
+            let mut reader = open_text_reader(&path)?;
+            loop {
+                line.clear();
+                if reader.read_line(&mut line)? == 0 {
+                    break;
+                }
+
+                let raw = line.trim_end_matches('\n').trim_end_matches('\r');
+                if raw.is_empty() {
+                    continue;
+                }
+
+                let mut cols = raw.split('\t');
+                let chr_col = cols.next().ok_or_else(|| {
+                    anyhow::anyhow!("Missing chromosome column in {}", path.display())
+                })?;
+                let start_col = cols
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("Missing start column in {}", path.display()))?;
+                let end_col = cols
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("Missing end column in {}", path.display()))?;
+                let value_col = cols
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("Missing value column in {}", path.display()))?;
+                let value = value_col.parse::<f64>().with_context(|| {
+                    format!("Parsing positional value '{}' in {}", value_col, path.display())
+                })?;
+                let scaled_value = round_to(value * multiplier, decimals);
+
+                if indexed {
+                    let idx_col = cols.next().ok_or_else(|| {
+                        anyhow::anyhow!("Missing window index column in {}", path.display())
+                    })?;
+                    anyhow::ensure!(
+                        cols.next().is_none(),
+                        "Unexpected extra columns in indexed positional tile {}",
+                        path.display()
+                    );
+                    writeln!(
+                        out,
+                        "{}\t{}\t{}\t{}\t{}",
+                        chr_col,
+                        start_col,
+                        end_col,
+                        CompactNumber {
+                            v: scaled_value,
+                            decimals
+                        },
+                        idx_col
+                    )?;
+                } else {
+                    anyhow::ensure!(
+                        cols.next().is_none(),
+                        "Unexpected extra columns in positional tile {}",
+                        path.display()
+                    );
+                    writeln!(
+                        out,
+                        "{}\t{}\t{}\t{}",
+                        chr_col,
+                        start_col,
+                        end_col,
+                        CompactNumber {
+                            v: scaled_value,
+                            decimals
+                        }
+                    )?;
+                }
+            }
+        }
+    }
+
+    out.flush().context("Flushing scaled merged positional output")?;
+    Ok(final_path)
+}
+
+/// Merge positional tiles, optionally applying a late restore-mean multiplier.
+///
+/// This keeps the final positional merge dispatch next to the concrete positional merge
+/// implementations instead of duplicating the `scaled vs direct-copy` decision at call sites.
+pub fn merge_positional_tiles_with_optional_scaling(
+    temp_dir: &std::path::Path,
+    out_dir: &std::path::Path,
+    chromosomes: &[String],
+    per_tile_prefix: &str,
+    final_name: &str,
+    restore_mean_multiplier: Option<f64>,
+    indexed: bool,
+    decimals: i32,
+    n_threads: usize,
+) -> Result<std::path::PathBuf> {
+    if let Some(multiplier) = restore_mean_multiplier {
+        merge_scaled_positional_tiles(
+            temp_dir,
+            out_dir,
+            chromosomes,
+            per_tile_prefix,
+            final_name,
+            multiplier,
+            indexed,
+            decimals,
+            n_threads,
+        )
+    } else {
+        merge_positional_tiles(temp_dir, out_dir, chromosomes, per_tile_prefix, final_name)
+    }
 }
 
 /// Joins already-compressed per-tile final outputs while preserving frame boundaries.
@@ -123,24 +262,7 @@ pub fn concat_aligned_size_tile_finals(
 
     // Then append each tile's compressed frame in genomic order
     for chr in chromosomes {
-        // Collect tile files for this chromosome
-        let mut chr_files: Vec<(u32, std::path::PathBuf)> = Vec::new();
-        for entry in std::fs::read_dir(temp_dir)
-            .with_context(|| format!("Listing {}", temp_dir.display()))?
-        {
-            let path = entry?.path();
-            if !path.is_file() {
-                continue;
-            }
-            let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-            if fname.starts_with(per_tile_prefix)
-                && fname.contains(&format!(".{chr}."))
-                && let Some(idx) = parse_tile_index(fname)
-            {
-                chr_files.push((idx, path));
-            }
-        }
-        chr_files.sort_by_key(|(i, _)| *i);
+        let chr_files = sorted_tile_files_for_chromosome(temp_dir, chr, per_tile_prefix)?;
 
         // Copy bytes verbatim (frame concatenation)
         for (_i, p) in chr_files {

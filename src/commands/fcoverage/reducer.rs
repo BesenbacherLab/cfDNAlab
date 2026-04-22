@@ -3,7 +3,7 @@ use fxhash::{FxBuildHasher, FxHashMap};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::fmt::Display;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -11,33 +11,10 @@ use crate::commands::fcoverage::tiling::finalize_value;
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::write_final_row;
 use crate::shared::formatters::round_to;
+use crate::shared::io::open_text_reader;
 use crate::shared::interval::{IndexedInterval, Interval};
 
 type StreamHeap = BinaryHeap<Reverse<(u64, usize)>>;
-
-/// Open a partials or cross-index file with transparent zstd decoding.
-///
-/// The reducer reads both plain `.tsv` files and `.zst` sidecars. Keeping this logic in one
-/// helper avoids subtle mismatches where one path would accept compressed files and another would
-/// silently stop doing so after a later edit.
-fn open_maybe_zstd_reader(
-    path: &Path,
-    open_message: &str,
-) -> Result<BufReader<Box<dyn Read + Send>>> {
-    let file =
-        std::fs::File::open(path).with_context(|| format!("{open_message} {}", path.display()))?;
-    let boxed: Box<dyn Read + Send> = if path
-        .extension()
-        .and_then(|suffix| suffix.to_str())
-        .map(|suffix| suffix.eq_ignore_ascii_case("zst"))
-        .unwrap_or(false)
-    {
-        Box::new(zstd::Decoder::new(file).context("Opening zstd decoder")?)
-    } else {
-        Box::new(file)
-    };
-    Ok(BufReader::new(boxed))
-}
 
 /// Parse one tab-delimited column with consistent missing/invalid diagnostics.
 ///
@@ -133,7 +110,7 @@ struct ParsedPartialRow {
 /// - keep line numbers for diagnostics
 /// - parse the current schema into one normalized row shape
 struct PartialsStream {
-    reader: BufReader<Box<dyn Read + Send>>,
+    reader: Box<dyn BufRead>,
     line_buf: String,
     chr: String,
     line_number: u64,
@@ -144,7 +121,8 @@ struct PartialsStream {
 impl PartialsStream {
     fn open(path: &Path, chr: &str, tile_index: u32, schema: PartialsSchema) -> Result<Self> {
         Ok(Self {
-            reader: open_maybe_zstd_reader(path, "Opening partials file")?,
+            reader: open_text_reader(path)
+                .with_context(|| format!("Opening partials file {}", path.display()))?,
             line_buf: String::new(),
             chr: chr.to_string(),
             line_number: 0,
@@ -452,7 +430,8 @@ fn load_expected_contributions(
             continue;
         };
 
-        let mut reader = open_maybe_zstd_reader(cross_path, "Opening cross-index")?;
+        let mut reader = open_text_reader(cross_path)
+            .with_context(|| format!("Opening cross-index {}", cross_path.display()))?;
         let mut line = String::new();
         loop {
             line.clear();

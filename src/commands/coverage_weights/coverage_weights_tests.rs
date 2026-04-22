@@ -1,5 +1,6 @@
 use super::*;
 use anyhow::Result;
+use crate::commands::fcoverage::config::LengthNormalizationMode;
 use std::fs::File;
 use std::io::Write;
 use tempfile::TempDir;
@@ -7,6 +8,7 @@ use tempfile::TempDir;
 fn make_run_result(path: PathBuf) -> FCoverageRunResult {
     FCoverageRunResult {
         counters: crate::commands::counters::FCoverageCounters::default(),
+        mean_normalization_length: None,
         final_out_path: path,
     }
 }
@@ -388,4 +390,27 @@ fn normalize_average_overlap_by_global_mean_keeps_bins_above_support_floor() -> 
     );
 
     Ok(())
+}
+
+#[test]
+fn build_fcoverage_average_config_uses_unit_mass_for_fragment_count_weights() {
+    let tempdir = TempDir::new().expect("tempdir should exist");
+    let args = ScalingWeightsArgs::new(
+        crate::commands::cli_common::IOCArgs {
+            bam: PathBuf::from("input.bam"),
+            output_dir: tempdir.path().to_path_buf(),
+            n_threads: 1,
+        },
+        crate::commands::cli_common::ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes_file: None,
+        },
+    );
+
+    let cfg = build_fcoverage_average_config(&args, tempdir.path(), true);
+
+    assert_eq!(
+        cfg.normalize_by_length_mode,
+        LengthNormalizationMode::UnitMass
+    );
 }

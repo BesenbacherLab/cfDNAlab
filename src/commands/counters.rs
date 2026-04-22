@@ -97,6 +97,8 @@ counter_struct!(FragmentKmersCounters;
 
 #[cfg(feature = "cmd_fcoverage")]
 counter_struct!(FCoverageCounters;
+    restore_mean_tile_owned_fragments: u64,
+    restore_mean_tile_owned_normalization_length_sum: u64,
     gc_failed_fragments: u64,
     gc_out_of_range_tags: u64,
     gc_missing_tags: u64

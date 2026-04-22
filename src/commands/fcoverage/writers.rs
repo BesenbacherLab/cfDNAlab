@@ -1,4 +1,4 @@
-use crate::shared::formatters::{CompactNumber, round_to_with_precomputed_factor};
+use crate::shared::formatters::{CompactNumber, round_to, round_to_with_precomputed_factor};
 use crate::shared::interval::Interval;
 use crate::shared::writers::open_zstd_auto_writer;
 use anyhow::{Result, bail};
@@ -8,12 +8,13 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::commands::fcoverage::reducer::{
-    ReducedAggregateRow, reduce_aggregates_by_size_with_cross_index_for_chr,
+    ReducedAggregateRow, reduce_aggregates_by_size_basic_with_cross_index_for_chr_rows,
+    reduce_aggregates_by_size_with_cross_index_for_chr,
     reduce_aggregates_by_size_with_cross_index_for_chr_rows,
     reduce_bed_basic_with_cross_index_for_chr_rows, reduce_bed_with_cross_index_for_chr,
     reduce_bed_with_cross_index_for_chr_rows,
 };
-use crate::commands::fcoverage::tiling::concat_aligned_size_tile_finals;
+use crate::commands::fcoverage::tiling::{concat_aligned_size_tile_finals, finalize_value};
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::shared::base::{ZEROISH_F32_TOLERANCE, ZEROISH_F64_TOLERANCE};
 use crate::shared::bed::{GroupedCoverageLayout, Windows};
@@ -342,6 +343,48 @@ fn write_reduced_summary_stats_row<W: Write>(
     write_summary_stats_row(w, chr, row.interval, stats, decimals)
 }
 
+fn scale_reduced_row(
+    row: ReducedAggregateRow,
+    restore_mean_multiplier: Option<f64>,
+) -> ReducedAggregateRow {
+    let Some(multiplier) = restore_mean_multiplier else {
+        return row;
+    };
+
+    ReducedAggregateRow {
+        coverage_sum: row.coverage_sum * multiplier,
+        coverage_sum_of_squares: row.coverage_sum_of_squares * multiplier.powi(2),
+        ..row
+    }
+}
+
+fn write_scaled_non_summary_reduced_row<W: Write>(
+    writer: &mut W,
+    chromosome: &str,
+    row: ReducedAggregateRow,
+    masked: bool,
+    action: CoverageWindowAction,
+    decimals: i32,
+    restore_mean_multiplier: f64,
+) -> Result<()> {
+    let row = scale_reduced_row(row, Some(restore_mean_multiplier));
+    let value = finalize_value(
+        row.coverage_sum,
+        row.eligible_positions,
+        row.interval.len(),
+        masked,
+        &action,
+    );
+    write_final_row(
+        writer,
+        chromosome,
+        row.interval,
+        round_to(value, decimals),
+        row.blacklisted_positions,
+        decimals,
+    )
+}
+
 /// Write a final aggregate row: `chromosome  start  end  value  blacklisted_positions`
 #[inline]
 pub fn write_final_row<W: Write>(
@@ -517,6 +560,7 @@ pub(crate) fn write_bed_aggregate_output(
     action: CoverageWindowAction,
     decimals: i32,
     n_threads: usize,
+    restore_mean_multiplier: Option<f64>,
 ) -> Result<()> {
     let mut writer = open_zstd_auto_writer(final_path, 3, Some(n_threads as u32))?;
     if action.is_summary_stats() {
@@ -530,7 +574,14 @@ pub(crate) fn write_bed_aggregate_output(
                     temp_dir,
                     partials_prefix,
                     windows_for_chr.as_slice(),
-                    |row| write_reduced_summary_stats_row(&mut writer, chromosome, row, decimals),
+                    |row| {
+                        write_reduced_summary_stats_row(
+                            &mut writer,
+                            chromosome,
+                            scale_reduced_row(row, restore_mean_multiplier),
+                            decimals,
+                        )
+                    },
                 )?;
             }
         }
@@ -544,16 +595,36 @@ pub(crate) fn write_bed_aggregate_output(
         )?;
         for chromosome in chromosomes {
             if let Some(windows_for_chr) = windows_by_chr.get(chromosome) {
-                reduce_bed_with_cross_index_for_chr(
-                    chromosome,
-                    temp_dir,
-                    partials_prefix,
-                    windows_for_chr.as_slice(),
-                    masked,
-                    action,
-                    decimals,
-                    &mut writer,
-                )?;
+                if let Some(restore_mean_multiplier) = restore_mean_multiplier {
+                    reduce_bed_basic_with_cross_index_for_chr_rows(
+                        chromosome,
+                        temp_dir,
+                        partials_prefix,
+                        windows_for_chr.as_slice(),
+                        |row| {
+                            write_scaled_non_summary_reduced_row(
+                                &mut writer,
+                                chromosome,
+                                row,
+                                masked,
+                                action,
+                                decimals,
+                                restore_mean_multiplier,
+                            )
+                        },
+                    )?;
+                } else {
+                    reduce_bed_with_cross_index_for_chr(
+                        chromosome,
+                        temp_dir,
+                        partials_prefix,
+                        windows_for_chr.as_slice(),
+                        masked,
+                        action,
+                        decimals,
+                        &mut writer,
+                    )?;
+                }
             }
         }
     }
@@ -609,6 +680,7 @@ pub(crate) fn write_grouped_bed_aggregate_output(
     action: CoverageWindowAction,
     decimals: i32,
     n_threads: usize,
+    restore_mean_multiplier: Option<f64>,
 ) -> Result<()> {
     // Start every group accumulator with its known span. Segment reduction will fill in the
     // coverage-derived fields later, but span positions come from the grouped layout itself.
@@ -637,7 +709,13 @@ pub(crate) fn write_grouped_bed_aggregate_output(
                 temp_dir,
                 partials_prefix,
                 windows_for_chr.as_slice(),
-                |row| fold_reduced_segment_into_group(grouped_layout, &mut grouped_accums, row),
+                |row| {
+                    fold_reduced_segment_into_group(
+                        grouped_layout,
+                        &mut grouped_accums,
+                        scale_reduced_row(row, restore_mean_multiplier),
+                    )
+                },
             )?;
         } else {
             reduce_bed_basic_with_cross_index_for_chr_rows(
@@ -645,7 +723,13 @@ pub(crate) fn write_grouped_bed_aggregate_output(
                 temp_dir,
                 partials_prefix,
                 windows_for_chr.as_slice(),
-                |row| fold_reduced_segment_into_group(grouped_layout, &mut grouped_accums, row),
+                |row| {
+                    fold_reduced_segment_into_group(
+                        grouped_layout,
+                        &mut grouped_accums,
+                        scale_reduced_row(row, restore_mean_multiplier),
+                    )
+                },
             )?;
         }
     }
@@ -752,10 +836,17 @@ pub(crate) fn write_size_aggregate_output(
     decimals: i32,
     n_threads: usize,
     tile_and_window_boundaries_align: bool,
+    restore_mean_multiplier: Option<f64>,
 ) -> Result<()> {
-    if tile_and_window_boundaries_align {
+    if tile_and_window_boundaries_align && restore_mean_multiplier.is_none() {
         // Fast path: every tile already wrote complete fixed-size bins, so we can concatenate the
         // ready-made outputs instead of reopening the cross-tile reducers.
+        //
+        // `restore-mean` intentionally bypasses this fast path and falls through to the shared
+        // reducer/finalizer below. In that mode, aligned tiles already wrote exact raw rows to
+        // `partials_out`, and the ordinary reducer path can finalize them directly with the
+        // existing "missing cross-index means one contribution" rule.
+
         let header = if action.is_summary_stats() {
             summary_stats_header().to_string()
         } else {
@@ -782,6 +873,10 @@ pub(crate) fn write_size_aggregate_output(
 
     // General path: some bins crossed tile boundaries, so we have to reduce the partial rows back
     // into complete fixed-size bins chromosome by chromosome.
+    //
+    // This same path also handles aligned `restore-mean` runs. In that case there is still no
+    // cross-tile reduction to do, but reusing the reducer/finalizer avoids a second raw-row
+    // writer path with the same final semantics.
     let mut writer = open_zstd_auto_writer(final_path, 3, Some(n_threads as u32))?;
     if action.is_summary_stats() {
         writeln!(writer, "{}", summary_stats_header())?;
@@ -794,7 +889,14 @@ pub(crate) fn write_size_aggregate_output(
                 temp_dir,
                 partials_prefix,
                 chrom_len,
-                |row| write_reduced_summary_stats_row(&mut writer, chromosome, row, decimals),
+                |row| {
+                    write_reduced_summary_stats_row(
+                        &mut writer,
+                        chromosome,
+                        scale_reduced_row(row, restore_mean_multiplier),
+                        decimals,
+                    )
+                },
             )?;
         }
     } else {
@@ -807,16 +909,36 @@ pub(crate) fn write_size_aggregate_output(
             let chrom_len = chromosome_length_u64(contigs, chromosome)?;
             // `average` and `total` can use the lighter reducer because they do not need the
             // summary-only raw moments.
-            reduce_aggregates_by_size_with_cross_index_for_chr(
-                chromosome,
-                temp_dir,
-                partials_prefix,
-                masked,
-                action,
-                chrom_len,
-                decimals,
-                &mut writer,
-            )?;
+            if let Some(restore_mean_multiplier) = restore_mean_multiplier {
+                reduce_aggregates_by_size_basic_with_cross_index_for_chr_rows(
+                    chromosome,
+                    temp_dir,
+                    partials_prefix,
+                    chrom_len,
+                    |row| {
+                        write_scaled_non_summary_reduced_row(
+                            &mut writer,
+                            chromosome,
+                            row,
+                            masked,
+                            action,
+                            decimals,
+                            restore_mean_multiplier,
+                        )
+                    },
+                )?;
+            } else {
+                reduce_aggregates_by_size_with_cross_index_for_chr(
+                    chromosome,
+                    temp_dir,
+                    partials_prefix,
+                    masked,
+                    action,
+                    chrom_len,
+                    decimals,
+                    &mut writer,
+                )?;
+            }
         }
     }
     writer.flush()?;

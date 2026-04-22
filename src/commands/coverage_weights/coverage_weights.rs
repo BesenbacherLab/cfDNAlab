@@ -6,7 +6,7 @@ use crate::{
             StrideBin, fill_triangular_overlap, normalize_average_overlap_by_global_mean,
         },
         fcoverage::{
-            config::FCoverageConfig,
+            config::{FCoverageConfig, LengthNormalizationMode},
             fcoverage::{FCoverageRunResult, run_inner as fcoverage_run_inner},
             window_results::CoverageWindowAction,
         },
@@ -231,7 +231,11 @@ fn build_fcoverage_average_config(
     );
 
     cfg.set_unpaired(opt.unpaired.clone());
-    cfg.set_normalize_by_length(normalize_by_length);
+    cfg.set_normalize_by_length_mode(if normalize_by_length {
+        LengthNormalizationMode::UnitMass
+    } else {
+        LengthNormalizationMode::Off
+    });
     cfg.set_output_prefix(opt.output_prefix.clone());
     cfg.set_decimals(FCOVERAGE_INTERMEDIATE_DECIMALS);
     cfg.set_per_window(CoverageWindowAction::Average);

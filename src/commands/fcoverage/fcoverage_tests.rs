@@ -3,7 +3,7 @@ use super::{
     minimum_positive_gc_weight, minimum_positive_pre_scaling_support,
 };
 use crate::commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs};
-use crate::commands::fcoverage::config::FCoverageConfig;
+use crate::commands::fcoverage::config::{FCoverageConfig, LengthNormalizationMode};
 use crate::shared::gc_tag::MIN_REASONABLE_GC_WEIGHT;
 use std::path::PathBuf;
 
@@ -31,7 +31,7 @@ fn minimum_positive_support_is_one_without_gc_or_length_normalization() {
 #[test]
 fn minimum_positive_support_uses_max_fragment_length_when_length_normalized() {
     let mut opt = base_config();
-    opt.set_normalize_by_length(true);
+    opt.set_normalize_by_length_bool(true);
     opt.fragment_lengths_mut().max_fragment_length = 500;
 
     let expected_min_support = 1.0 / 500.0;
@@ -90,7 +90,7 @@ fn minimum_positive_support_uses_gc_lower_bound_for_gc_tag_runs() {
 #[test]
 fn internal_cleanup_floor_stays_below_theoretical_minimum_with_gc_and_length_normalization() {
     let mut opt = base_config();
-    opt.set_normalize_by_length(true);
+    opt.set_normalize_by_length_bool(true);
     opt.fragment_lengths_mut().max_fragment_length = 1000;
     opt.set_gc(ApplyGCArgs {
         gc_file: Some(PathBuf::from("gc_bias_correction.npz")),
@@ -108,4 +108,35 @@ fn internal_cleanup_floor_stays_below_theoretical_minimum_with_gc_and_length_nor
     assert_eq!(cleanup_floor, (min_support / 2.0) as f32);
     assert!(cleanup_floor > 0.0);
     assert!((cleanup_floor as f64) < min_support);
+}
+
+#[test]
+fn length_normalization_mode_defaults_to_off() {
+    let opt = base_config();
+
+    assert_eq!(opt.normalize_by_length_mode, LengthNormalizationMode::Off);
+}
+
+#[test]
+fn restore_mean_uses_same_intrinsic_minimum_positive_support_as_unit_mass() {
+    let mut unit_mass = base_config();
+    unit_mass.set_normalize_by_length_mode(LengthNormalizationMode::UnitMass);
+    unit_mass.fragment_lengths_mut().max_fragment_length = 500;
+
+    let mut restore_mean = base_config();
+    restore_mean.set_normalize_by_length_mode(LengthNormalizationMode::RestoreMean);
+    restore_mean.fragment_lengths_mut().max_fragment_length = 500;
+
+    assert_eq!(
+        minimum_positive_base_weight(&unit_mass),
+        minimum_positive_base_weight(&restore_mean)
+    );
+    assert_eq!(
+        minimum_positive_pre_scaling_support(&unit_mass),
+        minimum_positive_pre_scaling_support(&restore_mean)
+    );
+    assert_eq!(
+        internal_residual_coverage_floor(&unit_mass),
+        internal_residual_coverage_floor(&restore_mean)
+    );
 }

@@ -15,7 +15,7 @@ use cfdnalab::commands::cli_common::{
 use cfdnalab::commands::coverage_weights::{
     config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
 };
-use cfdnalab::commands::fcoverage::config::FCoverageConfig;
+use cfdnalab::commands::fcoverage::config::{FCoverageConfig, LengthNormalizationMode};
 use cfdnalab::commands::fcoverage::fcoverage::{run, run_inner};
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
 use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
@@ -82,6 +82,74 @@ fn base_config(bam_path: &Path, output_dir: &Path) -> FCoverageConfig {
         frag.max_fragment_length = 200;
     }
     cfg
+}
+
+fn set_restore_mean_length_normalization(cfg: &mut FCoverageConfig) {
+    cfg.set_normalize_by_length_mode(LengthNormalizationMode::RestoreMean);
+}
+
+fn mixed_length_fragment_bam() -> Result<BamFixture> {
+    bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        vec![paired_fragment(20, 40, 20), paired_fragment(100, 80, 20)],
+        Vec::new(),
+        "fcoverage_restore_mean_mixed_lengths",
+    )
+}
+
+fn mixed_length_three_chromosome_bam() -> Result<BamFixture> {
+    bam_from_specs(
+        vec![
+            ("chr1".to_string(), 200),
+            ("chr2".to_string(), 200),
+            ("chr3".to_string(), 200),
+        ],
+        vec![
+            paired_fragment_on_tid(0, 20, 40, 20),
+            paired_fragment_on_tid(1, 10, 60, 20),
+            paired_fragment_on_tid(2, 40, 80, 20),
+        ],
+        Vec::new(),
+        "fcoverage_restore_mean_three_chr",
+    )
+}
+
+fn empty_bam_fixture(name: &str) -> Result<BamFixture> {
+    bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        Vec::new(),
+        Vec::new(),
+        name,
+    )
+}
+
+fn dense_bedgraph_for_chromosome(
+    text: &str,
+    chromosome: &str,
+    chromosome_length: usize,
+) -> Vec<f64> {
+    let mut coverage = vec![0.0; chromosome_length];
+    for line in text.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        let cols: Vec<_> = line.split('\t').collect();
+        assert!(
+            cols.len() >= 4,
+            "expected at least four bedGraph columns, got '{}'",
+            line
+        );
+        if cols[0] != chromosome {
+            continue;
+        }
+        let start: usize = cols[1].parse().expect("bedGraph start must parse");
+        let end: usize = cols[2].parse().expect("bedGraph end must parse");
+        let value: f64 = cols[3].parse().expect("bedGraph value must parse");
+        for position in start..end {
+            coverage[position] = value;
+        }
+    }
+    coverage
 }
 
 fn parse_tsv(text: &str) -> Vec<Vec<&str>> {
@@ -414,7 +482,7 @@ fn normalize_by_length_keeps_fractional_positional_output_without_other_weights(
     cfg.set_decimals(4);
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
-    cfg.normalize_by_length = true;
+    cfg.set_normalize_by_length_bool(true);
 
     // Manual expectations:
     // - The single fragment covers [20, 80), length 60.
@@ -449,7 +517,7 @@ fn normalize_by_length_by_size_total_counts_each_fragment_as_one() -> Result<()>
     cfg.set_decimals(6);
     cfg.set_per_window(CoverageWindowAction::Total);
     cfg.set_windows(windows);
-    cfg.normalize_by_length = true;
+    cfg.set_normalize_by_length_bool(true);
 
     // Manual expectations:
     // - The fragment spans 60 bases and contributes 1 / 60 to each covered base.
@@ -503,7 +571,7 @@ fn normalize_by_length_and_gc_file_weights_multiply_per_position() -> Result<()>
     cfg.set_decimals(6);
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
-    cfg.normalize_by_length = true;
+    cfg.set_normalize_by_length_bool(true);
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
@@ -576,7 +644,7 @@ fn normalize_by_length_uses_counted_segment_length_for_gapped_fragments() -> Res
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.normalize_by_length = true;
+    cfg.set_normalize_by_length_bool(true);
 
     // Manual expectations:
     // - The read spans [20, 70) on the reference with a 10 bp deletion in the middle.
@@ -613,7 +681,7 @@ fn normalize_by_length_ignore_gap_renormalizes_over_remaining_counted_span() -> 
         cfg.set_per_window(CoverageWindowAction::Average);
         cfg.set_keep_zero_runs(false);
         cfg.set_ignore_gap(ignore_gap);
-        cfg.normalize_by_length = true;
+        cfg.set_normalize_by_length_bool(true);
 
         run(&cfg)?;
 
@@ -658,7 +726,7 @@ fn normalize_by_length_matches_between_paired_and_unpaired_for_same_span() -> Re
     paired_cfg.set_per_window(CoverageWindowAction::Average);
     paired_cfg.set_keep_zero_runs(false);
     paired_cfg.set_output_prefix("paired");
-    paired_cfg.normalize_by_length = true;
+    paired_cfg.set_normalize_by_length_bool(true);
 
     let mut unpaired_cfg = base_config(&unpaired_bam.bam, unpaired_out.path());
     unpaired_cfg.set_decimals(4);
@@ -666,7 +734,7 @@ fn normalize_by_length_matches_between_paired_and_unpaired_for_same_span() -> Re
     unpaired_cfg.set_keep_zero_runs(false);
     unpaired_cfg.set_output_prefix("unpaired");
     unpaired_cfg.unpaired.reads_are_fragments = true;
-    unpaired_cfg.normalize_by_length = true;
+    unpaired_cfg.set_normalize_by_length_bool(true);
 
     // Manual expectations:
     // - Both inputs represent the same counted span [20, 80), length 60.
@@ -737,7 +805,7 @@ fn normalize_by_length_uses_paired_counted_segments_when_ignore_gap_is_on() -> R
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.set_ignore_gap(true);
-    cfg.normalize_by_length = true;
+    cfg.set_normalize_by_length_bool(true);
 
     // Manual expectations:
     // - The fragment outer span is [20, 80), length 60.
@@ -792,7 +860,7 @@ fn normalize_by_length_uses_counted_segment_length_for_refskip_fragments() -> Re
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.normalize_by_length = true;
+    cfg.set_normalize_by_length_bool(true);
 
     // Manual expectations:
     // - The read spans [20, 70) on the reference with a 10 bp ref-skip in the middle.
@@ -856,7 +924,7 @@ fn normalize_by_length_segmented_fragment_still_multiplies_gc_and_scaling() -> R
     cfg.set_per_window(CoverageWindowAction::Average);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.normalize_by_length = true;
+    cfg.set_normalize_by_length_bool(true);
     cfg.set_gc(ApplyGCArgs {
         gc_file: Some(gc_path),
         gc_tag: None,
@@ -892,6 +960,1336 @@ fn normalize_by_length_segmented_fragment_still_multiplies_gc_and_scaling() -> R
     let text = read_zst_to_string(&output_path)?;
     let lines: Vec<_> = text.lines().collect();
     assert_eq!(lines, vec!["chr1\t20\t40\t0.25", "chr1\t50\t70\t0.25"]);
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_positional_output_uses_mean_normalization_length_for_mixed_fragment_lengths()
+-> Result<()> {
+    // Future-facing test for `--normalize-by-length=restore-mean`.
+    //
+    // Manual expectations:
+    // - Two fragments are counted:
+    //     [20, 60) with normalization length 40
+    //     [100, 180) with normalization length 80
+    // - Mean normalization length is therefore:
+    //     (40 + 80) / 2 = 60
+    // - Unit-mass per-base weights would be:
+    //     first fragment:  1 / 40
+    //     second fragment: 1 / 80
+    // - `restore-mean` multiplies those by 60, giving:
+    //     first fragment:  60 / 40 = 1.5
+    //     second fragment: 60 / 80 = 0.75
+    let bam = mixed_length_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(2);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_keep_zero_runs(false);
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    assert!(
+        result
+            .final_out_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.contains("length_normalized_with_restored_mean")),
+        "restore-mean output path should include the restore-mean marker, got {}",
+        result.final_out_path.display()
+    );
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    assert_eq!(text, "chr1\t20\t60\t1.5\nchr1\t100\t180\t0.75\n");
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_positional_output_is_basewise_tile_size_invariant_across_tile_boundaries()
+-> Result<()> {
+    // Future-facing test for the positional scaled-merge path.
+    //
+    // Manual expectations:
+    // - Same mixed-length fixture as above:
+    //     [20, 60)  -> 1.5
+    //     [100, 180) -> 0.75
+    // - The final bedGraph segmentation may differ across tile sizes, but the basewise coverage
+    //   must stay identical.
+    let bam = mixed_length_fragment_bam()?;
+    let mut observed_coverages = Vec::new();
+
+    for tile_size in [33_u32, 1_000_u32] {
+        let out_dir = TempDir::new()?;
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        cfg.set_decimals(2);
+        cfg.set_per_window(CoverageWindowAction::Average);
+        cfg.set_keep_zero_runs(true);
+        cfg.set_tile_size(tile_size);
+        set_restore_mean_length_normalization(&mut cfg);
+
+        let result = run_inner(&cfg)?;
+        let text = read_zst_to_string(&result.final_out_path)?;
+        observed_coverages.push(dense_bedgraph_for_chromosome(&text, "chr1", 200));
+    }
+
+    let mut expected = vec![0.0_f64; 200];
+    for position in 20..60 {
+        expected[position] = 1.5;
+    }
+    for position in 100..180 {
+        expected[position] = 0.75;
+    }
+
+    assert_eq!(observed_coverages[0], expected);
+    assert_eq!(observed_coverages[1], expected);
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_unique_positions_windowed_output_scales_selected_runs() -> Result<()> {
+    // Future-facing test for `OnlyIncludeThesePositionsUnique`.
+    //
+    // Manual expectations:
+    // - Mean normalization length is still 60.
+    // - BED windows:
+    //     [15, 50)  intersects the first fragment as [20, 50) with value 1.5
+    //     [120, 190) intersects the second fragment as [120, 180) with value 0.75
+    let bam = mixed_length_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("restore_mean_unique_windows.bed");
+    write_bed(
+        &bed_path,
+        &[("chr1", 15, 50, "first"), ("chr1", 120, 190, "second")],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_keep_zero_runs(false);
+    cfg.set_per_window(CoverageWindowAction::OnlyIncludeThesePositionsUnique);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+        by_grouped_bed: None,
+    });
+    cfg.set_decimals(2);
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    assert_eq!(text, "chr1\t20\t50\t1.5\nchr1\t120\t180\t0.75\n");
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_indexed_positions_keep_window_indices_and_scaled_values() -> Result<()> {
+    // Future-facing test for `OnlyIncludeThesePositionsIndexed`.
+    //
+    // Manual expectations:
+    // - Mean normalization length is 60.
+    // - Window 0 [15, 50) contributes:
+    //     [20, 50) -> 1.5
+    // - Window 1 [40, 130) contributes:
+    //     [40, 60) -> 1.5
+    //     [100, 130) -> 0.75
+    // - Window 2 [120, 190) contributes:
+    //     [120, 180) -> 0.75
+    let bam = mixed_length_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("restore_mean_indexed_windows.bed");
+    write_bed(
+        &bed_path,
+        &[
+            ("chr1", 15, 50, "window_a"),
+            ("chr1", 40, 130, "window_b"),
+            ("chr1", 120, 190, "window_c"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_keep_zero_runs(false);
+    cfg.set_per_window(CoverageWindowAction::OnlyIncludeThesePositionsIndexed);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+        by_grouped_bed: None,
+    });
+    cfg.set_decimals(2);
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec![
+            "chr1\t20\t50\t1.5\t0",
+            "chr1\t40\t60\t1.5\t1",
+            "chr1\t100\t130\t0.75\t1",
+            "chr1\t120\t180\t0.75\t2",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_by_size_total_counts_mean_normalization_length_per_fragment() -> Result<()> {
+    // Future-facing test for by-size total aggregation.
+    //
+    // Manual expectations:
+    // - Mean normalization length = 60.
+    // - Each fragment contributes total mass 60 after `restore-mean`.
+    // - The single 200 bp window therefore gets:
+    //     60 + 60 = 120
+    let bam = mixed_length_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(2);
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: Some(200),
+        by_bed: None,
+        by_grouped_bed: None,
+    });
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec![
+            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chr1\t0\t200\t120\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_by_size_average_restores_global_mean_level_for_single_full_window() -> Result<()> {
+    // Future-facing test for by-size average aggregation.
+    //
+    // Manual expectations:
+    // - Restored total coverage across the chromosome is 120.
+    // - The only window spans 200 bp.
+    // - Average coverage is therefore:
+    //     120 / 200 = 0.6
+    let bam = mixed_length_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: Some(200),
+        by_bed: None,
+        by_grouped_bed: None,
+    });
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec![
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
+            "chr1\t0\t200\t0.6\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_by_size_total_aligned_fast_path_matches_general_path() -> Result<()> {
+    // Future-facing fast-path/general-path parity test.
+    //
+    // Manual expectations for 40 bp windows:
+    // - [0, 40):   20 covered bases from the 40 bp fragment at value 1.5 -> 30
+    // - [40, 80):  20 covered bases from the 40 bp fragment at value 1.5 -> 30
+    // - [80, 120): 20 covered bases from the 80 bp fragment at value 0.75 -> 15
+    // - [120,160): 40 covered bases from the 80 bp fragment at value 0.75 -> 30
+    // - [160,200): 20 covered bases from the 80 bp fragment at value 0.75 -> 15
+    let bam = mixed_length_fragment_bam()?;
+    let mut outputs = Vec::new();
+
+    for tile_size in [40_u32, 55_u32] {
+        let out_dir = TempDir::new()?;
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        cfg.set_decimals(2);
+        cfg.set_per_window(CoverageWindowAction::Total);
+        cfg.set_tile_size(tile_size);
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: Some(40),
+            by_bed: None,
+            by_grouped_bed: None,
+        });
+        set_restore_mean_length_normalization(&mut cfg);
+
+        let result = run_inner(&cfg)?;
+        outputs.push(read_zst_to_string(&result.final_out_path)?);
+    }
+
+    let expected = concat!(
+        "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions\n",
+        "chr1\t0\t40\t30\t0\n",
+        "chr1\t40\t80\t30\t0\n",
+        "chr1\t80\t120\t15\t0\n",
+        "chr1\t120\t160\t30\t0\n",
+        "chr1\t160\t200\t15\t0\n",
+    );
+
+    assert_eq!(outputs[0], expected);
+    assert_eq!(outputs[1], expected);
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_by_size_summary_stats_derives_scaled_raw_and_derived_values() -> Result<()> {
+    // Future-facing test for by-size summary stats.
+    //
+    // Manual expectations for the full 200 bp chromosome window:
+    // - Coverage values:
+    //     40 positions at 1.5
+    //     80 positions at 0.75
+    //     80 positions at 0
+    // - coverage_sum = 40*1.5 + 80*0.75 = 120
+    // - coverage_sum_of_squares = 40*(1.5^2) + 80*(0.75^2) = 90 + 45 = 135
+    // - average_coverage = 120 / 200 = 0.6
+    // - variance_coverage = (135 / 200) - 0.6^2 = 0.675 - 0.36 = 0.315
+    // - sd_coverage = sqrt(0.315)
+    // - coefficient_of_variation_coverage = sd / mean
+    // - covered_fraction = 120 / 200 = 0.6
+    let bam = mixed_length_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::SummaryStats);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: Some(200),
+        by_bed: None,
+        by_grouped_bed: None,
+    });
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+    let rows = parse_tsv(&text);
+
+    assert_eq!(
+        rows[0],
+        vec![
+            "chromosome",
+            "start",
+            "end",
+            "span_positions",
+            "blacklisted_positions",
+            "eligible_positions",
+            "nonzero_positions",
+            "coverage_sum",
+            "coverage_sum_of_squares",
+            "average_coverage",
+            "total_coverage",
+            "variance_coverage",
+            "sd_coverage",
+            "coefficient_of_variation_coverage",
+            "covered_fraction",
+        ]
+    );
+    assert_eq!(
+        rows[1][0..7],
+        ["chr1", "0", "200", "200", "0", "200", "120"]
+    );
+    assert_close(rows[1][7].parse::<f64>()?, 120.0, 1e-9);
+    assert_close(rows[1][8].parse::<f64>()?, 135.0, 1e-9);
+    assert_close(rows[1][9].parse::<f64>()?, 0.6, 1e-9);
+    assert_close(rows[1][10].parse::<f64>()?, 120.0, 1e-9);
+    assert_close(rows[1][11].parse::<f64>()?, 0.315, 1e-9);
+    assert_close(rows[1][12].parse::<f64>()?, 0.315_f64.sqrt(), 1e-9);
+    assert_close(
+        rows[1][13].parse::<f64>()?,
+        0.315_f64.sqrt() / 0.6_f64,
+        1e-9,
+    );
+    assert_close(rows[1][14].parse::<f64>()?, 0.6, 1e-9);
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_per_position_handles_three_chromosomes_in_global_mode() -> Result<()> {
+    // Future-facing three-chromosome positional test.
+    //
+    // Manual expectations:
+    // - chr1 fragment length 40 -> 60 / 40 = 1.5 on [20, 60)
+    // - chr2 fragment length 60 -> 60 / 60 = 1.0 on [10, 70)
+    // - chr3 fragment length 80 -> 60 / 80 = 0.75 on [40, 120)
+    let bam = mixed_length_three_chromosome_bam()?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.chromosomes = base_chromosomes(&["chr1", "chr2", "chr3"]);
+    cfg.set_decimals(2);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_keep_zero_runs(false);
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec![
+            "chr1\t20\t60\t1.5",
+            "chr2\t10\t70\t1",
+            "chr3\t40\t120\t0.75",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_by_bed_average_handles_three_chromosomes_with_global_window_indices() -> Result<()>
+{
+    // Future-facing three-chromosome BED-average test.
+    //
+    // Manual expectations:
+    // - Mean normalization length across fragment lengths 40, 60, 80 is 60.
+    // - chr1 window [20, 60): full 40 bp fragment at 1.5 -> average 1.5
+    // - chr2 window [0, 40): 30 covered bases at 1.0 -> average 30 / 40 = 0.75
+    // - chr3 window [50, 100): 50 covered bases at 0.75 -> average 37.5 / 50 = 0.75
+    let bam = mixed_length_three_chromosome_bam()?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("restore_mean_three_chr_windows.bed");
+    write_bed(
+        &bed_path,
+        &[
+            ("chr1", 20, 60, "chr1_window"),
+            ("chr2", 0, 40, "chr2_window"),
+            ("chr3", 50, 100, "chr3_window"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.chromosomes = base_chromosomes(&["chr1", "chr2", "chr3"]);
+    cfg.set_decimals(2);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+        by_grouped_bed: None,
+    });
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec![
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
+            "chr1\t20\t60\t1.5\t0",
+            "chr2\t0\t40\t0.75\t0",
+            "chr3\t50\t100\t0.75\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_by_bed_average_skips_chromosomes_without_windows_and_keeps_later_chromosomes()
+-> Result<()> {
+    // Future-facing BED-average chromosome-skipping test.
+    //
+    // Manual expectations:
+    // - We keep chromosomes chr1 and chr2.
+    // - Only chr2 has a BED window: [0, 40).
+    // - The chr2 fragment spans [10, 70) at restored value 1.0, so overlap inside [0,40) is 30.
+    // - Average coverage is therefore 30 / 40 = 0.75.
+    let bam = mixed_length_three_chromosome_bam()?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("restore_mean_chr2_only.bed");
+    write_bed(&bed_path, &[("chr2", 0, 40, "chr2_window")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.chromosomes = base_chromosomes(&["chr1", "chr2"]);
+    cfg.set_decimals(2);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+        by_grouped_bed: None,
+    });
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec![
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
+            "chr2\t0\t40\t0.75\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_by_size_total_handles_three_chromosomes() -> Result<()> {
+    // Future-facing by-size multi-chromosome test.
+    //
+    // Manual expectations:
+    // - Fragment normalization lengths are 40, 60, and 80, so mean_normalization_length = 60.
+    // - Each fragment therefore contributes total mass 60 to its chromosome-wide 200 bp window.
+    let bam = mixed_length_three_chromosome_bam()?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.chromosomes = base_chromosomes(&["chr1", "chr2", "chr3"]);
+    cfg.set_decimals(2);
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: Some(200),
+        by_bed: None,
+        by_grouped_bed: None,
+    });
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec![
+            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chr1\t0\t200\t60\t0",
+            "chr2\t0\t200\t60\t0",
+            "chr3\t0\t200\t60\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_grouped_total_on_unique_bases_merges_same_group_overlaps_after_scaling()
+-> Result<()> {
+    // Future-facing grouped-total-on-unique-bases test.
+    //
+    // Manual expectations:
+    // - Mean normalization length = 60.
+    // - Group `beta` intervals:
+    //     [20, 50) and [40, 60)   -> merge to [20, 60) with 40 bp at 1.5
+    //     [100,150) and [140,180) -> merge to [100,180) with 80 bp at 0.75
+    //   Unique union span = 120, total_coverage = 40*1.5 + 80*0.75 = 120
+    // - Group `gamma` stays a zero row on [0, 10)
+    let bam = mixed_length_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("restore_mean_grouped_unique_total.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 20, 50, "beta"),
+            ("chr1", 40, 60, "beta"),
+            ("chr1", 100, 150, "beta"),
+            ("chr1", 140, 180, "beta"),
+            ("chr1", 0, 10, "gamma"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::TotalOnUniqueBases);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+    let rows = parse_tsv(&text);
+
+    assert_eq!(
+        rows,
+        vec![
+            vec![
+                "group_idx",
+                "span_positions",
+                "blacklisted_positions",
+                "eligible_positions",
+                "total_coverage",
+            ],
+            vec!["0", "120", "0", "120", "120"],
+            vec!["1", "10", "0", "10", "0"],
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_grouped_summary_stats_on_unique_bases_writes_scaled_rows() -> Result<()> {
+    // Future-facing grouped summary-stat test.
+    //
+    // Manual expectations for `beta` after merging same-group overlaps:
+    // - eligible = nonzero = span = 120
+    // - coverage_sum = 120
+    // - coverage_sum_of_squares = 40*(1.5^2) + 80*(0.75^2) = 135
+    // - average_coverage = 120 / 120 = 1
+    // - variance_coverage = (135 / 120) - 1^2 = 0.125
+    // - sd_coverage = sqrt(0.125)
+    // - coefficient_of_variation_coverage = sqrt(0.125)
+    // - covered_fraction = 1
+    let bam = mixed_length_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir
+        .path()
+        .join("restore_mean_grouped_unique_summary.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 20, 50, "beta"),
+            ("chr1", 40, 60, "beta"),
+            ("chr1", 100, 150, "beta"),
+            ("chr1", 140, 180, "beta"),
+            ("chr1", 0, 10, "gamma"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::SummaryStatsOnUniqueBases);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+    let rows = parse_tsv(&text);
+
+    assert_eq!(rows[1][0..5], ["0", "120", "0", "120", "120"]);
+    assert_close(rows[1][5].parse::<f64>()?, 120.0, 1e-9);
+    assert_close(rows[1][6].parse::<f64>()?, 135.0, 1e-9);
+    assert_close(rows[1][7].parse::<f64>()?, 1.0, 1e-9);
+    assert_close(rows[1][8].parse::<f64>()?, 120.0, 1e-9);
+    assert_close(rows[1][9].parse::<f64>()?, 0.125, 1e-9);
+    assert_close(rows[1][10].parse::<f64>()?, 0.125_f64.sqrt(), 1e-9);
+    assert_close(rows[1][11].parse::<f64>()?, 0.125_f64.sqrt(), 1e-9);
+    assert_close(rows[1][12].parse::<f64>()?, 1.0, 1e-9);
+
+    assert_eq!(rows[2][0..5], ["1", "10", "0", "10", "0"]);
+    assert_close(rows[2][5].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[2][6].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[2][7].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[2][8].parse::<f64>()?, 0.0, 1e-9);
+    assert!(rows[2][11].eq_ignore_ascii_case("NaN"));
+    assert_close(rows[2][12].parse::<f64>()?, 0.0, 1e-9);
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_grouped_plain_summary_stats_writes_scaled_rows() -> Result<()> {
+    // Future-facing plain grouped summary-stat test.
+    //
+    // Manual expectations for `beta`:
+    // - Two separate same-group intervals are kept separate in plain grouped mode:
+    //     [20, 50)  -> 30 bases at 1.5
+    //     [100,160) -> 60 bases at 0.75
+    // - span = eligible = nonzero = 90
+    // - coverage_sum = 45 + 45 = 90
+    // - coverage_sum_of_squares = 30*(1.5^2) + 60*(0.75^2) = 67.5 + 33.75 = 101.25
+    // - average = 90 / 90 = 1
+    // - variance = 101.25 / 90 - 1 = 0.125
+    // - sd = sqrt(0.125)
+    // - cv = sqrt(0.125)
+    // - covered_fraction = 1
+    let bam = mixed_length_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir
+        .path()
+        .join("restore_mean_grouped_plain_summary.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 20, 50, "beta"),
+            ("chr1", 100, 160, "beta"),
+            ("chr1", 0, 10, "gamma"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::SummaryStats);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let output = read_zst_to_string(&result.final_out_path)?;
+    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+
+    assert_eq!(
+        rows_by_name["beta"][0..5]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["0", "90", "0", "90", "90"]
+    );
+    assert_close(rows_by_name["beta"][5].parse::<f64>()?, 90.0, 1e-9);
+    assert_close(rows_by_name["beta"][6].parse::<f64>()?, 101.25, 1e-9);
+    assert_close(rows_by_name["beta"][7].parse::<f64>()?, 1.0, 1e-9);
+    assert_close(rows_by_name["beta"][8].parse::<f64>()?, 90.0, 1e-9);
+    assert_close(rows_by_name["beta"][9].parse::<f64>()?, 0.125, 1e-9);
+    assert_close(
+        rows_by_name["beta"][10].parse::<f64>()?,
+        0.125_f64.sqrt(),
+        1e-9,
+    );
+    assert_close(
+        rows_by_name["beta"][11].parse::<f64>()?,
+        0.125_f64.sqrt(),
+        1e-9,
+    );
+    assert_close(rows_by_name["beta"][12].parse::<f64>()?, 1.0, 1e-9);
+
+    assert_eq!(
+        rows_by_name["gamma"][0..5]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["1", "10", "0", "10", "0"]
+    );
+    assert_close(rows_by_name["gamma"][5].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["gamma"][6].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["gamma"][7].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["gamma"][8].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["gamma"][9].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows_by_name["gamma"][10].parse::<f64>()?, 0.0, 1e-9);
+    assert!(rows_by_name["gamma"][11].eq_ignore_ascii_case("NaN"));
+    assert_close(rows_by_name["gamma"][12].parse::<f64>()?, 0.0, 1e-9);
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_grouped_plain_summary_stats_is_invariant_when_segments_cross_tiles() -> Result<()> {
+    // Future-facing grouped summary tile-size invariance test.
+    let bam = mixed_length_fragment_bam()?;
+    let mut outputs = Vec::new();
+    let mut sidecars = Vec::new();
+
+    for tile_size in [33_u32, 1_000_u32] {
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir.path().join(format!(
+            "restore_mean_grouped_plain_summary_{tile_size}.bed"
+        ));
+        write_bed(
+            &grouped_bed,
+            &[
+                ("chr1", 20, 50, "beta"),
+                ("chr1", 100, 160, "beta"),
+                ("chr1", 0, 10, "gamma"),
+            ],
+        )?;
+
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        cfg.set_tile_size(tile_size);
+        cfg.set_decimals(6);
+        cfg.set_per_window(CoverageWindowAction::SummaryStats);
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        set_restore_mean_length_normalization(&mut cfg);
+
+        let result = run_inner(&cfg)?;
+        outputs.push(read_zst_to_string(&result.final_out_path)?);
+        sidecars.push(std::fs::read_to_string(
+            out_dir.path().join("testcov.group_index.tsv"),
+        )?);
+    }
+
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(sidecars[0], sidecars[1]);
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_segmented_fragment_still_multiplies_gc_and_scaling() -> Result<()> {
+    // Future-facing restore-mean version of the segmented GC+scaling test.
+    //
+    // Manual expectations:
+    // - The counted segments are [20, 40) and [50, 70), total normalization length 40.
+    // - Because there is only one counted fragment, `mean_normalization_length = 40`.
+    // - Unit-mass base weight is 1 / 40.
+    // - GC weight = 2 and scaling factor = 5 everywhere, so unit-mass positional value is:
+    //     (1 / 40) * 2 * 5 = 0.25
+    // - `restore-mean` multiplies by 40, giving:
+    //     0.25 * 40 = 10
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 200)],
+        Vec::new(),
+        vec![ReadSpec {
+            tid: 0,
+            pos: 20,
+            cigar: vec![('M', 20), ('D', 10), ('M', 20)],
+            seq: vec![b'A'; 40],
+            qual: 40,
+            is_reverse: false,
+            mapq: 60,
+            flags: 0,
+            mate_tid: None,
+            mate_pos: None,
+            insert_size: 0,
+        }],
+        "fcoverage_restore_mean_gapped_with_gc_and_scaling",
+    )?;
+    let ref_twobit = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let gc_path = out_dir.path().join("restore_mean_gc_pkg.npz");
+    let scaling_path = out_dir.path().join("restore_mean_scaling.tsv");
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 0,
+        length_edges: vec![50, 51],
+        gc_edges: vec![0, 101],
+        length_bin_frequencies: array![1.0_f64],
+        correction_matrix: array![[2.0_f64]],
+    };
+    package.write_npz(&gc_path)?;
+    write_scaling_factors(&scaling_path, &[("chr1", 0, 200, 5.0)])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_keep_zero_runs(false);
+    cfg.unpaired.reads_are_fragments = true;
+    set_restore_mean_length_normalization(&mut cfg);
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        neutralize_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+    {
+        let mut scale_genome = ScaleGenomeArgs::default();
+        scale_genome.scaling_factors = Some(scaling_path);
+        cfg.set_scale_genome(scale_genome);
+    }
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 50;
+        frag.max_fragment_length = 50;
+    }
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec!["chr1\t20\t40\t10", "chr1\t50\t70\t10"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_keep_zero_runs_writes_zero_flanks_and_zero_gaps() -> Result<()> {
+    // Future-facing test for `keep_zero_runs` under restore-mean.
+    //
+    // Manual expectations:
+    // - Covered restore-mean runs are:
+    //     [20, 60)   -> 1.5
+    //     [100, 180) -> 0.75
+    // - With `keep_zero_runs=true`, the uncovered flanks and middle gap remain as explicit zeros.
+    let bam = mixed_length_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(2);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_keep_zero_runs(true);
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec![
+            "chr1\t0\t20\t0",
+            "chr1\t20\t60\t1.5",
+            "chr1\t60\t100\t0",
+            "chr1\t100\t180\t0.75",
+            "chr1\t180\t200\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_blacklist_masks_positions_in_positional_output() -> Result<()> {
+    // Future-facing blacklist test for positional restore-mean output.
+    //
+    // Manual expectations:
+    // - Base restore-mean runs are [20, 60) -> 1.5 and [100, 180) -> 0.75.
+    // - Blacklisting [30, 35) and [130, 150) removes those positions entirely.
+    let bam = mixed_length_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+    let blacklist_path = out_dir.path().join("restore_mean_blacklist.bed");
+    write_bed(
+        &blacklist_path,
+        &[("chr1", 30, 35, "masked_a"), ("chr1", 130, 150, "masked_b")],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(2);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_keep_zero_runs(false);
+    cfg.set_blacklist(Some(vec![blacklist_path]));
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec![
+            "chr1\t20\t30\t1.5",
+            "chr1\t35\t60\t1.5",
+            "chr1\t100\t130\t0.75",
+            "chr1\t150\t180\t0.75",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_with_no_counted_fragments_keeps_zero_signal_and_returns_no_mean() -> Result<()> {
+    // Future-facing zero-count bookkeeping test.
+    //
+    // Manual expectations:
+    // - No fragments contribute, so all positional coverage is zero.
+    // - `keep_zero_runs=true` therefore yields one full-chromosome zero run.
+    // - `mean_normalization_length` is undefined, so the internal result should return `None`.
+    let bam = empty_bam_fixture("fcoverage_restore_mean_empty")?;
+    let out_dir = TempDir::new()?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(2);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_keep_zero_runs(true);
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    assert_eq!(text, "chr1\t0\t200\t0\n");
+    assert_eq!(result.mean_normalization_length, None);
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_by_bed_total_is_invariant_when_windows_cross_tile_boundaries() -> Result<()> {
+    // Future-facing BED total tile-size invariance test.
+    //
+    // Manual expectations:
+    // - Window [0, 40):   20 bases at 1.5 -> 30
+    // - Window [20, 80):  40 bases at 1.5 -> 60
+    // - Window [120,170): 50 bases at 0.75 -> 37.5
+    let bam = mixed_length_fragment_bam()?;
+    let mut outputs = Vec::new();
+
+    for tile_size in [33_u32, 1_000_u32] {
+        let out_dir = TempDir::new()?;
+        let bed_path = out_dir
+            .path()
+            .join(format!("restore_mean_bed_total_{tile_size}.bed"));
+        write_bed(
+            &bed_path,
+            &[
+                ("chr1", 0, 40, "window_a"),
+                ("chr1", 20, 80, "window_b"),
+                ("chr1", 120, 170, "window_c"),
+            ],
+        )?;
+
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        cfg.set_decimals(2);
+        cfg.set_per_window(CoverageWindowAction::Total);
+        cfg.set_tile_size(tile_size);
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+            by_grouped_bed: None,
+        });
+        set_restore_mean_length_normalization(&mut cfg);
+
+        let result = run_inner(&cfg)?;
+        outputs.push(read_zst_to_string(&result.final_out_path)?);
+    }
+
+    let expected = concat!(
+        "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions\n",
+        "chr1\t0\t40\t30\t0\n",
+        "chr1\t20\t80\t60\t0\n",
+        "chr1\t120\t170\t37.5\t0\n",
+    );
+    assert_eq!(outputs[0], expected);
+    assert_eq!(outputs[1], expected);
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_by_bed_summary_stats_is_invariant_when_windows_cross_tiles() -> Result<()> {
+    // Future-facing BED summary-stats tile-size invariance test.
+    //
+    // Manual expectations:
+    // - Window [0, 80):
+    //     40 bases at 1.5 and 40 bases at 0
+    //     coverage_sum = 60
+    //     coverage_sum_of_squares = 90
+    //     average = 0.75
+    //     variance = 0.5625
+    //     sd = 0.75
+    //     cv = 1
+    //     covered_fraction = 0.5
+    // - Window [100, 180):
+    //     80 bases at 0.75
+    //     coverage_sum = 60
+    //     coverage_sum_of_squares = 45
+    //     average = 0.75
+    //     variance = sd = cv = 0
+    //     covered_fraction = 1
+    let bam = mixed_length_fragment_bam()?;
+    let mut outputs = Vec::new();
+
+    for tile_size in [33_u32, 1_000_u32] {
+        let out_dir = TempDir::new()?;
+        let bed_path = out_dir
+            .path()
+            .join(format!("restore_mean_bed_summary_{tile_size}.bed"));
+        write_bed(
+            &bed_path,
+            &[("chr1", 0, 80, "window_a"), ("chr1", 100, 180, "window_b")],
+        )?;
+
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        cfg.set_decimals(6);
+        cfg.set_per_window(CoverageWindowAction::SummaryStats);
+        cfg.set_tile_size(tile_size);
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+            by_grouped_bed: None,
+        });
+        set_restore_mean_length_normalization(&mut cfg);
+
+        let result = run_inner(&cfg)?;
+        outputs.push(read_zst_to_string(&result.final_out_path)?);
+    }
+
+    assert_eq!(outputs[0], outputs[1]);
+    let rows = parse_tsv(&outputs[0]);
+    assert_eq!(rows[1][0..7], ["chr1", "0", "80", "80", "0", "80", "40"]);
+    assert_close(rows[1][7].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows[1][8].parse::<f64>()?, 90.0, 1e-9);
+    assert_close(rows[1][9].parse::<f64>()?, 0.75, 1e-9);
+    assert_close(rows[1][10].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows[1][11].parse::<f64>()?, 0.5625, 1e-9);
+    assert_close(rows[1][12].parse::<f64>()?, 0.75, 1e-9);
+    assert_close(rows[1][13].parse::<f64>()?, 1.0, 1e-9);
+    assert_close(rows[1][14].parse::<f64>()?, 0.5, 1e-9);
+
+    assert_eq!(rows[2][0..7], ["chr1", "100", "180", "80", "0", "80", "80"]);
+    assert_close(rows[2][7].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows[2][8].parse::<f64>()?, 45.0, 1e-9);
+    assert_close(rows[2][9].parse::<f64>()?, 0.75, 1e-9);
+    assert_close(rows[2][10].parse::<f64>()?, 60.0, 1e-9);
+    assert_close(rows[2][11].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[2][12].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[2][13].parse::<f64>()?, 0.0, 1e-9);
+    assert_close(rows[2][14].parse::<f64>()?, 1.0, 1e-9);
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_by_bed_total_keeps_coordinate_sorted_output_when_same_start_windows_cross_tiles()
+-> Result<()> {
+    // Future-facing coordinate-order regression test.
+    //
+    // Manual expectations:
+    // - Window [0, 40) has restored total 30.
+    // - Window [0, 100) has restored total 60.
+    // - Final output should stay coordinate-sorted, so [0,40) precedes [0,100).
+    let bam = mixed_length_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("restore_mean_same_start_windows.bed");
+    write_bed(
+        &bed_path,
+        &[("chr1", 0, 100, "wide"), ("chr1", 0, 40, "narrow")],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_tile_size(33);
+    cfg.set_decimals(2);
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+        by_grouped_bed: None,
+    });
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec![
+            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chr1\t0\t40\t30\t0",
+            "chr1\t0\t100\t60\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_by_bed_total_halo_only_window_is_not_double_counted_across_tiles() -> Result<()> {
+    // Future-facing CoreOverlap regression test under restore-mean.
+    //
+    // Manual expectations:
+    // - One 20 bp fragment spans [5, 25), so with restore-mean based on that one fragment the
+    //   restored value is still 1 across the covered span.
+    // - BED windows [5,10), [15,20), [20,25) each overlap 5 covered bases and must therefore
+    //   each report total_coverage = 5 exactly once.
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 40)],
+        vec![paired_fragment(5, 20, 10)],
+        Vec::new(),
+        "fcoverage_restore_mean_halo_only",
+    )?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("restore_mean_halo_only_windows.bed");
+    write_bed(
+        &bed_path,
+        &[
+            ("chr1", 5, 10, "a"),
+            ("chr1", 15, 20, "b"),
+            ("chr1", 20, 25, "c"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_tile_size(10);
+    cfg.set_decimals(0);
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+        by_grouped_bed: None,
+    });
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec![
+            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chr1\t5\t10\t5\t0",
+            "chr1\t15\t20\t5\t0",
+            "chr1\t20\t25\t5\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_grouped_bed_total_uses_site_weighted_group_semantics() -> Result<()> {
+    // Future-facing grouped plain-total semantics test.
+    //
+    // Manual expectations:
+    // - Group `beta` keeps its two loaded intervals separate:
+    //     [20, 50)  -> 30 * 1.5 = 45
+    //     [100,160) -> 60 * 0.75 = 45
+    //   span_positions = eligible_positions = 90
+    //   total_coverage = 90
+    // - Group `alpha` = [20, 40) -> 20 * 1.5 = 30
+    // - Group `gamma` = [0, 10) -> 0
+    let bam = mixed_length_fragment_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("restore_mean_grouped_plain_total.bed");
+    write_bed(
+        &grouped_bed,
+        &[
+            ("chr1", 20, 50, "beta"),
+            ("chr1", 20, 40, "alpha"),
+            ("chr1", 100, 160, "beta"),
+            ("chr1", 0, 10, "gamma"),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let output = read_zst_to_string(&result.final_out_path)?;
+    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+
+    assert_eq!(
+        rows_by_name["beta"]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["0", "90", "0", "90", "90"]
+    );
+    assert_eq!(
+        rows_by_name["alpha"]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["1", "20", "0", "20", "30"]
+    );
+    assert_eq!(
+        rows_by_name["gamma"]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["2", "10", "0", "10", "0"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_grouped_bed_total_is_invariant_when_plain_group_segments_cross_tiles() -> Result<()>
+{
+    // Future-facing grouped plain-total tile-size invariance test.
+    let bam = mixed_length_fragment_bam()?;
+    let mut outputs = Vec::new();
+    let mut sidecars = Vec::new();
+
+    for tile_size in [33_u32, 1_000_u32] {
+        let out_dir = TempDir::new()?;
+        let grouped_bed = out_dir
+            .path()
+            .join(format!("restore_mean_grouped_plain_{tile_size}.bed"));
+        write_bed(
+            &grouped_bed,
+            &[
+                ("chr1", 20, 50, "beta"),
+                ("chr1", 20, 40, "alpha"),
+                ("chr1", 100, 160, "beta"),
+                ("chr1", 0, 10, "gamma"),
+            ],
+        )?;
+
+        let mut cfg = base_config(&bam.bam, out_dir.path());
+        cfg.set_tile_size(tile_size);
+        cfg.set_decimals(6);
+        cfg.set_per_window(CoverageWindowAction::Total);
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            by_grouped_bed: Some(grouped_bed),
+        });
+        set_restore_mean_length_normalization(&mut cfg);
+
+        let result = run_inner(&cfg)?;
+        outputs.push(read_zst_to_string(&result.final_out_path)?);
+        sidecars.push(std::fs::read_to_string(
+            out_dir.path().join("testcov.group_index.tsv"),
+        )?);
+    }
+
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(sidecars[0], sidecars[1]);
+
+    Ok(())
+}
+
+#[test]
+fn restore_mean_grouped_bed_ignores_groups_on_filtered_out_chromosomes() -> Result<()> {
+    // Future-facing filtered-chromosome grouped test.
+    //
+    // Manual expectations:
+    // - We count only `chr1`.
+    // - `alpha` on chr1 covers [0,100) and sees the 40 bp fragment at restored value 1.5:
+    //     total_coverage = 60
+    // - `beta` on chr2 must not appear because chr2 is filtered out.
+    let bam = mixed_length_three_chromosome_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("restore_mean_grouped_filtered_chr.bed");
+    write_bed(
+        &grouped_bed,
+        &[("chr1", 0, 100, "alpha"), ("chr2", 0, 120, "beta")],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.chromosomes = base_chromosomes(&["chr1"]);
+    cfg.set_decimals(6);
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+    set_restore_mean_length_normalization(&mut cfg);
+
+    let result = run_inner(&cfg)?;
+    let output = read_zst_to_string(&result.final_out_path)?;
+    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+
+    assert_eq!(rows_by_name.len(), 1);
+    assert_eq!(
+        rows_by_name["alpha"]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["0", "100", "0", "100", "60"]
+    );
 
     Ok(())
 }
@@ -3174,7 +4572,7 @@ fn normalize_by_length_and_gc_tag_weights_multiply_per_position() -> Result<()> 
     cfg.set_decimals(4);
     cfg.set_keep_zero_runs(false);
     cfg.unpaired.reads_are_fragments = true;
-    cfg.normalize_by_length = true;
+    cfg.set_normalize_by_length_bool(true);
     cfg.set_gc(ApplyGCArgs {
         gc_file: None,
         gc_tag: Some("GC".to_string()),

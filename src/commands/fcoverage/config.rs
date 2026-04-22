@@ -6,6 +6,23 @@ use crate::commands::cli_common::{
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 
+/// How fragment length normalization should be applied in `fcoverage`.
+///
+/// `unit-mass` is the ordinary length-normalized mode where each counted fragment contributes
+/// total mass `1.0` before any GC correction or genomic scaling.
+///
+/// `restore-mean` counts in that same unit-mass space, then multiplies the final output by the
+/// observed mean normalization length. This restores the plain global mean level in the ordinary
+/// length-normalized case, but keeps the local fragment-length equalization itself.
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LengthNormalizationMode {
+    #[default]
+    Off,
+    UnitMass,
+    RestoreMean,
+}
+
 /// Count positional **fragment** coverage across the genome.
 ///
 /// In paired-end mode, only fragments with both reads present are considered.
@@ -89,7 +106,7 @@ pub struct FCoverageConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
 
-    /// Divide the contribution of each fragment by the number of countable bases [flag]
+    /// Divide the contribution of each fragment by the number of countable bases `[string/flag]`
     ///
     /// By default, we count each fragment as `1.0` in each covered position (before correction/scaling).
     /// That weights longer fragments higher than shorter fragments in the overall mass
@@ -101,13 +118,36 @@ pub struct FCoverageConfig {
     /// to a total weight of `1.0` before correction/scaling.
     /// For `--per-window total` this approximates fragment counts
     /// (in sufficiently large windows).
+    /// For `--per-window average` this approximates fragment-count density,
+    /// i.e. fragment counts divided by window length.
     ///
-    /// This flag is reflected in the output filenames.
+    /// **Modes**:
+    ///
+    /// - `unit-mass`: Specifying `--normalize-by-length` or `--normalize-by-length=unit-mass`
+    /// uses the described "all fragments contribute a mass of 1" mode.
+    ///
+    /// - `restore-mean`: Specifying `--normalize-by-length=restore-mean` restores the global mean
+    /// by multiplying the final output by the observed mean normalization length (the countable bases)
+    /// after counting in unit-mass space.
+    ///
+    /// This setting is reflected in the output filenames:
+    /// `length_normalized` for `unit-mass`,
+    /// `length_normalized_with_restored_mean` for `restore-mean`.
     ///
     /// Blacklisted positions still count toward the normalization denominator
     /// to avoid large values around blacklisted regions (edge effects).
-    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
-    pub normalize_by_length: bool,
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_enum,
+            default_value_t = LengthNormalizationMode::Off,
+            default_missing_value = "unit-mass",
+            num_args = 0..=1,
+            help_heading = "Core"
+        )
+    )]
+    pub normalize_by_length_mode: LengthNormalizationMode,
 
     /// Optional prefix for output files (e.g., a sample name) `[string]`
     ///
@@ -268,7 +308,7 @@ impl FCoverageConfig {
                 reads_are_fragments: false,
             },
             logging: LoggingArgs::default(),
-            normalize_by_length: false,
+            normalize_by_length_mode: LengthNormalizationMode::Off,
             output_prefix: String::new(),
             decimals: 2,
             keep_zero_runs: false,
@@ -299,8 +339,27 @@ impl FCoverageConfig {
         self.unpaired = unpaired;
     }
 
-    pub fn set_normalize_by_length(&mut self, normalize_by_length: bool) {
-        self.normalize_by_length = normalize_by_length;
+    pub fn set_normalize_by_length_bool(&mut self, normalize_by_length: bool) {
+        self.normalize_by_length_mode = if normalize_by_length {
+            LengthNormalizationMode::UnitMass
+        } else {
+            LengthNormalizationMode::Off
+        };
+    }
+
+    pub fn set_normalize_by_length_mode(
+        &mut self,
+        normalize_by_length_mode: LengthNormalizationMode,
+    ) {
+        self.normalize_by_length_mode = normalize_by_length_mode;
+    }
+
+    pub fn uses_length_normalization(&self) -> bool {
+        self.normalize_by_length_mode != LengthNormalizationMode::Off
+    }
+
+    pub fn restores_mean_after_length_normalization(&self) -> bool {
+        self.normalize_by_length_mode == LengthNormalizationMode::RestoreMean
     }
 
     pub fn set_decimals(&mut self, decimals: u8) {

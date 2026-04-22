@@ -23,12 +23,18 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 ///
 /// Internally, this command runs:
 ///
-/// `fcoverage --normalize-by-length --by-size <stride> --per-window average`
+/// `fcoverage --normalize-by-length=unit-mass --by-size <stride> --per-window average`
+///
+/// (The `unit-mass` mode is used as it's cheaper than rescaling and normalizes to the same weights.)
 ///
 /// and then smooths those stride-bin averages.
 ///
-/// The resulting stride-bin values reflect local fragment counts.
-/// Strictly speaking they are approximations since fragments overlapping
+/// The resulting stride-bin values reflect local fragment-count density rather
+/// than literal counts. Because all stride bins have the same width,
+/// fragment-count density and fragment counts differ only by one constant
+/// multiplier, which cancels during normalization into scaling factors.
+///
+/// Strictly speaking this is still an approximation since fragments overlapping
 /// multiple stride bins are counted partly in each, but in sufficiently large
 /// bins the approximation error is tiny.
 ///
