@@ -21,31 +21,6 @@ cfdna fcoverage \
   --per-window 'average'
 ```
 
-## Normalize by countable bases
-
-In the default coverage mode, longer fragments weight more than shorter fragments simply because they cover more positions (each counted with `1.0` before correction/scaling). When you instead want all fragments to contribute the same mass, you can enable `--normalize-by-length` and count them as `1.0/num_countable_bases` (the fragment length in most cases). 
-
-On a positional-level, this might be a bit funky to interpret, but once you're working with larger windows, this represents **fragment counts**, where fragments not fully contained by a window are weighted by their overlaps.
-
-```bash
-cfdna fcoverage \
-  --bam <sample>.bam \
-  --output-dir <sample_directory>/coverage \
-  --output-prefix <sample_id> \
-  --n-threads 12 \
-  --blacklist <path>/hg38-blacklist.v2.bed \
-  --blacklist <path>/<another_blacklist>.bed \
-  --by-size 1000000 \
-  # Normalize by countable bases
-  --normalize-by-length \
-  # "total" gives us the fragment count scale in larger windows
-  --per-window 'total' \
-  # Additional precision in the output
-  --decimals 3
-```
-
-If you want positional values on the same scale as the regular coverage tracks, you can use `--normalize-by-length=restore-mean`. This multiplies each coverage value by the mean `num_countable_bases` from all the counted fragments. This makes interpretation of positional values *closer* to "how many fragments overlap this position". For windows, this pairs better with `--per-window average` (**NOTE**: rescaling can lead to longer runtime, so for "fragment counts per window", the `--normalize-by-length --per-window 'total'` path is better).
-
 ## GC-bias correction example
 
 ```bash
@@ -103,3 +78,28 @@ cfdna fcoverage \
   --ref-2bit <path>/hg38.2bit \
   --scaling-factors <sample_directory>/gc_corrected_coverage_weights/<sample_id>.scaling_factors.tsv
 ```
+
+## Normalize by countable bases
+
+In the default coverage mode, longer fragments weight more than shorter fragments simply because they cover more positions (each counted with `1.0` before correction/scaling). When you instead want all fragments to contribute the same mass, you can enable `--normalize-by-length` and count them as `1.0/num_countable_bases` (the fragment length in most cases). 
+
+On a positional-level, this might be a bit funky to interpret, but once you're working with larger windows, this represents **fragment counts**, where fragments not fully contained by a window are weighted by their overlaps.
+
+```bash
+cfdna fcoverage \
+  --bam <sample>.bam \
+  --output-dir <sample_directory>/coverage \
+  --output-prefix <sample_id> \
+  --n-threads 12 \
+  --blacklist <path>/hg38-blacklist.v2.bed \
+  --blacklist <path>/<another_blacklist>.bed \
+  --by-size 1000000 \
+  # Normalize by countable bases
+  --normalize-by-length \
+  # "total" gives us the fragment count scale in larger windows
+  --per-window 'total' \
+  # Additional precision in the output
+  --decimals 3
+```
+
+If you want positional values on the same scale as the regular coverage tracks, you can use `--normalize-by-length=restore-mean`. This multiplies each coverage value by the mean `num_countable_bases` from all the counted fragments. This makes interpretation of positional values *closer* to "how many fragments overlap this position". For windows, this pairs better with `--per-window average` (**NOTE**: rescaling can lead to longer runtime, so for "fragment counts per window", the `--normalize-by-length --per-window 'total'` path is better).
