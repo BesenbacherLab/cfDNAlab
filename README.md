@@ -2,6 +2,13 @@
   <img src="cfdnalab_logo_400x255_144dpi.png" height="255" />
 </p>
 
+<p align="center">
+  <a href="https://github.com/BesenbacherLab/cfDNAlab/actions/workflows/rust.yml"><img src="https://github.com/BesenbacherLab/cfDNAlab/actions/workflows/rust.yml/badge.svg" alt="CI" /></a>
+  <a href="https://crates.io/crates/cfdnalab"><img src="https://img.shields.io/badge/crates.io-not_published-lightgrey" alt="crates.io" /></a>
+  <a href="https://cfDNAlab.tools"><img src="https://img.shields.io/badge/docs-cfDNAlab.tools-blue" alt="Docs" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT" /></a>
+</p>
+
 Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, **fragment end-motifs**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. Apply sample-specific GC correction and large-scale genomic smoothing.
 
 Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaired data where each read represents a full fragment. Written in rust for *speed*.
