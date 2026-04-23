@@ -15,9 +15,9 @@ Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment 
 
 Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaired data where each read represents a full fragment. Written in rust for *speed*.
 
-The commands are **highly flexible** with many options and good default settings. See [recipes](#recipes) in the end of this README for usage examples.
+The commands are **highly flexible** with many options and good default settings. See [examples](#examples) in the end of this README for usage examples.
 
-The package is in alpha-stage (being developed). Multiple additional commands are currently being built.
+The package is under active development and may change. Follow changes in the [CHANGELOG](https://github.com/BesenbacherLab/cfDNAlab/CHANGELOG). Multiple additional commands are currently being built.
 Suggest a tool or feature [here](https://github.com/BesenbacherLab/cfDNAlab/issues/new/choose)!
 
 ---
@@ -59,8 +59,8 @@ The following commands are currently available:
 | `cfdna lengths`                      | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)` for inwardly directed pairs only                                                                                                               |
 | **Normalization**                    | Precompute normalization/correction factors to enable their use in the feature extraction commands                                                                                                                     |
 | `cfdna gc-bias`, `cfdna ref-gc-bias` | Calculate GC-bias for correcting a sample in the main commands                                                                                                                                                         |
-| `cfdna coverage-weights`             | Calculate fragment coverage-based scaling factors for normalizing/smoothing coverage across the genome                                                                                                                 |
 | `cfdna fragment-count-weights`       | Calculate fragment count-based scaling factors for normalizing/smoothing fragment counts across the genome                                                                                                             |
+| `cfdna coverage-weights`             | Calculate fragment coverage-based scaling factors for normalizing/smoothing coverage across the genome                                                                                                                 |
 | **Conversion**                       | Convert BAM > frag > BAM or BAM > BAM                                                                                                                                                                                  |
 | `cfdna bam-to-bam`                   | Apply our filters and/or write GC correction and coverage weight tags to a BAM file                                                                                                                                    |
 | `cfdna bam-to-frag`                  | Write fragment coordinates to a "frag" file (bed-like tsv file)                                                                                                                                                        |
@@ -74,7 +74,7 @@ Planned: `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks
 
 - **Blacklist filtering**: Supply BED files with regions to exclude. The implementation is specific to each tool (filtering of full fragments or just the overlapping positions).
 
-- **Windowing**: Perform the command in genomic windows. Either a single global window (default), windows specified in a BED file, or via a fixed window size. Assign fragments to windows by how they overlap.
+- **Windowing**: Perform the command in genomic windows. Either a single global window (default), windows specified in a BED file (optionally grouped), or via a fixed window size. Assign fragments to windows by how they overlap.
 
 - **Genomic smoothing**: Scale the contribution of fragments by either their coverage or counts in megabase-scale overlapping bins. This reduces the effect of amplifications and deletions.
 
@@ -82,8 +82,8 @@ Planned: `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks
 
 ## FAQ
 
-- How is *fragment* coverage different from the outputs of similar tools like `mosdepth` and `samtools`?
-  - `mosdepth` counts the coverage of aligned bases per *read* [TODO: Not that simple]. `fcoverage` instead first collects the paired reads into a fragment and then counts the coverage of the aligned bases and (optionally) the gap between mate reads. (TODO on samtools!).
+- How is *fragment* coverage for paired-end data different from the outputs of similar tools?
+  - `fcoverage` first collects paired reads into **fragments** and then counts the coverage of the aligned bases and (optionally) the gap between mate reads.
 
 - How do you define a "fragment" in paired-end sequencing data?
   - We define the *fragment* as the bases from the start of the forward read till the end of the reverse read (`[start(forward), end(reverse))`) for *inwardly directed* pairs only (i.e., where `start(forward) <= start(reverse)`), as suggested by Wang, H. et al. 2025. Some methods exclude deletions and skipped-regions. Some methods allow including soft-clipped bases.
@@ -97,20 +97,20 @@ Planned: `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks
   Reverse        3' |<<<<<<<<| 5' 
   ``` 
 
-- Should I order the BAM files differently to allow pairing of reads into fragments?
-  - No, we expect BAM files to be *coordinate-sorted* and indexed.
+- How should I order the BAM files?
+  - We expect BAM files to be *coordinate-sorted* and indexed.
 
 - How do I run the command for unpaired data?
-  - Most commands accept `--reads-are-fragments`. Each read is then assumed to represent a full fragment.
+  - The commands accept `--reads-are-fragments`. Each read is then assumed to represent the full aligned fragment.
 
 - How did you use LLMs (AI) in this project?
   - OpenAI's codex models were used for pair programming to speed up development and testing. Claude Code provided code reviews. All code for the released commands have been designed and validated by us.
 
 ---
 
-## Recipes
+## Examples
 
-We aim for high flexibility to make the commands useful for both established and novel use cases. This leads to commands having many options. The following recipes (examples) will get you quickly up and running with common cfDNA analyses.
+We aim for high flexibility to make the commands useful for both established and novel use cases. This leads to commands having many options. The following examples will get you quickly up and running with the most common cfDNA analyses. For more elaborate guides and command help pages, see the [docs](https://cfdnalab.tools/).
 
 The final example is a full pipeline for running everything (but without the explanations from the separate examples).
 
