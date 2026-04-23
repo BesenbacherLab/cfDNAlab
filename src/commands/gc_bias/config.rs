@@ -109,6 +109,20 @@ pub struct GCConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub unpaired: UnpairedArgs,
 
+    /// Optional prefix for output files (e.g., a sample name) `[string]`
+    ///
+    /// Leave empty to write filenames without a leading prefix.
+    ///
+    /// E.g., specify to enable writing to the same output directory from multiple calls to this software.
+    ///
+    /// Examples produce files like:
+    ///   `<prefix>.gc_bias_correction.npz`
+    #[cfg_attr(
+        feature = "cli",
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
+    )]
+    pub output_prefix: String,
+
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub ref_genome: Ref2BitRequiredArgs,
 
@@ -349,6 +363,7 @@ impl GCConfig {
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
+            output_prefix: String::new(),
             ref_genome: Ref2BitRequiredArgs { ref_2bit },
             ref_gc_file,
             windows: GCWindowsArgs::default(),
@@ -375,6 +390,10 @@ impl GCConfig {
 
     pub fn set_ioc(&mut self, ioc: IOCArgs) {
         self.ioc = ioc;
+    }
+
+    pub fn set_output_prefix(&mut self, output_prefix: String) {
+        self.output_prefix = output_prefix;
     }
 
     pub fn set_ref_gc_file(&mut self, ref_gc_file: PathBuf) {

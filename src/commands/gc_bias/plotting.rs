@@ -1,6 +1,7 @@
 use crate::commands::gc_bias::binning::BinnedAxis;
 use crate::commands::gc_bias::binning::compute_bin_edges;
 use crate::commands::gc_bias::load_reference_bias::ReferenceGCMetadata;
+use crate::shared::io::dot_join;
 use crate::shared::plotters::{
     heatmap::{HeatmapFormat, HeatmapUpsample, write_heatmap_with_histograms},
     histogram::HistogramSpec,
@@ -19,6 +20,8 @@ use std::path::Path;
 /// ----------
 /// - `output_dir`:
 ///     Destination for plot files.
+/// - `prefix`:
+///     Optional output-file prefix.
 /// - `gc_bins`:
 ///     Mapping of GC-bin indices to contiguous GC ranges, used to build axis labels.
 /// - `length_bins`:
@@ -35,6 +38,7 @@ use std::path::Path;
 ///     Count grid collapsed to GC/length bins for the binned heatmap histograms.
 pub fn plot_gc_bias(
     output_dir: &Path,
+    prefix: &str,
     gc_bins: &BinnedAxis,
     length_bins: &BinnedAxis,
     correction_matrix: &Array2<f64>,
@@ -134,7 +138,10 @@ pub fn plot_gc_bias(
     }
 
     // Line plots: average GC bias across lengths (unweighted and weighted)
-    let plot_path_unweighted = output_dir.join("avg_gc_bias_across_lengths_unweighted.png");
+    let plot_path_unweighted = output_dir.join(dot_join(&[
+        prefix,
+        "avg_gc_bias_across_lengths_unweighted.png",
+    ]));
     write_line_plot_png(
         &plot_path_unweighted,
         "Average GC bias across fragment lengths (unweighted)",
@@ -147,7 +154,10 @@ pub fn plot_gc_bias(
     )
     .with_context(|| format!("writing GC bias plot to {}", plot_path_unweighted.display()))?;
 
-    let plot_path_weighted = output_dir.join("avg_gc_bias_across_lengths_weighted.png");
+    let plot_path_weighted = output_dir.join(dot_join(&[
+        prefix,
+        "avg_gc_bias_across_lengths_weighted.png",
+    ]));
     write_line_plot_png(
         &plot_path_weighted,
         "Average GC bias across fragment lengths (weighted by length frequency)",
@@ -167,7 +177,7 @@ pub fn plot_gc_bias(
         .ceil() as usize;
 
     // Full-resolution heatmap with GC% / length histograms
-    let heatmap_path = output_dir.join("gc_bias_heatmap.png");
+    let heatmap_path = output_dir.join(dot_join(&[prefix, "gc_bias_heatmap.png"]));
     write_heatmap_with_histograms(
         &heatmap_path,
         "GC bias per length and GC %",
@@ -193,7 +203,7 @@ pub fn plot_gc_bias(
     .with_context(|| format!("writing GC bias heatmap to {}", heatmap_path.display()))?;
 
     // Binned heatmap with bin-index histograms
-    let heatmap_path = output_dir.join("gc_bias_heatmap.bins.png");
+    let heatmap_path = output_dir.join(dot_join(&[prefix, "gc_bias_heatmap.bins.png"]));
     write_heatmap_with_histograms(
         &heatmap_path,
         "GC bias per length bin and GC bin",

@@ -51,7 +51,7 @@ Counts (`<outside>_<inside>`): `AT_CG: 1`, `GA_TG: 1`
     "Weight how genomic regions contribute to the count distribution(s), e.g., to reduce the ",
     "influence of copy number alterations (if that is meaningful to your analysis). ",
     "This weights the contribution of each fragment by region-wise precomputed scaling factors.\n\n",
-    "Can be precomputed with `cfdna coverage-weights` or `cfdna fragment-count-weights`.\n\n",
+    "Can be precomputed with `cfdna fragment-count-weights` (recommended) or `cfdna coverage-weights`.\n\n",
     "## Window assignment\n\n",
     "By default, a motif is counted in the window the fragment end falls in with the weight 1.0 (before correction/scaling).\n\n",
     "With `--clip-strategy raw-shifted-boundary`, that endpoint can move outside the aligned span by the soft-clipped length.\n\n",

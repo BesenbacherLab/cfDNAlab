@@ -35,6 +35,7 @@ use crate::{
         fragment::minimal_fragment::Fragment,
         fragment_iterators::fragments_from_bam,
         interval::{IndexedInterval, Interval},
+        io::dot_join,
         midpoint::midpoint_random_even_with_thread_rng,
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
@@ -239,6 +240,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
+    let prefix = opt.output_prefix.trim();
     let window_opt = opt.windows.resolve_windows();
     let mut intermediate_saver =
         IntermediateFileSaver::new(opt.save_intermediates, opt.ioc.output_dir.clone());
@@ -710,7 +712,11 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         length_bin_frequencies.clone(),
         &reference_metadata,
     )?;
-    correction_pkg.write_npz(opt.ioc.output_dir.join("gc_bias_correction.npz"))?;
+    correction_pkg.write_npz(
+        opt.ioc
+            .output_dir
+            .join(dot_join(&[prefix, "gc_bias_correction.npz"])),
+    )?;
 
     // Plot the avg. gc-bias across lengths for quick QC
     #[cfg(feature = "plotters")]
@@ -721,6 +727,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
 
         plot_gc_bias(
             &opt.ioc.output_dir,
+            prefix,
             &gc_bins,
             &length_bins,
             &correction_matrix,

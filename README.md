@@ -1,4 +1,4 @@
-<img src='https://raw.githubusercontent.com/BesenbacherLab/cfdnalab/main/cfdnalab_logo_400x255_144dpi.png' align="center" height="255" />
+<img src='cfdnalab_logo_400x255_144dpi.png' align="center" height="255" />
 
 Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, **fragment end-motifs**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. Apply sample-specific GC correction and large-scale genomic smoothing.
 

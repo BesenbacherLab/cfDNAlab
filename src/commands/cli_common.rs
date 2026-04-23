@@ -538,7 +538,7 @@ impl ChromosomeArgs {
 pub struct ScaleGenomeArgs {
     /// Optional path to non-negative scaling factors for normalizing/smoothing the genome `[path]`
     ///
-    /// `.tsv` file as produced by `cfdna coverage-weights` or `cfdna fragment-count-weights` containing a scaling factor to *multiply* by per **scaling-bin**.
+    /// `.tsv` file as produced by `cfdna fragment-count-weights` or `cfdna coverage-weights` containing a scaling factor to *multiply* by per **scaling-bin**.
     ///
     /// Files may start with comment metadata lines from `cfdna coverage-weights/fragment-count-weights`, such as `# gc_mode=corrected_tag`.
     ///

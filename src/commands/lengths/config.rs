@@ -45,7 +45,7 @@ pub const MAX_MAX_SOFT_CLIPS: u16 = 256;
 /// influence of copy number alterations. This weights the contribution of each fragment
 /// by region-wise precomputed scaling factors.
 ///
-/// Can be precomputed with `cfdna coverage-weights` or `cfdna fragment-count-weights`.
+/// Can be precomputed with `cfdna fragment-count-weights` (recommended) or `cfdna coverage-weights`.
 ///
 /// ## Window assignment
 ///
