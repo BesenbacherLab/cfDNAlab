@@ -11,13 +11,13 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT" /></a>
 </p>
 
-Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, **fragment end-motifs**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. Apply sample-specific GC correction and large-scale genomic smoothing.
+Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, **fragment end-motifs**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. All commands integrate options for sample-specific GC correction and large-scale genomic smoothing.
 
 Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaired data where each read represents a full fragment. Written in rust for *speed*.
 
-The commands are **highly flexible** with many options and good default settings. Start with the simple [examples](#examples) in this README and then check the full guides and command help pages in the [docs](https://cfdnalab.tools/).
+The commands are **highly flexible** with many options and good default settings. Start with the simple [examples](#examples) in this README and then check the full guides in the [docs](https://cfdnalab.tools/).
 
-The package is under active development and may change. Follow changes in the [CHANGELOG](https://github.com/BesenbacherLab/cfDNAlab/blob/main/CHANGELOG). Multiple additional commands are currently being built.
+The package is under active development and may [change](https://github.com/BesenbacherLab/cfDNAlab/blob/main/CHANGELOG). Multiple additional commands are currently being built.
 Suggest a tool or feature [here](https://github.com/BesenbacherLab/cfDNAlab/issues/new/choose)!
 
 ---
@@ -68,15 +68,17 @@ The following commands are currently available:
 
 Planned: `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks` (call windowed protection score peaks). Let us know what other fragmentomics features you would like to extract with `cfDNAlab`.
 
-### Common options
+### Common command options
 
-- **GC bias correction**: Perform GC bias correction by weighting the contribution of each fragment by their GC content.
+- **GC bias correction**: Perform GC bias correction by weighting the contribution of each fragment by its GC content.
 
 - **Blacklist filtering**: Supply BED files with regions to exclude. The implementation is specific to each tool (filtering of full fragments or just the overlapping positions).
 
 - **Windowing**: Perform the command in genomic windows. Either a single global window (default), windows specified in a BED file (optionally grouped), or via a fixed window size. Assign fragments to windows by how they overlap.
 
 - **Genomic smoothing**: Scale the contribution of fragments by either their coverage or counts in megabase-scale overlapping bins. This reduces the effect of amplifications and deletions.
+
+- **Unpaired data**: If you have Nanopore-sequenced cell-free DNA (or similar) where each read represents the full fragment, you can supply the `--reads-are-fragments` flag. This will consider each read a full fragment.
 
 ---
 
@@ -116,7 +118,7 @@ The final example is a full pipeline for running everything (but without the exp
 
 **Assembly**: The below examples use filenames specific to the hg38 assembly, but any assembly (hg19 etc.) should work. Just be consistent, of course. Note that most commands use only the autosomes (`chr1-chr22`) by default (see `--chromosomes` in help files).
 
-**Fragment length range**: The min/max fragment length range defaults to `30-1000bp`. This can be specified via `--min-fragment-length` and `--max-fragment-length`. We suggest keeping this range for the `ref-gc-bias`, `gc-bias`, and `coverage-weights` commands (unless you want to support longer fragments than 1000bp). In the downstream feature extraction commands you can then narrow the range, if you want.
+**Fragment length range**: The min/max fragment length range defaults to `30-1000bp`. This can be specified via `--min-fragment-length` and `--max-fragment-length`. We suggest keeping this range for the `ref-gc-bias` command. In the downstream feature extraction commands you can then narrow the range, if you want. For the scaling factors made with `fragment-count-weights` or `coverage-weights`, it's a trade-off whether to use the full range or an analysis-specific narrower range. The matching narrower range will make the genomic regions contribute more equally to the downstream features, while the full or a different range may better estimate the effect of copy number changes.
 
 ### GC correction pipeline
 
@@ -124,7 +126,7 @@ Fragmentomics features are vulnerable to biases from various sample-handling and
 
 This requires only a few steps:
 
-1) Calculate the "expected" GC bias in the reference genome assembly (e.g., hg38). This can be **REUSED for all samples** aligned to that assembly:
+1) Calculate the "expected" GC bias in the reference genome assembly (e.g., hg38). This can be **reused for all samples** aligned to that assembly:
 
 ```bash
 
@@ -183,7 +185,9 @@ cfdna fcoverage \
 
 ### Genomic smoothing pipeline
 
-For some commands, like `cfdna midpoints`, where we investigate **local changes** in the fragment distribution, we often want all non-blacklisted genomic regions to contribute roughly the same fragment mass to the features. We refer to this scaling of genomic regions as **genomic smoothing**. We further use **fragment mass** as a common quantity for fragment counts and fragment coverage:
+For some commands, like `cfdna midpoints`, where we investigate **local changes** in the fragment distribution, we often want all non-blacklisted genomic regions to contribute roughly the same fragment mass to the features. We refer to this scaling of genomic regions as **genomic smoothing**. 
+
+We use **fragment mass** as a common quantity for fragment counts and fragment coverage:
 
 - `cfdna coverage-weights` uses length-weighted mass. Each covered position receives `1.0`, so longer fragments contribute more total mass because they cover more bases.
 - `cfdna fragment-count-weights` uses unit fragment mass. Each covered position receives roughly `1.0 / fragment_length`, so each fragment contributes about `1.0` total mass regardless of length.
@@ -278,15 +282,16 @@ cfdna fcoverage \
 
   # OPTIONS:
 
-  # Average per 1Mb positions
+  # Use windowing:
+  # 1) Average per 1Mb positions
   --by-size 1000000 \
   --per-window 'average' \
-  # OR sums per window in a bed file
+  # 2) Sum per window in a bed file
   --by-bed <path>/<some_intervals>.bed \
   --per-window 'total' \
-  # OR average per group of windows in a bed file
+  # 3) Summary-statistics per group of windows in a bed file
   --by-grouped-bed <path>/<some_grouped_intervals>.bed \
-  --per-window 'average' \
+  --per-window 'summary-stats' \
 
   # Add GC correction and / or genomic smoothing (see above)
   --gc-file ... \
@@ -331,11 +336,12 @@ cfdna ends \
   # NOTE: Only recommended for `--k-inside` extraction with `--k-outside 0`
   --clip-strategy 'raw-aligned-boundary' \
 
-  # Separate counts per 1Mb positions
+  # Use windowing:
+  # 1) Separate counts per 1Mb positions
   --by-size 1000000 \
-  # OR supply a bed file
+  # 2) Per window in a bed file
   --by-bed <path>/<some_intervals>.bed \
-  # OR supply a grouped bed file
+  # 3) Per window in a grouped bed file
   --by-grouped-bed <path>/<some_grouped_intervals>.bed \
 
   # Add GC correction and / or genomic smoothing (see above)
@@ -365,10 +371,13 @@ cfdna lengths \
   # Adjust lengths to indels
   --indel-mode 'adjust' \
 
-  # Separate counts per 1Mb positions
+  # Use windowing:
+  # 1) Separate counts per 1Mb positions
   --by-size 1000000 \
-  # OR supply a bed file
+  # 2) Per window in a bed file
   --by-bed <path>/<some_intervals>.bed \
+  # 3) Per window in a grouped bed file
+  --by-grouped-bed <path>/<some_grouped_intervals>.bed \
 
   # Add GC correction and / or genomic smoothing (see above)
   --gc-file ... \
@@ -379,7 +388,7 @@ cfdna lengths \
 
 ### Fragment midpoint profiles
 
-Multiple studies have used profiled the midpoint coverage around e.g. transcription factor binding sites (summed per transcription factor, per position) [REFS]. This can inform about the binding activity of different transcription factors related to cancer.
+Multiple studies have profiled the midpoint coverage around e.g. transcription factor binding sites (summed per transcription factor, per position) [REFS]. This can inform about the binding activity of different transcription factors related to cancer.
 
 ```bash
 
@@ -435,34 +444,122 @@ THREADS=12
 MINLENGTH=30
 MAXLENGTH=1000
 
-# GC bias correction matrix
-cfdna gc-bias --bam $BAM --output-dir $OUT/gc_bias --output-prefix $SAMPLE_NAME --ref-2bit $ASSEMBLY --ref-gc-file $REF_GC --blacklist $BLACKLIST --n-threads $THREADS 
+# Build sample-specific GC correction
+cfdna gc-bias \
+  --bam $BAM \
+  --output-dir $OUT/gc_bias \
+  --output-prefix $SAMPLE_NAME \
+  --ref-2bit $ASSEMBLY \
+  --ref-gc-file $REF_GC \
+  --blacklist $BLACKLIST \
+  --n-threads $THREADS 
 
 # Fragment count weights for genomic smoothing
-cfdna fragment-count-weights --bam $BAM --output-dir $OUT/scaling_factors --output-prefix $SAMPLE_NAME --blacklist $BLACKLIST --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz --ref-2bit $ASSEMBLY  --n-threads $THREADS 
+cfdna fragment-count-weights \
+  --bam $BAM \
+  --output-dir $OUT/scaling_factors \
+  --output-prefix $SAMPLE_NAME \
+  --blacklist $BLACKLIST \
+  --min-fragment-length $MINLENGTH \
+  --max-fragment-length $MAXLENGTH \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --ref-2bit $ASSEMBLY  \
+  --n-threads $THREADS 
 
 # Coverage weights for genomic smoothing
-cfdna coverage-weights --bam $BAM --output-dir $OUT/scaling_factors --output-prefix $SAMPLE_NAME --blacklist $BLACKLIST --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz --ref-2bit $ASSEMBLY --n-threads $THREADS 
+cfdna coverage-weights \
+  --bam $BAM \
+  --output-dir $OUT/scaling_factors \
+  --output-prefix $SAMPLE_NAME \
+  --blacklist $BLACKLIST \
+  --min-fragment-length $MINLENGTH \
+  --max-fragment-length $MAXLENGTH \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --ref-2bit $ASSEMBLY \
+  --n-threads $THREADS 
 
 # Fragment coverage per position
-cfdna fcoverage --bam $BAM --output-dir $OUT/coverage --output-prefix $SAMPLE_NAME --blacklist $BLACKLIST --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz --ref-2bit $ASSEMBLY --n-threads $THREADS 
+cfdna fcoverage \
+  --bam $BAM \
+  --output-dir $OUT/coverage \
+  --output-prefix $SAMPLE_NAME \
+  --blacklist $BLACKLIST \
+  --min-fragment-length $MINLENGTH \
+  --max-fragment-length $MAXLENGTH \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --ref-2bit $ASSEMBLY \
+  --n-threads $THREADS 
 
 # Fragment *counts* in 5Mb bins 
 # By using `--normalize-by-length --per-window 'total'` for count scale
-cfdna fcoverage --bam $BAM --output-dir $OUT/fragment_counts_per_5Mb --output-prefix $SAMPLE_NAME --normalize-by-length --by-size 5000000 --per-window 'total' --blacklist $BLACKLIST --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz --ref-2bit $ASSEMBLY --n-threads $THREADS
+cfdna fcoverage \
+  --bam $BAM \
+  --output-dir $OUT/fragment_counts_per_5Mb \
+  --output-prefix $SAMPLE_NAME \
+  --normalize-by-length \
+  --by-size 5000000 \
+  --per-window 'total' \
+  --blacklist $BLACKLIST \
+  --min-fragment-length $MINLENGTH \
+  --max-fragment-length $MAXLENGTH \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --ref-2bit $ASSEMBLY \
+  --n-threads $THREADS
 
 # Fragment lengths (global)
-cfdna lengths --bam $BAM --output-dir $OUT/lengths_$MINLENGTH_$MAXLENGTH --output-prefix $SAMPLE_NAME --blacklist $BLACKLIST  --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz --ref-2bit $ASSEMBLY --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv --n-threads $THREADS 
+cfdna lengths \
+  --bam $BAM \
+  --output-dir $OUT/lengths_$MINLENGTH_$MAXLENGTH \
+  --output-prefix $SAMPLE_NAME \
+  --blacklist $BLACKLIST  \
+  --min-fragment-length $MINLENGTH \
+  --max-fragment-length $MAXLENGTH \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --ref-2bit $ASSEMBLY \
+  --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv \
+  --n-threads $THREADS 
 
 # Fragment lengths in 5Mb bins 
 # E.g., to calculate short/long ratios from (100-150bp, 151-220bp)
-cfdna lengths --bam $BAM --output-dir $OUT/lengths_per_5mb_100_220 --output-prefix $SAMPLE_NAME--by-size 5000000 --blacklist $BLACKLIST --min-fragment-length 100 --max-fragment-length 220 --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz --ref-2bit $ASSEMBLY --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv --n-threads $THREADS
+cfdna lengths \
+  --bam $BAM \
+  --output-dir $OUT/lengths_per_5mb_100_220 \
+  --output-prefix $SAMPLE_NAME --by-size 5000000 \
+  --blacklist $BLACKLIST \
+  --min-fragment-length 100 \
+  --max-fragment-length 220 \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --ref-2bit $ASSEMBLY \
+  --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv \
+  --n-threads $THREADS
 
 # Fragment end motifs (global)
-cfdna ends --bam $BAM --output-dir $OUT/end_motifs_$MINLENGTH_$MAXLENGTH --output-prefix $SAMPLE_NAME --k-inside 2 --k-outside 2 --blacklist $BLACKLIST  --min-fragment-length $MINLENGTH --max-fragment-length $MAXLENGTH --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz --ref-2bit $ASSEMBLY --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv --n-threads $THREADS 
+cfdna ends \
+  --bam $BAM \
+  --output-dir $OUT/end_motifs_$MINLENGTH_$MAXLENGTH \
+  --output-prefix $SAMPLE_NAME \
+  --k-inside 2 \
+  --k-outside 2 \
+  --blacklist $BLACKLIST \
+  --min-fragment-length $MINLENGTH \
+  --max-fragment-length $MAXLENGTH \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --ref-2bit $ASSEMBLY \
+  --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv \
+  --n-threads $THREADS 
 
 # Midpoint profiles (very fast alternative to Griffin)
-cfdna midpoints --bam $BAM --output-dir $OUT/midpoints --output-prefix $SAMPLE_NAME --intervals $MIDPOINT_INTERVALS --blacklist $BLACKLIST --length-bins $MINLENGTH $(($MAXLENGTH+1)) --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz --ref-2bit $ASSEMBLY --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv --n-threads $THREADS
+cfdna midpoints \
+  --bam $BAM \
+  --output-dir $OUT/midpoints \
+  --output-prefix $SAMPLE_NAME \
+  --intervals $MIDPOINT_INTERVALS \
+  --blacklist $BLACKLIST \
+  --length-bins $MINLENGTH $(($MAXLENGTH+1)) \
+  --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
+  --ref-2bit $ASSEMBLY \
+  --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv \
+  --n-threads $THREADS
 
 ```
 
@@ -490,7 +587,14 @@ cfdna fcoverage \
 
 ## Output formats
 
-The various commands produce either Numpy arrays (`.npy`, `.npz`), `.tsv.zst`, `.bedgraph.zst`, or text/json files.
+Most commands write one of these output types:
+
+| Format          | Use                            | Read with                    |
+| --------------- | ------------------------------ | ---------------------------- |
+| `.npy`, `.npz`  | dense array(s)                 | Python / NumPy               |
+| `.tsv.zst`      | tabular outputs                | `zstdcat`, Python, R         |
+| `.bedgraph.zst` | positional tracks              | `zstdcat`, convert to bigWig |
+| `.json`, `.txt` | settings and auxiliary outputs | any text reader              |
 
 Numpy files can be read with python:
 
@@ -513,13 +617,6 @@ zstd -d path_to/file.tsv.zst
 zstdcat path_to/file.tsv.zst
 
 ```
-
-Tip: Bedgraph files can be converted to bigwig files for indexed lookup.
-
-File columns: [TODO: Check correctness]
-
-- Bedgraph: `chromosome  start  end  value`
-- Scaling factors TSV: `chromosome  start  end  scaling_factor`
 
 ---
 
