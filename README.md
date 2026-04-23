@@ -17,7 +17,7 @@ Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaire
 
 The commands are **highly flexible** with many options and good default settings. Start with the simple [examples](#examples) in this README and then check the full guides and command help pages in the [docs](https://cfdnalab.tools/).
 
-The package is under active development and may change. Follow changes in the [CHANGELOG](https://github.com/BesenbacherLab/cfDNAlab/CHANGELOG). Multiple additional commands are currently being built.
+The package is under active development and may change. Follow changes in the [CHANGELOG](https://github.com/BesenbacherLab/cfDNAlab/blob/main/CHANGELOG). Multiple additional commands are currently being built.
 Suggest a tool or feature [here](https://github.com/BesenbacherLab/cfDNAlab/issues/new/choose)!
 
 ---
