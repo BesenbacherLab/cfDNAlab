@@ -32,12 +32,6 @@ Suggest a tool or feature [here](https://github.com/BesenbacherLab/cfDNAlab/issu
   &nbsp;
 </p>
 
----
-
-<p>
-  &nbsp;
-</p>
-
 ## Installation
 
 ### Compile from source
