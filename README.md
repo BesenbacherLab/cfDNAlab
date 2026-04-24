@@ -1,13 +1,8 @@
-<p align="center">
+<p>
   &nbsp;
-  
-  &nbsp;
-  
-  &nbsp;
-  
-  &nbsp;
+</p>
 
-  &nbsp;
+<p align="center">
   <img src="cfdnalab_logo_400x255_144dpi.png" height="255" />
 </p>
 
