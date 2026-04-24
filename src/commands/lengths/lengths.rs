@@ -124,6 +124,7 @@ fn build_reference_based_scaling_overlaps_for_clip_adjusted_count_overlap(
 ///   the first failure.
 pub fn run(opt: &LengthsConfig) -> Result<()> {
     let start_time = Instant::now();
+    opt.fragment_lengths.validate()?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }

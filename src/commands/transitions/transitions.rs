@@ -131,6 +131,7 @@ pub fn compute_transition_frequencies(
 ///   the first failure.
 pub fn run(opt: &TransitionsConfig) -> Result<()> {
     let start_time = Instant::now();
+    opt.shared_args.fragment_lengths.validate()?;
 
     let prefix = opt.shared_args.output_prefix.trim();
 

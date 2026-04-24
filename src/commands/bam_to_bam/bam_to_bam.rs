@@ -80,6 +80,7 @@ pub fn run(opt: &BamToBamConfig) -> Result<()> {
 }
 
 pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
+    opt.fragment_lengths.validate()?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }

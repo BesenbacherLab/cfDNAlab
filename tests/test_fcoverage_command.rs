@@ -84,6 +84,30 @@ fn base_config(bam_path: &Path, output_dir: &Path) -> FCoverageConfig {
     cfg
 }
 
+#[test]
+fn fcoverage_rejects_inverted_fragment_length_range_before_reading_inputs() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let mut cfg = base_config(Path::new("missing.bam"), temp_dir.path());
+    {
+        let fragment_lengths = cfg.fragment_lengths_mut();
+        fragment_lengths.min_fragment_length = 500;
+        fragment_lengths.max_fragment_length = 100;
+    }
+
+    let error = match run_inner(&cfg) {
+        Ok(_) => panic!("inverted fragment length range should fail"),
+        Err(error) => error,
+    };
+    let message = error.to_string();
+
+    assert!(
+        message.contains("--min-fragment-length (500) must be <= --max-fragment-length (100)"),
+        "unexpected error: {message}"
+    );
+
+    Ok(())
+}
+
 fn set_restore_mean_length_normalization(cfg: &mut FCoverageConfig) {
     cfg.set_normalize_by_length_mode(LengthNormalizationMode::RestoreMean);
 }

@@ -69,6 +69,7 @@ const COMMAND_TARGET: &str = "ref-gc-bias";
 
 pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     let start_time = Instant::now();
+    opt.fragment_lengths.validate()?;
     let prefix = opt.output_prefix.trim();
     let chromosomes = opt.chromosomes.resolve_chromosomes(None)?;
     let window_opt = opt.windows.resolve_windows();

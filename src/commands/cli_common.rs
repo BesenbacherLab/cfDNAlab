@@ -136,6 +136,35 @@ impl FragmentLengthArgs {
             max_fragment_length: 1000,
         }
     }
+
+    /// Validate the configured inclusive fragment-length range.
+    ///
+    /// Clap enforces these constraints for CLI parsing, but commands and tests can also build
+    /// configs directly. Validate at command startup so invalid ranges fail before IO or output
+    /// side effects.
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.min_fragment_length >= MIN_ACGT_BASES_FOR_GC_FRACTION,
+            "--min-fragment-length ({}) must be >= {}",
+            self.min_fragment_length,
+            MIN_ACGT_BASES_FOR_GC_FRACTION
+        );
+        ensure!(
+            self.max_fragment_length >= MIN_ACGT_BASES_FOR_GC_FRACTION,
+            "--max-fragment-length ({}) must be >= {}",
+            self.max_fragment_length,
+            MIN_ACGT_BASES_FOR_GC_FRACTION
+        );
+        ensure!(
+            self.min_fragment_length <= self.max_fragment_length,
+            "--min-fragment-length ({}) must be <= --max-fragment-length ({})",
+            self.min_fragment_length,
+            self.max_fragment_length
+        );
+
+        Ok(())
+    }
+
     /// Check whether a fragment length is within the configured inclusive range.
     pub fn contains(&self, len: u32) -> bool {
         len >= self.min_fragment_length && len <= self.max_fragment_length
@@ -1150,4 +1179,9 @@ pub fn parse_length_bins(
     }
 
     LengthBins::new(bins)
+}
+
+#[cfg(test)]
+mod tests {
+    include!("cli_common_tests.rs");
 }

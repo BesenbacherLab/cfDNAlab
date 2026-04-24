@@ -104,6 +104,7 @@ fn outside_kmer_clip_strategy_warning(
 ///   the first failure.
 pub fn run(opt: &EndsConfig) -> Result<()> {
     let start_time = Instant::now();
+    opt.fragment_lengths.validate()?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }

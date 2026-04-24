@@ -6,7 +6,7 @@ Scope: package-level findings discovered while reviewing released commands. Do n
 
 ## Findings
 
-### G-001 - High - Shared fragment length ranges can be inverted without a direct error
+### G-001 - High - Shared fragment length ranges can be inverted without a direct error [IMPLEMENTED]
 
 `FragmentLengthArgs` validates each bound independently as `>= 10`, but there is no shared validation that `min_fragment_length <= max_fragment_length` ([cli_common.rs](../../src/commands/cli_common.rs#L118-L129)). The shared `contains()` helper then returns false for every fragment when the range is inverted ([cli_common.rs](../../src/commands/cli_common.rs#L139-L142)).
 

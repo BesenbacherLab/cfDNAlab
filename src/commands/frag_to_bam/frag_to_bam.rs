@@ -120,6 +120,7 @@ pub fn run(opt: &FragToBamConfig) -> Result<()> {
 }
 
 fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
+    opt.fragment_lengths.validate()?;
     ensure_output_dir(&opt.output_dir)?;
     let column_layout = resolve_frag_column_layout(opt)?;
 

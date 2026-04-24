@@ -132,6 +132,7 @@ pub fn run(opt: &FCoverageConfig) -> Result<()> {
 }
 
 pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
+    opt.fragment_lengths.validate()?;
     opt.gc.validate()?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
