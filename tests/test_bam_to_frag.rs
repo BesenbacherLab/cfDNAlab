@@ -1064,6 +1064,7 @@ mod tests_bam_to_frag {
         // Point `--gc-file` at a directory instead of the expected `.npz` package file.
         // The command should reject that immediately during GC package loading.
         let bam = simple_inward_bam()?;
+        let ref_twobit = simple_reference_twobit()?;
         let work = tempdir().context("tempdir")?;
         let out_dir = work.path().join("out_gc_directory_error");
         std::fs::create_dir_all(&out_dir)?;
@@ -1088,6 +1089,7 @@ mod tests_bam_to_frag {
             gc_file: Some(gc_dir.clone()),
             neutralize_invalid_gc: false,
         });
+        cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
 
         // Act
         let err = run_inner(&cfg).expect_err("directory-valued GC package path should fail");
