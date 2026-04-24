@@ -54,6 +54,7 @@ use crate::{
             Tile, TileWindowSpan, build_tiles, overlapping_windows_for_tile,
             precompute_tile_window_spans,
         },
+        windowing::ensure_plain_bed_windows_not_empty,
     },
 };
 use anyhow::{Context, Result, ensure};
@@ -100,6 +101,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         WindowSpec::Bed(bed) => {
             info!(target: COMMAND_TARGET, "Loading window coordinates");
             let mut wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            ensure_plain_bed_windows_not_empty(&wds)?;
             info!(
                 target: COMMAND_TARGET,
                 "Merging overlapping/touching windows"

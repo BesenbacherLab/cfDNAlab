@@ -45,6 +45,7 @@ use crate::{
         tiled_run::{
             TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
         },
+        windowing::ensure_plain_bed_windows_not_empty,
     },
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -270,12 +271,9 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             info!(target: COMMAND_TARGET, "Loading window coordinates");
-            Some(load_windows_from_bed(
-                bed,
-                Some(chromosomes.as_slice()),
-                None,
-                None,
-            )?)
+            let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            ensure_plain_bed_windows_not_empty(&windows)?;
+            Some(windows)
         }
         _ => None,
     };

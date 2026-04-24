@@ -40,8 +40,8 @@ use crate::{
         },
         window_fetch::{BedFetchPolicy, fetch_span_for_tile},
         windowing::{
-            build_bin_info, compute_window_offsets, write_bin_info_tsv,
-            write_group_index_with_blacklist_tsv,
+            build_bin_info, compute_window_offsets, ensure_plain_bed_windows_not_empty,
+            write_bin_info_tsv, write_group_index_with_blacklist_tsv,
         },
     },
 };
@@ -153,12 +153,9 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     let windows_map = match &window_opt {
         DistributionWindowSpec::Bed(bed) => {
             info!(target: COMMAND_TARGET, "Loading window coordinates");
-            Some(load_windows_from_bed(
-                bed,
-                Some(chromosomes.as_slice()),
-                None,
-                None,
-            )?)
+            let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            ensure_plain_bed_windows_not_empty(&windows)?;
+            Some(windows)
         }
         _ => None,
     };

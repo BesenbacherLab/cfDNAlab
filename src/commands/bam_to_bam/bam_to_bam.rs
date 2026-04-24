@@ -36,6 +36,7 @@ use crate::{
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq,
         scale_genome::compute_window_scaling_over_fragment,
+        windowing::ensure_plain_bed_windows_not_empty,
     },
 };
 
@@ -114,12 +115,9 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
     let windows_map = match &window_opt {
         WindowSpec::Bed(bed) => {
             info!(target: COMMAND_TARGET, "Loading window coordinates");
-            Some(load_windows_from_bed(
-                bed,
-                Some(chromosomes.as_slice()),
-                None,
-                None,
-            )?)
+            let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            ensure_plain_bed_windows_not_empty(&windows)?;
+            Some(windows)
         }
         _ => None,
     };

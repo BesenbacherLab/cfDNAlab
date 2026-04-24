@@ -53,7 +53,10 @@ use crate::{
             TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
         },
         window_fetch::{BedFetchPolicy, fetch_span_for_tile},
-        windowing::{WindowContext, build_bin_info, compute_window_offsets},
+        windowing::{
+            WindowContext, build_bin_info, compute_window_offsets,
+            ensure_plain_bed_windows_not_empty,
+        },
     },
 };
 use anyhow::{Context, Result, bail};
@@ -174,12 +177,9 @@ fn run_inner_with_reporting(
             if show_progress_and_status {
                 info!(target: COMMAND_TARGET, "Loading window coordinates");
             }
-            Some(load_windows_from_bed(
-                bed,
-                Some(chromosomes.as_slice()),
-                None,
-                None,
-            )?)
+            let windows = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            ensure_plain_bed_windows_not_empty(&windows)?;
+            Some(windows)
         }
         _ => None,
     };

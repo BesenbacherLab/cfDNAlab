@@ -85,6 +85,37 @@ fn compute_window_offsets_preserves_bed_original_indices() -> Result<()> {
 }
 
 #[test]
+fn ensure_plain_bed_windows_not_empty_errors_when_no_windows_survive() -> Result<()> {
+    // Arrange
+    let mut windows_map = FxHashMap::default();
+    windows_map.insert("chr1".to_string(), Windows::from_tuples(&[])?);
+    windows_map.insert("chr2".to_string(), Windows::from_tuples(&[])?);
+
+    // Act
+    let result = ensure_plain_bed_windows_not_empty(&windows_map);
+
+    // Assert
+    let err = result.expect_err("empty selected BED windows should error");
+    assert!(
+        err.to_string()
+            .contains("BED file did not contain any valid windows on the selected chromosomes")
+    );
+    Ok(())
+}
+
+#[test]
+fn ensure_plain_bed_windows_not_empty_accepts_one_surviving_window() -> Result<()> {
+    // Arrange
+    let mut windows_map = FxHashMap::default();
+    windows_map.insert("chr1".to_string(), Windows::from_tuples(&[])?);
+    windows_map.insert("chr2".to_string(), Windows::from_tuples(&[(10, 20, 0)])?);
+
+    // Act / Assert
+    ensure_plain_bed_windows_not_empty(&windows_map)?;
+    Ok(())
+}
+
+#[test]
 fn build_bin_info_uses_size_offsets_in_output_indices() -> Result<()> {
     // Arrange
     let chromosomes = vec!["chr1".to_string(), "chr2".to_string()];

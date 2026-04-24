@@ -26,6 +26,7 @@ use crate::shared::thread_pool::init_global_pool;
 use crate::shared::tiled_run::{
     TempDirGuard, Tile, TileMode, TileWindowSpan, build_tiles, precompute_tile_window_spans,
 };
+use crate::shared::windowing::ensure_plain_bed_windows_not_empty;
 use crate::shared::writers::open_zstd_auto_writer;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use fxhash::FxHashMap;
@@ -121,6 +122,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
         WindowSpec::Bed(bed) => {
             info!(target: COMMAND_TARGET, "Loading window coordinates");
             let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            ensure_plain_bed_windows_not_empty(&wds)?;
             if matches!(
                 opt.per_window,
                 Some(PeaksWindowAction::OnlyIncludeThesePositionsUnique)

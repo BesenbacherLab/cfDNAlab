@@ -8,7 +8,7 @@ use crate::{
         io::create_text_writer,
     },
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use fxhash::FxHashMap;
 use std::{io::Write, path::Path};
 
@@ -111,6 +111,19 @@ pub fn compute_window_offsets(
             Ok((total, offsets))
         }
     }
+}
+
+/// Validate that an ordinary BED map contains at least one selected window.
+///
+/// BED loaders keep empty chromosome entries when a chromosome whitelist is supplied. This helper
+/// checks the actual surviving windows so commands can fail early when a BED file is empty after
+/// chromosome filtering.
+pub fn ensure_plain_bed_windows_not_empty(windows_map: &FxHashMap<String, Windows>) -> Result<()> {
+    ensure!(
+        windows_map.values().any(|windows| !windows.is_empty()),
+        "BED file did not contain any valid windows on the selected chromosomes"
+    );
+    Ok(())
 }
 
 /// Build per-window metadata (coordinates, blacklist overlap, etc.) for downstream consumers.

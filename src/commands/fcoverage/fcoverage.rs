@@ -45,6 +45,7 @@ use crate::{
             load_windows_from_bed, write_group_idx_to_name_tsv,
         },
         thread_pool::init_global_pool,
+        windowing::ensure_plain_bed_windows_not_empty,
         writers::open_zstd_auto_writer,
     },
 };
@@ -209,6 +210,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
         DistributionWindowSpec::Bed(bed) => {
             info!(target: COMMAND_TARGET, "Loading window coordinates");
             let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            ensure_plain_bed_windows_not_empty(&wds)?;
             if matches!(
                 opt.per_window,
                 CoverageWindowAction::OnlyIncludeThesePositionsUnique

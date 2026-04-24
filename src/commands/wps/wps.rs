@@ -39,6 +39,7 @@ use crate::{
     },
     shared::{
         bam::create_chromosome_reader, bed::load_windows_from_bed, thread_pool::init_global_pool,
+        windowing::ensure_plain_bed_windows_not_empty,
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -143,6 +144,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         WindowSpec::Bed(bed) => {
             info!(target: COMMAND_TARGET, "Loading window coordinates");
             let wds = load_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            ensure_plain_bed_windows_not_empty(&wds)?;
             if matches!(
                 per_window_wps_action,
                 Some(CoverageWindowAction::OnlyIncludeThesePositionsUnique)

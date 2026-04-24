@@ -96,7 +96,7 @@ Recommended fix:
 - Build GC prefixes over the narrowed fetch span and shift fragment coordinates relative to that narrowed span.
 - Add a shared helper-level regression, or one command-level regression per fetch helper family, proving no reference sequence is requested for a no-window tile.
 
-### G-007 - High - Plain BED modes need a shared no-surviving-windows guard
+### G-007 - High - Plain BED modes need a shared no-surviving-windows guard [IMPLEMENTED]
 
 The shared BED offset helper returns `total = 0` when no BED windows survive the selected chromosome filter ([windowing.rs](../../src/shared/windowing.rs#L99-L111)). Grouped BED paths in reviewed commands often guard this case, but ordinary BED paths do not have a shared validation point. `ends` loads ordinary BED windows without checking for at least one surviving window ([ends.rs](../../src/commands/ends/ends.rs#L161-L170)); `lengths` has the same ordinary BED load path ([lengths.rs](../../src/commands/lengths/lengths.rs#L150-L159)). `ref-gc-bias` also loads, filters, and flattens ordinary BED windows without checking that any selected positions remain ([ref_gc_bias.rs](../../src/commands/ref_gc_bias/ref_gc_bias.rs#L97-L118)).
 
