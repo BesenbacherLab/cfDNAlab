@@ -507,56 +507,6 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         .finish()
         .context("Finalize fragment length settings writer")?;
 
-    // Plot the global fragment length distribution as a line plot for quick QC
-    #[cfg(feature = "plotters")]
-    {
-        info!(target: COMMAND_TARGET, "Plotting overall length distribution");
-
-        use crate::shared::plotters::lineplot::write_line_plot_png;
-
-        if all_bins.is_empty() {
-            info!(
-                target: COMMAND_TARGET,
-                "Skipping overall length plot because no bins were produced"
-            );
-        } else {
-            let mut global_counts = vec![0f64; all_bins[0].counts.len()];
-            for length_counts in &all_bins {
-                for (total, count) in global_counts.iter_mut().zip(length_counts.counts.iter()) {
-                    *total += *count;
-                }
-            }
-
-            let total_counts: f64 = global_counts.iter().sum();
-            if total_counts > 0.0 {
-                for value in &mut global_counts {
-                    *value /= total_counts;
-                }
-            }
-
-            let x_values: Vec<f64> = (all_bins[0].length_min..=all_bins[0].length_max)
-                .map(|len| len as f64)
-                .collect();
-
-            let plot_path = opt
-                .ioc
-                .output_dir
-                .join(dot_join(&[prefix, "fragment_lengths_overall.png"]));
-
-            write_line_plot_png(
-                &plot_path,
-                "Fragment length distribution (summed/global)",
-                "Fragment length (bp)",
-                "Density",
-                &x_values,
-                &global_counts,
-                1600,
-                1000,
-            )
-            .with_context(|| format!("writing fragment length plot to {}", plot_path.display()))?;
-        }
-    }
-
     // Write window coordinates plus overlap metadata as TSV to output_dir
     match &window_opt {
         DistributionWindowSpec::GroupedBed(_) => {
@@ -585,6 +535,56 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
             info!(target: COMMAND_TARGET, "Writing window coordinates to disk");
             let bins_path = opt.ioc.output_dir.join(dot_join(&[prefix, "bins.tsv"]));
             write_bin_info_tsv(bins_path, &bin_info)?;
+        }
+    }
+
+    // Plot the global fragment length distribution after the machine-readable outputs are complete
+    #[cfg(feature = "plotters")]
+    {
+        info!(target: COMMAND_TARGET, "Plotting overall length distribution");
+
+        use crate::shared::plotters::lineplot::write_line_plot_png;
+
+        if all_bins.is_empty() {
+            info!(
+                target: COMMAND_TARGET,
+                "Skipping overall length plot because no bins were produced"
+            );
+        } else {
+            let mut global_counts = vec![0f64; all_bins[0].counts.len()];
+            for length_counts in &all_bins {
+                for (total, count) in global_counts.iter_mut().zip(length_counts.counts.iter()) {
+                    *total += *count;
+                }
+            }
+
+            let total_counts: f64 = global_counts.iter().sum();
+            if total_counts > 0.0 {
+                for value in &mut global_counts {
+                    *value /= total_counts;
+                }
+            }
+
+            let x_values: Vec<f64> = (all_bins[0].length_min..=all_bins[0].length_max)
+                .map(|length| length as f64)
+                .collect();
+
+            let plot_path = opt
+                .ioc
+                .output_dir
+                .join(dot_join(&[prefix, "fragment_lengths_overall.png"]));
+
+            write_line_plot_png(
+                &plot_path,
+                "Fragment length distribution (summed/global)",
+                "Fragment length (bp)",
+                "Density",
+                &x_values,
+                &global_counts,
+                1600,
+                1000,
+            )
+            .with_context(|| format!("writing fragment length plot to {}", plot_path.display()))?;
         }
     }
 

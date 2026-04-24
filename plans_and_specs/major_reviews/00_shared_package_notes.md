@@ -108,17 +108,16 @@ Recommended fix:
 - Call it immediately after ordinary BED loading, mirroring the grouped BED checks.
 - Keep output writers and stackers defensive by returning clear errors on empty primary output collections.
 
-### G-008 - Medium - Feature-gated QC plots are default command side effects
+### G-008 - Medium - Feature-gated QC plots are default command side effects [IMPLEMENTED]
 
-When the `plotters` feature is enabled, some commands do plotting by default as part of counting. `midpoints` defaults `plot_groups` to `[0]` ([config.rs](../../src/commands/midpoints/config.rs#L197-L212)) and always calls plotting under the feature ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L283-L300)). `lengths` has no plot option and always writes an overall PNG when bins exist ([lengths.rs](../../src/commands/lengths/lengths.rs#L507-L553)); that plot happens after `length_counts.npy` and settings are written but before `bins.tsv` or `group_index.tsv` metadata ([lengths.rs](../../src/commands/lengths/lengths.rs#L481-L585)). `gc-bias` writes the correction package first, then always writes four QC PNGs under the feature, with no plot opt-out ([gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L706-L738)).
+When the `plotters` feature is enabled, some commands do plotting by default as part of counting. `midpoints` defaults `plot_groups` to `[0]` ([config.rs](../../src/commands/midpoints/config.rs#L197-L212)) and always calls plotting under the feature ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L283-L300)). Before this fix, `lengths` had no plot option and wrote its overall PNG after `length_counts.npy` and settings but before `bins.tsv` or `group_index.tsv` metadata. `gc-bias` writes the correction package first, then always writes four QC PNGs under the feature, with no plot opt-out ([gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L706-L738)).
 
-Impact: production counting can spend time on PNG generation and can fail after primary outputs have already been written. In `lengths`, that can leave the primary matrix without the metadata file that tells users what rows mean. In `gc-bias`, a plot failure can make the command return an error after the reusable correction package already exists.
+Impact: production counting can spend time on PNG generation and can fail after primary outputs have already been written. In `lengths`, this could leave the primary matrix without the metadata file that tells users what rows mean. In `gc-bias`, a plot failure can make the command return an error after the reusable correction package already exists.
 
-Recommended fix:
+Implemented fix:
 
-- Make plotting opt-in, or add an explicit `--no-plots`/empty CLI value that is easy to use.
-- Write required machine-readable metadata before optional QC plots.
-- Consider treating plot failures as warnings when primary scientific outputs have already succeeded.
+- Keep QC plotting as a default feature-gated command side effect.
+- Write required machine-readable outputs before QC plots. In `lengths`, `bins.tsv` or `group_index.tsv` is now written before `fragment_lengths_overall.png`.
 
 ### G-009 - Medium - `--chromosomes all` is BAM-header only, so reference-only commands cannot use it
 
