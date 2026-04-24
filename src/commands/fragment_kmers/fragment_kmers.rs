@@ -50,7 +50,7 @@ use crate::{
         scale_genome::apply_scaling_to_coverage_in_place,
         thread_pool::init_global_pool,
         tiled_run::{
-            Tile, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
+            TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
         },
         window_fetch::{BedFetchPolicy, fetch_span_for_tile},
         windowing::{WindowContext, build_bin_info, compute_window_offsets},
@@ -232,7 +232,7 @@ fn run_inner_with_reporting(
     )?;
 
     // Build temporary directory
-    let temp_dir = make_temp_dir(&opt.shared_args.ioc.output_dir, prefix)
+    let temp_dir_guard = TempDirGuard::new(&opt.shared_args.ioc.output_dir, prefix)
         .context("create per-run temp dir")?;
 
     // Window size when --by-size (otherwise None)
@@ -271,7 +271,7 @@ fn run_inner_with_reporting(
     let chr_offsets = Arc::new(chr_offsets_map);
 
     let total_tiles = tiles.len();
-    let temp_dir = Arc::new(temp_dir);
+    let temp_dir = Arc::new(temp_dir_guard.path().to_path_buf());
 
     // Create progress bar
     let progress = ProgressFactory::with_enabled(show_progress_and_status);

@@ -34,18 +34,14 @@ use crate::shared::io::open_text_reader;
 use crate::shared::progress::ProgressFactory;
 use crate::shared::reference::load_chrom_sizes;
 use crate::shared::thread_pool::init_global_pool;
-use crate::shared::tiled_run::make_temp_dir;
+use crate::shared::tiled_run::{TempDirGuard, make_temp_dir};
 use anyhow::{Context, Result, bail};
-use ctrlc;
 use fxhash::{FxHashMap, FxHashSet};
 use indicatif::ProgressStyle;
 use std::collections::hash_map::Entry;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process;
 use std::sync::Arc;
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use std::{env, fs, mem};
 
@@ -156,43 +152,6 @@ pub struct BlacklistCursor {
     pub post_cursor: usize, // Post-merge filtering
 }
 
-// Removes the temp directory on drop
-struct TempDirGuard {
-    path: PathBuf,
-    removed: bool,
-}
-
-impl TempDirGuard {
-    fn new(base_dir: &Path, prefix: &str) -> Result<Self> {
-        let path = make_temp_dir(base_dir, prefix).context("create per-run temp dir")?;
-        Ok(Self {
-            path,
-            removed: false,
-        })
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-
-    fn remove(&mut self) -> Result<()> {
-        if self.removed {
-            return Ok(());
-        }
-        if self.path.exists() {
-            fs::remove_dir_all(&self.path).context("Removing temp dir")?;
-        }
-        self.removed = true;
-        Ok(())
-    }
-}
-
-impl Drop for TempDirGuard {
-    fn drop(&mut self) {
-        let _ = self.remove();
-    }
-}
-
 /// Run the prepare pipeline using the provided configuration.
 pub fn run(cfg: &PrepareConfig) -> Result<()> {
     let start_time = Instant::now();
@@ -208,43 +167,11 @@ pub fn run(cfg: &PrepareConfig) -> Result<()> {
             .unwrap_or_else(|| env::current_dir().expect("current_dir")),
         _ => env::temp_dir(),
     };
-    let mut temp_dir_guard = TempDirGuard::new(&base_output_dir, "prepare_windows")?;
+    let mut temp_dir_guard = TempDirGuard::new(&base_output_dir, "prepare_windows")
+        .context("create per-run temp dir")?;
     // Keep per-chrom temp files in a subdirectory so they can be removed once filtered
     let stream_temp_dir = make_temp_dir(temp_dir_guard.path(), "prepare_windows_stream")
         .context("create stream temp dir")?;
-
-    // Best-effort cleanup when interrupted (Ctrl+C). Install once per process and
-    // ignore duplicate registration errors that arise when tests invoke this code repeatedly.
-    let cleanup_done = Arc::new(AtomicBool::new(false));
-    let cleanup_path = temp_dir_guard.path().to_path_buf();
-    {
-        static CTRL_C_HANDLER_INSTALLED: OnceLock<()> = OnceLock::new();
-        if CTRL_C_HANDLER_INSTALLED.get().is_none() {
-            let cleanup_done = cleanup_done.clone();
-            match ctrlc::set_handler(move || {
-                if cleanup_done.swap(true, Ordering::SeqCst) {
-                    return;
-                }
-                if let Err(err) = fs::remove_dir_all(&cleanup_path) {
-                    eprintln!(
-                        "Warning: failed to remove temporary directory {:?}: {}",
-                        cleanup_path, err
-                    );
-                }
-                process::exit(130);
-            }) {
-                Ok(()) => {
-                    let _ = CTRL_C_HANDLER_INSTALLED.set(());
-                }
-                Err(err) => {
-                    // Safe to proceed if another handler was registered earlier in the process.
-                    if !err.to_string().contains("already registered") {
-                        return Err(err).context("install Ctrl+C handler");
-                    }
-                }
-            }
-        }
-    }
 
     // TODO: Validate IO paths early (and other args)
 

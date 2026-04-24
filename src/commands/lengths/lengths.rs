@@ -36,7 +36,7 @@ use crate::{
         scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
         thread_pool::init_global_pool,
         tiled_run::{
-            Tile, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
+            TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
         },
         window_fetch::{BedFetchPolicy, fetch_span_for_tile},
         windowing::{
@@ -51,7 +51,7 @@ use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{io::Write, path::Path, sync::Arc, time::Instant};
-use tracing::{info, warn};
+use tracing::info;
 
 const COMMAND_TARGET: &str = "lengths";
 
@@ -260,7 +260,9 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         opt.fragment_lengths.max_fragment_length as usize,
     );
 
-    let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
+    let temp_dir_guard =
+        TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
+    let temp_dir = temp_dir_guard.path();
     let partials_prefix = &dot_join(&[prefix, "part"]);
     let cross_prefix = &dot_join(&[prefix, "cross"]);
 
@@ -298,7 +300,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 scaling_chr,
                 gc_corrector.clone(),
                 &template_counts,
-                &temp_dir,
+                temp_dir,
                 partials_prefix,
                 cross_prefix,
             )?;
@@ -362,7 +364,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 let n_windows = chrom_len.div_ceil(*window_bp) as usize;
                 let counts = reduce_partials_for_chr(
                     chr,
-                    &temp_dir,
+                    temp_dir,
                     partials_prefix,
                     cross_prefix,
                     n_windows,
@@ -392,7 +394,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 }
                 let counts = reduce_partials_for_chr(
                     chr,
-                    &temp_dir,
+                    temp_dir,
                     partials_prefix,
                     cross_prefix,
                     wchr_slice.len(),
@@ -465,20 +467,6 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
 
         // Unzip back out if you need separate Vecs again
         (bin_info, all_bins) = paired.into_iter().unzip();
-    }
-
-    let keep_temp = false;
-    if !keep_temp {
-        if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-            warn!(
-                target: COMMAND_TARGET,
-                "warning: failed to remove temp dir {}: {}",
-                temp_dir.display(),
-                e
-            );
-        }
-    } else {
-        warn!(target: COMMAND_TARGET, "kept temp tiles in {}", temp_dir.display());
     }
 
     // Write final counts to output_dir

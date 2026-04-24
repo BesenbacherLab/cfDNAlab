@@ -44,7 +44,7 @@ Recommended fix:
 - Use prose before each snippet instead of inline comments after `\`.
 - Keep one short "option variants" list outside code blocks if needed.
 
-### G-003 - High - Tiled commands clean temporary directories only on successful completion
+### G-003 - High - Tiled commands clean temporary directories only on successful completion [IMPLEMENTED]
 
 Several released tiled commands create a temp directory inside the output directory and rely on an explicit `remove_dir_all()` on the normal path instead of a cleanup guard. `midpoints` creates its temp directory before tiled counting ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L155-L157)) and removes it only after merge, final writes, and optional plotting have all succeeded ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L302-L311)). The same unguarded cleanup pattern exists in `fcoverage` ([fcoverage.rs](../../src/commands/fcoverage/fcoverage.rs#L295-L296), [fcoverage.rs](../../src/commands/fcoverage/fcoverage.rs#L745-L752)), `ends` ([ends.rs](../../src/commands/ends/ends.rs#L435-L443)), `lengths` ([lengths.rs](../../src/commands/lengths/lengths.rs#L467-L475)), and `gc-bias` ([gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L327-L329), [gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L399-L408)). `lengths` removes its temp directory before final matrix/metadata writes, so failures before that cleanup leak temp files while failures after cleanup leave partial final outputs without the temp files available for inspection.
 

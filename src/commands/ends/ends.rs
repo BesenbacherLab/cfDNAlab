@@ -50,7 +50,7 @@ use crate::{
         scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
         thread_pool::init_global_pool,
         tiled_run::{
-            Tile, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
+            TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
         },
         window_fetch::{BedFetchPolicy, fetch_span_for_tile},
         windowing::{
@@ -280,7 +280,9 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     let chr_offsets = Arc::new(chr_offsets_map);
     let chr_offsets_for_threads = chr_offsets.clone();
 
-    let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
+    let temp_dir_guard =
+        TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
+    let temp_dir = temp_dir_guard.path();
     let counts_prefix = &dot_join(&[prefix, "counts"]);
     let inside_spec = build_optional_kmer_spec(opt.k_inside, "inside")?;
     let outside_spec = build_optional_kmer_spec(opt.k_outside, "outside")?;
@@ -322,7 +324,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                 blacklist_chr,
                 scaling_chr,
                 gc_corrector.clone(),
-                &temp_dir,
+                temp_dir,
                 counts_prefix,
                 inside_spec.as_ref(),
                 outside_spec.as_ref(),
@@ -433,20 +435,6 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         &motif_order,
         write_dense_output,
     )?;
-
-    let keep_temp = false;
-    if !keep_temp {
-        if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-            warn!(
-                target: COMMAND_TARGET,
-                "warning: failed to remove temp dir {}: {}",
-                temp_dir.display(),
-                e
-            );
-        }
-    } else {
-        warn!(target: COMMAND_TARGET, "kept temp tiles in {}", temp_dir.display());
-    }
 
     write_end_settings_json(&opt.ioc.output_dir, prefix, opt)?;
 

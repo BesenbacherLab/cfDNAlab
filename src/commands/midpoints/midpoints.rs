@@ -35,7 +35,7 @@ use crate::{
         scale_genome::compute_window_scaling_over_fragment,
         thread_pool::init_global_pool,
         tiled_run::{
-            Tile, TileWindowSpan, build_tiles, clamp_fetch_to_window_span, make_temp_dir,
+            TempDirGuard, Tile, TileWindowSpan, build_tiles, clamp_fetch_to_window_span,
             overlapping_windows_for_tile, precompute_tile_window_spans,
         },
         window_fetch::window_derived_fetch_extent_for_core_overlap,
@@ -47,7 +47,7 @@ use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::{path::PathBuf, sync::Arc, time::Instant};
-use tracing::{info, warn};
+use tracing::info;
 
 const COMMAND_TARGET: &str = "midpoints";
 
@@ -154,7 +154,9 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     )?;
 
     // Build temporary directory
-    let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
+    let temp_dir_guard =
+        TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
+    let temp_dir = temp_dir_guard.path();
 
     // Build tiles
     let halo_bp: u32 = max_fragment_length; // Safe halo for pairing
@@ -298,20 +300,6 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
             &group_idx_to_name,
             all_counts_3d_arr,
         )?;
-    }
-
-    let keep_temp = false; // TODO: Make cli arg behind a feature for dev purposes?
-    if !keep_temp {
-        if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-            warn!(
-                target: COMMAND_TARGET,
-                "warning: failed to remove temp dir {}: {}",
-                temp_dir.display(),
-                e
-            );
-        }
-    } else {
-        warn!(target: COMMAND_TARGET, "kept temp tiles in {}", temp_dir.display());
     }
 
     let elapsed = start_time.elapsed();

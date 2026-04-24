@@ -43,7 +43,7 @@ use crate::{
         reference::read_seq_in_range,
         thread_pool::init_global_pool,
         tiled_run::{
-            Tile, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
+            TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
         },
     },
 };
@@ -325,8 +325,9 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     let zero_reduce_sum = zero_counts.zeroed_like()?;
 
     // Build temporary directory for cross-tile window partials
-    let temp_dir =
-        make_temp_dir(&opt.ioc.output_dir, "gc_bias_cross").context("create per-run temp dir")?;
+    let mut temp_dir_guard = TempDirGuard::new(&opt.ioc.output_dir, "gc_bias_cross")
+        .context("create per-run temp dir")?;
+    let temp_dir = temp_dir_guard.path().to_path_buf();
 
     let mut reduce_state: ReduceState = tiles
         .par_iter()
@@ -396,18 +397,13 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         reduce_state.scaled_weight += cross_weight;
     }
 
-    let keep_temp = false;
-    if !keep_temp {
-        if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-            warn!(
-                target: COMMAND_TARGET,
-                "warning: failed to remove temp dir {}: {}",
-                temp_dir.display(),
-                e
-            );
-        }
-    } else {
-        warn!(target: COMMAND_TARGET, "kept temp tiles in {}", temp_dir.display());
+    if let Err(err) = temp_dir_guard.remove() {
+        warn!(
+            target: COMMAND_TARGET,
+            "warning: failed to remove temp dir {}: {}",
+            temp_dir.display(),
+            err
+        );
     }
 
     let counted_windows = if matches!(window_opt, WindowSpec::Global) {

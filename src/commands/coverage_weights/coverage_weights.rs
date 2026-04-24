@@ -18,7 +18,7 @@ use crate::{
     shared::{
         interval::Interval,
         io::{dot_join, open_text_reader},
-        tiled_run::make_temp_dir,
+        tiled_run::TempDirGuard,
     },
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -26,10 +26,10 @@ use fxhash::FxHashMap;
 use std::{
     fs::File,
     io::{BufRead, BufWriter, Write},
-    path::{Path, PathBuf},
+    path::Path,
     time::Instant,
 };
-use tracing::{info, warn};
+use tracing::info;
 
 const FCOVERAGE_INTERMEDIATE_DECIMALS: u8 = 12;
 
@@ -72,13 +72,6 @@ impl ScalingWeightsCommand {
         match self {
             Self::Coverage => info!(target: "coverage-weights", "{message}"),
             Self::FragmentCount => info!(target: "fragment-count-weights", "{message}"),
-        }
-    }
-
-    fn warn(self, message: &str) {
-        match self {
-            Self::Coverage => warn!(target: "coverage-weights", "{message}"),
-            Self::FragmentCount => warn!(target: "fragment-count-weights", "{message}"),
         }
     }
 }
@@ -139,12 +132,12 @@ pub(crate) fn run_with_fcoverage(
     // Keep all intermediate files under the user-chosen output directory so disk usage stays
     // within the filesystem location the user already selected for results.
     ensure_output_dir(&opt.ioc.output_dir)?;
-    let fcoverage_output_dir = make_temp_dir(
+    let fcoverage_output_dir_guard = TempDirGuard::new(
         &opt.ioc.output_dir,
         &dot_join(&[opt.output_prefix.as_str(), "coverage_weights_source"]),
     )
     .context("creating internal fcoverage output directory")?;
-    let _fcoverage_output_cleanup = RemoveDirOnDrop::new(fcoverage_output_dir.clone(), command);
+    let fcoverage_output_dir = fcoverage_output_dir_guard.path().to_path_buf();
 
     let fcoverage_cfg = build_fcoverage_stride_config(
         opt,
@@ -404,29 +397,6 @@ fn load_stride_bins_from_fcoverage_tsv(
     }
 
     Ok(bins_by_chr)
-}
-
-struct RemoveDirOnDrop {
-    path: PathBuf,
-    command: ScalingWeightsCommand,
-}
-
-impl RemoveDirOnDrop {
-    fn new(path: PathBuf, command: ScalingWeightsCommand) -> Self {
-        Self { path, command }
-    }
-}
-
-impl Drop for RemoveDirOnDrop {
-    fn drop(&mut self) {
-        if let Err(err) = std::fs::remove_dir_all(&self.path) {
-            self.command.warn(&format!(
-                "failed to remove temp dir {}: {}",
-                self.path.display(),
-                err
-            ));
-        }
-    }
 }
 
 #[cfg(test)]

@@ -3,6 +3,7 @@ use anyhow::Result;
 use crate::commands::fcoverage::config::LengthNormalizationMode;
 use std::fs::File;
 use std::io::Write;
+use std::path::PathBuf;
 use tempfile::TempDir;
 
 fn make_run_result(path: PathBuf) -> FCoverageRunResult {

@@ -9,7 +9,7 @@ use crate::{
         interval::Interval,
         io::{dot_join, open_text_reader},
         reference::load_chrom_sizes_with_order,
-        tiled_run::make_temp_dir,
+        tiled_run::TempDirGuard,
     },
 };
 use anyhow::{Context, Result, anyhow, bail};
@@ -21,7 +21,6 @@ use rust_htslib::bam::{
 };
 use std::collections::hash_map::Entry;
 use std::{
-    fs,
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
@@ -163,8 +162,9 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
     )
     .context("Loading blacklist intervals")?;
 
-    let temp_dir = make_temp_dir(&opt.output_dir, opt.output_prefix.trim())
+    let mut temp_dir_guard = TempDirGuard::new(&opt.output_dir, opt.output_prefix.trim())
         .context("Creating temp directory for frag-to-bam")?;
+    let temp_dir = temp_dir_guard.path().to_path_buf();
 
     let reader = open_text_reader(&opt.frag)
         .with_context(|| format!("Opening fragment file {}", opt.frag.display()))?;
@@ -333,7 +333,9 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
     /* Second pass (from temps) - Write to BAM */
 
     if chroms_observed.is_empty() {
-        fs::remove_dir_all(&temp_dir).context("Cleaning up temp directory")?;
+        temp_dir_guard
+            .remove()
+            .context("Cleaning up temp directory")?;
         bail!("No fragments passed filters; no BAM to write");
     }
 
@@ -374,7 +376,9 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
         }
     }
 
-    fs::remove_dir_all(&temp_dir).context("Cleaning up temp directory")?;
+    temp_dir_guard
+        .remove()
+        .context("Cleaning up temp directory")?;
 
     Ok((counters, output_path))
 }

@@ -33,7 +33,7 @@ use crate::{
         reference::read_seq,
         scale_genome::compute_window_scaling_over_fragment,
         thread_pool::init_global_pool,
-        tiled_run::make_temp_dir,
+        tiled_run::TempDirGuard,
         writers::open_zstd_auto_writer,
     },
 };
@@ -157,7 +157,9 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     )?;
 
     // Build temporary directory
-    let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
+    let mut temp_dir_guard =
+        TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
+    let temp_dir = temp_dir_guard.path().to_path_buf();
     let output_file: PathBuf = opt.ioc.output_dir.join(dot_join(&[prefix, "frag.tsv.gz"]));
     let output_header_file: PathBuf = opt
         .ioc
@@ -220,7 +222,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     concat_frag_zst_to_gzip(&chromosome_paths, &output_file, false)?;
 
     // Remove temporary directory once final outputs are written
-    fs::remove_dir_all(&temp_dir).context("remove temp directory")?;
+    temp_dir_guard.remove().context("remove temp directory")?;
 
     // Create text line
     info!(target: COMMAND_TARGET, "Writing a header file");

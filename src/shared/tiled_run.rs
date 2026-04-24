@@ -2,6 +2,17 @@ use crate::shared::bam::Contigs;
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::dot_join;
 use rand::{Rng, distr::Alphanumeric};
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
+use std::process;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
+use tracing::warn;
+
+const TEMP_DIR_CLEANUP_TARGET: &str = "temp-dir-cleanup";
+static TEMP_DIR_CTRL_C_CLEANUP_STARTED: AtomicBool = AtomicBool::new(false);
+static TEMP_DIR_CTRL_C_HANDLER_INSTALLED: OnceLock<()> = OnceLock::new();
+static TEMP_DIR_CTRL_C_REGISTRY: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
 
 /// A processing tile for one chromosome
 #[derive(Debug, Clone)]
@@ -628,10 +639,7 @@ fn random_suffix(n: usize) -> String {
 ///
 /// # Returns
 /// Path to the created temporary directory.
-pub fn make_temp_dir(
-    base_out: &std::path::Path,
-    prefix: &str,
-) -> anyhow::Result<std::path::PathBuf> {
+pub fn make_temp_dir(base_out: &Path, prefix: &str) -> anyhow::Result<PathBuf> {
     // Try a few times just in case
     for _ in 0..8 {
         let suffix = random_suffix(10);
@@ -646,6 +654,145 @@ pub fn make_temp_dir(
     let p = base_out.join(dot_join(&["tmp", prefix, &ts.to_string()]));
     std::fs::create_dir_all(&p)?;
     Ok(p)
+}
+
+/// Guard for per-run temporary directories.
+///
+/// Commands keep this value in scope for as long as tile files may be needed. The directory is
+/// removed when the guard is dropped, so early returns clean up the same way as successful runs.
+/// Call `remove()` when cleanup failure should be reported on the normal success path.
+pub struct TempDirGuard {
+    path: PathBuf,
+    removed: bool,
+}
+
+impl TempDirGuard {
+    /// Creates and guards a unique temporary directory inside `base_out`.
+    pub fn new(base_out: &Path, prefix: &str) -> anyhow::Result<Self> {
+        install_temp_dir_ctrl_c_cleanup_handler();
+        let path = make_temp_dir(base_out, prefix)?;
+        Ok(Self::from_existing_path(path))
+    }
+
+    /// Guards an existing temporary directory path.
+    pub fn from_existing_path(path: PathBuf) -> Self {
+        install_temp_dir_ctrl_c_cleanup_handler();
+        register_temp_dir_for_ctrl_c_cleanup(&path);
+        Self {
+            path,
+            removed: false,
+        }
+    }
+
+    /// Returns the guarded temporary directory path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Removes the guarded directory and disables drop-time cleanup after success.
+    pub fn remove(&mut self) -> anyhow::Result<()> {
+        if self.removed {
+            return Ok(());
+        }
+
+        match std::fs::remove_dir_all(&self.path) {
+            Ok(()) => {
+                self.removed = true;
+                unregister_temp_dir_for_ctrl_c_cleanup(&self.path);
+                Ok(())
+            }
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                self.removed = true;
+                unregister_temp_dir_for_ctrl_c_cleanup(&self.path);
+                Ok(())
+            }
+            Err(err) => Err(err.into()),
+        }
+    }
+}
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        if self.removed {
+            return;
+        }
+
+        match std::fs::remove_dir_all(&self.path) {
+            Ok(()) => {
+                self.removed = true;
+                unregister_temp_dir_for_ctrl_c_cleanup(&self.path);
+            }
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                self.removed = true;
+                unregister_temp_dir_for_ctrl_c_cleanup(&self.path);
+            }
+            Err(err) => {
+                warn!(
+                    target: TEMP_DIR_CLEANUP_TARGET,
+                    "warning: failed to remove temp dir {}: {}",
+                    self.path.display(),
+                    err
+                );
+            }
+        }
+    }
+}
+
+fn temp_dir_ctrl_c_registry() -> &'static Mutex<Vec<PathBuf>> {
+    TEMP_DIR_CTRL_C_REGISTRY.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn install_temp_dir_ctrl_c_cleanup_handler() {
+    TEMP_DIR_CTRL_C_HANDLER_INSTALLED.get_or_init(|| {
+        if let Err(err) = ctrlc::set_handler(|| {
+            if TEMP_DIR_CTRL_C_CLEANUP_STARTED.swap(true, Ordering::SeqCst) {
+                return;
+            }
+
+            let paths = match temp_dir_ctrl_c_registry().lock() {
+                Ok(paths) => paths.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            for path in paths {
+                match std::fs::remove_dir_all(&path) {
+                    Ok(()) => {}
+                    Err(err) if err.kind() == ErrorKind::NotFound => {}
+                    Err(err) => {
+                        // Write directly to stderr because the handler exits immediately after cleanup
+                        eprintln!(
+                            "Warning: failed to remove temporary directory {}: {}",
+                            path.display(),
+                            err
+                        );
+                    }
+                }
+            }
+
+            process::exit(130);
+        }) {
+            warn!(
+                target: TEMP_DIR_CLEANUP_TARGET,
+                "warning: failed to install Ctrl+C temp-dir cleanup handler: {}",
+                err
+            );
+        }
+    });
+}
+
+fn register_temp_dir_for_ctrl_c_cleanup(path: &Path) {
+    let mut paths = match temp_dir_ctrl_c_registry().lock() {
+        Ok(paths) => paths,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    paths.push(path.to_path_buf());
+}
+
+fn unregister_temp_dir_for_ctrl_c_cleanup(path: &Path) {
+    let mut paths = match temp_dir_ctrl_c_registry().lock() {
+        Ok(paths) => paths,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    paths.retain(|registered_path| registered_path != path);
 }
 
 #[cfg(test)]

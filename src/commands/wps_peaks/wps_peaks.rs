@@ -24,7 +24,7 @@ use crate::shared::io::dot_join;
 use crate::shared::progress::ProgressFactory;
 use crate::shared::thread_pool::init_global_pool;
 use crate::shared::tiled_run::{
-    Tile, TileMode, TileWindowSpan, build_tiles, make_temp_dir, precompute_tile_window_spans,
+    TempDirGuard, Tile, TileMode, TileWindowSpan, build_tiles, precompute_tile_window_spans,
 };
 use crate::shared::writers::open_zstd_auto_writer;
 use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -32,12 +32,12 @@ use fxhash::FxHashMap;
 use rayon::prelude::*;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::fs::{File, remove_dir_all};
+use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
-use tracing::{info, warn};
+use tracing::info;
 
 const EXTRA_PEAK_HALO_BP: u32 = 450;
 const COMMAND_TARGET: &str = "wps-peaks";
@@ -218,8 +218,9 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     // Configure global thread‐pool size
     init_global_pool(opt.shared_args.ioc.n_threads as usize)?;
 
-    let temp_dir = make_temp_dir(&opt.shared_args.ioc.output_dir, prefix)
+    let temp_dir_guard = TempDirGuard::new(&opt.shared_args.ioc.output_dir, prefix)
         .context("create per-run temp dir for peaks")?;
+    let temp_dir = temp_dir_guard.path();
     let tile_window_spans_for_threads = tile_window_spans.clone();
     let stats_mode = matches!(opt.per_window, Some(PeaksWindowAction::Stats));
 
@@ -281,7 +282,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
                 None
             };
 
-            let path = tile_peaks_path(&temp_dir, prefix, tile, tile_idx);
+            let path = tile_peaks_path(temp_dir, prefix, tile, tile_idx);
             if peaks.is_empty() {
                 File::create(&path).context("create empty tile peak file")?;
             } else {
@@ -373,15 +374,6 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
             }
             writer.finish()?;
         }
-    }
-
-    if let Err(e) = remove_dir_all(&temp_dir) {
-        warn!(
-            target: COMMAND_TARGET,
-            "warning: failed to remove temp dir {}: {}",
-            temp_dir.display(),
-            e
-        );
     }
 
     let elapsed = start_time.elapsed();

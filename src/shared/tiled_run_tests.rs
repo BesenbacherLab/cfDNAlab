@@ -24,6 +24,34 @@ fn make_tile(core_start: u32, core_end: u32, fetch_start: u32, fetch_end: u32, i
 }
 
 #[test]
+fn temp_dir_guard_removes_non_empty_directory_on_drop() -> anyhow::Result<()> {
+    let base_dir = tempfile::TempDir::new()?;
+    let guarded_path = {
+        let guard = TempDirGuard::new(base_dir.path(), "guard_drop")?;
+        let guarded_path = guard.path().to_path_buf();
+        std::fs::write(guarded_path.join("tile.tmp"), b"temporary tile payload")?;
+        assert!(guarded_path.exists());
+        guarded_path
+    };
+
+    assert!(!guarded_path.exists());
+    Ok(())
+}
+
+#[test]
+fn temp_dir_guard_remove_is_idempotent() -> anyhow::Result<()> {
+    let base_dir = tempfile::TempDir::new()?;
+    let mut guard = TempDirGuard::new(base_dir.path(), "guard_remove")?;
+    let guarded_path = guard.path().to_path_buf();
+
+    guard.remove()?;
+    guard.remove()?;
+
+    assert!(!guarded_path.exists());
+    Ok(())
+}
+
+#[test]
 fn precompute_tile_window_spans_keeps_left_halo_only_windows_for_raw_end_reach() {
     // Human verification status: unverified
     // Raw clipping can move the counted left endpoint left of the aligned fragment start.

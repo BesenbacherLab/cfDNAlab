@@ -25,7 +25,7 @@ use crate::shared::read::{default_include_read_paired_end, default_include_read_
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
 use crate::shared::tiled_run::{
-    Tile, TileMode, TileWindowSpan, build_tiles, make_temp_dir, overlapping_windows_for_tile,
+    TempDirGuard, Tile, TileMode, TileWindowSpan, build_tiles, overlapping_windows_for_tile,
     precompute_tile_window_spans,
 };
 use crate::{
@@ -295,7 +295,9 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
         || opt.uses_length_normalization();
 
     // Build temporary directory
-    let temp_dir = make_temp_dir(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
+    let temp_dir_guard =
+        TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
+    let temp_dir = temp_dir_guard.path();
 
     // Window size when --by-size (otherwise None)
     let by_size_bp: Option<u64> = match &window_opt {
@@ -624,7 +626,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     let final_out_path = if !windowed {
         // Whole-genome positional coverage
         merge_positional_tiles_with_optional_scaling(
-            &temp_dir,
+            temp_dir,
             &opt.ioc.output_dir,
             &chromosomes,
             positional_prefix,
@@ -639,7 +641,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
             CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
                 // Windowed positional (unique and non-indexed)
                 merge_positional_tiles_with_optional_scaling(
-                    &temp_dir,
+                    temp_dir,
                     &opt.ioc.output_dir,
                     &chromosomes,
                     positional_prefix,
@@ -653,7 +655,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
             CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
                 // Windowed positional with orig_idx column
                 merge_positional_tiles_with_optional_scaling(
-                    &temp_dir,
+                    temp_dir,
                     &opt.ioc.output_dir,
                     &chromosomes,
                     positional_prefix,
@@ -675,7 +677,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                 match &window_opt {
                     DistributionWindowSpec::Bed(_) => write_bed_aggregate_output(
                         &final_path,
-                        &temp_dir,
+                        temp_dir,
                         partials_prefix,
                         windows_map
                             .as_ref()
@@ -689,7 +691,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                     )?,
                     DistributionWindowSpec::GroupedBed(_) => write_grouped_bed_aggregate_output(
                         &final_path,
-                        &temp_dir,
+                        temp_dir,
                         partials_prefix,
                         grouped_layout
                             .as_ref()
@@ -702,7 +704,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                     )?,
                     DistributionWindowSpec::Size(_) => write_size_aggregate_output(
                         &final_path,
-                        &temp_dir,
+                        temp_dir,
                         partials_prefix,
                         finals_prefix,
                         &chromosomes,
@@ -743,15 +745,6 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
         "Saved output to: {}",
         final_out_path.display()
     );
-
-    if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-        warn!(
-            target: COMMAND_TARGET,
-            "failed to remove temp dir {}: {}",
-            temp_dir.display(),
-            e
-        );
-    }
 
     Ok(FCoverageRunResult {
         counters: global_counter,

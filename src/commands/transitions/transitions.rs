@@ -8,7 +8,7 @@ use crate::{
         },
         transitions::config::TransitionsConfig,
     },
-    shared::{io::dot_join, tiled_run::make_temp_dir},
+    shared::{io::dot_join, tiled_run::TempDirGuard},
 };
 use anyhow::{Context, Result, ensure};
 use fxhash::FxHashMap;
@@ -139,8 +139,9 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;
 
     // Build temporary directory
-    let temp_root = make_temp_dir(&opt.shared_args.ioc.output_dir, prefix)
+    let mut temp_root_guard = TempDirGuard::new(&opt.shared_args.ioc.output_dir, prefix)
         .context("create per-run temp dir")?;
+    let temp_root = temp_root_guard.path().to_path_buf();
 
     let mut tmp_ioc = opt.shared_args.ioc.clone();
     tmp_ioc.output_dir = temp_root.join("kmer_counts");
@@ -227,7 +228,9 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
     }
 
     // Remove temporary staging directory once final outputs are written
-    fs::remove_dir_all(&temp_root).context("remove transitions temp directory")?;
+    temp_root_guard
+        .remove()
+        .context("remove transitions temp directory")?;
 
     let elapsed = start_time.elapsed();
     print_fragment_run_statistics(

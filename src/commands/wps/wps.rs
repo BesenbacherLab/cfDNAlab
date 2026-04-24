@@ -23,7 +23,7 @@ use crate::shared::read::{default_include_read_paired_end, default_include_read_
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
 use crate::shared::tiled_run::{
-    Tile, TileMode, TileWindowSpan, build_tiles, make_temp_dir, overlapping_windows_for_tile,
+    TempDirGuard, Tile, TileMode, TileWindowSpan, build_tiles, overlapping_windows_for_tile,
     precompute_tile_window_spans,
 };
 use crate::shared::writers::open_zstd_auto_writer;
@@ -47,7 +47,7 @@ use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::io::Write;
 use std::{sync::Arc, time::Instant};
-use tracing::{info, warn};
+use tracing::info;
 
 const COMMAND_TARGET: &str = "wps";
 
@@ -215,8 +215,9 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     }
 
     // Build temporary directory
-    let temp_dir = make_temp_dir(&opt.shared_args.ioc.output_dir, prefix)
+    let temp_dir_guard = TempDirGuard::new(&opt.shared_args.ioc.output_dir, prefix)
         .context("create per-run temp dir")?;
+    let temp_dir = temp_dir_guard.path();
 
     // Window size when --by-size (otherwise None)
     let by_size_bp: Option<u64> = match &window_opt {
@@ -487,7 +488,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
                 // Windowed positional (unique and non-indexed)
                 merge_positional_tiles(
-                    &temp_dir,
+                    temp_dir,
                     &opt.shared_args.ioc.output_dir,
                     &chromosomes,
                     positional_prefix,
@@ -497,7 +498,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
                 // Windowed positional with orig_idx column
                 merge_positional_tiles(
-                    &temp_dir,
+                    temp_dir,
                     &opt.shared_args.ioc.output_dir,
                     &chromosomes,
                     positional_prefix,
@@ -543,7 +544,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                             if let Some(wchr) = win_map.get(chr) {
                                 reduce_bed_with_cross_index_for_chr(
                                     chr,
-                                    &temp_dir,
+                                    temp_dir,
                                     partials_prefix,
                                     wchr.as_slice(),
                                     true,
@@ -558,7 +559,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     WindowSpec::Size(_) => {
                         if tile_and_window_boundaries_align {
                             let _ = concat_aligned_size_tile_finals(
-                                &temp_dir,
+                                temp_dir,
                                 &opt.shared_args.ioc.output_dir,
                                 &chromosomes,
                                 finals_prefix,
@@ -592,7 +593,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                                     })?;
                                 reduce_aggregates_by_size_with_cross_index_for_chr(
                                     chr,
-                                    &temp_dir,
+                                    temp_dir,
                                     partials_prefix,
                                     true,
                                     action,
@@ -616,7 +617,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     } else {
         // Whole-genome positional coverage
         merge_positional_tiles(
-            &temp_dir,
+            temp_dir,
             &opt.shared_args.ioc.output_dir,
             &chromosomes,
             positional_prefix,
@@ -629,19 +630,6 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         final_out_path.display()
     );
 
-    let keep_temp = false; // TODO: Make cli arg behind a feature for dev purposes?
-    if !keep_temp {
-        if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
-            warn!(
-                target: COMMAND_TARGET,
-                "warning: failed to remove temp dir {}: {}",
-                temp_dir.display(),
-                e
-            );
-        }
-    } else {
-        warn!(target: COMMAND_TARGET, "kept temp tiles in {}", temp_dir.display());
-    }
     let elapsed = start_time.elapsed();
     print_fragment_run_statistics(
         &global_counter.base,
