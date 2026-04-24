@@ -77,7 +77,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }
-    opt.gc.validate()?;
+    opt.gc.validate(opt.ref_2bit.as_deref())?;
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let prefix = opt.output_prefix.trim();

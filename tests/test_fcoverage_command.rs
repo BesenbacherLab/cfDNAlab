@@ -108,6 +108,35 @@ fn fcoverage_rejects_inverted_fragment_length_range_before_reading_inputs() -> R
     Ok(())
 }
 
+#[test]
+fn fcoverage_rejects_gc_file_without_ref_2bit_before_output_setup() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let output_dir = temp_dir.path().join("not_created");
+    let mut cfg = base_config(Path::new("missing.bam"), &output_dir);
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(temp_dir.path().join("missing_gc_package.npz")),
+        gc_tag: None,
+        neutralize_invalid_gc: false,
+    });
+
+    let error = match run_inner(&cfg) {
+        Ok(_) => panic!("GC file without --ref-2bit should fail"),
+        Err(error) => error,
+    };
+    let message = error.to_string();
+
+    assert!(
+        message.contains("--gc-file requires --ref-2bit"),
+        "unexpected error: {message}"
+    );
+    assert!(
+        !output_dir.exists(),
+        "configuration validation should fail before creating the output directory"
+    );
+
+    Ok(())
+}
+
 fn set_restore_mean_length_normalization(cfg: &mut FCoverageConfig) {
     cfg.set_normalize_by_length_mode(LengthNormalizationMode::RestoreMean);
 }

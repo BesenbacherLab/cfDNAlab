@@ -87,7 +87,9 @@ const COMMAND_TARGET: &str = "fragment-kmers";
 pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
     let start_time = Instant::now();
     opt.shared_args.fragment_lengths.validate()?;
-    opt.shared_args.gc.validate()?;
+    opt.shared_args
+        .gc
+        .validate(Some(opt.shared_args.ref_genome.ref_2bit.as_path()))?;
     let global_counter = run_inner(opt)?;
     let elapsed = start_time.elapsed();
     print_fragment_run_statistics(
@@ -134,6 +136,9 @@ fn run_inner_with_reporting(
     show_progress_and_status: bool,
 ) -> Result<FragmentKmersCounters> {
     opt.shared_args.fragment_lengths.validate()?;
+    opt.shared_args
+        .gc
+        .validate(Some(opt.shared_args.ref_genome.ref_2bit.as_path()))?;
     if opt.shared_args.unpaired.reads_are_fragments && opt.shared_args.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }

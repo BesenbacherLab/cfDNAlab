@@ -138,7 +138,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     {
         warn!(target: COMMAND_TARGET, "{warning_message}");
     }
-    opt.gc.validate()?;
+    opt.gc.validate(opt.ref_2bit.as_deref())?;
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let window_opt = opt.windows.resolve_windows();

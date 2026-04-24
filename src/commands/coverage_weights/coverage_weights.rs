@@ -104,7 +104,7 @@ pub(crate) fn run_with_fcoverage(
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     opt.check_bin_sizes()?;
     opt.fragment_lengths.validate()?;
-    opt.gc.validate()?;
+    opt.gc.validate(opt.ref_2bit.as_deref())?;
 
     // Keep all intermediate files under the user-chosen output directory so disk usage stays
     // within the filesystem location the user already selected for results.

@@ -658,10 +658,11 @@ pub struct ApplyGCArgs {
 impl ApplyGCArgs {
     /// Validate combinations that clap already rejects on the CLI, so programmatic configs fail
     /// the same way instead of depending on branch order deeper in the command logic.
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self, ref_2bit: Option<&Path>) -> Result<()> {
         if self.gc_file.is_some() && self.gc_tag.is_some() {
             bail!("--gc-file and --gc-tag cannot be used together");
         }
+        validate_gc_file_reference(self.gc_file.as_deref(), ref_2bit)?;
         Ok(())
     }
 }
@@ -687,6 +688,21 @@ pub struct ApplyGCArgFileOnly {
     /// instead and count them with neutral weight `1.0`.
     #[cfg_attr(feature = "cli", clap(long, help_heading = "GC Correction"))]
     pub neutralize_invalid_gc: bool,
+}
+
+impl ApplyGCArgFileOnly {
+    /// Validate GC-file settings that are shared by commands without `--gc-tag`.
+    pub fn validate(&self, ref_2bit: Option<&Path>) -> Result<()> {
+        validate_gc_file_reference(self.gc_file.as_deref(), ref_2bit)
+    }
+}
+
+fn validate_gc_file_reference(gc_file: Option<&Path>, ref_2bit: Option<&Path>) -> Result<()> {
+    ensure!(
+        gc_file.is_none() || ref_2bit.is_some(),
+        "--gc-file requires --ref-2bit"
+    );
+    Ok(())
 }
 
 // TODO: Is "nearest" clear enough in all usecases?

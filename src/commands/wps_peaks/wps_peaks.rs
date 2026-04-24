@@ -90,7 +90,9 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
         opt.shared_args.window_size,
         opt.shared_args.max_fragment_length
     );
-    opt.shared_args.gc.validate()?;
+    opt.shared_args
+        .gc
+        .validate(opt.shared_args.ref_2bit.as_deref())?;
 
     // Create output directory if needed
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;

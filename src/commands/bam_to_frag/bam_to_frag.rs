@@ -85,6 +85,7 @@ pub fn run(opt: &BamToFragConfig) -> Result<()> {
 
 pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     opt.fragment_lengths.validate()?;
+    opt.gc.validate(opt.ref_2bit.as_deref())?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
     }

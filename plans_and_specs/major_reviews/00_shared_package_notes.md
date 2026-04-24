@@ -56,7 +56,7 @@ Recommended fix:
 - Keep the current warning behavior for cleanup failures, but make cleanup run on error paths too.
 - Add one helper-level test for the guard and one command-level regression that forces a post-temp error.
 
-### G-004 - High - `--gc-file` lacks shared fail-fast validation for the required `--ref-2bit`
+### G-004 - High - `--gc-file` lacks shared fail-fast validation for the required `--ref-2bit` [IMPLEMENTED]
 
 `ApplyGCArgs::validate()` checks only that `--gc-file` and `--gc-tag` are not combined ([cli_common.rs](../../src/commands/cli_common.rs#L629-L637)). Commands with file-based GC correction then perform their own `ref_2bit` checks later. In `midpoints`, startup calls `opt.gc.validate()` ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L75-L81)), but the missing-reference error is raised inside `process_tile()` after output setup and temp directory creation ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L368-L372)). `ends` has the same delayed check: startup only requires `--ref-2bit` for motif extraction cases ([ends.rs](../../src/commands/ends/ends.rs#L132-L140)), while the GC-file missing-reference error is raised inside tile processing after the temp directory is created ([ends.rs](../../src/commands/ends/ends.rs#L281-L284), [ends.rs](../../src/commands/ends/ends.rs#L612-L617)). `lengths` loads the GC package at startup ([lengths.rs](../../src/commands/lengths/lengths.rs#L204-L213)), but it does not reject a missing `--ref-2bit` until tile processing after temp directory creation ([lengths.rs](../../src/commands/lengths/lengths.rs#L260-L305), [lengths.rs](../../src/commands/lengths/lengths.rs#L633-L638)).
 
