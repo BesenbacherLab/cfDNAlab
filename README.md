@@ -1,6 +1,4 @@
-<p>
-  &nbsp;
-</p>
+<br>
 
 <p align="center">
   <img src="cfdnalab_logo_400x255_144dpi.png" height="255" />
@@ -15,9 +13,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT" /></a>
 </p>
 
-<p>
-  &nbsp;
-</p>
+<br>
 
 Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, **fragment end-motifs**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. All commands integrate options for sample-specific GC correction and large-scale genomic smoothing.
 
@@ -28,9 +24,7 @@ The commands are **highly flexible** with many options and good default settings
 The package is under active development and may [change](https://github.com/BesenbacherLab/cfDNAlab/blob/main/CHANGELOG). Multiple additional commands are currently being built.
 Suggest a tool or feature [here](https://github.com/BesenbacherLab/cfDNAlab/issues/new/choose)!
 
-<p>
-  &nbsp;
-</p>
+<br>
 
 ## Installation
 
@@ -54,9 +48,7 @@ cd cfdnalab && cargo build --release --features cli,plotters
 target/release/cfdna --help
 ```
 
-<p>
-  &nbsp;
-</p>
+<br>
 
 ## Commands
 
@@ -92,9 +84,7 @@ Planned: `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks
 
 - **Unpaired data**: If you have Nanopore-sequenced cell-free DNA (or similar) where each read represents the full fragment, you can supply the `--reads-are-fragments` flag. This will consider each read a full fragment.
 
-<p>
-  &nbsp;
-</p>
+<br>
 
 ## FAQ
 
@@ -122,9 +112,7 @@ Planned: `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks
 - How did you use LLMs (AI) in this project?
   - OpenAI's codex models were used for pair programming to speed up development and testing. Claude Code provided code reviews. All code for the released commands have been designed and validated by us.
 
-<p>
-  &nbsp;
-</p>
+<br>
 
 ## Examples
 
@@ -580,9 +568,7 @@ cfdna midpoints \
 
 ```
 
-<p>
-  &nbsp;
-</p>
+<br>
 
 ## Unpaired (--reads-are-fragments)
 
@@ -602,9 +588,7 @@ cfdna fcoverage \
 
 ```
 
-<p>
-  &nbsp;
-</p>
+<br>
 
 ## Output formats
 
@@ -639,9 +623,7 @@ zstdcat path_to/file.tsv.zst
 
 ```
 
-<p>
-  &nbsp;
-</p>
+<br>
 
 ## References
 
