@@ -15,6 +15,10 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT" /></a>
 </p>
 
+<p>
+  &nbsp;
+</p>
+
 Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, **fragment end-motifs**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. All commands integrate options for sample-specific GC correction and large-scale genomic smoothing.
 
 Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaired data where each read represents a full fragment. Written in rust for *speed*.
