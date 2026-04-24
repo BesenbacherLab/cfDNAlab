@@ -191,7 +191,7 @@ Recommended fix:
 - Consider `File::sync_all()` only if you want a stronger durability guarantee than ordinary command-line tools usually provide.
 - Add a small writer-helper regression if the writer logic is extracted; otherwise, keep this as a targeted code-review fix.
 
-### G-015 - Low - All-zero smoothing runs fail with a misleading normalization error
+### G-015 - Low - All-zero smoothing runs fail with a misleading normalization error [IMPLEMENTED]
 
 `normalize_average_overlap_by_global_mean()` skips non-finite and effectively zero overlap values when computing the global mean ([striding.rs](../../src/commands/coverage_weights/striding.rs#L204-L223)). If every stride bin is zero after filtering, blacklisting, or GC correction, it returns `no bins to normalize or all had length 0` ([striding.rs](../../src/commands/coverage_weights/striding.rs#L225-L227)). The caller invokes this after internal `fcoverage` has already completed and the stride bins have been smoothed ([coverage_weights.rs](../../src/commands/coverage_weights/coverage_weights.rs#L126-L137)).
 

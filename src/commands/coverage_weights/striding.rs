@@ -200,14 +200,18 @@ pub fn normalize_average_overlap_by_global_mean(
 ) -> Result<f32> {
     let mut sum = 0.0_f64;
     let mut wsum = 0.0_f64;
+    let mut total_bins = 0usize;
+    let mut finite_non_zero_bins = 0usize;
 
     // Compute global mean over all chromosomes
     for bins in bins_by_chr.values() {
         for b in bins {
+            total_bins += 1;
             let v = b.average_overlap_coverage as f64;
             if !v.is_finite() || is_effectively_zero(v) {
                 continue; // Skip NaN/inf and bins without real support
             }
+            finite_non_zero_bins += 1;
             let w = if length_weighted {
                 b.size() as f64
             } else {
@@ -223,7 +227,19 @@ pub fn normalize_average_overlap_by_global_mean(
     }
 
     if wsum == 0.0 {
-        anyhow::bail!("no bins to normalize or all had length 0");
+        if total_bins == 0 {
+            anyhow::bail!("no stride bins were available to normalize");
+        }
+        if finite_non_zero_bins == 0 {
+            anyhow::bail!(
+                "no finite non-zero smoothed fragment mass after filtering across {} stride bins. Check --chromosomes, --min-mapq, fragment length filters, blacklist, and GC correction inputs",
+                total_bins
+            );
+        }
+        anyhow::bail!(
+            "internal error: total sum of 0 but found {} finite non-zero bins. Should be impossible, please report",
+            finite_non_zero_bins
+        );
     }
 
     let mean = sum / wsum;

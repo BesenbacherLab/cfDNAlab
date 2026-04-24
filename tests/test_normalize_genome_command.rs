@@ -275,6 +275,34 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
 }
 
 #[test]
+fn coverage_weights_errors_clearly_when_filters_remove_all_smoothed_mass() -> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // `simple_inward_bam` contains one MAPQ-60 fragment. Setting min_mapq to 61 leaves
+    // stride bins in the chromosome but no counted fragment mass after filtering.
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = make_simple_coverage_weights_config(out_dir.path(), &bam.bam);
+    cfg.set_min_mapq(61);
+
+    // Act
+    let err = run(&cfg).expect_err("all filtered smoothing input should fail clearly");
+
+    // Assert
+    let message = err.to_string();
+    assert!(
+        message.contains("no finite non-zero smoothed fragment mass after filtering"),
+        "unexpected error message: {message}"
+    );
+    assert!(
+        message.contains("--min-mapq"),
+        "unexpected error message: {message}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn coverage_weights_ignore_gap_omits_inter_mate_gap_and_writes_metadata() -> Result<()> {
     // Human verification status: unverified
     let bam = paired_fragment_with_inter_mate_gap_bam("coverage_weights_ignore_gap")?;

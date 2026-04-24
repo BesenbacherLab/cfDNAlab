@@ -380,6 +380,50 @@ fn normalize_average_overlap_by_global_mean_ignores_bins_below_support_floor() -
 }
 
 #[test]
+fn normalize_average_overlap_by_global_mean_explains_all_zero_smoothed_mass() -> Result<()> {
+    // Arrange
+    let mut bins_by_chr = FxHashMap::default();
+    bins_by_chr.insert(
+        "chr1".to_string(),
+        vec![
+            StrideBin {
+                interval: Interval::new(0, 10)?,
+                average_coverage: 0.0,
+                average_overlap_coverage: 0.0,
+                scaling_factor: 0.0,
+            },
+            StrideBin {
+                interval: Interval::new(10, 20)?,
+                average_coverage: 0.0,
+                average_overlap_coverage: 5e-11,
+                scaling_factor: 0.0,
+            },
+        ],
+    );
+
+    // Act
+    let err = normalize_average_overlap_by_global_mean(&mut bins_by_chr, true, true)
+        .expect_err("all-zero smoothed mass should fail");
+
+    // Assert
+    let message = err.to_string();
+    assert!(
+        message.contains("no finite non-zero smoothed fragment mass after filtering"),
+        "unexpected error message: {message}"
+    );
+    assert!(
+        message.contains("2 stride bins"),
+        "unexpected error message: {message}"
+    );
+    assert!(
+        message.contains("--chromosomes") && message.contains("--min-mapq"),
+        "unexpected error message: {message}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn normalize_average_overlap_by_global_mean_keeps_bins_above_support_floor() -> Result<()> {
     // Arrange
     let mut bins_by_chr = FxHashMap::default();
