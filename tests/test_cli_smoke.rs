@@ -255,8 +255,8 @@ fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> 
 fn coverage_weights_cli_minimal_invocation_writes_scaling_tsv() -> Result<()> {
     // Human verification status: unverified
     // Arrange: simple_inward_bam has chr1 length 200 and one fragment spanning [20,80).
-    // With stride 20 this yields exactly 10 stride bins -> 12 TSV lines including one metadata
-    // line and one header line.
+    // With stride 20 this yields exactly 10 stride bins -> 13 TSV lines including two metadata
+    // lines and one header line.
     let bam_fixture = fixtures::simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let output_prefix = "cli_smoke_covweights";
@@ -305,12 +305,16 @@ fn coverage_weights_cli_minimal_invocation_writes_scaling_tsv() -> Result<()> {
     );
     assert_eq!(
         lines.get(1).copied().unwrap_or_default(),
+        "# ignore_gap=false"
+    );
+    assert_eq!(
+        lines.get(2).copied().unwrap_or_default(),
         "chromosome\tstart\tend\taverage_pos_coverage\taverage_overlapping_pos_coverage\tscaling_factor"
     );
     assert_eq!(
         lines.len(),
-        12,
-        "Expected 1 metadata line + 1 header + 10 stride-bin rows for chr1 length 200 with stride 20"
+        13,
+        "Expected 2 metadata lines + 1 header + 10 stride-bin rows for chr1 length 200 with stride 20"
     );
 
     Ok(())

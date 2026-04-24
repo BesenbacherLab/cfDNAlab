@@ -40,18 +40,17 @@ struct ScalingRow {
 
 fn parse_scaling_rows(tsv_path: &std::path::Path) -> Result<Vec<ScalingRow>> {
     let content = std::fs::read_to_string(tsv_path)?;
-    let mut lines = content.lines();
-    let first_line = lines.next().unwrap_or("");
-    let header = if let Some(gc_mode) = first_line.strip_prefix("# gc_mode=") {
-        assert!(
-            !gc_mode.is_empty(),
-            "expected non-empty gc_mode metadata in {}",
-            tsv_path.display()
-        );
-        lines.next().unwrap_or("")
-    } else {
-        first_line
-    };
+    let mut lines = content.lines().peekable();
+    while let Some(metadata_line) = lines.peek().copied().filter(|line| line.starts_with('#')) {
+        if let Some((key, value)) = metadata_line.strip_prefix('#').and_then(|line| {
+            let (key, value) = line.trim().split_once('=')?;
+            Some((key.trim(), value.trim()))
+        }) {
+            assert!(!value.is_empty(), "expected non-empty {key} metadata");
+        }
+        lines.next();
+    }
+    let header = lines.next().unwrap_or("");
     assert_eq!(
         header,
         "chromosome\tstart\tend\taverage_pos_coverage\taverage_overlapping_pos_coverage\tscaling_factor"
@@ -182,6 +181,19 @@ fn multi_chrom_order_bam(name: &str) -> Result<fixtures::BamFixture> {
     )
 }
 
+fn paired_fragment_with_inter_mate_gap_bam(name: &str) -> Result<fixtures::BamFixture> {
+    // One 80 bp fragment with 20 bp mates:
+    // - forward read covers [20, 40)
+    // - reverse read covers [80, 100)
+    // - inter-mate gap is [40, 80)
+    bam_from_specs(
+        vec![("chr1".to_string(), 120)],
+        vec![paired_fragment(20, 80, 20)],
+        Vec::new(),
+        name,
+    )
+}
+
 fn fragment_on_tid(mut fragment: FragmentSpec, tid: usize) -> FragmentSpec {
     fragment.forward.tid = tid;
     fragment.reverse.tid = tid;
@@ -253,6 +265,39 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
             );
         }
     }
+
+    Ok(())
+}
+
+#[test]
+fn coverage_weights_ignore_gap_omits_inter_mate_gap_and_writes_metadata() -> Result<()> {
+    // Human verification status: unverified
+    let bam = paired_fragment_with_inter_mate_gap_bam("coverage_weights_ignore_gap")?;
+    let out_dir = TempDir::new()?;
+    let mut cfg = make_simple_coverage_weights_config(out_dir.path(), &bam.bam);
+    cfg.set_bin_size(20);
+    cfg.set_stride(20);
+    cfg.set_ignore_gap(true);
+
+    run(&cfg)?;
+
+    let tsv_path = out_dir.path().join("coverage.coverage.scaling_factors.tsv");
+    let content = std::fs::read_to_string(&tsv_path)?;
+    assert!(
+        content.lines().any(|line| line == "# ignore_gap=true"),
+        "expected ignore_gap metadata in {}",
+        tsv_path.display()
+    );
+
+    let rows = parse_scaling_rows(&tsv_path)?;
+    let average_coverages: Vec<f64> = rows.iter().map(|row| row.average_pos_coverage).collect();
+
+    // With `bin_size == stride`, there is no smoothing across neighboring stride bins.
+    // The single fragment contributes only its read-covered segments when ignore_gap=true:
+    // - [20,40) -> coverage 1
+    // - [40,80) -> inter-mate gap, coverage 0
+    // - [80,100) -> coverage 1
+    assert_eq!(average_coverages, vec![0.0, 1.0, 0.0, 0.0, 1.0, 0.0]);
 
     Ok(())
 }

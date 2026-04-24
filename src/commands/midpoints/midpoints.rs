@@ -140,6 +140,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
             opt.gc.gc_file.is_some(),
             opt.gc.gc_tag.is_some(),
         ),
+        None,
     )?;
 
     // Load GC correction package if specified

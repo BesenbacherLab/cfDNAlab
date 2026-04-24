@@ -187,6 +187,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             opt.shared_args.gc.gc_file.is_some(),
             opt.shared_args.gc.gc_tag.is_some(),
         ),
+        None,
     )?;
 
     // Load GC correction package if specified

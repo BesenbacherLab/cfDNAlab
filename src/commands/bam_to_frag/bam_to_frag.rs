@@ -132,6 +132,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
         &chromosomes,
         &contigs,
         crate::shared::scale_genome::scaling_gc_mode_for_run(opt.gc.gc_file.is_some(), false),
+        None,
     )?;
     let count_scale_genome = opt.count_scale_genome_args();
     if count_scale_genome.scaling_factors.is_some() {
@@ -142,6 +143,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
         &chromosomes,
         &contigs,
         crate::shared::scale_genome::scaling_gc_mode_for_run(opt.gc.gc_file.is_some(), false),
+        None,
     )?;
 
     // Load GC correction package if specified

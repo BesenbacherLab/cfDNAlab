@@ -52,6 +52,10 @@ impl ScalingGCMode {
 pub struct ScalingFactorsMetadata {
     /// Whether the source coverage used GC correction.
     pub gc_mode: ScalingGCMode,
+    /// Whether coverage-based smoothing weights were built with `--ignore-gap`.
+    ///
+    /// Old files and count-based scaling files may omit this metadata.
+    pub ignore_gap: Option<bool>,
 }
 
 /// Parsed scaling factors together with their file metadata.
@@ -297,6 +301,7 @@ pub fn load_scaling_factors_tsv(
     let mut metadata = ScalingFactorsMetadata::default();
     let mut lineno = 0usize;
     let mut saw_gc_mode_metadata = false;
+    let mut saw_ignore_gap_metadata = false;
     loop {
         header.clear();
         if r.read_line(&mut header)? == 0 {
@@ -319,6 +324,7 @@ pub fn load_scaling_factors_tsv(
                 lineno,
                 &mut metadata,
                 &mut saw_gc_mode_metadata,
+                &mut saw_ignore_gap_metadata,
             )?;
             continue;
         }
@@ -505,6 +511,7 @@ fn parse_scaling_metadata_comment(
     lineno: usize,
     metadata: &mut ScalingFactorsMetadata,
     saw_gc_mode_metadata: &mut bool,
+    saw_ignore_gap_metadata: &mut bool,
 ) -> Result<()> {
     let Some((raw_key, raw_value)) = comment_body.split_once('=') else {
         return Ok(());
@@ -524,6 +531,17 @@ fn parse_scaling_metadata_comment(
             metadata.gc_mode = parse_scaling_gc_mode(path, value)?;
             *saw_gc_mode_metadata = true;
         }
+        "ignore_gap" => {
+            if *saw_ignore_gap_metadata {
+                bail!(
+                    "{}:{}: duplicate scaling metadata key 'ignore_gap'",
+                    path.display(),
+                    lineno
+                );
+            }
+            metadata.ignore_gap = Some(parse_scaling_bool(path, "ignore_gap", value)?);
+            *saw_ignore_gap_metadata = true;
+        }
         _ => {}
     }
     Ok(())
@@ -539,6 +557,19 @@ fn parse_scaling_gc_mode(path: &Path, value: &str) -> Result<ScalingGCMode> {
             "{}: invalid value '{}' for scaling metadata key 'gc_mode'; expected one of 'unknown', 'uncorrected', 'corrected_file', or 'corrected_tag'",
             path.display(),
             value,
+        ),
+    }
+}
+
+fn parse_scaling_bool(path: &Path, key: &str, value: &str) -> Result<bool> {
+    match value.to_ascii_lowercase().as_str() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => bail!(
+            "{}: invalid value '{}' for scaling metadata key '{}'; expected 'true' or 'false'",
+            path.display(),
+            value,
+            key,
         ),
     }
 }
@@ -583,5 +614,31 @@ pub fn ensure_scaling_gc_compatibility(
         // - file with tag
         // - tag with file
         _ => Ok(()),
+    }
+}
+
+/// Warn when coverage-based smoothing factors were built with different gap handling.
+///
+/// Missing metadata is accepted silently. Older scaling TSVs and count-based scaling TSVs do not
+/// necessarily know this setting.
+pub fn warn_on_scaling_ignore_gap_mismatch(
+    path: &Path,
+    scaling_factor_metadata: ScalingFactorsMetadata,
+    current_ignore_gap: Option<bool>,
+) {
+    let Some(file_ignore_gap) = scaling_factor_metadata.ignore_gap else {
+        return;
+    };
+    let Some(current_ignore_gap) = current_ignore_gap else {
+        return;
+    };
+    if file_ignore_gap != current_ignore_gap {
+        warn!(
+            target: "scale-genome",
+            "warning: scaling factors file {} was built with ignore_gap={}, but current run uses ignore_gap={}. This can introduce a small gap-handling mismatch in coverage normalization.",
+            path.display(),
+            file_ignore_gap,
+            current_ignore_gap
+        );
     }
 }

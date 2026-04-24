@@ -87,7 +87,12 @@ impl ScalingWeightsCommand {
 /// - Returns an error if internal `fcoverage` fails, the intermediate TSV is malformed, or the
 ///   final scaling output cannot be written.
 pub fn run(opt: &crate::commands::coverage_weights::config::CoverageWeightsConfig) -> Result<()> {
-    run_with_fcoverage(&opt.shared, false, ScalingWeightsCommand::Coverage)
+    run_with_fcoverage(
+        &opt.shared,
+        false,
+        ScalingWeightsCommand::Coverage,
+        Some(opt.ignore_gap),
+    )
 }
 
 /// Shared implementation for coverage-based and count-normalized scaling weights.
@@ -98,6 +103,7 @@ pub(crate) fn run_with_fcoverage(
     opt: &ScalingWeightsArgs,
     normalize_by_length: bool,
     command: ScalingWeightsCommand,
+    source_ignore_gap: Option<bool>,
 ) -> Result<()> {
     let start_time = Instant::now();
     let (chromosomes, _contigs) =
@@ -105,6 +111,9 @@ pub(crate) fn run_with_fcoverage(
     opt.check_bin_sizes()?;
     opt.fragment_lengths.validate()?;
     opt.gc.validate(opt.ref_2bit.as_deref())?;
+    if source_ignore_gap.unwrap_or(false) && opt.unpaired.reads_are_fragments {
+        bail!("--ignore-gap cannot be used with --reads-are-fragments");
+    }
 
     // Keep all intermediate files under the user-chosen output directory so disk usage stays
     // within the filesystem location the user already selected for results.
@@ -116,8 +125,12 @@ pub(crate) fn run_with_fcoverage(
     .context("creating internal fcoverage output directory")?;
     let _fcoverage_output_cleanup = RemoveDirOnDrop::new(fcoverage_output_dir.clone(), command);
 
-    let fcoverage_cfg =
-        build_fcoverage_average_config(opt, &fcoverage_output_dir, normalize_by_length);
+    let fcoverage_cfg = build_fcoverage_average_config(
+        opt,
+        &fcoverage_output_dir,
+        normalize_by_length,
+        source_ignore_gap.unwrap_or(false),
+    );
 
     command.info("Calling internal fcoverage");
     let fcoverage_result =
@@ -157,6 +170,9 @@ pub(crate) fn run_with_fcoverage(
         .as_metadata_value()
     )
     .context("writing TSV metadata")?;
+    if let Some(ignore_gap) = source_ignore_gap {
+        writeln!(tsv_writer, "# ignore_gap={ignore_gap}").context("writing TSV metadata")?;
+    }
     writeln!(
         tsv_writer,
         "chromosome\tstart\tend\taverage_pos_coverage\taverage_overlapping_pos_coverage\tscaling_factor"
@@ -221,6 +237,7 @@ fn build_fcoverage_average_config(
     opt: &ScalingWeightsArgs,
     output_dir: &Path,
     normalize_by_length: bool,
+    ignore_gap: bool,
 ) -> FCoverageConfig {
     let mut cfg = FCoverageConfig::new(
         crate::commands::cli_common::IOCArgs {
@@ -240,6 +257,7 @@ fn build_fcoverage_average_config(
     cfg.set_output_prefix(opt.output_prefix.clone());
     cfg.set_decimals(FCOVERAGE_INTERMEDIATE_DECIMALS);
     cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_ignore_gap(ignore_gap);
     cfg.set_windows(crate::commands::cli_common::DistributionWindowsArgs {
         by_size: Some(opt.stride as u64),
         by_bed: None,

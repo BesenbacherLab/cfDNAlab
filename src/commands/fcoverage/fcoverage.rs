@@ -268,6 +268,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
             opt.gc.gc_file.is_some(),
             opt.gc.gc_tag.is_some(),
         ),
+        Some(opt.ignore_gap),
     )?;
 
     // Load GC correction package if specified

@@ -214,6 +214,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
             opt.gc.gc_file.is_some(),
             opt.gc.gc_tag.is_some(),
         ),
+        None,
     )?;
 
     // Load GC correction package if specified

@@ -144,7 +144,7 @@ Recommended fix:
 - Have downstream loaders expose and log this metadata.
 - Decide which mismatches should be hard errors versus warnings; at minimum, detect known-incompatible settings such as reference identity, BAM identity when available, and end-offset/length-range conflicts.
 
-### G-011 - High - Scaling-factor TSV metadata is too thin for safe reuse
+### G-011 - Medium - Scaling-factor TSV metadata is too thin for safe reuse
 
 The smoothing-weight writer emits only one metadata comment, `# gc_mode=...`, before the scaling TSV header ([coverage_weights.rs](../../src/commands/coverage_weights/coverage_weights.rs#L149-L163)). The downstream loader models only that GC mode in `ScalingFactorsMetadata` ([scale_genome.rs](../../src/shared/scale_genome.rs#L47-L55)), ignores every other metadata key ([scale_genome.rs](../../src/shared/scale_genome.rs#L502-L530)), and downstream command setup checks only GC-mode compatibility before using the map ([cli_common.rs](../../src/commands/cli_common.rs#L987-L1004), [scale_genome.rs](../../src/shared/scale_genome.rs#L546-L587)).
 
@@ -203,7 +203,7 @@ Recommended fix:
 - Include the selected chromosomes and key filters in the error context if practical.
 - Add one command-level regression with a tiny BAM and a filter combination that removes all support.
 
-### G-016 - Medium - Smoothing-weight commands cannot match `fcoverage --ignore-gap` segmentation
+### G-016 - Medium - Smoothing-weight commands cannot match `fcoverage --ignore-gap` segmentation [IMPLEMENTED]
 
 `fcoverage` exposes `--ignore-gap` to exclude the inter-mate gap from paired-end fragment coverage ([config.rs](../../src/commands/fcoverage/config.rs#L242-L249)), and the tile worker passes `!opt.ignore_gap` into fragment segmentation ([fcoverage.rs](../../src/commands/fcoverage/fcoverage.rs#L840-L845)). The smoothing-weight shared args do not expose an equivalent setting ([scaling_weights_config.rs](../../src/commands/coverage_weights/scaling_weights_config.rs#L12-L109)), and the internal `fcoverage` config builder sets filtering, blacklist, GC, and stride windows, but never sets `ignore_gap`, leaving the `fcoverage` default of full-span counting in place ([coverage_weights.rs](../../src/commands/coverage_weights/coverage_weights.rs#L233-L252), [config.rs](../../src/commands/fcoverage/config.rs#L312-L320)).
 

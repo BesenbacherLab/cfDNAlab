@@ -218,6 +218,7 @@ fn run_inner_with_reporting(
             opt.shared_args.gc.gc_file.is_some(),
             opt.shared_args.gc.gc_tag.is_some(),
         ),
+        Some(opt.shared_args.ignore_gap),
     )?;
 
     // Load GC correction package if specified

@@ -600,6 +600,47 @@ mod tests_load_scaling_factors_tsv {
     }
 
     #[test]
+    fn load_scaling_factors_tsv_reads_ignore_gap_metadata_before_header() -> anyhow::Result<()> {
+        // Coverage-based scaling files can record whether the source coverage omitted inter-mate
+        // gaps. The parser should keep that as optional metadata without affecting row parsing.
+        let file = write_scaling_file(
+            "# gc_mode=uncorrected\n# ignore_gap=true\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t1.0\n",
+        )?;
+
+        let loaded =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))?;
+
+        assert_eq!(loaded.metadata.ignore_gap, Some(true));
+        assert_eq!(
+            loaded.bins_by_chromosome.get("chr1"),
+            Some(&vec![(0, 10, 1.0_f32)])
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn load_scaling_factors_tsv_rejects_invalid_ignore_gap_value() -> anyhow::Result<()> {
+        // `ignore_gap` is boolean metadata. Values other than true/false should fail before row
+        // parsing so typoed metadata does not silently disable the downstream warning.
+        let file = write_scaling_file(
+            "# ignore_gap=maybe\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t10\t1.0\n",
+        )?;
+
+        let err =
+            load_scaling_factors_tsv(file.path(), &["chr1".to_string()], &contigs_for_chr1(10))
+                .expect_err("invalid ignore_gap metadata should fail");
+
+        assert!(
+            err.to_string()
+                .contains("invalid value 'maybe' for scaling metadata key 'ignore_gap'"),
+            "unexpected error: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn load_scaling_factors_tsv_rejects_invalid_gc_mode_value() -> anyhow::Result<()> {
         // `gc_mode` is enumerated metadata, so any other value should fail before row parsing.
         let file = write_scaling_file(
@@ -923,6 +964,7 @@ mod tests_scaling_gc_compatibility {
         let path = Path::new("/tmp/example.scaling_factors.tsv");
         let metadata = ScalingFactorsMetadata {
             gc_mode: ScalingGCMode::Unknown,
+            ignore_gap: None,
         };
 
         // Missing metadata should never block use, even when the current run uses GC correction.
@@ -939,6 +981,7 @@ mod tests_scaling_gc_compatibility {
         let path = Path::new("/tmp/example.scaling_factors.tsv");
         let metadata = ScalingFactorsMetadata {
             gc_mode: ScalingGCMode::Uncorrected,
+            ignore_gap: None,
         };
 
         let err =
@@ -963,6 +1006,7 @@ mod tests_scaling_gc_compatibility {
         let path = Path::new("/tmp/example.scaling_factors.tsv");
         let metadata = ScalingFactorsMetadata {
             gc_mode: ScalingGCMode::CorrectedFromTag,
+            ignore_gap: None,
         };
 
         let err =
@@ -987,6 +1031,7 @@ mod tests_scaling_gc_compatibility {
         let path = Path::new("/tmp/example.scaling_factors.tsv");
         let metadata = ScalingFactorsMetadata {
             gc_mode: ScalingGCMode::CorrectedFromFile,
+            ignore_gap: None,
         };
 
         ensure_scaling_gc_compatibility(path, metadata, scaling_gc_mode_for_run(false, true))?;
@@ -1002,6 +1047,7 @@ mod tests_scaling_gc_compatibility {
         let path = Path::new("/tmp/example.scaling_factors.tsv");
         let metadata = ScalingFactorsMetadata {
             gc_mode: ScalingGCMode::CorrectedFromTag,
+            ignore_gap: None,
         };
 
         ensure_scaling_gc_compatibility(path, metadata, scaling_gc_mode_for_run(true, false))?;
@@ -1016,6 +1062,7 @@ mod tests_scaling_gc_compatibility {
         let path = Path::new("/tmp/example.scaling_factors.tsv");
         let metadata = ScalingFactorsMetadata {
             gc_mode: ScalingGCMode::Uncorrected,
+            ignore_gap: None,
         };
 
         ensure_scaling_gc_compatibility(path, metadata, scaling_gc_mode_for_run(false, false))?;

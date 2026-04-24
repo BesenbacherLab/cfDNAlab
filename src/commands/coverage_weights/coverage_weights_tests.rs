@@ -407,7 +407,7 @@ fn build_fcoverage_average_config_uses_unit_mass_for_fragment_count_weights() {
         },
     );
 
-    let cfg = build_fcoverage_average_config(&args, tempdir.path(), true);
+    let cfg = build_fcoverage_average_config(&args, tempdir.path(), true, false);
 
     assert_eq!(
         cfg.normalize_by_length_mode,

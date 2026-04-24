@@ -1022,6 +1022,8 @@ pub fn load_blacklist_map(
 /// - `contigs`: BAM target metadata, used to validate the TSV content.
 /// - `current_gc_mode`: Whether the current command run uses raw coverage,
 ///   file-based GC correction, or tag-based GC correction.
+/// - `current_ignore_gap`: Whether the current command omits inter-mate gaps from fragment
+///   coverage. Use `None` for commands where that concept is not part of scaling compatibility.
 ///
 /// Returns:
 /// - A scaling factor map ready for lookups by chromosome.
@@ -1034,6 +1036,7 @@ pub fn load_scaling_map(
     chromosomes: &[String],
     contigs: &Contigs,
     current_gc_mode: crate::shared::scale_genome::ScalingGCMode,
+    current_ignore_gap: Option<bool>,
 ) -> Result<FxHashMap<String, Vec<(u64, u64, f32)>>> {
     if let Some(path) = &scale_args.scaling_factors {
         let loaded =
@@ -1043,6 +1046,11 @@ pub fn load_scaling_map(
             loaded.metadata,
             current_gc_mode,
         )?;
+        crate::shared::scale_genome::warn_on_scaling_ignore_gap_mismatch(
+            path,
+            loaded.metadata,
+            current_ignore_gap,
+        );
         Ok(loaded.bins_by_chromosome)
     } else {
         Ok(FxHashMap::with_hasher(Default::default()))

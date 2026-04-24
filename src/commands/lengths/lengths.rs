@@ -201,6 +201,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         &chromosomes,
         &contigs,
         crate::shared::scale_genome::scaling_gc_mode_for_run(opt.gc.gc_file.is_some(), false),
+        None,
     )?;
 
     // Load GC correction package if specified

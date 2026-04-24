@@ -96,6 +96,14 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 pub struct CoverageWeightsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub shared: ScalingWeightsArgs,
+
+    /// Ignore inter-mate gap when building coverage-based smoothing weights `[flag]`
+    ///
+    /// Use this when downstream coverage analyses will also use `fcoverage --ignore-gap`.
+    ///
+    /// Cannot be used with `--reads-are-fragments`.
+    #[cfg_attr(feature = "cli", clap(long, help_heading = "Core"))]
+    pub ignore_gap: bool,
 }
 
 impl CoverageWeightsConfig {
@@ -105,7 +113,12 @@ impl CoverageWeightsConfig {
     ) -> Self {
         Self {
             shared: ScalingWeightsArgs::new(ioc, chromosomes),
+            ignore_gap: false,
         }
+    }
+
+    pub fn set_ignore_gap(&mut self, ignore_gap: bool) {
+        self.ignore_gap = ignore_gap;
     }
 }
 
