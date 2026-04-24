@@ -199,6 +199,7 @@ pub(crate) fn run_with_fcoverage(
         }
     }
 
+    tsv_writer.flush().context("flushing scaling-factors TSV")?;
     command.info(&format!("Saved output to: {}", final_output_path.display()));
 
     let global_counter = fcoverage_result.counters;

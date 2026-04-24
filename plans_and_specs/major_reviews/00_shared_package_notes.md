@@ -179,7 +179,7 @@ Recommended fix:
 - Update both command docs to say that non-zero smoothed support is normalized to mean 1.0 before inversion, and `scaling_factor` is the reciprocal multiplier.
 - If a factor-column mean of 1.0 is actually desired, the normalization algorithm needs a second factor-space normalization step and downstream expectations should be reviewed.
 
-### G-014 - Medium - Smoothing-weight TSV writes do not explicitly flush the final writer
+### G-014 - Medium - Smoothing-weight TSV writes do not explicitly flush the final writer [IMPLEMENTED]
 
 The shared smoothing-weight writer creates a `BufWriter<File>` for the final scaling TSV, writes metadata, header, and rows, then logs the output path and returns without calling `flush()` ([coverage_weights.rs](../../src/commands/coverage_weights/coverage_weights.rs#L144-L185)). Any write error that surfaces only during the final buffered flush would be lost because the writer is dropped after the function has already decided to return `Ok(())`.
 
