@@ -28,7 +28,15 @@ The commands are **highly flexible** with many options and good default settings
 The package is under active development and may [change](https://github.com/BesenbacherLab/cfDNAlab/blob/main/CHANGELOG). Multiple additional commands are currently being built.
 Suggest a tool or feature [here](https://github.com/BesenbacherLab/cfDNAlab/issues/new/choose)!
 
+<p>
+  &nbsp;
+</p>
+
 ---
+
+<p>
+  &nbsp;
+</p>
 
 ## Installation
 
