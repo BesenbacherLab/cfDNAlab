@@ -1,4 +1,5 @@
 <p align="center">
+  &nbsp;
   <img src="cfdnalab_logo_400x255_144dpi.png" height="255" />
 </p>
 
@@ -196,13 +197,14 @@ We use **fragment mass** as a common quantity for fragment counts and fragment c
 
 **More detailed**, the smoothing weight commands build a smoothed normalization map using a sliding window:
 
-**A**) They split the genome into "stride-bins" (default: 500kb) and measure the average positional fragment mass in each bin.
+**A**) They split the genome into "stride-bins" (default: 500kb) and measure fragment mass in each bin.
+`coverage-weights` writes this as average coverage per stride, while `fragment-count-weights` writes total unit fragment mass per stride.
 
 **B**) They smooth each bin with a triangular weighting kernel, that weights the fragment mass of the neighbouring stride-bins by how many overlapping megabins (default: 5Mb) they are part of. E.g.:
 
 Using a megabin-size of `6` and stride size of `2` for demonstrational purposes:
 
-**Stride bins** (fixed along genome, each with an average positional coverage):
+**Stride bins** (fixed along genome, each with a stride-level fragment-mass value):
 
 `[A] [B] [C] [D] [E] [F] [G] ...`
 

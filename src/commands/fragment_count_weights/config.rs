@@ -17,22 +17,22 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 /// `<prefix>.fragment_counts.scaling_factors.tsv`
 ///
 /// The scaling factors are *inverted*, so normalization becomes multiplication.
-/// Zero-valued support leads to zero-valued scaling factors. Non-zero factors have `mean == 1.0`.
+/// Zero-valued smoothed fragment mass leads to zero-valued scaling factors.
+/// Non-zero factors have `mean == 1.0`.
 ///
 /// ## Fragment counts
 ///
 /// Internally, this command runs:
 ///
-/// `fcoverage --normalize-by-length=unit-mass --by-size <stride> --per-window average`
+/// `fcoverage --normalize-by-length=unit-mass --by-size <stride> --per-window total`
 ///
 /// (The `unit-mass` mode is used as it's cheaper than rescaling and normalizes to the same weights.)
 ///
-/// and then smooths those stride-bin averages.
+/// and then smooths those stride-bin totals.
 ///
-/// The resulting stride-bin values reflect local fragment-count density rather
-/// than literal counts. Because all stride bins have the same width,
-/// fragment-count density and fragment counts differ only by one constant
-/// multiplier, which cancels during normalization into scaling factors.
+/// The resulting stride-bin values approximate fragment counts in each stride bin.
+/// A full fragment contributes total mass 1.0, split across the stride bins it overlaps
+/// according to covered span.
 ///
 /// Strictly speaking this is still an approximation since fragments overlapping
 /// multiple stride bins are counted partly in each, but in sufficiently large
@@ -47,7 +47,7 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 /// ## GC correction
 ///
 /// When downstream tools should use both genomic smoothing and GC-bias correction,
-/// you can build the smoothing weight off GC-corrected fragment support by supplying either
+/// you can build the smoothing weight off GC-corrected fragment mass by supplying either
 /// `--gc-file` or `--gc-tag`. This avoids over-correction where the genomic smoothing scalars
 /// partly reflect large-scale GC bias.
 ///
@@ -57,7 +57,7 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 /// ## Smoothing
 ///
 /// Smoothing is performed as a triangular moving average, calculating
-/// a weighted average of fragment-support values from all bins overlapping a stride.
+/// a weighted average of fragment-mass values from all bins overlapping a stride.
 ///
 /// ## Always-on exclusion criteria
 ///

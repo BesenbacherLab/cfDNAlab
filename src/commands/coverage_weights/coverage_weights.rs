@@ -40,10 +40,31 @@ pub(crate) enum ScalingWeightsCommand {
 }
 
 impl ScalingWeightsCommand {
+    fn fcoverage_window_action(self) -> CoverageWindowAction {
+        match self {
+            Self::Coverage => CoverageWindowAction::Average,
+            Self::FragmentCount => CoverageWindowAction::Total,
+        }
+    }
+
+    fn fcoverage_value_header(self) -> &'static str {
+        match self {
+            Self::Coverage => "average_coverage",
+            Self::FragmentCount => "total_coverage",
+        }
+    }
+
     fn output_file_name(self) -> &'static str {
         match self {
             Self::Coverage => "coverage.scaling_factors.tsv",
             Self::FragmentCount => "fragment_counts.scaling_factors.tsv",
+        }
+    }
+
+    fn output_value_headers(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Coverage => ("stride_average_coverage", "smoothed_coverage"),
+            Self::FragmentCount => ("stride_fragment_mass", "smoothed_fragment_mass"),
         }
     }
 
@@ -65,10 +86,10 @@ impl ScalingWeightsCommand {
 /// Calculates weights for genomic smoothing using large bins and a stride.
 ///
 /// Technical details:
-/// - Reuses `fcoverage --by-size <stride> --per-window average` as the raw counting step so
-///   fragment handling, GC correction, blacklisting, and tiling stay consistent with `fcoverage`.
-/// - Reads the resulting stride-bin averages back from disk, smooths them with a triangular
-///   kernel, and writes the final scaling factors as TSV.
+/// - Reuses internal `fcoverage` by-size aggregates so fragment handling, GC correction,
+///   blacklisting, and tiling stay consistent with `fcoverage`.
+/// - Reads the resulting stride-bin values back from disk, smooths them with a triangular kernel,
+///   and writes the final scaling factors as TSV.
 /// - Tracks the internal `fcoverage` counters so the printed summary reflects the fragments
 ///   that contributed to the scaling factors.
 ///
@@ -97,8 +118,8 @@ pub fn run(opt: &crate::commands::coverage_weights::config::CoverageWeightsConfi
 
 /// Shared implementation for coverage-based and count-normalized scaling weights.
 ///
-/// The future count-based command can call this with `normalize_by_length = true`
-/// to reuse the exact same `fcoverage`-based counting path.
+/// `fragment-count-weights` calls this with `normalize_by_length = true`
+/// and reads total unit fragment mass from the internal `fcoverage` output.
 pub(crate) fn run_with_fcoverage(
     opt: &ScalingWeightsArgs,
     normalize_by_length: bool,
@@ -125,10 +146,11 @@ pub(crate) fn run_with_fcoverage(
     .context("creating internal fcoverage output directory")?;
     let _fcoverage_output_cleanup = RemoveDirOnDrop::new(fcoverage_output_dir.clone(), command);
 
-    let fcoverage_cfg = build_fcoverage_average_config(
+    let fcoverage_cfg = build_fcoverage_stride_config(
         opt,
         &fcoverage_output_dir,
         normalize_by_length,
+        command,
         source_ignore_gap.unwrap_or(false),
     );
 
@@ -137,8 +159,11 @@ pub(crate) fn run_with_fcoverage(
         fcoverage_run_inner(&fcoverage_cfg).context("running internal fcoverage")?;
     command.info("Reading internal fcoverage output");
 
-    let mut bins_by_chr =
-        load_stride_bins_from_fcoverage_average_tsv(&fcoverage_result, chromosomes.as_slice())?;
+    let mut bins_by_chr = load_stride_bins_from_fcoverage_tsv(
+        &fcoverage_result,
+        chromosomes.as_slice(),
+        command.fcoverage_value_header(),
+    )?;
 
     for chromosome in &chromosomes {
         let bins = bins_by_chr
@@ -147,12 +172,12 @@ pub(crate) fn run_with_fcoverage(
         fill_triangular_overlap(bins, opt.bin_size, opt.stride);
     }
 
-    let global_average_overlap_coverage =
+    let global_average_smoothed_value =
         normalize_average_overlap_by_global_mean(&mut bins_by_chr, true, true)?;
 
     command.info(&format!(
-        "Calculated the global average overlapping position-coverage: {}",
-        global_average_overlap_coverage
+        "Calculated the global average smoothed value: {}",
+        global_average_smoothed_value
     ));
 
     command.info("Writing stride-bin coordinates and scaling factors to disk");
@@ -173,9 +198,10 @@ pub(crate) fn run_with_fcoverage(
     if let Some(ignore_gap) = source_ignore_gap {
         writeln!(tsv_writer, "# ignore_gap={ignore_gap}").context("writing TSV metadata")?;
     }
+    let (stride_value_header, smoothed_value_header) = command.output_value_headers();
     writeln!(
         tsv_writer,
-        "chromosome\tstart\tend\taverage_pos_coverage\taverage_overlapping_pos_coverage\tscaling_factor"
+        "chromosome\tstart\tend\t{stride_value_header}\t{smoothed_value_header}\tscaling_factor"
     )
     .context("writing TSV header")?;
 
@@ -234,10 +260,11 @@ pub(crate) fn run_with_fcoverage(
     Ok(())
 }
 
-fn build_fcoverage_average_config(
+fn build_fcoverage_stride_config(
     opt: &ScalingWeightsArgs,
     output_dir: &Path,
     normalize_by_length: bool,
+    command: ScalingWeightsCommand,
     ignore_gap: bool,
 ) -> FCoverageConfig {
     let mut cfg = FCoverageConfig::new(
@@ -257,7 +284,7 @@ fn build_fcoverage_average_config(
     });
     cfg.set_output_prefix(opt.output_prefix.clone());
     cfg.set_decimals(FCOVERAGE_INTERMEDIATE_DECIMALS);
-    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_per_window(command.fcoverage_window_action());
     cfg.set_ignore_gap(ignore_gap);
     cfg.set_windows(crate::commands::cli_common::DistributionWindowsArgs {
         by_size: Some(opt.stride as u64),
@@ -273,9 +300,10 @@ fn build_fcoverage_average_config(
     cfg
 }
 
-fn load_stride_bins_from_fcoverage_average_tsv(
+fn load_stride_bins_from_fcoverage_tsv(
     fcoverage_result: &FCoverageRunResult,
     chromosomes: &[String],
+    value_header: &str,
 ) -> Result<FxHashMap<String, Vec<StrideBin>>> {
     let path = &fcoverage_result.final_out_path;
     let mut reader = open_text_reader(path)?;
@@ -286,8 +314,9 @@ fn load_stride_bins_from_fcoverage_average_tsv(
         bail!("{}: empty file; header required", path.display());
     }
     let header = line.trim_end();
+    let expected_header = format!("chromosome\tstart\tend\t{value_header}\tblacklisted_positions");
     ensure!(
-        header == "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
+        header == expected_header,
         "{}: unexpected fcoverage header: '{}'",
         path.display(),
         header
@@ -323,7 +352,7 @@ fn load_stride_bins_from_fcoverage_average_tsv(
             .parse()
             .with_context(|| format!("{}: invalid end '{}'", path.display(), cols[2]))?;
         let average_coverage: f32 = cols[3].parse().with_context(|| {
-            format!("{}: invalid average_coverage '{}'", path.display(), cols[3])
+            format!("{}: invalid {} '{}'", path.display(), value_header, cols[3])
         })?;
         let _: u64 = cols[4].parse().with_context(|| {
             format!(

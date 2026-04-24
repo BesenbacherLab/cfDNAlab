@@ -34,7 +34,7 @@ fn write_zstd_tsv(tempdir: &TempDir, file_name: &str, lines: &[&str]) -> Result<
 }
 
 #[test]
-fn load_stride_bins_from_fcoverage_average_tsv_reads_contiguous_bins_from_zstd() -> Result<()> {
+fn load_stride_bins_from_fcoverage_tsv_reads_contiguous_bins_from_zstd() -> Result<()> {
     // Arrange
     let tempdir = TempDir::new()?;
     let path = write_zstd_tsv(
@@ -49,9 +49,10 @@ fn load_stride_bins_from_fcoverage_average_tsv_reads_contiguous_bins_from_zstd()
     )?;
 
     // Act
-    let bins_by_chr = load_stride_bins_from_fcoverage_average_tsv(
+    let bins_by_chr = load_stride_bins_from_fcoverage_tsv(
         &make_run_result(path),
         &["chr1".to_string(), "chr2".to_string()],
+        "average_coverage",
     )?;
 
     // Assert
@@ -76,15 +77,16 @@ fn load_stride_bins_from_fcoverage_average_tsv_reads_contiguous_bins_from_zstd()
 }
 
 #[test]
-fn load_stride_bins_from_fcoverage_average_tsv_rejects_empty_file() -> Result<()> {
+fn load_stride_bins_from_fcoverage_tsv_rejects_empty_file() -> Result<()> {
     // Arrange
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(&tempdir, "coverage.average.tsv", &[])?;
 
     // Act
-    let err = load_stride_bins_from_fcoverage_average_tsv(
+    let err = load_stride_bins_from_fcoverage_tsv(
         &make_run_result(path),
         &["chr1".to_string()],
+        "average_coverage",
     )
     .expect_err("empty file should fail");
 
@@ -94,7 +96,7 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_empty_file() -> Result<()
 }
 
 #[test]
-fn load_stride_bins_from_fcoverage_average_tsv_rejects_unexpected_header() -> Result<()> {
+fn load_stride_bins_from_fcoverage_tsv_rejects_unexpected_header() -> Result<()> {
     // Arrange
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
@@ -107,9 +109,10 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_unexpected_header() -> Re
     )?;
 
     // Act
-    let err = load_stride_bins_from_fcoverage_average_tsv(
+    let err = load_stride_bins_from_fcoverage_tsv(
         &make_run_result(path),
         &["chr1".to_string()],
+        "average_coverage",
     )
     .expect_err("wrong header should fail");
 
@@ -119,7 +122,36 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_unexpected_header() -> Re
 }
 
 #[test]
-fn load_stride_bins_from_fcoverage_average_tsv_rejects_short_rows() -> Result<()> {
+fn load_stride_bins_from_fcoverage_tsv_reads_requested_value_column() -> Result<()> {
+    // Arrange
+    let tempdir = TempDir::new()?;
+    let path = write_plain_tsv(
+        &tempdir,
+        "coverage.total.tsv",
+        &[
+            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chr1\t0\t10\t12.5\t0",
+            "chr1\t10\t20\t25\t0",
+        ],
+    )?;
+
+    // Act
+    let bins_by_chr = load_stride_bins_from_fcoverage_tsv(
+        &make_run_result(path),
+        &["chr1".to_string()],
+        "total_coverage",
+    )?;
+
+    // Assert
+    let chr1_bins = bins_by_chr.get("chr1").expect("chr1 bins should exist");
+    assert_eq!(chr1_bins.len(), 2);
+    assert_eq!(chr1_bins[0].average_coverage, 12.5);
+    assert_eq!(chr1_bins[1].average_coverage, 25.0);
+    Ok(())
+}
+
+#[test]
+fn load_stride_bins_from_fcoverage_tsv_rejects_short_rows() -> Result<()> {
     // Arrange
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
@@ -132,9 +164,10 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_short_rows() -> Result<()
     )?;
 
     // Act
-    let err = load_stride_bins_from_fcoverage_average_tsv(
+    let err = load_stride_bins_from_fcoverage_tsv(
         &make_run_result(path),
         &["chr1".to_string()],
+        "average_coverage",
     )
     .expect_err("short row should fail");
 
@@ -144,7 +177,7 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_short_rows() -> Result<()
 }
 
 #[test]
-fn load_stride_bins_from_fcoverage_average_tsv_rejects_invalid_start() -> Result<()> {
+fn load_stride_bins_from_fcoverage_tsv_rejects_invalid_start() -> Result<()> {
     // Arrange
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
@@ -157,9 +190,10 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_invalid_start() -> Result
     )?;
 
     // Act
-    let err = load_stride_bins_from_fcoverage_average_tsv(
+    let err = load_stride_bins_from_fcoverage_tsv(
         &make_run_result(path),
         &["chr1".to_string()],
+        "average_coverage",
     )
     .expect_err("invalid start should fail");
 
@@ -169,7 +203,7 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_invalid_start() -> Result
 }
 
 #[test]
-fn load_stride_bins_from_fcoverage_average_tsv_rejects_invalid_interval() -> Result<()> {
+fn load_stride_bins_from_fcoverage_tsv_rejects_invalid_interval() -> Result<()> {
     // Arrange
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
@@ -182,9 +216,10 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_invalid_interval() -> Res
     )?;
 
     // Act
-    let err = load_stride_bins_from_fcoverage_average_tsv(
+    let err = load_stride_bins_from_fcoverage_tsv(
         &make_run_result(path),
         &["chr1".to_string()],
+        "average_coverage",
     )
     .expect_err("zero-length interval should fail");
 
@@ -198,7 +233,7 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_invalid_interval() -> Res
 }
 
 #[test]
-fn load_stride_bins_from_fcoverage_average_tsv_rejects_missing_requested_chromosome() -> Result<()> {
+fn load_stride_bins_from_fcoverage_tsv_rejects_missing_requested_chromosome() -> Result<()> {
     // Arrange
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
@@ -211,9 +246,10 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_missing_requested_chromos
     )?;
 
     // Act
-    let err = load_stride_bins_from_fcoverage_average_tsv(
+    let err = load_stride_bins_from_fcoverage_tsv(
         &make_run_result(path),
         &["chr1".to_string(), "chr2".to_string()],
+        "average_coverage",
     )
     .expect_err("missing requested chromosome should fail");
 
@@ -223,7 +259,7 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_missing_requested_chromos
 }
 
 #[test]
-fn load_stride_bins_from_fcoverage_average_tsv_rejects_first_bin_not_starting_at_zero() -> Result<()> {
+fn load_stride_bins_from_fcoverage_tsv_rejects_first_bin_not_starting_at_zero() -> Result<()> {
     // Arrange
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
@@ -236,9 +272,10 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_first_bin_not_starting_at
     )?;
 
     // Act
-    let err = load_stride_bins_from_fcoverage_average_tsv(
+    let err = load_stride_bins_from_fcoverage_tsv(
         &make_run_result(path),
         &["chr1".to_string()],
+        "average_coverage",
     )
     .expect_err("first bin starting after zero should fail");
 
@@ -248,7 +285,7 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_first_bin_not_starting_at
 }
 
 #[test]
-fn load_stride_bins_from_fcoverage_average_tsv_rejects_gap_between_bins() -> Result<()> {
+fn load_stride_bins_from_fcoverage_tsv_rejects_gap_between_bins() -> Result<()> {
     // Arrange
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
@@ -262,9 +299,10 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_gap_between_bins() -> Res
     )?;
 
     // Act
-    let err = load_stride_bins_from_fcoverage_average_tsv(
+    let err = load_stride_bins_from_fcoverage_tsv(
         &make_run_result(path),
         &["chr1".to_string()],
+        "average_coverage",
     )
     .expect_err("gap between bins should fail");
 
@@ -274,7 +312,7 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_gap_between_bins() -> Res
 }
 
 #[test]
-fn load_stride_bins_from_fcoverage_average_tsv_rejects_overlap_between_bins() -> Result<()> {
+fn load_stride_bins_from_fcoverage_tsv_rejects_overlap_between_bins() -> Result<()> {
     // Arrange
     let tempdir = TempDir::new()?;
     let path = write_plain_tsv(
@@ -288,9 +326,10 @@ fn load_stride_bins_from_fcoverage_average_tsv_rejects_overlap_between_bins() ->
     )?;
 
     // Act
-    let err = load_stride_bins_from_fcoverage_average_tsv(
+    let err = load_stride_bins_from_fcoverage_tsv(
         &make_run_result(path),
         &["chr1".to_string()],
+        "average_coverage",
     )
     .expect_err("overlap between bins should fail");
 
@@ -393,7 +432,7 @@ fn normalize_average_overlap_by_global_mean_keeps_bins_above_support_floor() -> 
 }
 
 #[test]
-fn build_fcoverage_average_config_uses_unit_mass_for_fragment_count_weights() {
+fn build_fcoverage_stride_config_uses_unit_mass_and_total_for_fragment_count_weights() {
     let tempdir = TempDir::new().expect("tempdir should exist");
     let args = ScalingWeightsArgs::new(
         crate::commands::cli_common::IOCArgs {
@@ -407,10 +446,17 @@ fn build_fcoverage_average_config_uses_unit_mass_for_fragment_count_weights() {
         },
     );
 
-    let cfg = build_fcoverage_average_config(&args, tempdir.path(), true, false);
+    let cfg = build_fcoverage_stride_config(
+        &args,
+        tempdir.path(),
+        true,
+        ScalingWeightsCommand::FragmentCount,
+        false,
+    );
 
     assert_eq!(
         cfg.normalize_by_length_mode,
         LengthNormalizationMode::UnitMass
     );
+    assert_eq!(cfg.per_window, CoverageWindowAction::Total);
 }

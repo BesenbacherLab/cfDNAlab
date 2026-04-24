@@ -33,12 +33,17 @@ struct ScalingRow {
     chromosome: String,
     start: u64,
     end: u64,
-    average_pos_coverage: f64,
-    average_overlapping_pos_coverage: f64,
+    stride_value: f64,
+    smoothed_value: f64,
     scaling_factor: f64,
 }
 
 fn parse_scaling_rows(tsv_path: &std::path::Path) -> Result<Vec<ScalingRow>> {
+    const COVERAGE_HEADER: &str =
+        "chromosome\tstart\tend\tstride_average_coverage\tsmoothed_coverage\tscaling_factor";
+    const FRAGMENT_COUNT_HEADER: &str =
+        "chromosome\tstart\tend\tstride_fragment_mass\tsmoothed_fragment_mass\tscaling_factor";
+
     let content = std::fs::read_to_string(tsv_path)?;
     let mut lines = content.lines().peekable();
     while let Some(metadata_line) = lines.peek().copied().filter(|line| line.starts_with('#')) {
@@ -51,9 +56,9 @@ fn parse_scaling_rows(tsv_path: &std::path::Path) -> Result<Vec<ScalingRow>> {
         lines.next();
     }
     let header = lines.next().unwrap_or("");
-    assert_eq!(
-        header,
-        "chromosome\tstart\tend\taverage_pos_coverage\taverage_overlapping_pos_coverage\tscaling_factor"
+    assert!(
+        header == COVERAGE_HEADER || header == FRAGMENT_COUNT_HEADER,
+        "unexpected scaling header: {header}"
     );
 
     let mut rows = Vec::new();
@@ -64,8 +69,8 @@ fn parse_scaling_rows(tsv_path: &std::path::Path) -> Result<Vec<ScalingRow>> {
             chromosome: parts[0].to_string(),
             start: parts[1].parse()?,
             end: parts[2].parse()?,
-            average_pos_coverage: parts[3].parse()?,
-            average_overlapping_pos_coverage: parts[4].parse()?,
+            stride_value: parts[3].parse()?,
+            smoothed_value: parts[4].parse()?,
             scaling_factor: parts[5].parse()?,
         });
     }
@@ -247,7 +252,7 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
         let should_be_non_zero = expected_non_zero_rows[row_index];
         if should_be_non_zero {
             assert!(
-                row.average_overlapping_pos_coverage > 0.0,
+                row.smoothed_value > 0.0,
                 "row {row_index} should overlap the smoothed coverage support"
             );
             assert!(
@@ -256,7 +261,7 @@ fn coverage_scaling_written_with_expected_ranges() -> Result<()> {
             );
         } else {
             assert_eq!(
-                row.average_overlapping_pos_coverage, 0.0,
+                row.smoothed_value, 0.0,
                 "row {row_index} should be outside the smoothed coverage support"
             );
             assert_eq!(
@@ -290,7 +295,7 @@ fn coverage_weights_ignore_gap_omits_inter_mate_gap_and_writes_metadata() -> Res
     );
 
     let rows = parse_scaling_rows(&tsv_path)?;
-    let average_coverages: Vec<f64> = rows.iter().map(|row| row.average_pos_coverage).collect();
+    let average_coverages: Vec<f64> = rows.iter().map(|row| row.stride_value).collect();
 
     // With `bin_size == stride`, there is no smoothing across neighboring stride bins.
     // The single fragment contributes only its read-covered segments when ignore_gap=true:
@@ -391,25 +396,25 @@ fn fragment_count_weights_differs_from_coverage_weights_for_mixed_fragment_lengt
     // Human verification status: unverified
     // Arrange
     //
-    // We choose bin_size == stride == 20 so the smoothed value equals the raw stride-bin average.
+    // We choose bin_size == stride == 20 so the smoothed value equals the raw stride-bin value.
     // The BAM has two fragments on chr1:
     // - short: [0,20), length 20
     // - long:  [20,80), length 60
     //
     // Coverage weights:
     // - each covered base gets weight 1.0
-    // - bins [0,20), [20,40), [40,60), [60,80) each get average_pos_coverage = 1.0
+    // - bins [0,20), [20,40), [40,60), [60,80) each get stride_value = 1.0
     // - global mean over non-zero bins = 1.0
     // - scaling_factor for each covered bin = 1.0
     //
     // Fragment-count weights:
-    // - short fragment contributes 1/20 per base in [0,20)       -> average_pos_coverage = 0.05
-    // - long fragment contributes 1/60 per base in [20,80)       -> average_pos_coverage = 1/60
+    // - short fragment contributes total mass 1.0 into [0,20)     -> stride_value = 1.0
+    // - long fragment contributes total mass 1.0 across 3 bins    -> stride_value = 1/3
     // - global mean over the four non-zero bins is:
-    //     (0.05 + 3*(1/60)) / 4 = (0.05 + 0.05) / 4 = 0.025
+    //     (1.0 + 3*(1/3)) / 4 = 0.5
     // - scaling factors become:
-    //     short bin: 0.025 / 0.05    = 0.5
-    //     long bins: 0.025 / (1/60)  = 1.5
+    //     short bin: 0.5 / 1.0   = 0.5
+    //     long bins: 0.5 / (1/3) = 1.5
     let bam = mixed_length_fragment_bam("weights_mixed_lengths")?;
     let coverage_out = TempDir::new()?;
     let counts_out = TempDir::new()?;
@@ -472,13 +477,13 @@ fn fragment_count_weights_differs_from_coverage_weights_for_mixed_fragment_lengt
     assert_eq!(counts_rows.len(), 5);
 
     // Covered bins stay at scaling factor 1.0 in coverage mode because all four
-    // non-zero bins have the same average support.
+    // non-zero bins have the same smoothed value.
     for row_index in 0..4 {
         assert_approx(
-            coverage_rows[row_index].average_pos_coverage,
+            coverage_rows[row_index].stride_value,
             1.0,
             1e-6,
-            "coverage average_pos_coverage",
+            "coverage stride_value",
         );
         assert_approx(
             coverage_rows[row_index].scaling_factor,
@@ -487,23 +492,23 @@ fn fragment_count_weights_differs_from_coverage_weights_for_mixed_fragment_lengt
             "coverage scaling_factor",
         );
     }
-    assert_eq!(coverage_rows[4].average_pos_coverage, 0.0);
+    assert_eq!(coverage_rows[4].stride_value, 0.0);
     assert_eq!(coverage_rows[4].scaling_factor, 0.0);
 
-    // In fragment-count mode the short fragment dominates its one bin less than a long
-    // fragment would in coverage mode, while the long fragment is spread across three bins.
+    // In fragment-count mode each fragment contributes total mass 1.0. The short fragment
+    // puts all of that mass into one stride bin, while the long fragment is split across three.
     assert_approx(
-        counts_rows[0].average_pos_coverage,
-        0.05,
+        counts_rows[0].stride_value,
+        1.0,
         1e-6,
-        "fragment-count short-bin average_pos_coverage",
+        "fragment-count short-bin stride_value",
     );
     for row_index in 1..4 {
         assert_approx(
-            counts_rows[row_index].average_pos_coverage,
-            1.0 / 60.0,
+            counts_rows[row_index].stride_value,
+            1.0 / 3.0,
             1e-6,
-            "fragment-count long-bin average_pos_coverage",
+            "fragment-count long-bin stride_value",
         );
     }
     assert_approx(
@@ -520,7 +525,7 @@ fn fragment_count_weights_differs_from_coverage_weights_for_mixed_fragment_lengt
             "fragment-count long-bin scaling_factor",
         );
     }
-    assert_eq!(counts_rows[4].average_pos_coverage, 0.0);
+    assert_eq!(counts_rows[4].stride_value, 0.0);
     assert_eq!(counts_rows[4].scaling_factor, 0.0);
 
     Ok(())
@@ -555,7 +560,7 @@ fn given_simple_fragment_when_coverage_weights_run_then_scaling_values_match_han
     let rows = parse_scaling_rows(&tsv_path)?;
 
     // Assert
-    let expected_average_pos_coverage = [0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let expected_stride_value = [0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
     let expected_average_overlap = [
         1.0 / 3.0,
         3.0 / 4.0,
@@ -585,16 +590,16 @@ fn given_simple_fragment_when_coverage_weights_run_then_scaling_values_match_han
     for row_index in 0..rows.len() {
         let row = &rows[row_index];
         assert_approx(
-            row.average_pos_coverage,
-            expected_average_pos_coverage[row_index],
+            row.stride_value,
+            expected_stride_value[row_index],
             1e-6,
-            &format!("average_pos_coverage at row {row_index}"),
+            &format!("stride_value at row {row_index}"),
         );
         assert_approx(
-            row.average_overlapping_pos_coverage,
+            row.smoothed_value,
             expected_average_overlap[row_index],
             1e-6,
-            &format!("average_overlapping_pos_coverage at row {row_index}"),
+            &format!("smoothed_value at row {row_index}"),
         );
         assert_approx(
             row.scaling_factor,
@@ -632,7 +637,7 @@ fn given_unpaired_read_fragment_when_coverage_weights_run_then_scaling_matches_s
     let rows = parse_scaling_rows(&tsv_path)?;
 
     // Assert
-    let expected_average_pos_coverage = [0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let expected_stride_value = [0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
     let expected_average_overlap = [
         1.0 / 3.0,
         3.0 / 4.0,
@@ -662,16 +667,16 @@ fn given_unpaired_read_fragment_when_coverage_weights_run_then_scaling_matches_s
     for row_index in 0..rows.len() {
         let row = &rows[row_index];
         assert_approx(
-            row.average_pos_coverage,
-            expected_average_pos_coverage[row_index],
+            row.stride_value,
+            expected_stride_value[row_index],
             1e-6,
-            &format!("unpaired average_pos_coverage at row {row_index}"),
+            &format!("unpaired stride_value at row {row_index}"),
         );
         assert_approx(
-            row.average_overlapping_pos_coverage,
+            row.smoothed_value,
             expected_average_overlap[row_index],
             1e-6,
-            &format!("unpaired average_overlapping_pos_coverage at row {row_index}"),
+            &format!("unpaired smoothed_value at row {row_index}"),
         );
         assert_approx(
             row.scaling_factor,
@@ -1070,7 +1075,7 @@ fn multi_chromosome_scaling_uses_one_shared_global_mean() -> Result<()> {
         assert_eq!(row.start, (row_index as u64) * 20);
         assert_eq!(row.end, row.start + 20);
         assert_approx(
-            row.average_overlapping_pos_coverage,
+            row.smoothed_value,
             expected_chr1_overlap[row_index],
             1e-6,
             &format!("chr1 avg overlap row {row_index}"),
@@ -1087,7 +1092,7 @@ fn multi_chromosome_scaling_uses_one_shared_global_mean() -> Result<()> {
         assert_eq!(row.start, (row_index as u64) * 20);
         assert_eq!(row.end, row.start + 20);
         assert_approx(
-            row.average_overlapping_pos_coverage,
+            row.smoothed_value,
             expected_chr2_overlap[row_index],
             1e-6,
             &format!("chr2 avg overlap row {row_index}"),
@@ -1123,7 +1128,7 @@ fn coverage_weights_default_min_mapq_matches_explicit_thirty_and_differs_from_ex
     //   avg-overlap = [1/3, 3/4, 1, 3/4, 1/4, 0, 0, 0, 0, 0]
     //   scaling     = [37/20, 37/45, 37/60, 37/45, 37/15, 0, 0, 0, 0, 0]
     //
-    // Keeping both identical fragments doubles `average_pos_coverage` and `average_overlapping_pos_coverage`
+    // Keeping both identical fragments doubles `stride_value` and `smoothed_value`
     // element-wise, but leaves `scaling_factor` unchanged because both the numerator and the
     // global mean double.
     let high_mapq = paired_fragment(20, 60, 20);
@@ -1228,14 +1233,14 @@ fn coverage_weights_default_min_mapq_matches_explicit_thirty_and_differs_from_ex
         assert_eq!(default_row.start, explicit_row.start);
         assert_eq!(default_row.end, explicit_row.end);
         assert_approx(
-            default_row.average_pos_coverage,
-            explicit_row.average_pos_coverage,
+            default_row.stride_value,
+            explicit_row.stride_value,
             1e-12,
-            "default vs explicit-30 average_pos_coverage",
+            "default vs explicit-30 stride_value",
         );
         assert_approx(
-            default_row.average_overlapping_pos_coverage,
-            explicit_row.average_overlapping_pos_coverage,
+            default_row.smoothed_value,
+            explicit_row.smoothed_value,
             1e-12,
             "default vs explicit-30 average_overlap",
         );
@@ -1247,7 +1252,7 @@ fn coverage_weights_default_min_mapq_matches_explicit_thirty_and_differs_from_ex
         );
     }
 
-    let expected_default_average_pos_coverage = [0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let expected_default_stride_value = [0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
     let expected_default_average_overlap = [
         1.0 / 3.0,
         3.0 / 4.0,
@@ -1275,13 +1280,13 @@ fn coverage_weights_default_min_mapq_matches_explicit_thirty_and_differs_from_ex
 
     for (row_index, row) in default_rows.iter().enumerate() {
         assert_approx(
-            row.average_pos_coverage,
-            expected_default_average_pos_coverage[row_index],
+            row.stride_value,
+            expected_default_stride_value[row_index],
             1e-6,
-            &format!("default average_pos_coverage at row {row_index}"),
+            &format!("default stride_value at row {row_index}"),
         );
         assert_approx(
-            row.average_overlapping_pos_coverage,
+            row.smoothed_value,
             expected_default_average_overlap[row_index],
             1e-6,
             &format!("default average_overlap at row {row_index}"),
@@ -1296,13 +1301,13 @@ fn coverage_weights_default_min_mapq_matches_explicit_thirty_and_differs_from_ex
 
     for (row_index, row) in explicit_zero_rows.iter().enumerate() {
         assert_approx(
-            row.average_pos_coverage,
-            expected_default_average_pos_coverage[row_index] * 2.0,
+            row.stride_value,
+            expected_default_stride_value[row_index] * 2.0,
             1e-6,
-            &format!("explicit-zero average_pos_coverage at row {row_index}"),
+            &format!("explicit-zero stride_value at row {row_index}"),
         );
         assert_approx(
-            row.average_overlapping_pos_coverage,
+            row.smoothed_value,
             expected_default_average_overlap[row_index] * 2.0,
             1e-6,
             &format!("explicit-zero average_overlap at row {row_index}"),
@@ -1460,7 +1465,7 @@ fn blacklist_masking_changes_scaling_profile_and_excludes_zeroed_bins_from_globa
     let rows = parse_scaling_rows(&out_dir.path().join("coverage.coverage.scaling_factors.tsv"))?;
 
     // Assert
-    let expected_average_pos_coverage = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let expected_stride_value = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
     let expected_average_overlap = [
         0.0,
         1.0 / 4.0,
@@ -1479,16 +1484,16 @@ fn blacklist_masking_changes_scaling_profile_and_excludes_zeroed_bins_from_globa
     for row_index in 0..rows.len() {
         let row = &rows[row_index];
         assert_approx(
-            row.average_pos_coverage,
-            expected_average_pos_coverage[row_index],
+            row.stride_value,
+            expected_stride_value[row_index],
             1e-6,
-            &format!("blacklist average_pos_coverage at row {row_index}"),
+            &format!("blacklist stride_value at row {row_index}"),
         );
         assert_approx(
-            row.average_overlapping_pos_coverage,
+            row.smoothed_value,
             expected_average_overlap[row_index],
             1e-6,
-            &format!("blacklist average_overlapping_pos_coverage at row {row_index}"),
+            &format!("blacklist smoothed_value at row {row_index}"),
         );
         assert_approx(
             row.scaling_factor,

@@ -309,7 +309,7 @@ fn coverage_weights_cli_minimal_invocation_writes_scaling_tsv() -> Result<()> {
     );
     assert_eq!(
         lines.get(2).copied().unwrap_or_default(),
-        "chromosome\tstart\tend\taverage_pos_coverage\taverage_overlapping_pos_coverage\tscaling_factor"
+        "chromosome\tstart\tend\tstride_average_coverage\tsmoothed_coverage\tscaling_factor"
     );
     assert_eq!(
         lines.len(),
@@ -375,7 +375,7 @@ fn fragment_count_weights_cli_minimal_invocation_writes_scaling_tsv() -> Result<
     );
     assert_eq!(
         lines.get(1).copied().unwrap_or_default(),
-        "chromosome\tstart\tend\taverage_pos_coverage\taverage_overlapping_pos_coverage\tscaling_factor"
+        "chromosome\tstart\tend\tstride_fragment_mass\tsmoothed_fragment_mass\tscaling_factor"
     );
     assert_eq!(
         lines.len(),

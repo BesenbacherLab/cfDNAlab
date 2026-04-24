@@ -5,7 +5,7 @@ use anyhow::bail;
 
 /// Shared arguments for scaling-weight commands.
 ///
-/// These settings control how raw fragment support is counted before the
+/// These settings control how raw fragment mass is counted before the
 /// command-specific smoothing and scaling-factor postprocessing is applied.
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Clone)]
@@ -38,7 +38,7 @@ pub struct ScalingWeightsArgs {
     /// Larger values lead to a more smooth coverage across the genome.
     ///
     /// **NOTE**: The normalizing scaling factors are calculated per stride-sized overlap
-    /// of these bins. Technically, we only count the support per stride-sized bin
+    /// of these bins. Technically, we only count fragment mass per stride-sized bin
     /// and then calculate the overlap with a triangular weighting scheme.
     #[cfg_attr(
         feature = "cli",
@@ -49,7 +49,8 @@ pub struct ScalingWeightsArgs {
     ///
     /// **NOTE**: `--bin-size` must be divisible by `stride`. I.e., `--bin-size % stride` == 0`.
     ///
-    /// A normalizing scaling factor is calculated per stride as the (inverse) weighted average support of the overlapping large-scale bins.
+    /// A normalizing scaling factor is calculated per stride as the inverse weighted average
+    /// fragment mass of the overlapping large-scale bins.
     ///
     /// Smaller values lead to a higher precision in the downstream normalization
     /// but also require saving a larger TSV in the end (one line per stride-bin)
