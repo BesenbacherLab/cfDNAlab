@@ -54,7 +54,9 @@ cd cfdnalab && cargo build --release --features cli,plotters
 target/release/cfdna --help
 ```
 
----
+<p>
+  &nbsp;
+</p>
 
 ## Commands
 
@@ -90,7 +92,9 @@ Planned: `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks
 
 - **Unpaired data**: If you have Nanopore-sequenced cell-free DNA (or similar) where each read represents the full fragment, you can supply the `--reads-are-fragments` flag. This will consider each read a full fragment.
 
----
+<p>
+  &nbsp;
+</p>
 
 ## FAQ
 
@@ -118,7 +122,9 @@ Planned: `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks
 - How did you use LLMs (AI) in this project?
   - OpenAI's codex models were used for pair programming to speed up development and testing. Claude Code provided code reviews. All code for the released commands have been designed and validated by us.
 
----
+<p>
+  &nbsp;
+</p>
 
 ## Examples
 
@@ -574,7 +580,9 @@ cfdna midpoints \
 
 ```
 
----
+<p>
+  &nbsp;
+</p>
 
 ## Unpaired (--reads-are-fragments)
 
@@ -594,7 +602,9 @@ cfdna fcoverage \
 
 ```
 
----
+<p>
+  &nbsp;
+</p>
 
 ## Output formats
 
@@ -629,7 +639,9 @@ zstdcat path_to/file.tsv.zst
 
 ```
 
----
+<p>
+  &nbsp;
+</p>
 
 ## References
 
