@@ -227,6 +227,7 @@ fn run_inner_with_reporting(
     }
     let gc_corrector = load_gc_corrector(
         opt.shared_args.gc.gc_file.as_ref(),
+        Some(&opt.shared_args.ref_genome.ref_2bit),
         opt.shared_args.fragment_lengths.min_fragment_length,
         opt.shared_args.fragment_lengths.max_fragment_length,
     )?;

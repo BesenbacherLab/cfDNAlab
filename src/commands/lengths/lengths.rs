@@ -207,6 +207,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
     }
     let gc_corrector = load_length_agnostic_gc_corrector(
         opt.gc.gc_file.as_ref(),
+        opt.ref_2bit.as_ref(),
         &opt.gc_length_weighting,
         opt.fragment_lengths.min_fragment_length,
         opt.fragment_lengths.max_fragment_length,

@@ -401,6 +401,7 @@ fn build_gc_package(path: &Path, end_offset: u64) -> Result<()> {
         length_edges: vec![10, 60, 200],
         gc_edges: vec![0, 50, 101],
         length_bin_frequencies: array![1.0_f64, 3.0_f64],
+        reference_contig_signature: [0, 0],
         correction_matrix: array![[1.0_f64, 1.0_f64], [2.0_f64, 10.0_f64]],
     };
     package.write_npz(path)?;
@@ -621,6 +622,7 @@ fn normalize_by_length_and_gc_file_weights_multiply_per_position() -> Result<()>
         length_edges: vec![61, 62],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
+        reference_contig_signature: [0, 0],
         correction_matrix: array![[3.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -972,6 +974,7 @@ fn normalize_by_length_segmented_fragment_still_multiplies_gc_and_scaling() -> R
         length_edges: vec![50, 51],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
+        reference_contig_signature: [0, 0],
         correction_matrix: array![[2.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -1836,6 +1839,7 @@ fn restore_mean_segmented_fragment_still_multiplies_gc_and_scaling() -> Result<(
         length_edges: vec![50, 51],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
+        reference_contig_signature: [0, 0],
         correction_matrix: array![[2.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -4723,6 +4727,7 @@ fn bam_to_bam_gc_file_output_drives_fcoverage_gc_tag_same_as_original_gc_file() 
         length_edges: vec![60, 61],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
+        reference_contig_signature: [0, 0],
         correction_matrix: array![[3.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -5031,6 +5036,7 @@ fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range
         length_edges: vec![10, 59],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
+        reference_contig_signature: [0, 0],
         correction_matrix: array![[1.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -5078,6 +5084,7 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
         length_edges: vec![10, 200],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
+        reference_contig_signature: [0, 0],
         correction_matrix: array![[1.0_f64]],
     };
     package.write_npz(&gc_path)?;

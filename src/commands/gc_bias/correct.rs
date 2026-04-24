@@ -5,9 +5,11 @@ use crate::commands::gc_bias::{
 };
 use crate::shared::gc_tag::{SanitizedGCWeight, sanitize_gc_weight};
 use crate::shared::interval::Interval;
+use crate::shared::reference::twobit_contig_signature;
 use anyhow::{Context, Result, anyhow, ensure};
 use ndarray::{Array1, Array2, Axis};
 use std::str::FromStr;
+use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct GCCorrector {
@@ -273,11 +275,13 @@ impl FromStr for MarginalizeLengthsWeightingScheme {
 
 pub fn load_gc_corrector<P: AsRef<std::path::Path>>(
     gc_file: Option<&P>,
+    ref_2bit: Option<&P>,
     min_fragment_length: u32,
     max_fragment_length: u32,
 ) -> Result<Option<GCCorrector>> {
     if let Some(path) = gc_file {
         let package = GCCorrectionPackage::from_file(path)?;
+        warn_on_reference_contig_mismatch(&package, ref_2bit)?;
         validate_gc_package_compatibility(&package, min_fragment_length, max_fragment_length)?;
         Ok(Some(GCCorrector::from_package(&package)?))
     } else {
@@ -287,12 +291,14 @@ pub fn load_gc_corrector<P: AsRef<std::path::Path>>(
 
 pub fn load_length_agnostic_gc_corrector<P: AsRef<std::path::Path>>(
     gc_file: Option<&P>,
+    ref_2bit: Option<&P>,
     weighting_scheme: &MarginalizeLengthsWeightingScheme,
     min_fragment_length: u32,
     max_fragment_length: u32,
 ) -> Result<Option<LengthAgnosticGCCorrector>> {
     if let Some(path) = gc_file {
         let package = GCCorrectionPackage::from_file(path)?;
+        warn_on_reference_contig_mismatch(&package, ref_2bit)?;
         validate_gc_package_compatibility(&package, min_fragment_length, max_fragment_length)?;
         let gc_corrector = GCCorrector::from_package(&package)?;
         let length_agnostic_gc_corrector =
@@ -301,6 +307,24 @@ pub fn load_length_agnostic_gc_corrector<P: AsRef<std::path::Path>>(
     } else {
         Ok(None)
     }
+}
+
+fn warn_on_reference_contig_mismatch<P: AsRef<std::path::Path>>(
+    package: &GCCorrectionPackage,
+    ref_2bit: Option<&P>,
+) -> Result<()> {
+    let Some(ref_2bit) = ref_2bit else {
+        return Ok(());
+    };
+
+    let run_signature = twobit_contig_signature(ref_2bit)?;
+    if run_signature != package.reference_contig_signature {
+        warn!(
+            target: "gc-bias",
+            "GC correction package was built against a reference contig set that differs from --ref-2bit. GC weights may be invalid if the package and input reference are from different assemblies."
+        );
+    }
+    Ok(())
 }
 
 fn validate_gc_package_compatibility(

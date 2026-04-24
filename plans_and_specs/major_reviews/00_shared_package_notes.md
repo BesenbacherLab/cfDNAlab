@@ -131,7 +131,7 @@ Recommended fix:
 - For reference-only commands, make `all` resolve from the reference file rather than requiring a BAM.
 - Add one regression for `ref-gc-bias --chromosomes all` on a tiny multi-contig `.2bit`.
 
-### G-010 - High - GC correction packages cannot identify the sample or inputs they were built from
+### G-010 - High - GC correction packages cannot identify the sample or inputs they were built from [IMPLEMENTED]
 
 The correction package stores only schema version, end offset, length/GC edges, the correction matrix, and length-bin frequencies ([package.rs](../../src/commands/gc_bias/package.rs#L11-L19), [package.rs](../../src/commands/gc_bias/package.rs#L46-L57)). The shared CLI help says `--gc-file` should come from the same BAM file ([cli_common.rs](../../src/commands/cli_common.rs#L581-L586)), but downstream loading validates only package shape, schema version, length-bin coverage, and end-offset compatibility ([package.rs](../../src/commands/gc_bias/package.rs#L75-L118), [correct.rs](../../src/commands/gc_bias/correct.rs#L274-L342)).
 

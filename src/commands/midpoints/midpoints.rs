@@ -149,6 +149,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     }
     let gc_corrector = load_gc_corrector(
         opt.gc.gc_file.as_ref(),
+        opt.ref_2bit.as_ref(),
         min_fragment_length,
         max_fragment_length,
     )?;

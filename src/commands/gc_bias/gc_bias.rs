@@ -41,6 +41,7 @@ use crate::{
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
+        reference::twobit_contig_signature,
         thread_pool::init_global_pool,
         tiled_run::{
             TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
@@ -705,6 +706,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         correction_matrix.clone(),
         length_bin_frequencies.clone(),
         &reference_metadata,
+        twobit_contig_signature(&opt.ref_genome.ref_2bit)?,
     )?;
     correction_pkg.write_npz(
         opt.ioc

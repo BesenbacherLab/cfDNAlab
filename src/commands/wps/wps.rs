@@ -198,6 +198,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     }
     let gc_corrector = load_gc_corrector(
         opt.shared_args.gc.gc_file.as_ref(),
+        opt.shared_args.ref_2bit.as_ref(),
         opt.shared_args.min_fragment_length,
         opt.shared_args.max_fragment_length,
     )?;

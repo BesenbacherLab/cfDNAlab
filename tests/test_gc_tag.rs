@@ -261,6 +261,7 @@ mod test_gc_tag_values {
                 length_edges: vec![10, 11],
                 gc_edges: vec![0, 101],
                 length_bin_frequencies: array![1.0_f64],
+                reference_contig_signature: [0, 0],
                 correction_matrix: array![[weight]],
             };
             let corrector = GCCorrector::from_package(&package).expect("build corrector");
@@ -287,6 +288,7 @@ mod test_gc_tag_values {
             length_edges: vec![10, 11],
             gc_edges: vec![0, 101],
             length_bin_frequencies: array![1.0_f64],
+            reference_contig_signature: [0, 0],
             correction_matrix: array![[just_below_min]],
         };
         let corrector = GCCorrector::from_package(&package).expect("build corrector");

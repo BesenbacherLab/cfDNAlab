@@ -154,6 +154,7 @@ mod tests_gc_bias {
             gc_edges: gc_edges.clone(),
             correction_matrix,
             length_bin_frequencies: array![1.0_f64, 1.0_f64],
+            reference_contig_signature: [0, 0],
         };
         let tmp_dir = tempdir()?;
         let pkg_path = tmp_dir.path().join("gc_package.npz");
@@ -252,6 +253,7 @@ mod tests_gc_bias {
             gc_edges: vec![0, 50, 100],
             correction_matrix,
             length_bin_frequencies: array![0.2_f64, 0.8_f64],
+            reference_contig_signature: [0, 0],
         }
     }
 

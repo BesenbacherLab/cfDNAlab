@@ -1405,6 +1405,7 @@ mod tests_lengths_command {
             length_edges: vec![10, 60, 200],
             gc_edges: vec![0, 50, 101],
             length_bin_frequencies: array![1.0_f64, 3.0_f64],
+            reference_contig_signature: [0, 0],
             correction_matrix,
         };
         package.write_npz(path)?;
@@ -1701,6 +1702,7 @@ mod tests_lengths_command {
             length_edges: vec![61, 62],
             gc_edges: vec![0, 101],
             length_bin_frequencies: array![1.0_f64],
+            reference_contig_signature: [0, 0],
             correction_matrix: array![[3.0_f64]],
         };
         package.write_npz(&gc_path)?;
@@ -1784,6 +1786,7 @@ mod tests_lengths_command {
             length_edges: vec![10, 59],
             gc_edges: vec![0, 101],
             length_bin_frequencies: array![1.0_f64],
+            reference_contig_signature: [0, 0],
             correction_matrix: array![[1.0_f64]],
         };
         package.write_npz(&gc_path)?;
@@ -1842,6 +1845,7 @@ mod tests_lengths_command {
             length_edges: vec![10, 200],
             gc_edges: vec![0, 101],
             length_bin_frequencies: array![1.0_f64],
+            reference_contig_signature: [0, 0],
             correction_matrix: array![[1.0_f64]],
         };
         package.write_npz(&gc_path)?;
@@ -3899,6 +3903,7 @@ mod tests_lengths_command {
             length_edges: vec![10, 11, 20],
             gc_edges: vec![0, 51, 100],
             length_bin_frequencies: array![1.0_f64, 1.0_f64],
+            reference_contig_signature: [0, 0],
             correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
         };
         package.write_npz(&gc_path)?;

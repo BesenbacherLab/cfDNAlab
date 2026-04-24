@@ -2908,6 +2908,7 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
         length_edges: vec![61, 62],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
+        reference_contig_signature: [0, 0],
         correction_matrix: array![[3.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -3268,6 +3269,7 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
         length_edges: vec![60, 61],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
+        reference_contig_signature: [0, 0],
         correction_matrix: array![[3.0_f64]],
     };
     package.write_npz(&gc_path)?;
