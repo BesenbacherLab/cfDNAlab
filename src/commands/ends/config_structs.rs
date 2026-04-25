@@ -378,8 +378,9 @@ pub struct AssignMotifToWindowArgs {
     ///
     /// `"midpoint"`: Assign motifs when the fragment midpoint overlaps a window.
     ///
-    /// Midpoints for even-sized fragments are randomly selected as either the left or right base
-    /// to avoid bias.
+    /// Midpoints for even-sized fragments use a deterministic coordinate-derived random seed to
+    /// select either the left or right base. Duplicate fragments with the same coordinates get the
+    /// same choice. This avoids fixed rounding bias while keeping repeated runs reproducible.
     ///
     /// **NOTE**: In the rare case where windows are smaller than fragments, it's still
     /// the proportion of the fragment positions that overlap that is considered. If the window

@@ -70,7 +70,7 @@ Recommended fix:
 - Call it at the start of every command that accepts `ApplyGCArgs` plus an optional `ref_2bit`.
 - Keep deeper checks only as defensive assertions/context, not the first user-visible validation.
 
-### G-005 - Medium - Shared even-fragment midpoint tie-breaking is not reproducible
+### G-005 - Medium - Shared even-fragment midpoint tie-breaking is not reproducible [IMPLEMENTED]
 
 The shared midpoint helper uses thread-local randomness for even-length fragments ([midpoint.rs](../../src/shared/midpoint.rs#L9-L35)). Released commands that call it inherit run-to-run variation for exact boundary placement, including `midpoints` ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L508-L510)), `ends` ([ends.rs](../../src/commands/ends/ends.rs#L791-L799)), `lengths` ([lengths.rs](../../src/commands/lengths/lengths.rs#L890-L897)), and `gc-bias` ([gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L104-L112)).
 
@@ -167,7 +167,7 @@ Recommended fix:
 - If truncation is intended, accumulate the denominator using the same length factor as the numerator, for example `sum_w += weight * len_ratio`, or compute the numerator and denominator in base-pair units.
 - Add a helper-level regression with a short final stride bin where every bin has identical average support; the smoothed values should stay identical if edge truncation is the contract.
 
-### G-013 - Medium - Smoothing-weight docs claim the inverted scaling factors have mean 1.0
+### G-013 - Medium - Smoothing-weight docs claim the inverted scaling factors have mean 1.0 [IMPLEMENTED]
 
 Both smoothing-weight command docs say the factors are inverted and then claim non-zero factors have `mean == 1.0` ([fragment_count_weights/config.rs](../../src/commands/fragment_count_weights/config.rs#L19-L20), [coverage_weights/config.rs](../../src/commands/coverage_weights/config.rs#L19-L20)). The implementation first computes a global mean of `average_overlap_coverage`, then writes each non-zero scaling factor as `1.0 / (value / mean)` when `invert` is true ([striding.rs](../../src/commands/coverage_weights/striding.rs#L196-L252)).
 

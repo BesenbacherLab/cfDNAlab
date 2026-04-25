@@ -12,7 +12,7 @@ mod tests {
         },
         indel_mode::IndelMode,
         interval::{IndexedInterval, Interval},
-        midpoint::{midpoint_random_even, midpoint_random_even_with_thread_rng},
+        midpoint::{midpoint_random_even, midpoint_random_even_for_fragment},
         overlaps::find_overlapping_windows,
         scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
     };
@@ -522,24 +522,22 @@ mod tests {
     }
 
     #[test]
-    fn midpoint_random_even_with_thread_rng_returns_one_of_two_centers() {
+    fn midpoint_random_even_for_fragment_returns_one_of_two_centers() {
         // Human verification status: unverified
         // Even-length fragment [start, start+len), len=6 -> centers are start+2 or start+3.
         let start = 1000u32;
         let len = 6u32;
 
-        // Sample a few times; each must be one of the two positions.
-        for _ in 0..100 {
-            let m = midpoint_random_even_with_thread_rng(start, len);
-            assert!(
-                m == start + len / 2 || m == start + len / 2 - 1,
-                "midpoint {m} not one of the two centers"
-            );
-        }
+        let m = midpoint_random_even_for_fragment("chr1", start, len);
+        assert!(
+            m == start + len / 2 || m == start + len / 2 - 1,
+            "midpoint {m} not one of the two centers"
+        );
+        assert_eq!(m, midpoint_random_even_for_fragment("chr1", start, len));
 
         // Midpoint from odd-length fragment
         let len = len + 1; // 7
-        let m = midpoint_random_even_with_thread_rng(start, len);
+        let m = midpoint_random_even_for_fragment("chr1", start, len);
         assert!(m == start + len / 2, "midpoint {m} not the center element");
     }
 

@@ -27,7 +27,7 @@ use crate::{
         fragment_iterators::fragments_from_bam,
         interval::{IndexedInterval, Interval},
         io::dot_join,
-        midpoint::midpoint_random_even_with_thread_rng,
+        midpoint::midpoint_random_even_for_fragment,
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
@@ -496,8 +496,9 @@ fn process_tile(
         }
 
         // Determine fragment midpoint
-        // Uses random rounding for even-sized fragments to avoid bias
-        let midpoint = midpoint_random_even_with_thread_rng(fragment.start(), fragment_length);
+        // Uses deterministic coordinate-derived random rounding for even-sized fragments
+        let midpoint =
+            midpoint_random_even_for_fragment(&tile.chr, fragment.start(), fragment_length);
 
         // Only keep fragments with midpoints within the tile
         if midpoint < tile.core_start() || midpoint >= tile.core_end() {

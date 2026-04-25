@@ -42,7 +42,7 @@ use crate::{
         fragment_iterators::fragments_with_ends_from_bam,
         interval::{IndexedInterval, Interval},
         io::dot_join,
-        midpoint::midpoint_random_even_with_thread_rng,
+        midpoint::midpoint_random_even_for_fragment,
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
@@ -780,7 +780,8 @@ fn process_tile(
         let query_interval = match opt.window_assignment.assign_by {
             WindowMotifAssigner::Midpoint => {
                 let fragment_assignment_length = fragment.assignment_len();
-                let midpoint = midpoint_random_even_with_thread_rng(
+                let midpoint = midpoint_random_even_for_fragment(
+                    &tile.chr,
                     fragment.assignment_start(),
                     fragment_assignment_length,
                 );

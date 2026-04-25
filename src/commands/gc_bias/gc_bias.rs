@@ -36,7 +36,7 @@ use crate::{
         fragment_iterators::fragments_from_bam,
         interval::{IndexedInterval, Interval},
         io::dot_join,
-        midpoint::midpoint_random_even_with_thread_rng,
+        midpoint::midpoint_random_even_for_fragment,
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
@@ -104,12 +104,14 @@ pub fn get_fragment_gc(
 /// non-streaming windows. Keeping the assignment span as an `Interval` avoids
 /// open-coding start/end math in each path.
 fn fragment_assignment_interval(
+    chromosome: &str,
     fragment: &Fragment,
     assign_by: WindowAssigner,
 ) -> Result<Interval<u64>> {
     match assign_by {
         WindowAssigner::Midpoint => {
-            let midpoint = midpoint_random_even_with_thread_rng(fragment.start(), fragment.len());
+            let midpoint =
+                midpoint_random_even_for_fragment(chromosome, fragment.start(), fragment.len());
             Ok(Interval::new(midpoint.into(), (midpoint + 1).into())?)
         }
         WindowAssigner::Any
@@ -969,8 +971,11 @@ fn process_tile(
                 continue;
             };
 
-            let assignment_interval =
-                fragment_assignment_interval(&fragment, opt.window_assignment.assign_by)?;
+            let assignment_interval = fragment_assignment_interval(
+                &tile.chr,
+                &fragment,
+                opt.window_assignment.assign_by,
+            )?;
             let fragment_span_length = assignment_interval.len() as f64;
 
             // Choose buffers to update: at most current and next for fixed-size windows
@@ -1092,8 +1097,11 @@ fn process_tile(
                 // Find all overlapping windows
 
                 // Calculate what part needs to overlap to some degree
-                let query_interval =
-                    fragment_assignment_interval(&fragment, opt.window_assignment.assign_by)?;
+                let query_interval = fragment_assignment_interval(
+                    &tile.chr,
+                    &fragment,
+                    opt.window_assignment.assign_by,
+                )?;
                 let overlapping_windows = find_overlapping_windows(
                     chrom_len,
                     &mut window_ptr,
