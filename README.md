@@ -261,7 +261,7 @@ W_D: [0][1][2][3][2][1][0]
 
 $$smoothMass_{D} = (0A + 1B + 2C + 3D + 2E + 1F + 0G) / (1+2+3+2+1)$$
 
-**C**) Finally, the values are **inverted** with $1/smoothMass$ to become multiplicative scaling factors (one per stride-bin). A fragment's contribution (`1.0` or the gc-weight) can then be scaled by multiplying by the scaling factor of the stride-bin it's located in.
+**C**) Finally, non-zero $smoothMass$ values are normalized to global mean `1.0` and then **inverted** to become multiplicative scaling factors (one per stride-bin). A fragment's contribution (`1.0` or the gc-weight) can then be scaled by multiplying by the scaling factor of the stride-bin it's located in.
 
 You can think of this approach as a very fast alternative to e.g. Gaussian smoothing.
 

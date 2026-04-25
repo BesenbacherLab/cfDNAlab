@@ -17,8 +17,7 @@ pub struct StrideBin {
     /// Average coverage of overlapping mega-bins
     pub average_overlap_coverage: f32,
     /// Scaling factor for normalizing coverage
-    /// across the genome. Normalized across
-    /// all stride-bins for a mean of 1.0.
+    /// across the genome. Multiplicative.
     pub scaling_factor: f32,
 }
 

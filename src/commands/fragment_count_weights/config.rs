@@ -16,9 +16,8 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 ///
 /// `<prefix>.fragment_counts.scaling_factors.tsv`
 ///
-/// The scaling factors are *inverted*, so normalization becomes multiplication.
-/// Zero-valued smoothed fragment mass leads to zero-valued scaling factors.
-/// Non-zero factors have `mean == 1.0`.
+/// **Multipliers**: After normalization of the non-zero smoothed fragment-mass values to
+/// a global mean of `1.0`, the values are **inverted** to **multiplicative** scaling factors.
 ///
 /// ## Fragment counts
 ///
