@@ -80,7 +80,7 @@ Planned: `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks
 
 - **Windowing**: Perform the command in genomic windows. Either a single global window (default), windows specified in a BED file (optionally grouped), or via a fixed window size. Assign fragments to windows by how they overlap.
 
-- **Genomic smoothing**: Scale the contribution of fragments by either their coverage or counts in megabase-scale overlapping bins. This reduces the effect of amplifications and deletions.
+- **Genomic smoothing**: Scale the contribution of fragments by either their coverage or counts in megabase-scale overlapping bins. Useful when aggregating local, relative changes in coverage or counts where all genomic regions should contribute roughly the same. Reduces the effect of amplifications and deletions.
 
 - **Unpaired data**: If you have Nanopore-sequenced cell-free DNA (or similar) where each read represents the full fragment, you can supply the `--reads-are-fragments` flag. This will consider each read a full fragment.
 
@@ -124,6 +124,35 @@ The final example is a full pipeline for running everything (but without the exp
 
 **Fragment length range**: The min/max fragment length range defaults to `30-1000bp`. This can be specified via `--min-fragment-length` and `--max-fragment-length`. We suggest keeping this range for the `ref-gc-bias` command. In the downstream feature extraction commands you can then narrow the range, if you want. For the scaling factors made with `fragment-count-weights` or `coverage-weights`, it's a trade-off whether to use the full range or an analysis-specific narrower range. The matching narrower range will make the genomic regions contribute more equally to the downstream features, while the full or a different range may better estimate copy number changes.
 
+**Blacklist consistency**: When using blacklists to remove problematic regions of the genome, we recommend using them consistently in all commands. If you have sample-specific blacklists, reuse for all commands run on the same sample.
+
+### Shared arguments
+
+The following arguments are shared across *most* of the commands:
+
+```bash
+
+cfdna <command>
+  --bam <sample>.bam \                          # Coordinate-sorted cfDNA BAM file
+  --output-dir <path> \                         # Output directory
+  --output-prefix <sample_id> \                 # Output filename prefix
+  --n-threads <int> \                           # CPU threads
+  --tile-size <int> \                           # Processing tile size (reduce for lower RAM)
+  --reads-are-fragments \                       # Treat each read as one fragment
+  --blacklist <path>/hg38-blacklist.v2.bed \    # BED intervals to exclude
+  --blacklist <path>/<another_blacklist>.bed \  # Additional BED intervals to exclude
+  --ref-2bit <path>/hg38.2bit \                 # Reference genome in 2bit format
+  --min-fragment-length <int> \                 # Minimum fragment length
+  --max-fragment-length <int> \                 # Maximum fragment length
+  --chromosomes chr1,chr2,chr3... \             # Chromosomes to include (default: chr1-chr22)
+  --min-mapq <int> \                            # Minimum read mapping quality
+  --by-size | --by-bed | --by-grouped-bed \     # Feature window definition (default: global)
+  --gc-file | --gc-tag \                        # GC-bias correction source
+  --scaling-factors <path> \                    # Scaling factors TSV for genomic smoothing
+  --logging <string>                            # Logging mode: stdout, quiet, file
+
+```
+
 ### GC correction pipeline
 
 Fragmentomics features are vulnerable to biases from various sample-handling and sequencing processes, such as PCR amplification. `cfDNAlab` commands thus allow the correction of the commonly observed **GC-bias**.
@@ -142,8 +171,7 @@ cfdna ref-gc-bias \
   --output-dir <ref_gc_directory> \
   --output-prefix hg38 \ # Output becomes "<ref_gc_directory>/hg38.ref_gc_package.npz"
   --n-threads 12 \
-  --blacklist <path>/hg38-blacklist.v2.bed \
-  --blacklist <path>/<another_blacklist>.bed  # As many as you want
+  --blacklist <path>/hg38-blacklist.v2.bed
 
 ```
 
@@ -159,8 +187,7 @@ cfdna gc-bias \
   --n-threads 12 \
   --ref-2bit <path>/hg38.2bit \
   --ref-gc-file <ref_gc_directory>/hg38.ref_gc_package.npz \
-  --blacklist <path>/hg38-blacklist.v2.bed \
-  --blacklist <path>/<another_blacklist>.bed  # Should match those specified in ref-gc-bias!
+  --blacklist <path>/hg38-blacklist.v2.bed  # Should match those specified in ref-gc-bias!
 
 ```
 
@@ -251,8 +278,7 @@ cfdna fragment-count-weights \
   --output-dir <sample_directory>/scaling_factors \
   --output-prefix <sample_id> \
   --n-threads 12 \
-  --blacklist <path>/hg38-blacklist.v2.bed \
-  --blacklist <path>/<another_blacklist>.bed  # Tip: Use the same blacklists everywhere / per sample!
+  --blacklist <path>/hg38-blacklist.v2.bed
 
 ```
 
@@ -278,12 +304,11 @@ When no GC correction or genomic smoothing is applied, each fragment is counted 
 cfdna fcoverage --help
 
 cfdna fcoverage \
-  --bam <sample>.bam \                          # Coordinate-sorted bam file with cfDNA
-  --output-dir <sample_directory>/coverage \    # Where to write files
-  --output-prefix <sample_id> \                 # A file prefix to identify the sample (optional)
-  --n-threads 12 \                              # Use 12 CPU cores (speed vs. RAM tradeoff)
+  --bam <sample>.bam \ 
+  --output-dir <sample_directory>/coverage \
+  --output-prefix <sample_id> \
+  --n-threads 12 \  
   --blacklist <path>/hg38-blacklist.v2.bed \
-  --blacklist <path>/<another_blacklist>.bed \  # Tip: Use the same blacklists everywhere / per sample!
 
   # OPTIONS:
 
@@ -319,15 +344,15 @@ The base motifs in the end of fragments reflect the enzyme processes that cleave
 cfdna ends --help
 
 cfdna ends \
-  --bam <sample>.bam \                          # Coordinate-sorted bam file with cfDNA
-  --output-dir <sample_directory>/end_motifs \  # Where to write files
-  --output-prefix <sample_id> \                 # A file prefix to identify the sample (optional)
-  --n-threads 12 \                              # Use 12 CPU cores (speed vs. RAM tradeoff)
+  --bam <sample>.bam \
+  --output-dir <sample_directory>/end_motifs \
+  --output-prefix <sample_id> \
+  --n-threads 12 \
   --blacklist <path>/hg38-blacklist.v2.bed \
-  --blacklist <path>/<another_blacklist>.bed \  # Tip: Use the same blacklists everywhere / per sample!
+  --blacklist <path>/<another_blacklist>.bed \
   --ref-2bit <path>/hg38.2bit \
-  --k-inside 2 \                                # Bases to count just inside the fragment
-  --k-outside 2 \                               # Bases to count just outside the fragment
+  --k-inside 2 \
+  --k-outside 2 \
 
   # OPTIONS:
 
@@ -364,12 +389,12 @@ Multiple studies have used fragment lengths (count distributions) to detect canc
 cfdna lengths --help
 
 cfdna lengths \
-  --bam <sample>.bam \                          # Coordinate-sorted bam file with cfDNA
-  --output-dir <sample_directory>/lengths \     # Where to write files
-  --output-prefix <sample_id> \                 # A file prefix to identify the sample (optional)
-  --n-threads 12 \                              # Use 12 CPU cores (speed vs. RAM tradeoff)
+  --bam <sample>.bam \
+  --output-dir <sample_directory>/lengths \
+  --output-prefix <sample_id> \
+  --n-threads 12 \
   --blacklist <path>/hg38-blacklist.v2.bed \
-  --blacklist <path>/<another_blacklist>.bed \  # Tip: Use the same blacklists everywhere / per sample!
+  --blacklist <path>/<another_blacklist>.bed \
 
   # OPTIONS:
 
@@ -400,13 +425,13 @@ Multiple studies have profiled the midpoint coverage around e.g. transcription f
 cfdna midpoints --help
 
 cfdna midpoints \
-  --bam <sample>.bam \                          # Coordinate-sorted bam file with cfDNA
-  --output-dir <sample_directory>/midpoints \   # Where to write files
-  --output-prefix <sample_id> \                 # A file prefix to identify the sample (optional)
-  --n-threads 12 \                              # Use 12 CPU cores (speed vs. RAM tradeoff)
-  --intervals <fixed_size_intervals>.tsv \      # The grouped fixed-size intervals (see --help)
+  --bam <sample>.bam \
+  --output-dir <sample_directory>/midpoints \
+  --output-prefix <sample_id> \
+  --n-threads 12 \
+  --intervals <fixed_size_intervals>.tsv \
   --blacklist <path>/hg38-blacklist.v2.bed \
-  --blacklist <path>/<another_blacklist>.bed \  # Tip: Use the same blacklists everywhere / per sample!
+  --blacklist <path>/<another_blacklist>.bed \
 
   # OPTIONS:
 
@@ -581,10 +606,8 @@ Simplest example:
 cfdna fcoverage --help
 
 cfdna fcoverage \
-  --bam <sample>.bam \                          # Coordinate-sorted bam file with cfDNA
-  --output-dir <sample_directory>/coverage \    # Where to write files
-  --output-prefix <sample_id> \                 # A file prefix to identify the sample (optional)
-  --reads-are-fragments                         # Consider each read a fragment
+  ...  # See fcoverage example
+  --reads-are-fragments
 
 ```
 
