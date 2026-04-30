@@ -310,14 +310,14 @@ cfdna fcoverage \
   --n-threads 12 \  
   --blacklist <path>/hg38-blacklist.v2.bed
 ```
-Choose any relevant options below. These are *non-exhaustive examples* and none of them are required. See `--help` for more details.
+Choose any relevant options below. See `--help` for more options.
 
 ```bash
   # OPTIONS:
 
   # Use windowing 
-  # Choose max. one windowing type and action. 
-  # Default: one global window with positional coverage.
+  # Choose max. one windowing type and per-window output
+  # Default: one global window with positional coverage
   # 1) Average per 1Mb positions
   --by-size 1000000 \
   --per-window 'average' \
@@ -359,7 +359,7 @@ cfdna ends \
   --k-inside 2 \
   --k-outside 2
 ```
-Choose any relevant options below. These are *non-exhaustive examples* and none of them are required. See `--help` for more details.
+Choose any relevant options below. See `--help` for more options.
 
 ```bash
   # OPTIONS:
@@ -407,7 +407,7 @@ cfdna lengths \
   --blacklist <path>/<another_blacklist>.bed
 ```
 
-Choose any relevant options below. These are *non-exhaustive examples* and none of them are required. See `--help` for more details.
+Choose any relevant options below. See `--help` for more options.
 
 ```bash
   # OPTIONS:
@@ -450,7 +450,7 @@ cfdna midpoints \
   --blacklist <path>/<another_blacklist>.bed
 ```
 
-Choose any relevant options below. These are *non-exhaustive examples* and none of them are required. See `--help` for more details.
+Choose any relevant options below. See `--help` for more options.
 
 ```bash
   # OPTIONS:
