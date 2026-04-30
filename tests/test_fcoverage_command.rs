@@ -27,9 +27,10 @@ use cfdnalab::shared::read::default_include_read_paired_end;
 use fixtures::{
     BamFixture, FragmentSpec, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, ReadSpec, bam_from_specs,
     bam_from_specs_strict_identity, build_real_neutral_gc_package,
-    build_real_neutral_gc_package_for_range, build_real_non_neutral_gc_package, long_fragment_bam,
-    paired_fragment, read_zst_to_string, simple_inward_bam, simple_reference_twobit, write_bed,
-    write_scaling_factors,
+    build_real_neutral_gc_package_for_range, build_real_non_neutral_gc_package,
+    late_origin_gc_reference_sequence, long_fragment_bam, paired_fragment, read_zst_to_string,
+    simple_inward_bam, simple_reference_twobit, twobit_from_sequences, write_bed,
+    write_scaling_factors, write_two_bin_gc_package,
 };
 use ndarray::Array2;
 use ndarray::array;
@@ -673,6 +674,62 @@ fn normalize_by_length_and_gc_file_weights_multiply_per_position() -> Result<()>
         lines[0]
     );
 
+    Ok(())
+}
+
+#[test]
+fn gc_file_windowed_late_tile_uses_reference_coordinates_after_fetch_narrowing() -> Result<()> {
+    // Arrange:
+    // - The tile core starts at 0, but the only BED window is [930,941).
+    // - The reference is shorter than the BAM chromosome, but long enough for the narrowed
+    //   window-derived fetch span. Reading the full tile reference would overrun the reference.
+    // - The accepted fragment interval [900,961) is all C, so it lands in the high-GC correction
+    //   bin with weight 7.0. Using prefix-local origin 0 would see A-only sequence instead.
+    // - In unique-position mode, only the 11 covered bases inside [930,941) are written, each at
+    //   coverage 7.0.
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 1_500)],
+        vec![paired_fragment_on_tid(0, 900, 61, 20)],
+        Vec::new(),
+        "fcoverage_late_tile_gc_origin",
+    )?;
+    let reference = twobit_from_sequences(
+        "fcoverage_late_tile_gc_origin_ref",
+        vec![("chr1".to_string(), late_origin_gc_reference_sequence())],
+    )?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("late_window.bed");
+    let gc_path = out_dir.path().join("two_bin_gc_package.npz");
+    write_bed(&bed_path, &[("chr1", 930, 941, "late")])?;
+    write_two_bin_gc_package(&gc_path, 61, 2.0, 7.0)?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(0);
+    cfg.set_keep_zero_runs(false);
+    cfg.set_per_window(CoverageWindowAction::OnlyIncludeThesePositionsUnique);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+        by_grouped_bed: None,
+    });
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        neutralize_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 61;
+        frag.max_fragment_length = 61;
+    }
+
+    // Act
+    let result = run_inner(&cfg)?;
+    let text = read_zst_to_string(&result.final_out_path)?;
+
+    // Assert
+    assert_eq!(text, "chr1\t930\t941\t7\n");
     Ok(())
 }
 

@@ -18,8 +18,8 @@ use cfdnalab::commands::midpoints::midpoints::run;
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity,
     build_real_neutral_gc_package, build_real_neutral_gc_package_for_range,
-    build_real_non_neutral_gc_package, complex_bam_fixture, simple_reference_twobit,
-    twobit_from_sequences, write_bed,
+    build_real_non_neutral_gc_package, complex_bam_fixture, late_origin_gc_reference_sequence,
+    simple_reference_twobit, twobit_from_sequences, write_bed, write_two_bin_gc_package,
 };
 use ndarray::Array3;
 use ndarray::array;
@@ -915,6 +915,66 @@ fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_midpo
         HashMap::from([("groupA".to_string(), 0usize)])
     );
 
+    Ok(())
+}
+
+#[test]
+fn gc_file_late_tile_site_uses_reference_coordinates_after_fetch_narrowing() -> Result<()> {
+    // Arrange:
+    // - The only site is [925,936), well inside a tile whose fetch origin is still 0.
+    // - The reference is shorter than the BAM chromosome, but long enough for the narrowed
+    //   window-derived fetch span. Reading the full tile reference would overrun the reference.
+    // - The fragment [900,961) has deterministic midpoint 930, so it lands at position 5.
+    // - The fragment interval [900,961) is all C, so it lands in the high-GC correction bin with
+    //   weight 7.0. Using prefix-local origin 0 would see A-only sequence instead.
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 1_500)],
+        vec![paired_fragment_on_tid(0, 900, 61, 20)],
+        Vec::new(),
+        "midpoints_late_tile_gc_origin",
+    )?;
+    let reference = twobit_from_sequences(
+        "midpoints_late_tile_gc_origin_ref",
+        vec![("chr1".to_string(), late_origin_gc_reference_sequence())],
+    )?;
+    let temp = TempDir::new()?;
+    let bed_path = temp.path().join("late_site.bed");
+    let gc_path = temp.path().join("two_bin_gc_package.npz");
+    write_bed(&bed_path, &[("chr1", 925, 936, "late")])?;
+    write_two_bin_gc_package(&gc_path, 61, 2.0, 7.0)?;
+
+    let mut cfg = MidpointsConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: temp.path().to_path_buf(),
+            n_threads: 1,
+        },
+        base_chromosomes(&["chr1"]),
+        bed_path,
+    );
+    cfg.set_output_prefix("sites");
+    cfg.set_length_bins(vec![61, 62]);
+    cfg.set_tile_size(1_000);
+    cfg.set_min_mapq(0);
+    cfg.set_require_proper_pair(false);
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        neutralize_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+
+    // Act
+    run(&cfg)?;
+    let arr: Array3<f32> = read_npy(temp.path().join("sites.midpoint_profiles.npy"))?;
+
+    // Assert
+    assert_eq!(arr.shape(), &[1, 1, 11]);
+    assert_eq!(
+        arr.slice(ndarray::s![0, 0, ..]).to_vec(),
+        vec![0.0, 0.0, 0.0, 0.0, 0.0, 7.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    );
+    assert_eq!(arr.sum(), 7.0);
     Ok(())
 }
 

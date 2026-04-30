@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
     commands::cli_common::WindowSpec,
+    commands::gc_bias::counting::build_gc_prefixes,
     shared::{
         interval::{IndexedInterval, Interval},
         tiled_run::{Tile, TileWindowSpan},
@@ -127,6 +128,82 @@ fn prepare_tile_windows_bed_keeps_a_right_halo_only_window_for_fragment_owned_mo
     assert_eq!(prepared.windows[0].idx, 0);
     assert_eq!(prepared.windows[0].interval, Interval::new(22, 23)?);
     assert!(!prepared.windows[0].contained);
+    Ok(())
+}
+
+#[test]
+fn set_window_acgt_uses_sequence_interval_as_prefix_origin() -> Result<()> {
+    // Human verification status: unverified
+    // The prefix arrays are built from reference slice [900,961), not from chromosome start.
+    // The observed interval [930,941) should therefore be counted as local [30,41).
+    //
+    // The repeated ACGT reference starts at A at coordinate 900. In [930,941), all 11 bases are
+    // A/C/G/T, so the ACGT support numerator and denominator should both be 11.
+    let seq = b"ACGT".repeat(16);
+    let prefixes = build_gc_prefixes(&seq);
+    let sequence_interval = Interval::new(900_u64, 961_u64)?;
+    let observed_interval = Interval::new(930_u64, 941_u64)?;
+    let mut window = WindowState::new(0, observed_interval, true, &make_template())?;
+
+    // Act
+    set_window_acgt_in_observed_interval(
+        &mut window,
+        &prefixes,
+        observed_interval,
+        sequence_interval,
+    )?;
+
+    // Assert
+    assert_eq!(window.counts.num_acgt_out_of, (11, 11));
+    Ok(())
+}
+
+#[test]
+fn set_window_acgt_clips_observed_interval_to_loaded_sequence() -> Result<()> {
+    // Manual derivation:
+    // - Prefixes cover reference slice [900,910), all A/C/G/T.
+    // - The observed interval [895,905) overlaps only [900,905) of that loaded slice.
+    // - The support denominator is therefore the clipped length 5, not the original 10.
+    let prefixes = build_gc_prefixes(&vec![b'C'; 10]);
+    let sequence_interval = Interval::new(900_u64, 910_u64)?;
+    let observed_interval = Interval::new(895_u64, 905_u64)?;
+    let mut window = WindowState::new(0, observed_interval, true, &make_template())?;
+
+    set_window_acgt_in_observed_interval(
+        &mut window,
+        &prefixes,
+        observed_interval,
+        sequence_interval,
+    )?;
+
+    assert_eq!(window.counts.num_acgt_out_of, (5, 5));
+    Ok(())
+}
+
+#[test]
+fn set_window_acgt_errors_when_observed_interval_misses_loaded_sequence() -> Result<()> {
+    // Manual derivation:
+    // - Prefixes cover reference slice [900,910).
+    // - Observed interval [880,890) has no overlap with that loaded slice.
+    // - This is a caller error for support bookkeeping and should produce a clear error instead
+    //   of silently recording zero support.
+    let prefixes = build_gc_prefixes(&vec![b'C'; 10]);
+    let sequence_interval = Interval::new(900_u64, 910_u64)?;
+    let observed_interval = Interval::new(880_u64, 890_u64)?;
+    let mut window = WindowState::new(0, observed_interval, true, &make_template())?;
+
+    let error = set_window_acgt_in_observed_interval(
+        &mut window,
+        &prefixes,
+        observed_interval,
+        sequence_interval,
+    )
+    .expect_err("missing loaded-sequence overlap should error");
+
+    assert!(
+        error.to_string().contains("does not overlap sequence"),
+        "unexpected error: {error}"
+    );
     Ok(())
 }
 

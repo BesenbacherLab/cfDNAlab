@@ -3,13 +3,14 @@
 mod fixtures;
 
 use anyhow::{Context, Result, ensure};
-use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
+use cfdnalab::commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, WindowsArgs};
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
 use cfdnalab::commands::wps::config::WPSConfig;
 use cfdnalab::commands::wps::wps::run as run_fn;
 use fixtures::{
-    BamFixture, FragmentSpec, ReadSpec, bam_from_specs, long_fragment_bam, read_zst_to_string,
-    write_bed,
+    BamFixture, FragmentSpec, ReadSpec, bam_from_specs, late_origin_gc_reference_sequence,
+    long_fragment_bam, read_zst_to_string, twobit_from_sequences, write_bed,
+    write_two_bin_gc_package,
 };
 use std::cmp::max;
 use std::fs::File;
@@ -212,6 +213,50 @@ fn run_wps_with_chrom(cfg: &WPSConfig) -> Result<Vec<WpsRun>> {
     }
 
     Ok(runs)
+}
+
+#[test]
+fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -> Result<()> {
+    // Arrange:
+    // - The fragment spans [900,961), and the reported WPS centers are restricted to [925,936).
+    // - The reference is shorter than the BAM chromosome, but long enough for the narrowed
+    //   window-derived fetch span. Reading the full tile reference would overrun the reference.
+    // - The fragment interval [900,961) is all C, so it lands in the high-GC correction bin with
+    //   weight 7.0. Using prefix-local origin 0 would see A-only sequence instead.
+    // - A 10 bp WPS window around every center in [925,936) lies fully inside the fragment and
+    //   contains neither endpoint, so the unweighted score is +1 throughout.
+    // - The GC package therefore makes the full run +7.
+    let bam = make_fixture("wps_late_tile_gc_origin", &[(900, 961)])?;
+    let reference = twobit_from_sequences(
+        "wps_late_tile_gc_origin_ref",
+        vec![("chr1".to_string(), late_origin_gc_reference_sequence())],
+    )?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("late_window.bed");
+    let gc_path = out_dir.path().join("two_bin_gc_package.npz");
+    write_bed(&bed_path, &[("chr1", 925, 936, "late")])?;
+    write_two_bin_gc_package(&gc_path, 61, 2.0, 7.0)?;
+
+    let mut cfg = make_config(10, false, &bam.bam, out_dir.path(), "late_gc");
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+    });
+    cfg.set_min_fragment_length(61);
+    cfg.set_max_fragment_length(61);
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        neutralize_invalid_gc: false,
+    });
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+
+    // Act
+    let actual = run_wps(&cfg)?;
+
+    // Assert
+    assert_runs_equal(&actual, &[wps_run("chr1", 925, 936, 7.0)]);
+    Ok(())
 }
 
 #[test]

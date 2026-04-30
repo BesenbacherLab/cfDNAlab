@@ -17,8 +17,8 @@ mod tests_gc_bias {
             binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
             config::GCConfig,
             correct::{GCCorrector, LengthAgnosticGCCorrector, MarginalizeLengthsWeightingScheme},
-            counting::gc_percent_widths,
-            gc_bias::{interpolate_masked_corrections, run as run_gc_bias},
+            counting::{build_gc_prefixes, gc_percent_widths},
+            gc_bias::{get_fragment_gc, interpolate_masked_corrections, run as run_gc_bias},
             load_reference_bias::load_reference_gc_data,
             outliers::{
                 OutlierAction, OutlierRule, OutlierScope, OutlierStats, apply_outliers_to_matrix,
@@ -29,6 +29,7 @@ mod tests_gc_bias {
         },
         ref_gc_bias::{config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias},
     };
+    use cfdnalab::shared::interval::Interval;
 
     const GC_COMMAND_F64_TOL: f64 = 1e-6;
 
@@ -40,6 +41,136 @@ mod tests_gc_bias {
             (actual - expected).abs() <= GC_COMMAND_F64_TOL,
             "{context}: expected {expected}, got {actual}"
         );
+    }
+
+    #[test]
+    fn get_fragment_gc_uses_sequence_interval_as_prefix_origin() -> Result<()> {
+        // Manual derivation:
+        // - Prefixes are built from the loaded reference slice [900,961), not from chromosome
+        //   origin 0.
+        // - The sequence slice is 61 C bases, so fragment [900,961) has 61 GC bases.
+        // - A local-origin bug would either ask the 61 bp prefix for [900,961) or otherwise fail
+        //   to count the loaded slice as the fragment interval.
+        let prefixes = build_gc_prefixes(&vec![b'C'; 61]);
+        let fragment_interval = Interval::new(900_u64, 961_u64)?;
+        let sequence_interval = Interval::new(900_u64, 961_u64)?;
+
+        let gc_count = get_fragment_gc(fragment_interval, sequence_interval, 0, &prefixes, 0.0)?;
+
+        assert_eq!(gc_count, Some(61));
+        Ok(())
+    }
+
+    #[test]
+    fn get_fragment_gc_returns_none_when_fragment_is_outside_loaded_sequence() -> Result<()> {
+        // Manual derivation:
+        // - Prefixes cover only [900,961).
+        // - Fragment [961,1022) is a valid reference interval, but its contracted GC window is
+        //   completely outside the loaded sequence, so this is a legitimate missing correction
+        //   rather than an indexing error.
+        let prefixes = build_gc_prefixes(&vec![b'C'; 61]);
+        let fragment_interval = Interval::new(961_u64, 1022_u64)?;
+        let sequence_interval = Interval::new(900_u64, 961_u64)?;
+
+        let gc_count = get_fragment_gc(fragment_interval, sequence_interval, 0, &prefixes, 0.0)?;
+
+        assert_eq!(gc_count, None);
+        Ok(())
+    }
+
+    #[test]
+    fn gc_bias_late_tile_bed_window_uses_nonzero_sequence_interval_origin() -> Result<()> {
+        // Manual derivation:
+        // - The chromosome is 1022 bp and tile_size is 500, so the tile owning [900,961) has
+        //   core [500,1000) and fetch origin 439 after the 61 bp halo.
+        // - The observed fragment [900,961) lies in the all-C part of
+        //   `late_origin_gc_reference_sequence()`, so its GC percentage is 100.
+        // - In BED-window mode, `gc-bias` scales a single supported length-61 count by the number
+        //   of reachable GC-count cells: 0..=61 gives 62 cells.
+        // - Therefore the saved observed average count matrix has exactly 62.0 at GC% 100 and
+        //   zero everywhere else. If the tile's non-zero sequence interval is ignored, the
+        //   fragment cannot be mapped to the loaded prefix coordinates correctly.
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_late_tile_origin_reference",
+            vec![(
+                "chr1".to_string(),
+                fixtures::late_origin_gc_reference_sequence(),
+            )],
+        )?;
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 1_022)],
+            vec![fixtures::paired_fragment(900, 61, 20)],
+            Vec::new(),
+            "gc_bias_late_tile_origin_bam",
+        )?;
+        let ref_gc_dir = TempDir::new()?;
+        let bed_path = ref_gc_dir.path().join("late_window.bed");
+        std::fs::write(&bed_path, "chr1\t900\t961\n")?;
+        let ref_cfg = RefGCBiasConfig {
+            ref_genome: Ref2BitRequiredArgs {
+                ref_2bit: reference.path.clone(),
+            },
+            output_dir: ref_gc_dir.path().to_path_buf(),
+            output_prefix: String::new(),
+            n_threads: 1,
+            n_positions: 962,
+            seed: Some(23),
+            windows: cfdnalab::commands::ref_gc_bias::config::RefGCWindowsArgs {
+                by_bed: Some(bed_path.clone()),
+            },
+            chromosomes: ChromosomeArgs {
+                chromosomes: Some(vec!["chr1".to_string()]),
+                chromosomes_file: None,
+            },
+            blacklist: None,
+            fragment_lengths: cfdnalab::commands::cli_common::FragmentLengthArgs {
+                min_fragment_length: 61,
+                max_fragment_length: 61,
+            },
+            end_offset: 0,
+            skip_interpolation: true,
+            smoothing_sigma: 0.55,
+            smoothing_radius: 2,
+            skip_smoothing: true,
+            tile_size: 500,
+            logging: LoggingArgs::default(),
+        };
+
+        let out_dir = TempDir::new()?;
+        let mut cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        cfg.set_tile_size(500);
+        cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+            global: false,
+        });
+        cfg.set_num_extreme_gc_bins(0);
+        cfg.set_num_short_length_bins(0);
+        cfg.set_min_gc_bin_mass(1.0);
+        cfg.set_min_length_bin_mass(0.0);
+        cfg.set_min_length_bin_width(1);
+        cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        run_ref_gc_bias(&ref_cfg)?;
+        run_gc_bias(&cfg)?;
+
+        let avg_counts: ndarray::Array2<f64> =
+            read_npy(out_dir.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+        assert_eq!(avg_counts.dim(), (1, 101));
+        for (gc_pct, &value) in avg_counts.row(0).iter().enumerate() {
+            match gc_pct {
+                100 => assert!(
+                    (value - 62.0).abs() < 1e-12,
+                    "expected scaled observed count 62.0 at GC% 100, got {value}"
+                ),
+                _ => assert!(
+                    value.abs() < 1e-12,
+                    "expected no observed mass outside GC% 100, got bin {gc_pct}={value}"
+                ),
+            }
+        }
+        Ok(())
     }
 
     #[test]

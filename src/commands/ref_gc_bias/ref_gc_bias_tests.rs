@@ -144,3 +144,46 @@ fn process_tile_counts_boundary_crossing_bed_window_from_core_start_through_fetc
     assert_eq!(total_acgt_in_core, 2);
     Ok(())
 }
+
+#[test]
+fn process_tile_blacklist_uses_reference_coordinates_with_nonzero_sequence_origin() -> Result<()> {
+    // Manual derivation:
+    // - The tile loads reference slice [900,920), so prefix-local coordinate 0 maps to reference
+    //   coordinate 900.
+    // - The blacklist interval [905,910) should mask local [5,10), leaving only five ACGT bases
+    //   in the tile-owned core [900,910).
+    // - With fragment length 10 and min ACGT fraction 1.0, every possible core-owned start
+    //   900..909 overlaps the masked [905,910) segment. No fragment has full ACGT support, so
+    //   no reference GC count survives.
+    // - If masking incorrectly used prefix-local origin 0, [905,910) would miss this 20 bp slice,
+    //   `total_acgt_in_core` would be 10, and starts would be counted.
+    let mut sequence = "A".repeat(900);
+    sequence.push_str(&"C".repeat(20));
+    let reference = twobit_from_sequences(
+        "ref_gc_bias_blacklist_nonzero_origin",
+        vec![("chr1".into(), sequence)],
+    )?;
+    let cfg = base_test_config(reference.path.clone());
+    let tile = Tile::from_coords("chr1".to_string(), 0, 90, 900, 910, 900, 920)?;
+    let windows = vec![IndexedInterval::new(900, 920, 0)?];
+    let span = TileWindowSpan {
+        first_idx: 0,
+        last_idx_exclusive: 1,
+    };
+    let start_positions: Vec<usize> = (900..910).collect();
+    let blacklist_intervals = vec![Interval::new(905_u64, 910_u64)?];
+
+    let (counts, total_acgt_in_core) = process_tile(
+        &tile,
+        Some(&span),
+        920,
+        Some(&windows),
+        &start_positions,
+        &blacklist_intervals,
+        &cfg,
+    )?;
+
+    assert_eq!(counts.sum(), 0.0);
+    assert_eq!(total_acgt_in_core, 5);
+    Ok(())
+}

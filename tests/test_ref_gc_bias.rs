@@ -199,6 +199,46 @@ fn counts_gc_for_each_window_with_end_offset() -> Result<()> {
 }
 
 #[test]
+fn reference_gc_counts_use_tile_local_prefix_coordinates_after_late_sequence_load() -> Result<()> {
+    // Human verification status: unverified
+    // This mirrors ref-gc-bias after loading a late reference slice, e.g. absolute [900,964).
+    // The count helper receives tile-local coordinates, so absolute window [930,941) is [30,41)
+    // and absolute start 930 is local start 30.
+    //
+    // In the ACGT repeat, local [30,41) is:
+    //   G T A C G T A C G T A
+    // This has 5 GC bases and 11 ACGT bases, so length 11 / GC count 5 gets one count.
+    let seq = b"ACGT".repeat(16);
+    let prefixes = build_gc_prefixes(&seq);
+    let windows = IndexedInterval::from_tuples(&[(30, 41, 0)])?;
+    let starts = vec![30usize];
+    let mut counts_by_bin = vec![GCCounts::new(11, 11, 0, (0, 0))?];
+
+    // Act
+    count_reference_gc_and_length_by_window(
+        &mut counts_by_bin,
+        &prefixes,
+        (11, 12),
+        windows.as_slice(),
+        starts.as_slice(),
+        seq.len() as u64,
+        1.0,
+        1,
+        0,
+    )?;
+
+    // Assert
+    assert_eq!(counts_by_bin[0].sum(), 1.0);
+    assert_eq!(
+        counts_by_bin[0]
+            .get(11, 5)
+            .expect("length 11 / GC count 5 should be in range"),
+        1.0
+    );
+    Ok(())
+}
+
+#[test]
 fn skips_counts_after_blacklist_removes_acgt_support() -> Result<()> {
     // Human verification status: unverified
     // Arrange: Blacklist the middle of the fragment so only half the bases remain ACGT

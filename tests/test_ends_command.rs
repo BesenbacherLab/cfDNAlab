@@ -18,8 +18,9 @@ use cfdnalab::commands::{
 };
 use cfdnalab::shared::{blacklist::BlacklistStrategy, indel_mode::IndelMotifFilterPolicy};
 use fixtures::{
-    BamFixture, FragmentSpec, ReadSpec, bam_from_specs, paired_fragment, simple_reference_twobit,
-    single_read_bam_with_qualities, twobit_from_sequences, write_bed, write_scaling_factors,
+    BamFixture, FragmentSpec, ReadSpec, bam_from_specs, late_origin_gc_reference_sequence,
+    paired_fragment, simple_reference_twobit, single_read_bam_with_qualities,
+    twobit_from_sequences, write_bed, write_scaling_factors, write_two_bin_gc_package,
 };
 #[cfg(feature = "cmd_gc_bias")]
 use ndarray::array;
@@ -1447,6 +1448,66 @@ fn gc_file_weights_each_counted_end_motif_by_the_fragment_gc_correction() -> Res
     assert_eq!(motif_count(&matrix, &motifs, 0, "_A"), 3.0);
     assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 3.0);
     assert_eq!(matrix.sum(), 6.0);
+    Ok(())
+}
+
+#[cfg(feature = "cmd_gc_bias")]
+#[test]
+fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -> Result<()> {
+    // Arrange:
+    // - The BED window [900,961) is far from the tile fetch origin 0 but contains both fragment
+    //   endpoints.
+    // - The reference is shorter than the BAM chromosome, but long enough for the narrowed
+    //   window-derived fetch span. Reading the full tile reference would overrun the reference.
+    // - The fragment interval [900,961) is all C, so it lands in the high-GC correction bin with
+    //   weight 7.0. Using prefix-local origin 0 would see A-only sequence instead.
+    // - Reference-backed endpoint motifs are `_C` on the left and `_G` on the right, so the two
+    //   weighted endpoint motifs sum to 14.0.
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 1_500)],
+        vec![paired_fragment(900, 61, 20)],
+        Vec::new(),
+        "ends_late_tile_gc_origin",
+    )?;
+    let reference = twobit_from_sequences(
+        "ends_late_tile_gc_origin_ref",
+        vec![("chr1".to_string(), late_origin_gc_reference_sequence())],
+    )?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("late_window.bed");
+    let gc_path = out_dir.path().join("two_bin_gc_package.npz");
+    write_bed(&bed_path, &[("chr1", 900, 961, "late")])?;
+    write_two_bin_gc_package(&gc_path, 61, 2.0, 7.0)?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.tile_size = 1_000;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+        by_grouped_bed: None,
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        neutralize_invalid_gc: false,
+    });
+    set_exact_fragment_length(&mut cfg, 61);
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[1, 4]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_C"), 7.0);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 7.0);
+    assert_eq!(matrix.sum(), 14.0);
     Ok(())
 }
 

@@ -3,10 +3,15 @@
 mod fixtures;
 
 use anyhow::Result;
-use cfdnalab::commands::cli_common::{ChromosomeArgs, IOCArgs, WindowsArgs};
+use cfdnalab::commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, WindowsArgs};
 use cfdnalab::commands::fragment_kmers::{config::FragmentKmersConfig, fragment_kmers::run};
 use cfdnalab::shared::io::dot_join;
-use fixtures::{simple_inward_bam, simple_reference_twobit, write_bed};
+use fixtures::{
+    ReadSpec, bam_from_specs, late_origin_gc_reference_sequence, simple_inward_bam,
+    simple_reference_twobit, twobit_from_sequences, write_bed, write_two_bin_gc_package,
+};
+use ndarray::Array2;
+use ndarray_npy::read_npy;
 use tempfile::TempDir;
 
 fn base_chromosomes(chrs: &[&str]) -> ChromosomeArgs {
@@ -76,6 +81,96 @@ fn bed_windowed_runs_write_prefixed_bins_tsv_with_exact_blacklisted_fractions() 
         )
     );
     assert!(!out_dir.path().join("bins.tsv").exists());
+    Ok(())
+}
+
+#[test]
+fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -> Result<()> {
+    // Arrange:
+    // - The one unpaired fragment spans [900,961), while the BED window starts far from tile
+    //   origin 0.
+    // - The reference is shorter than the BAM chromosome, but long enough for the narrowed
+    //   window-derived fetch span. Reading the full tile reference would overrun the reference.
+    // - The correct fragment interval [900,961) is all C, so it lands in the high-GC correction
+    //   bin with weight 7.0. Using prefix-local origin 0 would see A-only sequence instead.
+    // - With k=1 over the selected reference span, the 61 selected bases are all C.
+    let bam = bam_from_specs(
+        vec![("chr1".to_string(), 1_500)],
+        Vec::new(),
+        vec![ReadSpec {
+            tid: 0,
+            pos: 900,
+            cigar: vec![('M', 61)],
+            seq: vec![b'A'; 61],
+            qual: 40,
+            is_reverse: false,
+            mapq: 60,
+            flags: 0,
+            mate_tid: None,
+            mate_pos: None,
+            insert_size: 0,
+        }],
+        "fragment_kmers_late_tile_gc_origin",
+    )?;
+    let reference = twobit_from_sequences(
+        "fragment_kmers_late_tile_gc_origin_ref",
+        vec![("chr1".to_string(), late_origin_gc_reference_sequence())],
+    )?;
+    let out_dir = TempDir::new()?;
+    let bed_path = out_dir.path().join("late_window.bed");
+    let gc_path = out_dir.path().join("two_bin_gc_package.npz");
+    write_bed(&bed_path, &[("chr1", 900, 961, "late")])?;
+    write_two_bin_gc_package(&gc_path, 61, 2.0, 7.0)?;
+
+    let mut cfg = FragmentKmersConfig::new(
+        IOCArgs {
+            bam: bam.bam.clone(),
+            output_dir: out_dir.path().to_path_buf(),
+            n_threads: 1,
+        },
+        cfdnalab::commands::cli_common::Ref2BitRequiredArgs {
+            ref_2bit: reference.path.clone(),
+        },
+        base_chromosomes(&["chr1"]),
+    );
+    cfg.set_output_prefix("kmers".to_string());
+    cfg.set_kmer_sizes(vec![1]);
+    cfg.set_windows(WindowsArgs {
+        by_size: None,
+        by_bed: Some(bed_path),
+    });
+    cfg.set_min_mapq(0);
+    cfg.shared_args.unpaired.reads_are_fragments = true;
+    {
+        let frag = cfg.fragment_lengths_mut();
+        frag.min_fragment_length = 61;
+        frag.max_fragment_length = 61;
+    }
+    cfg.set_gc(ApplyGCArgs {
+        gc_file: Some(gc_path),
+        gc_tag: None,
+        neutralize_invalid_gc: false,
+    });
+
+    // Act
+    run(&cfg)?;
+    let counts: Array2<f64> = read_npy(out_dir.path().join("kmers.k1_counts.npy"))?;
+    let motifs = std::fs::read_to_string(out_dir.path().join("kmers.k1_motifs.txt"))?;
+
+    // Assert
+    assert_eq!(counts.shape(), &[1, 4]);
+    for (motif, expected) in [("A", 0.0), ("C", 427.0), ("G", 0.0), ("T", 0.0)] {
+        let column = motifs
+            .lines()
+            .position(|observed| observed == motif)
+            .expect("motif should be present");
+        assert_eq!(
+            counts[(0, column)],
+            expected,
+            "unexpected count for {motif}"
+        );
+    }
+    assert_eq!(counts.sum(), 427.0);
     Ok(())
 }
 

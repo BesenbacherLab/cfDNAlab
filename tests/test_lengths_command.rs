@@ -27,7 +27,8 @@ mod tests_lengths_command {
     use fixtures::{
         BamFixture, FragmentSpec, ReadSpec, bam_from_specs, build_real_neutral_gc_package,
         build_real_neutral_gc_package_for_range, build_real_non_neutral_gc_package,
-        simple_inward_bam, simple_reference_twobit, write_bed, write_scaling_factors,
+        late_origin_gc_reference_sequence, simple_inward_bam, simple_reference_twobit,
+        twobit_from_sequences, write_bed, write_scaling_factors, write_two_bin_gc_package,
     };
     use ndarray::Array2;
     use ndarray::array;
@@ -3958,6 +3959,166 @@ mod tests_lengths_command {
         assert_eq!(arr.shape(), &[2, 1]);
         assert_eq!(arr[(0, 0)], 2.0);
         assert_eq!(arr[(1, 0)], 0.0);
+        assert_eq!(arr.sum(), 2.0);
+        Ok(())
+    }
+
+    #[test]
+    fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -> Result<()> {
+        // Arrange:
+        // - The counted BED window [930,941) is far from the tile fetch origin 0.
+        // - The reference is shorter than the BAM chromosome, but long enough for the narrowed
+        //   window-derived fetch span. Reading the full tile reference would overrun the reference.
+        // - The one 61 bp unpaired fragment overlaps the window.
+        // - Its reference interval [900,961) is all C, so it lands in the high-GC correction bin
+        //   with weight 7.0. Using prefix-local origin 0 would see A-only sequence instead.
+        let bam = bam_from_specs(
+            vec![("chr1".to_string(), 1_500)],
+            Vec::new(),
+            vec![ReadSpec {
+                tid: 0,
+                pos: 900,
+                cigar: vec![('M', 61)],
+                seq: vec![b'A'; 61],
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: 0,
+                mate_tid: None,
+                mate_pos: None,
+                insert_size: 0,
+            }],
+            "lengths_late_tile_gc_origin",
+        )?;
+        let reference = twobit_from_sequences(
+            "lengths_late_tile_gc_origin_ref",
+            vec![("chr1".to_string(), late_origin_gc_reference_sequence())],
+        )?;
+        let out_dir = TempDir::new()?;
+        let bed_path = out_dir.path().join("late_window.bed");
+        let gc_path = out_dir.path().join("two_bin_gc_package.npz");
+        write_bed(&bed_path, &[("chr1", 930, 941, "late")])?;
+        write_two_bin_gc_package(&gc_path, 61, 2.0, 7.0)?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+            by_grouped_bed: None,
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Any,
+        });
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            neutralize_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(reference.path.clone()));
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 61;
+            frag.max_fragment_length = 61;
+        }
+
+        // Act
+        run(&cfg)?;
+        let counts_path = out_dir.path().join("length_counts.npy");
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+
+        // Assert
+        assert_eq!(arr.shape(), &[1, 1]);
+        assert_eq!(arr[(0, 0)], 7.0);
+        assert_eq!(arr.sum(), 7.0);
+        Ok(())
+    }
+
+    #[test]
+    fn gc_file_chromosome_end_window_keeps_clamped_fetch_halo() -> Result<()> {
+        // Manual derivation:
+        // - The BAM and reference chromosome both end at 1022.
+        // - The one unpaired fragment spans [961,1022), touching chromosome end and overlapping
+        //   the BED window [1010,1022).
+        // - Fetch narrowing must clamp the right halo to chrom_len=1022 while still retaining the
+        //   full 61 bp fragment needed for GC correction.
+        // - The reference interval [961,1022) is all A in `late_origin_gc_reference_sequence()`,
+        //   so the fragment lands in the low-GC bin with weight 2.0.
+        let bam = bam_from_specs(
+            vec![("chr1".to_string(), 1_022)],
+            Vec::new(),
+            vec![ReadSpec {
+                tid: 0,
+                pos: 961,
+                cigar: vec![('M', 61)],
+                seq: vec![b'A'; 61],
+                qual: 40,
+                is_reverse: false,
+                mapq: 60,
+                flags: 0,
+                mate_tid: None,
+                mate_pos: None,
+                insert_size: 0,
+            }],
+            "lengths_chrom_end_gc_fetch_halo",
+        )?;
+        let reference = twobit_from_sequences(
+            "lengths_chrom_end_gc_fetch_halo_ref",
+            vec![("chr1".to_string(), late_origin_gc_reference_sequence())],
+        )?;
+        let out_dir = TempDir::new()?;
+        let bed_path = out_dir.path().join("right_end_window.bed");
+        let gc_path = out_dir.path().join("two_bin_gc_package.npz");
+        write_bed(&bed_path, &[("chr1", 1010, 1022, "right_end")])?;
+        write_two_bin_gc_package(&gc_path, 61, 2.0, 7.0)?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: Some(bed_path),
+            by_grouped_bed: None,
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Any,
+        });
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            neutralize_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(reference.path.clone()));
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        {
+            let frag = cfg.fragment_lengths_mut();
+            frag.min_fragment_length = 61;
+            frag.max_fragment_length = 61;
+        }
+
+        run(&cfg)?;
+        let arr: Array2<f64> = read_npy(out_dir.path().join("length_counts.npy"))?;
+
+        assert_eq!(arr.shape(), &[1, 1]);
+        assert_eq!(arr[(0, 0)], 2.0);
         assert_eq!(arr.sum(), 2.0);
         Ok(())
     }
