@@ -308,11 +308,16 @@ cfdna fcoverage \
   --output-dir <sample_directory>/coverage \
   --output-prefix <sample_id> \
   --n-threads 12 \  
-  --blacklist <path>/hg38-blacklist.v2.bed \
+  --blacklist <path>/hg38-blacklist.v2.bed
+```
+Choose any relevant options below. These are *non-exhaustive examples* and none of them are required. See `--help` for more details.
 
+```bash
   # OPTIONS:
 
-  # Use windowing:
+  # Use windowing 
+  # Choose max. one windowing type and action. 
+  # Default: one global window with positional coverage.
   # 1) Average per 1Mb positions
   --by-size 1000000 \
   --per-window 'average' \
@@ -330,7 +335,7 @@ cfdna fcoverage \
 
   # Count each fragment with total mass ~1 across its countable bases
   --normalize-by-length
-  # Same but rescale outputs to the global mean coverage level
+  # OR same but rescale outputs to the global mean coverage level
   --normalize-by-length=restore-mean
 
 ```
@@ -352,8 +357,11 @@ cfdna ends \
   --blacklist <path>/<another_blacklist>.bed \
   --ref-2bit <path>/hg38.2bit \
   --k-inside 2 \
-  --k-outside 2 \
+  --k-outside 2
+```
+Choose any relevant options below. These are *non-exhaustive examples* and none of them are required. See `--help` for more details.
 
+```bash
   # OPTIONS:
 
   # Get inside-bases from the reference instead of the read
@@ -366,7 +374,9 @@ cfdna ends \
   # NOTE: Only recommended for `--k-inside` extraction with `--k-outside 0`
   --clip-strategy 'raw-aligned-boundary' \
 
-  # Use windowing:
+  # Use windowing
+  # Choose max. one windowing type 
+  # Default: one global window
   # 1) Separate counts per 1Mb positions
   --by-size 1000000 \
   # 2) Per window in a bed file
@@ -394,14 +404,20 @@ cfdna lengths \
   --output-prefix <sample_id> \
   --n-threads 12 \
   --blacklist <path>/hg38-blacklist.v2.bed \
-  --blacklist <path>/<another_blacklist>.bed \
+  --blacklist <path>/<another_blacklist>.bed
+```
 
+Choose any relevant options below. These are *non-exhaustive examples* and none of them are required. See `--help` for more details.
+
+```bash
   # OPTIONS:
 
   # Adjust lengths to indels
   --indel-mode 'adjust' \
 
-  # Use windowing:
+  # Use windowing
+  # Choose max. one windowing type 
+  # Default: one global window
   # 1) Separate counts per 1Mb positions
   --by-size 1000000 \
   # 2) Per window in a bed file
@@ -431,8 +447,12 @@ cfdna midpoints \
   --n-threads 12 \
   --intervals <fixed_size_intervals>.tsv \
   --blacklist <path>/hg38-blacklist.v2.bed \
-  --blacklist <path>/<another_blacklist>.bed \
+  --blacklist <path>/<another_blacklist>.bed
+```
 
+Choose any relevant options below. These are *non-exhaustive examples* and none of them are required. See `--help` for more details.
+
+```bash
   # OPTIONS:
 
   # Count in fragment length bins (last end is exclusive)
