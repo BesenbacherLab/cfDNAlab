@@ -1,7 +1,8 @@
 use super::{
-    ApplyGCArgFileOnly, ApplyGCArgs, FragmentLengthArgs, MAX_SUPPORTED_FRAGMENT_LENGTH,
-    parse_length_bins,
+    ApplyGCArgFileOnly, ApplyGCArgs, ChromosomeArgs, ContigSource, FragmentLengthArgs,
+    MAX_SUPPORTED_FRAGMENT_LENGTH, parse_length_bins,
 };
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[test]
@@ -93,6 +94,42 @@ fn parse_length_bins_rejects_range_past_max_supported_fragment_length() {
             "length-bins end ({invalid_end}) must be <= max fragment length + 1 ({})",
             MAX_SUPPORTED_FRAGMENT_LENGTH + 1
         )),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn resolve_chromosomes_all_uses_contig_source_order() {
+    let mut chrom_sizes = tempfile::NamedTempFile::new().unwrap();
+    writeln!(chrom_sizes, "chrB\t20").unwrap();
+    writeln!(chrom_sizes, "chrA\t10").unwrap();
+
+    let args = ChromosomeArgs {
+        chromosomes: Some(vec!["all".to_string()]),
+        chromosomes_file: None,
+    };
+
+    let chromosomes = args
+        .resolve_chromosomes(Some(ContigSource::chrom_sizes(chrom_sizes.path())))
+        .expect("all should resolve from the provided contig source");
+
+    assert_eq!(chromosomes, vec!["chrB", "chrA"]);
+}
+
+#[test]
+fn resolve_chromosomes_all_without_contig_source_fails() {
+    let args = ChromosomeArgs {
+        chromosomes: Some(vec!["all".to_string()]),
+        chromosomes_file: None,
+    };
+
+    let error = args
+        .resolve_chromosomes(None)
+        .expect_err("all should require a contig source");
+    let message = error.to_string();
+
+    assert!(
+        message.contains("`--chromosomes all` requires a contig source"),
         "unexpected error: {message}"
     );
 }

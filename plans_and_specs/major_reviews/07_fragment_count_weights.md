@@ -6,15 +6,13 @@ Scope: `src/commands/fragment_count_weights/*`, the shared smoothing-weight impl
 
 Shared findings that affect this command:
 
-- G-011 in `00_shared_package_notes.md`: scaling-factor TSV metadata is too thin for safe reuse.
-- G-012 in `00_shared_package_notes.md`: short final stride bins are length-weighted only in the numerator.
+- No active shared correctness findings from `00_shared_package_notes.md`; remaining items below are command-specific.
 
 ## Release triage
 
 Pre-release correctness/safety:
 
-- G-012: short final stride bins distort edge scaling factors.
-- G-011: scaling-factor TSVs need enough metadata for safe reuse.
+- None currently active.
 
 Pre-release docs/schema polish:
 
@@ -31,11 +29,10 @@ Impact: the file name says `fragment_counts`, but the primary numeric columns re
 Recommended fix:
 
 - Rename the shared columns to neutral names like `average_pos_support` and `average_overlapping_pos_support`, or emit command-specific column names while keeping `scaling_factor` stable.
-- Add source metadata as part of G-011 so downstream tools do not need to infer the smoothing source from filenames or column wording.
 - Update the CLI smoke and parsing tests to pin the intended fragment-count schema.
 
 ## Existing Coverage Notes
 
 The command already has a basic integration check that it writes one stride row per chromosome span ([test_normalize_genome_command.rs](../../tests/test_normalize_genome_command.rs#L260-L290)), an identity-smoothing comparison proving fragment-count mode differs from coverage mode for mixed fragment lengths ([test_normalize_genome_command.rs](../../tests/test_normalize_genome_command.rs#L343-L480)), a CLI smoke test for the output path, metadata line, header, and row count ([test_cli_smoke.rs](../../tests/test_cli_smoke.rs#L319-L383)), and a helper test proving the shared builder uses `LengthNormalizationMode::UnitMass` for fragment-count weights ([coverage_weights_tests.rs](../../src/commands/coverage_weights/coverage_weights_tests.rs#L395-L416)).
 
-The important missing coverage from this review is fragment-count expected values with real smoothing (`bin_size > stride`), short-final-bin edge behavior from G-012, richer scaling metadata from G-011, and the intended fragment-count output terminology.
+The important missing coverage from this review is fragment-count expected values with real smoothing (`bin_size > stride`) and the intended fragment-count output terminology.

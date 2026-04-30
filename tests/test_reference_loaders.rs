@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
+use cfdnalab::commands::cli_common::{ChromosomeArgs, ContigSource};
 use cfdnalab::shared::reference::{
-    load_chrom_sizes, read_seq, read_seq_in_range, twobit_contig_lengths,
+    load_chrom_sizes, read_seq, read_seq_in_range, twobit_contig_lengths, twobit_contig_names,
 };
 use std::io::{BufWriter, Write};
 use tempfile::NamedTempFile;
@@ -116,6 +117,32 @@ fn twobit_contig_lengths_filters_requested_contigs() -> Result<()> {
     assert_eq!(lengths.get("chr1"), Some(&10));
     assert!(!lengths.contains_key("chr2"));
     assert!(!lengths.contains_key("chr3"));
+    Ok(())
+}
+
+#[test]
+fn twobit_contig_names_preserves_reference_order() -> Result<()> {
+    // Human verification status: unverified
+    let twobit = write_twobit(">chrB\nACGT\n>chrA\nTTAA\n>chrTiny\nCC\n")?;
+
+    let names = twobit_contig_names(twobit.path())?;
+
+    assert_eq!(names, vec!["chrB", "chrA", "chrTiny"]);
+    Ok(())
+}
+
+#[test]
+fn chromosome_args_all_resolves_from_twobit_source_order() -> Result<()> {
+    // Human verification status: unverified
+    let twobit = write_twobit(">chrB\nACGT\n>chrA\nTTAA\n")?;
+    let args = ChromosomeArgs {
+        chromosomes: Some(vec!["all".to_string()]),
+        chromosomes_file: None,
+    };
+
+    let names = args.resolve_chromosomes(Some(ContigSource::ref_2bit(twobit.path())))?;
+
+    assert_eq!(names, vec!["chrB", "chrA"]);
     Ok(())
 }
 

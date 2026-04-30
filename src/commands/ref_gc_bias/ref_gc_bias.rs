@@ -72,7 +72,9 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     let start_time = Instant::now();
     opt.fragment_lengths.validate()?;
     let prefix = opt.output_prefix.trim();
-    let chromosomes = opt.chromosomes.resolve_chromosomes(None)?;
+    let chromosomes = opt
+        .chromosomes
+        .resolve_chromosomes(Some(ContigSource::ref_2bit(&opt.ref_genome.ref_2bit)))?;
     let window_opt = opt.windows.resolve_windows();
     opt.check_smoothing_settings()?;
 

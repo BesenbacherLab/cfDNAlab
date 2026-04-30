@@ -1,6 +1,6 @@
 use crate::{
     commands::{
-        cli_common::{ensure_output_dir, load_blacklist_map},
+        cli_common::{ContigSource, ensure_output_dir, load_blacklist_map},
         frag_to_bam::config::FragToBamConfig,
     },
     shared::{
@@ -126,20 +126,9 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
     let (chrom_sizes_order, chrom_sizes) = load_chrom_sizes_with_order(&opt.chrom_sizes)
         .context("Loading chromosome sizes for BAM header")?;
 
-    let chromosomes = {
-        let want_all = opt
-            .chromosomes
-            .chromosomes
-            .as_ref()
-            .map(|chrs| chrs.len() == 1 && chrs[0].eq_ignore_ascii_case("all"))
-            .unwrap_or(false);
-
-        if want_all {
-            chrom_sizes_order.clone()
-        } else {
-            opt.chromosomes.resolve_chromosomes(None)?
-        }
-    };
+    let chromosomes = opt
+        .chromosomes
+        .resolve_chromosomes(Some(ContigSource::chrom_sizes(&opt.chrom_sizes)))?;
 
     if chromosomes.is_empty() {
         bail!("No chromosomes configured to read");

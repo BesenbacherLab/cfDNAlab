@@ -15,24 +15,12 @@ Implemented findings removed from active tracking:
 - G-007: plain BED modes need a shared no-surviving-windows guard.
 - G-008: feature-gated QC plots are default command side effects.
 - G-010: GC correction packages cannot identify the sample or inputs they were built from.
+- G-011: scaling-factor TSV compatibility metadata is minimal but sufficient for first release.
+- G-012: short final stride bins are length-weighted only in the numerator.
 - G-013: smoothing-weight docs claim the inverted scaling factors have mean 1.0.
 - G-014: smoothing-weight TSV writes do not explicitly flush the final writer.
 - G-015: all-zero smoothing runs fail with a misleading normalization error.
 - G-016: smoothing-weight commands cannot match `fcoverage --ignore-gap` segmentation.
-
-## Pre-release correctness and release-safety
-
-### G-011 - Medium - Scaling-factor TSV metadata is too thin for safe reuse
-
-The smoothing-weight writer emits only one metadata comment, `# gc_mode=...`, before the scaling TSV header ([coverage_weights.rs](../../src/commands/coverage_weights/coverage_weights.rs#L149-L163)). The downstream loader models only that GC mode in `ScalingFactorsMetadata` ([scale_genome.rs](../../src/shared/scale_genome.rs#L47-L55)), ignores every other metadata key ([scale_genome.rs](../../src/shared/scale_genome.rs#L502-L530)), and downstream command setup checks only GC-mode compatibility before using the map ([cli_common.rs](../../src/commands/cli_common.rs#L987-L1004), [scale_genome.rs](../../src/shared/scale_genome.rs#L546-L587)).
-
-Impact: downstream commands cannot detect a scaling TSV made from the wrong BAM, wrong smoothing source (`coverage-weights` vs `fragment-count-weights`), chromosome set, bin size, stride, fragment-length range, MAPQ threshold, pairing mode, blacklist set, reference, GC source/package, or cfDNAlab version. The README tells users to build the factors from the same BAM, but the artifact itself cannot prove or even summarize that provenance.
-
-Recommended fix:
-
-- Add machine-readable metadata comments, preferably one JSON line, with at least source command, BAM identity/fingerprint, contigs/chromosome selection, `bin_size`, `stride`, fragment-length range, MAPQ/proper-pair/unpaired settings, blacklist provenance, GC mode and GC source identity, reference identity when relevant, and cfDNAlab version.
-- Have `load_scaling_factors_tsv()` parse and expose the metadata rather than ignoring all non-`gc_mode` keys.
-- Decide which mismatches should be hard errors versus warnings. Source type, BAM identity when available, contig identity, and GC/source incompatibilities are the highest-value checks.
 
 ## Pre-release docs/API polish
 

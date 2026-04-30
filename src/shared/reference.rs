@@ -57,6 +57,14 @@ pub fn twobit_contig_lengths<P: AsRef<Path>>(
     Ok(name_to_size)
 }
 
+/// Return contig names from a .2bit file in reference order.
+pub fn twobit_contig_names<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
+    let path = path.as_ref();
+    let tb =
+        TwoBitFile::open(path).with_context(|| format!("opening 2bit reference {:?}", path))?;
+    Ok(tb.chrom_names())
+}
+
 /// Compute a stable signature from 2bit contig names and lengths.
 ///
 /// GC correction packages depend on the reference contig set used when they were built.

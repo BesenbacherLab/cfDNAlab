@@ -6,15 +6,13 @@ Scope: `src/commands/coverage_weights/*`, the internal `fcoverage` configuration
 
 Shared findings that affect this command:
 
-- G-011 in `00_shared_package_notes.md`: scaling-factor TSV metadata is too thin for safe reuse.
-- G-012 in `00_shared_package_notes.md`: short final stride bins are length-weighted only in the numerator.
+- No active shared correctness findings from `00_shared_package_notes.md`.
 
 ## Release triage
 
 Pre-release correctness/safety:
 
-- G-012: short final stride bins distort edge scaling factors.
-- G-011: scaling-factor TSVs need enough metadata for safe reuse.
+- None currently active.
 
 ## Findings
 
@@ -26,4 +24,4 @@ The command's feature wiring is internally consistent in the current feature mat
 
 The command already has direct coverage for output row ranges and non-zero support behavior ([test_normalize_genome_command.rs](../../tests/test_normalize_genome_command.rs#L208-L258)), contiguous output bins ([test_normalize_genome_command.rs](../../tests/test_normalize_genome_command.rs#L293-L341)), hand-derived smoothing and scaling values for a simple fragment ([test_normalize_genome_command.rs](../../tests/test_normalize_genome_command.rs#L484-L563)), unpaired read-as-fragment behavior ([test_normalize_genome_command.rs](../../tests/test_normalize_genome_command.rs#L565-L640)), bin-size validation ([test_normalize_genome_command.rs](../../tests/test_normalize_genome_command.rs#L642-L689)), support-floor and length-weighted global mean behavior ([test_normalize_genome_command.rs](../../tests/test_normalize_genome_command.rs#L691-L907)), one shared global mean across chromosomes ([test_normalize_genome_command.rs](../../tests/test_normalize_genome_command.rs#L909-L1059)), default MAPQ behavior ([test_normalize_genome_command.rs](../../tests/test_normalize_genome_command.rs#L1061-L1274)), chromosome row ordering ([test_normalize_genome_command.rs](../../tests/test_normalize_genome_command.rs#L1276-L1373)), blacklist masking ([test_normalize_genome_command.rs](../../tests/test_normalize_genome_command.rs#L1375-L1457)), CLI smoke output shape ([test_cli_smoke.rs](../../tests/test_cli_smoke.rs#L253-L317)), and cross-command consumption of a real scaling TSV with GC correction ([test_cross_command_artifact_matrix.rs](../../tests/test_cross_command_artifact_matrix.rs#L96-L147), [test_cross_command_artifact_matrix.rs](../../tests/test_cross_command_artifact_matrix.rs#L240-L450)).
 
-The important missing coverage from this review is standalone feature-matrix compilation, short-final-bin smoothing from G-012, and richer scaling metadata from G-011.
+The important missing coverage from this review is standalone feature-matrix compilation.

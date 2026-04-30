@@ -3,6 +3,7 @@ use crate::shared::bam::{Contigs, bam_contigs_info};
 use crate::shared::blacklist::load_blacklists;
 use crate::shared::interval::Interval;
 use crate::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
+use crate::shared::reference::{load_chrom_sizes_with_order, twobit_contig_names};
 use crate::shared::scale_genome::load_scaling_factors_tsv;
 use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
@@ -509,10 +510,8 @@ pub struct ChromosomeArgs {
     ///
     /// When no chromosomes are specified, it defaults to `chr1..chr22`.
     ///
-    /// Specify `"all"` *as the only string* to use all present chromosomes.
-    /// For BAM-backed commands this uses the BAM header order.
-    /// For commands that read chromosome order from their input,
-    /// this may use the input order or some other order.
+    /// Specify `"all"` *as the only string* to use all chromosomes from the
+    /// command's configured contig source.
     #[cfg_attr(
         feature = "cli", clap(
             long, num_args = 1..,
@@ -535,6 +534,44 @@ pub struct ChromosomeArgs {
     pub chromosomes_file: Option<PathBuf>,
 }
 
+/// Source used to expand `--chromosomes all`.
+#[derive(Debug, Clone, Copy)]
+pub enum ContigSourceKind {
+    Bam,
+    Ref2Bit,
+    ChromSizes,
+}
+
+/// Path and format for the contig source used by chromosome resolution.
+#[derive(Debug, Clone)]
+pub struct ContigSource {
+    pub path: PathBuf,
+    pub kind: ContigSourceKind,
+}
+
+impl ContigSource {
+    pub fn bam(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            kind: ContigSourceKind::Bam,
+        }
+    }
+
+    pub fn ref_2bit(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            kind: ContigSourceKind::Ref2Bit,
+        }
+    }
+
+    pub fn chrom_sizes(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            kind: ContigSourceKind::ChromSizes,
+        }
+    }
+}
+
 impl ChromosomeArgs {
     /// Returns the final chromosome list, in priority order:
     /// 1) from `--chromosomes-file`
@@ -542,7 +579,7 @@ impl ChromosomeArgs {
     /// 3) default `chr1`..`chr22`
     pub fn resolve_chromosomes(
         &self,
-        bam_path: Option<&std::path::Path>,
+        contig_source: Option<ContigSource>,
     ) -> anyhow::Result<Vec<String>> {
         if let Some(file) = &self.chromosomes_file {
             let text: String = std::fs::read_to_string(file)
@@ -556,12 +593,17 @@ impl ChromosomeArgs {
             Ok(list)
         } else if let Some(chrs) = &self.chromosomes {
             if chrs.len() == 1 && chrs[0].eq_ignore_ascii_case("all") {
-                let Some(bam) = bam_path else {
-                    bail!(
-                        "`--chromosomes all` requires `--bam <file>` to read contigs from the BAM header"
-                    );
+                let Some(source) = contig_source else {
+                    bail!("`--chromosomes all` requires a contig source");
                 };
-                return bam_header_contigs(bam);
+                return match source.kind {
+                    ContigSourceKind::Bam => bam_header_contigs(&source.path),
+                    ContigSourceKind::Ref2Bit => twobit_contig_names(&source.path),
+                    ContigSourceKind::ChromSizes => {
+                        let (chromosome_order, _) = load_chrom_sizes_with_order(&source.path)?;
+                        Ok(chromosome_order)
+                    }
+                };
             }
             Ok(chrs.clone())
         } else {
@@ -959,7 +1001,7 @@ pub fn resolve_chromosomes_and_contigs(
     bam_path: &Path,
 ) -> Result<(Vec<String>, Contigs)> {
     let chromosomes = chrom_args
-        .resolve_chromosomes(Some(bam_path))
+        .resolve_chromosomes(Some(ContigSource::bam(bam_path)))
         .context("resolve chromosomes")?;
     let contigs = bam_contigs_info(bam_path, &chromosomes).context("fetch contig metadata")?;
     Ok((chromosomes, contigs))
