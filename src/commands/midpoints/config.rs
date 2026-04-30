@@ -1,7 +1,7 @@
 use crate::{
     commands::cli_common::{
-        ApplyGCArgs, ChromosomeArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs, UnpairedArgs,
-        parse_length_bins,
+        ApplyGCArgs, ChromosomeArgs, IOCArgs, LoggingArgs, MAX_SUPPORTED_FRAGMENT_LENGTH,
+        ScaleGenomeArgs, UnpairedArgs, parse_length_bins,
     },
     shared::blacklist::BlacklistStrategy,
 };
@@ -265,7 +265,7 @@ impl MidpointsConfig {
         if self.length_bins.len() == 1 {
             let raw_spec = self.length_bins[0].trim();
             if raw_spec.contains(':') || raw_spec.contains('-') || raw_spec.contains(',') {
-                let parsed = parse_length_bins(Some(raw_spec), 10, u32::MAX - 1)?;
+                let parsed = parse_length_bins(Some(raw_spec), 10, MAX_SUPPORTED_FRAGMENT_LENGTH)?;
                 return Ok(parsed.to_edges());
             }
         }
@@ -277,6 +277,11 @@ impl MidpointsConfig {
                 .parse::<u32>()
                 .with_context(|| format!("failed parsing length bin edge '{}'", raw_edge))?;
             ensure!(edge >= 10, "length bin edges must be >= 10");
+            ensure!(
+                edge <= MAX_SUPPORTED_FRAGMENT_LENGTH + 1,
+                "length bin edges must be <= {}",
+                MAX_SUPPORTED_FRAGMENT_LENGTH + 1
+            );
             edges.push(edge);
         }
 
@@ -314,4 +319,9 @@ impl MidpointsConfig {
     pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
         self.ref_2bit = ref_2bit;
     }
+}
+
+#[cfg(test)]
+mod tests {
+    include!("config_tests.rs");
 }

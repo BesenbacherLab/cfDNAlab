@@ -1,4 +1,7 @@
-use super::{ApplyGCArgFileOnly, ApplyGCArgs, FragmentLengthArgs};
+use super::{
+    ApplyGCArgFileOnly, ApplyGCArgs, FragmentLengthArgs, MAX_SUPPORTED_FRAGMENT_LENGTH,
+    parse_length_bins,
+};
 use std::path::{Path, PathBuf};
 
 #[test]
@@ -28,6 +31,70 @@ fn fragment_length_args_accepts_inclusive_single_length_range() {
 
     args.validate()
         .expect("single-length fragment range should be valid");
+}
+
+#[test]
+fn fragment_length_args_accepts_max_supported_fragment_length() {
+    let args = FragmentLengthArgs {
+        min_fragment_length: MAX_SUPPORTED_FRAGMENT_LENGTH,
+        max_fragment_length: MAX_SUPPORTED_FRAGMENT_LENGTH,
+    };
+
+    args.validate()
+        .expect("the configured maximum supported fragment length should be valid");
+}
+
+#[test]
+fn fragment_length_args_rejects_above_max_supported_fragment_length() {
+    let too_large = MAX_SUPPORTED_FRAGMENT_LENGTH + 1;
+    let args = FragmentLengthArgs {
+        min_fragment_length: 10,
+        max_fragment_length: too_large,
+    };
+
+    let error = args
+        .validate()
+        .expect_err("fragment lengths above the supported cap should fail");
+    let message = error.to_string();
+
+    assert!(
+        message.contains(&format!(
+            "--max-fragment-length ({too_large}) must be <= {MAX_SUPPORTED_FRAGMENT_LENGTH}"
+        )),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn parse_length_bins_accepts_bin_ending_after_max_supported_fragment_length() {
+    let spec = format!(
+        "{}:{}:1",
+        MAX_SUPPORTED_FRAGMENT_LENGTH,
+        MAX_SUPPORTED_FRAGMENT_LENGTH + 1
+    );
+
+    let bins = parse_length_bins(Some(&spec), 10, MAX_SUPPORTED_FRAGMENT_LENGTH)
+        .expect("the final exclusive edge may be max supported length + 1");
+
+    assert_eq!(bins.to_edges(), vec![MAX_SUPPORTED_FRAGMENT_LENGTH, MAX_SUPPORTED_FRAGMENT_LENGTH + 1]);
+}
+
+#[test]
+fn parse_length_bins_rejects_range_past_max_supported_fragment_length() {
+    let invalid_end = MAX_SUPPORTED_FRAGMENT_LENGTH + 2;
+    let spec = format!("10:{invalid_end}:1");
+
+    let error = parse_length_bins(Some(&spec), 10, MAX_SUPPORTED_FRAGMENT_LENGTH)
+        .expect_err("length-bin ranges beyond the supported cap should fail before expansion");
+    let message = error.to_string();
+
+    assert!(
+        message.contains(&format!(
+            "length-bins end ({invalid_end}) must be <= max fragment length + 1 ({})",
+            MAX_SUPPORTED_FRAGMENT_LENGTH + 1
+        )),
+        "unexpected error: {message}"
+    );
 }
 
 #[test]

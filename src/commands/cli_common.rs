@@ -13,6 +13,9 @@ pub use crate::shared::logging::{LogSpec, LoggingArgs};
 /// Minimum ACGT bases required when estimating GC fraction for sample reads.
 pub const MIN_ACGT_BASES_FOR_GC_FRACTION: u32 = 10;
 
+/// Maximum supported fragment length.
+pub const MAX_SUPPORTED_FRAGMENT_LENGTH: u32 = 100_000;
+
 /// Args for in-/output and core (threads).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone)]
@@ -119,13 +122,13 @@ pub struct FragmentLengthArgs {
     /// Minimum fragment length to include `[integer]`
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "30", value_parser = clap::value_parser!(u32).range(MIN_ACGT_BASES_FOR_GC_FRACTION as i64..), help_heading="Filtering"))]
+        clap(long, default_value = "30", value_parser = clap::value_parser!(u32).range(MIN_ACGT_BASES_FOR_GC_FRACTION as i64..=MAX_SUPPORTED_FRAGMENT_LENGTH as i64), help_heading="Filtering"))]
     pub min_fragment_length: u32,
 
     /// Maximum fragment length to include `[integer]`
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "1000", value_parser = clap::value_parser!(u32).range(MIN_ACGT_BASES_FOR_GC_FRACTION as i64..), help_heading="Filtering"))]
+        clap(long, default_value = "1000", value_parser = clap::value_parser!(u32).range(MIN_ACGT_BASES_FOR_GC_FRACTION as i64..=MAX_SUPPORTED_FRAGMENT_LENGTH as i64), help_heading="Filtering"))]
     pub max_fragment_length: u32,
 }
 
@@ -160,6 +163,12 @@ impl FragmentLengthArgs {
             "--min-fragment-length ({}) must be <= --max-fragment-length ({})",
             self.min_fragment_length,
             self.max_fragment_length
+        );
+        ensure!(
+            self.max_fragment_length <= MAX_SUPPORTED_FRAGMENT_LENGTH,
+            "--max-fragment-length ({}) must be <= {}",
+            self.max_fragment_length,
+            MAX_SUPPORTED_FRAGMENT_LENGTH
         );
 
         Ok(())
@@ -1139,6 +1148,13 @@ pub fn parse_length_bins(
             max_length
         );
     }
+    if max_length > MAX_SUPPORTED_FRAGMENT_LENGTH {
+        bail!(
+            "max fragment length ({}) must be <= {}",
+            max_length,
+            MAX_SUPPORTED_FRAGMENT_LENGTH
+        );
+    }
 
     let bins = if let Some(raw) = raw {
         let raw = raw.trim();
@@ -1159,6 +1175,20 @@ pub fn parse_length_bins(
             }
             if start >= end {
                 bail!("length-bins start must be < end");
+            }
+            if start < min_length {
+                bail!(
+                    "length-bins start ({}) must be >= min fragment length ({})",
+                    start,
+                    min_length
+                );
+            }
+            if end > max_edge {
+                bail!(
+                    "length-bins end ({}) must be <= max fragment length + 1 ({})",
+                    end,
+                    max_edge
+                );
             }
             let mut bins = Vec::new();
             let mut pos = start;
