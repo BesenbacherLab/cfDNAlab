@@ -6,12 +6,23 @@ Scope: `src/commands/midpoints/*`, the CLI dispatch for `midpoints`, and directl
 
 Shared findings that affect this command:
 
-- G-002 in `00_shared_package_notes.md`: README examples are not clean runnable snippets.
-- G-003 in `00_shared_package_notes.md`: tiled temp directories need cleanup guards.
-- G-004 in `00_shared_package_notes.md`: `--gc-file` needs shared fail-fast `--ref-2bit` validation.
-- G-005 in `00_shared_package_notes.md`: shared even-fragment midpoint tie-breaking is not reproducible.
+- G-002 in `00_shared_package_notes.md`: README OPTIONS blocks need clearer alternative-choice labeling.
+
+Post-release performance optimizations that affect this command:
+
 - G-006 in `00_shared_package_notes.md`: sparse-window reference sequence reads happen before no-window pruning.
-- G-008 in `00_shared_package_notes.md`: feature-gated QC plots are default command side effects.
+
+## Release triage
+
+Pre-release semantic/docs:
+
+- G-002: README OPTIONS blocks should keep their current structure but clarify alternative choices.
+- M-005: midpoint blacklist semantics should be either aligned with counted midpoint placement or documented explicitly.
+
+Post-release performance/scalability:
+
+- G-006: sparse-window GC reference pruning.
+- M-001: dense per-tile profile storage can be too large for sparse targeted runs.
 
 ## Findings
 
@@ -26,26 +37,6 @@ Recommended fix:
 - Consider a sparse per-tile accumulator keyed by `(group_idx, length_bin_idx, position)` and reduce sparse triplets into the final dense NPY.
 - If dense output remains the final format, add an upfront memory/disk estimate and fail fast above a practical threshold.
 - At minimum, document the full shape cost in `--length-bins` or command help.
-
-### M-002 - High - Covered by shared sparse-window GC reference finding
-
-The midpoint-specific evidence for this is now tracked in G-006 in `00_shared_package_notes.md` to avoid repeating the same reference-preload issue across every tiled command.
-
-### M-003 - Medium - Length-bin lookup memory is proportional to the maximum edge, not the number of bins
-
-`ProfileGroupsCounts::precompute_length_bin_lookup()` allocates a `Vec<usize>` with length equal to the last length-bin edge ([counting_by_group.rs](../../src/commands/midpoints/counting_by_group.rs#L80-L95)). That means a valid two-edge configuration like `--length-bins 10 10000000` creates one logical bin but a ten-million-entry lookup table for every counter.
-
-Impact: the memory behavior contradicts the help note that memory is linear in the number of bins ([config.rs](../../src/commands/midpoints/config.rs#L84-L98)). A wide single bin can waste large amounts of memory or OOM before any counting benefit appears.
-
-Recommended fix:
-
-- Replace the absolute-length LUT with `partition_point`/binary search over bin edges, or store an offset LUT only for a bounded realistic range.
-- Reject impractically large maximum edges if full-range lookup is kept.
-- Add a config/counting test that covers a wide one-bin range without allocating by max edge.
-
-### M-004 - Medium - Covered by shared default-plot side-effect finding
-
-The midpoint-specific plotting evidence is now tracked in G-008 in `00_shared_package_notes.md` because `lengths` has the same feature-gated default plotting pattern.
 
 ### M-005 - Medium - `--blacklist-strategy midpoint` uses a different even-fragment midpoint than counting
 
@@ -64,4 +55,4 @@ Recommended fix:
 
 The command already has broad integration coverage: length-bin parsing, default MAPQ, paired/unpaired parity, group index ordering, even-length midpoint edge placement, blacklist midpoint behavior, real GC packages, GC tags, GC/scaling multiplication, scaling TSV validation, tile-boundary behavior, chromosome-end fetch narrowing, CLI smoke output, and cross-command BAM/fragment roundtrips are all represented.
 
-The most important midpoint-specific missing tests from this review are memory-shape guardrails for large group/bin configurations, wide length-bin ranges that should not allocate by max edge, and the chosen even-midpoint blacklist semantics if that contract changes. Shared missing coverage for skipped-tile GC reference pruning and explicit plot opt-out behavior is tracked in `00_shared_package_notes.md`.
+The most important midpoint-specific missing tests from this review are memory-shape guardrails for large group/bin configurations and the chosen even-midpoint blacklist semantics if that contract changes. The deferred skipped-tile GC reference pruning optimization is tracked in G-006 in `00_shared_package_notes.md`.

@@ -6,14 +6,28 @@ Scope: `src/commands/lengths/*`, the `lengths` CLI configuration, and directly u
 
 Shared findings that affect this command:
 
-- G-001 in `00_shared_package_notes.md`: shared fragment length ranges can be inverted without a direct error.
-- G-002 in `00_shared_package_notes.md`: README examples are not clean runnable snippets.
-- G-003 in `00_shared_package_notes.md`: tiled temp directories need cleanup guards.
-- G-004 in `00_shared_package_notes.md`: `--gc-file` needs shared fail-fast `--ref-2bit` validation.
-- G-005 in `00_shared_package_notes.md`: `--assign-by midpoint` uses shared non-reproducible even-fragment midpoint tie-breaking.
+- G-002 in `00_shared_package_notes.md`: README OPTIONS blocks need clearer alternative-choice labeling.
+
+Post-release performance optimizations that affect this command:
+
 - G-006 in `00_shared_package_notes.md`: sparse-window reference sequence reads happen before no-window pruning.
-- G-007 in `00_shared_package_notes.md`: ordinary BED modes need a shared no-surviving-windows guard.
-- G-008 in `00_shared_package_notes.md`: feature-gated QC plots are default command side effects.
+
+## Release triage
+
+Pre-release correctness/safety:
+
+- L-001: indel-adjusted output length and aligned fetch span share one max-length setting.
+- L-002: GC length marginalization ignores the requested output length range.
+- L-003: settings sidecar is too thin to interpret the matrix.
+- L-004: BED row reordering should fail loudly if metadata and counts drift apart.
+
+Pre-release docs/API polish:
+
+- G-002: README OPTIONS blocks should keep their current structure but clarify alternative choices.
+
+Post-release performance:
+
+- G-006: sparse-window GC reference pruning.
 
 ## Findings
 
@@ -73,4 +87,4 @@ Recommended fix:
 
 The command already has broad integration coverage: global, fixed-size, ordinary BED, grouped BED, multi-chromosome runs, tile-boundary invariance, unpaired mode, default MAPQ, GC correction, GC weighting modes, scaling factors, blacklist behavior, indel and clip modes, soft-clip filtering, all window assignment modes, grouped metadata, and reducer helper behavior are represented.
 
-The most important lengths-specific missing tests from this review are deletion-adjusted fragments whose aligned span exceeds the configured max adjusted output length, GC marginalization when the package range is broader than the output range, sidecar completeness for indel/clip/grouped outputs, and defensive metadata/count mismatch handling. Shared missing coverage for inverted length ranges, no surviving ordinary BED windows, fail-fast GC reference validation, sparse-window GC reference pruning, deterministic midpoint assignment, and plot opt-out behavior is tracked in `00_shared_package_notes.md`.
+The most important lengths-specific missing tests from this review are deletion-adjusted fragments whose aligned span exceeds the configured max adjusted output length, GC marginalization when the package range is broader than the output range, sidecar completeness for indel/clip/grouped outputs, and defensive metadata/count mismatch handling. The deferred sparse-window GC reference pruning optimization is tracked in G-006 in `00_shared_package_notes.md`.

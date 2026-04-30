@@ -1,5 +1,7 @@
 # G-006 Plan: Origin-Aware GC Prefixes and Safe Reference Pruning
 
+Status: deferred post-release performance optimization. This plan is intentionally not part of the first-release correctness queue unless later evidence shows a correctness bug independent of the pruning/refactor work.
+
 ## Summary
 
 Fix G-006 by making GC prefix arrays carry an explicit mapping between reference coordinates and prefix-array coordinates. Then move reference reads after window/fetch pruning and build prefixes only for the narrowed span.

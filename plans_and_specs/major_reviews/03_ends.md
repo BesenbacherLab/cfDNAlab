@@ -6,19 +6,30 @@ Scope: `src/commands/ends/*`, the `ends` CLI configuration, and directly used sh
 
 Shared findings that affect this command:
 
-- G-001 in `00_shared_package_notes.md`: shared fragment length ranges can be inverted without a direct error.
-- G-002 in `00_shared_package_notes.md`: README examples are not clean runnable snippets.
-- G-003 in `00_shared_package_notes.md`: tiled temp directories need cleanup guards.
-- G-004 in `00_shared_package_notes.md`: `--gc-file` needs shared fail-fast `--ref-2bit` validation.
-- G-005 in `00_shared_package_notes.md`: `--assign-by midpoint` uses shared non-reproducible even-fragment midpoint tie-breaking.
+- G-002 in `00_shared_package_notes.md`: README OPTIONS blocks need clearer alternative-choice labeling.
+
+Post-release performance optimizations that affect this command:
+
 - G-006 in `00_shared_package_notes.md`: sparse-window reference sequence reads happen before no-window pruning.
-- G-007 in `00_shared_package_notes.md`: ordinary BED modes need a shared no-surviving-windows guard.
+
+## Release triage
+
+Pre-release correctness/safety:
+
+- E-002: raw-shifted GC correction uses different geometry for filtering and correction.
+- E-004: settings sidecar omits fields needed to interpret empty sparse motif outputs.
+- E-005: raw-clipping geometry needs a visible contract for blacklist/scaling behavior.
+
+Pre-release docs/API polish:
+
+- G-002: README OPTIONS blocks should keep their current structure but clarify alternative choices.
+
+Post-release performance:
+
+- G-006: sparse-window GC reference pruning.
+- E-003: motif reference preload is full-tile even when BED windowing narrows the BAM fetch.
 
 ## Findings
-
-### E-001 - High - Covered by shared plain-BED empty-window finding
-
-The ends-specific evidence for ordinary `--by-bed` producing no primary sparse output is now tracked in G-007 in `00_shared_package_notes.md`, together with the equivalent `lengths` failure mode.
 
 ### E-002 - High - Raw-shifted GC correction filters by adjusted length but corrects by aligned length
 
@@ -34,7 +45,7 @@ Recommended fix:
 - If aligned GC is intentional, validate that the GC package covers possible aligned lengths after soft-clip adjustment and document the split geometry.
 - Add a focused regression with a soft-clipped raw-shifted fragment, an adjusted length different from the aligned length, and a GC package whose length range exposes the mismatch.
 
-### E-003 - High - Motif reference preload is full-tile even when BED windowing narrows the BAM fetch
+### E-003 - Post-release performance - Motif reference preload is full-tile even when BED windowing narrows the BAM fetch
 
 The GC-prefix part of this issue is now covered by G-006 in `00_shared_package_notes.md`. The ends-specific remaining issue is motif reference preparation: `motif_reference_span_for_tile()` always expands the tile fetch span, not the narrowed fetch span ([motifs.rs](../../src/commands/ends/motifs.rs#L153-L168)), and `build_tile_motif_context()` then reads that whole span and precomputes reference k-mer codes when reference bases are needed ([motifs.rs](../../src/commands/ends/motifs.rs#L239-L261)). The current tests pin this full-tile behavior ([motifs_tests.rs](../../src/commands/ends/motifs_tests.rs#L434-L485)).
 
@@ -73,4 +84,4 @@ Recommended fix:
 
 The command already has broad coverage: read-backed and reference-backed motifs, inside-only and outside motifs, dense and sparse outputs, prefix handling, base-quality filters, unpaired mode, hard/soft clipping strategies, indel policy interactions, fragment and motif blacklisting, grouped BED aggregation, all window assignment modes, raw endpoint tile-boundary behavior, GC-file and GC-tag weighting, scaling factors, grouped metadata, settings formatting, and required-reference checks for motif extraction.
 
-The most important ends-specific missing tests from this review are raw-shifted `--gc-file` with adjusted length different from aligned length, motif reference narrowing for skipped sparse-window tiles, sidecar completeness for zero-observed sparse outputs, and explicit raw-clipping geometry contracts for fragment-level blacklist/scaling behavior. Shared missing coverage for ordinary `--by-bed` with zero surviving windows and GC reference pruning is tracked in `00_shared_package_notes.md`.
+The most important ends-specific missing tests from this review are raw-shifted `--gc-file` with adjusted length different from aligned length, sidecar completeness for zero-observed sparse outputs, and explicit raw-clipping geometry contracts for fragment-level blacklist/scaling behavior. Motif reference narrowing for skipped sparse-window tiles and shared GC reference pruning are deferred performance optimizations tracked here and in G-006 in `00_shared_package_notes.md`.

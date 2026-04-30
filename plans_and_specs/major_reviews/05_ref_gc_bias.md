@@ -6,11 +6,30 @@ Scope: `src/commands/ref_gc_bias/*`, the reference GC package writer/loader boun
 
 Shared findings that affect this command:
 
-- G-001 in `00_shared_package_notes.md`: shared fragment length ranges can be inverted without a direct error.
-- G-002 in `00_shared_package_notes.md`: README examples are not clean runnable snippets.
-- G-006 in `00_shared_package_notes.md`: sparse-window reference sequence reads happen before no-window pruning.
-- G-007 in `00_shared_package_notes.md`: ordinary BED modes need a shared no-surviving-windows guard.
+- G-002 in `00_shared_package_notes.md`: README OPTIONS blocks need clearer alternative-choice labeling.
 - G-009 in `00_shared_package_notes.md`: `--chromosomes all` is BAM-header only, so reference-only commands cannot use it.
+
+Post-release performance optimizations that affect this command:
+
+- G-006 in `00_shared_package_notes.md`: sparse-window reference sequence reads happen before no-window pruning.
+
+## Release triage
+
+Pre-release correctness/safety:
+
+- RGC-001: reject reference packages with no usable sampled counts.
+- RGC-003: add enough reference-package metadata to prevent unsafe reuse.
+
+Pre-release semantic/docs:
+
+- G-002: README OPTIONS blocks should keep their current structure but clarify alternative choices.
+- G-009: decide whether reference-only `--chromosomes all` should work for the first release.
+- RGC-002: document approximate/tile-size-dependent `--n-positions` behavior or make quotas exact.
+- RGC-004: decide whether `--skip-smoothing` should validate unused smoothing parameters.
+
+Post-release performance:
+
+- G-006: sparse-window reference pruning.
 
 ## Findings
 
@@ -20,7 +39,7 @@ The sampling helpers treat "zero requested positions" and "no valid starts exist
 
 `ref-gc-bias` only checks that the global sampling density is not above 1.0 ([ref_gc_bias.rs](../../src/commands/ref_gc_bias/ref_gc_bias.rs#L143-L152)). It then counts tiles, computes `used_start_positions`, but only logs that value after the package has been written ([ref_gc_bias.rs](../../src/commands/ref_gc_bias/ref_gc_bias.rs#L200-L259), [ref_gc_bias.rs](../../src/commands/ref_gc_bias/ref_gc_bias.rs#L323-L350)). If no selected ACGT positions remain, the support threshold becomes zero and every zero-valued bin is considered supported (`value >= threshold`) ([support_masking.rs](../../src/commands/gc_bias/support_masking.rs#L112-L128)).
 
-Impact: configurations such as `--n-positions 0`, all selected contigs shorter than `--max-fragment-length`, sparse sampling rounded to zero per tile, or a fully masked/empty selected reference can produce a plausible `.ref_gc_package.npz` with no usable empirical information. G-007 covers the related empty-BED entry point; this finding is about the post-sampling/post-counting guard the command still needs.
+Impact: configurations such as `--n-positions 0`, all selected contigs shorter than `--max-fragment-length`, sparse sampling rounded to zero per tile, or a fully masked/empty selected reference can produce a plausible `.ref_gc_package.npz` with no usable empirical information. This finding is about the post-sampling/post-counting guard the command still needs.
 
 Recommended fix:
 
@@ -68,4 +87,4 @@ Recommended fix:
 
 The command already has good coverage for written package shapes and scalar metadata, exact distributions, blacklist masking, end offsets, smoothing, interpolation, BED flattening, full-chromosome BED vs global mode, multiple blacklist files, rejection when sampling density exceeds 1.0, and fixed-seed determinism for thread count and identical tile size.
 
-The important missing coverage from this review is zero usable sampled starts, zero covered ACGT positions, tile-size-dependent sampling behavior, `--chromosomes all` on a reference-only command, richer package provenance, inverted fragment ranges for `ref-gc-bias`, and the `skip_smoothing` validation contract.
+The important missing coverage from this review is zero usable sampled starts, zero covered ACGT positions, tile-size-dependent sampling behavior, `--chromosomes all` on a reference-only command, richer package provenance, and the `skip_smoothing` validation contract. The deferred sparse-window reference pruning optimization is tracked in G-006 in `00_shared_package_notes.md`.

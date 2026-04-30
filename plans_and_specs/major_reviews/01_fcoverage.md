@@ -6,11 +6,27 @@ Scope: `src/commands/fcoverage/*`, the CLI dispatch for `fcoverage`, and directl
 
 Shared findings that affect this command:
 
-- G-001 in `00_shared_package_notes.md`: inverted fragment length ranges are not rejected.
-- G-002 in `00_shared_package_notes.md`: README examples are not clean runnable snippets.
-- G-003 in `00_shared_package_notes.md`: tiled temp directories need cleanup guards.
-- G-004 in `00_shared_package_notes.md`: `--gc-file` needs shared fail-fast `--ref-2bit` validation.
+- G-002 in `00_shared_package_notes.md`: README OPTIONS blocks need clearer alternative-choice labeling.
+
+Post-release performance optimizations that affect this command:
+
 - G-006 in `00_shared_package_notes.md`: sparse-window reference sequence reads happen before no-window pruning.
+
+## Release triage
+
+Pre-release correctness/safety:
+
+- F-001: positional output writers discard write errors.
+- F-005: fully masked averages need an intentional scalar-vs-summary contract.
+
+Pre-release docs/API polish:
+
+- G-002: README OPTIONS blocks should keep their current structure but clarify alternative choices.
+- F-006: fix blacklist help for positional outputs.
+
+Post-release performance:
+
+- G-006: sparse-window GC reference pruning.
 
 ## Findings
 
@@ -32,25 +48,6 @@ Recommended fix:
 - Make `visit_runs_in_window()` return `Result<()>`, with a callback returning `Result<()>`.
 - Propagate each `writeln!` with `?`.
 - Add a tiny writer test with a custom failing writer so this cannot regress without needing filesystem tricks.
-
-### F-002 - High - Covered by shared GC validation and temp cleanup findings
-
-This command is affected by G-003 and G-004 in `00_shared_package_notes.md`. The fcoverage-specific evidence is that `run_inner()` reaches temp directory creation before the tile-level `ref_2bit` check, and its cleanup block runs only on the success tail ([fcoverage.rs](../../src/commands/fcoverage/fcoverage.rs#L272-L296), [fcoverage.rs](../../src/commands/fcoverage/fcoverage.rs#L745-L752), [fcoverage.rs](../../src/commands/fcoverage/fcoverage.rs#L780-L784)).
-
-### F-003 - Medium - Covered by shared sparse-window GC reference finding
-
-The fcoverage-specific evidence for this is now tracked in G-006 in `00_shared_package_notes.md` to avoid repeating the same reference-preload issue across every tiled command.
-
-### F-004 - Medium - `--normalize-by-length=off` is accepted even though it is not a documented user mode
-
-`LengthNormalizationMode` derives `clap::ValueEnum`, and the internal default variant `Off` is not skipped ([config.rs](../../src/commands/fcoverage/config.rs#L17-L23)). The CLI argument uses that value enum with `default_value_t = LengthNormalizationMode::Off` and `default_missing_value = "unit-mass"` ([config.rs](../../src/commands/fcoverage/config.rs#L140-L152)). The help text documents only `unit-mass` and `restore-mean` as user-facing modes ([config.rs](../../src/commands/fcoverage/config.rs#L124-L136)).
-
-Impact: users can spell an explicit no-op mode that the docs do not describe. That is not a correctness failure, but it adds avoidable CLI surface area while the package is still pre-public.
-
-Recommended fix:
-
-- Mark `Off` as skipped for clap value parsing, while keeping it as the Rust default.
-- Add a CLI parser regression test that rejects `--normalize-by-length=off` and accepts bare `--normalize-by-length`.
 
 ### F-005 - Medium - Fully masked averages are `0` in average mode but `NaN` in summary-stats mode
 
@@ -76,4 +73,4 @@ Recommended fix:
 
 ## Existing coverage notes
 
-The command already has unusually broad end-to-end coverage in `tests/test_fcoverage_command.rs`, including normalization, restore-mean, gap handling, blacklist masking, tile-boundary invariance, by-size/by-BED/grouped-BED modes, GC file/tag paths, and invalid mode combinations. The most important fcoverage-specific missing tests from this review are writer-error propagation, CLI parser behavior for `--normalize-by-length=off`, and the chosen scalar-average behavior for fully masked windows. Shared missing coverage for early `--gc-file`/`--ref-2bit` validation and sparse-window GC reference pruning is tracked in `00_shared_package_notes.md`.
+The command already has unusually broad end-to-end coverage in `tests/test_fcoverage_command.rs`, including normalization, restore-mean, gap handling, blacklist masking, tile-boundary invariance, by-size/by-BED/grouped-BED modes, GC file/tag paths, and invalid mode combinations. The most important fcoverage-specific missing tests from this review are writer-error propagation and the chosen scalar-average behavior for fully masked windows. The deferred sparse-window GC reference pruning optimization is tracked in G-006 in `00_shared_package_notes.md`.

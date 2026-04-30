@@ -6,10 +6,25 @@ Scope: `src/commands/gc_bias/*`, `gc-bias` CLI configuration, correction-package
 
 Shared findings that affect this command:
 
-- G-003 in `00_shared_package_notes.md`: tiled temp directories need cleanup guards.
-- G-005 in `00_shared_package_notes.md`: `--assign-by midpoint` uses shared non-reproducible even-fragment midpoint tie-breaking.
-- G-008 in `00_shared_package_notes.md`: feature-gated QC plots are default command side effects.
-- G-010 in `00_shared_package_notes.md`: GC correction packages cannot identify the sample or inputs they were built from.
+- No active shared correctness findings from `00_shared_package_notes.md`; remaining items below are command-specific.
+
+## Release triage
+
+Pre-release correctness/safety:
+
+- GB-001: cross-tile spill files can collide or merge incorrectly across chromosomes.
+- GB-002: `--save-intermediates` should respect `--output-prefix`.
+- GB-003: documented clamp contract does not match final package weights.
+- GB-004: written correction matrices should be finite and valid.
+- GB-005: malformed reference GC packages should fail during loading, not after counting.
+
+Pre-release docs/API polish:
+
+- GB-007: CLI help example should be a clean runnable snippet.
+
+Post-release performance:
+
+- GB-006: empty BED tiles still open a BAM reader before skipping.
 
 ## Findings
 
@@ -72,7 +87,7 @@ Recommended fix:
 - Validate the minimum effective length contract that `ref-gc-bias` enforces when it writes packages.
 - Add loader-level regressions for row-count mismatch, inverted length range, and out-of-range end offset.
 
-### GB-006 - Low - Empty BED tiles still open a BAM reader before skipping
+### GB-006 - Post-release performance - Empty BED tiles still open a BAM reader before skipping
 
 The tile worker opens a fresh chromosome reader before preparing the tile-window state ([gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L784-L825)). `prepare_tile_windows()` can identify BED tiles with no candidate windows and return `skip_tile` before reference sequence reads or BAM fetches happen ([windows.rs](../../src/commands/gc_bias/windows.rs#L372-L448)), but the BAM reader has already been opened. The heavier reference sequence read and BAM fetch happen later ([gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L831-L847), [gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L880-L882)).
 

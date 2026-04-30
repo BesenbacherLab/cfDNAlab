@@ -34,6 +34,7 @@ Unreleased commands should be ignored except when released commands depend on th
 - Prefer evidence from current code over comments or old plans.
 - Use source links with line references for every concrete finding.
 - Separate bugs, scientific/semantic risks, performance risks, documentation inconsistencies, and test gaps.
+- Keep active findings triaged into pre-release correctness/safety, pre-release docs/API polish, and post-release performance optimization. Do not leave completed findings in the active queue.
 - Treat backwards compatibility as out of scope unless explicitly requested.
 - Do not run tests during review. Test suggestions should be derived by reading code and existing test coverage.
 
@@ -48,4 +49,3 @@ For each command:
 5. Check fragment/window/blacklist/GC/scaling semantics where relevant.
 6. Check performance bottlenecks that follow from the actual control flow.
 7. Write only new findings into that command's markdown file.
-
