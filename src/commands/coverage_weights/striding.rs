@@ -152,19 +152,20 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
         //             We use weights[2..] = [3,2,1].
         let w_start = half_window.saturating_sub(i - start_i);
 
-        let mut sum_cov = 0.0_f32; // Weighted sum of coverage densities
-        let mut sum_w = 0usize; // Sum of integer weights actually used
+        let mut sum_cov = 0.0_f64; // Weighted sum of coverage densities
+        let mut sum_w = 0.0_f64; // Weighted sum of integer weights actually used
 
         // Sum average_coverage * weight, and the weights
         for j in 0..slice_len {
-            let w = weights[w_start + j];
+            let mut w = weights[w_start + j] as f64;
             // Last stride-bin may be shorter, so weight by length (most == 1.0)
-            let len_ratio = (bin_slice[j].size() as f32) / (stride as f32);
-            sum_cov += bin_slice[j].average_coverage * (w as f32) * len_ratio;
+            let len_ratio = (bin_slice[j].size() as f64) / (stride as f64);
+            w = w * len_ratio;
+            sum_cov += bin_slice[j].average_coverage as f64 * w;
             sum_w += w;
         }
-        bins[i].average_overlap_coverage = if sum_w > 0 {
-            sum_cov / (sum_w as f32)
+        bins[i].average_overlap_coverage = if sum_w > 0.0 {
+            (sum_cov / sum_w) as f32
         } else {
             0.0
         };

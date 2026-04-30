@@ -340,6 +340,60 @@ fn load_stride_bins_from_fcoverage_tsv_rejects_overlap_between_bins() -> Result<
 }
 
 #[test]
+fn fill_triangular_overlap_preserves_constant_support_with_short_final_bin() -> Result<()> {
+    // Arrange:
+    // Four stride bins cover a 35 bp chromosome with stride 10:
+    // - three full bins: [0,10), [10,20), [20,30)
+    // - one short final bin: [30,35)
+    //
+    // Every base has the same support, so every bin has average coverage 4.0.
+    // Smoothing should not change a constant signal: the weighted numerator and
+    // denominator should represent the same in-chromosome bases, including the
+    // half-length final bin.
+    let mut bins = vec![
+        StrideBin {
+            interval: Interval::new(0, 10)?,
+            average_coverage: 4.0,
+            average_overlap_coverage: 0.0,
+            scaling_factor: 0.0,
+        },
+        StrideBin {
+            interval: Interval::new(10, 20)?,
+            average_coverage: 4.0,
+            average_overlap_coverage: 0.0,
+            scaling_factor: 0.0,
+        },
+        StrideBin {
+            interval: Interval::new(20, 30)?,
+            average_coverage: 4.0,
+            average_overlap_coverage: 0.0,
+            scaling_factor: 0.0,
+        },
+        StrideBin {
+            interval: Interval::new(30, 35)?,
+            average_coverage: 4.0,
+            average_overlap_coverage: 0.0,
+            scaling_factor: 0.0,
+        },
+    ];
+
+    // Act
+    fill_triangular_overlap(&mut bins, 30, 10);
+
+    // Assert
+    for bin in &bins {
+        assert!(
+            (bin.average_overlap_coverage - 4.0).abs() <= 1e-6,
+            "constant support should remain 4.0 after smoothing for {:?}, got {}",
+            bin.interval,
+            bin.average_overlap_coverage
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn normalize_average_overlap_by_global_mean_ignores_bins_below_support_floor() -> Result<()> {
     // Arrange
     let mut bins_by_chr = FxHashMap::default();

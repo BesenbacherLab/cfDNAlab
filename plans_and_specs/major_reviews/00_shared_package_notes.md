@@ -22,18 +22,6 @@ Implemented findings removed from active tracking:
 
 ## Pre-release correctness and release-safety
 
-### G-012 - High - Short final stride bins are length-weighted only in the numerator
-
-`fill_triangular_overlap()` accounts for a short final stride bin by multiplying its contribution by `len_ratio = bin_slice[j].size() / stride` in the weighted sum, but it still adds the full integer kernel weight to the denominator ([striding.rs](../../src/commands/coverage_weights/striding.rs#L156-L168)). The command docs describe chromosome-edge kernels as truncated and normalized by the remaining weights, not as padded with missing sequence that behaves like zero support ([config.rs](../../src/commands/coverage_weights/config.rs#L79-L82)).
-
-Impact: when a contig length is not an exact multiple of `--stride`, smoothed support near the right chromosome edge is depressed by the missing part of the final short stride bin. That inflates the reciprocal scaling factors near contig ends in both `coverage-weights` and `fragment-count-weights`. A constant-support genome should remain constant after edge smoothing; with the current denominator, the tail can drift below the interior solely because the final bin is shorter.
-
-Recommended fix:
-
-- Decide the intended contract: length-normalized truncation at contig edges, or zero-padding outside the contig.
-- If truncation is intended, accumulate the denominator using the same length factor as the numerator, for example `sum_w += weight * len_ratio`, or compute the numerator and denominator in base-pair units.
-- Add a helper-level regression with a short final stride bin where every bin has identical average support; the smoothed values should stay identical if edge truncation is the contract.
-
 ### G-011 - Medium - Scaling-factor TSV metadata is too thin for safe reuse
 
 The smoothing-weight writer emits only one metadata comment, `# gc_mode=...`, before the scaling TSV header ([coverage_weights.rs](../../src/commands/coverage_weights/coverage_weights.rs#L149-L163)). The downstream loader models only that GC mode in `ScalingFactorsMetadata` ([scale_genome.rs](../../src/shared/scale_genome.rs#L47-L55)), ignores every other metadata key ([scale_genome.rs](../../src/shared/scale_genome.rs#L502-L530)), and downstream command setup checks only GC-mode compatibility before using the map ([cli_common.rs](../../src/commands/cli_common.rs#L987-L1004), [scale_genome.rs](../../src/shared/scale_genome.rs#L546-L587)).
