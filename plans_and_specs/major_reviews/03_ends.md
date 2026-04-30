@@ -17,7 +17,6 @@ Post-release performance optimizations that affect this command:
 Pre-release correctness/safety:
 
 - E-002: raw-shifted GC correction uses different geometry for filtering and correction.
-- E-004: settings sidecar omits fields needed to interpret empty sparse motif outputs.
 - E-005: raw-clipping geometry needs a visible contract for blacklist/scaling behavior.
 
 Pre-release docs/API polish:
@@ -56,18 +55,6 @@ Recommended fix:
 - Consider narrowing motif reference preload to the reachable assignment/motif span for the tile's relevant windows, while keeping enough padding for outside bases and raw-shifted soft clips.
 - Add regression coverage with a sparse BED where no-window tiles do not request motif reference sequence.
 
-### E-004 - Medium - The settings sidecar omits core interpretation fields
-
-`write_end_settings_json()` says it records motif-definition settings and fragment-length filter basis ([write.rs](../../src/commands/ends/write.rs#L70-L73)), but it currently writes only `source_inside`, `clip_strategy`, `window_assignment`, optional base-quality filters, and optional complement collapse ([write.rs](../../src/commands/ends/write.rs#L88-L109)). It does not write the required motif sizes `k_inside` and `k_outside` ([config.rs](../../src/commands/ends/config.rs#L121-L127)), the fragment length range ([config.rs](../../src/commands/ends/config.rs#L225-L228), [cli_common.rs](../../src/commands/cli_common.rs#L118-L129)), `max_soft_clips`, `indel_filter`, or whether dense all-motif output was requested.
-
-Impact: most non-empty motif label files let users infer motif dimensions, but zero-observed sparse outputs have an empty motif file. In those cases the sidecar is the natural place to recover the run's motif and filtering definition, and it is currently incomplete.
-
-Recommended fix:
-
-- Serialize the sidecar through a small serde struct instead of manual string assembly.
-- Include at least `k_inside`, `k_outside`, `min_fragment_length`, `max_fragment_length`, `clip_strategy`, `max_soft_clips`, `source_inside`, `indel_filter`, `window_assignment`, `all_motifs`, and configured base-quality filters.
-- Add a regression for a sparse run with zero observed motifs that still writes enough settings to interpret the empty result.
-
 ### E-005 - Medium - Raw-clipping geometry is split across counting features without a visible contract
 
 The raw-shifted help says the shifted boundary is used for outside-base lookup, window assignment, and motif-level blacklist validation ([config_structs.rs](../../src/commands/ends/config_structs.rs#L315-L321)). In the implementation, window queries use `assignment_interval` ([ends.rs](../../src/commands/ends/ends.rs#L791-L805)), but full-fragment blacklist filtering uses the aligned interval ([ends.rs](../../src/commands/ends/ends.rs#L775-L780)), scaling-bin lookup uses the aligned interval ([ends.rs](../../src/commands/ends/ends.rs#L871-L879)), and non-overlap scaling also computes fragment scaling over the aligned interval ([ends.rs](../../src/commands/ends/ends.rs#L899-L914)).
@@ -84,4 +71,4 @@ Recommended fix:
 
 The command already has broad coverage: read-backed and reference-backed motifs, inside-only and outside motifs, dense and sparse outputs, prefix handling, base-quality filters, unpaired mode, hard/soft clipping strategies, indel policy interactions, fragment and motif blacklisting, grouped BED aggregation, all window assignment modes, raw endpoint tile-boundary behavior, GC-file and GC-tag weighting, scaling factors, grouped metadata, settings formatting, and required-reference checks for motif extraction.
 
-The most important ends-specific missing tests from this review are raw-shifted `--gc-file` with adjusted length different from aligned length, sidecar completeness for zero-observed sparse outputs, and explicit raw-clipping geometry contracts for fragment-level blacklist/scaling behavior. Motif reference narrowing for skipped sparse-window tiles and shared GC reference pruning are deferred performance optimizations tracked here and in G-006 in `00_shared_package_notes.md`.
+The most important ends-specific missing tests from this review are raw-shifted `--gc-file` with adjusted length different from aligned length and explicit raw-clipping geometry contracts for fragment-level blacklist/scaling behavior. Motif reference narrowing for skipped sparse-window tiles and shared GC reference pruning are deferred performance optimizations tracked here and in G-006 in `00_shared_package_notes.md`.

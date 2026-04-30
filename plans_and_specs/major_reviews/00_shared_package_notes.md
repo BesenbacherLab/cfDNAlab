@@ -42,18 +42,6 @@ Recommended fix:
 - Add one explicit sentence before the OPTIONS blocks: choose one option from each alternative group; do not run every OPTIONS line together.
 - Where alternatives are shown, label them as alternatives in prose or comments rather than implying they are cumulative arguments.
 
-### G-009 - Low - `--chromosomes all` is BAM-header only, so reference-only commands cannot use it
-
-The shared chromosome resolver treats `--chromosomes all` as "read contigs from the BAM header" and errors when no BAM path is available ([cli_common.rs](../../src/commands/cli_common.rs#L504-L525)). `ref-gc-bias` is reference-only and calls that resolver with `None` before opening the `.2bit` file ([ref_gc_bias.rs](../../src/commands/ref_gc_bias/ref_gc_bias.rs#L70-L75)), even though the reference helper can read `.2bit` contig names and sizes ([reference.rs](../../src/shared/reference.rs#L38-L51)).
-
-Impact: the default remains `chr1` through `chr22`, but users cannot ask `ref-gc-bias` to use all contigs in a reference with the same `--chromosomes all` spelling used by BAM-backed commands. They must know and provide an explicit chromosome list or file, which is easy to miss for non-human references or assemblies with non-autosomal contigs.
-
-Recommended fix:
-
-- Split chromosome resolution by source type, or add a resolver that accepts a contig-provider callback.
-- For reference-only commands, make `all` resolve from the reference file rather than requiring a BAM.
-- Add one regression for `ref-gc-bias --chromosomes all` on a tiny multi-contig `.2bit`.
-
 ## Post-release performance optimizations
 
 ### G-006 - Sparse-window reference sequence reads happen before no-window pruning

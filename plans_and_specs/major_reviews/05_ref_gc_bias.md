@@ -7,7 +7,6 @@ Scope: `src/commands/ref_gc_bias/*`, the reference GC package writer/loader boun
 Shared findings that affect this command:
 
 - G-002 in `00_shared_package_notes.md`: README OPTIONS blocks need clearer alternative-choice labeling.
-- G-009 in `00_shared_package_notes.md`: `--chromosomes all` is BAM-header only, so reference-only commands cannot use it.
 
 Post-release performance optimizations that affect this command:
 
@@ -23,7 +22,6 @@ Pre-release correctness/safety:
 Pre-release semantic/docs:
 
 - G-002: README OPTIONS blocks should keep their current structure but clarify alternative choices.
-- G-009: decide whether reference-only `--chromosomes all` should work for the first release.
 - RGC-002: document approximate/tile-size-dependent `--n-positions` behavior or make quotas exact.
 - RGC-004: decide whether `--skip-smoothing` should validate unused smoothing parameters.
 

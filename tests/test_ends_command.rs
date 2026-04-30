@@ -919,14 +919,25 @@ fn parse_group_index_tsv(text: &str) -> Vec<(u64, String)> {
 }
 
 fn expected_settings_json(
+    k_inside: usize,
+    k_outside: usize,
     source_inside: &str,
     clip_strategy: &str,
     window_assignment: &str,
+    indel_filter: &str,
+    effective_indel_filter: &str,
 ) -> Value {
     let mut expected = Map::new();
+    expected.insert("k_inside".to_string(), json!(k_inside));
+    expected.insert("k_outside".to_string(), json!(k_outside));
     expected.insert("source_inside".to_string(), json!(source_inside));
     expected.insert("clip_strategy".to_string(), json!(clip_strategy));
     expected.insert("window_assignment".to_string(), json!(window_assignment));
+    expected.insert("indel_filter".to_string(), json!(indel_filter));
+    expected.insert(
+        "effective_indel_filter".to_string(),
+        json!(effective_indel_filter),
+    );
     #[cfg(feature = "ends_experimental")]
     expected.insert("collapse_complement".to_string(), json!(false));
     Value::Object(expected)
@@ -3029,7 +3040,15 @@ fn sparse_output_is_the_default_when_all_motifs_is_disabled() -> Result<()> {
     assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 1.0);
     assert_eq!(
         parse_json(&settings),
-        expected_settings_json("reference", "aligned", "endpoint")
+        expected_settings_json(
+            1,
+            0,
+            "reference",
+            "aligned",
+            "endpoint",
+            "auto",
+            "skip-affected-end",
+        )
     );
     Ok(())
 }
@@ -3060,7 +3079,15 @@ fn dense_all_motifs_output_still_uses_the_same_settings_sidecar() -> Result<()> 
     assert!(!sparse_output_paths(out_dir.path()).0.exists());
     assert_eq!(
         parse_json(&settings),
-        expected_settings_json("reference", "aligned", "endpoint")
+        expected_settings_json(
+            1,
+            0,
+            "reference",
+            "aligned",
+            "endpoint",
+            "auto",
+            "skip-affected-end",
+        )
     );
     Ok(())
 }
@@ -5671,6 +5698,7 @@ fn settings_json_keeps_the_runtime_fields_needed_to_interpret_output() -> Result
     // - source_inside = read
     // - clip_strategy = skip
     // - window_assignment = endpoint
+    // - indel filter: skip-affected-end
     // - collapse_complement = false
     let bam = single_read_bam(
         "ends_settings_semantics",
@@ -5686,6 +5714,7 @@ fn settings_json_keeps_the_runtime_fields_needed_to_interpret_output() -> Result
     });
     cfg.clip.clip_strategy = ClipStrategy::Skip;
     cfg.source_inside = KmerSource::Read;
+    cfg.set_indel_filter(IndelMotifFilterPolicy::SkipAffectedEnd);
     cfg.all_motifs = false;
     cfg.set_window_assignment(AssignMotifToWindowArgs {
         assign_by: WindowMotifAssigner::Endpoint,
@@ -5703,7 +5732,15 @@ fn settings_json_keeps_the_runtime_fields_needed_to_interpret_output() -> Result
     // Assert
     assert_eq!(
         parse_json(&settings),
-        expected_settings_json("read", "skip", "endpoint")
+        expected_settings_json(
+            1,
+            0,
+            "read",
+            "skip",
+            "endpoint",
+            "skip-affected-end",
+            "skip-affected-end",
+        )
     );
     Ok(())
 }
@@ -5741,7 +5778,7 @@ fn settings_json_formats_proportion_window_assignment_stably() -> Result<()> {
     // Assert: exact sidecar contract, not just substring presence.
     assert_eq!(
         parse_json(&settings),
-        expected_settings_json("read", "aligned", "proportion=0.125")
+        expected_settings_json(1, 0, "read", "aligned", "proportion=0.125", "auto", "allow",)
     );
     Ok(())
 }
@@ -6953,7 +6990,15 @@ fn settings_json_ignores_fragment_length_bounds_but_keeps_motif_definition_field
     // Assert
     assert_eq!(
         parse_json(&settings),
-        expected_settings_json("reference", "aligned", "endpoint")
+        expected_settings_json(
+            1,
+            0,
+            "reference",
+            "aligned",
+            "endpoint",
+            "auto",
+            "skip-affected-end",
+        )
     );
     Ok(())
 }

@@ -4,6 +4,7 @@ use crate::{
         config_structs::{BaseQualityFilter, ClipStrategy, KmerSource, WindowMotifAssigner},
     },
     shared::{
+        indel_mode::IndelMotifFilterPolicy,
         io::{create_text_writer, dot_join},
         kmers::write::write_category_sparse_with_paths,
     },
@@ -68,9 +69,9 @@ pub fn write_end_motif_outputs(
 
 /// Write the small settings sidecar needed to interpret end-motif outputs.
 ///
-/// This records the motif-definition settings and fragment-length filter basis,
-/// but intentionally leaves out output-format details that are already obvious
-/// from the files written next to it.
+/// This records the motif-definition settings needed to interpret the motif
+/// labels, but intentionally leaves out output-format details that are already
+/// obvious from the files written next to it.
 ///
 /// Parameters
 /// ----------
@@ -90,6 +91,8 @@ pub fn write_end_settings_json(output_dir: &Path, prefix: &str, opt: &EndsConfig
     let mut settings_writer = create_text_writer(&settings_path)
         .with_context(|| format!("create {}", settings_path.display()))?;
     let settings_entries: Vec<String> = [
+        format!("  \"k_inside\": {}", opt.k_inside),
+        format!("  \"k_outside\": {}", opt.k_outside),
         format!(
             "  \"source_inside\": \"{}\"",
             kmer_source_name(opt.source_inside)
@@ -101,6 +104,14 @@ pub fn write_end_settings_json(output_dir: &Path, prefix: &str, opt: &EndsConfig
         format!(
             "  \"window_assignment\": \"{}\"",
             window_assigner_name(opt.window_assignment.assign_by)
+        ),
+        format!(
+            "  \"indel_filter\": \"{}\"",
+            indel_filter_name(opt.indel_filter)
+        ),
+        format!(
+            "  \"effective_indel_filter\": \"{}\"",
+            effective_indel_filter_name(opt.indel_filter, opt.source_inside)
         ),
     ]
     .into_iter()
@@ -253,6 +264,56 @@ fn window_assigner_name(assigner: WindowMotifAssigner) -> String {
         WindowMotifAssigner::Proportion(value) => {
             format!("proportion={}", format_proportion_threshold(value))
         }
+    }
+}
+
+/// Convert the indel-filter policy to its JSON-sidecar string form.
+///
+/// Parameters
+/// ----------
+/// - `policy`:
+///   Indel-handling policy for end motifs
+///
+/// Returns
+/// -------
+/// - `&'static str`:
+///   Stable sidecar string for that setting
+fn indel_filter_name(policy: IndelMotifFilterPolicy) -> &'static str {
+    match policy {
+        IndelMotifFilterPolicy::Auto => "auto",
+        IndelMotifFilterPolicy::SkipAffectedEnd => "skip-affected-end",
+        IndelMotifFilterPolicy::SkipAffectedFragment => "skip-affected-fragment",
+    }
+}
+
+/// Resolve the indel-filter policy that is actually applied during motif extraction.
+///
+/// The CLI-level `auto` value depends on where inside-fragment bases come from.
+/// Read-backed motifs keep indel-affected ends, while reference-backed motifs
+/// skip only the affected end.
+///
+/// Parameters
+/// ----------
+/// - `policy`:
+///   Configured indel-handling policy for end motifs
+/// - `source_inside`:
+///   Source for inside-fragment motif bases
+///
+/// Returns
+/// -------
+/// - `&'static str`:
+///   Effective sidecar string for that run
+fn effective_indel_filter_name(
+    policy: IndelMotifFilterPolicy,
+    source_inside: KmerSource,
+) -> &'static str {
+    match policy {
+        IndelMotifFilterPolicy::Auto => match source_inside {
+            KmerSource::Read => "allow",
+            KmerSource::Reference => "skip-affected-end",
+        },
+        IndelMotifFilterPolicy::SkipAffectedEnd => "skip-affected-end",
+        IndelMotifFilterPolicy::SkipAffectedFragment => "skip-affected-fragment",
     }
 }
 
