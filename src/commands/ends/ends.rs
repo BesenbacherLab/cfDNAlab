@@ -64,7 +64,15 @@ use anyhow::{Context, Result, bail, ensure};
 use fxhash::FxHashMap;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{convert::TryInto, path::Path, sync::Arc, time::Instant};
+use std::{
+    convert::TryInto,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
+};
 use tracing::{info, warn};
 
 const COMMAND_TARGET: &str = "ends";
@@ -258,6 +266,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         tile_span_right_halo,
     ));
     let tile_window_spans_for_threads = tile_window_spans.clone();
+    let raw_shifted_gc_length_warning_issued = Arc::new(AtomicBool::new(false));
     // Window rows are global across chromosomes. For fixed-size windows we therefore need a
     // per-chromosome row offset to turn chromosome-local overlap indices into global output rows.
     // BED windows already carry their own original indices, so their offsets stay at zero.
@@ -323,6 +332,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                 blacklist_chr,
                 scaling_chr,
                 gc_corrector.clone(),
+                raw_shifted_gc_length_warning_issued.clone(),
                 temp_dir,
                 counts_prefix,
                 inside_spec.as_ref(),
@@ -554,6 +564,8 @@ fn record_counted_fragment_stats(counter: &mut EndsCounters, counted_end_flags: 
 ///   Genomic scaling bins for this chromosome
 /// - `gc_corrector_opt`:
 ///   Optional GC corrector shared from the outer runner
+/// - `raw_shifted_gc_length_warning_issued`:
+///   Shared guard that allows at most one aligned-GC length warning per run
 /// - `temp_dir`:
 ///   Temporary directory for tile payloads
 /// - `counts_prefix`:
@@ -577,6 +589,7 @@ fn process_tile(
     blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
+    raw_shifted_gc_length_warning_issued: Arc<AtomicBool>,
     temp_dir: &Path,
     counts_prefix: &str,
     inside_spec: Option<&crate::shared::kmers::kmer_codec::KmerSpec>,
@@ -729,6 +742,9 @@ fn process_tile(
         let gc_corrector = gc_corrector_opt.as_ref();
         let gc_prefixes = gc_prefixes_opt.as_ref();
         let fetch_start = tile.fetch_start();
+        let warn_on_aligned_length_miss =
+            matches!(opt.clip.clip_strategy, ClipStrategy::RawShiftedBoundary)
+                && opt.gc.gc_file.is_some();
         move |fragment: &FragmentWithEnds| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
@@ -736,6 +752,20 @@ fn process_tile(
                         .interval
                         .try_to_u64()?
                         .shift_left(fetch_start as u64)?;
+                    if warn_on_aligned_length_miss
+                        && !raw_shifted_gc_length_warning_issued.load(Ordering::Relaxed)
+                    {
+                        let aligned_length = fetch_relative_fragment.len() as usize;
+                        if !corrector.covers_fragment_length(aligned_length)
+                            && !raw_shifted_gc_length_warning_issued.swap(true, Ordering::Relaxed)
+                        {
+                            let (package_min_length, package_max_length) = corrector.length_range();
+                            warn!(
+                                target: COMMAND_TARGET,
+                                "`--clip-strategy raw-shifted-boundary` produced at least one fragment whose aligned length ({aligned_length}) is outside the GC package range [{package_min_length}-{package_max_length}]. File-based GC correction uses aligned reference length, so these fragments follow the invalid-GC handling path and are included in the GC correction failure statistics."
+                            );
+                        }
+                    }
                     corrector.correct_fragment(fetch_relative_fragment, prefixes)
                 }
                 _ => Ok(None),

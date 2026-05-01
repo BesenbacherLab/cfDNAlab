@@ -319,6 +319,10 @@ pub struct ClippingArgs {
     ///
     ///   This shifted boundary is used for outside-base lookup,
     ///   window assignment, and motif-level blacklist validation.
+    ///
+    ///   File-based GC correction still uses the aligned reference span. If
+    ///   the aligned length falls outside the GC package range, the fragment is
+    ///   considered invalid and is included in the GC correction failure statistics.
     #[cfg_attr(
         feature = "cli",
         clap(

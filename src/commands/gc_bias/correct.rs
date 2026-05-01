@@ -69,6 +69,10 @@ impl GCCorrector {
         gc_prefixes: &GCPrefixes,
     ) -> Result<Option<f64>> {
         let fragment_length = fragment_interval.len() as usize;
+        if self.length_index(fragment_length).is_none() {
+            return Ok(None);
+        }
+
         let gc_window = fragment_interval
             .contract(self.end_offset)
             .ok_or_else(|| {
@@ -102,8 +106,15 @@ impl GCCorrector {
         // The length index and GC index have the minimum values assigned at 0
         // So we offset the values by their minimum to get the index, which
         // in turn will give us the bin (for which we have correction factors)
-        let length_idx = fragment_length - self.length_min;
-        let gc_idx = gc_pct - self.gc_min;
+        let length_idx = self.length_index(fragment_length).ok_or_else(|| {
+            anyhow!(
+                "GC correction: unexpected fragment length {}",
+                fragment_length
+            )
+        })?;
+        let gc_idx = self
+            .gc_index(gc_pct)
+            .ok_or_else(|| anyhow!("GC correction: unexpected GC percentage {}", gc_pct))?;
         let length_bin = self
             .lengths_bins
             .index_to_bin
@@ -126,6 +137,52 @@ impl GCCorrector {
             .with_context(|| format!("GC range [{}-{}]", self.gc_min, self.gc_max))?;
 
         Ok(self.correction_matrix[(length_bin, gc_bin)])
+    }
+
+    /// Check whether this package covers a fragment length.
+    ///
+    /// Commands can use this to classify an out-of-package length as an
+    /// unusable GC weight before trying to look up a correction.
+    ///
+    /// Parameters
+    /// ----------
+    /// - `fragment_length`:
+    ///   Aligned fragment length used for GC correction
+    ///
+    /// Returns
+    /// -------
+    /// - `bool`:
+    ///   `true` when the length is inside the package range
+    #[inline]
+    pub fn covers_fragment_length(&self, fragment_length: usize) -> bool {
+        self.length_index(fragment_length).is_some()
+    }
+
+    /// Return the inclusive fragment-length range covered by this package.
+    ///
+    /// Returns
+    /// -------
+    /// - `(usize, usize)`:
+    ///   Minimum and maximum aligned fragment lengths covered by the package
+    #[inline]
+    pub fn length_range(&self) -> (usize, usize) {
+        (self.length_min, self.length_max)
+    }
+
+    #[inline]
+    fn length_index(&self, fragment_length: usize) -> Option<usize> {
+        if fragment_length < self.length_min || fragment_length > self.length_max {
+            return None;
+        }
+        Some(fragment_length - self.length_min)
+    }
+
+    #[inline]
+    fn gc_index(&self, gc_pct: usize) -> Option<usize> {
+        if gc_pct < self.gc_min || gc_pct > self.gc_max {
+            return None;
+        }
+        Some(gc_pct - self.gc_min)
     }
 }
 
@@ -364,4 +421,9 @@ fn validate_gc_package_compatibility(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    include!("correct_tests.rs");
 }

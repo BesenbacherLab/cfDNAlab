@@ -16,7 +16,6 @@ Post-release performance optimizations that affect this command:
 
 Pre-release correctness/safety:
 
-- E-002: raw-shifted GC correction uses different geometry for filtering and correction.
 - E-005: raw-clipping geometry needs a visible contract for blacklist/scaling behavior.
 
 Pre-release docs/API polish:
@@ -29,20 +28,6 @@ Post-release performance:
 - E-003: motif reference preload is full-tile even when BED windowing narrows the BAM fetch.
 
 ## Findings
-
-### E-002 - High - Raw-shifted GC correction filters by adjusted length but corrects by aligned length
-
-`FragmentWithEnds` keeps two geometries: `interval` is the aligned fragment span and `assignment_interval` is the boundary-adjusted span ([ends_fragment.rs](../../src/shared/fragment/ends_fragment.rs#L37-L44)). `ends` filters fragment lengths using `assignment_len()` ([ends.rs](../../src/commands/ends/ends.rs#L701-L705)), but file-based GC correction passes the aligned `fragment.interval` into `GCCorrector::correct_fragment()` ([ends.rs](../../src/commands/ends/ends.rs#L739-L750)).
-
-The corrector then derives the correction length from the interval it receives ([correct.rs](../../src/commands/gc_bias/correct.rs#L64-L70)) and indexes the GC package by subtracting `length_min` ([correct.rs](../../src/commands/gc_bias/correct.rs#L99-L116)). Package compatibility is validated against the configured min/max fragment lengths ([correct.rs](../../src/commands/gc_bias/correct.rs#L274-L282), [correct.rs](../../src/commands/gc_bias/correct.rs#L332-L340)), which are the same settings that `ends` applies to the adjusted assignment length.
-
-Impact: in `--clip-strategy raw-shifted-boundary`, a soft-clipped fragment can pass length filtering because its adjusted length is inside the configured range, but then GC correction can request a weight for the shorter aligned length. If the package covers only the configured adjusted range, this can error during counting; if the package covers both, the GC weight is still based on a different length/span than the endpoint assignment.
-
-Recommended fix:
-
-- Decide the intended GC geometry for raw-shifted `ends`: adjusted assignment interval, aligned interval, or unsupported with `--gc-file`.
-- If aligned GC is intentional, validate that the GC package covers possible aligned lengths after soft-clip adjustment and document the split geometry.
-- Add a focused regression with a soft-clipped raw-shifted fragment, an adjusted length different from the aligned length, and a GC package whose length range exposes the mismatch.
 
 ### E-003 - Post-release performance - Motif reference preload is full-tile even when BED windowing narrows the BAM fetch
 
@@ -71,4 +56,4 @@ Recommended fix:
 
 The command already has broad coverage: read-backed and reference-backed motifs, inside-only and outside motifs, dense and sparse outputs, prefix handling, base-quality filters, unpaired mode, hard/soft clipping strategies, indel policy interactions, fragment and motif blacklisting, grouped BED aggregation, all window assignment modes, raw endpoint tile-boundary behavior, GC-file and GC-tag weighting, scaling factors, grouped metadata, settings formatting, and required-reference checks for motif extraction.
 
-The most important ends-specific missing tests from this review are raw-shifted `--gc-file` with adjusted length different from aligned length and explicit raw-clipping geometry contracts for fragment-level blacklist/scaling behavior. Motif reference narrowing for skipped sparse-window tiles and shared GC reference pruning are deferred performance optimizations tracked here and in G-006 in `00_shared_package_notes.md`.
+The most important ends-specific missing tests from this review are explicit raw-clipping geometry contracts for fragment-level blacklist/scaling behavior. Motif reference narrowing for skipped sparse-window tiles and shared GC reference pruning are deferred performance optimizations tracked here and in G-006 in `00_shared_package_notes.md`.

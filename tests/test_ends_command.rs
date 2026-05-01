@@ -16,7 +16,10 @@ use cfdnalab::commands::{
         ends::run,
     },
 };
-use cfdnalab::shared::{blacklist::BlacklistStrategy, indel_mode::IndelMotifFilterPolicy};
+use cfdnalab::shared::{
+    blacklist::BlacklistStrategy, indel_mode::IndelMotifFilterPolicy,
+    reference::twobit_contig_signature,
+};
 use fixtures::{
     BamFixture, FragmentSpec, ReadSpec, bam_from_specs, late_origin_gc_reference_sequence,
     paired_fragment, simple_reference_twobit, single_read_bam_with_qualities,
@@ -697,6 +700,22 @@ fn fragment_on_tid(tid: usize, start: i64, fragment_len: i64, read_len: i64) -> 
     fragment.forward.mate_tid = Some(tid);
     fragment.reverse.mate_tid = Some(tid);
     fragment
+}
+
+fn single_read_on_tid(tid: usize, pos: i64, cigar: Vec<(char, u32)>, seq: &[u8]) -> ReadSpec {
+    ReadSpec {
+        tid,
+        pos,
+        cigar,
+        seq: seq.to_vec(),
+        qual: 40,
+        is_reverse: false,
+        mapq: 60,
+        flags: 0,
+        mate_tid: None,
+        mate_pos: None,
+        insert_size: 0,
+    }
 }
 
 fn three_chrom_reference_end_fixture(name: &str) -> Result<(BamFixture, fixtures::TwoBitFixture)> {
@@ -1519,6 +1538,168 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
     assert_eq!(motif_count(&matrix, &motifs, 0, "_C"), 7.0);
     assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 7.0);
     assert_eq!(matrix.sum(), 14.0);
+    Ok(())
+}
+
+#[cfg(all(feature = "cli", feature = "cmd_gc_bias"))]
+#[test]
+fn raw_shifted_gc_file_warns_once_and_counts_aligned_length_failures_across_tiles_and_chromosomes()
+-> Result<()> {
+    // Arrange:
+    // - each affected chr/tile has two valid 30M reads, one invalid 1S28M1S read, then two
+    //   more valid 30M reads
+    // - valid reads have assignment length 30 and aligned length 30, so GC correction succeeds
+    // - invalid reads have raw-shifted assignment length 30 but aligned length 28
+    // - the GC package covers only length 30, so the four invalid reads are skipped as GC failures
+    // - those failures are split across chr1/chr2 and two non-initial tiles to exercise the
+    //   run-level once-only warning guard without relying on first-fragment behavior
+    let full_length_seq = [b'A'; 30];
+    let clipped_seq = [b'A'; 30];
+    let mut reads = Vec::new();
+    for tid in [0, 1] {
+        for tile_start in [1_000_000, 2_000_000] {
+            for offset in [5, 10] {
+                reads.push(single_read_on_tid(
+                    tid,
+                    tile_start + offset,
+                    vec![('M', 30)],
+                    &full_length_seq,
+                ));
+            }
+            reads.push(single_read_on_tid(
+                tid,
+                tile_start + 40,
+                vec![('S', 1), ('M', 28), ('S', 1)],
+                &clipped_seq,
+            ));
+            for offset in [60, 65] {
+                reads.push(single_read_on_tid(
+                    tid,
+                    tile_start + offset,
+                    vec![('M', 30)],
+                    &full_length_seq,
+                ));
+            }
+        }
+    }
+    let bam = bam_from_specs(
+        vec![
+            ("chr1".to_string(), 3_000_000),
+            ("chr2".to_string(), 3_000_000),
+        ],
+        Vec::new(),
+        reads,
+        "ends_raw_shifted_gc_length_warning",
+    )?;
+    let reference = twobit_from_sequences(
+        "ends_raw_shifted_gc_length_warning_ref",
+        vec![
+            ("chr1".to_string(), "A".repeat(3_000_000)),
+            ("chr2".to_string(), "A".repeat(3_000_000)),
+        ],
+    )?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    write_bed(
+        &windows_bed,
+        &[
+            ("chr1", 0, 3_000_000, "chr1"),
+            ("chr2", 0, 3_000_000, "chr2"),
+        ],
+    )?;
+
+    let gc_path = out_dir.path().join("gc_package.npz");
+    let package = GCCorrectionPackage {
+        version: GC_CORRECTION_SCHEMA_VERSION,
+        end_offset: 0,
+        length_edges: vec![30, 31],
+        gc_edges: vec![0, 101],
+        length_bin_frequencies: array![1.0_f64],
+        reference_contig_signature: twobit_contig_signature(&reference.path)?,
+        correction_matrix: array![[1.0_f64]],
+    };
+    package.write_npz(&gc_path)?;
+
+    let binary = cfdna_binary_path()?;
+
+    // Act
+    let output = Command::new(binary)
+        .args([
+            "ends",
+            "--bam",
+            bam.bam.to_str().context("bam path is not valid UTF-8")?,
+            "--output-dir",
+            out_dir
+                .path()
+                .to_str()
+                .context("output dir is not valid UTF-8")?,
+            "--chromosomes",
+            "chr1,chr2",
+            "--reads-are-fragments",
+            "--k-inside",
+            "1",
+            "--k-outside",
+            "0",
+            "--source-inside",
+            "read",
+            "--clip-strategy",
+            "raw-shifted-boundary",
+            "--all-motifs",
+            "--by-bed",
+            windows_bed
+                .to_str()
+                .context("windows BED path is not valid UTF-8")?,
+            "--assign-by",
+            "endpoint",
+            "--ref-2bit",
+            reference
+                .path
+                .to_str()
+                .context("reference path is not valid UTF-8")?,
+            "--gc-file",
+            gc_path
+                .to_str()
+                .context("GC package path is not valid UTF-8")?,
+            "--min-fragment-length",
+            "30",
+            "--max-fragment-length",
+            "30",
+            "--min-mapq",
+            "0",
+            "--tile-size",
+            "1000000",
+            "--output-prefix",
+            "ends",
+            "--n-threads",
+            "2",
+        ])
+        .output()
+        .context("running cfdna ends CLI with raw-shifted file-based GC")?;
+
+    // Assert
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\n\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).context("stdout is not valid UTF-8")?;
+    let stderr = String::from_utf8(output.stderr).context("stderr is not valid UTF-8")?;
+    let warning_needle = "`--clip-strategy raw-shifted-boundary` produced at least one fragment whose aligned length";
+    assert_eq!(
+        stderr.matches(warning_needle).count(),
+        1,
+        "raw-shifted GC length warning should be emitted once per run\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("GC correction failures (fragment skipped): 4"));
+    assert!(stdout.contains("Fragments with one or more counted motifs: 16"));
+    assert!(stdout.contains("Distinct counted end motifs across those fragments: 32"));
+
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+    assert_eq!(matrix.shape(), &[2, 4]);
+    assert_eq!(matrix.row(0).sum(), 16.0);
+    assert_eq!(matrix.row(1).sum(), 16.0);
+    assert_eq!(matrix.sum(), 32.0);
     Ok(())
 }
 
