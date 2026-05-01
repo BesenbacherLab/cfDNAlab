@@ -4,7 +4,7 @@ use crate::{
             ApplyGCArgFileOnly, AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs,
             FragmentLengthArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs, UnpairedArgs,
         },
-        gc_bias::correct::MarginalizeLengthsWeightingScheme,
+        gc_bias::correct::{GCLengthRange, MarginalizeLengthsWeightingScheme},
     },
     shared::{blacklist::BlacklistStrategy, clip_mode::ClipMode, indel_mode::IndelMode},
 };
@@ -36,8 +36,8 @@ pub const MAX_MAX_SOFT_CLIPS: u16 = 256;
 /// Note: The GC percentage is calculated from the **aligned** reference span.
 /// It does not consider `--indel-mode` or `--clip-mode`.
 ///
-/// The length-dimension of the original correction matrix is averaged out with
-/// a specifiable weighting scheme (`--gc-length-weighting`).
+/// The length-dimension of the original correction matrix is averaged out over
+/// `--gc-length-range` with a specifiable weighting scheme (`--gc-length-weighting`).
 ///
 /// ## Genomic smoothing (--scaling-factors)
 ///
@@ -267,33 +267,38 @@ pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub gc: ApplyGCArgFileOnly,
 
-    /// How to weight the fragment length bins when estimating the global GC bias correction `[string]`
+    /// How to weight the fragment length bins when estimating the length-agnostic GC correction `[string]`
     ///
-    /// To GC correct a fragment length distribution, the correction weights should be **length-agnostic**.
+    /// The default GC correction package stores a `fragment length x GC` matrix with
+    /// one normalized GC correction curve per fragment length bin.
     ///
-    /// The default `fragment-length x GC` matrix has one correction curve per length bin,
-    /// so using it would preserve the original length distribution (assuming we're correcting the
-    /// same fragments seen by `cfdna gc-bias`).
+    /// When estimating the fragment length distribution itself, using those normalized
+    /// curves directly would just preserve the original length distribution (when applied
+    /// to the same fragments seen by `cfdna gc-bias`).
     ///
-    /// We therefore average out the fragment length dimension to get a single, length-agnostic GC bias curve.
+    /// We therefore average out the fragment length dimension to get a single, length-agnostic GC correction curve.
     ///
-    /// We have three weighting options when averaging the fragment-length-wise correction curves:
-    ///     
+    /// First, `--gc-length-range` selects which length bins to use. Then this option
+    /// controls how those selected correction curves are collapsed.
+    ///
+    /// We have three weighting options:
+    ///
     /// - `"equal"` weighting (default): Weight every length bin the same.
     ///
-    ///   Keeps the correction independent of the distribution we are trying to estimate.
+    ///   Keeps the correction independent of the length distribution we are trying to estimate.
     ///
-    ///   Downside: Rare fragment length bins contribute the same as the most present fragment lengths.
+    ///   Downside: Rare fragment length bins contribute the same as the most common fragment lengths.
     ///   
     ///   For low-coverage BAM files, this *could* make the correction more volatile to outliers.
     ///
-    /// - `"coverage"`-based weighting: Weight lengths by how often they were observed in `cfdna gc-bias`.
+    /// - `"frequency"` weighting: Weight lengths by their fragment-length frequency in the GC package.
     ///
-    ///   This should work better for the majority of the observed fragments **BUT**:
+    ///   This makes the collapsed curve represent the fragments most often seen in the package, **BUT**:
     ///
-    ///   Downside: **Biases** the correction based on the length distribution we are trying to estimate.
+    ///   Downside: Biases the correction based on the length distribution we are trying to estimate.
+    ///   This is **circular**: the length signal is partly used to correct itself.
     ///
-    /// - `"max-coverage"` weighting: Use the GC curve for the most-observed fragment length bin.
+    /// - `"max-frequency"` weighting: Use the GC correction curve for the most frequent selected length bin.
     #[cfg_attr(
         feature = "cli",
         clap(
@@ -304,6 +309,30 @@ pub struct LengthsConfig {
         )
     )]
     pub gc_length_weighting: MarginalizeLengthsWeightingScheme,
+
+    /// Which fragment length bins to use when averaging out the GC correction matrix `[string]`
+    ///
+    /// The GC correction package stores one GC correction curve per fragment length bin.
+    /// This option controls which length bins `--gc-length-weighting`
+    /// collapses to a single length-agnostic GC curve.
+    ///
+    /// Possible values:
+    ///
+    /// - `"requested"`: Use length bins that overlap the requested
+    ///   `--min-fragment-length..--max-fragment-length` range.
+    ///
+    /// - `"package"`: Use all length bins in the GC correction package.
+    ///   Useful for repeated calls with different length ranges that you wish to compare downstream.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value = "requested",
+            ignore_case = true,
+            help_heading = "GC Correction"
+        )
+    )]
+    pub gc_length_range: GCLengthRange,
 
     /// 2bit reference genome file [path]
     ///
@@ -353,6 +382,7 @@ impl LengthsConfig {
                 neutralize_invalid_gc: false,
             },
             gc_length_weighting: MarginalizeLengthsWeightingScheme::Equal,
+            gc_length_range: GCLengthRange::Requested,
             ref_2bit: None,
             logging: LoggingArgs::default(),
         }
@@ -403,6 +433,10 @@ impl LengthsConfig {
         gc_length_weighting: MarginalizeLengthsWeightingScheme,
     ) {
         self.gc_length_weighting = gc_length_weighting;
+    }
+
+    pub fn set_gc_length_range(&mut self, gc_length_range: GCLengthRange) {
+        self.gc_length_range = gc_length_range;
     }
 
     pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {

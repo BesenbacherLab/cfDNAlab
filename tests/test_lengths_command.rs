@@ -16,7 +16,8 @@ mod tests_lengths_command {
         config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
     };
     use cfdnalab::commands::gc_bias::{
-        GC_CORRECTION_SCHEMA_VERSION, correct::MarginalizeLengthsWeightingScheme,
+        GC_CORRECTION_SCHEMA_VERSION,
+        correct::{GCLengthRange, MarginalizeLengthsWeightingScheme},
         package::GCCorrectionPackage,
     };
     use cfdnalab::commands::lengths::config::LengthsConfig;
@@ -1425,8 +1426,8 @@ mod tests_lengths_command {
         let expected = |scheme: MarginalizeLengthsWeightingScheme| -> f64 {
             match scheme {
                 MarginalizeLengthsWeightingScheme::Equal => 5.5, // mean of rows at GC bin 50
-                MarginalizeLengthsWeightingScheme::Coverage => 7.75, // weighted by [1,3]
-                MarginalizeLengthsWeightingScheme::MaxCoverage => 10.0, // most frequent row
+                MarginalizeLengthsWeightingScheme::Frequency => 7.75, // weighted by [1,3]
+                MarginalizeLengthsWeightingScheme::MaxFrequency => 10.0, // most frequent row
             }
         };
 
@@ -1470,8 +1471,8 @@ mod tests_lengths_command {
 
         for scheme in [
             MarginalizeLengthsWeightingScheme::Equal,
-            MarginalizeLengthsWeightingScheme::Coverage,
-            MarginalizeLengthsWeightingScheme::MaxCoverage,
+            MarginalizeLengthsWeightingScheme::Frequency,
+            MarginalizeLengthsWeightingScheme::MaxFrequency,
         ] {
             let observed = run_with_scheme(scheme)?;
             let exp = expected(scheme);
@@ -1483,6 +1484,74 @@ mod tests_lengths_command {
                 observed
             );
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn gc_length_range_controls_which_package_rows_are_marginalized() -> Result<()> {
+        // Human verification status: unverified
+        // Package rows:
+        // - [10,60): GC bin 50 correction = 1
+        // - [60,200]: GC bin 50 correction = 10
+        //
+        // The simple fixture has one 60 bp fragment with GC%=50.
+        // With requested range [60,60], default `requested` selection uses only the second row.
+        // With `package`, equal weighting uses both rows: (1 + 10) / 2 = 5.5.
+        let bam = simple_inward_bam()?;
+        let ref_twobit = simple_reference_twobit()?;
+        let gc_dir = TempDir::new()?;
+        let gc_path = gc_dir.path().join("gc_pkg_range.npz");
+        build_gc_package(&gc_path, 0)?;
+
+        let run_with_range = |gc_length_range: GCLengthRange| -> Result<f64> {
+            let out_dir = TempDir::new()?;
+            let mut cfg = LengthsConfig::new(
+                IOCArgs {
+                    bam: bam.bam.clone(),
+                    output_dir: out_dir.path().to_path_buf(),
+                    n_threads: 2,
+                },
+                base_chromosomes(&["chr1"]),
+            );
+            cfg.set_indel_mode(IndelMode::Ignore);
+            cfg.set_windows(DistributionWindowsArgs::default());
+            cfg.set_window_assignment(AssignToWindowArgs::default());
+            cfg.set_min_mapq(0);
+            cfg.set_require_proper_pair(false);
+            cfg.set_gc_length_range(gc_length_range);
+            cfg.set_gc_length_weighting(MarginalizeLengthsWeightingScheme::Equal);
+            cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+                gc_file: Some(gc_path.clone()),
+                neutralize_invalid_gc: false,
+            });
+            cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+            {
+                let frag = cfg.fragment_lengths_mut();
+                frag.min_fragment_length = 60;
+                frag.max_fragment_length = 60;
+            }
+
+            run(&cfg)?;
+
+            let prefix = cfg.output_prefix.trim();
+            let npy_path = out_dir
+                .path()
+                .join(dot_join(&[prefix, "length_counts.npy"]));
+            let arr: Array2<f64> = read_npy(&npy_path)?;
+            Ok(arr[(0, 0)])
+        };
+
+        let requested_value = run_with_range(GCLengthRange::Requested)?;
+        let package_value = run_with_range(GCLengthRange::Package)?;
+        assert!(
+            (requested_value - 10.0).abs() < 1e-6,
+            "requested range should use only the 60 bp package row, got {requested_value}"
+        );
+        assert!(
+            (package_value - 5.5).abs() < 1e-6,
+            "package range should average both package rows, got {package_value}"
+        );
 
         Ok(())
     }
@@ -3888,8 +3957,8 @@ mod tests_lengths_command {
         // Arrange:
         // - one unpaired fragment spans [10,20) with length 10 on the simple ACGT reference
         // - that fragment has GC%=50
-        // - `lengths` uses the length-agnostic GC corrector, which averages the two length rows
-        //   in the package below with the default `equal` weighting:
+        // - `lengths` uses the length-agnostic GC corrector over the full package range, which
+        //   averages the two length rows below with the default `equal` weighting:
         //     GC bin [0,51): (3.0 + 1.0) / 2 = 2.0
         // - grouped windows keep `beta` as the counted row and preserve `gamma` as an explicit
         //   zero row
@@ -3936,6 +4005,7 @@ mod tests_lengths_command {
             gc_file: Some(gc_path),
             neutralize_invalid_gc: false,
         });
+        cfg.set_gc_length_range(GCLengthRange::Package);
         cfg.set_ref_2bit(Some(reference.path.clone()));
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);

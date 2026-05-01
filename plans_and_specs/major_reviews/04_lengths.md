@@ -17,7 +17,6 @@ Post-release performance optimizations that affect this command:
 Pre-release correctness/safety:
 
 - L-001: indel-adjusted output length and aligned fetch span share one max-length setting.
-- L-002: GC length marginalization ignores the requested output length range.
 - L-003: settings sidecar is too thin to interpret the matrix.
 - L-004: BED row reordering should fail loudly if metadata and counts drift apart.
 
@@ -44,18 +43,6 @@ Recommended fix:
 - Separate "maximum adjusted output length" from "maximum aligned fetch span" when `--indel-mode adjust` is allowed.
 - Either add an explicit aligned-span cap used for tiling/fetch/pairing, or fail fast for indel adjustment unless such a cap is configured.
 - Add a regression with an adjusted-in-range fragment whose aligned span exceeds `max_fragment_length`; it should either count correctly or produce the new explicit configuration error.
-
-### L-002 - Medium - GC length marginalization ignores the requested output length range
-
-`lengths` loads a length-agnostic GC corrector with the configured min/max range ([lengths.rs](../../src/commands/lengths/lengths.rs#L204-L213)), and the loader validates that the package covers that range ([correct.rs](../../src/commands/gc_bias/correct.rs#L288-L300), [correct.rs](../../src/commands/gc_bias/correct.rs#L332-L340)). But `LengthAgnosticGCCorrector::from_gc_corrector()` averages or selects rows from the entire package matrix; it does not subset rows to the requested length range before applying `equal`, `coverage`, or `max-coverage` weighting ([correct.rs](../../src/commands/gc_bias/correct.rs#L143-L190)).
-
-Impact: if a GC package covers a broad range, a run that counts only short fragments can still derive its "length-agnostic" GC curve from long fragments that cannot appear in the output. This is especially surprising for `--gc-length-weighting max-coverage`, where the selected correction row can come from the most frequent package length, not the most frequent eligible length.
-
-Recommended fix:
-
-- Decide whether marginalization should use the full package or only the configured output length range.
-- If the full package is intentional, document that directly in `--gc-length-weighting` help.
-- If the configured range is intended, subset the correction matrix and frequency vector before marginalizing, then add tests where the package range is broader than the command range.
 
 ### L-003 - Medium - The settings sidecar is too thin to interpret the matrix
 
@@ -87,4 +74,4 @@ Recommended fix:
 
 The command already has broad integration coverage: global, fixed-size, ordinary BED, grouped BED, multi-chromosome runs, tile-boundary invariance, unpaired mode, default MAPQ, GC correction, GC weighting modes, scaling factors, blacklist behavior, indel and clip modes, soft-clip filtering, all window assignment modes, grouped metadata, and reducer helper behavior are represented.
 
-The most important lengths-specific missing tests from this review are deletion-adjusted fragments whose aligned span exceeds the configured max adjusted output length, GC marginalization when the package range is broader than the output range, sidecar completeness for indel/clip/grouped outputs, and defensive metadata/count mismatch handling. The deferred sparse-window GC reference pruning optimization is tracked in G-006 in `00_shared_package_notes.md`.
+The most important lengths-specific missing tests from this review are deletion-adjusted fragments whose aligned span exceeds the configured max adjusted output length, sidecar completeness for indel/clip/grouped outputs, and defensive metadata/count mismatch handling. The deferred sparse-window GC reference pruning optimization is tracked in G-006 in `00_shared_package_notes.md`.

@@ -16,7 +16,10 @@ mod tests_gc_bias {
             GC_CORRECTION_SCHEMA_VERSION,
             binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
             config::GCConfig,
-            correct::{GCCorrector, LengthAgnosticGCCorrector, MarginalizeLengthsWeightingScheme},
+            correct::{
+                GCCorrector, GCLengthRange, LengthAgnosticGCCorrector,
+                MarginalizeLengthsWeightingScheme,
+            },
             counting::{build_gc_prefixes, gc_percent_widths},
             gc_bias::{get_fragment_gc, interpolate_masked_corrections, run as run_gc_bias},
             load_reference_bias::load_reference_gc_data,
@@ -396,6 +399,9 @@ mod tests_gc_bias {
         let agnostic = LengthAgnosticGCCorrector::from_gc_corrector(
             &corrector,
             &MarginalizeLengthsWeightingScheme::Equal,
+            GCLengthRange::Package,
+            20,
+            40,
         )?;
 
         for gc_pct in 0..50 {
@@ -414,54 +420,199 @@ mod tests_gc_bias {
     }
 
     #[test]
-    fn length_agnostic_coverage_weighting_uses_frequencies() -> Result<()> {
+    fn length_agnostic_frequency_weighting_uses_frequencies() -> Result<()> {
         // Human verification status: unverified
         let package = make_length_agnostic_package();
         let corrector = GCCorrector::from_package(&package)?;
         let agnostic = LengthAgnosticGCCorrector::from_gc_corrector(
             &corrector,
-            &MarginalizeLengthsWeightingScheme::Coverage,
+            &MarginalizeLengthsWeightingScheme::Frequency,
+            GCLengthRange::Package,
+            20,
+            40,
         )?;
 
         // Weighted average with frequencies [0.2, 0.8]
         for gc_pct in 0..50 {
             assert!(
                 (agnostic.get_correction_weight(gc_pct)? - 2.6).abs() < 1e-12,
-                "coverage weighting should map GC% {gc_pct} into the first GC bin"
+                "frequency weighting should map GC% {gc_pct} into the first GC bin"
             );
         }
         for gc_pct in 50..=100 {
             assert!(
                 (agnostic.get_correction_weight(gc_pct)? - 4.4).abs() < 1e-12,
-                "coverage weighting should map GC% {gc_pct} into the second GC bin"
+                "frequency weighting should map GC% {gc_pct} into the second GC bin"
             );
         }
         Ok(())
     }
 
     #[test]
-    fn length_agnostic_max_coverage_picks_most_frequent_row() -> Result<()> {
+    fn length_agnostic_max_frequency_picks_most_frequent_row() -> Result<()> {
         // Human verification status: unverified
         let package = make_length_agnostic_package();
         let corrector = GCCorrector::from_package(&package)?;
         let agnostic = LengthAgnosticGCCorrector::from_gc_corrector(
             &corrector,
-            &MarginalizeLengthsWeightingScheme::MaxCoverage,
+            &MarginalizeLengthsWeightingScheme::MaxFrequency,
+            GCLengthRange::Package,
+            20,
+            40,
         )?;
 
         // Row with highest frequency is [3.0, 5.0]
         for gc_pct in 0..50 {
             assert!(
                 (agnostic.get_correction_weight(gc_pct)? - 3.0).abs() < 1e-12,
-                "max-coverage weighting should map GC% {gc_pct} into the first GC bin"
+                "max-frequency weighting should map GC% {gc_pct} into the first GC bin"
             );
         }
         for gc_pct in 50..=100 {
             assert!(
                 (agnostic.get_correction_weight(gc_pct)? - 5.0).abs() < 1e-12,
-                "max-coverage weighting should map GC% {gc_pct} into the second GC bin"
+                "max-frequency weighting should map GC% {gc_pct} into the second GC bin"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn length_agnostic_requested_range_uses_only_overlapping_length_rows() -> Result<()> {
+        // Human verification status: unverified
+        // The package has two length rows:
+        // - [20,30): correction [1,2]
+        // - [30,40]: correction [3,5]
+        //
+        // Requested range [30,30] overlaps only the second row, so equal weighting should
+        // collapse to [3,5] rather than the full-package mean [2,3.5].
+        let package = make_length_agnostic_package();
+        let corrector = GCCorrector::from_package(&package)?;
+        let agnostic = LengthAgnosticGCCorrector::from_gc_corrector(
+            &corrector,
+            &MarginalizeLengthsWeightingScheme::Equal,
+            GCLengthRange::Requested,
+            30,
+            30,
+        )?;
+
+        for gc_pct in 0..50 {
+            assert!(
+                (agnostic.get_correction_weight(gc_pct)? - 3.0).abs() < 1e-12,
+                "requested range should map GC% {gc_pct} into the selected first GC bin"
+            );
+        }
+        for gc_pct in 50..=100 {
+            assert!(
+                (agnostic.get_correction_weight(gc_pct)? - 5.0).abs() < 1e-12,
+                "requested range should map GC% {gc_pct} into the selected second GC bin"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn length_agnostic_package_range_keeps_full_package_rows() -> Result<()> {
+        // Human verification status: unverified
+        // Even with requested range [30,30], package range selection should keep both
+        // package rows, preserving the full-package equal-weighted mean [2,3.5].
+        let package = make_length_agnostic_package();
+        let corrector = GCCorrector::from_package(&package)?;
+        let agnostic = LengthAgnosticGCCorrector::from_gc_corrector(
+            &corrector,
+            &MarginalizeLengthsWeightingScheme::Equal,
+            GCLengthRange::Package,
+            30,
+            30,
+        )?;
+
+        for gc_pct in 0..50 {
+            assert!(
+                (agnostic.get_correction_weight(gc_pct)? - 2.0).abs() < 1e-12,
+                "package range should map GC% {gc_pct} into the full-package first GC bin"
+            );
+        }
+        for gc_pct in 50..=100 {
+            assert!(
+                (agnostic.get_correction_weight(gc_pct)? - 3.5).abs() < 1e-12,
+                "package range should map GC% {gc_pct} into the full-package second GC bin"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn length_agnostic_requested_range_collapses_multiple_selected_rows() -> Result<()> {
+        // Manual derivation:
+        // - Length bins are [20,30), [30,40), and [40,50].
+        // - Requested range [35,45] overlaps only the second and third rows.
+        // - The first row has large corrections and 0.5 frequency, so including it by mistake
+        //   would change every expected value.
+        // - Selected-row frequencies are [0.125, 0.375], so frequency weighting must
+        //   renormalize over the selected rows before averaging:
+        //     (2 * 0.125 + 6 * 0.375) / 0.5 = 5
+        //     (20 * 0.125 + 60 * 0.375) / 0.5 = 50
+        //     (200 * 0.125 + 600 * 0.375) / 0.5 = 500
+        let package = GCCorrectionPackage {
+            version: GC_CORRECTION_SCHEMA_VERSION,
+            end_offset: 0,
+            length_edges: vec![20, 30, 40, 50],
+            gc_edges: vec![0, 25, 50, 100],
+            correction_matrix: array![
+                [1000.0_f64, 10000.0_f64, 100000.0_f64],
+                [2.0_f64, 20.0_f64, 200.0_f64],
+                [6.0_f64, 60.0_f64, 600.0_f64],
+            ],
+            length_bin_frequencies: array![0.5_f64, 0.125_f64, 0.375_f64],
+            reference_contig_signature: [0, 0],
+        };
+        let corrector = GCCorrector::from_package(&package)?;
+
+        let expected_by_scheme = [
+            (
+                MarginalizeLengthsWeightingScheme::Equal,
+                [4.0_f64, 40.0_f64, 400.0_f64],
+            ),
+            (
+                MarginalizeLengthsWeightingScheme::Frequency,
+                [5.0_f64, 50.0_f64, 500.0_f64],
+            ),
+            (
+                MarginalizeLengthsWeightingScheme::MaxFrequency,
+                [6.0_f64, 60.0_f64, 600.0_f64],
+            ),
+        ];
+
+        for (scheme, expected) in expected_by_scheme {
+            let agnostic = LengthAgnosticGCCorrector::from_gc_corrector(
+                &corrector,
+                &scheme,
+                GCLengthRange::Requested,
+                35,
+                45,
+            )?;
+
+            let checked_gc_bins = [
+                (0_usize, expected[0]),
+                (24_usize, expected[0]),
+                (25_usize, expected[1]),
+                (49_usize, expected[1]),
+                (50_usize, expected[2]),
+                (100_usize, expected[2]),
+            ];
+            for (gc_pct, expected_weight) in checked_gc_bins {
+                let observed = agnostic.get_correction_weight(gc_pct)?;
+                assert!(
+                    (observed - expected_weight).abs() < 1e-12,
+                    "scheme {:?}, GC% {}: expected {}, got {}",
+                    scheme,
+                    gc_pct,
+                    expected_weight,
+                    observed
+                );
+            }
+        }
+
         Ok(())
     }
 

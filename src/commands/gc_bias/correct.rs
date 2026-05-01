@@ -69,7 +69,7 @@ impl GCCorrector {
         gc_prefixes: &GCPrefixes,
     ) -> Result<Option<f64>> {
         let fragment_length = fragment_interval.len() as usize;
-        if self.length_index(fragment_length).is_none() {
+        if self.length_offset_index(fragment_length).is_none() {
             return Ok(None);
         }
 
@@ -103,39 +103,8 @@ impl GCCorrector {
     /// **multiply** its existing weight (e.g. `1.0`) with the correction weight.
     #[inline]
     pub fn get_correction_weight(&self, fragment_length: usize, gc_pct: usize) -> Result<f64> {
-        // The length index and GC index have the minimum values assigned at 0
-        // So we offset the values by their minimum to get the index, which
-        // in turn will give us the bin (for which we have correction factors)
-        let length_idx = self.length_index(fragment_length).ok_or_else(|| {
-            anyhow!(
-                "GC correction: unexpected fragment length {}",
-                fragment_length
-            )
-        })?;
-        let gc_idx = self
-            .gc_index(gc_pct)
-            .ok_or_else(|| anyhow!("GC correction: unexpected GC percentage {}", gc_pct))?;
-        let length_bin = self
-            .lengths_bins
-            .index_to_bin
-            .get(&length_idx)
-            .copied()
-            .ok_or_else(|| {
-                anyhow!(
-                    "GC correction: unexpected fragment length {}",
-                    fragment_length
-                )
-            })
-            .with_context(|| format!("length range [{}-{}]", self.length_min, self.length_max))?;
-
-        let gc_bin = self
-            .gc_bins
-            .index_to_bin
-            .get(&gc_idx)
-            .copied()
-            .ok_or_else(|| anyhow!("GC correction: unexpected GC percentage {}", gc_pct))
-            .with_context(|| format!("GC range [{}-{}]", self.gc_min, self.gc_max))?;
-
+        let length_bin = self.length_bin(fragment_length)?;
+        let gc_bin = self.gc_bin(gc_pct)?;
         Ok(self.correction_matrix[(length_bin, gc_bin)])
     }
 
@@ -155,7 +124,7 @@ impl GCCorrector {
     ///   `true` when the length is inside the package range
     #[inline]
     pub fn covers_fragment_length(&self, fragment_length: usize) -> bool {
-        self.length_index(fragment_length).is_some()
+        self.length_offset_index(fragment_length).is_some()
     }
 
     /// Return the inclusive fragment-length range covered by this package.
@@ -170,7 +139,7 @@ impl GCCorrector {
     }
 
     #[inline]
-    fn length_index(&self, fragment_length: usize) -> Option<usize> {
+    fn length_offset_index(&self, fragment_length: usize) -> Option<usize> {
         if fragment_length < self.length_min || fragment_length > self.length_max {
             return None;
         }
@@ -178,11 +147,45 @@ impl GCCorrector {
     }
 
     #[inline]
-    fn gc_index(&self, gc_pct: usize) -> Option<usize> {
+    fn gc_offset_index(&self, gc_pct: usize) -> Option<usize> {
         if gc_pct < self.gc_min || gc_pct > self.gc_max {
             return None;
         }
         Some(gc_pct - self.gc_min)
+    }
+
+    #[inline]
+    fn length_bin(&self, fragment_length: usize) -> Result<usize> {
+        let length_idx = self.length_offset_index(fragment_length).ok_or_else(|| {
+            anyhow!(
+                "GC correction: unexpected fragment length {}",
+                fragment_length
+            )
+        })?;
+        self.lengths_bins
+            .index_to_bin
+            .get(&length_idx)
+            .copied()
+            .ok_or_else(|| {
+                anyhow!(
+                    "GC correction: unexpected fragment length {}",
+                    fragment_length
+                )
+            })
+            .with_context(|| format!("length range [{}-{}]", self.length_min, self.length_max))
+    }
+
+    #[inline]
+    fn gc_bin(&self, gc_pct: usize) -> Result<usize> {
+        let gc_idx = self
+            .gc_offset_index(gc_pct)
+            .ok_or_else(|| anyhow!("GC correction: unexpected GC percentage {}", gc_pct))?;
+        self.gc_bins
+            .index_to_bin
+            .get(&gc_idx)
+            .copied()
+            .ok_or_else(|| anyhow!("GC correction: unexpected GC percentage {}", gc_pct))
+            .with_context(|| format!("GC range [{}-{}]", self.gc_min, self.gc_max))
     }
 }
 
@@ -198,51 +201,61 @@ pub struct LengthAgnosticGCCorrector {
 impl LengthAgnosticGCCorrector {
     /// Create length-agnostic GC corrector from the standard GC corrector.
     ///
-    /// Averages out the length dimension, weighted based on the `weighting_scheme`.
+    /// The GC package stores binned length correction curves. Requested-range selection keeps
+    /// every package length bin that overlaps the requested inclusive fragment-length range.
     pub fn from_gc_corrector(
         corrector: &GCCorrector,
         weighting_scheme: &MarginalizeLengthsWeightingScheme,
+        gc_length_range: GCLengthRange,
+        min_fragment_length: u32,
+        max_fragment_length: u32,
     ) -> Result<Self> {
+        let selected_length_bins = selected_length_bins(
+            corrector,
+            gc_length_range,
+            min_fragment_length,
+            max_fragment_length,
+        )?;
+        let selected_correction_matrix = corrector
+            .correction_matrix
+            .select(Axis(0), &selected_length_bins);
+
         // Average corrections to remove the length dimension
         // using the specified weighting scheme
         let correction_vector = match weighting_scheme {
-            MarginalizeLengthsWeightingScheme::Equal => corrector
-                .correction_matrix
+            MarginalizeLengthsWeightingScheme::Equal => selected_correction_matrix
                 .mean_axis(Axis(0))
-                .ok_or_else(|| {
-                    anyhow!(
-                        "Failed to average out the length dimension of the GC correction matrix."
-                    )
-                })?,
-            MarginalizeLengthsWeightingScheme::Coverage => {
-                let weights = &corrector.length_bin_frequencies;
+                .ok_or_else(|| anyhow!("No GC correction length bins selected"))?,
+            MarginalizeLengthsWeightingScheme::Frequency => {
+                let weights = corrector
+                    .length_bin_frequencies
+                    .select(Axis(0), &selected_length_bins);
                 let total_weight: f64 = weights.iter().sum();
                 ensure!(total_weight > 0.0, "Length-bin frequencies sum to zero");
                 // correction_matrix shape: (length_bins, gc_bins)
-                corrector
-                    .correction_matrix
+                selected_correction_matrix
                     .t()
-                    .dot(weights)
+                    .dot(&weights)
                     .mapv(|v| v / total_weight)
             }
-            MarginalizeLengthsWeightingScheme::MaxCoverage => {
-                let length_bin_frequencies = &corrector.length_bin_frequencies;
-                let (max_index, max_frequency) =
-                    length_bin_frequencies.iter().copied().enumerate().fold(
-                        (None, 0.0_f64),
-                        |(best_index, best_frequency), (index, frequency)| {
-                            if frequency > best_frequency {
-                                (Some(index), frequency)
-                            } else {
-                                (best_index, best_frequency)
-                            }
-                        },
-                    );
+            MarginalizeLengthsWeightingScheme::MaxFrequency => {
+                let weights = corrector
+                    .length_bin_frequencies
+                    .select(Axis(0), &selected_length_bins);
+                let (max_index, max_frequency) = weights.iter().copied().enumerate().fold(
+                    (None, 0.0_f64),
+                    |(best_index, best_frequency), (index, frequency)| {
+                        if frequency > best_frequency {
+                            (Some(index), frequency)
+                        } else {
+                            (best_index, best_frequency)
+                        }
+                    },
+                );
                 let most_frequent_index =
                     max_index.ok_or_else(|| anyhow!("Length-bin frequencies array is empty"))?;
                 ensure!(max_frequency > 0.0, "Length-bin frequencies sum to zero");
-                corrector
-                    .correction_matrix
+                selected_correction_matrix
                     .row(most_frequent_index)
                     .to_owned()
             }
@@ -307,12 +320,75 @@ impl LengthAgnosticGCCorrector {
     }
 }
 
+fn selected_length_bins(
+    corrector: &GCCorrector,
+    gc_length_range: GCLengthRange,
+    min_fragment_length: u32,
+    max_fragment_length: u32,
+) -> Result<Vec<usize>> {
+    match gc_length_range {
+        GCLengthRange::Package => Ok((0..corrector.correction_matrix.dim().0).collect()),
+        GCLengthRange::Requested => {
+            let requested_min = min_fragment_length as usize;
+            let requested_max = max_fragment_length as usize;
+            ensure!(
+                requested_min <= requested_max,
+                "minimum fragment length ({}) must be <= maximum fragment length ({})",
+                requested_min,
+                requested_max
+            );
+            ensure!(
+                requested_min >= corrector.length_min && requested_max <= corrector.length_max,
+                "requested GC length range [{}-{}] is outside package range [{}-{}]",
+                requested_min,
+                requested_max,
+                corrector.length_min,
+                corrector.length_max
+            );
+
+            let first_selected_bin = corrector.length_bin(requested_min)?;
+            let last_selected_bin = corrector.length_bin(requested_max)?;
+
+            // Package length bins are contiguous, so every bin between the endpoint bins overlaps
+            // the requested inclusive fragment-length range
+            let selected_bins: Vec<usize> = (first_selected_bin..=last_selected_bin).collect();
+            ensure!(
+                !selected_bins.is_empty(),
+                "requested GC length range [{}-{}] selected no correction length bins",
+                requested_min,
+                requested_max
+            );
+            Ok(selected_bins)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
+pub enum GCLengthRange {
+    #[default]
+    Requested,
+    Package,
+}
+
+impl FromStr for GCLengthRange {
+    type Err = String;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if s == "requested" {
+            Ok(GCLengthRange::Requested)
+        } else if s == "package" {
+            Ok(GCLengthRange::Package)
+        } else {
+            Err("Use 'requested' or 'package'".into())
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
 pub enum MarginalizeLengthsWeightingScheme {
     #[default]
     Equal,
-    Coverage,
-    MaxCoverage,
+    Frequency,
+    MaxFrequency,
 }
 
 impl FromStr for MarginalizeLengthsWeightingScheme {
@@ -320,12 +396,12 @@ impl FromStr for MarginalizeLengthsWeightingScheme {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         if s == "equal" {
             Ok(MarginalizeLengthsWeightingScheme::Equal)
-        } else if s == "coverage" {
-            Ok(MarginalizeLengthsWeightingScheme::Coverage)
-        } else if s == "max-coverage" {
-            Ok(MarginalizeLengthsWeightingScheme::MaxCoverage)
+        } else if s == "frequency" {
+            Ok(MarginalizeLengthsWeightingScheme::Frequency)
+        } else if s == "max-frequency" {
+            Ok(MarginalizeLengthsWeightingScheme::MaxFrequency)
         } else {
-            Err("Use 'equal', 'coverage', or 'max-coverage'".into())
+            Err("Use 'equal', 'frequency', or 'max-frequency'".into())
         }
     }
 }
@@ -350,6 +426,7 @@ pub fn load_length_agnostic_gc_corrector<P: AsRef<std::path::Path>>(
     gc_file: Option<&P>,
     ref_2bit: Option<&P>,
     weighting_scheme: &MarginalizeLengthsWeightingScheme,
+    gc_length_range: GCLengthRange,
     min_fragment_length: u32,
     max_fragment_length: u32,
 ) -> Result<Option<LengthAgnosticGCCorrector>> {
@@ -358,8 +435,13 @@ pub fn load_length_agnostic_gc_corrector<P: AsRef<std::path::Path>>(
         warn_on_reference_contig_mismatch(&package, ref_2bit)?;
         validate_gc_package_compatibility(&package, min_fragment_length, max_fragment_length)?;
         let gc_corrector = GCCorrector::from_package(&package)?;
-        let length_agnostic_gc_corrector =
-            LengthAgnosticGCCorrector::from_gc_corrector(&gc_corrector, weighting_scheme)?;
+        let length_agnostic_gc_corrector = LengthAgnosticGCCorrector::from_gc_corrector(
+            &gc_corrector,
+            weighting_scheme,
+            gc_length_range,
+            min_fragment_length,
+            max_fragment_length,
+        )?;
         Ok(Some(length_agnostic_gc_corrector))
     } else {
         Ok(None)

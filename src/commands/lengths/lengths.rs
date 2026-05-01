@@ -209,6 +209,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         opt.gc.gc_file.as_ref(),
         opt.ref_2bit.as_ref(),
         &opt.gc_length_weighting,
+        opt.gc_length_range,
         opt.fragment_lengths.min_fragment_length,
         opt.fragment_lengths.max_fragment_length,
     )?;
