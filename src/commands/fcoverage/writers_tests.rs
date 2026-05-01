@@ -1,9 +1,26 @@
 use super::{
     SummaryStatsRow, coverage_cv_overflow_label, derive_coefficient_of_variation_coverage,
-    derive_nonnegative_variance_coverage, derive_summary_stats, write_summary_stats_row,
+    derive_nonnegative_variance_coverage, derive_summary_stats, write_bedgraph_runs,
+    write_summary_stats_row, write_windowed_runs,
 };
 use crate::shared::base::{ZEROISH_F32_TOLERANCE, ZEROISH_F64_TOLERANCE};
 use crate::shared::interval::Interval;
+use std::io::{Error, ErrorKind, Result as IoResult, Write};
+
+struct FailingWriter;
+
+impl Write for FailingWriter {
+    fn write(&mut self, _buf: &[u8]) -> IoResult<usize> {
+        Err(Error::new(
+            ErrorKind::BrokenPipe,
+            "synthetic positional write failure",
+        ))
+    }
+
+    fn flush(&mut self) -> IoResult<()> {
+        Ok(())
+    }
+}
 
 #[test]
 fn derive_summary_stats_returns_nan_fields_when_no_positions_are_eligible() {
@@ -181,4 +198,53 @@ fn coverage_cv_overflow_label_is_derived_from_the_threshold_constant() {
     // Arrange / Act / Assert
     // Keep this explicit so a future threshold change has to update the expected label too
     assert_eq!(coverage_cv_overflow_label(), ">1e6");
+}
+
+#[test]
+fn write_bedgraph_runs_returns_immediate_writer_errors() {
+    // Arrange: a single non-zero run forces one bedGraph row write. The writer fails immediately
+    // on `write`, while `flush` would succeed, so this catches swallowed callback errors.
+    let coverage = [1.0_f32, 1.0_f32];
+    let mut writer = FailingWriter;
+
+    // Act
+    let err = write_bedgraph_runs("chr1", &coverage, None, 0, coverage.len(), 100, 3, false, &mut writer)
+        .expect_err("bedGraph writer should return the row write error");
+
+    // Assert
+    assert!(
+        err.to_string()
+            .contains("synthetic positional write failure"),
+        "expected immediate write error, got {err:#}"
+    );
+}
+
+#[test]
+fn write_windowed_runs_returns_immediate_writer_errors() {
+    // Arrange: the indexed windowed writer path has a distinct row format from bedGraph, so it
+    // should independently propagate the same immediate `Write` failure.
+    let coverage = [2.0_f32, 2.0_f32];
+    let mut writer = FailingWriter;
+
+    // Act
+    let err = write_windowed_runs(
+        "chr1",
+        &coverage,
+        None,
+        0,
+        coverage.len(),
+        200,
+        Some(7),
+        3,
+        false,
+        &mut writer,
+    )
+    .expect_err("windowed writer should return the row write error");
+
+    // Assert
+    assert!(
+        err.to_string()
+            .contains("synthetic positional write failure"),
+        "expected immediate write error, got {err:#}"
+    );
 }

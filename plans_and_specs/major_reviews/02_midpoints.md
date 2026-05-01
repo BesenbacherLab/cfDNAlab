@@ -6,8 +6,6 @@ Scope: `src/commands/midpoints/*`, the CLI dispatch for `midpoints`, and directl
 
 Shared findings that affect this command:
 
-- G-002 in `00_shared_package_notes.md`: README OPTIONS blocks need clearer alternative-choice labeling.
-
 Post-release performance optimizations that affect this command:
 
 - G-006 in `00_shared_package_notes.md`: sparse-window reference sequence reads happen before no-window pruning.
@@ -16,7 +14,6 @@ Post-release performance optimizations that affect this command:
 
 Pre-release semantic/docs:
 
-- G-002: README OPTIONS blocks should keep their current structure but clarify alternative choices.
 - M-005: midpoint blacklist semantics should be either aligned with counted midpoint placement or documented explicitly.
 
 Post-release performance/scalability:

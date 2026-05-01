@@ -6,8 +6,6 @@ Scope: `src/commands/fcoverage/*`, the CLI dispatch for `fcoverage`, and directl
 
 Shared findings that affect this command:
 
-- G-002 in `00_shared_package_notes.md`: README OPTIONS blocks need clearer alternative-choice labeling.
-
 Post-release performance optimizations that affect this command:
 
 - G-006 in `00_shared_package_notes.md`: sparse-window reference sequence reads happen before no-window pruning.
@@ -16,12 +14,10 @@ Post-release performance optimizations that affect this command:
 
 Pre-release correctness/safety:
 
-- F-001: positional output writers discard write errors.
 - F-005: fully masked averages need an intentional scalar-vs-summary contract.
 
 Pre-release docs/API polish:
 
-- G-002: README OPTIONS blocks should keep their current structure but clarify alternative choices.
 - F-006: fix blacklist help for positional outputs.
 
 Post-release performance:
@@ -29,25 +25,6 @@ Post-release performance:
 - G-006: sparse-window GC reference pruning.
 
 ## Findings
-
-### F-001 - High - Positional output writers discard write errors
-
-`write_bedgraph_runs()` and `write_windowed_runs()` call `writeln!` inside a callback and assign the result to `_` ([writers.rs](../../src/commands/fcoverage/writers.rs#L981-L1003), [writers.rs](../../src/commands/fcoverage/writers.rs#L1040-L1073)). The comment says errors are "bubbled up by caller on flush", but that is not a reliable contract for every `Write` implementation, and the functions return `Ok(())` even when an individual row write failed.
-
-Affected outputs:
-
-- whole-genome positional bedGraph
-- `--by-bed --per-window unique-positions`
-- `--by-bed --per-window indexed-positions`
-- restore-mean positional paths before final scaled merge
-
-Impact: disk-full, interrupted pipe, or writer failures can be reported as successful output or can produce truncated positional files without the failing write being attached to the row that failed.
-
-Recommended fix:
-
-- Make `visit_runs_in_window()` return `Result<()>`, with a callback returning `Result<()>`.
-- Propagate each `writeln!` with `?`.
-- Add a tiny writer test with a custom failing writer so this cannot regress without needing filesystem tricks.
 
 ### F-005 - Medium - Fully masked averages are `0` in average mode but `NaN` in summary-stats mode
 
@@ -73,4 +50,4 @@ Recommended fix:
 
 ## Existing coverage notes
 
-The command already has unusually broad end-to-end coverage in `tests/test_fcoverage_command.rs`, including normalization, restore-mean, gap handling, blacklist masking, tile-boundary invariance, by-size/by-BED/grouped-BED modes, GC file/tag paths, and invalid mode combinations. The most important fcoverage-specific missing tests from this review are writer-error propagation and the chosen scalar-average behavior for fully masked windows. The deferred sparse-window GC reference pruning optimization is tracked in G-006 in `00_shared_package_notes.md`.
+The command already has unusually broad end-to-end coverage in `tests/test_fcoverage_command.rs`, including normalization, restore-mean, gap handling, blacklist masking, tile-boundary invariance, by-size/by-BED/grouped-BED modes, GC file/tag paths, and invalid mode combinations. The most important fcoverage-specific missing test from this review is the chosen scalar-average behavior for fully masked windows. The deferred sparse-window GC reference pruning optimization is tracked in G-006 in `00_shared_package_notes.md`.

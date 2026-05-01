@@ -988,19 +988,17 @@ pub fn write_bedgraph_runs<W: Write>(
         |run_lo, run_hi, value| {
             let run_start_abs = tile_abs_start + run_lo as u64;
             let run_end_abs = tile_abs_start + run_hi as u64;
-            // Ignore write errors here; bubbled up by caller on flush
-            let _ = writeln!(
+            writeln!(
                 out,
                 "{}\t{}\t{}\t{}",
                 chr,
                 run_start_abs,
                 run_end_abs,
                 CompactNumber { v: value, decimals },
-            );
+            )?;
+            Ok(())
         },
-    );
-
-    Ok(())
+    )
 }
 
 /// Writes run-length encoded coverage for a single window in TSV form.
@@ -1047,7 +1045,7 @@ pub fn write_windowed_runs<W: Write>(
         |run_lo, run_hi, value| {
             let run_start_abs = tile_abs_start + run_lo as u64;
             let run_end_abs = tile_abs_start + run_hi as u64;
-            let _ = if let Some(idx) = orig_idx {
+            if let Some(idx) = orig_idx {
                 writeln!(
                     out,
                     "{}\t{}\t{}\t{}\t{}",
@@ -1056,7 +1054,7 @@ pub fn write_windowed_runs<W: Write>(
                     run_end_abs,
                     CompactNumber { v: value, decimals },
                     idx
-                )
+                )?;
             } else {
                 writeln!(
                     out,
@@ -1065,12 +1063,11 @@ pub fn write_windowed_runs<W: Write>(
                     run_start_abs,
                     run_end_abs,
                     CompactNumber { v: value, decimals },
-                )
+                )?;
             };
+            Ok(())
         },
-    );
-
-    Ok(())
+    )
 }
 
 /// Iterates over contiguous runs of equal rounded coverage within a slice.
@@ -1087,6 +1084,7 @@ pub fn write_windowed_runs<W: Write>(
 /// - `decimals`: Number of decimals to keep when grouping runs.
 /// - `keep_zero_runs`: Whether runs with value zero should be visited.
 /// - `on_run`: Visitor called with `(run_start, run_end, rounded_value)`.
+///   Any error stops iteration and is returned to the caller.
 #[inline]
 fn visit_runs_in_window(
     cov: &[f32],
@@ -1095,8 +1093,8 @@ fn visit_runs_in_window(
     local_end_idx: usize,
     decimals: i32,
     keep_zero_runs: bool,
-    on_run: impl FnMut(usize, usize, f64),
-) {
+    on_run: impl FnMut(usize, usize, f64) -> Result<()>,
+) -> Result<()> {
     let m = mask.unwrap_or(&[]);
     let m_has_elements = !m.is_empty();
     if m_has_elements {
@@ -1133,6 +1131,7 @@ fn visit_runs_in_window(
 /// - `decimals`: Number of decimals to keep when grouping runs.
 /// - `keep_zero_runs`: Whether runs with value zero should be visited.
 /// - `on_run`: Visitor called with `(run_start, run_end, rounded_value)`.
+///   Any error stops iteration and is returned to the caller.
 #[inline]
 fn visit_runs_unmasked(
     cov: &[f32],
@@ -1140,8 +1139,8 @@ fn visit_runs_unmasked(
     local_end_idx: usize,
     decimals: i32,
     keep_zero_runs: bool,
-    mut on_run: impl FnMut(usize, usize, f64),
-) {
+    mut on_run: impl FnMut(usize, usize, f64) -> Result<()>,
+) -> Result<()> {
     let mut i = local_start_idx;
     let rounding_factor = if decimals <= 0 {
         1.0
@@ -1171,9 +1170,10 @@ fn visit_runs_unmasked(
             continue;
         }
 
-        on_run(run_start_idx, j, value0);
+        on_run(run_start_idx, j, value0)?;
         i = j;
     }
+    Ok(())
 }
 
 /// Visits runs while respecting a binary mask that excludes certain bases.
@@ -1189,6 +1189,7 @@ fn visit_runs_unmasked(
 /// - `decimals`: Number of decimals to keep when grouping runs.
 /// - `keep_zero_runs`: Whether runs with value zero should be visited.
 /// - `on_run`: Visitor called with `(run_start, run_end, rounded_value)`.
+///   Any error stops iteration and is returned to the caller.
 #[inline]
 fn visit_runs_masked(
     cov: &[f32],
@@ -1197,8 +1198,8 @@ fn visit_runs_masked(
     local_end_idx: usize,
     decimals: i32,
     keep_zero_runs: bool,
-    mut on_run: impl FnMut(usize, usize, f64),
-) {
+    mut on_run: impl FnMut(usize, usize, f64) -> Result<()>,
+) -> Result<()> {
     let mut i = local_start_idx;
     let rounding_factor = if decimals <= 0 {
         1.0
@@ -1237,9 +1238,10 @@ fn visit_runs_masked(
             continue;
         }
 
-        on_run(run_start_idx, j, value0);
+        on_run(run_start_idx, j, value0)?;
         i = j;
     }
+    Ok(())
 }
 
 #[cfg(test)]
