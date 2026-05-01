@@ -4611,6 +4611,48 @@ fn max_soft_clips_skips_only_the_over_clipped_end() -> Result<()> {
 }
 
 #[test]
+fn raw_shifted_boundary_fragment_blacklist_uses_the_shifted_assignment_interval() -> Result<()> {
+    // Arrange: 2S10M at pos 10 has aligned span [10,20) but raw-shifted assignment span [8,20).
+    // Blacklisting [8,9) should drop the whole fragment through fragment-level blacklist
+    // filtering, even though the aligned span itself does not overlap the blacklist.
+    let bam = single_read_bam(
+        "ends_raw_shifted_blacklist_assignment_interval",
+        10,
+        vec![('S', 2), ('M', 10)],
+        b"TTAAAAAAAAAT",
+    )?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let blacklist_bed = out_dir.path().join("blacklist.bed");
+    write_bed(&blacklist_bed, &[("chr1", 8, 9, "shifted_extension")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.blacklist = Some(vec![blacklist_bed]);
+    cfg.blacklist_strategy = BlacklistStrategy::Any;
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 12;
+        lengths.max_fragment_length = 12;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (_motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[1, 4]);
+    assert_eq!(matrix.sum(), 0.0);
+    Ok(())
+}
+
+#[test]
 fn raw_aligned_boundary_blacklist_validation_ignores_inside_bases_without_reference_overlap()
 -> Result<()> {
     // Arrange: left motif uses two fully clipped bases in raw-aligned-boundary mode.

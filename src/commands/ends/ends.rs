@@ -791,11 +791,11 @@ fn process_tile(
             continue;
         }
 
-        // Determine blacklist status (based on aligned fragment coordinates)
+        // Fragment-level blacklist filtering follows the clip-strategy assignment geometry.
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.blacklist_strategy,
-            fragment.interval.try_to_u64()?,
+            fragment.assignment_interval.try_to_u64()?,
             opt.fragment_lengths.max_fragment_length as u64,
             &mut bl_ptr,
         );
