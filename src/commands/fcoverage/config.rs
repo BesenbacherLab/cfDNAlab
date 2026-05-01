@@ -68,7 +68,7 @@ pub enum LengthNormalizationMode {
 ///
 /// ## Blacklisting
 ///
-/// Positions in blacklisted regions are set to `f32::NaN` (and thus not included in sums or averages).
+/// Blacklisted positions are excluded from positional and aggregate coverage outputs.
 ///
 /// ## GC correction
 ///
