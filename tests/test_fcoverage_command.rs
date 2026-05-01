@@ -3105,6 +3105,51 @@ fn blacklist_average_uses_only_unmasked_positions_in_denominator() -> Result<()>
 }
 
 #[test]
+fn blacklist_average_writes_nan_when_window_has_no_eligible_positions() -> Result<()> {
+    // Human verification status: verified
+    // Manual expectations:
+    // - Window [0,40) is fully blacklisted, so it has no eligible positions.
+    // - No denominator exists for average coverage, so the scalar average must be undefined
+    //   rather than true zero.
+    // - Window [40,80) is unmasked and covered by the single fragment, so average = 1.
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let blacklist_path = out_dir.path().join("blacklist_average_nan.bed");
+    write_bed(&blacklist_path, &[("chr1", 0, 40, "fully_masked")])?;
+
+    let mut windows = DistributionWindowsArgs::default();
+    windows.by_size = Some(40);
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(3);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_windows(windows);
+    cfg.blacklist = Some(vec![blacklist_path]);
+
+    // Act
+    run(&cfg)?;
+
+    let output_path = out_dir.path().join("testcov.fcoverage.average.tsv.zst");
+    let text = read_zst_to_string(&output_path)?;
+    let lines: Vec<_> = text.lines().collect();
+
+    // Assert
+    assert_eq!(
+        lines,
+        vec![
+            "chromosome\tstart\tend\taverage_coverage\tblacklisted_positions",
+            "chr1\t0\t40\tNaN\t40",
+            "chr1\t40\t80\t1\t0",
+            "chr1\t80\t120\t0\t0",
+            "chr1\t120\t160\t0\t0",
+            "chr1\t160\t200\t0\t0",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
 fn per_position_and_by_size_totals_conserve_total_covered_bases() -> Result<()> {
     // Human verification status: unverified
     let bam = long_fragment_bam("fcoverage_conservation_fixture")?;

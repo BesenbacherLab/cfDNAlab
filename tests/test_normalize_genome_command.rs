@@ -85,6 +85,14 @@ fn assert_approx(actual: f64, expected: f64, tolerance: f64, label: &str) {
     );
 }
 
+fn assert_approx_or_both_nan(actual: f64, expected: f64, tolerance: f64, label: &str) {
+    if expected.is_nan() {
+        assert!(actual.is_nan(), "{label}: expected NaN, got {actual}");
+    } else {
+        assert_approx(actual, expected, tolerance, label);
+    }
+}
+
 fn scaling_row_chromosomes(rows: &[ScalingRow]) -> Vec<String> {
     rows.iter().map(|row| row.chromosome.clone()).collect()
 }
@@ -291,7 +299,7 @@ fn coverage_weights_errors_clearly_when_filters_remove_all_smoothed_mass() -> Re
     // Assert
     let message = err.to_string();
     assert!(
-        message.contains("no finite non-zero smoothed fragment mass after filtering"),
+        message.contains("no usable finite non-zero smoothed fragment mass after filtering"),
         "unexpected error message: {message}"
     );
     assert!(
@@ -1451,35 +1459,42 @@ fn chromosomes_all_uses_bam_header_order_for_scaling_tsv_rows() -> Result<()> {
 }
 
 #[test]
-fn blacklist_masking_changes_scaling_profile_and_excludes_zeroed_bins_from_global_mean()
--> Result<()> {
+fn blacklist_masking_treats_fully_masked_stride_as_missing_for_smoothing_and_scaling() -> Result<()>
+{
     // Human verification status: unverified
     // Arrange:
     // Start from the same simple fixture with one fragment [20,80), then blacklist [20,40).
     //
     // Per-stride average coverage with stride=20 and blacklist exclusion becomes:
     // - [0,20):   0
-    // - [20,40):  0   because every covered base in this stride bin is blacklisted
+    // - [20,40):  NaN because every position in this stride bin is blacklisted
     // - [40,60):  1   fully covered and unmasked
     // - [60,80):  1   fully covered and unmasked
     // - later bins: 0
     //
     // With bin-size=40 and stride=20, the triangular kernel is [1,2,1].
+    // Non-finite stride averages are missing measurements, so smoothing skips
+    // both their coverage value and their kernel weight.
     // Hand-derived avg-overlapping-position-coverage:
-    // - row 0: truncated [2,1] over [0,0]          -> 0
-    // - row 1: [1,2,1] over [0,0,1]                -> 1/4
-    // - row 2: [1,2,1] over [0,1,1]                -> 3/4
+    // - row 0: truncated [2,1] over [0,NaN]        -> 0/2 = 0
+    // - row 1: [1,2,1] over [0,NaN,1]              -> 1/(1+1) = 1/2
+    // - row 2: [1,2,1] over [NaN,1,1]              -> 3/(2+1) = 1
     // - row 3: [1,2,1] over [1,1,0]                -> 3/4
     // - row 4: [1,2,1] over [1,0,0]                -> 1/4
     // - later rows: 0
     //
-    // The global mean ignores zeros, so:
-    //   mean = (1/4 + 3/4 + 3/4 + 1/4) / 4 = 2 / 4 = 1/2
+    // The global mean uses only rows with finite raw stride values and finite non-zero smoothed
+    // values. The fully masked [20,40) stride keeps its smoothed value in the output, but it
+    // does not receive a usable scaling factor and does not define the global mean.
+    //
+    //   mean = (1 + 3/4 + 1/4) / 3 = 2/3
     //
     // Inverted scaling factors therefore become:
     // - 0       -> 0
-    // - 1/4     -> (1/2) / (1/4) = 2
-    // - 3/4     -> (1/2) / (3/4) = 2/3
+    // - NaN raw -> 0 even though the smoothed display value is finite
+    // - 1       -> (2/3) / 1 = 2/3
+    // - 3/4     -> (2/3) / (3/4) = 8/9
+    // - 1/4     -> (2/3) / (1/4) = 8/3
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let blacklist_path = out_dir.path().join("blacklist.bed");
@@ -1493,11 +1508,11 @@ fn blacklist_masking_changes_scaling_profile_and_excludes_zeroed_bins_from_globa
     let rows = parse_scaling_rows(&out_dir.path().join("coverage.coverage.scaling_factors.tsv"))?;
 
     // Assert
-    let expected_stride_value = [0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let expected_stride_value = [0.0, f64::NAN, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
     let expected_average_overlap = [
         0.0,
-        1.0 / 4.0,
-        3.0 / 4.0,
+        1.0 / 2.0,
+        1.0,
         3.0 / 4.0,
         1.0 / 4.0,
         0.0,
@@ -1506,12 +1521,23 @@ fn blacklist_masking_changes_scaling_profile_and_excludes_zeroed_bins_from_globa
         0.0,
         0.0,
     ];
-    let expected_scaling = [0.0, 2.0, 2.0 / 3.0, 2.0 / 3.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    let expected_scaling = [
+        0.0,
+        0.0,
+        2.0 / 3.0,
+        8.0 / 9.0,
+        8.0 / 3.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    ];
 
     assert_eq!(rows.len(), 10);
     for row_index in 0..rows.len() {
         let row = &rows[row_index];
-        assert_approx(
+        assert_approx_or_both_nan(
             row.stride_value,
             expected_stride_value[row_index],
             1e-6,

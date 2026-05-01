@@ -574,8 +574,8 @@ pub fn coverage_summary_and_counts(
 
 /// Converts accumulated coverage statistics into a final window value.
 ///
-/// Depending on the requested action the result is either an average (over allowed or full span)
-/// or the raw total; zero denominators yield zero to avoid NaNs.
+/// Depending on the requested action the result is either an average over eligible positions or
+/// the raw total. Averages with no eligible positions are undefined and return `NaN`.
 ///
 /// # Parameters
 /// - `sum`: Accumulated coverage sum.
@@ -598,13 +598,13 @@ pub fn finalize_value(
         CoverageWindowAction::Average | CoverageWindowAction::AverageOnUniqueBases => {
             if masked {
                 if allowed_positions == 0 {
-                    0.0
+                    f64::NAN
                 } else {
                     sum / allowed_positions as f64
                 }
             } else {
                 if unmasked_span_bp == 0 {
-                    0.0
+                    f64::NAN
                 } else {
                     sum / unmasked_span_bp as f64
                 }

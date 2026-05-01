@@ -80,6 +80,10 @@ use crate::commands::coverage_weights::scaling_weights_config::ScalingWeightsArg
 ///
 /// The weights are normalized by their sum (after potential truncation at edges).
 ///
+/// Stride bins with undefined average coverage, for example fully blacklisted bins from
+/// `fcoverage`, are skipped while smoothing neighboring bins. They may still get a finite
+/// smoothed value from neighboring support, but their scaling factor is written as `0`.
+///
 /// ## Always-on exclusion criteria
 ///
 /// The following criteria always exclude a read:

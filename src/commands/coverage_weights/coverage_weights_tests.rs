@@ -394,6 +394,53 @@ fn fill_triangular_overlap_preserves_constant_support_with_short_final_bin() -> 
 }
 
 #[test]
+fn fill_triangular_overlap_skips_nan_stride_averages_when_smoothing() -> Result<()> {
+    // Arrange:
+    // A fully blacklisted stride from fcoverage average is `NaN`, not zero.
+    // That bin has no denominator, so it should not contribute either coverage
+    // or weight to neighboring smoothed bins.
+    let mut bins = vec![
+        StrideBin {
+            interval: Interval::new(0, 10)?,
+            average_coverage: 0.0,
+            average_overlap_coverage: 0.0,
+            scaling_factor: 0.0,
+        },
+        StrideBin {
+            interval: Interval::new(10, 20)?,
+            average_coverage: f32::NAN,
+            average_overlap_coverage: 0.0,
+            scaling_factor: 0.0,
+        },
+        StrideBin {
+            interval: Interval::new(20, 30)?,
+            average_coverage: 1.0,
+            average_overlap_coverage: 0.0,
+            scaling_factor: 0.0,
+        },
+    ];
+
+    // Act
+    fill_triangular_overlap(&mut bins, 20, 10);
+
+    // Assert:
+    // With bin-size=20 and stride=10, the triangular kernel is [1,2,1].
+    // - row 0: truncated [2,1] over [0,NaN], skipping NaN -> 0 / 2 = 0
+    // - row 1: [1,2,1] over [0,NaN,1], skipping NaN -> 1 / (1+1) = 1/2
+    // - row 2: truncated [1,2] over [NaN,1], skipping NaN -> 2 / 2 = 1
+    let expected_average_overlap = [0.0_f32, 0.5, 1.0];
+    for (bin_index, expected) in expected_average_overlap.iter().enumerate() {
+        let actual = bins[bin_index].average_overlap_coverage;
+        assert!(
+            (actual - expected).abs() <= 1e-6,
+            "expected smoothed value {expected} at bin {bin_index}, got {actual}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn normalize_average_overlap_by_global_mean_ignores_bins_below_support_floor() -> Result<()> {
     // Arrange
     let mut bins_by_chr = FxHashMap::default();
@@ -435,6 +482,73 @@ fn normalize_average_overlap_by_global_mean_ignores_bins_below_support_floor() -
 }
 
 #[test]
+fn normalize_average_overlap_by_global_mean_ignores_nan_raw_or_smoothed_bins() -> Result<()> {
+    // Arrange:
+    // A NaN raw stride value means the stride had no eligible denominator.
+    // A NaN smoothed value means no finite neighboring support was available.
+    // Both cases stay visible in the diagnostic columns, but neither should participate in
+    // the global mean or receive a usable scaling factor.
+    let mut bins_by_chr = FxHashMap::default();
+    bins_by_chr.insert(
+        "chr1".to_string(),
+        vec![
+            StrideBin {
+                interval: Interval::new(0, 10)?,
+                average_coverage: f32::NAN,
+                average_overlap_coverage: 4.0,
+                scaling_factor: 0.0,
+            },
+            StrideBin {
+                interval: Interval::new(10, 20)?,
+                average_coverage: 1.0,
+                average_overlap_coverage: f32::NAN,
+                scaling_factor: 0.0,
+            },
+            StrideBin {
+                interval: Interval::new(20, 30)?,
+                average_coverage: 0.0,
+                average_overlap_coverage: 0.0,
+                scaling_factor: 0.0,
+            },
+            StrideBin {
+                interval: Interval::new(30, 40)?,
+                average_coverage: 2.0,
+                average_overlap_coverage: 2.0,
+                scaling_factor: 0.0,
+            },
+        ],
+    );
+
+    // Act
+    let mean = normalize_average_overlap_by_global_mean(&mut bins_by_chr, false, true)?;
+
+    // Assert
+    let chr1_bins = bins_by_chr.get("chr1").expect("chr1 bins should exist");
+    assert!((mean - 2.0).abs() <= 1e-6, "expected mean 2.0, got {mean}");
+    assert_eq!(
+        chr1_bins[0].scaling_factor, 0.0,
+        "NaN raw support should get scaling 0 even when smoothed support is finite"
+    );
+    assert_eq!(
+        chr1_bins[1].scaling_factor, 0.0,
+        "NaN smoothed support should get scaling 0"
+    );
+    assert_eq!(
+        chr1_bins[2].scaling_factor, 0.0,
+        "zero smoothed support should get scaling 0"
+    );
+    // Since only this bin is included in the mean, the normalization leads 
+    // to a scaling factor of 2/2=1
+    assert!(
+        (chr1_bins[3].scaling_factor - 1.0).abs() <= 1e-6,
+        "only finite non-zero bin should normalize to 1.0, got {}",
+        chr1_bins[3].scaling_factor
+    );
+
+    Ok(())
+}
+
+#[test]
 fn normalize_average_overlap_by_global_mean_explains_all_zero_smoothed_mass() -> Result<()> {
     // Arrange
     let mut bins_by_chr = FxHashMap::default();
@@ -463,7 +577,7 @@ fn normalize_average_overlap_by_global_mean_explains_all_zero_smoothed_mass() ->
     // Assert
     let message = err.to_string();
     assert!(
-        message.contains("no finite non-zero smoothed fragment mass after filtering"),
+        message.contains("no usable finite non-zero smoothed fragment mass after filtering"),
         "unexpected error message: {message}"
     );
     assert!(

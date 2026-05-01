@@ -41,8 +41,11 @@ pub enum LengthNormalizationMode {
 /// is possible:
 ///
 /// - Get the average (default) or total coverage per window.
+///   Average is `NaN` when no positions are eligible, for example when the
+///   whole window is blacklisted.
 ///
 /// - Get summary statistics per window or grouped row.
+///   Derived statistics with no eligible positions are `NaN`.
 ///
 /// - Get the positional coverage for the included windows only (`--by-bed` *only*).
 ///   Excludes all positions that do not overlap a window from the output.
@@ -197,10 +200,13 @@ pub struct FCoverageConfig {
     /// Possible values:
     ///
     /// - `"average"`: Get the average coverage per window (default).
+    ///   Returns `NaN` when the window has no eligible positions after masking.
     ///
     /// - `"total"`: Get the total coverage per window.
     ///
     /// - `"summary-stats"`: Get raw and derived coverage summary statistics per window.
+    ///   Average, variance, standard deviation, CV, and covered fraction are `NaN`
+    ///   when the window has no eligible positions after masking.
     ///
     /// For `--by-bed` only:
     ///

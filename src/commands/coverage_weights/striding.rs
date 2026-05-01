@@ -98,8 +98,10 @@ fn triangular_weights(half_window: usize) -> Vec<usize> {
 /// 1) Pick the slice of bins we can actually use: `[start_i .. end_i)`
 /// 2) Compute `w_start`, the index into `weights` that aligns the first usable bin with
 ///    the correct kernel position (so the kernel's center still targets `i`).
-/// 3) Accumulate `sum( average_coverage[j] * weight[j] )` and `sum(weights)`
+/// 3) Accumulate `sum( average_coverage[j] * weight[j] )` and `sum(weights)`.
+///    Non-finite averages are missing measurements and do not contribute to either sum.
 /// 4) Normalize: `average_overlap_coverage[i] = weighted_sum / sum_weights`.
+///    If no finite neighbor is available, the smoothed value is `NaN`.
 ///
 /// Parameters
 /// ----------
@@ -158,16 +160,20 @@ pub fn fill_triangular_overlap(bins: &mut Vec<StrideBin>, bin_size: u32, stride:
         // Sum average_coverage * weight, and the weights
         for j in 0..slice_len {
             let mut w = weights[w_start + j] as f64;
+            let average_coverage = bin_slice[j].average_coverage as f64;
+            if !average_coverage.is_finite() {
+                continue;
+            }
             // Last stride-bin may be shorter, so weight by length (most == 1.0)
             let len_ratio = (bin_slice[j].size() as f64) / (stride as f64);
             w = w * len_ratio;
-            sum_cov += bin_slice[j].average_coverage as f64 * w;
+            sum_cov += average_coverage * w;
             sum_w += w;
         }
         bins[i].average_overlap_coverage = if sum_w > 0.0 {
             (sum_cov / sum_w) as f32
         } else {
-            0.0
+            f32::NAN
         };
     }
 }
@@ -201,17 +207,24 @@ pub fn normalize_average_overlap_by_global_mean(
     let mut sum = 0.0_f64;
     let mut wsum = 0.0_f64;
     let mut total_bins = 0usize;
-    let mut finite_non_zero_bins = 0usize;
+    let mut usable_bins = 0usize;
 
-    // Compute global mean over all chromosomes
+    // Compute global mean over all chromosomes.
+    // A smoothed value can be finite even when the raw stride average is missing because smoothing
+    // can interpolate across masked bins. Those rows are useful in the output, but they should not
+    // define the global mean or receive a usable scaling factor.
     for bins in bins_by_chr.values() {
         for b in bins {
             total_bins += 1;
-            let v = b.average_overlap_coverage as f64;
-            if !v.is_finite() || is_effectively_zero(v) {
+            let raw_average = b.average_coverage as f64;
+            let smoothed_average = b.average_overlap_coverage as f64;
+            if !raw_average.is_finite()
+                || !smoothed_average.is_finite()
+                || is_effectively_zero(smoothed_average)
+            {
                 continue; // Skip NaN/inf and bins without real support
             }
-            finite_non_zero_bins += 1;
+            usable_bins += 1;
             let w = if length_weighted {
                 b.size() as f64
             } else {
@@ -221,7 +234,7 @@ pub fn normalize_average_overlap_by_global_mean(
             if w == 0.0 {
                 continue;
             }
-            sum += v * w;
+            sum += smoothed_average * w;
             wsum += w;
         }
     }
@@ -230,15 +243,15 @@ pub fn normalize_average_overlap_by_global_mean(
         if total_bins == 0 {
             anyhow::bail!("no stride bins were available to normalize");
         }
-        if finite_non_zero_bins == 0 {
+        if usable_bins == 0 {
             anyhow::bail!(
-                "no finite non-zero smoothed fragment mass after filtering across {} stride bins. Check --chromosomes, --min-mapq, fragment length filters, blacklist, and GC correction inputs",
+                "no usable finite non-zero smoothed fragment mass after filtering across {} stride bins. Check --chromosomes, --min-mapq, fragment length filters, blacklist, and GC correction inputs",
                 total_bins
             );
         }
         anyhow::bail!(
-            "internal error: total sum of 0 but found {} finite non-zero bins. Should be impossible, please report",
-            finite_non_zero_bins
+            "internal error: total sum of 0 but found {} usable bins. Should be impossible, please report",
+            usable_bins
         );
     }
 
@@ -251,11 +264,15 @@ pub fn normalize_average_overlap_by_global_mean(
     let inv_mean = 1.0_f64 / mean;
     for bins in bins_by_chr.values_mut() {
         for b in bins.iter_mut() {
-            let v = b.average_overlap_coverage as f64;
-            b.scaling_factor = if !v.is_finite() || is_effectively_zero(v) {
+            let raw_average = b.average_coverage as f64;
+            let smoothed_average = b.average_overlap_coverage as f64;
+            b.scaling_factor = if !raw_average.is_finite()
+                || !smoothed_average.is_finite()
+                || is_effectively_zero(smoothed_average)
+            {
                 0.0
             } else {
-                let normalized = v * inv_mean;
+                let normalized = smoothed_average * inv_mean;
                 if invert {
                     (1.0 / normalized) as f32
                 } else {

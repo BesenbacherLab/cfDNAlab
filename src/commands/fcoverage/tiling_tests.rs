@@ -223,17 +223,17 @@ fn coverage_sum_and_counts_uses_full_sum_and_span_when_unmasked() {
 }
 
 #[test]
-fn finalize_value_returns_zero_for_masked_average_with_no_allowed_positions() {
+fn finalize_value_returns_nan_for_masked_average_with_no_allowed_positions() {
     // Arrange / Act / Assert
     let value = finalize_value(7.5, 0, 100, true, &CoverageWindowAction::Average);
-    assert_eq!(value, 0.0);
+    assert!(value.is_nan());
 }
 
 #[test]
-fn finalize_value_returns_zero_for_unmasked_average_with_zero_span() {
+fn finalize_value_returns_nan_for_unmasked_average_with_zero_span() {
     // Arrange / Act / Assert
     let value = finalize_value(7.5, 5, 0, false, &CoverageWindowAction::Average);
-    assert_eq!(value, 0.0);
+    assert!(value.is_nan());
 }
 
 #[test]
