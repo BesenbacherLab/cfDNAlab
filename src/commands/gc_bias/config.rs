@@ -285,7 +285,7 @@ pub struct GCConfig {
     )]
     pub min_window_acgt_pct: u8,
 
-    /// Handle extreme correction factors to avoid unstable weights `[string]`
+    /// Handle extreme GC-bias values to avoid unstable weights `[string]`
     ///
     /// Options:
     ///
@@ -295,7 +295,8 @@ pub struct GCConfig {
     ///
     /// - `iqr`, `stddev`, `mad`: Use the corresponding rule with multiplier `--outlier-k`.
     ///
-    /// **NOTE**: After outlier detection, correction values are further clipped at `[0.1, 10.0]`.
+    /// **NOTE**: After outlier detection, extreme GC-bias values are clipped at `[0.1, 10.0]`
+    /// before the final scaling steps.
     #[cfg_attr(
         feature = "cli",
         clap(long, default_value_t = DEFAULT_OUTLIER_METHOD, value_enum, help_heading = "Outliers")

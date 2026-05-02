@@ -11,7 +11,10 @@ mod tests_gc_bias {
     use tempfile::{TempDir, tempdir};
 
     use cfdnalab::commands::{
-        cli_common::{ChromosomeArgs, GCWindowsArgs, IOCArgs, LoggingArgs, Ref2BitRequiredArgs},
+        cli_common::{
+            ChromosomeArgs, GCWindowsArgs, IOCArgs, LoggingArgs, MIN_ACGT_BASES_FOR_GC_FRACTION,
+            Ref2BitRequiredArgs,
+        },
         gc_bias::{
             GC_CORRECTION_SCHEMA_VERSION,
             binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
@@ -22,7 +25,7 @@ mod tests_gc_bias {
             },
             counting::{build_gc_prefixes, gc_percent_widths},
             gc_bias::{get_fragment_gc, interpolate_masked_corrections, run as run_gc_bias},
-            load_reference_bias::load_reference_gc_data,
+            load_reference_bias::{ReferenceGCMetadata, load_reference_gc_data},
             outliers::{
                 OutlierAction, OutlierRule, OutlierScope, OutlierStats, apply_outliers_to_matrix,
                 interpolated_quantile, outlier_bounds,
@@ -272,6 +275,53 @@ mod tests_gc_bias {
         assert_eq!(reconstructed_axis.num_bins, axis.num_bins);
         assert_eq!(reconstructed_axis.bin_to_indices, axis.bin_to_indices);
         assert_eq!(reconstructed_axis.index_to_bin, axis.index_to_bin);
+    }
+
+    #[test]
+    fn rejects_correction_package_components_with_invalid_weights() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange: one length bin spanning 30..=31 and one GC bin spanning 0..=100.
+        // The package writer should reject invalid final correction weights before an NPZ can be
+        // written, and the error should identify the offending bin.
+        let length_bins = bins_from_edges(&[30, 31])?;
+        let gc_bins = bins_from_edges(&[0, 100])?;
+        let reference_metadata = ReferenceGCMetadata {
+            min_fragment_length: 30,
+            max_fragment_length: 31,
+            end_offset: 10,
+            chromosomes: vec!["chr1".to_string()],
+            skip_interpolation: false,
+            smoothing_sigma: 0.55,
+            smoothing_radius: 2,
+            skip_smoothing: true,
+        };
+
+        for invalid_weight in [f64::NAN, f64::INFINITY, -0.25] {
+            // Act
+            let error = GCCorrectionPackage::from_components(
+                GC_CORRECTION_SCHEMA_VERSION,
+                &length_bins,
+                &gc_bins,
+                array![[invalid_weight]],
+                array![1.0_f64],
+                &reference_metadata,
+                [0, 0],
+            )
+            .expect_err("invalid correction weight should fail package construction");
+
+            // Assert
+            let message = error.to_string();
+            assert!(
+                message.contains("GC correction matrix contains invalid weight"),
+                "unexpected error message: {message}"
+            );
+            assert!(
+                message.contains("length bin 0 [30-31], GC bin 0 [0-100]"),
+                "unexpected error message: {message}"
+            );
+        }
+
+        Ok(())
     }
 
     #[test]
@@ -2561,11 +2611,10 @@ mod tests_gc_bias {
         let ref_gc_dir = TempDir::new()?;
         write_reference_gc_package_fixture(
             ref_gc_dir.path(),
-            &[GC_CORRECTION_SCHEMA_VERSION],
-            &[false],
-            &[2],
-            &[0.55],
-            &[true, false],
+            ReferencePackageFixture {
+                skip_smoothing: vec![true, false],
+                ..ReferencePackageFixture::default()
+            },
         )?;
         let out_dir = TempDir::new()?;
         let cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
@@ -2593,11 +2642,10 @@ mod tests_gc_bias {
         let ref_gc_dir = TempDir::new()?;
         write_reference_gc_package_fixture(
             ref_gc_dir.path(),
-            &[GC_CORRECTION_SCHEMA_VERSION + 1],
-            &[false],
-            &[2],
-            &[0.55],
-            &[true],
+            ReferencePackageFixture {
+                version: vec![GC_CORRECTION_SCHEMA_VERSION + 1],
+                ..ReferencePackageFixture::default()
+            },
         )?;
         let out_dir = TempDir::new()?;
         let cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
@@ -2622,14 +2670,12 @@ mod tests_gc_bias {
         let bam = fixtures::simple_inward_bam()?;
         let reference = fixtures::simple_reference_twobit()?;
         let ref_gc_dir = TempDir::new()?;
-        write_reference_gc_package_fixture_for_chromosomes(
+        write_reference_gc_package_fixture(
             ref_gc_dir.path(),
-            &[GC_CORRECTION_SCHEMA_VERSION],
-            &[false],
-            &[2],
-            &[0.55],
-            &[true],
-            &["chr2"],
+            ReferencePackageFixture {
+                chromosomes: vec!["chr2".to_string()],
+                ..ReferencePackageFixture::default()
+            },
         )?;
         let out_dir = TempDir::new()?;
         let cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
@@ -2851,33 +2897,35 @@ mod tests_gc_bias {
         assert!((matrix[[1, 1]] - 1.0).abs() < 1e-6);
     }
 
-    fn write_reference_gc_package_fixture(
-        out_dir: &std::path::Path,
-        version: &[u32],
-        skip_interpolation: &[bool],
-        smoothing_radius: &[u32],
-        smoothing_sigma: &[f64],
-        skip_smoothing: &[bool],
-    ) -> Result<()> {
-        write_reference_gc_package_fixture_for_chromosomes(
-            out_dir,
-            version,
-            skip_interpolation,
-            smoothing_radius,
-            smoothing_sigma,
-            skip_smoothing,
-            &["chr1"],
-        )
+    struct ReferencePackageFixture {
+        version: Vec<u32>,
+        skip_interpolation: Vec<bool>,
+        smoothing_radius: Vec<u32>,
+        smoothing_sigma: Vec<f64>,
+        skip_smoothing: Vec<bool>,
+        chromosomes: Vec<String>,
+        length_range: [u32; 2],
+        end_offset: u32,
     }
 
-    fn write_reference_gc_package_fixture_for_chromosomes(
+    impl Default for ReferencePackageFixture {
+        fn default() -> Self {
+            Self {
+                version: vec![GC_CORRECTION_SCHEMA_VERSION],
+                skip_interpolation: vec![false],
+                smoothing_radius: vec![2],
+                smoothing_sigma: vec![0.55],
+                skip_smoothing: vec![true],
+                chromosomes: vec!["chr1".to_string()],
+                length_range: [30, 31],
+                end_offset: 10,
+            }
+        }
+    }
+
+    fn write_reference_gc_package_fixture(
         out_dir: &std::path::Path,
-        version: &[u32],
-        skip_interpolation: &[bool],
-        smoothing_radius: &[u32],
-        smoothing_sigma: &[f64],
-        skip_smoothing: &[bool],
-        chromosomes: &[&str],
+        fixture: ReferencePackageFixture,
     ) -> Result<()> {
         let package_path = out_dir.join("ref_gc_package.npz");
         let counts = array![[1.0_f64, 2.0_f64], [3.0_f64, 4.0_f64]];
@@ -2891,37 +2939,43 @@ mod tests_gc_bias {
         npz.add_array("support_mask_unobservables", &support_unobservables)?;
         npz.add_array("support_mask_outliers", &support_outliers)?;
         npz.add_array("gc_percent_widths", &gc_percent_widths)?;
-        npz.add_array("version", &ndarray::Array1::from(version.to_vec()))?;
-        npz.add_array("length_range", &ndarray::Array1::from(vec![30_u32, 40_u32]))?;
-        npz.add_array("end_offset", &ndarray::Array1::from(vec![10_u32]))?;
+        npz.add_array("version", &ndarray::Array1::from(fixture.version))?;
+        npz.add_array(
+            "length_range",
+            &ndarray::Array1::from(fixture.length_range.to_vec()),
+        )?;
+        npz.add_array(
+            "end_offset",
+            &ndarray::Array1::from(vec![fixture.end_offset]),
+        )?;
         npz.add_array(
             "skip_interpolation",
-            &ndarray::Array1::from(skip_interpolation.to_vec()),
+            &ndarray::Array1::from(fixture.skip_interpolation),
         )?;
         npz.add_array(
             "smoothing_radius",
-            &ndarray::Array1::from(smoothing_radius.to_vec()),
+            &ndarray::Array1::from(fixture.smoothing_radius),
         )?;
         npz.add_array(
             "smoothing_sigma",
-            &ndarray::Array1::from(smoothing_sigma.to_vec()),
+            &ndarray::Array1::from(fixture.smoothing_sigma),
         )?;
         npz.add_array(
             "skip_smoothing",
-            &ndarray::Array1::from(skip_smoothing.to_vec()),
+            &ndarray::Array1::from(fixture.skip_smoothing),
         )?;
-        write_reference_chromosomes_json(&mut npz, chromosomes)?;
+        write_reference_chromosomes_json(&mut npz, &fixture.chromosomes)?;
         npz.finish()?;
         Ok(())
     }
 
-    fn write_reference_chromosomes_json(
+    fn write_reference_chromosomes_json<S: AsRef<str>>(
         npz: &mut NpzWriter<std::fs::File>,
-        chromosomes: &[&str],
+        chromosomes: &[S],
     ) -> Result<()> {
-        let chromosome_names: Vec<String> = chromosomes
+        let chromosome_names: Vec<&str> = chromosomes
             .iter()
-            .map(|chromosome| chromosome.to_string())
+            .map(|chromosome| chromosome.as_ref())
             .collect();
         let chromosomes_json = serde_json::to_vec(&chromosome_names)?;
         npz.add_array("chromosomes_json", &ndarray::Array1::from(chromosomes_json))?;
@@ -3246,14 +3300,7 @@ mod tests_gc_bias {
         // Arrange: write a minimal reference package with the current schema version and scalar
         // metadata fields.
         let tmp = tempdir()?;
-        write_reference_gc_package_fixture(
-            tmp.path(),
-            &[GC_CORRECTION_SCHEMA_VERSION],
-            &[false],
-            &[2],
-            &[0.55],
-            &[true],
-        )?;
+        write_reference_gc_package_fixture(tmp.path(), ReferencePackageFixture::default())?;
 
         // Act
         let loaded = load_reference_gc_data(&tmp.path().join("ref_gc_package.npz"))?;
@@ -3276,7 +3323,7 @@ mod tests_gc_bias {
             array![[10_u16, 20_u16], [30_u16, 40_u16]]
         );
         assert_eq!(loaded.metadata.min_fragment_length, 30);
-        assert_eq!(loaded.metadata.max_fragment_length, 40);
+        assert_eq!(loaded.metadata.max_fragment_length, 31);
         assert_eq!(loaded.metadata.end_offset, 10);
         assert_eq!(loaded.metadata.chromosomes, vec!["chr1".to_string()]);
         assert!(!loaded.metadata.skip_interpolation);
@@ -3294,11 +3341,10 @@ mod tests_gc_bias {
         let tmp = tempdir()?;
         write_reference_gc_package_fixture(
             tmp.path(),
-            &[GC_CORRECTION_SCHEMA_VERSION],
-            &[false],
-            &[2],
-            &[0.55],
-            &[true, false],
+            ReferencePackageFixture {
+                skip_smoothing: vec![true, false],
+                ..ReferencePackageFixture::default()
+            },
         )?;
 
         // Act
@@ -3321,11 +3367,10 @@ mod tests_gc_bias {
         let tmp = tempdir()?;
         write_reference_gc_package_fixture(
             tmp.path(),
-            &[GC_CORRECTION_SCHEMA_VERSION + 1],
-            &[false],
-            &[2],
-            &[0.55],
-            &[true],
+            ReferencePackageFixture {
+                version: vec![GC_CORRECTION_SCHEMA_VERSION + 1],
+                ..ReferencePackageFixture::default()
+            },
         )?;
 
         // Act
@@ -3337,6 +3382,117 @@ mod tests_gc_bias {
             error
                 .to_string()
                 .contains("Reference GC package schema version mismatch")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_reference_gc_package_with_row_count_mismatched_to_length_range() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange: the package has two matrix rows, but `length_range = [30, 32]` names three
+        // concrete fragment-length rows: 30, 31, and 32.
+        let tmp = tempdir()?;
+        write_reference_gc_package_fixture(
+            tmp.path(),
+            ReferencePackageFixture {
+                length_range: [30, 32],
+                ..ReferencePackageFixture::default()
+            },
+        )?;
+
+        // Act
+        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.npz"))
+            .expect_err("expected row-count mismatch");
+
+        // Assert
+        assert!(
+            error
+                .to_string()
+                .contains("row count 2 does not match length_range [30, 32] (expected 3)")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_reference_gc_package_with_inverted_length_range() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange: `[31, 30]` cannot name an inclusive set of length rows.
+        let tmp = tempdir()?;
+        write_reference_gc_package_fixture(
+            tmp.path(),
+            ReferencePackageFixture {
+                length_range: [31, 30],
+                ..ReferencePackageFixture::default()
+            },
+        )?;
+
+        // Act
+        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.npz"))
+            .expect_err("expected inverted length_range error");
+
+        // Assert
+        assert!(
+            error
+                .to_string()
+                .contains("length_range must be ordered as [min, max]. Found [31, 30]")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_reference_gc_package_with_out_of_range_end_offset() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange: the writer stores `end_offset` as u32, but the command metadata model uses u8.
+        // Values above 255 must not be truncated.
+        let tmp = tempdir()?;
+        write_reference_gc_package_fixture(
+            tmp.path(),
+            ReferencePackageFixture {
+                end_offset: 300,
+                ..ReferencePackageFixture::default()
+            },
+        )?;
+
+        // Act
+        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.npz"))
+            .expect_err("expected out-of-range end_offset error");
+
+        // Assert
+        assert!(
+            error
+                .to_string()
+                .contains("end_offset in reference GC package must fit in u8")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_reference_gc_package_with_too_short_effective_minimum_length() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange: `min_fragment_length = 30` and `end_offset = 11` leaves only 8 bp after
+        // trimming both ends. `ref-gc-bias` refuses to write such a package, so the loader should
+        // reject one if it appears on disk.
+        let tmp = tempdir()?;
+        write_reference_gc_package_fixture(
+            tmp.path(),
+            ReferencePackageFixture {
+                end_offset: 11,
+                ..ReferencePackageFixture::default()
+            },
+        )?;
+
+        // Act
+        let error = load_reference_gc_data(&tmp.path().join("ref_gc_package.npz"))
+            .expect_err("expected invalid effective minimum length");
+
+        // Assert
+        let expected_message = format!(
+            "min_fragment_length (30) - 2 * end_offset (11) must be >= {}",
+            MIN_ACGT_BASES_FOR_GC_FRACTION
+        );
+        assert!(
+            error.to_string().contains(&expected_message),
+            "unexpected error message: {error}"
         );
         Ok(())
     }

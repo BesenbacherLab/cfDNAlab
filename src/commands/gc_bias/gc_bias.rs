@@ -761,11 +761,11 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             "  > 'unsupported' = bins the reference masks out (winsorized after interpolation)"
                 .to_string(),
         );
-        extra_lines.push(format!(
-            "  Clamped to [0.1,10.0]: {}",
-            outlier_stats.hard_clamped
-        ));
     }
+    extra_lines.push(format!(
+        "Extreme GC-bias values clamped to [{:.1},{:.1}] before final scaling: {}",
+        CORRECTION_CLAMP_RANGE.0, CORRECTION_CLAMP_RANGE.1, outlier_stats.hard_clamped
+    ));
     print_fragment_run_statistics(
         &global_counter.base,
         elapsed,

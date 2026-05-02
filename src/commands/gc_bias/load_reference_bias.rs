@@ -1,4 +1,6 @@
-use crate::commands::gc_bias::GC_CORRECTION_SCHEMA_VERSION;
+use crate::commands::{
+    cli_common::MIN_ACGT_BASES_FOR_GC_FRACTION, gc_bias::GC_CORRECTION_SCHEMA_VERSION,
+};
 use anyhow::{Context, Result, ensure};
 use ndarray::{Array1, Array2};
 use ndarray_npy::NpzReader;
@@ -126,6 +128,40 @@ fn read_reference_gc_package(
         "skip_smoothing should be length 1. Found len={}",
         skip_smoothing_arr.len()
     );
+    ensure!(
+        version_arr[0] == GC_CORRECTION_SCHEMA_VERSION,
+        "Reference GC package schema version mismatch: file={}, expected={}; \
+        Incompatible with this version of cfDNAlab.",
+        version_arr[0],
+        GC_CORRECTION_SCHEMA_VERSION
+    );
+    let min_fragment_length = lengths[0] as usize;
+    let max_fragment_length = lengths[1] as usize;
+    ensure!(
+        min_fragment_length <= max_fragment_length,
+        "length_range must be ordered as [min, max]. Found [{}, {}]",
+        min_fragment_length,
+        max_fragment_length
+    );
+    let expected_length_rows = max_fragment_length - min_fragment_length + 1;
+    ensure!(
+        counts.nrows() == expected_length_rows,
+        "Reference GC package row count {} does not match length_range [{}, {}] (expected {})",
+        counts.nrows(),
+        min_fragment_length,
+        max_fragment_length,
+        expected_length_rows
+    );
+    let end_offset = u8::try_from(end_offset_arr[0])
+        .context("end_offset in reference GC package must fit in u8")?;
+    let minimum_effective_length = MIN_ACGT_BASES_FOR_GC_FRACTION as usize;
+    ensure!(
+        min_fragment_length >= 2 * end_offset as usize + minimum_effective_length,
+        "Reference GC package has invalid effective minimum length: min_fragment_length ({}) - 2 * end_offset ({}) must be >= {}",
+        min_fragment_length,
+        end_offset,
+        minimum_effective_length
+    );
     let chromosomes: Vec<String> = serde_json::from_slice(
         chromosomes_json
             .as_slice()
@@ -136,17 +172,10 @@ fn read_reference_gc_package(
         !chromosomes.is_empty(),
         "chromosomes_json must contain at least one chromosome"
     );
-    ensure!(
-        version_arr[0] == GC_CORRECTION_SCHEMA_VERSION,
-        "Reference GC package schema version mismatch: file={}, expected={}; \
-        Incompatible with this version of cfDNAlab.",
-        version_arr[0],
-        GC_CORRECTION_SCHEMA_VERSION
-    );
     let metadata = ReferenceGCMetadata {
-        min_fragment_length: lengths[0] as usize,
-        max_fragment_length: lengths[1] as usize,
-        end_offset: end_offset_arr[0] as u8,
+        min_fragment_length,
+        max_fragment_length,
+        end_offset,
         chromosomes,
         skip_interpolation: skip_interpolation_arr[0] as bool,
         smoothing_radius: smoothing_radius_arr[0] as u8,

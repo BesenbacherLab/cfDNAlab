@@ -35,6 +35,7 @@ impl GCCorrectionPackage {
             reference_metadata.max_fragment_length as u32,
         )?;
         let gc_edges = compute_bin_edges(gc_bins, 0, 100)?;
+        validate_correction_matrix_for_writing(&correction_matrix, &length_edges, &gc_edges)?;
         Ok(Self {
             version,
             end_offset: reference_metadata.end_offset as u64,
@@ -148,6 +149,41 @@ impl GCCorrectionPackage {
             reference_contig_signature,
         })
     }
+}
+
+fn validate_correction_matrix_for_writing(
+    correction_matrix: &Array2<f64>,
+    length_edges: &[u32],
+    gc_edges: &[u32],
+) -> Result<()> {
+    ensure!(
+        length_edges.len() == correction_matrix.nrows() + 1,
+        "Number of Length edges ({}) must match number of correction rows + 1 ({})",
+        length_edges.len(),
+        correction_matrix.nrows() + 1
+    );
+    ensure!(
+        gc_edges.len() == correction_matrix.ncols() + 1,
+        "Number of GC edges ({}) must match number of correction columns + 1 ({})",
+        gc_edges.len(),
+        correction_matrix.ncols() + 1
+    );
+
+    for ((length_bin_idx, gc_bin_idx), &weight) in correction_matrix.indexed_iter() {
+        ensure!(
+            weight.is_finite() && weight >= 0.0,
+            "GC correction matrix contains invalid weight {} at length bin {} [{}-{}], GC bin {} [{}-{}]. Correction weights must be finite and non-negative",
+            weight,
+            length_bin_idx,
+            length_edges[length_bin_idx],
+            length_edges[length_bin_idx + 1],
+            gc_bin_idx,
+            gc_edges[gc_bin_idx],
+            gc_edges[gc_bin_idx + 1]
+        );
+    }
+
+    Ok(())
 }
 
 fn validate_correction_package_path(path: &Path) -> Result<()> {
