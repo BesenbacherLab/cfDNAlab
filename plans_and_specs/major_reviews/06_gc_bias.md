@@ -12,28 +12,13 @@ Shared findings that affect this command:
 
 Pre-release correctness/safety:
 
-- GB-001: cross-tile spill files can collide or merge incorrectly across chromosomes.
 - GB-002: `--save-intermediates` should respect `--output-prefix`.
-
-Pre-release docs/API polish:
 
 Post-release performance:
 
 - GB-006: empty BED tiles still open a BAM reader before skipping.
 
 ## Findings
-
-### GB-001 - High - Cross-tile spill files are keyed by chromosome-local tile/window ids
-
-`Tile.index` resets to zero for each chromosome ([tiled_run.rs](../../src/shared/tiled_run.rs#L488-L516)). `gc-bias` passes that chromosome-local index to `write_crossing_parts()` ([gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L1160-L1169)), and the writer creates filenames as `cross.<tile_idx>.npz` with no chromosome or global tile id ([cross_tile_parts.rs](../../src/commands/gc_bias/cross_tile_parts.rs#L20-L30)). The crossing file also stores only `idx` plus counts/support arrays ([cross_tile_parts.rs](../../src/commands/gc_bias/cross_tile_parts.rs#L14-L18), [cross_tile_parts.rs](../../src/commands/gc_bias/cross_tile_parts.rs#L54-L57)), and the streaming reducer sorts by that filename index and merges active parts by `idx` only ([cross_tile_parts.rs](../../src/commands/gc_bias/cross_tile_parts.rs#L96-L106), [cross_tile_parts.rs](../../src/commands/gc_bias/cross_tile_parts.rs#L145-L155)).
-
-Impact: any multi-chromosome run that enters the crossing-file path can corrupt reduction. For BED windows this can happen when windows cross tile boundaries; for fixed-size windows it can happen when tiles are not guaranteed aligned to the window grid. Tiles with the same chromosome-local index on different chromosomes write the same temp path, so parallel workers can overwrite each other or return duplicate paths. For fixed-size windows, even after filename collisions are fixed, per-chromosome window indices can still merge across chromosomes when the reducer keys only by `idx`.
-
-Recommended fix:
-
-- Use the global `par_iter().enumerate()` tile index, not `tile.index`, in crossing filenames and reducer sorting.
-- Include chromosome/tid or a globally unique window id in every crossing row key. BED windows already carry global BED row ids, but fixed-size windows need a chromosome offset or compound `(tid, window_idx)` key.
-- Add a regression with two chromosomes, crossing fixed-size windows or crossing BED windows, and a tile size/window layout that forces the crossing reducer on both chromosomes.
 
 ### GB-002 - Medium - `--save-intermediates` ignores `--output-prefix`
 
@@ -63,4 +48,4 @@ Recommended fix:
 
 The command already has broad coverage for default MAPQ, global/fixed/BED windows, no-count failure, reference end-offset propagation, overlapping/touching BED behavior, aligned vs misaligned single-chromosome tiling, aligned multi-chromosome accumulation, empty middle tiles, fixed-size vs BED cross-tile equivalence on one chromosome, real `ref-gc-bias` integration, saved intermediate sequence/content, minimum window ACGT filtering, outlier methods, hard-clamp behavior, and greedy binning.
 
-The missing coverage from this review is multi-chromosome crossing-file reduction, prefix-safe intermediates, avoiding BAM-reader opens for no-window BED tiles, and copy-pasteable CLI help.
+The missing coverage from this review is prefix-safe intermediates and avoiding BAM-reader opens for no-window BED tiles.

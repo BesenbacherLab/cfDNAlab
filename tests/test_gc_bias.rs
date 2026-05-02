@@ -4,7 +4,7 @@ mod fixtures;
 
 mod tests_gc_bias {
     use crate::fixtures;
-    use anyhow::Result;
+    use anyhow::{Context, Result};
     use fxhash::FxHashMap;
     use ndarray::array;
     use ndarray_npy::{NpzWriter, read_npy};
@@ -1551,6 +1551,154 @@ mod tests_gc_bias {
     }
 
     #[test]
+    fn multi_chromosome_cross_tile_windows_match_hand_derived_counts_in_each_window_mode()
+    -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // Build asymmetric chromosomes with 100 bp logical windows:
+        // - chr1 is all A, so every length-10 fragment contributes GC% 0
+        // - chr2 is all C, so every length-10 fragment contributes GC% 100
+        // - chr1 has one counted window
+        // - chr2 has two counted windows
+        //
+        // The intended behavior is independent of tile layout. We use `tile_size = 75`, so all
+        // 100 bp fixed-size and BED windows cross a tile boundary:
+        // - [0,100) crosses tiles [0,75) and [75,150)
+        // - [100,200) crosses tiles [75,150) and [150,200)
+        //
+        // This same fixture is run through all public windowing modes:
+        // - global: one chromosome-wide window per chromosome, no per-window mean scaling
+        // - by-size: one 100 bp window on chr1 and two 100 bp windows on chr2
+        // - by-BED: the same three 100 bp windows, explicitly listed
+        //
+        // Hand-derived expected saved `avg_cfdna_counts`:
+        // - global mode keeps raw counts, so the chr1 fragment gives GC% 0 = 1 and the two chr2
+        //   fragments give GC% 100 = 2
+        // - by-size and by-BED scale each pure counted window to 11 at the observed GC bin,
+        //   because a 10 bp fragment has 11 reachable GC-count states, then average across three
+        //   counted windows:
+        //     GC% 0   -> 11 / 3
+        //     GC% 100 -> 22 / 3
+        let reference = fixtures::twobit_from_sequences(
+            "gc_bias_multi_chr_cross_tile_reference",
+            vec![
+                ("chr1".to_string(), "A".repeat(100)),
+                ("chr2".to_string(), "C".repeat(200)),
+            ],
+        )?;
+
+        let fragment_on_chromosome = |tid: usize, start: i64| {
+            let mut fragment = fixtures::paired_fragment(start, 10, 5);
+            fragment.forward.tid = tid;
+            fragment.reverse.tid = tid;
+            fragment.forward.mate_tid = Some(tid);
+            fragment.reverse.mate_tid = Some(tid);
+            fragment
+        };
+        let bam = fixtures::bam_from_specs(
+            vec![("chr1".to_string(), 100), ("chr2".to_string(), 200)],
+            vec![
+                fragment_on_chromosome(0, 10),
+                fragment_on_chromosome(1, 10),
+                fragment_on_chromosome(1, 110),
+            ],
+            Vec::new(),
+            "gc_bias_multi_chr_cross_tile_bam",
+        )?;
+
+        let ref_gc_dir = TempDir::new()?;
+        write_two_bin_reference_gc_package(ref_gc_dir.path(), (10, 10), &["chr1", "chr2"])?;
+
+        let bed_dir = TempDir::new()?;
+        let bed_path = bed_dir.path().join("windows.bed");
+        std::fs::write(&bed_path, "chr1\t0\t100\nchr2\t0\t100\nchr2\t100\t200\n")?;
+
+        let cases = vec![
+            (
+                "global",
+                GCWindowsArgs {
+                    by_size: None,
+                    by_bed: None,
+                    global: true,
+                },
+                1.0,
+                2.0,
+            ),
+            (
+                "by-size",
+                GCWindowsArgs {
+                    by_size: Some(100),
+                    by_bed: None,
+                    global: false,
+                },
+                11.0 / 3.0,
+                22.0 / 3.0,
+            ),
+            (
+                "by-BED",
+                GCWindowsArgs {
+                    by_size: None,
+                    by_bed: Some(bed_path),
+                    global: false,
+                },
+                11.0 / 3.0,
+                22.0 / 3.0,
+            ),
+        ];
+
+        for (case_name, windows, expected_gc0, expected_gc100) in cases {
+            let out_dir = TempDir::new()?;
+            let ioc = IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            };
+            let mut cfg = GCConfig::new(
+                ioc,
+                reference.path.clone(),
+                ref_gc_dir.path().join("ref_gc_package.npz"),
+                ChromosomeArgs {
+                    chromosomes: Some(vec!["chr1".to_string(), "chr2".to_string()]),
+                    chromosomes_file: None,
+                },
+            );
+            cfg.set_windows(windows);
+            cfg.set_min_mapq(0);
+            cfg.set_tile_size(75);
+            cfg.set_min_window_acgt_pct(0);
+            cfg.set_save_intermediates(true);
+
+            // Act
+            run_gc_bias(&cfg).with_context(|| {
+                format!("{case_name} multi-chromosome cross-tile gc-bias run failed")
+            })?;
+
+            // Assert
+            let avg_counts: ndarray::Array2<f64> =
+                read_npy(out_dir.path().join("gc_bias.avg_cfdna_counts.0.npy"))?;
+            assert_eq!(avg_counts.dim(), (1, 101), "{case_name}");
+            for (gc_pct, &value) in avg_counts.row(0).iter().enumerate() {
+                match gc_pct {
+                    0 => assert!(
+                        (value - expected_gc0).abs() < 1e-12,
+                        "{case_name}: expected {expected_gc0} at GC% 0, got {value}"
+                    ),
+                    100 => assert!(
+                        (value - expected_gc100).abs() < 1e-12,
+                        "{case_name}: expected {expected_gc100} at GC% 100, got {value}"
+                    ),
+                    _ => assert!(
+                        value.abs() < 1e-12,
+                        "{case_name}: expected no mass outside GC% 0/100, got bin {gc_pct}={value}"
+                    ),
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn empty_middle_tile_matches_single_tile_gc_bias_run() -> Result<()> {
         // Human verification status: unverified
         // Arrange:
@@ -2999,7 +3147,7 @@ mod tests_gc_bias {
             "version",
             &ndarray::Array1::from(vec![GC_CORRECTION_SCHEMA_VERSION]),
         )?;
-        npz.add_array("length_range", &ndarray::Array1::from(vec![30_u32, 40_u32]))?;
+        npz.add_array("length_range", &ndarray::Array1::from(vec![30_u32, 31_u32]))?;
         npz.add_array("end_offset", &ndarray::Array1::from(vec![10_u32]))?;
         npz.add_array("skip_interpolation", &ndarray::Array1::from(vec![false]))?;
         npz.add_array("smoothing_radius", &ndarray::Array1::from(vec![2_u32]))?;
@@ -3013,6 +3161,7 @@ mod tests_gc_bias {
     fn write_two_bin_reference_gc_package(
         out_dir: &std::path::Path,
         length_range: (u32, u32),
+        chromosomes: &[&str],
     ) -> Result<()> {
         let package_path = out_dir.join("ref_gc_package.npz");
         let n_lengths = (length_range.1 - length_range.0 + 1) as usize;
@@ -3048,7 +3197,7 @@ mod tests_gc_bias {
         npz.add_array("smoothing_radius", &ndarray::Array1::from(vec![2_u32]))?;
         npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
         npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
-        write_reference_chromosomes_json(&mut npz, &["chr1"])?;
+        write_reference_chromosomes_json(&mut npz, chromosomes)?;
         npz.finish()?;
         Ok(())
     }
@@ -4052,7 +4201,7 @@ mod tests_gc_bias {
         )?;
 
         let ref_gc_dir = TempDir::new()?;
-        write_two_bin_reference_gc_package(ref_gc_dir.path(), (10, 10))?;
+        write_two_bin_reference_gc_package(ref_gc_dir.path(), (10, 10), &["chr1"])?;
 
         let out_dir = TempDir::new()?;
         let mut cfg =

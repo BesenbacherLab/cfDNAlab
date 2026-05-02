@@ -86,6 +86,7 @@ mod tests_stream_helpers_and_finalizer {
             2.0,
             &mut out,
             &mut crossing_parts,
+            0,
         )?;
 
         assert_eq!(out.weight, 1);
@@ -134,6 +135,7 @@ mod tests_stream_helpers_and_finalizer {
             100.0,
             &mut out,
             &mut crossing_parts,
+            0,
         )?;
 
         // Assert
@@ -198,6 +200,7 @@ mod tests_stream_helpers_and_finalizer {
             100.0,
             &mut out,
             &mut crossing_parts,
+            0,
         )?;
         finalize_window_buffer(
             &mut right_buf,
@@ -210,6 +213,7 @@ mod tests_stream_helpers_and_finalizer {
             100.0,
             &mut out,
             &mut crossing_parts,
+            0,
         )?;
 
         // Assert
@@ -268,6 +272,7 @@ mod tests_stream_helpers_and_finalizer {
             100.0,
             &mut out,
             &mut crossing_parts,
+            0,
         )?;
 
         // Assert

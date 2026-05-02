@@ -46,6 +46,7 @@ use crate::{
         tiled_run::{
             TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
         },
+        windowing::compute_window_offsets,
         windowing::ensure_plain_bed_windows_not_empty,
     },
 };
@@ -136,6 +137,7 @@ pub fn finalize_window_buffer(
     // optional crossing-file path back to the reducer
     tile_output: &mut WindowState,
     crossing_parts: &mut Vec<CrossingPart>,
+    crossing_window_index_offset: u64,
 ) -> Result<()> {
     let crosses_tile = !tile_core_interval.contains_interval(buf.interval);
     // For a window that crosses tile boundaries, this is the part of the window owned by the
@@ -176,8 +178,13 @@ pub fn finalize_window_buffer(
         } else {
             buf.counts.num_acgt_out_of = (0, 0);
         }
+        let crossing_window_idx = buf
+            .idx
+            .checked_add(crossing_window_index_offset)
+            .context("crossing window index overflowed")?;
         crossing_parts.push(CrossingPart {
-            idx: buf.idx as usize,
+            idx: usize::try_from(crossing_window_idx)
+                .context("crossing window index exceeded usize range")?,
             counts: buf.counts.clone(),
         });
     } else {
@@ -287,6 +294,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         compute_window_stats(&window_opt, windows_map.as_ref(), &contigs, &chromosomes)?;
     let avg_window_span = window_stats.avg_span;
     let total_windows = window_stats.total_windows;
+    let (_, chromosome_window_offsets) =
+        compute_window_offsets(&window_opt, &chromosomes, &contigs, windows_map.as_ref())?;
 
     // Build tiles (core plus halo = max fragment length) to bound memory per worker
     let halo_bp = reference_metadata.max_fragment_length as u32;
@@ -336,6 +345,10 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         .par_iter()
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<ReduceState> {
+            // Crossing files share one temp directory across chromosomes, so their filenames need
+            // the run-global tile index, not `Tile.index`, which is chromosome-local.
+            let crossing_file_tile_idx =
+                u32::try_from(tile_idx).context("global tile index exceeded u32 range")?;
             let chr = tile.chr.as_str();
             let tile_span = tile_window_spans_for_threads[tile_idx];
             let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
@@ -343,6 +356,14 @@ pub fn run(opt: &GCConfig) -> Result<()> {
                 .and_then(|m| m.get(chr).map(|v| v.as_slice()));
             let blacklist_chr: &[Interval<u64>] =
                 blacklist_map.get(chr).map(|v| v.as_slice()).unwrap_or(&[]);
+            let crossing_window_index_offset_chr = match &window_opt {
+                // Fixed-size window ids start at zero on each chromosome. BED windows already
+                // carry global original ids, and global mode uses the single shared window id 0.
+                WindowSpec::Size(_) => *chromosome_window_offsets
+                    .get(chr)
+                    .with_context(|| format!("missing fixed-size window offset for {chr}"))?,
+                _ => 0,
+            };
 
             let (tile_counts, counter) = process_tile(
                 tile,
@@ -356,6 +377,8 @@ pub fn run(opt: &GCConfig) -> Result<()> {
                 &zero_counts,
                 &temp_dir,
                 blacklist_chr,
+                crossing_file_tile_idx,
+                crossing_window_index_offset_chr,
             )?;
 
             let mut state = ReduceState::from_scaled_sum(zero_reduce_sum.clone());
@@ -808,6 +831,8 @@ fn process_tile(
     template: &GCCounts,
     temp_dir: &PathBuf,
     blacklist_intervals: &[Interval<u64>],
+    crossing_file_tile_idx: u32,
+    crossing_window_index_offset: u64,
 ) -> anyhow::Result<(WindowState, GCCounters)> {
     let apply_window_scaling = !matches!(window_opt, WindowSpec::Global);
 
@@ -959,6 +984,7 @@ fn process_tile(
                     avg_window_span,
                     &mut tile_output,
                     &mut crossing_parts,
+                    crossing_window_index_offset,
                 )?;
                 let current_next = match next.take() {
                     Some(window) => window,
@@ -1067,6 +1093,7 @@ fn process_tile(
             avg_window_span,
             &mut tile_output,
             &mut crossing_parts,
+            crossing_window_index_offset,
         )?;
         if let Some(next_window) = next.as_mut() {
             finalize_window_buffer(
@@ -1080,6 +1107,7 @@ fn process_tile(
                 avg_window_span,
                 &mut tile_output,
                 &mut crossing_parts,
+                crossing_window_index_offset,
             )?;
         }
     } else {
@@ -1169,6 +1197,7 @@ fn process_tile(
                 avg_window_span,
                 &mut tile_output,
                 &mut crossing_parts,
+                crossing_window_index_offset,
             )?;
         }
     }
@@ -1182,12 +1211,12 @@ fn process_tile(
     // Streaming and non-streaming share the same writer
     tile_output.crossing_file = if using_streaming {
         if !windows_aligned_to_tiles {
-            write_crossing_parts(temp_dir, tile.index, template, &crossing_parts)?
+            write_crossing_parts(temp_dir, crossing_file_tile_idx, template, &crossing_parts)?
         } else {
             None
         }
     } else if !windows_aligned_to_tiles && !matches!(window_opt, WindowSpec::Global) {
-        write_crossing_parts(temp_dir, tile.index, template, &crossing_parts)?
+        write_crossing_parts(temp_dir, crossing_file_tile_idx, template, &crossing_parts)?
     } else {
         None
     };
