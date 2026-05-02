@@ -36,12 +36,12 @@ pub const MAX_MAX_SOFT_CLIPS: u16 = 256;
 ///
 /// Weight the contribution of each fragment based on their GC contents.
 ///
-/// Note: The GC percentage is calculated from the **aligned** reference span.
-/// It does not consider `--indel-mode` or `--clip-mode`.
-///
 /// The length-dimension of the original correction matrix is averaged out over
-/// `--gc-length-range` with a specifiable weighting scheme (`--gc-length-weighting`).
+/// `--gc-length-range` with a specifiable weighting scheme (see `--gc-length-weighting`).
 ///
+/// The GC percentage is calculated from the **aligned** reference span.
+/// It does not consider `--indel-mode` or `--clip-mode`.
+/// 
 /// ## Genomic smoothing (--scaling-factors)
 ///
 /// Weight how genomic regions contribute to the length distribution(s), e.g., to reduce the
@@ -63,8 +63,8 @@ pub const MAX_MAX_SOFT_CLIPS: u16 = 256;
 /// (i.e., the coverage in the window) by multiplying each column by the fragment length
 /// it represents. Remember to account for the minimum fragment length offset.
 ///
-/// Other options include counting the full fragment if the *fragment midpoint* or a given
-/// *proportion* of positions overlaps the window.
+/// Other options include counting the full fragment if the **fragment midpoint** or a given
+/// **proportion** of positions overlaps the window.
 ///
 /// ## Blacklisting
 ///
@@ -228,8 +228,8 @@ pub struct LengthsConfig {
     ///   Example: The default `30:1001:1` creates one column per length from 30 through 1000.
     ///
     /// - Multiple integer values interpreted as bin edges:
-    ///   Example: `--length-bins 30 80 150 221` creates bins `[30,80)`,
-    ///   `[80,150)`, and `[150,221)`.
+    ///   Example: `--length-bins 30 80 151 221` creates bins `[30,80)`,
+    ///   `[80,151)`, and `[151,221)`.
     ///
     /// **NOTE**: Memory consumption increases linearly with the number of bins.
     #[cfg_attr(
@@ -319,16 +319,18 @@ pub struct LengthsConfig {
     ///
     ///   Downside: Rare fragment length bins contribute the same as the most common fragment lengths.
     ///   
-    ///   For low-coverage BAM files, this *could* make the correction more volatile to outliers.
+    ///   For low-coverage BAM files, this could make the correction more volatile to outliers.
     ///
-    /// - `"frequency"` weighting: Weight lengths by their fragment length frequency in the GC package.
+    /// - `"frequency"` weighting: Weight length bins by their frequencies in the length distribution
+    ///   used to build the GC package.
     ///
-    ///   This makes the collapsed curve represent the fragments most often seen in the package, **BUT**:
+    ///   This makes the collapsed curve represent the fragments most often seen in the package:
     ///
-    ///   Downside: Biases the correction based on the length distribution we are trying to estimate.
+    ///   Downside: **Biases** the correction based on the length distribution we are trying to estimate.
     ///   This is **circular**: the length signal is partly used to correct itself.
     ///
-    /// - `"max-frequency"` weighting: Use the GC correction curve for the most frequent selected length bin.
+    /// - `"max-frequency"` weighting: Use the GC correction curve for the length bin with highest
+    ///   frequency in the length distribution used to build the GC package.
     #[cfg_attr(
         feature = "cli",
         clap(
