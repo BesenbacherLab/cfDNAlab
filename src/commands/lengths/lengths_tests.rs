@@ -1,5 +1,10 @@
-use super::{WindowMetadataEntry, reorder_bed_outputs_by_original_index};
+use super::{
+    WindowMetadataEntry, configured_max_fragment_reach_bp, reorder_bed_outputs_by_original_index,
+};
+use crate::commands::cli_common::{ChromosomeArgs, IOCArgs};
 use crate::commands::lengths::counting::{LengthAxis, LengthCounts};
+use crate::commands::lengths::config::LengthsConfig;
+use crate::shared::{clip_mode::ClipMode, indel_mode::IndelMode};
 use std::sync::Arc;
 
 fn counts_with_value(value: f64) -> LengthCounts {
@@ -11,6 +16,57 @@ fn counts_with_value(value: f64) -> LengthCounts {
 
 fn bin_info_entry(original_index: u64) -> WindowMetadataEntry {
     ("chr1".to_string(), 0, 10, original_index, 0.0)
+}
+
+fn test_config() -> LengthsConfig {
+    LengthsConfig::new(
+        IOCArgs {
+            bam: "input.bam".into(),
+            output_dir: ".".into(),
+            n_threads: 1,
+        },
+        ChromosomeArgs {
+            chromosomes: Some(vec!["chr1".to_string()]),
+            chromosomes_file: None,
+        },
+    )
+}
+
+#[test]
+fn configured_max_fragment_reach_uses_larger_active_cap() {
+    // Arrange:
+    // The length axis allows adjusted lengths through 100. Deletion adjustment can make the
+    // aligned reference span longer, while clip adjustment can move the assignment interval
+    // outside the aligned span. The reach uses the larger active cap, not their sum.
+    let length_axis = LengthAxis::new(vec![30, 101]).expect("test axis should be valid");
+    let mut config = test_config();
+    config.set_indel_mode(IndelMode::Adjust);
+    config.clip_mode = ClipMode::Adjust;
+    config.max_soft_clips = 7;
+    config.max_deletion_bases = 11;
+
+    // Act
+    let reach_bp = configured_max_fragment_reach_bp(&config, &length_axis);
+
+    // Assert
+    assert_eq!(reach_bp, 111);
+}
+
+#[test]
+fn configured_max_fragment_reach_ignores_inactive_caps() {
+    // Arrange:
+    // In the default modes, neither cap changes the reference-coordinate reach because lengths
+    // are already based on aligned reference spans.
+    let length_axis = LengthAxis::new(vec![30, 101]).expect("test axis should be valid");
+    let mut config = test_config();
+    config.max_soft_clips = 7;
+    config.max_deletion_bases = 11;
+
+    // Act
+    let reach_bp = configured_max_fragment_reach_bp(&config, &length_axis);
+
+    // Assert
+    assert_eq!(reach_bp, 100);
 }
 
 #[test]

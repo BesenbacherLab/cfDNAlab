@@ -14,6 +14,8 @@ use std::path::PathBuf;
 
 pub const DEFAULT_MAX_SOFT_CLIPS: u16 = 256;
 pub const MAX_MAX_SOFT_CLIPS: u16 = 256;
+pub const DEFAULT_MAX_DELETION_BASES: u16 = 100;
+pub const MAX_DELETION_BASES: u16 = 256;
 
 /// Count fragment lengths in a BAM-file.
 ///
@@ -142,6 +144,22 @@ pub struct LengthsConfig {
         )
     )]
     pub indel_mode: IndelMode,
+
+    /// Skip fragments with more deleted reference bases than this **when using** `--indel-mode adjust` `[integer]`
+    ///
+    /// Both `D` and `N` CIGAR operations count as deletion bases.
+    ///
+    /// **NOTE**: This cap is only used with `--indel-mode adjust`.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value_t = DEFAULT_MAX_DELETION_BASES,
+            value_parser = clap::value_parser!(u16).range(0..=MAX_DELETION_BASES as i64),
+            help_heading = "Indels and clipping"
+        )
+    )]
+    pub max_deletion_bases: u16,
 
     /// How to handle soft clipping in fragment ends `[string]`
     ///
@@ -297,16 +315,16 @@ pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub gc: ApplyGCArgFileOnly,
 
-    /// How to weight the GC-package fragment length bins when estimating the 
+    /// How to weight the GC-package fragment length bins when estimating the
     /// length-agnostic GC correction `[string]`
     ///
     /// The default GC correction package stores a `fragment length x GC` matrix with
-    /// one normalized GC correction curve per fragment length bin. **NOTE**: These 
-    /// fragment length bins are independent of those specified on `--length-bins` 
+    /// one normalized GC correction curve per fragment length bin. **NOTE**: These
+    /// fragment length bins are independent of those specified on `--length-bins`
     /// and are referred to as **GC length bins**.
     ///
     /// When estimating the fragment length distribution itself, using those normalized
-    /// correction curves directly would just preserve the original length distribution 
+    /// correction curves directly would just preserve the original length distribution
     /// (when applied to the same fragments seen by `cfdna gc-bias`).
     ///
     /// We therefore average out the fragment length dimension to get a single, length-agnostic GC correction curve.
@@ -351,7 +369,7 @@ pub struct LengthsConfig {
 
     /// Which GC-package fragment length bins to use when averaging out the GC correction matrix `[string]`
     ///
-    /// The GC correction package stores one GC correction curve per fragment length bin 
+    /// The GC correction package stores one GC correction curve per fragment length bin
     /// (separate from `--length-bins` and referred to as **GC length bins**).
     /// This option controls which GC length bins `--gc-length-weighting`
     /// collapses to a single length-agnostic GC curve.
@@ -376,10 +394,10 @@ pub struct LengthsConfig {
 
     /// Exclude low-frequency selected GC length bins up to this cumulative fraction `[float]`
     ///
-    /// After selecting the GC length bins with `--gc-length-range`, 
+    /// After selecting the GC length bins with `--gc-length-range`,
     /// this excludes the least frequent GC length bins while keeping
     /// at least a `1 - fraction` total frequency fraction.
-    /// 
+    ///
     /// Conservative: GC length bins with practically the same frequency are grouped,
     /// and the whole group is excluded only if the retained sum of frequencies
     /// is at least `1 - fraction` of the selected total.
@@ -426,6 +444,7 @@ impl LengthsConfig {
             indel_mode: IndelMode::Ignore,
             clip_mode: ClipMode::Aligned,
             max_soft_clips: DEFAULT_MAX_SOFT_CLIPS,
+            max_deletion_bases: DEFAULT_MAX_DELETION_BASES,
             windows: DistributionWindowsArgs::default(),
             window_assignment: AssignToWindowArgs::default(),
             chromosomes,

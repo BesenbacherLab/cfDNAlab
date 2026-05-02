@@ -41,6 +41,7 @@ fn settings_writer_records_non_default_interpretation_fields() {
     config.set_indel_mode(IndelMode::Adjust);
     config.clip_mode = ClipMode::Adjust;
     config.max_soft_clips = 7;
+    config.max_deletion_bases = 11;
     config.set_window_assignment(AssignToWindowArgs {
         assign_by: WindowAssigner::Proportion(0.5),
     });
@@ -77,6 +78,7 @@ fn settings_writer_records_non_default_interpretation_fields() {
     assert_eq!(settings["indel_mode"], json!("adjust"));
     assert_eq!(settings["clip_mode"], json!("adjust"));
     assert_eq!(settings["max_soft_clips"], json!(7));
+    assert_eq!(settings["max_deletion_bases"], json!(11));
     assert_eq!(settings["assign_by"], json!("proportion=0.5"));
     assert_eq!(settings["gc_length_weighting"], json!("frequency"));
     assert_eq!(settings["gc_length_range"], json!("package"));

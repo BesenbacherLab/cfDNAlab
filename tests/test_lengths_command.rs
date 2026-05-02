@@ -255,6 +255,7 @@ mod tests_lengths_command {
         assert_eq!(settings["indel_mode"], "ignore");
         assert_eq!(settings["clip_mode"], "aligned");
         assert_eq!(settings["max_soft_clips"], 256);
+        assert_eq!(settings["max_deletion_bases"], 100);
         assert_eq!(settings["assign_by"], "count-overlap");
         assert_eq!(settings["gc_length_weighting"], "equal");
         assert_eq!(settings["gc_length_range"], "requested");
@@ -2185,6 +2186,53 @@ mod tests_lengths_command {
         let l24 = 24 - 10;
         assert!((skip_arr[(0, l24)] - 1.0).abs() < 1e-6);
         assert!((skip_arr.sum() - 1.0).abs() < 1e-6);
+
+        Ok(())
+    }
+
+    #[test]
+    fn max_deletion_bases_filters_indel_adjusted_fragments_before_counting() -> Result<()> {
+        // Human verification status: unverified
+        // Reuse the indel fixture with one clean fragment, one insertion-bearing fragment,
+        // and one deletion-bearing fragment.
+        //
+        // Mental derivation:
+        // - In adjust mode, the deletion-bearing fragment has one deleted reference base.
+        // - max_deletion_bases=0 therefore drops only that fragment.
+        // - The clean fragment remains in adjusted-length bin 24.
+        // - The insertion-bearing fragment remains in adjusted-length bin 17.
+        let bam = indel_bam_fixture()?;
+        let out_dir = TempDir::new()?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 2,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Adjust);
+        cfg.max_deletion_bases = 0;
+        cfg.set_windows(DistributionWindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_per_bp_length_bins(10, 100);
+
+        run(&cfg)?;
+
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let clean_length_bin = 24 - 10;
+        let insertion_length_bin = 17 - 10;
+        let deletion_length_bin = 10 - 10;
+        assert!((arr[(0, clean_length_bin)] - 1.0).abs() < 1e-6);
+        assert!((arr[(0, insertion_length_bin)] - 1.0).abs() < 1e-6);
+        assert!((arr[(0, deletion_length_bin)]).abs() < 1e-6);
+        assert!((arr.sum() - 2.0).abs() < 1e-6);
 
         Ok(())
     }

@@ -27,6 +27,7 @@ use crate::{
         clip_mode::ClipMode,
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
         fragment_iterators::fragments_with_indel_counts_from_bam,
+        indel_mode::IndelMode,
         interval::{IndexedInterval, Interval},
         io::dot_join,
         midpoint::midpoint_random_even_for_fragment,
@@ -75,6 +76,29 @@ struct TileOutputs {
     counters: LengthsCounters,
     global_counts: Option<(String, LengthCounts)>,
     grouped_counts: Option<FxHashMap<u64, LengthCounts>>,
+}
+
+/// Maximum reference-coordinate reach a counted fragment can require.
+///
+/// Length bins bound the adjusted output length. When indel adjustment is enabled, deleted
+/// reference bases can make the aligned span longer than that adjusted length. When clip
+/// adjustment is enabled, the soft-clip cap bounds how far assignment can move outside the
+/// aligned reference span.
+fn configured_max_fragment_reach_bp(opt: &LengthsConfig, length_axis: &LengthAxis) -> u32 {
+    let max_soft_clip_bases = if matches!(opt.clip_mode, ClipMode::Adjust) {
+        opt.max_soft_clips as u32
+    } else {
+        0
+    };
+    let max_deletion_bases = if matches!(opt.indel_mode, IndelMode::Adjust) {
+        opt.max_deletion_bases as u32
+    } else {
+        0
+    };
+
+    length_axis
+        .max_fragment_length()
+        .saturating_add(max_soft_clip_bases.max(max_deletion_bases))
 }
 
 /// Build the scaling-overlap view for `CountOverlap` under `clip_mode=adjust`.
@@ -247,10 +271,14 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         length_axis.max_fragment_length(),
     )?;
 
-    // BAM fetches are in aligned reference coordinates. Indel and clip modes
-    // affect fragment filtering and assignment after fetching; soft-clips only
-    // enter the precomputed window reach below.
-    let aligned_fetch_halo_bp = length_axis.max_fragment_length();
+    // BAM fetches are in aligned reference coordinates. For deletion-adjusted lengths, the
+    // *aligned* reference span can be larger than the maximum fragment length and still be valid,
+    // so fetches use the bounded fragment reach rather than only the maximum adjusted output length.
+    let max_fragment_reach_bp = configured_max_fragment_reach_bp(opt, length_axis.as_ref());
+    // Fragment ownership is based on the aligned fragment start. The left reach only needs to
+    // cover assignment coordinates before that owned start, which can only come from left soft
+    // clipping. Deletion-adjusted fragments still use the same aligned start, while their allowed
+    // reference span to the right is covered by `max_fragment_reach_bp`.
     let left_assignment_reach_bp = if matches!(opt.clip_mode, ClipMode::Adjust) {
         opt.max_soft_clips as u64
     } else {
@@ -266,7 +294,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         &chromosomes,
         &contigs,
         opt.tile_size,
-        aligned_fetch_halo_bp,
+        max_fragment_reach_bp,
         align_bp,
     )?;
 
@@ -284,7 +312,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         left_assignment_reach_bp,
         // We use fragments starting in a tile, so we need windows reachable by that assignment
         // interval to the right of the tile as well
-        length_axis.max_fragment_length() as u64,
+        max_fragment_reach_bp as u64,
     ));
     let tile_window_spans_for_threads = tile_window_spans.clone();
 
@@ -638,6 +666,7 @@ fn process_tile(
     cross_prefix: &str,
 ) -> Result<TileOutputs> {
     let fetch_window_opt = window_opt.as_fetch_window_spec();
+    let max_fragment_reach_bp = configured_max_fragment_reach_bp(opt, length_axis.as_ref()) as u64;
     // One BAM reader per tile
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
     debug_assert_eq!(_tid_check, tile.tid as u32);
@@ -662,16 +691,15 @@ fn process_tile(
         None
     };
 
-    // Adapt reference-coordinate fetch bounds to the present windows. Indel and
-    // clip adjustments are not part of BAM fetching; they are applied after
-    // records have been fetched.
+    // Adapt reference-coordinate fetch bounds to the present windows using the same bounded
+    // reference reach used for tile halos.
     let Some(fetch_span) = fetch_span_for_tile(
         tile,
         tile_window_span,
         windows_chr,
         &fetch_window_opt,
         chrom_len,
-        length_axis.max_fragment_length() as u64,
+        max_fragment_reach_bp,
         BedFetchPolicy::CandidateWindowExtent,
     )?
     else {
@@ -724,7 +752,7 @@ fn process_tile(
             let min_bin_idx = (leftmost_reachable_start / *window_bp) as usize;
             // Furthest coordinate a fragment starting in this tile can reach
             let max_reachable_end = (tile.core_end() as u64)
-                .saturating_add(length_axis.max_fragment_length() as u64)
+                .saturating_add(max_fragment_reach_bp)
                 .min(chrom_len);
             // One past the last bin that could overlap that reach
             let max_bin_idx_exclusive = if max_reachable_end == 0 {
@@ -786,10 +814,10 @@ fn process_tile(
     // Fraction of a fragment that must overlap with a window to assign to that window
     let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
         WindowAssigner::Any | WindowAssigner::CountOverlap => {
-            1. / (length_axis.max_fragment_length() as f64 + 1.0)
+            1. / (max_fragment_reach_bp as f64 + 1.0)
         } // +1 to avoid rounding error issues
         WindowAssigner::All | WindowAssigner::Midpoint => {
-            1.0 - (1. / (length_axis.max_fragment_length() as f64 + 1.0))
+            1.0 - (1. / (max_fragment_reach_bp as f64 + 1.0))
         } // 1.0 but just below to avoid rounding errors
         WindowAssigner::Proportion(p) => p,
     };
@@ -813,8 +841,14 @@ fn process_tile(
         let indel_mode = opt.indel_mode;
         let clip_mode = opt.clip_mode;
         let max_soft_clips = opt.max_soft_clips as u32;
+        let max_deletion_bases = opt.max_deletion_bases as u32;
         move |fragment: &FragmentWithIndelCounts| {
             if !fragment.soft_clips_within_limit(max_soft_clips) {
+                return false;
+            }
+            if matches!(indel_mode, IndelMode::Adjust)
+                && !fragment.deletion_bases_within_limit(max_deletion_bases)
+            {
                 return false;
             }
             if matches!(clip_mode, ClipMode::Skip) && fragment.has_soft_clipping() {
@@ -888,7 +922,7 @@ fn process_tile(
             blacklist_intervals,
             opt.blacklist_strategy,
             aligned_fragment_interval,
-            length_axis.max_fragment_length() as u64,
+            max_fragment_reach_bp,
             &mut bl_ptr,
         );
         if in_blacklist {
@@ -929,7 +963,7 @@ fn process_tile(
             by_size,
             query_interval,
             min_overlap_fraction,
-            length_axis.max_fragment_length().into(),
+            max_fragment_reach_bp,
         )?;
         let overlapping_windows = if let Some(overlaps) = overlapping_windows {
             overlaps
@@ -965,8 +999,8 @@ fn process_tile(
                 Some(&scaling_with_bin_idx),
                 None,
                 aligned_fragment_interval, // Full aligned fragment
-                1. / (length_axis.max_fragment_length() as f64 + 1.0), // Any overlap
-                length_axis.max_fragment_length().into(),
+                1. / (max_fragment_reach_bp as f64 + 1.0), // Any overlap
+                max_fragment_reach_bp,
             )
             .with_context(|| format!("finding overlapping scaling bins on chr {}", tile.chr))?
             .context("no overlapping scaling bins found")?; // Should always find >= 1 bin

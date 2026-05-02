@@ -163,6 +163,22 @@ impl FragmentWithIndelCounts {
         self.left_soft_clip_bp <= max_soft_clips && self.right_soft_clip_bp <= max_soft_clips
     }
 
+    /// Number of reference bases removed by deletion-like CIGAR operations.
+    ///
+    /// The stored deletion fields already follow the fragment-level support policy used for length
+    /// adjustment. This includes `D` and `N` operations seen by the reads.
+    #[inline]
+    pub fn deletion_bases(&self) -> u32 {
+        self.deletions_nonoverlap
+            .saturating_add(self.deletions_overlap_supported)
+    }
+
+    /// Whether the fragment satisfies the configured deletion-base limit.
+    #[inline]
+    pub fn deletion_bases_within_limit(&self, max_deletion_bases: u32) -> bool {
+        self.deletion_bases() <= max_deletion_bases
+    }
+
     /// Window-assignment interval after applying the requested clip mode.
     ///
     /// This only changes the fragment coordinates for soft clipping. Indel-aware length changes do

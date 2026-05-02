@@ -214,3 +214,26 @@ fn soft_clip_limit_is_applied_independently_to_both_fragment_ends() {
     assert!(!left_exceeds_limit.soft_clips_within_limit(4));
     assert!(equals_limit_on_both_ends.soft_clips_within_limit(4));
 }
+
+#[test]
+fn deletion_base_limit_uses_total_supported_deletion_bases() {
+    // Human verification status: unverified
+    // The deletion limit is applied to the fragment-level total used for length adjustment.
+    //
+    // Case 1: 6 non-overlap + 2 supported overlap bases = 8, equal to the limit => keep.
+    // Case 2: limit 7 is below the same 8 deleted reference bases => reject.
+    let fragment = FragmentWithIndelCounts {
+        tid: 0,
+        interval: Interval::new(100, 200).expect("test fragment interval should be valid"),
+        left_soft_clip_bp: 0,
+        right_soft_clip_bp: 0,
+        deletions_nonoverlap: 6,
+        insertions_nonoverlap: 0,
+        deletions_overlap_supported: 2,
+        insertions_overlap_supported: 0,
+    };
+
+    assert_eq!(fragment.deletion_bases(), 8);
+    assert!(fragment.deletion_bases_within_limit(8));
+    assert!(!fragment.deletion_bases_within_limit(7));
+}
