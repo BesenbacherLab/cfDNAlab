@@ -11,8 +11,9 @@ use crate::{
         },
         lengths::{
             config::LengthsConfig,
-            counting::{LengthCounts, stack_length_counts},
+            counting::{LengthAxis, LengthCounts, stack_length_counts},
             tiling::{reduce_partials_for_chr, write_cross_npy, write_partials_npz},
+            writer::write_fragment_length_settings_json,
         },
         run_statistics::{
             DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions, GCStatisticsSummary,
@@ -27,7 +28,7 @@ use crate::{
         fragment::indel_counting_fragment::FragmentWithIndelCounts,
         fragment_iterators::fragments_with_indel_counts_from_bam,
         interval::{IndexedInterval, Interval},
-        io::{create_text_writer, dot_join},
+        io::dot_join,
         midpoint::midpoint_random_even_for_fragment,
         overlaps::{OverlappingWindow, OverlappingWindows, find_overlapping_windows},
         progress::ProgressFactory,
@@ -50,10 +51,17 @@ use fxhash::FxHashMap;
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{io::Write, path::Path, sync::Arc, time::Instant};
+use std::{path::Path, sync::Arc, time::Instant};
 use tracing::info;
 
 const COMMAND_TARGET: &str = "lengths";
+
+/// Window metadata entry used when pairing BED/window metadata with count arrays.
+///
+/// Fields are `(chromosome, start, end, original_window_index, blacklisted_fraction)`.
+/// The tuple shape matches `build_bin_info()` and `write_bin_info_tsv()`. The alias
+/// keeps the BED reordering helper tied to that shared metadata contract.
+type WindowMetadataEntry = (String, u64, u64, u64, f64);
 
 // Map orig_idx -> counts plus containment flag for this tile
 #[derive(Clone)]
@@ -111,7 +119,30 @@ fn build_reference_based_scaling_overlaps_for_clip_adjusted_count_overlap(
     Ok(scaling_overlaps)
 }
 
-/// Execute the fragment-length counting pipeline end-to-end.
+fn reorder_bed_outputs_by_original_index(
+    bin_info: &mut Vec<WindowMetadataEntry>,
+    all_bins: &mut Vec<LengthCounts>,
+) -> Result<()> {
+    ensure!(
+        bin_info.len() == all_bins.len(),
+        "BED metadata entries ({}) did not match length count vectors ({})",
+        bin_info.len(),
+        all_bins.len()
+    );
+
+    let mut paired: Vec<_> = std::mem::take(bin_info)
+        .into_iter()
+        .zip(std::mem::take(all_bins))
+        .collect();
+    paired.sort_unstable_by_key(|(info, _)| info.3);
+
+    let (sorted_bin_info, sorted_bins) = paired.into_iter().unzip();
+    *bin_info = sorted_bin_info;
+    *all_bins = sorted_bins;
+    Ok(())
+}
+
+/// Execute the fragment length counting pipeline end-to-end.
 ///
 /// Parameters:
 /// - `opt`: Fully resolved configuration for the `lengths` command.
@@ -124,7 +155,7 @@ fn build_reference_based_scaling_overlaps_for_clip_adjusted_count_overlap(
 ///   the first failure.
 pub fn run(opt: &LengthsConfig) -> Result<()> {
     let start_time = Instant::now();
-    opt.fragment_lengths.validate()?;
+    let length_axis = Arc::new(LengthAxis::new(opt.resolve_length_bins()?)?);
     opt.gc.validate(opt.ref_2bit.as_deref())?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
@@ -210,11 +241,14 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         opt.ref_2bit.as_ref(),
         &opt.gc_length_weighting,
         opt.gc_length_range,
-        opt.fragment_lengths.min_fragment_length,
-        opt.fragment_lengths.max_fragment_length,
+        length_axis.min_fragment_length(),
+        length_axis.max_fragment_length(),
     )?;
 
-    let aligned_fetch_halo_bp = opt.fragment_lengths.max_fragment_length;
+    // BAM fetches are in aligned reference coordinates. Indel and clip modes
+    // affect fragment filtering and assignment after fetching; soft-clips only
+    // enter the precomputed window reach below.
+    let aligned_fetch_halo_bp = length_axis.max_fragment_length();
     let left_assignment_reach_bp = if matches!(opt.clip_mode, ClipMode::Adjust) {
         opt.max_soft_clips as u64
     } else {
@@ -248,16 +282,13 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         left_assignment_reach_bp,
         // We use fragments starting in a tile, so we need windows reachable by that assignment
         // interval to the right of the tile as well
-        opt.fragment_lengths.max_fragment_length as u64,
+        length_axis.max_fragment_length() as u64,
     ));
     let tile_window_spans_for_threads = tile_window_spans.clone();
 
     // Reusable length-bin template so every tile/window counter shares identical bounds and avoids repeated allocations
     // Cloned with `zeroed_like` when building per-window `TileCounts`, which guarantees merge compatibility during reduction
-    let template_counts = LengthCounts::new(
-        opt.fragment_lengths.min_fragment_length as usize,
-        opt.fragment_lengths.max_fragment_length as usize,
-    );
+    let template_counts = LengthCounts::new(Arc::clone(&length_axis));
 
     let temp_dir_guard =
         TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
@@ -298,6 +329,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 blacklist_chr,
                 scaling_chr,
                 gc_corrector.clone(),
+                &length_axis,
                 &template_counts,
                 temp_dir,
                 partials_prefix,
@@ -431,7 +463,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         }
     }
 
-    let mut bin_info: Vec<(String, u64, u64, u64, f64)> = match &window_opt {
+    let mut bin_info: Vec<WindowMetadataEntry> = match &window_opt {
         DistributionWindowSpec::Global | DistributionWindowSpec::GroupedBed(_) => Vec::new(),
         _ => {
             let (_total_windows, chr_offsets) = compute_window_offsets(
@@ -458,14 +490,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
             "Reordering counts by original window index in BED file"
         );
 
-        // Zip into a single Vec to allow sorting together
-        let mut paired: Vec<_> = bin_info.into_iter().zip(all_bins).collect(); // (BinInfo, DecodedCounts)
-
-        // Sort primarily by original window index
-        paired.sort_unstable_by_key(|(info, _)| info.3);
-
-        // Unzip back out if you need separate Vecs again
-        (bin_info, all_bins) = paired.into_iter().unzip();
+        reorder_bed_outputs_by_original_index(&mut bin_info, &mut all_bins)?;
     }
 
     // Write final counts to output_dir
@@ -473,26 +498,11 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         opt.ioc
             .output_dir
             .join(dot_join(&[prefix, "length_counts.npy"])),
-        &stack_length_counts(&all_bins),
+        &stack_length_counts(&all_bins)?,
     )
     .context("Write final fail")?;
 
-    // Write the min+max fragment length settings
-    let settings_path = opt
-        .ioc
-        .output_dir
-        .join(dot_join(&[prefix, "fragment_length_settings.json"]));
-    let mut settings_writer =
-        create_text_writer(&settings_path).context("Create fragment length settings file")?;
-    writeln!(
-        settings_writer,
-        "{{\"min_fragment_length\":{},\"max_fragment_length\":{}}}",
-        opt.fragment_lengths.min_fragment_length, opt.fragment_lengths.max_fragment_length
-    )
-    .context("Write fragment length settings")?;
-    settings_writer
-        .finish()
-        .context("Finalize fragment length settings writer")?;
+    write_fragment_length_settings_json(opt, &window_opt, &length_axis, prefix)?;
 
     // Write window coordinates plus overlap metadata as TSV to output_dir
     match &window_opt {
@@ -552,9 +562,21 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 }
             }
 
-            let x_values: Vec<f64> = (all_bins[0].length_min..=all_bins[0].length_max)
-                .map(|length| length as f64)
+            let x_values: Vec<f64> = length_axis
+                .edges()
+                .windows(2)
+                .map(|edge_pair| (edge_pair[0] as f64 + edge_pair[1] as f64 - 1.0) / 2.0)
                 .collect();
+            let x_label = if length_axis.is_single_bp_bins() {
+                "Fragment length (bp)"
+            } else {
+                "Fragment length bin midpoint (bp)"
+            };
+            let y_label = if length_axis.is_single_bp_bins() {
+                "Density"
+            } else {
+                "Fraction of counted mass per bin"
+            };
 
             let plot_path = opt
                 .ioc
@@ -564,8 +586,8 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
             write_line_plot_png(
                 &plot_path,
                 "Fragment length distribution (summed/global)",
-                "Fragment length (bp)",
-                "Density",
+                x_label,
+                y_label,
                 &x_values,
                 &global_counts,
                 1600,
@@ -607,6 +629,7 @@ fn process_tile(
     blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<LengthAgnosticGCCorrector>,
+    length_axis: &Arc<LengthAxis>,
     template: &LengthCounts,
     temp_dir: &Path,
     partials_prefix: &str,
@@ -637,14 +660,16 @@ fn process_tile(
         None
     };
 
-    // Adapt the fetch coordinates to the present windows (*in windowed mode!*)
+    // Adapt reference-coordinate fetch bounds to the present windows. Indel and
+    // clip adjustments are not part of BAM fetching; they are applied after
+    // records have been fetched.
     let Some(fetch_span) = fetch_span_for_tile(
         tile,
         tile_window_span,
         windows_chr,
         &fetch_window_opt,
         chrom_len,
-        opt.fragment_lengths.max_fragment_length as u64,
+        length_axis.max_fragment_length() as u64,
         BedFetchPolicy::CandidateWindowExtent,
     )?
     else {
@@ -697,7 +722,7 @@ fn process_tile(
             let min_bin_idx = (leftmost_reachable_start / *window_bp) as usize;
             // Furthest coordinate a fragment starting in this tile can reach
             let max_reachable_end = (tile.core_end() as u64)
-                .saturating_add(opt.fragment_lengths.max_fragment_length as u64)
+                .saturating_add(length_axis.max_fragment_length() as u64)
                 .min(chrom_len);
             // One past the last bin that could overlap that reach
             let max_bin_idx_exclusive = if max_reachable_end == 0 {
@@ -759,10 +784,10 @@ fn process_tile(
     // Fraction of a fragment that must overlap with a window to assign to that window
     let min_overlap_fraction: f64 = match opt.window_assignment.assign_by {
         WindowAssigner::Any | WindowAssigner::CountOverlap => {
-            1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0)
+            1. / (length_axis.max_fragment_length() as f64 + 1.0)
         } // +1 to avoid rounding error issues
         WindowAssigner::All | WindowAssigner::Midpoint => {
-            1.0 - (1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0))
+            1.0 - (1. / (length_axis.max_fragment_length() as f64 + 1.0))
         } // 1.0 but just below to avoid rounding errors
         WindowAssigner::Proportion(p) => p,
     };
@@ -782,7 +807,7 @@ fn process_tile(
 
     // Function for filtering fragments after pairing
     let fragment_filter = {
-        let lengths = opt.fragment_lengths.clone();
+        let length_axis = Arc::clone(length_axis);
         let indel_mode = opt.indel_mode;
         let clip_mode = opt.clip_mode;
         let max_soft_clips = opt.max_soft_clips as u32;
@@ -793,7 +818,7 @@ fn process_tile(
             if matches!(clip_mode, ClipMode::Skip) && fragment.has_soft_clipping() {
                 return false;
             }
-            lengths.contains(fragment.adjusted_len(indel_mode, clip_mode))
+            length_axis.contains(fragment.adjusted_len(indel_mode, clip_mode))
         }
     };
 
@@ -861,7 +886,7 @@ fn process_tile(
             blacklist_intervals,
             opt.blacklist_strategy,
             aligned_fragment_interval,
-            opt.fragment_lengths.max_fragment_length as u64,
+            length_axis.max_fragment_length() as u64,
             &mut bl_ptr,
         );
         if in_blacklist {
@@ -902,7 +927,7 @@ fn process_tile(
             by_size,
             query_interval,
             min_overlap_fraction,
-            opt.fragment_lengths.max_fragment_length.into(),
+            length_axis.max_fragment_length().into(),
         )?;
         let overlapping_windows = if let Some(overlaps) = overlapping_windows {
             overlaps
@@ -938,8 +963,8 @@ fn process_tile(
                 Some(&scaling_with_bin_idx),
                 None,
                 aligned_fragment_interval, // Full aligned fragment
-                1. / (opt.fragment_lengths.max_fragment_length as f64 + 1.0), // Any overlap
-                opt.fragment_lengths.max_fragment_length.into(),
+                1. / (length_axis.max_fragment_length() as f64 + 1.0), // Any overlap
+                length_axis.max_fragment_length().into(),
             )
             .with_context(|| format!("finding overlapping scaling bins on chr {}", tile.chr))?
             .context("no overlapping scaling bins found")?; // Should always find >= 1 bin
@@ -1004,7 +1029,7 @@ fn process_tile(
                         counts_by_group
                             .entry(group_idx)
                             .or_insert_with(|| template.zeroed_like())
-                            .incr_weighted(fragment_length as usize, count_weight);
+                            .incr_weighted(fragment_length as usize, count_weight)?;
                     }
                     _ => {
                         let vec_idx = overlapped_window_idx - counts_start_idx;
@@ -1020,7 +1045,7 @@ fn process_tile(
                         if let Some(entry) = counts_by_idx[vec_idx].as_mut() {
                             entry
                                 .counts
-                                .incr_weighted(fragment_length as usize, count_weight);
+                                .incr_weighted(fragment_length as usize, count_weight)?;
                         }
                     }
                 }
@@ -1048,7 +1073,7 @@ fn process_tile(
                         counts_by_group
                             .entry(group_idx)
                             .or_insert_with(|| template.zeroed_like())
-                            .incr_weighted(fragment_length as usize, count_weight);
+                            .incr_weighted(fragment_length as usize, count_weight)?;
                     }
                     _ => {
                         let vec_idx = overlapped_window.idx - counts_start_idx;
@@ -1064,7 +1089,7 @@ fn process_tile(
                         if let Some(entry) = counts_by_idx[vec_idx].as_mut() {
                             entry
                                 .counts
-                                .incr_weighted(fragment_length as usize, count_weight);
+                                .incr_weighted(fragment_length as usize, count_weight)?;
                         }
                     }
                 }
@@ -1139,4 +1164,9 @@ fn process_tile(
         global_counts: None,
         grouped_counts: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    include!("lengths_tests.rs");
 }

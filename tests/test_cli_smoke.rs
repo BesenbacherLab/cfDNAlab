@@ -3,6 +3,7 @@
 mod fixtures;
 
 use anyhow::{Context, Result, bail};
+use serde_json::Value;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -208,10 +209,8 @@ fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> 
             "1",
             "--min-mapq",
             "0",
-            "--min-fragment-length",
-            "10",
-            "--max-fragment-length",
-            "200",
+            "--length-bins",
+            "10:201:1",
             "--output-prefix",
             output_prefix,
         ],
@@ -238,14 +237,19 @@ fn lengths_cli_minimal_invocation_writes_output_files_with_expected_prefix() -> 
     );
 
     let settings_text = std::fs::read_to_string(&settings_path)?;
-    assert!(
-        settings_text.contains("\"min_fragment_length\":10"),
-        "Expected settings file to include min fragment length"
+    let settings: Value =
+        serde_json::from_str(&settings_text).context("settings JSON should parse")?;
+    assert_eq!(settings["length_axis"]["min_fragment_length"], 10);
+    assert_eq!(settings["length_axis"]["max_fragment_length"], 200);
+    assert_eq!(settings["length_axis"]["n_bins"], 191);
+    assert_eq!(
+        settings["length_axis"]["bin_definition"]["kind"],
+        "stepped_range"
     );
-    assert!(
-        settings_text.contains("\"max_fragment_length\":200"),
-        "Expected settings file to include max fragment length"
-    );
+    assert_eq!(settings["length_axis"]["bin_definition"]["start"], 10);
+    assert_eq!(settings["length_axis"]["bin_definition"]["end"], 201);
+    assert_eq!(settings["length_axis"]["bin_definition"]["step"], 1);
+    assert!(settings["length_axis"].get("edges").is_none());
 
     Ok(())
 }
@@ -445,7 +449,7 @@ fn fcoverage_cli_minimal_invocation_writes_expected_positional_run() -> Result<(
 #[test]
 fn midpoints_cli_minimal_invocation_writes_profiles_and_group_index() -> Result<()> {
     // Human verification status: unverified
-    // Arrange: one window in one group with one fragment-length bin.
+    // Arrange: one window in one group with one fragment length bin.
     let bam_fixture = fixtures::simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let intervals_path = out_dir.path().join("intervals.bed");

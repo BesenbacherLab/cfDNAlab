@@ -17,8 +17,6 @@ Post-release performance optimizations that affect this command:
 Pre-release correctness/safety:
 
 - L-001: indel-adjusted output length and aligned fetch span share one max-length setting.
-- L-003: settings sidecar is too thin to interpret the matrix.
-- L-004: BED row reordering should fail loudly if metadata and counts drift apart.
 
 Pre-release docs/API polish:
 
@@ -44,34 +42,8 @@ Recommended fix:
 - Either add an explicit aligned-span cap used for tiling/fetch/pairing, or fail fast for indel adjustment unless such a cap is configured.
 - Add a regression with an adjusted-in-range fragment whose aligned span exceeds `max_fragment_length`; it should either count correctly or produce the new explicit configuration error.
 
-### L-003 - Medium - The settings sidecar is too thin to interpret the matrix
-
-The command can change the meaning of both length columns and row assignment through `--indel-mode`, `--clip-mode`, `--max-soft-clips`, `--assign-by`, GC weighting, scaling, and grouped BED mode ([config.rs](../../src/commands/lengths/config.rs#L104-L178), [config.rs](../../src/commands/lengths/config.rs#L202-L323)). The sidecar currently writes only `min_fragment_length` and `max_fragment_length` by hand ([lengths.rs](../../src/commands/lengths/lengths.rs#L490-L505)).
-
-There is also a small documentation mismatch: the top-level command doc says the `.npy` shape is `(# windows, # lengths)` ([config.rs](../../src/commands/lengths/config.rs#L18-L20)), but grouped BED mode writes one row per group, not one row per window ([lengths.rs](../../src/commands/lengths/lengths.rs#L408-L425), [lengths.rs](../../src/commands/lengths/lengths.rs#L557-L579)).
-
-Impact: downstream consumers can recover the numeric length range, but not whether those lengths are aligned, indel-adjusted, clip-adjusted, or assigned by overlap/midpoint/proportion. For grouped outputs, the sidecar also does not state that rows correspond to groups.
-
-Recommended fix:
-
-- Replace the manual JSON string with a small serde settings struct.
-- Include at least `min_fragment_length`, `max_fragment_length`, `indel_mode`, `clip_mode`, `max_soft_clips`, `assign_by`, window mode, grouped-vs-window row semantics, GC length weighting, and whether GC/scaling inputs were used.
-- Clarify the command help so grouped BED output is described as `(# groups, # lengths)`.
-
-### L-004 - Low - BED row reordering silently truncates if metadata and counts drift apart
-
-After BED reduction, the command pairs `bin_info` with `all_bins` using `zip()` and sorts the pairs by original BED index ([lengths.rs](../../src/commands/lengths/lengths.rs#L430-L464)). `zip()` stops at the shorter iterator, so any upstream mismatch between metadata rows and count rows would silently drop the extras before writing `length_counts.npy` and `bins.tsv`.
-
-Impact: current invariants probably keep these lengths equal in normal non-empty runs, but this is a fragile final-output boundary. If an earlier window-filtering or reducer bug appears, the final files can become self-consistent-looking while missing rows.
-
-Recommended fix:
-
-- Add `ensure!(bin_info.len() == all_bins.len(), ...)` immediately before zipping.
-- Make `stack_length_counts()` accept a slice and return `Result<Array2<f64>>`, including an explicit empty-input error.
-- Add a small unit test for the defensive mismatch check rather than relying only on end-to-end happy paths.
-
 ## Existing coverage notes
 
 The command already has broad integration coverage: global, fixed-size, ordinary BED, grouped BED, multi-chromosome runs, tile-boundary invariance, unpaired mode, default MAPQ, GC correction, GC weighting modes, scaling factors, blacklist behavior, indel and clip modes, soft-clip filtering, all window assignment modes, grouped metadata, and reducer helper behavior are represented.
 
-The most important lengths-specific missing tests from this review are deletion-adjusted fragments whose aligned span exceeds the configured max adjusted output length, sidecar completeness for indel/clip/grouped outputs, and defensive metadata/count mismatch handling. The deferred sparse-window GC reference pruning optimization is tracked in G-006 in `00_shared_package_notes.md`.
+The most important lengths-specific missing test from this review covers deletion-adjusted fragments whose aligned span exceeds the configured max adjusted output length. The deferred sparse-window GC reference pruning optimization is tracked in G-006 in `00_shared_package_notes.md`.

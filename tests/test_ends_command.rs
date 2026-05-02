@@ -134,7 +134,7 @@ fn end_scope_bq_filter_drops_only_the_failing_end() -> Result<()> {
     let (motifs, matrix) = read_dense_output(out_dir.path())?;
 
     // Assert: without BQ filters, the same 10 bp fragment is counted at both ends, so this test
-    // cannot pass because the default fragment-length filter removed the fragment earlier.
+    // cannot pass because the default fragment length filter removed the fragment earlier.
     assert_eq!(baseline_matrix.sum(), 2.0);
     assert_eq!(
         motif_count(&baseline_matrix, &baseline_motifs, 0, "_A"),
@@ -7187,7 +7187,7 @@ fn grouped_bed_assign_when_proportion_counts_only_groups_meeting_threshold() -> 
 #[test]
 fn settings_json_ignores_fragment_length_bounds_but_keeps_motif_definition_fields() -> Result<()> {
     // Arrange:
-    // - fragment-length bounds change counting eligibility only, so they should not appear
+    // - fragment length bounds change counting eligibility only, so they should not appear
     // - source_inside stays reference
     // - clip_strategy stays aligned
     // - window_assignment stays endpoint

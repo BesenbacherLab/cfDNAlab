@@ -1367,7 +1367,7 @@ It should also avoid pretending that one default is equally optimal for:
 - positional coverage correlations
 - midpoint profile extraction
 - end-motif counting
-- fragment-length distributions
+- fragment length distributions
 
 because the scaling semantics differ materially across those command families
 

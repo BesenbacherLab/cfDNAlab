@@ -122,7 +122,7 @@ The final example is a full pipeline for running everything (but without the exp
 
 **Assembly**: The below examples use filenames specific to the hg38 assembly, but any assembly (hg19 etc.) should work. Just be consistent, of course. Note that most commands use only the autosomes (`chr1-chr22`) by default (see `--chromosomes` in help files).
 
-**Fragment length range**: The min/max fragment length range defaults to `30-1000bp`. This can be specified via `--min-fragment-length` and `--max-fragment-length`. We suggest keeping this range for the `ref-gc-bias` command. In the downstream feature extraction commands you can then narrow the range, if you want. For the scaling factors made with `fragment-count-weights` or `coverage-weights`, it's a trade-off whether to use the full range or an analysis-specific narrower range. The matching narrower range will make the genomic regions contribute more equally to the downstream features, while the full or a different range may better estimate copy number changes.
+**Fragment length range**: The min/max fragment length range defaults to `30-1000bp`. Most commands specify this via `--min-fragment-length` and `--max-fragment-length`, while `lengths` and `midpoints` use `--length-bins`. We suggest keeping this range for the `ref-gc-bias` command. In the downstream feature extraction commands you can then narrow the range, if you want. For the scaling factors made with `fragment-count-weights` or `coverage-weights`, it's a trade-off whether to use the full range or an analysis-specific narrower range. The matching narrower range will make the genomic regions contribute more equally to the downstream features, while the full or a different range may better estimate copy number changes.
 
 **Blacklist consistency**: When using blacklists to remove problematic regions of the genome, we recommend using them consistently in all commands. If you have sample-specific blacklists, reuse for all commands run on the same sample.
 
@@ -425,6 +425,13 @@ Choose any relevant options below. See `--help` for more options.
   # 3) Per window in a grouped bed file
   --by-grouped-bed <path>/<some_grouped_intervals>.bed \
 
+  # Count in fragment length bins (last edge is exclusive)
+  # Default is one column per length from 30 through 1000
+  # 1) Bin lengths every 10bp
+  --length-bins 30:1001:10 \
+  # 2) Specific bin edges, here short/long bins
+  --length-bins 100 151 221 \
+
   # Add GC correction and / or genomic smoothing (see above)
   --gc-file ... \
   --ref-2bit <path>/hg38.2bit \
@@ -562,8 +569,7 @@ cfdna lengths \
   --output-dir $OUT/lengths_$MINLENGTH_$MAXLENGTH \
   --output-prefix $SAMPLE_NAME \
   --blacklist $BLACKLIST  \
-  --min-fragment-length $MINLENGTH \
-  --max-fragment-length $MAXLENGTH \
+  --length-bins $MINLENGTH:$(($MAXLENGTH+1)):1 \
   --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
   --ref-2bit $ASSEMBLY \
   --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv \
@@ -576,8 +582,7 @@ cfdna lengths \
   --output-dir $OUT/lengths_per_5mb_100_220 \
   --output-prefix $SAMPLE_NAME --by-size 5000000 \
   --blacklist $BLACKLIST \
-  --min-fragment-length 100 \
-  --max-fragment-length 220 \
+  --length-bins 100 151 221 \
   --gc-file $OUT/gc_bias/$SAMPLE_NAME.gc_bias_correction.npz \
   --ref-2bit $ASSEMBLY \
   --scaling-factors $OUT/scaling_factors/$SAMPLE_NAME.fragment_counts.scaling_factors.tsv \

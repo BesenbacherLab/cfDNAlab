@@ -75,7 +75,7 @@ const COMMAND_TARGET: &str = "fragment-kmers";
 ///   each chromosome in parallel tiles using Rayon.
 /// - Streams fragments through per-window accumulators, enumerating the requested k-mers inside
 ///   every counted window and writing dense (or optional sparse) count matrices plus motif lists.
-/// - Applies fragment-length, blacklist, indel, scaling, and strand handling policies consistently
+/// - Applies fragment length, blacklist, indel, scaling, and strand handling policies consistently
 ///   across threads.
 ///
 /// Parameters:

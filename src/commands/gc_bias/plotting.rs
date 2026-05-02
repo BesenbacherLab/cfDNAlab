@@ -25,7 +25,7 @@ use std::path::Path;
 /// - `gc_bins`:
 ///     Mapping of GC-bin indices to contiguous GC ranges, used to build axis labels.
 /// - `length_bins`:
-///     Mapping of length-bin indices to contiguous fragment-length ranges for axis labels.
+///     Mapping of length-bin indices to contiguous fragment length ranges for axis labels.
 /// - `correction_matrix`:
 ///     Correction factors shaped `(length_bin, gc_bin)`.
 /// - `length_bin_frequencies`:

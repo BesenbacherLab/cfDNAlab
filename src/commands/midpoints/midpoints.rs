@@ -122,7 +122,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         indexed_windows_map.insert(chromosome.clone(), grouped_windows.as_slice().to_vec());
     }
 
-    // Parse and validate fragment-length bins once so all tiles use the same edges
+    // Parse and validate fragment length bins once so all tiles use the same edges
     let length_bins = opt.resolve_length_bins()?;
     let num_length_bins = length_bins.len();
     let min_fragment_length = length_bins[0];

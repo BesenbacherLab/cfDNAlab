@@ -127,7 +127,7 @@ impl GCCorrector {
         self.length_offset_index(fragment_length).is_some()
     }
 
-    /// Return the inclusive fragment-length range covered by this package.
+    /// Return the inclusive fragment length range covered by this package.
     ///
     /// Returns
     /// -------
@@ -202,7 +202,7 @@ impl LengthAgnosticGCCorrector {
     /// Create length-agnostic GC corrector from the standard GC corrector.
     ///
     /// The GC package stores binned length correction curves. Requested-range selection keeps
-    /// every package length bin that overlaps the requested inclusive fragment-length range.
+    /// every package length bin that overlaps the requested inclusive fragment length range.
     pub fn from_gc_corrector(
         corrector: &GCCorrector,
         weighting_scheme: &MarginalizeLengthsWeightingScheme,
@@ -350,7 +350,7 @@ fn selected_length_bins(
             let last_selected_bin = corrector.length_bin(requested_max)?;
 
             // Package length bins are contiguous, so every bin between the endpoint bins overlaps
-            // the requested inclusive fragment-length range
+            // the requested inclusive fragment length range
             let selected_bins: Vec<usize> = (first_selected_bin..=last_selected_bin).collect();
             ensure!(
                 !selected_bins.is_empty(),
@@ -488,14 +488,14 @@ fn validate_gc_package_compatibility(
     ensure!(
         min_length > end_offset_twice,
         "GC correction: minimum fragment length ({min_length}) must exceed twice the end-offset ({}) used when building the correction. \
-        Increase --min-fragment-length or rebuild the GC correction package with a smaller --end-offset.",
+        Increase the requested minimum fragment length or rebuild the GC correction package with a smaller --end-offset.",
         end_offset_twice
     );
 
     ensure!(
         min_length >= package_min_length && max_length <= package_max_length,
         "GC correction: fragment length range [{}-{}] is outside the range covered by the correction package [{}-{}]. \
-        Adjust --min-fragment-length/--max-fragment-length or rebuild the GC correction package with matching limits.",
+        Adjust the requested fragment length range or rebuild the GC correction package with matching limits.",
         min_fragment_length,
         max_fragment_length,
         package_min_length,

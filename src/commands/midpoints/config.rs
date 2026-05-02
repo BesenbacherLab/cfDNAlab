@@ -1,11 +1,11 @@
 use crate::{
     commands::cli_common::{
         ApplyGCArgs, ChromosomeArgs, IOCArgs, LoggingArgs, MAX_SUPPORTED_FRAGMENT_LENGTH,
-        ScaleGenomeArgs, UnpairedArgs, parse_length_bins,
+        MIN_ACGT_BASES_FOR_GC_FRACTION, ScaleGenomeArgs, UnpairedArgs, resolve_length_bin_edges,
     },
     shared::blacklist::BlacklistStrategy,
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::Result;
 use std::path::PathBuf;
 
 /// Count positional fragment **midpoint** coverage in groups of genomic windows.
@@ -262,38 +262,11 @@ impl MidpointsConfig {
     }
 
     pub fn resolve_length_bins(&self) -> Result<Vec<u32>> {
-        if self.length_bins.len() == 1 {
-            let raw_spec = self.length_bins[0].trim();
-            if raw_spec.contains(':') || raw_spec.contains('-') || raw_spec.contains(',') {
-                let parsed = parse_length_bins(Some(raw_spec), 10, MAX_SUPPORTED_FRAGMENT_LENGTH)?;
-                return Ok(parsed.to_edges());
-            }
-        }
-
-        let mut edges = Vec::with_capacity(self.length_bins.len());
-        for raw_edge in &self.length_bins {
-            let edge = raw_edge
-                .trim()
-                .parse::<u32>()
-                .with_context(|| format!("failed parsing length bin edge '{}'", raw_edge))?;
-            ensure!(edge >= 10, "length bin edges must be >= 10");
-            ensure!(
-                edge <= MAX_SUPPORTED_FRAGMENT_LENGTH + 1,
-                "length bin edges must be <= {}",
-                MAX_SUPPORTED_FRAGMENT_LENGTH + 1
-            );
-            edges.push(edge);
-        }
-
-        ensure!(
-            edges.len() >= 2,
-            "length bin edges must contain at least two values"
-        );
-        ensure!(
-            edges.windows(2).all(|window| window[0] < window[1]),
-            "length bin edges must be strictly increasing"
-        );
-        Ok(edges)
+        resolve_length_bin_edges(
+            &self.length_bins,
+            MIN_ACGT_BASES_FOR_GC_FRACTION,
+            MAX_SUPPORTED_FRAGMENT_LENGTH,
+        )
     }
 
     pub fn set_tile_size(&mut self, tile_size: u32) {

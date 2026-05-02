@@ -285,7 +285,7 @@ That describes user-visible semantics without explaining reducer internals.
 
 `lengths` is structurally an even cleaner fit than `ends`.
 
-It already writes one fragment-length distribution per row, with shape:
+It already writes one fragment length distribution per row, with shape:
 
 - global: `(# 1, # lengths)`
 - windowed: `(# windows, # lengths)`

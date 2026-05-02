@@ -1123,7 +1123,7 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction
 fn midpoints_rejects_gc_package_when_length_bins_are_outside_supported_range() -> Result<()> {
     // Human verification status: unverified
     // Arrange:
-    // The midpoint command resolves its fragment-length range from the configured bin edges:
+    // The midpoint command resolves its fragment length range from the configured bin edges:
     //   [61, 62] -> counted fragment lengths are exactly 61 bp.
     //
     // We then hand-build the smallest valid GC package that only covers lengths 10..=60.
@@ -1563,7 +1563,7 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
     // Producer BAM:
     // - `simple_inward_bam()` contains one fragment [20, 80) on chr1.
     // - Run `coverage-weights` with a neutral real GC package over its full configured
-    //   fragment-length range so the written scaling TSV is GC-compatible with the consumer
+    //   fragment length range so the written scaling TSV is GC-compatible with the consumer
     //   command, but the numerical scaling profile stays unchanged.
     // - With `bin_size = stride = 20`, the written scaling TSV is therefore still the identity
     //   profile:

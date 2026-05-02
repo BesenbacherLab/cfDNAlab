@@ -314,11 +314,7 @@ fn lengths_consumes_shared_real_artifacts_with_expected_weighted_count() -> Resu
         neutralize_invalid_gc: false,
     });
     cfg.set_ref_2bit(Some(artifacts.reference_path.clone()));
-    {
-        let fragment_lengths = cfg.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 61;
-        fragment_lengths.max_fragment_length = 61;
-    }
+    cfg.set_per_bp_length_bins(61, 61);
 
     // Act
     run_lengths(&cfg)?;

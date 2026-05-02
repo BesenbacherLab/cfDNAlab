@@ -70,6 +70,7 @@ rand = "0.9.1"
 rayon = "1.10.0"
 rust-htslib = "0.50.0"
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0"
 smallvec = "1.15.1"
 staged-sg-filter = { version = "0.2.3", optional = true }
 strum = "0.27.2"
@@ -83,7 +84,6 @@ zstd = { version = "0.13.3", features = ["zstdmt"] }
 
 [dev-dependencies]
 libc = "0.2"
-serde_json = "1.0"
 
 [[bin]]
 name = "cfdna"

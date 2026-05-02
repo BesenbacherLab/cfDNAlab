@@ -942,7 +942,7 @@ mod tests_bam_to_frag {
     -> Result<()> {
         // Human verification status: unverified
         // Arrange:
-        // The fixture contributes one fragment of length 60. We keep the accepted fragment-length
+        // The fixture contributes one fragment of length 60. We keep the accepted fragment length
         // range at exactly 60, then provide a GC package that only covers 10..=59.
         //
         // Because `bam-to-frag` validates the package before conversion starts, the correct

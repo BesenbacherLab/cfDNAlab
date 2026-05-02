@@ -10,7 +10,8 @@ use crate::{commands::lengths::counting::LengthCounts, shared::tiled_run::parse_
 ///
 /// The archive stores two arrays:
 /// - `window_idx_chr` (u64): Zero-based window index within the current chromosome.
-/// - `counts` (f64): Matrix with one row per window and one column per fragment length.
+/// - `counts` (f64): Matrix with one row per window and one column per
+///   fragment length.
 pub fn write_partials_npz(
     temp_dir: &Path,
     prefix: &str,
@@ -31,13 +32,19 @@ pub fn write_partials_npz(
     for c in counts {
         ensure!(
             c.counts.len() == counts_len,
-            "All count rows must have identical length"
+            "All count vectors (rows) must have identical length"
         );
     }
 
     ensure!(
         contained_flags.len() == window_idxs_chr.len(),
         "contained flags length mismatch for tile {} {}",
+        chr,
+        tile_idx
+    );
+    ensure!(
+        counts.len() == window_idxs_chr.len(),
+        "counts length mismatch for tile {} {}",
         chr,
         tile_idx
     );

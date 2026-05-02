@@ -34,6 +34,7 @@ mod tests_lengths_command {
     use ndarray::Array2;
     use ndarray::array;
     use ndarray_npy::read_npy;
+    use serde_json::Value;
     use tempfile::TempDir;
 
     fn parse_group_index_rows(text: &str) -> Vec<(u64, String, f64)> {
@@ -204,6 +205,144 @@ mod tests_lengths_command {
     }
 
     #[test]
+    fn default_length_bins_preserve_per_bp_distribution_shape() -> Result<()> {
+        // Arrange:
+        // The default `--length-bins 30:1001:1` creates one column for each integer
+        // length from 30 through 1000. The simple fixture has one length-60 fragment.
+        let bam = simple_inward_bam()?;
+        let out_dir = TempDir::new()?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+
+        // Act
+        run(&cfg)?;
+
+        // Assert
+        let counts_path = out_dir.path().join("length_counts.npy");
+        let arr: Array2<f64> = read_npy(&counts_path)?;
+        assert_eq!(arr.shape(), &[1, 971]);
+        assert_eq!(arr[(0, 60 - 30)], 1.0);
+        assert_eq!(arr.sum(), 1.0);
+
+        let settings_text =
+            std::fs::read_to_string(out_dir.path().join("fragment_length_settings.json"))?;
+        let settings: Value = serde_json::from_str(&settings_text)?;
+        assert_eq!(settings["length_axis"]["column_intervals"], "half_open");
+        assert_eq!(settings["length_axis"]["min_fragment_length"], 30);
+        assert_eq!(settings["length_axis"]["max_fragment_length"], 1000);
+        assert_eq!(settings["length_axis"]["n_bins"], 971);
+        assert_eq!(settings["length_axis"]["single_bp_bins"], true);
+        assert_eq!(
+            settings["length_axis"]["bin_definition"]["kind"],
+            "stepped_range"
+        );
+        assert_eq!(settings["length_axis"]["bin_definition"]["start"], 30);
+        assert_eq!(settings["length_axis"]["bin_definition"]["end"], 1001);
+        assert_eq!(settings["length_axis"]["bin_definition"]["step"], 1);
+        assert!(settings["length_axis"].get("edges").is_none());
+        assert_eq!(settings["aggregation_level"], "global");
+        assert!(settings.get("row_semantics").is_none());
+        assert_eq!(settings["window_mode"], "global");
+        assert_eq!(settings["indel_mode"], "ignore");
+        assert_eq!(settings["clip_mode"], "aligned");
+        assert_eq!(settings["max_soft_clips"], 256);
+        assert_eq!(settings["assign_by"], "count-overlap");
+        assert_eq!(settings["gc_length_weighting"], "equal");
+        assert_eq!(settings["gc_length_range"], "requested");
+        assert_eq!(settings["gc_correction_used"], false);
+        assert_eq!(settings["scaling_factors_used"], false);
+        assert!(settings.get("min_mapq").is_none());
+        assert!(settings.get("require_proper_pair").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn wider_length_bins_collapse_multiple_lengths_into_one_column() -> Result<()> {
+        // Arrange:
+        // Two fragments have different exact lengths but both fall in [30,40).
+        let bam = bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            vec![
+                fixtures::paired_fragment(20, 35, 10),
+                fixtures::paired_fragment(80, 39, 10),
+            ],
+            Vec::new(),
+            "lengths_wider_bins_collapse",
+        )?;
+        let out_dir = TempDir::new()?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_length_bins(vec![30, 40, 50]);
+
+        // Act
+        run(&cfg)?;
+
+        // Assert
+        let arr: Array2<f64> = read_npy(out_dir.path().join("length_counts.npy"))?;
+        assert_eq!(arr.shape(), &[1, 2]);
+        assert_eq!(arr[(0, 0)], 2.0);
+        assert_eq!(arr[(0, 1)], 0.0);
+        assert_eq!(arr.sum(), 2.0);
+        Ok(())
+    }
+
+    #[test]
+    fn length_bins_filter_at_final_exclusive_edge() -> Result<()> {
+        // Arrange:
+        // [10,20) includes length 19 and excludes length 20.
+        let bam = bam_from_specs(
+            vec![("chr1".to_string(), 200)],
+            vec![
+                fixtures::paired_fragment(20, 19, 10),
+                fixtures::paired_fragment(80, 20, 10),
+            ],
+            Vec::new(),
+            "lengths_final_exclusive_edge",
+        )?;
+        let out_dir = TempDir::new()?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_length_bins(vec![10, 20]);
+
+        // Act
+        run(&cfg)?;
+
+        // Assert
+        let arr: Array2<f64> = read_npy(out_dir.path().join("length_counts.npy"))?;
+        assert_eq!(arr.shape(), &[1, 1]);
+        assert_eq!(arr[(0, 0)], 1.0);
+        assert_eq!(arr.sum(), 1.0);
+        Ok(())
+    }
+
+    #[test]
     fn counts_reference_lengths_global_window() -> Result<()> {
         // Human verification status: unverified
         let bam = simple_inward_bam()?;
@@ -222,11 +361,7 @@ mod tests_lengths_command {
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 200;
-        }
+        cfg.set_per_bp_length_bins(10, 200);
 
         run(&cfg)?;
 
@@ -275,11 +410,7 @@ mod tests_lengths_command {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
         cfg.set_tile_size(50);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 200;
-        }
+        cfg.set_per_bp_length_bins(10, 200);
 
         run(&cfg)?;
 
@@ -333,11 +464,7 @@ mod tests_lengths_command {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
         cfg.set_tile_size(100);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 50;
-        }
+        cfg.set_per_bp_length_bins(10, 50);
 
         run(&cfg)?;
 
@@ -394,11 +521,7 @@ mod tests_lengths_command {
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 200;
-        }
+        cfg.set_per_bp_length_bins(10, 200);
 
         run(&cfg)?;
 
@@ -458,11 +581,7 @@ mod tests_lengths_command {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
         cfg.set_tile_size(10);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -515,11 +634,7 @@ mod tests_lengths_command {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
         cfg.set_tile_size(10);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -579,11 +694,7 @@ mod tests_lengths_command {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
         cfg.set_tile_size(10);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -642,11 +753,7 @@ mod tests_lengths_command {
             cfg.set_min_mapq(0);
             cfg.set_require_proper_pair(false);
             cfg.set_tile_size(tile_size);
-            {
-                let frag = cfg.fragment_lengths_mut();
-                frag.min_fragment_length = 10;
-                frag.max_fragment_length = 10;
-            }
+            cfg.set_per_bp_length_bins(10, 10);
 
             run(&cfg)?;
 
@@ -709,11 +816,7 @@ mod tests_lengths_command {
             cfg.set_min_mapq(0);
             cfg.set_require_proper_pair(false);
             cfg.set_tile_size(tile_size);
-            {
-                let frag = cfg.fragment_lengths_mut();
-                frag.min_fragment_length = 10;
-                frag.max_fragment_length = 10;
-            }
+            cfg.set_per_bp_length_bins(10, 10);
 
             run(&cfg)?;
 
@@ -770,11 +873,7 @@ mod tests_lengths_command {
             cfg.set_min_mapq(0);
             cfg.set_require_proper_pair(false);
             cfg.set_tile_size(tile_size);
-            {
-                let frag = cfg.fragment_lengths_mut();
-                frag.min_fragment_length = 10;
-                frag.max_fragment_length = 10;
-            }
+            cfg.set_per_bp_length_bins(10, 10);
 
             run(&cfg)?;
 
@@ -832,11 +931,7 @@ mod tests_lengths_command {
             cfg.set_window_assignment(AssignToWindowArgs::default());
             cfg.set_min_mapq(0);
             cfg.set_require_proper_pair(false);
-            {
-                let frag = cfg.fragment_lengths_mut();
-                frag.min_fragment_length = 10;
-                frag.max_fragment_length = 200;
-            }
+            cfg.set_per_bp_length_bins(10, 200);
             cfg
         };
 
@@ -933,11 +1028,7 @@ mod tests_lengths_command {
             cfg.set_windows(DistributionWindowsArgs::default());
             cfg.set_window_assignment(AssignToWindowArgs::default());
             cfg.set_require_proper_pair(false);
-            {
-                let frag = cfg.fragment_lengths_mut();
-                frag.min_fragment_length = 50;
-                frag.max_fragment_length = 120;
-            }
+            cfg.set_per_bp_length_bins(50, 120);
             cfg
         };
 
@@ -1000,11 +1091,7 @@ mod tests_lengths_command {
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 120;
-        }
+        cfg.set_per_bp_length_bins(10, 120);
 
         run(&cfg)?;
 
@@ -1072,11 +1159,7 @@ mod tests_lengths_command {
             cfg.set_unpaired(cfdnalab::commands::cli_common::UnpairedArgs {
                 reads_are_fragments: unpaired,
             });
-            {
-                let frag = cfg.fragment_lengths_mut();
-                frag.min_fragment_length = 10;
-                frag.max_fragment_length = 200;
-            }
+            cfg.set_per_bp_length_bins(10, 200);
             cfg
         };
 
@@ -1129,11 +1212,7 @@ mod tests_lengths_command {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
         cfg.set_tile_size(30);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 120;
-        }
+        cfg.set_per_bp_length_bins(10, 120);
 
         run(&cfg)?;
 
@@ -1196,11 +1275,7 @@ mod tests_lengths_command {
         cfg.set_window_assignment(AssignToWindowArgs::default());
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 120;
-        }
+        cfg.set_per_bp_length_bins(10, 120);
 
         run(&cfg)?;
 
@@ -1269,11 +1344,7 @@ mod tests_lengths_command {
             cfg.set_min_mapq(0);
             cfg.set_require_proper_pair(false);
             cfg.set_tile_size(50);
-            {
-                let frag = cfg.fragment_lengths_mut();
-                frag.min_fragment_length = 10;
-                frag.max_fragment_length = 120;
-            }
+            cfg.set_per_bp_length_bins(10, 120);
             cfg
         };
 
@@ -1335,11 +1406,7 @@ mod tests_lengths_command {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
         cfg.set_scaling_factors(Some(scaling_path.clone()));
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 200;
-        }
+        cfg.set_per_bp_length_bins(10, 200);
 
         run(&cfg)?;
 
@@ -1379,11 +1446,7 @@ mod tests_lengths_command {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
         cfg.blacklist = Some(vec![blacklist_path.clone()]);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 200;
-        }
+        cfg.set_per_bp_length_bins(10, 200);
 
         run(&cfg)?;
 
@@ -1452,11 +1515,7 @@ mod tests_lengths_command {
                 neutralize_invalid_gc: false,
             });
             cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
-            {
-                let frag = cfg.fragment_lengths_mut();
-                frag.min_fragment_length = 10;
-                frag.max_fragment_length = 200;
-            }
+            cfg.set_per_bp_length_bins(10, 200);
 
             run(&cfg)?;
 
@@ -1526,11 +1585,7 @@ mod tests_lengths_command {
                 neutralize_invalid_gc: false,
             });
             cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
-            {
-                let frag = cfg.fragment_lengths_mut();
-                frag.min_fragment_length = 60;
-                frag.max_fragment_length = 60;
-            }
+            cfg.set_per_bp_length_bins(60, 60);
 
             run(&cfg)?;
 
@@ -1585,11 +1640,7 @@ mod tests_lengths_command {
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
         cfg.set_gc_length_weighting(MarginalizeLengthsWeightingScheme::Equal);
-        {
-            let fragment_lengths = cfg.fragment_lengths_mut();
-            fragment_lengths.min_fragment_length = 60;
-            fragment_lengths.max_fragment_length = 60;
-        }
+        cfg.set_per_bp_length_bins(60, 60);
 
         // Manual expectations:
         // - `ref-gc-bias` is run for exactly one fragment length: 60 bp.
@@ -1679,11 +1730,7 @@ mod tests_lengths_command {
         });
         cfg.set_ref_2bit(Some(reference.path.clone()));
         cfg.set_gc_length_weighting(MarginalizeLengthsWeightingScheme::Equal);
-        {
-            let fragment_lengths = cfg.fragment_lengths_mut();
-            fragment_lengths.min_fragment_length = 10;
-            fragment_lengths.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -1711,7 +1758,7 @@ mod tests_lengths_command {
         // Producer BAM:
         // - `simple_inward_bam()` contains one fragment [20, 80) on chr1.
         // - Run `coverage-weights` with a neutral real GC package over its full configured
-        //   fragment-length range so the written scaling TSV is GC-compatible with the consumer
+        //   fragment length range so the written scaling TSV is GC-compatible with the consumer
         //   command, but the numerical scaling profile stays unchanged.
         // - With `bin_size = stride = 20`, the written scaling profile is therefore still the
         //   identity over the covered stride bins:
@@ -1806,11 +1853,7 @@ mod tests_lengths_command {
             neutralize_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 61;
-            frag.max_fragment_length = 61;
-        }
+        cfg.set_per_bp_length_bins(61, 61);
 
         run(&cfg)?;
 
@@ -1879,11 +1922,7 @@ mod tests_lengths_command {
             neutralize_invalid_gc: false,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 60;
-            frag.max_fragment_length = 60;
-        }
+        cfg.set_per_bp_length_bins(60, 60);
 
         // Act
         let err = run(&cfg).expect_err("out-of-range GC package should fail");
@@ -1977,11 +2016,7 @@ mod tests_lengths_command {
             gc_file: Some(gc_path.clone()),
             neutralize_invalid_gc: false,
         });
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 200;
-        }
+        cfg.set_per_bp_length_bins(10, 200);
         // Intentionally omit ref_2bit
 
         let err = run(&cfg).expect_err("missing ref_2bit should error");
@@ -2021,11 +2056,7 @@ mod tests_lengths_command {
             neutralize_invalid_gc: true,
         });
         cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 200;
-        }
+        cfg.set_per_bp_length_bins(10, 200);
 
         let err = run(&cfg).expect_err("should fail validation when end-offset too large");
         let msg = format!("{err:#}");
@@ -2059,11 +2090,7 @@ mod tests_lengths_command {
         base_cfg.set_window_assignment(AssignToWindowArgs::default());
         base_cfg.set_min_mapq(0);
         base_cfg.set_require_proper_pair(false);
-        {
-            let frag = base_cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 100;
-        }
+        base_cfg.set_per_bp_length_bins(10, 100);
 
         // Adjust mode: expect all fragments counted with indel-aware lengths
         let mut adjust_cfg = base_cfg.clone();
@@ -2137,11 +2164,7 @@ mod tests_lengths_command {
             cfg.set_window_assignment(AssignToWindowArgs::default());
             cfg.set_min_mapq(0);
             cfg.set_require_proper_pair(false);
-            {
-                let frag = cfg.fragment_lengths_mut();
-                frag.min_fragment_length = 10;
-                frag.max_fragment_length = 14;
-            }
+            cfg.set_per_bp_length_bins(10, 14);
             cfg
         };
 
@@ -2233,11 +2256,7 @@ mod tests_lengths_command {
             cfg.set_min_mapq(0);
             cfg.set_require_proper_pair(false);
             cfg.set_tile_size(10);
-            {
-                let frag = cfg.fragment_lengths_mut();
-                frag.min_fragment_length = 10;
-                frag.max_fragment_length = 14;
-            }
+            cfg.set_per_bp_length_bins(10, 14);
             cfg
         };
 
@@ -2320,11 +2339,7 @@ mod tests_lengths_command {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
         cfg.set_scaling_factors(Some(scaling_path));
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 14;
-            frag.max_fragment_length = 14;
-        }
+        cfg.set_per_bp_length_bins(14, 14);
 
         run(&cfg)?;
 
@@ -2403,11 +2418,7 @@ mod tests_lengths_command {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
         cfg.set_scaling_factors(Some(scaling_path));
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 14;
-            frag.max_fragment_length = 14;
-        }
+        cfg.set_per_bp_length_bins(14, 14);
 
         run(&cfg)?;
 
@@ -2460,11 +2471,7 @@ mod tests_lengths_command {
             cfg.set_window_assignment(AssignToWindowArgs::default());
             cfg.set_min_mapq(0);
             cfg.set_require_proper_pair(false);
-            {
-                let frag = cfg.fragment_lengths_mut();
-                frag.min_fragment_length = 12;
-                frag.max_fragment_length = 12;
-            }
+            cfg.set_per_bp_length_bins(12, 12);
             cfg
         };
 
@@ -2523,12 +2530,8 @@ mod tests_lengths_command {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
         cfg.set_scaling_factors(Some(scaling_path));
-        {
-            let frag = cfg.fragment_lengths_mut();
-            // Keep only the insertion-bearing fragment from the edge fixture.
-            frag.min_fragment_length = 17;
-            frag.max_fragment_length = 17;
-        }
+        // Keep only the insertion-bearing fragment from the edge fixture.
+        cfg.set_per_bp_length_bins(17, 17);
 
         // Manual expectations:
         // - In adjust mode, the insertion fragment is counted in adjusted-length bin 17.
@@ -2572,12 +2575,8 @@ mod tests_lengths_command {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
         cfg.blacklist = Some(vec![blacklist_path]);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            // Keep only the deletion-bearing fragment from the edge fixture.
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        // Keep only the deletion-bearing fragment from the edge fixture.
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Manual expectations:
         // - In adjust mode, the deletion fragment is counted in adjusted-length bin 10.
@@ -2639,11 +2638,7 @@ mod tests_lengths_command {
             let mut cfg = base_cfg.clone();
             cfg.set_indel_mode(indel_mode);
             cfg.blacklist_strategy = BlacklistStrategy::Proportion(threshold);
-            {
-                let frag = cfg.fragment_lengths_mut();
-                frag.min_fragment_length = 10;
-                frag.max_fragment_length = 11;
-            }
+            cfg.set_per_bp_length_bins(10, 11);
 
             run(&cfg)?;
             let npy_path = out_dir
@@ -2691,11 +2686,7 @@ mod tests_lengths_command {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
         cfg.set_indel_mode(IndelMode::Ignore);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 200;
-        }
+        cfg.set_per_bp_length_bins(10, 200);
 
         let err = run(&cfg).expect_err("overlapping scaling bins should fail");
         let msg = format!("{err:#}");
@@ -2726,11 +2717,7 @@ mod tests_lengths_command {
         cfg.set_require_proper_pair(false);
         cfg.set_windows(DistributionWindowsArgs::default());
         cfg.set_window_assignment(AssignToWindowArgs::default());
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 200;
-        }
+        cfg.set_per_bp_length_bins(10, 200);
 
         run(&cfg)?;
 
@@ -2837,11 +2824,7 @@ mod tests_lengths_command {
             by_grouped_bed: None,
         });
         cfg.set_window_assignment(AssignToWindowArgs::default());
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 100;
-        }
+        cfg.set_per_bp_length_bins(10, 100);
 
         run(&cfg)?;
 
@@ -2885,11 +2868,7 @@ mod tests_lengths_command {
             cfg.set_window_assignment(AssignToWindowArgs { assign_by });
             cfg.set_min_mapq(0);
             cfg.set_require_proper_pair(false);
-            {
-                let frag = cfg.fragment_lengths_mut();
-                frag.min_fragment_length = 10;
-                frag.max_fragment_length = 200;
-            }
+            cfg.set_per_bp_length_bins(10, 200);
 
             run(&cfg)?;
 
@@ -2971,11 +2950,7 @@ mod tests_lengths_command {
         });
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -3029,11 +3004,7 @@ mod tests_lengths_command {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
         cfg.set_scaling_factors(Some(scaling_path));
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 200;
-        }
+        cfg.set_per_bp_length_bins(10, 200);
 
         // Act
         let err = run(&cfg).expect_err("truncated scaling TSV should fail");
@@ -3124,11 +3095,7 @@ mod tests_lengths_command {
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
         cfg.set_scaling_factors(Some(scaling_path));
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 61;
-            frag.max_fragment_length = 61;
-        }
+        cfg.set_per_bp_length_bins(61, 61);
 
         run(&cfg)?;
 
@@ -3191,11 +3158,7 @@ mod tests_lengths_command {
         cfg.blacklist = Some(vec![blacklist_bed]);
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 60;
-            frag.max_fragment_length = 60;
-        }
+        cfg.set_per_bp_length_bins(60, 60);
 
         // Act
         run(&cfg)?;
@@ -3277,11 +3240,7 @@ mod tests_lengths_command {
         });
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -3294,6 +3253,12 @@ mod tests_lengths_command {
                 .path()
                 .join(dot_join(&["sampleA", "group_index.tsv"])),
         )?;
+        let settings_text = std::fs::read_to_string(
+            out_dir
+                .path()
+                .join(dot_join(&["sampleA", "fragment_length_settings.json"])),
+        )?;
+        let settings: Value = serde_json::from_str(&settings_text)?;
 
         // Assert
         assert_eq!(arr.shape(), &[3, 1]);
@@ -3310,6 +3275,8 @@ mod tests_lengths_command {
                 (2, "gamma".to_string(), 1.0),
             ]
         );
+        assert_eq!(settings["aggregation_level"], "groups");
+        assert_eq!(settings["window_mode"], "by-grouped-bed");
         assert!(!out_dir.path().join("sampleA.bins.tsv").exists());
         assert!(!out_dir.path().join("sampleA.grouped_windows.tsv").exists());
         Ok(())
@@ -3364,11 +3331,7 @@ mod tests_lengths_command {
         });
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -3426,11 +3389,7 @@ mod tests_lengths_command {
         });
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -3499,11 +3458,7 @@ mod tests_lengths_command {
         });
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -3575,11 +3530,7 @@ mod tests_lengths_command {
         });
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 120;
-        }
+        cfg.set_per_bp_length_bins(10, 120);
 
         // Act
         run(&cfg)?;
@@ -3680,11 +3631,7 @@ mod tests_lengths_command {
         cfg.set_scaling_factors(Some(scaling_path));
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 120;
-        }
+        cfg.set_per_bp_length_bins(10, 120);
 
         // Act
         run(&cfg)?;
@@ -3799,11 +3746,7 @@ mod tests_lengths_command {
         });
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -3861,11 +3804,7 @@ mod tests_lengths_command {
         cfg.set_scaling_factors(Some(scaling_path));
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -3928,11 +3867,7 @@ mod tests_lengths_command {
         });
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -4009,11 +3944,7 @@ mod tests_lengths_command {
         cfg.set_ref_2bit(Some(reference.path.clone()));
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -4096,11 +4027,7 @@ mod tests_lengths_command {
         cfg.set_ref_2bit(Some(reference.path.clone()));
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 61;
-            frag.max_fragment_length = 61;
-        }
+        cfg.set_per_bp_length_bins(61, 61);
 
         // Act
         run(&cfg)?;
@@ -4178,11 +4105,7 @@ mod tests_lengths_command {
         cfg.set_ref_2bit(Some(reference.path.clone()));
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 61;
-            frag.max_fragment_length = 61;
-        }
+        cfg.set_per_bp_length_bins(61, 61);
 
         run(&cfg)?;
         let arr: Array2<f64> = read_npy(out_dir.path().join("length_counts.npy"))?;
@@ -4241,11 +4164,7 @@ mod tests_lengths_command {
         });
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -4307,11 +4226,7 @@ mod tests_lengths_command {
         });
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 100;
-            frag.max_fragment_length = 100;
-        }
+        cfg.set_per_bp_length_bins(100, 100);
 
         // Act
         run(&cfg)?;
@@ -4380,11 +4295,7 @@ mod tests_lengths_command {
         });
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -4448,11 +4359,7 @@ mod tests_lengths_command {
         });
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -4527,11 +4434,7 @@ mod tests_lengths_command {
         });
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         run(&cfg)?;
@@ -4584,11 +4487,7 @@ mod tests_lengths_command {
         });
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         let err = run(&cfg).expect_err("grouped BED without a group column should fail");
@@ -4626,11 +4525,7 @@ mod tests_lengths_command {
         });
         cfg.set_min_mapq(0);
         cfg.set_require_proper_pair(false);
-        {
-            let frag = cfg.fragment_lengths_mut();
-            frag.min_fragment_length = 10;
-            frag.max_fragment_length = 10;
-        }
+        cfg.set_per_bp_length_bins(10, 10);
 
         // Act
         let err =
@@ -4649,18 +4544,23 @@ mod tests_lengths_tiling_reducer {
     #![cfg(feature = "cmd_lengths")]
 
     use anyhow::Result;
-    use cfdnalab::commands::lengths::counting::LengthCounts;
+    use cfdnalab::commands::lengths::counting::{LengthAxis, LengthCounts};
     use cfdnalab::commands::lengths::tiling::{
         reduce_partials_for_chr, write_cross_npy, write_partials_npz,
     };
     use ndarray::{Array1, Array2, ShapeBuilder};
     use ndarray_npy::NpzWriter;
     use std::fs::File;
+    use std::sync::Arc;
     use tempfile::TempDir;
 
+    fn exact_axis(min_length: u32, max_length: u32) -> Arc<LengthAxis> {
+        let edges: Vec<u32> = (min_length..=max_length + 1).collect();
+        Arc::new(LengthAxis::new(edges).expect("test length axis should be valid"))
+    }
+
     fn template_counts() -> LengthCounts {
-        let lc = LengthCounts::new(10, 10);
-        lc
+        LengthCounts::new(exact_axis(10, 10))
     }
 
     fn counts_with_value(val: f64) -> LengthCounts {
@@ -4685,6 +4585,21 @@ mod tests_lengths_tiling_reducer {
         assert_eq!(reduced.len(), 1);
         assert!((reduced[0].counts[0] - 2.0).abs() < 1e-6);
         Ok(())
+    }
+
+    #[test]
+    fn partial_writer_rejects_count_rows_without_matching_window_indices() {
+        // Human verification status: unverified
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+
+        let counts = vec![counts_with_value(2.0)];
+        let contained = vec![true, false];
+
+        let err = write_partials_npz(dir, "partials", "chr1", 0, &[0, 1], &contained, &counts)
+            .expect_err("partial writer should reject mismatched row metadata");
+
+        assert!(err.to_string().contains("counts length mismatch"));
     }
 
     #[test]
@@ -4784,7 +4699,7 @@ mod tests_lengths_tiling_reducer {
         // Human verification status: unverified
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
-        let template = LengthCounts::new(10, 11); // two-length template
+        let template = LengthCounts::new(exact_axis(10, 11)); // two-length template
 
         // Two rows, both targeting window 0, but stored in Fortran order so each
         // row slice is non-contiguous and should be rejected.

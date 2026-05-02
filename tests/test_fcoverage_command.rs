@@ -2973,11 +2973,7 @@ fn fcoverage_and_lengths_agree_on_the_single_fragment_that_survives_mapq_filteri
     lengths_cfg.set_window_assignment(AssignToWindowArgs::default());
     lengths_cfg.set_min_mapq(30);
     lengths_cfg.set_require_proper_pair(false);
-    {
-        let frag = lengths_cfg.fragment_lengths_mut();
-        frag.min_fragment_length = 10;
-        frag.max_fragment_length = 200;
-    }
+    lengths_cfg.set_per_bp_length_bins(10, 200);
 
     let fcoverage_out = TempDir::new()?;
     let mut fcoverage_cfg = base_config(&bam.bam, fcoverage_out.path());
@@ -5126,7 +5122,7 @@ fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range
     // `simple_inward_bam()` contains one fragment of length 60.
     // Give `fcoverage` a GC package that only covers fragment lengths 10..=59:
     //   length_edges = [10, 59]
-    // With command fragment-length bounds set to exactly [60, 60], the consumer must reject the
+    // With command fragment length bounds set to exactly [60, 60], the consumer must reject the
     // package before any coverage counting starts.
     let bam = simple_inward_bam()?;
     let ref_twobit = simple_reference_twobit()?;

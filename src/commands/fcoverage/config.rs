@@ -13,7 +13,7 @@ use crate::commands::fcoverage::window_results::CoverageWindowAction;
 ///
 /// `restore-mean` counts in that same unit-mass space, then multiplies the final output by the
 /// observed mean normalization length. This restores the plain global mean level in the ordinary
-/// length-normalized case, but keeps the local fragment-length equalization itself.
+/// length-normalized case, but keeps the local fragment length equalization itself.
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LengthNormalizationMode {

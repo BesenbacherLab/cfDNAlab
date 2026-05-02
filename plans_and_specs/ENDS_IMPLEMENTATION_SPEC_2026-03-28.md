@@ -375,16 +375,16 @@ The current sidecar is intentionally narrower than the original draft and does n
 - `max_soft_clips`
 - `indel_filter`
 - `reads_are_fragments`
-- fragment-length filter settings
+- fragment length filter settings
 
 ### Fragment-length filtering
 
-Fragment-length filters remain defined on the assignment interval, not only on the aligned fragment interval.
+Fragment length filters remain defined on the assignment interval, not only on the aligned fragment interval.
 
 This matches the current `ends` implementation:
 
 - aligned fragment interval geometry is still used for fragment-level blacklist filtering, GC correction, and genomic scaling
-- assignment interval geometry is used for fragment-length filtering and window assignment
+- assignment interval geometry is used for fragment length filtering and window assignment
 
 Working shape:
 
@@ -758,7 +758,7 @@ The command now has two distinct geometries:
   - always stays on the original aligned interval
 
 - assignment boundary geometry
-  - used for fragment-length filtering and end/window assignment when an end is actually kept for assignment
+  - used for fragment length filtering and end/window assignment when an end is actually kept for assignment
   - may differ from the aligned boundary under `raw-shifted-boundary`
 
 This distinction is important and must stay explicit in the collector.

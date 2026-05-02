@@ -141,7 +141,7 @@ impl FragmentLengthArgs {
         }
     }
 
-    /// Validate the configured inclusive fragment-length range.
+    /// Validate the configured inclusive fragment length range.
     ///
     /// Clap enforces these constraints for CLI parsing, but commands and tests can also build
     /// configs directly. Validate at command startup so invalid ranges fail before IO or output
@@ -1109,7 +1109,7 @@ pub fn load_scaling_map(
     }
 }
 
-/// A single fragment-length bin.
+/// A single fragment length bin.
 ///
 /// Bins are half-open intervals `[start, end)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1119,10 +1119,11 @@ pub struct LengthBin {
     pub label: String,
 }
 
-/// A validated, ordered set of fragment-length bins.
+/// A validated, ordered set of fragment length bins.
 ///
 /// Bins must be strictly increasing and contiguous so they can be converted
-/// to a unique edge vector (`[e0, e1, ..., eN]`) used by midpoint counting.
+/// to a unique edge vector (`[e0, e1, ..., eN]`) shared by commands that need
+/// fragment length strata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LengthBins {
     bins: Vec<LengthBin>,
@@ -1155,7 +1156,7 @@ impl LengthBins {
         Ok(Self { bins })
     }
 
-    /// Convert bins into the edge vector expected by midpoint counting.
+    /// Convert bins into the edge vector expected by length-binned commands.
     ///
     /// Example:
     /// - `[30,80), [80,150), [150,220)` -> `[30, 80, 150, 220]`
@@ -1169,10 +1170,21 @@ impl LengthBins {
     }
 }
 
+fn parse_length_bin_number(raw_value: &str, field_name: &str) -> Result<u64> {
+    let trimmed = raw_value.trim();
+    ensure!(
+        !trimmed.is_empty() && trimmed.chars().all(|character| character.is_ascii_digit()),
+        "length-bins {field_name} must be a positive whole number"
+    );
+    trimmed
+        .parse::<u64>()
+        .with_context(|| format!("length-bins {field_name} is too large"))
+}
+
 /// Parse the `--length-bins` CLI string into validated `LengthBins`.
 ///
 /// Accepted forms:
-/// * `start:end:step` for regular bins.
+/// * `start:end:step` for bins that can be described by a range and step size.
 /// * `None` -> 1-bp bins spanning `[min_length, max_length]`.
 pub fn parse_length_bins(
     raw: Option<&str>,
@@ -1209,33 +1221,43 @@ pub fn parse_length_bins(
             if parts.len() != 3 {
                 bail!("length bins range must be start:end:step");
             }
-            let start: u32 = parts[0].trim().parse().context("parse length-bins start")?;
-            let end: u32 = parts[1].trim().parse().context("parse length-bins end")?;
-            let step: u32 = parts[2].trim().parse().context("parse length-bins step")?;
+            let start = parse_length_bin_number(parts[0], "start")?;
+            let end = parse_length_bin_number(parts[1], "end")?;
+            let step = parse_length_bin_number(parts[2], "step")?;
             if step == 0 {
                 bail!("length-bins step must be > 0");
+            }
+            if step > u64::from(max_length) {
+                bail!(
+                    "length-bins step ({}) must be <= max fragment length ({})",
+                    step,
+                    max_length
+                );
             }
             if start >= end {
                 bail!("length-bins start must be < end");
             }
-            if start < min_length {
+            if start < u64::from(min_length) {
                 bail!(
                     "length-bins start ({}) must be >= min fragment length ({})",
                     start,
                     min_length
                 );
             }
-            if end > max_edge {
+            if end > u64::from(max_edge) {
                 bail!(
                     "length-bins end ({}) must be <= max fragment length + 1 ({})",
                     end,
                     max_edge
                 );
             }
+            let start = start as u32;
+            let end = end as u32;
+            let step = step as u32;
             let mut bins = Vec::new();
             let mut pos = start;
             while pos < end {
-                let next = (pos + step).min(end);
+                let next = pos.saturating_add(step).min(end);
                 bins.push(LengthBin {
                     start: pos,
                     end: next,
@@ -1276,6 +1298,80 @@ pub fn parse_length_bins(
     }
 
     LengthBins::new(bins)
+}
+
+/// Resolve raw `--length-bins` values into strictly increasing bin edges.
+///
+/// Commands use different defaults, but the accepted syntax should stay shared:
+/// a single compact range spec like `30:1001:1`, or multiple integer edge
+/// values like `30 80 150 1001`.
+///
+/// Parameters
+/// ----------
+/// - `raw_values`:
+///   Raw CLI/config values.
+/// - `min_allowed_length`:
+///   Minimum allowed fragment length edge.
+/// - `max_supported_fragment_length`:
+///   Maximum supported inclusive fragment length. The final exclusive edge may
+///   be this value plus one.
+///
+/// Returns
+/// -------
+/// - `edges`:
+///   Strictly increasing half-open bin edges.
+pub fn resolve_length_bin_edges(
+    raw_values: &[String],
+    min_allowed_length: u32,
+    max_supported_fragment_length: u32,
+) -> Result<Vec<u32>> {
+    ensure!(
+        !raw_values.is_empty(),
+        "length bin edges must contain at least two values"
+    );
+
+    let max_edge = max_supported_fragment_length
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("max fragment length too large to build bin edges"))?;
+
+    if raw_values.len() == 1 {
+        let raw_spec = raw_values[0].trim();
+        if raw_spec.contains(':') || raw_spec.contains('-') || raw_spec.contains(',') {
+            let parsed = parse_length_bins(
+                Some(raw_spec),
+                min_allowed_length,
+                max_supported_fragment_length,
+            )?;
+            return Ok(parsed.to_edges());
+        }
+    }
+
+    let mut edges = Vec::with_capacity(raw_values.len());
+    for raw_edge in raw_values {
+        let edge = parse_length_bin_number(raw_edge, "edge")?;
+        ensure!(
+            edge >= u64::from(min_allowed_length),
+            "length bin edges must be >= {}",
+            min_allowed_length
+        );
+        ensure!(
+            edge <= u64::from(max_edge),
+            "length bin edges must be <= {}",
+            max_edge
+        );
+        edges.push(edge as u32);
+    }
+
+    ensure!(
+        edges.len() >= 2,
+        "length bin edges must contain at least two values"
+    );
+    ensure!(
+        edges.windows(2).all(|window| window[0] < window[1]),
+        "length bin edges must be strictly increasing"
+    );
+
+    Ok(edges)
 }
 
 #[cfg(test)]

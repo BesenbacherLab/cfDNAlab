@@ -2,22 +2,25 @@ use crate::{
     commands::{
         cli_common::{
             ApplyGCArgFileOnly, AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs,
-            FragmentLengthArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs, UnpairedArgs,
+            IOCArgs, LoggingArgs, MAX_SUPPORTED_FRAGMENT_LENGTH, MIN_ACGT_BASES_FOR_GC_FRACTION,
+            ScaleGenomeArgs, UnpairedArgs, resolve_length_bin_edges,
         },
         gc_bias::correct::{GCLengthRange, MarginalizeLengthsWeightingScheme},
     },
     shared::{blacklist::BlacklistStrategy, clip_mode::ClipMode, indel_mode::IndelMode},
 };
+use anyhow::Result;
 use std::path::PathBuf;
 
 pub const DEFAULT_MAX_SOFT_CLIPS: u16 = 256;
 pub const MAX_MAX_SOFT_CLIPS: u16 = 256;
 
-// TODO: Add length bins to enable e.g. short/long in much smaller windows without exploding RAM
-
 /// Count fragment lengths in a BAM-file.
 ///
-/// Writes an `.npy` file with shape (# windows, # lengths).
+/// Writes a two-dimensional `.npy` count matrix. The first dimension contains
+/// count vectors: one global vector, one vector per window, or one vector per
+/// grouped-BED group depending on the selected windowing mode. The second
+/// dimension contains fragment length bins.
 ///
 /// ## Fragment length definition
 ///
@@ -56,9 +59,9 @@ pub const MAX_MAX_SOFT_CLIPS: u16 = 256;
 /// For consecutive non-overlapping windows, this conserves the total mass, as an edge-overlapping
 /// fragment will count `f` in one window and `1-f` in the other window.
 ///
-/// To get base-weighted counts (i.e. coverage in the window), you can multiply the output
-/// counts by their lengths (`C'[L] = L * C[L]`; Remember to account for the minimum fragment
-/// length offset).
+/// With the default width-1 length bins, you can convert counts to base-weighted counts
+/// (i.e., the coverage in the window) by multiplying each column by the fragment length
+/// it represents. Remember to account for the minimum fragment length offset.
 ///
 /// Other options include counting the full fragment if the *fragment midpoint* or a given
 /// *proportion* of positions overlaps the window.
@@ -211,8 +214,35 @@ pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub scale_genome: ScaleGenomeArgs,
 
-    #[cfg_attr(feature = "cli", clap(flatten))]
-    pub fragment_lengths: FragmentLengthArgs,
+    /// Edges of fragment length bins to count in `[string(s)]`
+    ///
+    /// This also defines the minimum and maximum included fragment lengths.
+    ///
+    /// Bins are half-open. For example, `--length-bins 10 151 221` creates
+    /// bins `[10,151)` and `[151,221)`.
+    ///
+    /// Accepted forms:
+    ///
+    /// - A single value with `start:end:step`:
+    ///   Creates contiguous bins from `start` to `end` in `step` increments.
+    ///   Example: The default `30:1001:1` creates one column per length from 30 through 1000.
+    ///
+    /// - Multiple integer values interpreted as bin edges:
+    ///   Example: `--length-bins 30 80 150 221` creates bins `[30,80)`,
+    ///   `[80,150)`, and `[150,221)`.
+    ///
+    /// **NOTE**: Memory consumption increases linearly with the number of bins.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            value_parser,
+            num_args = 1..,
+            default_values_t = [String::from("30:1001:1")],
+            help_heading = "Core"
+        )
+    )]
+    pub length_bins: Vec<String>,
 
     /// Minimum mapping quality to include `[integer]`
     #[cfg_attr(
@@ -291,7 +321,7 @@ pub struct LengthsConfig {
     ///   
     ///   For low-coverage BAM files, this *could* make the correction more volatile to outliers.
     ///
-    /// - `"frequency"` weighting: Weight lengths by their fragment-length frequency in the GC package.
+    /// - `"frequency"` weighting: Weight lengths by their fragment length frequency in the GC package.
     ///
     ///   This makes the collapsed curve represent the fragments most often seen in the package, **BUT**:
     ///
@@ -318,8 +348,8 @@ pub struct LengthsConfig {
     ///
     /// Possible values:
     ///
-    /// - `"requested"`: Use length bins that overlap the requested
-    ///   `--min-fragment-length..--max-fragment-length` range.
+    /// - `"requested"`: Use length bins that overlap the range requested by
+    ///   `--length-bins`.
     ///
     /// - `"package"`: Use all length bins in the GC correction package.
     ///   Useful for repeated calls with different length ranges that you wish to compare downstream.
@@ -367,7 +397,7 @@ impl LengthsConfig {
             window_assignment: AssignToWindowArgs::default(),
             chromosomes,
             scale_genome: ScaleGenomeArgs::default(),
-            fragment_lengths: FragmentLengthArgs::default(),
+            length_bins: vec!["30:1001:1".to_string()],
             unpaired: UnpairedArgs {
                 reads_are_fragments: false,
             },
@@ -400,8 +430,36 @@ impl LengthsConfig {
         self.window_assignment = assign;
     }
 
-    pub fn fragment_lengths_mut(&mut self) -> &mut FragmentLengthArgs {
-        &mut self.fragment_lengths
+    pub fn set_length_bins(&mut self, edges: Vec<u32>) {
+        assert!(
+            edges.len() >= 2,
+            "length bin edges must contain at least two values"
+        );
+        self.length_bins = edges.into_iter().map(|edge| edge.to_string()).collect();
+    }
+
+    pub fn set_length_bins_spec<S: Into<String>>(&mut self, spec: S) {
+        self.length_bins = vec![spec.into()];
+    }
+
+    /// Set exact one-base output bins for an inclusive length range.
+    ///
+    /// This is a programmatic convenience for tests and callers that want the
+    /// old per-length distribution over `min_length..=max_length`.
+    pub fn set_per_bp_length_bins(&mut self, min_length: u32, max_length: u32) {
+        assert!(min_length <= max_length, "min length must be <= max length");
+        let exclusive_end = max_length
+            .checked_add(1)
+            .expect("max length too large to build length-bin range");
+        self.set_length_bins_spec(format!("{min_length}:{exclusive_end}:1"));
+    }
+
+    pub fn resolve_length_bins(&self) -> Result<Vec<u32>> {
+        resolve_length_bin_edges(
+            &self.length_bins,
+            MIN_ACGT_BASES_FOR_GC_FRACTION,
+            MAX_SUPPORTED_FRAGMENT_LENGTH,
+        )
     }
 
     pub fn set_unpaired(&mut self, unpaired: UnpairedArgs) {

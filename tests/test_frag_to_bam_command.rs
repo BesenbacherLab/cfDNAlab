@@ -2264,11 +2264,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_then_roundtrip_match
     original_cfg.set_min_mapq(0);
     original_cfg.set_require_proper_pair(false);
     original_cfg.set_window_assignment(AssignToWindowArgs::default());
-    {
-        let fragment_lengths = original_cfg.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 10;
-        fragment_lengths.max_fragment_length = 100;
-    }
+    original_cfg.set_per_bp_length_bins(10, 100);
 
     let mut restored_cfg = LengthsConfig::new(
         IOCArgs {
@@ -2282,11 +2278,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_then_roundtrip_match
     restored_cfg.unpaired.reads_are_fragments = true;
     restored_cfg.set_require_proper_pair(false);
     restored_cfg.set_window_assignment(AssignToWindowArgs::default());
-    {
-        let fragment_lengths = restored_cfg.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 10;
-        fragment_lengths.max_fragment_length = 100;
-    }
+    restored_cfg.set_per_bp_length_bins(10, 100);
 
     // Act
     run_lengths(&original_cfg)?;
@@ -2360,11 +2352,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_with_blacklist_then_
     original_cfg.set_require_proper_pair(false);
     original_cfg.set_window_assignment(AssignToWindowArgs::default());
     original_cfg.blacklist = Some(vec![blacklist_path.clone()]);
-    {
-        let fragment_lengths = original_cfg.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 10;
-        fragment_lengths.max_fragment_length = 100;
-    }
+    original_cfg.set_per_bp_length_bins(10, 100);
 
     let mut restored_cfg = LengthsConfig::new(
         IOCArgs {
@@ -2379,11 +2367,7 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_with_blacklist_then_
     restored_cfg.set_require_proper_pair(false);
     restored_cfg.set_window_assignment(AssignToWindowArgs::default());
     restored_cfg.blacklist = Some(vec![blacklist_path]);
-    {
-        let fragment_lengths = restored_cfg.fragment_lengths_mut();
-        fragment_lengths.min_fragment_length = 10;
-        fragment_lengths.max_fragment_length = 100;
-    }
+    restored_cfg.set_per_bp_length_bins(10, 100);
 
     // Act
     run_lengths(&original_cfg)?;
