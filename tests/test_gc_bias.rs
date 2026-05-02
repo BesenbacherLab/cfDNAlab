@@ -400,6 +400,7 @@ mod tests_gc_bias {
             &corrector,
             &MarginalizeLengthsWeightingScheme::Equal,
             GCLengthRange::Package,
+            0.0,
             20,
             40,
         )?;
@@ -428,6 +429,7 @@ mod tests_gc_bias {
             &corrector,
             &MarginalizeLengthsWeightingScheme::Frequency,
             GCLengthRange::Package,
+            0.0,
             20,
             40,
         )?;
@@ -457,6 +459,7 @@ mod tests_gc_bias {
             &corrector,
             &MarginalizeLengthsWeightingScheme::MaxFrequency,
             GCLengthRange::Package,
+            0.0,
             20,
             40,
         )?;
@@ -492,6 +495,7 @@ mod tests_gc_bias {
             &corrector,
             &MarginalizeLengthsWeightingScheme::Equal,
             GCLengthRange::Requested,
+            0.0,
             30,
             30,
         )?;
@@ -522,6 +526,7 @@ mod tests_gc_bias {
             &corrector,
             &MarginalizeLengthsWeightingScheme::Equal,
             GCLengthRange::Package,
+            0.0,
             30,
             30,
         )?;
@@ -588,6 +593,7 @@ mod tests_gc_bias {
                 &corrector,
                 &scheme,
                 GCLengthRange::Requested,
+                0.0,
                 35,
                 45,
             )?;

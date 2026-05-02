@@ -46,6 +46,7 @@ fn settings_writer_records_non_default_interpretation_fields() {
     });
     config.set_gc_length_weighting(MarginalizeLengthsWeightingScheme::Frequency);
     config.set_gc_length_range(GCLengthRange::Package);
+    config.set_gc_length_trim_rare(0.05);
     config.gc.gc_file = Some(PathBuf::from("gc_bias_correction.npz"));
     config.scale_genome.scaling_factors = Some(PathBuf::from("scaling.tsv"));
     config.set_min_mapq(17);
@@ -79,6 +80,7 @@ fn settings_writer_records_non_default_interpretation_fields() {
     assert_eq!(settings["assign_by"], json!("proportion=0.5"));
     assert_eq!(settings["gc_length_weighting"], json!("frequency"));
     assert_eq!(settings["gc_length_range"], json!("package"));
+    assert_eq!(settings["gc_length_trim_rare"], json!(0.05));
     assert_eq!(settings["gc_correction_used"], json!(true));
     assert_eq!(settings["scaling_factors_used"], json!(true));
     assert!(settings.get("min_mapq").is_none());
@@ -112,6 +114,7 @@ fn settings_writer_uses_compact_stepped_range_definition_for_dense_default() {
         json!({"kind": "stepped_range", "start": 30, "end": 1001, "step": 1})
     );
     assert!(settings["length_axis"].get("edges").is_none());
+    assert_eq!(settings["gc_length_trim_rare"], json!(0.0));
 }
 
 #[test]

@@ -258,6 +258,7 @@ mod tests_lengths_command {
         assert_eq!(settings["assign_by"], "count-overlap");
         assert_eq!(settings["gc_length_weighting"], "equal");
         assert_eq!(settings["gc_length_range"], "requested");
+        assert_eq!(settings["gc_length_trim_rare"], 0.0);
         assert_eq!(settings["gc_correction_used"], false);
         assert_eq!(settings["scaling_factors_used"], false);
         assert!(settings.get("min_mapq").is_none());
@@ -1543,6 +1544,64 @@ mod tests_lengths_command {
                 observed
             );
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn gc_length_trim_rare_removes_low_frequency_rows_before_equal_weighting() -> Result<()> {
+        // Package rows:
+        // - [10,60): GC bin 50 correction = 1, frequency = 1
+        // - [60,200]: GC bin 50 correction = 10, frequency = 3
+        //
+        // With `--gc-length-trim-rare 0.25`, the trim budget is 25% of total
+        // frequency: (1 + 3) * 0.25 = 1. The rare row with frequency 1 is
+        // removed exactly. Equal weighting over the retained rows therefore
+        // uses only correction 10.
+        //
+        // The simple fixture contains one 60 bp fragment with GC%=50, so the
+        // output cell for length 60 should be 1 fragment * correction 10 = 10.
+        let bam = simple_inward_bam()?;
+        let ref_twobit = simple_reference_twobit()?;
+        let gc_dir = TempDir::new()?;
+        let gc_path = gc_dir.path().join("gc_pkg_trim_rare.npz");
+        build_gc_package(&gc_path, 0)?;
+        let out_dir = TempDir::new()?;
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 2,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.set_windows(DistributionWindowsArgs::default());
+        cfg.set_window_assignment(AssignToWindowArgs::default());
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_gc_length_weighting(MarginalizeLengthsWeightingScheme::Equal);
+        cfg.set_gc_length_trim_rare(0.25);
+        cfg.set_gc(cfdnalab::commands::cli_common::ApplyGCArgFileOnly {
+            gc_file: Some(gc_path),
+            neutralize_invalid_gc: false,
+        });
+        cfg.set_ref_2bit(Some(ref_twobit.path.clone()));
+        cfg.set_per_bp_length_bins(10, 200);
+
+        run(&cfg)?;
+
+        let prefix = cfg.output_prefix.trim();
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[prefix, "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        let len60_idx = 60 - 10;
+        assert!(
+            (arr[(0, len60_idx)] - 10.0).abs() < 1e-6,
+            "expected rare-row-trimmed GC correction to give length-60 count 10, got {}",
+            arr[(0, len60_idx)]
+        );
 
         Ok(())
     }

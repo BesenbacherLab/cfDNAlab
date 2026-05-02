@@ -42,6 +42,7 @@ struct FragmentLengthSettings<'a> {
     assign_by: String,
     gc_length_weighting: &'static str,
     gc_length_range: &'static str,
+    gc_length_trim_rare: f64,
     gc_correction_used: bool,
     scaling_factors_used: bool,
 }
@@ -69,6 +70,7 @@ pub(super) fn write_fragment_length_settings_json(
         assign_by: window_assigner_name(opt.window_assignment.assign_by),
         gc_length_weighting: gc_length_weighting_name(opt.gc_length_weighting),
         gc_length_range: gc_length_range_name(opt.gc_length_range),
+        gc_length_trim_rare: opt.gc_length_trim_rare,
         gc_correction_used: opt.gc.gc_file.is_some(),
         scaling_factors_used: opt.scale_genome.scaling_factors.is_some(),
     };

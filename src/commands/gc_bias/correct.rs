@@ -11,6 +11,20 @@ use ndarray::{Array1, Array2, Axis};
 use std::str::FromStr;
 use tracing::warn;
 
+/// Fraction of selected length-bin frequency mass used to group practical ties.
+///
+/// Length-bin frequencies are stored as `f64` distribution weights. This is a
+/// practical tie threshold, not a machine-epsilon threshold: bins with frequency
+/// differences below this selected-mass-scaled value are treated as effectively
+/// the same, so rare-bin trimming does not choose between them by length order.
+///
+/// With normalized frequencies, `1e-7` groups a one-fragment difference once
+/// the selected range has about ten million effective fragments. `1e-6` would
+/// start doing that at about one million effective fragments, making trimming
+/// more conservative against length-order tie bias but more likely to merge
+/// real tail-frequency differences.
+const LENGTH_FREQUENCY_TIE_FRACTION: f64 = 1e-7;
+
 #[derive(Debug, Clone)]
 pub struct GCCorrector {
     correction_matrix: Array2<f64>,
@@ -207,6 +221,7 @@ impl LengthAgnosticGCCorrector {
         corrector: &GCCorrector,
         weighting_scheme: &MarginalizeLengthsWeightingScheme,
         gc_length_range: GCLengthRange,
+        gc_length_trim_rare: f64,
         min_fragment_length: u32,
         max_fragment_length: u32,
     ) -> Result<Self> {
@@ -215,6 +230,11 @@ impl LengthAgnosticGCCorrector {
             gc_length_range,
             min_fragment_length,
             max_fragment_length,
+        )?;
+        let selected_length_bins = trim_rare_length_bins(
+            selected_length_bins,
+            &corrector.length_bin_frequencies,
+            gc_length_trim_rare,
         )?;
         let selected_correction_matrix = corrector
             .correction_matrix
@@ -363,6 +383,164 @@ fn selected_length_bins(
     }
 }
 
+#[derive(Clone, Copy)]
+struct SelectedFrequency {
+    selected_order: usize,
+    frequency: f64,
+}
+
+/// Drop the least frequent selected GC-package length bins before length averaging.
+///
+/// `--gc-length-range` has already chosen which package rows may contribute to
+/// the length-agnostic GC curve. This helper applies `--gc-length-trim-rare`
+/// only within that selected set. A trim value of `0.05` means "remove rare
+/// selected rows while still retaining at least 95% of the selected length
+/// frequency mass".
+///
+/// Rows are considered from rarest to most common. Rows with practically the
+/// same frequency are treated as one group, so the trim decision does not pick
+/// shorter or longer fragments just because they appear earlier in package
+/// order. If the next row or tied group would exceed the trim budget, trimming
+/// stops.
+///
+/// Parameters
+/// ----------
+/// - `selected_length_bins`:
+///   Package row indices selected by `--gc-length-range`, in the order used by
+///   the correction matrix.
+///
+/// - `length_bin_frequencies`:
+///   Package frequencies for all length rows. Frequencies must be finite and
+///   non-negative when trimming is requested.
+///
+/// - `trim_rare_fraction`:
+///   Fraction of selected frequency mass that may be removed. Must be in
+///   `[0, 1)`.
+///
+/// Returns
+/// -------
+/// - `Vec<usize>`:
+///   Retained package row indices, still in the original selected order.
+fn trim_rare_length_bins(
+    selected_length_bins: Vec<usize>,
+    length_bin_frequencies: &Array1<f64>,
+    trim_rare_fraction: f64,
+) -> Result<Vec<usize>> {
+    ensure!(
+        trim_rare_fraction.is_finite() && (0.0..1.0).contains(&trim_rare_fraction),
+        "--gc-length-trim-rare must be finite and within [0, 1)"
+    );
+    if trim_rare_fraction == 0.0 {
+        return Ok(selected_length_bins);
+    }
+
+    // Work only on rows that survived `--gc-length-range`
+    //
+    // The selected-order index is kept separately from the package row index.
+    // After sorting by frequency, it lets us mark rows for removal and then
+    // rebuild the retained list in the original correction-matrix order.
+    let mut selected_frequencies = Vec::with_capacity(selected_length_bins.len());
+    for (selected_order, &length_bin_index) in selected_length_bins.iter().enumerate() {
+        let frequency = *length_bin_frequencies
+            .get(length_bin_index)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Length-bin frequency missing for selected GC length bin {}",
+                    length_bin_index
+                )
+            })?;
+        ensure!(
+            frequency.is_finite() && frequency >= 0.0,
+            "Length-bin frequencies must be finite and non-negative to trim rare bins"
+        );
+        selected_frequencies.push(SelectedFrequency {
+            selected_order,
+            frequency,
+        });
+    }
+
+    // Define the trim budget relative to the selected rows, not the full
+    // package, because `--gc-length-range requested` can intentionally narrow
+    // the correction matrix before trimming.
+    let total_frequency: f64 = selected_frequencies
+        .iter()
+        .map(|selected_frequency| selected_frequency.frequency)
+        .sum();
+    ensure!(
+        total_frequency > 0.0,
+        "Cannot trim rare GC length bins because selected length-bin frequencies sum to zero"
+    );
+    let frequency_tie_tolerance = LENGTH_FREQUENCY_TIE_FRACTION * total_frequency;
+
+    // Visit candidate rows from rarest to most common
+    //
+    // The sort order is only used to find rare rows. Length order must not be a
+    // hidden tie-breaker for removal, so tied or near-tied frequencies are
+    // handled as groups below.
+    selected_frequencies.sort_by(|left, right| left.frequency.total_cmp(&right.frequency));
+
+    let trim_budget = trim_rare_fraction * total_frequency;
+    let mut removed_frequency = 0.0;
+    let mut remove_selected = vec![false; selected_length_bins.len()];
+
+    // Remove whole rarity groups while the next group fits in the budget
+    //
+    // If a tied group would exceed the budget, keeping the whole group is less
+    // biased than choosing one member by length order. Because later groups are
+    // at least as frequent, no later row should be removed once this happens.
+    let mut group_start = 0;
+    while group_start < selected_frequencies.len() {
+        let group_frequency = selected_frequencies[group_start].frequency;
+        let mut group_end = group_start + 1;
+        // Advance until `group_end` points one past the tied group. That makes
+        // `group_start..group_end` the half-open slice for the whole group.
+        while group_end < selected_frequencies.len()
+            && length_frequencies_are_tied(
+                selected_frequencies[group_end].frequency,
+                group_frequency,
+                frequency_tie_tolerance,
+            )
+        {
+            group_end += 1;
+        }
+
+        let group_total_frequency: f64 = selected_frequencies[group_start..group_end]
+            .iter()
+            .map(|selected_frequency| selected_frequency.frequency)
+            .sum();
+        if removed_frequency + group_total_frequency <= trim_budget {
+            for selected_frequency in &selected_frequencies[group_start..group_end] {
+                remove_selected[selected_frequency.selected_order] = true;
+            }
+            removed_frequency += group_total_frequency;
+        } else {
+            break;
+        }
+
+        group_start = group_end;
+    }
+
+    // Return retained package rows in the same order as the selected
+    // correction-matrix rows. Downstream code can then select matrix rows and
+    // matching frequency weights with the same index vector.
+    let retained_length_bins: Vec<usize> = selected_length_bins
+        .into_iter()
+        .enumerate()
+        .filter_map(|(selected_order, length_bin_index)| {
+            (!remove_selected[selected_order]).then_some(length_bin_index)
+        })
+        .collect();
+    ensure!(
+        !retained_length_bins.is_empty(),
+        "Rare-bin trimming removed all selected GC length bins"
+    );
+    Ok(retained_length_bins)
+}
+
+fn length_frequencies_are_tied(left: f64, right: f64, tolerance: f64) -> bool {
+    (left - right).abs() <= tolerance
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
 pub enum GCLengthRange {
     #[default]
@@ -427,6 +605,7 @@ pub fn load_length_agnostic_gc_corrector<P: AsRef<std::path::Path>>(
     ref_2bit: Option<&P>,
     weighting_scheme: &MarginalizeLengthsWeightingScheme,
     gc_length_range: GCLengthRange,
+    gc_length_trim_rare: f64,
     min_fragment_length: u32,
     max_fragment_length: u32,
 ) -> Result<Option<LengthAgnosticGCCorrector>> {
@@ -439,6 +618,7 @@ pub fn load_length_agnostic_gc_corrector<P: AsRef<std::path::Path>>(
             &gc_corrector,
             weighting_scheme,
             gc_length_range,
+            gc_length_trim_rare,
             min_fragment_length,
             max_fragment_length,
         )?;

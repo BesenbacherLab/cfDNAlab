@@ -10,7 +10,7 @@ use crate::{
             counting::build_gc_prefixes,
         },
         lengths::{
-            config::LengthsConfig,
+            config::{LengthsConfig, validate_gc_length_trim_rare},
             counting::{LengthAxis, LengthCounts, stack_length_counts},
             tiling::{reduce_partials_for_chr, write_cross_npy, write_partials_npz},
             writer::write_fragment_length_settings_json,
@@ -156,6 +156,7 @@ fn reorder_bed_outputs_by_original_index(
 pub fn run(opt: &LengthsConfig) -> Result<()> {
     let start_time = Instant::now();
     let length_axis = Arc::new(LengthAxis::new(opt.resolve_length_bins()?)?);
+    validate_gc_length_trim_rare(opt.gc_length_trim_rare)?;
     opt.gc.validate(opt.ref_2bit.as_deref())?;
     if opt.unpaired.reads_are_fragments && opt.require_proper_pair {
         bail!("--require-proper-pair cannot be used with --reads-are-fragments");
@@ -241,6 +242,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         opt.ref_2bit.as_ref(),
         &opt.gc_length_weighting,
         opt.gc_length_range,
+        opt.gc_length_trim_rare,
         length_axis.min_fragment_length(),
         length_axis.max_fragment_length(),
     )?;

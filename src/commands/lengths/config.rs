@@ -41,7 +41,7 @@ pub const MAX_MAX_SOFT_CLIPS: u16 = 256;
 ///
 /// The GC percentage is calculated from the **aligned** reference span.
 /// It does not consider `--indel-mode` or `--clip-mode`.
-/// 
+///
 /// ## Genomic smoothing (--scaling-factors)
 ///
 /// Weight how genomic regions contribute to the length distribution(s), e.g., to reduce the
@@ -297,39 +297,46 @@ pub struct LengthsConfig {
     #[cfg_attr(feature = "cli", clap(flatten))]
     pub gc: ApplyGCArgFileOnly,
 
-    /// How to weight the fragment length bins when estimating the length-agnostic GC correction `[string]`
+    /// How to weight the GC-package fragment length bins when estimating the 
+    /// length-agnostic GC correction `[string]`
     ///
     /// The default GC correction package stores a `fragment length x GC` matrix with
-    /// one normalized GC correction curve per fragment length bin.
+    /// one normalized GC correction curve per fragment length bin. **NOTE**: These 
+    /// fragment length bins are independent of those specified on `--length-bins` 
+    /// and are referred to as **GC length bins**.
     ///
     /// When estimating the fragment length distribution itself, using those normalized
-    /// curves directly would just preserve the original length distribution (when applied
-    /// to the same fragments seen by `cfdna gc-bias`).
+    /// correction curves directly would just preserve the original length distribution 
+    /// (when applied to the same fragments seen by `cfdna gc-bias`).
     ///
     /// We therefore average out the fragment length dimension to get a single, length-agnostic GC correction curve.
     ///
-    /// First, `--gc-length-range` selects which length bins to use. Then this option
-    /// controls how those selected correction curves are collapsed.
+    /// First, `--gc-length-range` selects which GC length bins to use. Then,
+    /// `--gc-length-trim-rare` can exclude a fraction of the selected bins
+    /// with the lowest frequencies in the length distribution used to build
+    /// the GC correction package. Finally, `--gc-length-weighting` controls
+    /// how the retained correction curves are collapsed.
     ///
     /// We have three weighting options:
     ///
-    /// - `"equal"` weighting (default): Weight every length bin the same.
+    /// - `"equal"` weighting (default): Weight every GC length bin the same.
     ///
     ///   Keeps the correction independent of the length distribution we are trying to estimate.
     ///
-    ///   Downside: Rare fragment length bins contribute the same as the most common fragment lengths.
+    ///   Downside: Rare GC length bins contribute the same as the most common GC length bins.
     ///   
     ///   For low-coverage BAM files, this could make the correction more volatile to outliers.
+    ///   To reduce this effect, `--gc-length-trim-rare` allows filtering out a fraction of the rarest bins.
     ///
-    /// - `"frequency"` weighting: Weight length bins by their frequencies in the length distribution
+    /// - `"frequency"` weighting: Weight GC length bins by their frequencies in the length distribution
     ///   used to build the GC package.
     ///
-    ///   This makes the collapsed curve represent the fragments most often seen in the package:
+    ///   This makes the collapsed curve represent the fragments most often seen in the package.
     ///
     ///   Downside: **Biases** the correction based on the length distribution we are trying to estimate.
     ///   This is **circular**: the length signal is partly used to correct itself.
     ///
-    /// - `"max-frequency"` weighting: Use the GC correction curve for the length bin with highest
+    /// - `"max-frequency"` weighting: Use the GC correction curve for the GC length bin with highest
     ///   frequency in the length distribution used to build the GC package.
     #[cfg_attr(
         feature = "cli",
@@ -342,18 +349,19 @@ pub struct LengthsConfig {
     )]
     pub gc_length_weighting: MarginalizeLengthsWeightingScheme,
 
-    /// Which fragment length bins to use when averaging out the GC correction matrix `[string]`
+    /// Which GC-package fragment length bins to use when averaging out the GC correction matrix `[string]`
     ///
-    /// The GC correction package stores one GC correction curve per fragment length bin.
-    /// This option controls which length bins `--gc-length-weighting`
+    /// The GC correction package stores one GC correction curve per fragment length bin 
+    /// (separate from `--length-bins` and referred to as **GC length bins**).
+    /// This option controls which GC length bins `--gc-length-weighting`
     /// collapses to a single length-agnostic GC curve.
     ///
     /// Possible values:
     ///
-    /// - `"requested"`: Use length bins that overlap the range requested by
+    /// - `"requested"`: Use GC length bins that overlap the range requested by
     ///   `--length-bins`.
     ///
-    /// - `"package"`: Use all length bins in the GC correction package.
+    /// - `"package"`: Use all GC length bins in the GC correction package.
     ///   Useful for repeated calls with different length ranges that you wish to compare downstream.
     #[cfg_attr(
         feature = "cli",
@@ -365,6 +373,29 @@ pub struct LengthsConfig {
         )
     )]
     pub gc_length_range: GCLengthRange,
+
+    /// Exclude low-frequency selected GC length bins up to this cumulative fraction `[float]`
+    ///
+    /// After selecting the GC length bins with `--gc-length-range`, 
+    /// this excludes the least frequent GC length bins while keeping
+    /// at least a `1 - fraction` total frequency fraction.
+    /// 
+    /// Conservative: GC length bins with practically the same frequency are grouped,
+    /// and the whole group is excluded only if the retained sum of frequencies
+    /// is at least `1 - fraction` of the selected total.
+    ///
+    /// Use this with `--gc-length-weighting equal` when almost-unobserved
+    /// GC length bins make the length-agnostic GC correction too noisy.
+    #[cfg_attr(
+        feature = "cli",
+        clap(
+            long,
+            default_value = "0.0",
+            value_parser = parse_gc_length_trim_rare,
+            help_heading = "GC Correction"
+        )
+    )]
+    pub gc_length_trim_rare: f64,
 
     /// 2bit reference genome file [path]
     ///
@@ -415,6 +446,7 @@ impl LengthsConfig {
             },
             gc_length_weighting: MarginalizeLengthsWeightingScheme::Equal,
             gc_length_range: GCLengthRange::Requested,
+            gc_length_trim_rare: 0.0,
             ref_2bit: None,
             logging: LoggingArgs::default(),
         }
@@ -499,7 +531,32 @@ impl LengthsConfig {
         self.gc_length_range = gc_length_range;
     }
 
+    pub fn set_gc_length_trim_rare(&mut self, gc_length_trim_rare: f64) {
+        self.gc_length_trim_rare = gc_length_trim_rare;
+    }
+
     pub fn set_ref_2bit(&mut self, ref_2bit: Option<PathBuf>) {
         self.ref_2bit = ref_2bit;
     }
+}
+
+fn parse_gc_length_trim_rare(raw_value: &str) -> std::result::Result<f64, String> {
+    let value = raw_value
+        .parse::<f64>()
+        .map_err(|_| "--gc-length-trim-rare must be a number".to_string())?;
+    validate_gc_length_trim_rare(value).map_err(|error| error.to_string())?;
+    Ok(value)
+}
+
+pub(super) fn validate_gc_length_trim_rare(value: f64) -> Result<()> {
+    anyhow::ensure!(
+        value.is_finite() && (0.0..1.0).contains(&value),
+        "--gc-length-trim-rare must be finite and within [0, 1)"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    include!("config_tests.rs");
 }
