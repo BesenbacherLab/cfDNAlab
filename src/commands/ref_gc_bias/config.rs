@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 /// Build a reference GC bias table for cfDNA correction.
 ///
-/// Samples `n_positions` across all chromosomes and counts GC for every fragment length in range
+/// Samples approximately `n_positions` across all chromosomes and counts GC for every fragment length in range
 /// (optionally trimmed in ends). Creates one genome-wide GC-by-length table that
 /// downstream GC bias correction uses as the expected bias. If you provide a BED file via `--by-bed`,
 /// overlapping intervals are merged and counting is limited to those bases. Problematic regions
@@ -59,14 +59,21 @@ pub struct RefGCBiasConfig {
     /// with the GC of each fragment length being counted from
     /// those same starting positions.
     ///
-    /// **NOTE**: Sampling is independent of windowing and blacklisting!
-    /// The per-length-sum of the output counts may thus be significantly
-    /// lower than the specified `n_positions` and different between lengths.
+    /// **NOTE**: `--n-positions` is an approximate sampling target, not an exact quota.
+    /// Sampling is independent of windowing and blacklisting and the per-length-sum
+    /// of the output counts may thus be significantly lower than the specified
+    /// `n_positions` and different between lengths.
+    ///
     /// **TIP**: Add 20% extra starting positions than you think you need,
     /// since blacklisting likely removes a big chunk of them.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "500000000", help_heading = "Core")
+        clap(
+            long,
+            default_value = "500000000",
+            value_parser = parse_positive_usize,
+            help_heading = "Core"
+        )
     )]
     pub n_positions: usize,
 
@@ -165,6 +172,9 @@ pub struct RefGCBiasConfig {
 
 impl RefGCBiasConfig {
     pub fn check_smoothing_settings(&self) -> anyhow::Result<()> {
+        if self.skip_smoothing {
+            return Ok(());
+        }
         anyhow::ensure!(
             self.smoothing_sigma > 0.0,
             "--smoothing-sigma must be positive"
@@ -175,6 +185,17 @@ impl RefGCBiasConfig {
         );
         Ok(())
     }
+}
+
+#[cfg(feature = "cli")]
+fn parse_positive_usize(raw: &str) -> Result<usize, String> {
+    let value = raw
+        .parse::<usize>()
+        .map_err(|err| format!("invalid integer: {err}"))?;
+    if value == 0 {
+        return Err("must be greater than zero".to_string());
+    }
+    Ok(value)
 }
 
 #[cfg_attr(feature = "cli", derive(clap::Args))]

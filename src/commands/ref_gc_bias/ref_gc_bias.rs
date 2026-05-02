@@ -71,6 +71,10 @@ const COMMAND_TARGET: &str = "ref-gc-bias";
 pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     let start_time = Instant::now();
     opt.fragment_lengths.validate()?;
+    ensure!(
+        opt.n_positions > 0,
+        "--n-positions must be greater than zero"
+    );
     let prefix = opt.output_prefix.trim();
     let chromosomes = opt
         .chromosomes
@@ -145,6 +149,21 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         opt.fragment_lengths.max_fragment_length as usize,
         opt.end_offset as usize,
     ));
+    let total_valid_start_positions: u64 = chrom_lengths
+        .values()
+        .map(|&chrom_len| {
+            if chrom_len as u64 >= opt.fragment_lengths.max_fragment_length as u64 {
+                chrom_len as u64 - opt.fragment_lengths.max_fragment_length as u64 + 1
+            } else {
+                0
+            }
+        })
+        .sum();
+    ensure!(
+        total_valid_start_positions > 0,
+        "No selected chromosome is long enough for --max-fragment-length ({})",
+        opt.fragment_lengths.max_fragment_length
+    );
     let start_position_sampling_density = sampling_density(
         &chrom_lengths,
         opt.fragment_lengths.max_fragment_length as u64,
@@ -262,6 +281,14 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
 
     let used_start_positions =
         total_counts.sum_for_length(opt.fragment_lengths.min_fragment_length as usize)?;
+    ensure!(
+        used_start_positions > 0.0,
+        "No sampled start positions contributed usable reference GC counts"
+    );
+    ensure!(
+        total_covered_acgt_positions > 0,
+        "Selected reference windows contained no usable ACGT bases"
+    );
 
     // Convert counts to Array2 and interpolate zero-counts (single global grid)
     let mut global_counts = total_counts;
@@ -339,6 +366,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         opt.smoothing_radius,
         opt.smoothing_sigma,
         opt.skip_smoothing,
+        &chromosomes,
     )
     .context("Writing reference GC package failed")?;
 
@@ -370,6 +398,7 @@ fn write_reference_gc_package(
     smoothing_radius: u8,
     smoothing_sigma: f64,
     skip_smoothing: bool,
+    chromosomes: &[String],
 ) -> Result<()> {
     let file = std::fs::File::create(path)?;
     let mut npz = NpzWriter::new(file);
@@ -393,6 +422,8 @@ fn write_reference_gc_package(
     )?;
     npz.add_array("smoothing_sigma", &Array1::from(vec![smoothing_sigma]))?;
     npz.add_array("skip_smoothing", &Array1::from(vec![skip_smoothing]))?;
+    let chromosomes_json = serde_json::to_vec(chromosomes)?;
+    npz.add_array("chromosomes_json", &Array1::from(chromosomes_json))?;
     npz.finish()?;
     Ok(())
 }

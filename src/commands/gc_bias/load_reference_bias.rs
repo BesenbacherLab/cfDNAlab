@@ -18,6 +18,7 @@ pub struct ReferenceGCMetadata {
     pub min_fragment_length: usize,
     pub max_fragment_length: usize,
     pub end_offset: u8,
+    pub chromosomes: Vec<String>,
     pub skip_interpolation: bool,
     pub smoothing_sigma: f64,
     pub smoothing_radius: u8,
@@ -92,6 +93,9 @@ fn read_reference_gc_package(
     let skip_smoothing_arr: Array1<bool> = reader
         .by_name("skip_smoothing")
         .context("missing skip_smoothing in reference GC package")?;
+    let chromosomes_json: Array1<u8> = reader
+        .by_name("chromosomes_json")
+        .context("missing chromosomes_json in reference GC package")?;
     ensure!(
         version_arr.len() == 1,
         "version should be length 1. Found len={}",
@@ -122,6 +126,16 @@ fn read_reference_gc_package(
         "skip_smoothing should be length 1. Found len={}",
         skip_smoothing_arr.len()
     );
+    let chromosomes: Vec<String> = serde_json::from_slice(
+        chromosomes_json
+            .as_slice()
+            .context("chromosomes_json should be contiguous")?,
+    )
+    .context("invalid chromosomes_json in reference GC package")?;
+    ensure!(
+        !chromosomes.is_empty(),
+        "chromosomes_json must contain at least one chromosome"
+    );
     ensure!(
         version_arr[0] == GC_CORRECTION_SCHEMA_VERSION,
         "Reference GC package schema version mismatch: file={}, expected={}; \
@@ -133,6 +147,7 @@ fn read_reference_gc_package(
         min_fragment_length: lengths[0] as usize,
         max_fragment_length: lengths[1] as usize,
         end_offset: end_offset_arr[0] as u8,
+        chromosomes,
         skip_interpolation: skip_interpolation_arr[0] as bool,
         smoothing_radius: smoothing_radius_arr[0] as u8,
         smoothing_sigma: smoothing_sigma_arr[0] as f64,

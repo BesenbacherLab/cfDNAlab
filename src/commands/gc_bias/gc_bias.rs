@@ -50,6 +50,7 @@ use crate::{
     },
 };
 use anyhow::{Context, Result, anyhow, bail, ensure};
+use fxhash::FxHashSet;
 use ndarray::{Array1, Array2, ArrayBase, Axis, Data, DataMut, Ix2, Zip};
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
@@ -257,6 +258,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         gc_percent_widths: reference_gc_percent_widths,
         metadata: reference_metadata,
     } = load_reference_gc_data(&opt.ref_gc_file)?;
+    validate_reference_chromosomes(&reference_metadata.chromosomes, &chromosomes)?;
     let avg_norm_ref_counts = mean_scale_per_length_array(
         &reference_counts,
         0.,
@@ -775,6 +777,21 @@ pub fn run(opt: &GCConfig) -> Result<()> {
             gc: None,
         },
         extra_lines.iter().map(String::as_str),
+    );
+    Ok(())
+}
+
+fn validate_reference_chromosomes(
+    reference_chromosomes: &[String],
+    run_chromosomes: &[String],
+) -> Result<()> {
+    let reference_set: FxHashSet<&str> = reference_chromosomes.iter().map(String::as_str).collect();
+    let run_set: FxHashSet<&str> = run_chromosomes.iter().map(String::as_str).collect();
+    ensure!(
+        reference_set == run_set,
+        "Reference GC package was built for chromosomes [{}], but this run selected [{}]",
+        reference_chromosomes.join(","),
+        run_chromosomes.join(",")
     );
     Ok(())
 }

@@ -2617,6 +2617,39 @@ mod tests_gc_bias {
     }
 
     #[test]
+    fn gc_bias_run_rejects_reference_package_with_different_chromosomes() -> Result<()> {
+        // Human verification status: unverified
+        let bam = fixtures::simple_inward_bam()?;
+        let reference = fixtures::simple_reference_twobit()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_gc_package_fixture_for_chromosomes(
+            ref_gc_dir.path(),
+            &[GC_CORRECTION_SCHEMA_VERSION],
+            &[false],
+            &[2],
+            &[0.55],
+            &[true],
+            &["chr2"],
+        )?;
+        let out_dir = TempDir::new()?;
+        let cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+
+        // Manual expectations:
+        // - The run selects `chr1` from the BAM through `make_gc_bias_cfg()`.
+        // - The hand-written reference package claims it was built for `chr2`.
+        // - `gc-bias` must reject this before using the reference counts for correction.
+        let err =
+            run_gc_bias(&cfg).expect_err("chromosome-mismatched reference package should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("built for chromosomes [chr2]") && msg.contains("selected [chr1]"),
+            "unexpected error message: {msg}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn apply_outliers_per_length_winsorizes_rows() {
         // Human verification status: unverified
         let mut matrix = array![[1.0_f64, 2.0_f64, 100.0_f64], [1.0_f64, 5.0_f64, 6.0_f64]];
@@ -2826,6 +2859,26 @@ mod tests_gc_bias {
         smoothing_sigma: &[f64],
         skip_smoothing: &[bool],
     ) -> Result<()> {
+        write_reference_gc_package_fixture_for_chromosomes(
+            out_dir,
+            version,
+            skip_interpolation,
+            smoothing_radius,
+            smoothing_sigma,
+            skip_smoothing,
+            &["chr1"],
+        )
+    }
+
+    fn write_reference_gc_package_fixture_for_chromosomes(
+        out_dir: &std::path::Path,
+        version: &[u32],
+        skip_interpolation: &[bool],
+        smoothing_radius: &[u32],
+        smoothing_sigma: &[f64],
+        skip_smoothing: &[bool],
+        chromosomes: &[&str],
+    ) -> Result<()> {
         let package_path = out_dir.join("ref_gc_package.npz");
         let counts = array![[1.0_f64, 2.0_f64], [3.0_f64, 4.0_f64]];
         let support_unobservables = array![[true, false], [true, true]];
@@ -2857,7 +2910,21 @@ mod tests_gc_bias {
             "skip_smoothing",
             &ndarray::Array1::from(skip_smoothing.to_vec()),
         )?;
+        write_reference_chromosomes_json(&mut npz, chromosomes)?;
         npz.finish()?;
+        Ok(())
+    }
+
+    fn write_reference_chromosomes_json(
+        npz: &mut NpzWriter<std::fs::File>,
+        chromosomes: &[&str],
+    ) -> Result<()> {
+        let chromosome_names: Vec<String> = chromosomes
+            .iter()
+            .map(|chromosome| chromosome.to_string())
+            .collect();
+        let chromosomes_json = serde_json::to_vec(&chromosome_names)?;
+        npz.add_array("chromosomes_json", &ndarray::Array1::from(chromosomes_json))?;
         Ok(())
     }
 
@@ -2884,6 +2951,7 @@ mod tests_gc_bias {
         npz.add_array("smoothing_radius", &ndarray::Array1::from(vec![2_u32]))?;
         npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
         npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
+        write_reference_chromosomes_json(&mut npz, &["chr1"])?;
         npz.finish()?;
         Ok(())
     }
@@ -2926,6 +2994,7 @@ mod tests_gc_bias {
         npz.add_array("smoothing_radius", &ndarray::Array1::from(vec![2_u32]))?;
         npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
         npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
+        write_reference_chromosomes_json(&mut npz, &["chr1"])?;
         npz.finish()?;
         Ok(())
     }
@@ -2985,6 +3054,7 @@ mod tests_gc_bias {
         npz.add_array("smoothing_radius", &ndarray::Array1::from(vec![2_u32]))?;
         npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
         npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
+        write_reference_chromosomes_json(&mut npz, &["chr1"])?;
         npz.finish()?;
         Ok(())
     }
@@ -3028,6 +3098,7 @@ mod tests_gc_bias {
         npz.add_array("smoothing_radius", &ndarray::Array1::from(vec![2_u32]))?;
         npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
         npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
+        write_reference_chromosomes_json(&mut npz, &["chr1"])?;
         npz.finish()?;
         Ok(())
     }
@@ -3207,6 +3278,7 @@ mod tests_gc_bias {
         assert_eq!(loaded.metadata.min_fragment_length, 30);
         assert_eq!(loaded.metadata.max_fragment_length, 40);
         assert_eq!(loaded.metadata.end_offset, 10);
+        assert_eq!(loaded.metadata.chromosomes, vec!["chr1".to_string()]);
         assert!(!loaded.metadata.skip_interpolation);
         assert_eq!(loaded.metadata.smoothing_radius, 2);
         assert!((loaded.metadata.smoothing_sigma - 0.55).abs() < 1e-12);
