@@ -254,8 +254,11 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let prefix = opt.output_prefix.trim();
     let window_opt = opt.windows.resolve_windows();
-    let mut intermediate_saver =
-        IntermediateFileSaver::new(opt.save_intermediates, opt.ioc.output_dir.clone());
+    let mut intermediate_saver = IntermediateFileSaver::new(
+        opt.save_intermediates,
+        opt.ioc.output_dir.clone(),
+        prefix.to_string(),
+    );
 
     info!(target: COMMAND_TARGET, "Loading reference GC bias");
     let ReferenceGCData {
@@ -1430,14 +1433,16 @@ where
 pub struct IntermediateFileSaver {
     pub save_intermediates: bool,
     pub out_dir: PathBuf,
+    pub prefix: String,
     previously_saved: usize,
 }
 
 impl IntermediateFileSaver {
-    pub fn new(save_intermediates: bool, out_dir: PathBuf) -> Self {
+    pub fn new(save_intermediates: bool, out_dir: PathBuf, prefix: String) -> Self {
         IntermediateFileSaver {
             save_intermediates,
             out_dir,
+            prefix,
             previously_saved: 0,
         }
     }
@@ -1453,11 +1458,10 @@ impl IntermediateFileSaver {
     {
         if self.save_intermediates {
             info!(target: COMMAND_TARGET, "Intermediate file: Saving {}", msg_tag);
+            let file_name = format!("gc_bias.{}.{}.npy", file_tag, self.previously_saved);
             write_npy(
-                self.out_dir.join(format!(
-                    "gc_bias.{}.{}.npy",
-                    file_tag, self.previously_saved
-                )),
+                self.out_dir
+                    .join(dot_join(&[self.prefix.as_str(), file_name.as_str()])),
                 x,
             )
             .context(format!(

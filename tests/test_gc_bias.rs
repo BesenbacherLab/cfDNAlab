@@ -2498,6 +2498,86 @@ mod tests_gc_bias {
     }
 
     #[test]
+    fn save_intermediates_uses_output_prefixes_in_shared_output_directory() -> Result<()> {
+        // Human verification status: unverified
+        // Arrange:
+        // Use one output directory for two runs with different prefixes. With this reference
+        // package, each run writes exactly six intermediate arrays:
+        //   0 avg_cfdna_counts
+        //   1 normalized_avg_cfdna_counts
+        //   2 binned_ref_counts
+        //   3 binned_cfdna_counts
+        //   4 normalized_binned_cfdna_counts
+        //   5 normalized_binned_ref_counts
+        //
+        // The prefixes should make those twelve paths distinct in the shared directory.
+        let bam = fixtures::simple_inward_bam()?;
+        let reference = fixtures::simple_reference_twobit()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
+
+        let out_dir = TempDir::new()?;
+        for prefix in ["sampleA", "sampleB"] {
+            let mut cfg =
+                make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+            cfg.set_windows(GCWindowsArgs {
+                by_size: None,
+                by_bed: None,
+                global: true,
+            });
+            cfg.set_save_intermediates(true);
+            cfg.set_output_prefix(prefix.to_string());
+
+            run_gc_bias(&cfg)?;
+        }
+
+        // Assert:
+        let mut intermediate_files: Vec<String> = std::fs::read_dir(out_dir.path())?
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                if name.ends_with(".npy") {
+                    Some(name)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        intermediate_files.sort();
+        assert_eq!(
+            intermediate_files,
+            vec![
+                "sampleA.gc_bias.avg_cfdna_counts.0.npy".to_string(),
+                "sampleA.gc_bias.binned_cfdna_counts.3.npy".to_string(),
+                "sampleA.gc_bias.binned_ref_counts.2.npy".to_string(),
+                "sampleA.gc_bias.normalized_avg_cfdna_counts.1.npy".to_string(),
+                "sampleA.gc_bias.normalized_binned_cfdna_counts.4.npy".to_string(),
+                "sampleA.gc_bias.normalized_binned_ref_counts.5.npy".to_string(),
+                "sampleB.gc_bias.avg_cfdna_counts.0.npy".to_string(),
+                "sampleB.gc_bias.binned_cfdna_counts.3.npy".to_string(),
+                "sampleB.gc_bias.binned_ref_counts.2.npy".to_string(),
+                "sampleB.gc_bias.normalized_avg_cfdna_counts.1.npy".to_string(),
+                "sampleB.gc_bias.normalized_binned_cfdna_counts.4.npy".to_string(),
+                "sampleB.gc_bias.normalized_binned_ref_counts.5.npy".to_string(),
+            ]
+        );
+
+        let sample_a_avg: ndarray::Array2<f64> = read_npy(
+            out_dir
+                .path()
+                .join("sampleA.gc_bias.avg_cfdna_counts.0.npy"),
+        )?;
+        let sample_b_avg: ndarray::Array2<f64> = read_npy(
+            out_dir
+                .path()
+                .join("sampleB.gc_bias.avg_cfdna_counts.0.npy"),
+        )?;
+        assert_eq!(sample_a_avg, sample_b_avg);
+
+        Ok(())
+    }
+
+    #[test]
     fn min_window_acgt_pct_excludes_mostly_blacklisted_window_but_keeps_clean_window() -> Result<()>
     {
         // Human verification status: unverified
