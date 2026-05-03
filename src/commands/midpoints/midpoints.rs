@@ -487,9 +487,8 @@ fn process_tile(
 
     // Streaming pointers let sorted interval scans resume near the previous fragment
     let mut bl_ptr = 0; // Blacklist interval
-    let mut wd_ptr = tile_window_span
-        .and_then(|span| (!span.is_empty()).then_some(span.first_idx))
-        .unwrap_or(0);
+    // `core_overlapping_windows` is compacted per tile, so this pointer is tile-local
+    let mut wd_ptr = 0;
     let mut sf_ptr = 0; // Scaling factor bin
 
     // Create fragment iterator

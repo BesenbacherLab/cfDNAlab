@@ -490,6 +490,74 @@ fn bed_sites_mixed_core_and_halo_rows_keep_only_the_core_midpoint_count_across_t
 }
 
 #[test]
+fn later_tile_site_keeps_midpoint_count_when_window_span_starts_after_zero() -> Result<()> {
+    // Human verification status: unverified
+    // Arrange:
+    // - Two one-base sites are present on the chromosome, so the later tile's cached span starts
+    //   at chromosome-wide window index 1.
+    // - The unpaired fragment spans [37,48), has length 11, and has deterministic midpoint 42.
+    // - With tile_size=20, the midpoint belongs to tile [40,60), where the tile-local window list
+    //   contains only [42,43). The window scan must therefore start at local index 0.
+    // - With tile_size=1000, both sites are in one tile. The final profiles must match the
+    //   multi-tile run exactly.
+    let bam = single_read_fragment_bam("midpoints_later_tile_window_span_pointer", 37, 11)?;
+    let tile_sizes = [20_u32, 1_000_u32];
+    let mut outputs = Vec::new();
+
+    for tile_size in tile_sizes {
+        let temp = TempDir::new()?;
+        let bed_path = temp.path().join(format!("sites_{tile_size}.bed"));
+        write_bed(
+            &bed_path,
+            &[
+                ("chr1", 10, 11, "group_early"),
+                ("chr1", 42, 43, "group_late"),
+            ],
+        )?;
+
+        let mut cfg = MidpointsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: temp.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+            bed_path,
+        );
+        cfg.set_output_prefix("sites");
+        cfg.set_length_bins(vec![11, 12]);
+        cfg.set_tile_size(tile_size);
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.unpaired.reads_are_fragments = true;
+
+        run(&cfg)?;
+
+        let counts_path = temp.path().join("sites.midpoint_profiles.npy");
+        let arr: Array3<f32> = read_npy(&counts_path)?;
+        let map_path = temp.path().join("sites.group_index.tsv");
+        let group_to_idx = read_group_index_map(&map_path)?;
+
+        outputs.push((arr, group_to_idx));
+    }
+
+    let (small_tile_arr, small_tile_groups) = &outputs[0];
+    let (large_tile_arr, large_tile_groups) = &outputs[1];
+
+    assert_eq!(small_tile_groups, large_tile_groups);
+    assert_eq!(small_tile_arr, large_tile_arr);
+    assert_eq!(small_tile_arr.shape(), &[2, 1, 1]);
+    assert_eq!(
+        small_tile_arr[[small_tile_groups["group_early"], 0, 0]],
+        0.0
+    );
+    assert_eq!(small_tile_arr[[small_tile_groups["group_late"], 0, 0]], 1.0);
+    assert_eq!(small_tile_arr.sum(), 1.0);
+
+    Ok(())
+}
+
+#[test]
 fn core_overlap_bed_site_is_kept_for_midpoints() -> Result<()> {
     // Arrange:
     // - one unpaired fragment span [5,16), so the deterministic midpoint is 10
