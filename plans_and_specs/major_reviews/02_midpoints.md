@@ -19,21 +19,42 @@ Pre-release semantic/docs:
 Post-release performance/scalability:
 
 - G-006: sparse-window GC reference pruning.
-- M-001: dense per-tile profile storage can be too large for sparse targeted runs.
+- M-001A: internal dense per-tile profile storage can be too large for sparse targeted runs.
+- M-001B: optional sparse final output would help very large group, width, and length-bin shapes.
 
 ## Findings
 
-### M-001 - High - Per-tile profile storage is dense across all groups, positions, and length bins
+### M-001A - High - Per-tile profile storage is dense across all groups, positions, and length bins
 
 Every active tile allocates a full `ProfileGroupsCounts` for the complete output shape ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L432-L434)). The flattened allocation is `num_groups * window_size * num_length_bins` `f32`s ([counting_by_group.rs](../../src/commands/midpoints/counting_by_group.rs#L63-L69)), and each tile writes that full dense vector to a temp `.npy` even when only a few groups or positions were touched ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L660-L663)). The final merge then allocates the same full shape again and reads every dense tile file back ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L263-L266)).
 
-Impact: targeted midpoint profiles can become memory- and disk-bound long before BAM iteration is the bottleneck. With many groups, a 2001 bp profile, and range-style length bins, a single tile can require hundreds of MB or more even if that tile contains sparse sites. The help text warns only that memory increases with the number of bins ([config.rs](../../src/commands/midpoints/config.rs#L84-L98)), but the real scaling also includes groups, window size, thread count, and number of active tile temp files.
+Impact: targeted midpoint profiles can become memory- and disk-bound long before BAM iteration is the bottleneck. With many groups, a 2001 bp profile, and range-style length bins, each active tile currently pays the complete output-shape cost even if that tile only touches a small subset of groups, positions, or length bins. The help text warns only that memory increases with the number of bins ([config.rs](../../src/commands/midpoints/config.rs#L84-L98)), but the internal execution cost also includes groups, window size, thread count, and the number of active tile temp files.
 
-Recommended fix:
+Recommended tasks:
 
-- Consider a sparse per-tile accumulator keyed by `(group_idx, length_bin_idx, position)` and reduce sparse triplets into the final dense NPY.
-- If dense output remains the final format, add an upfront memory/disk estimate and fail fast above a practical threshold.
-- At minimum, document the full shape cost in `--length-bins` or command help.
+- Add a sparse per-tile accumulator for midpoint profile counts. Use the existing flattened profile index or an explicit `(group_idx, length_bin_idx, position)` key, whichever keeps merging simplest and least error-prone.
+- Write sparse tile partials to temp files instead of dense per-tile `.npy` vectors. A compact `.npz` with indices and values is enough if the final output remains dense.
+- Merge sparse tile partials into the existing dense final `ProfileGroupsCounts`, preserving the current default final `.npy` shape `(group, length_bin, position)`.
+- Keep the dense per-tile path only if benchmarks show it is materially faster for high-density runs and the added branch is still worth maintaining.
+- Add shape and temp-file estimates before counting starts. The estimate should report final dense bytes, current or selected per-tile partial strategy, and approximate worst-case thread-local memory.
+- Fail fast or warn at a clear threshold rather than allowing hidden OOM or runaway temp disk usage.
+- Add focused coverage for large declared shapes with few observed counts, checking that sparse internal partials produce the same dense final output as the old dense path.
+
+### M-001B - Medium - Very large final profile shapes need an optional sparse output format
+
+The final output is intentionally dense today: `<prefix>.midpoint_profiles.npy` stores counts shaped `(group, length_bin, position)` after collapsing all intervals in each group. Dense output is straightforward for downstream numpy workflows and should remain the default for ordinary profile sizes.
+
+Impact: dense final output becomes impractical when users request high positional resolution, many groups, and near-base-pair fragment length bins. For example, `2001 * 3000 * 971` cells is about 5.83 billion `f32` values, or roughly 21.7 GiB for the final counts alone. Sparse internal tile partials solve per-tile memory and temp disk pressure, but they do not solve the final artifact size when the requested output tensor itself is too large.
+
+Recommended tasks:
+
+- Add an explicit sparse final output option rather than changing the default dense artifact.
+- Choose and document a stable sparse layout. A practical first version is a SciPy-compatible sparse `.npz` with rows representing `group_idx * num_length_bins + length_bin_idx` and columns representing `position`, plus sidecar metadata for group names and length-bin edges.
+- Preserve zero-count groups in the sparse matrix shape so group indices remain stable even when a group has no observed counts.
+- Keep dense plotting tied to dense output, or require densifying only selected groups for plotting. Do not accidentally densify the full sparse output just to make plots.
+- Make the CLI estimate compare dense final size with expected sparse payload size when possible. If expected density is unknown before counting, report the dense final size and explain that sparse output avoids storing zeros in the final artifact.
+- Add roundtrip tests that load the sparse final output, densify it in test code, and compare it against the dense `.npy` output for the same small fixture.
+- Document downstream loading in Python, including how to reconstruct `(group, length_bin, position)` from the sparse two-dimensional representation.
 
 ### M-005 - Medium - `--blacklist-strategy midpoint` uses a different even-fragment midpoint than counting
 
