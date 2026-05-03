@@ -1,5 +1,5 @@
 use super::{LengthAxis, LengthCounts, stack_length_counts};
-use crate::commands::cli_common::MAX_SUPPORTED_FRAGMENT_LENGTH;
+use crate::shared::constants::MAX_SUPPORTED_FRAGMENT_LENGTH;
 use std::sync::Arc;
 
 fn axis(edges: Vec<u32>) -> Arc<LengthAxis> {

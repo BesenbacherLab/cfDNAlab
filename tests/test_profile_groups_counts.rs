@@ -4,6 +4,8 @@
 mod tests {
     use anyhow::Result;
     use cfdnalab::commands::midpoints::counting_by_group::*;
+    use cfdnalab::shared::length_axis::LengthAxis;
+    use std::sync::Arc;
 
     // Small helper for approximate comparisons where needed
     fn approx_eq(a: f32, b: f32, eps: f32) {
@@ -16,7 +18,11 @@ mod tests {
 
     fn make_counts() -> ProfileGroupsCounts {
         // window_size=5, groups=3, length bins [20,50), [50,100)
-        ProfileGroupsCounts::new(5, 3, vec![20, 50, 100])
+        ProfileGroupsCounts::new(5, 3, length_axis(vec![20, 50, 100]))
+    }
+
+    fn length_axis(edges: Vec<u32>) -> Arc<LengthAxis> {
+        Arc::new(LengthAxis::new(edges).expect("test length axis should be valid"))
     }
 
     #[test]
@@ -118,13 +124,13 @@ mod tests {
         // Human verification status: unverified
         let a = make_counts();
         // Different window size
-        let b = ProfileGroupsCounts::new(6, 3, vec![20, 50, 100]);
+        let b = ProfileGroupsCounts::new(6, 3, length_axis(vec![20, 50, 100]));
         assert!(a.clone().merge_from(&b).is_err());
         // Different groups
-        let b = ProfileGroupsCounts::new(5, 2, vec![20, 50, 100]);
+        let b = ProfileGroupsCounts::new(5, 2, length_axis(vec![20, 50, 100]));
         assert!(a.clone().merge_from(&b).is_err());
         // Different bins
-        let b = ProfileGroupsCounts::new(5, 3, vec![20, 60, 100]);
+        let b = ProfileGroupsCounts::new(5, 3, length_axis(vec![20, 60, 100]));
         assert!(a.clone().merge_from(&b).is_err());
     }
 

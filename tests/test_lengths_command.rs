@@ -16,13 +16,13 @@ mod tests_lengths_command {
         config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
     };
     use cfdnalab::commands::gc_bias::{
-        GC_CORRECTION_SCHEMA_VERSION,
         correct::{GCLengthRange, MarginalizeLengthsWeightingScheme},
         package::GCCorrectionPackage,
     };
     use cfdnalab::commands::lengths::config::LengthsConfig;
     use cfdnalab::commands::lengths::lengths::run;
     use cfdnalab::shared::blacklist::strategy::BlacklistStrategy;
+    use cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
     use cfdnalab::shared::io::dot_join;
     use cfdnalab::shared::{clip_mode::ClipMode, indel_mode::IndelMode};
     use fixtures::{

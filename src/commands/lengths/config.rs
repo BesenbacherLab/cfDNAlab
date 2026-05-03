@@ -2,18 +2,23 @@ use crate::{
     commands::{
         cli_common::{
             ApplyGCArgFileOnly, AssignToWindowArgs, ChromosomeArgs, DistributionWindowsArgs,
-            IOCArgs, LoggingArgs, MAX_SUPPORTED_FRAGMENT_LENGTH, MIN_ACGT_BASES_FOR_GC_FRACTION,
-            ScaleGenomeArgs, UnpairedArgs, resolve_length_bin_edges,
+            IOCArgs, LoggingArgs, ScaleGenomeArgs, UnpairedArgs, resolve_length_bin_edges,
         },
         gc_bias::correct::{GCLengthRange, MarginalizeLengthsWeightingScheme},
     },
-    shared::{blacklist::BlacklistStrategy, clip_mode::ClipMode, indel_mode::IndelMode},
+    shared::{
+        blacklist::BlacklistStrategy,
+        clip_mode::ClipMode,
+        constants::{
+            DEFAULT_MAX_SOFT_CLIPS, MAX_MAX_SOFT_CLIPS, MAX_SUPPORTED_FRAGMENT_LENGTH,
+            MIN_ACGT_BASES_FOR_GC_FRACTION,
+        },
+        indel_mode::IndelMode,
+    },
 };
 use anyhow::Result;
 use std::path::PathBuf;
 
-pub const DEFAULT_MAX_SOFT_CLIPS: u16 = 256;
-pub const MAX_MAX_SOFT_CLIPS: u16 = 256;
 pub const DEFAULT_MAX_DELETION_BASES: u16 = 100;
 pub const MAX_DELETION_BASES: u16 = 256;
 

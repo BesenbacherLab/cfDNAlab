@@ -388,7 +388,7 @@ fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Res
 
     assert_eq!(
         version.to_vec(),
-        vec![cfdnalab::commands::gc_bias::GC_CORRECTION_SCHEMA_VERSION]
+        vec![cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION]
     );
     assert_eq!(length_range.to_vec(), vec![10, 12]);
     assert_eq!(end_offset.to_vec(), vec![0]);

@@ -327,7 +327,7 @@ pub fn build_real_neutral_gc_package(
 #[cfg(feature = "cmd_gc_bias")]
 pub fn write_constant_gc_package(path: &Path, fragment_length: u32, weight: f64) -> Result<()> {
     let package = cfdnalab::commands::gc_bias::package::GCCorrectionPackage {
-        version: cfdnalab::commands::gc_bias::GC_CORRECTION_SCHEMA_VERSION,
+        version: cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
         length_edges: vec![fragment_length, fragment_length + 1],
         gc_edges: vec![0, 101],
@@ -347,7 +347,7 @@ pub fn write_two_bin_gc_package(
     high_gc_weight: f64,
 ) -> Result<()> {
     let package = cfdnalab::commands::gc_bias::package::GCCorrectionPackage {
-        version: cfdnalab::commands::gc_bias::GC_CORRECTION_SCHEMA_VERSION,
+        version: cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION,
         end_offset: 0,
         length_edges: vec![fragment_length, fragment_length + 1],
         gc_edges: vec![0, 51, 101],

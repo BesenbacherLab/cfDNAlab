@@ -4,18 +4,19 @@ mod fixtures;
 
 use anyhow::{Context, Result};
 #[cfg(feature = "cmd_gc_bias")]
-use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
+use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
 use cfdnalab::commands::{
     cli_common::{ApplyGCArgs, ChromosomeArgs, DistributionWindowsArgs, IOCArgs, UnpairedArgs},
     ends::{
         config::EndsConfig,
         config_structs::{
-            AssignMotifToWindowArgs, BaseQualityFilter, ClipStrategy, DEFAULT_MAX_SOFT_CLIPS,
-            KmerSource, WindowMotifAssigner,
+            AssignMotifToWindowArgs, BaseQualityFilter, ClipStrategy, KmerSource,
+            WindowMotifAssigner,
         },
         ends::run,
     },
 };
+use cfdnalab::shared::constants::{DEFAULT_MAX_SOFT_CLIPS, GC_CORRECTION_SCHEMA_VERSION};
 use cfdnalab::shared::{
     blacklist::BlacklistStrategy, indel_mode::IndelMotifFilterPolicy,
     reference::twobit_contig_signature,

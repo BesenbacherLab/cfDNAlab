@@ -1,6 +1,7 @@
 use crate::shared::bam::bam_header_contigs;
 use crate::shared::bam::{Contigs, bam_contigs_info};
 use crate::shared::blacklist::load_blacklists;
+use crate::shared::constants::{MAX_SUPPORTED_FRAGMENT_LENGTH, MIN_ACGT_BASES_FOR_GC_FRACTION};
 use crate::shared::interval::Interval;
 use crate::shared::positioning::{BasesFrom, MismatchBasesFrom, ReferenceFrame};
 use crate::shared::reference::{load_chrom_sizes_with_order, twobit_contig_names};
@@ -10,12 +11,6 @@ use fxhash::FxHashMap;
 use std::{path::Path, path::PathBuf, str::FromStr};
 
 pub use crate::shared::logging::{LogSpec, LoggingArgs};
-
-/// Minimum ACGT bases required when estimating GC fraction for sample reads.
-pub const MIN_ACGT_BASES_FOR_GC_FRACTION: u32 = 10;
-
-/// Maximum supported fragment length.
-pub const MAX_SUPPORTED_FRAGMENT_LENGTH: u32 = 100_000;
 
 /// Args for in-/output and core (threads).
 #[cfg_attr(feature = "cli", derive(clap::Args))]

@@ -11,12 +11,8 @@ mod tests_gc_bias {
     use tempfile::{TempDir, tempdir};
 
     use cfdnalab::commands::{
-        cli_common::{
-            ChromosomeArgs, GCWindowsArgs, IOCArgs, LoggingArgs, MIN_ACGT_BASES_FOR_GC_FRACTION,
-            Ref2BitRequiredArgs,
-        },
+        cli_common::{ChromosomeArgs, GCWindowsArgs, IOCArgs, LoggingArgs, Ref2BitRequiredArgs},
         gc_bias::{
-            GC_CORRECTION_SCHEMA_VERSION,
             binning::{BinnedAxis, bins_from_edges, compute_bin_edges},
             config::GCConfig,
             correct::{
@@ -34,6 +30,9 @@ mod tests_gc_bias {
             support_masking::build_extreme_bins_support_mask,
         },
         ref_gc_bias::{config::RefGCBiasConfig, ref_gc_bias::run as run_ref_gc_bias},
+    };
+    use cfdnalab::shared::constants::{
+        GC_CORRECTION_SCHEMA_VERSION, MIN_ACGT_BASES_FOR_GC_FRACTION,
     };
     use cfdnalab::shared::interval::Interval;
 

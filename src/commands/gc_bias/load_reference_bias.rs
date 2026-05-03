@@ -1,6 +1,4 @@
-use crate::commands::{
-    cli_common::MIN_ACGT_BASES_FOR_GC_FRACTION, gc_bias::GC_CORRECTION_SCHEMA_VERSION,
-};
+use crate::shared::constants::{GC_CORRECTION_SCHEMA_VERSION, MIN_ACGT_BASES_FOR_GC_FRACTION};
 use anyhow::{Context, Result, ensure};
 use ndarray::{Array1, Array2};
 use ndarray_npy::NpzReader;

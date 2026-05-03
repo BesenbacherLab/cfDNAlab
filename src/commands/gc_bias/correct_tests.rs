@@ -1,6 +1,7 @@
 use super::*;
-use crate::commands::gc_bias::{
-    GC_CORRECTION_SCHEMA_VERSION, counting::build_gc_prefixes, package::GCCorrectionPackage,
+use crate::{
+    commands::gc_bias::{counting::build_gc_prefixes, package::GCCorrectionPackage},
+    shared::constants::GC_CORRECTION_SCHEMA_VERSION,
 };
 use ndarray::{Array1, Array2, array};
 

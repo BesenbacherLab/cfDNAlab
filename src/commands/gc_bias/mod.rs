@@ -19,4 +19,3 @@ pub mod windows;
 
 // Constants
 pub const CORRECTION_CLAMP_RANGE: (f64, f64) = (0.1, 10.0);
-pub const GC_CORRECTION_SCHEMA_VERSION: u32 = 2;

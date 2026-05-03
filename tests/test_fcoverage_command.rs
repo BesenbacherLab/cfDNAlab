@@ -18,8 +18,9 @@ use cfdnalab::commands::coverage_weights::{
 use cfdnalab::commands::fcoverage::config::{FCoverageConfig, LengthNormalizationMode};
 use cfdnalab::commands::fcoverage::fcoverage::{run, run_inner};
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
-use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
+use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
 use cfdnalab::commands::lengths::{config::LengthsConfig, lengths::run as run_lengths};
+use cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
 use cfdnalab::shared::fragment::minimal_fragment::{MinimalReadInfo, collect_fragment};
 use cfdnalab::shared::indel_mode::IndelMode;
 use cfdnalab::shared::io::dot_join;

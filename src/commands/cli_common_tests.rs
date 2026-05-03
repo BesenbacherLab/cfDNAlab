@@ -1,7 +1,8 @@
 use super::{
     ApplyGCArgFileOnly, ApplyGCArgs, ChromosomeArgs, ContigSource, FragmentLengthArgs,
-    MAX_SUPPORTED_FRAGMENT_LENGTH, parse_length_bins, resolve_length_bin_edges,
+    parse_length_bins, resolve_length_bin_edges,
 };
+use crate::shared::constants::MAX_SUPPORTED_FRAGMENT_LENGTH;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 

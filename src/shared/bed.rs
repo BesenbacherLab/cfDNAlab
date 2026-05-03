@@ -619,7 +619,10 @@ pub fn load_grouped_windows_from_bed(
         }
 
         let checked_window = IndexedInterval::new(start, end, group_idx).with_context(|| {
-            format!("BED parse error at line {}: invalid interval [{start},{end})", lineno)
+            format!(
+                "BED parse error at line {}: invalid interval [{start},{end})",
+                lineno
+            )
         })?;
 
         vec_mapping

@@ -24,12 +24,13 @@ use cfdnalab::commands::frag_to_bam::{
     config::FragToBamConfig, frag_to_bam::run as run_frag_to_bam,
 };
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
-use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
+use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_lengths"))]
 use cfdnalab::commands::lengths::{config::LengthsConfig, lengths::run as run_lengths};
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_midpoints"))]
 use cfdnalab::commands::midpoints::{config::MidpointsConfig, midpoints::run as run_midpoints};
 use cfdnalab::shared::blacklist::BlacklistStrategy;
+use cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
 use cfdnalab::shared::io::dot_join;
 #[cfg(feature = "cmd_bam_to_frag")]
 use flate2::read::MultiGzDecoder;

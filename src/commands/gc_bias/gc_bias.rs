@@ -3,7 +3,7 @@ use crate::{
         cli_common::*,
         counters::GCCounters,
         gc_bias::{
-            CORRECTION_CLAMP_RANGE, GC_CORRECTION_SCHEMA_VERSION,
+            CORRECTION_CLAMP_RANGE,
             binning::{CollapseAggregation, bin_greedily_by_mass, collapse_counts_by_bins},
             config::GCConfig,
             counting::{
@@ -32,6 +32,7 @@ use crate::{
         bam::create_chromosome_reader,
         bed::load_windows_from_bed,
         blacklist::apply_blacklist_mask_to_seq,
+        constants::{GC_CORRECTION_SCHEMA_VERSION, MIN_ACGT_BASES_FOR_GC_FRACTION},
         fragment::minimal_fragment::Fragment,
         fragment_iterators::fragments_from_bam,
         interval::{IndexedInterval, Interval},

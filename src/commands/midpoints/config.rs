@@ -1,9 +1,12 @@
 use crate::{
     commands::cli_common::{
-        ApplyGCArgs, ChromosomeArgs, IOCArgs, LoggingArgs, MAX_SUPPORTED_FRAGMENT_LENGTH,
-        MIN_ACGT_BASES_FOR_GC_FRACTION, ScaleGenomeArgs, UnpairedArgs, resolve_length_bin_edges,
+        ApplyGCArgs, ChromosomeArgs, IOCArgs, LoggingArgs, ScaleGenomeArgs, UnpairedArgs,
+        resolve_length_bin_edges,
     },
-    shared::blacklist::BlacklistStrategy,
+    shared::{
+        blacklist::BlacklistStrategy,
+        constants::{MAX_SUPPORTED_FRAGMENT_LENGTH, MIN_ACGT_BASES_FOR_GC_FRACTION},
+    },
 };
 use anyhow::Result;
 use std::path::PathBuf;
@@ -11,7 +14,7 @@ use std::path::PathBuf;
 /// Count positional fragment **midpoint** coverage in groups of genomic windows.
 ///
 /// **Midpoints**: The center of the fragment span, with ties (in even-sized fragments)
-/// randomly (but reproducibly) assigned to the left or right mid-position to avoid bias 
+/// randomly (but reproducibly) assigned to the left or right mid-position to avoid bias
 /// from always rounding in the same direction.
 ///
 /// **Groups**: The coverage profiles are "collapsed" (summed per position) for all windows in a group.

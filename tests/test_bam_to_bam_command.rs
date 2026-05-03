@@ -16,8 +16,9 @@ use cfdnalab::commands::fragment_count_weights::{
 use cfdnalab::commands::{
     bam_to_bam::{bam_to_bam::run_inner, config::BamToBamConfig},
     cli_common::{ApplyGCArgFileOnly, ChromosomeArgs},
-    gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage},
+    gc_bias::package::GCCorrectionPackage,
 };
+use cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, build_real_non_neutral_gc_package, paired_fragment,
     simple_inward_bam, simple_reference_twobit, twobit_from_sequences,

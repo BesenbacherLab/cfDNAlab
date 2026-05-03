@@ -1,5 +1,8 @@
 use super::MidpointsConfig;
-use crate::commands::cli_common::{ChromosomeArgs, IOCArgs, MAX_SUPPORTED_FRAGMENT_LENGTH};
+use crate::{
+    commands::cli_common::{ChromosomeArgs, IOCArgs},
+    shared::constants::MAX_SUPPORTED_FRAGMENT_LENGTH,
+};
 use std::path::PathBuf;
 
 fn config_for_length_bin_resolution() -> MidpointsConfig {

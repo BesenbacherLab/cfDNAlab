@@ -1,12 +1,13 @@
 mod test_gc_tag_values {
     #[cfg(feature = "cmd_gc_bias")]
     use cfdnalab::commands::gc_bias::{
-        GC_CORRECTION_SCHEMA_VERSION, correct::GCCorrector, counting::build_gc_prefixes,
-        package::GCCorrectionPackage,
+        correct::GCCorrector, counting::build_gc_prefixes, package::GCCorrectionPackage,
     };
     use rust_htslib::bam::record::{Aux, Record};
 
     use cfdnalab::shared::base::ZEROISH_F32_TOLERANCE;
+    #[cfg(feature = "cmd_gc_bias")]
+    use cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
     use cfdnalab::shared::gc_tag::{
         ClassifiedGCTagWeight, GCTagValue, MIN_REASONABLE_GC_WEIGHT, combine_gc_tag_values,
         read_gc_tag_from_record,

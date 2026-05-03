@@ -12,9 +12,10 @@ use cfdnalab::commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, Scale
 use cfdnalab::commands::coverage_weights::{
     config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
 };
-use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
+use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
 use cfdnalab::commands::midpoints::config::MidpointsConfig;
 use cfdnalab::commands::midpoints::midpoints::run;
+use cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity,
     build_real_neutral_gc_package, build_real_neutral_gc_package_for_range,

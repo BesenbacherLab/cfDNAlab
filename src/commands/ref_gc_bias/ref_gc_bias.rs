@@ -28,7 +28,6 @@ use crate::{
     commands::{
         cli_common::*,
         gc_bias::{
-            GC_CORRECTION_SCHEMA_VERSION,
             counting::{
                 GCCounts, apply_gc_percent_width_correction, build_gc_prefixes,
                 count_reference_gc_and_length_by_window, gc_percent_widths,
@@ -44,6 +43,7 @@ use crate::{
         bam::Contigs,
         bed::{Windows, load_windows_from_bed},
         blacklist::apply_blacklist_mask_to_seq,
+        constants::GC_CORRECTION_SCHEMA_VERSION,
         interval::{IndexedInterval, Interval},
         io::dot_join,
         progress::ProgressFactory,

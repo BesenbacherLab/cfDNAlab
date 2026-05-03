@@ -43,7 +43,8 @@ mod tests_bam_to_frag {
         config::FragmentCountWeightsConfig,
         fragment_count_weights::run as run_fragment_count_weights,
     };
-    use cfdnalab::commands::gc_bias::{GC_CORRECTION_SCHEMA_VERSION, package::GCCorrectionPackage};
+    use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
+    use cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
     #[cfg(feature = "cmd_bam_to_bam")]
     use rust_htslib::bam::Read;
     #[cfg(feature = "cmd_bam_to_bam")]

@@ -11,7 +11,8 @@ use crate::{
             counting::build_gc_prefixes,
         },
         midpoints::{
-            config::MidpointsConfig, counting_by_group::ProfileGroupsCounts,
+            config::MidpointsConfig,
+            counting_by_group::{ProfileGroupsCounts, SparseProfileGroupsCounts},
             windows::ensure_uniform_window_len,
         },
         run_statistics::{
@@ -27,6 +28,7 @@ use crate::{
         fragment_iterators::fragments_from_bam,
         interval::{IndexedInterval, Interval},
         io::dot_join,
+        length_axis::LengthAxis,
         midpoint::midpoint_random_even_for_fragment,
         overlaps::find_overlapping_windows,
         progress::ProgressFactory,
@@ -58,7 +60,7 @@ const COMMAND_TARGET: &str = "midpoints";
 /// Implementation details:
 /// - Resolves chromosomes, loads grouped BED windows, and prepares optional blacklist and scaling
 ///   data before spawning parallel tiles.
-/// - Streams fragments through per-tile accumulators, writing temporary `.npy` slices that are
+/// - Streams fragments through per-tile accumulators, writing sparse temporary partials that are
 ///   merged into a final 3D array and companion group index.
 /// - Applies fragment length, blacklist, and scaling filters during aggregation so downstream tools
 ///   can consume ready-to-use profiles.
@@ -121,11 +123,10 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         .map(|(chromosome, grouped_windows)| (chromosome, grouped_windows.into_inner()))
         .collect();
 
-    // Parse and validate fragment length bins once so all tiles use the same edges
-    let length_bins = opt.resolve_length_bins()?;
-    let num_length_bins = length_bins.len();
-    let min_fragment_length = length_bins[0];
-    let max_fragment_length = length_bins[num_length_bins - 1] - 1;
+    // Parse and validate fragment length bins once so all tiles share one lookup table.
+    let length_axis = Arc::new(LengthAxis::new(opt.resolve_length_bins()?)?);
+    let min_fragment_length = length_axis.min_fragment_length();
+    let max_fragment_length = length_axis.max_fragment_length();
 
     // Load genomic scaling factors
     if opt.scale_genome.scaling_factors.is_some() {
@@ -222,7 +223,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
             // Windowed tmp outputs for faster reducer later on
             let tile_counts_out = temp_dir.join(format!(
-                "{prefix}.{chr}.{idx}.npy",
+                "{prefix}.{chr}.{idx}.npz",
                 prefix = tmp_prefix,
                 chr = tile.chr,
                 idx = tile.index
@@ -234,7 +235,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
                 tile_counts_out,
                 window_size,
                 num_groups,
-                &length_bins,
+                Arc::clone(&length_axis),
                 windows_chr,
                 tile_span.as_ref(),
                 blacklist_chr,
@@ -264,8 +265,9 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     );
 
     // Initialize count array and load+fill with tmp counts
-    let mut all_counts = ProfileGroupsCounts::new(window_size, num_groups, length_bins.to_vec());
-    all_counts.add_from_npy_1d_files_parallel(all_tmp_count_paths)?;
+    let mut all_counts =
+        ProfileGroupsCounts::new(window_size, num_groups, Arc::clone(&length_axis));
+    all_counts.add_from_sparse_npz_files_parallel(all_tmp_count_paths)?;
     let all_counts_3d_arr = all_counts.view_ndarray3_group_len_pos();
 
     info!(
@@ -296,7 +298,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
             prefix,
             &opt.ioc.output_dir,
             &opt.plot_groups,
-            &length_bins,
+            length_axis.edges(),
             &group_idx_to_name,
             all_counts_3d_arr,
         )?;
@@ -339,7 +341,7 @@ fn process_tile(
     tile_counts_out: PathBuf,
     window_size: usize,
     num_groups: usize,
-    length_bins: &[u32],
+    length_axis: Arc<LengthAxis>,
     windows: &[IndexedInterval<u64>],
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_intervals: &[Interval<u64>],
@@ -385,8 +387,8 @@ fn process_tile(
 
     // Extract min/max fragment lengths once so fetch shrinking and fragment filtering share the
     // same bounds.
-    let min_fragment_length = length_bins[0];
-    let max_fragment_length = length_bins[length_bins.len() - 1] - 1;
+    let min_fragment_length = length_axis.min_fragment_length();
+    let max_fragment_length = length_axis.max_fragment_length();
 
     // Adapt the fetch coordinates to the present windows
     // When no windows are present, skip this tile
@@ -418,8 +420,8 @@ fn process_tile(
         }
     };
 
-    // Initialize count array
-    let mut counts = ProfileGroupsCounts::new(window_size, num_groups, length_bins.to_vec());
+    // Initialize sparse count map
+    let mut counts = SparseProfileGroupsCounts::new(window_size, num_groups, length_axis);
 
     // Streaming pointers
     let mut bl_ptr = 0; // Blacklist interval
@@ -647,12 +649,17 @@ fn process_tile(
         }
     }
 
-    // Write tile counts to temp dir
-    let arr1 = counts.as_ndarray1();
-    write_npy(&tile_counts_out, &arr1).context("Write final fail")?;
-
     // Get counters from iterator
     counter.add_from_snapshot(iter.counters_snapshot());
+
+    if counts.is_empty() {
+        return Ok((counter, None));
+    }
+
+    // Write sparse tile counts to temp dir
+    counts
+        .write_npz(&tile_counts_out)
+        .context("Write midpoint tile counts fail")?;
 
     Ok((counter, Some(tile_counts_out)))
 }

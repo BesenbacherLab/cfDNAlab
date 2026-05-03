@@ -6,7 +6,10 @@ use crate::{
         },
         ends::config_structs::*,
     },
-    shared::{blacklist::BlacklistStrategy, indel_mode::IndelMotifFilterPolicy},
+    shared::{
+        blacklist::BlacklistStrategy, constants::DEFAULT_MAX_SOFT_CLIPS,
+        indel_mode::IndelMotifFilterPolicy,
+    },
 };
 use std::path::PathBuf;
 

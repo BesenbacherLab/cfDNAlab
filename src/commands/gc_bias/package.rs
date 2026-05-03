@@ -1,7 +1,9 @@
-use crate::commands::gc_bias::{
-    GC_CORRECTION_SCHEMA_VERSION,
-    binning::{BinnedAxis, compute_bin_edges},
-    load_reference_bias::ReferenceGCMetadata,
+use crate::{
+    commands::gc_bias::{
+        binning::{BinnedAxis, compute_bin_edges},
+        load_reference_bias::ReferenceGCMetadata,
+    },
+    shared::constants::GC_CORRECTION_SCHEMA_VERSION,
 };
 use anyhow::{Context, Result, bail, ensure};
 use ndarray::{Array1, Array2};
