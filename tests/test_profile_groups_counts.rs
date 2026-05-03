@@ -28,205 +28,145 @@ mod tests {
     #[test]
     fn new_and_shape() {
         // Human verification status: unverified
-        let c = make_counts();
-        assert_eq!(c.n_positions(), 5);
-        assert_eq!(c.n_groups(), 3);
-        assert_eq!(c.n_lengths(), 2);
-        assert_eq!(c.counts.len(), 3 * 5 * 2);
-        assert_eq!(c.min_fragment_length(), 20);
-        assert_eq!(c.max_fragment_length(), 99); // inclusive
+        let counts = make_counts();
+        assert_eq!(counts.n_positions(), 5);
+        assert_eq!(counts.n_groups(), 3);
+        assert_eq!(counts.n_lengths(), 2);
+        assert_eq!(counts.counts.len(), 3 * 2 * 5);
+        assert_eq!(counts.as_ndarray1().len(), 3 * 2 * 5);
+        assert_eq!(counts.min_fragment_length(), 20);
+        assert_eq!(counts.max_fragment_length(), 99);
     }
 
     #[test]
     fn index_of_valid_and_bounds() -> Result<()> {
         // Human verification status: unverified
-        let c = make_counts();
-        // group=1, pos=3, len=20 -> bin 0
-        let idx = c.index_of(3, 1, 20)?;
-        // idx = group*(P*L) + pos*L + len_bin
-        // P=5, L=2 -> 1*(5*2) + 3*2 + 0 = 10 + 6 + 0 = 16
-        assert_eq!(idx, 16);
+        let counts = make_counts();
 
-        // Top edge inclusive: 99 ok (bin 1), 100 is out (exclusive)
-        assert!(c.index_of(0, 0, 99).is_ok());
-        assert!(c.index_of(0, 0, 100).is_err());
+        // Layout is `(group, length_bin, position)`
+        // group=1, bin=0, position=3 -> 1*(2*5) + 0*5 + 3 = 13
+        assert_eq!(counts.index_of(3, 1, 20)?, 13);
+        assert_eq!(counts.index_of(0, 0, 20)?, 0);
+        assert_eq!(counts.index_of(4, 0, 20)?, 4);
+        assert_eq!(counts.index_of(0, 0, 50)?, 5);
+        assert_eq!(counts.index_of(0, 1, 20)?, 10);
 
-        // Below min -> error
-        assert!(c.index_of(0, 0, 19).is_err());
-
-        // Position/group out of range -> error
-        assert!(c.index_of(5, 0, 20).is_err()); // pos too big
-        assert!(c.index_of(0, 3, 20).is_err()); // group too big
+        assert!(counts.index_of(0, 0, 99).is_ok());
+        assert!(counts.index_of(0, 0, 100).is_err());
+        assert!(counts.index_of(0, 0, 19).is_err());
+        assert!(counts.index_of(5, 0, 20).is_err());
+        assert!(counts.index_of(0, 3, 20).is_err());
         Ok(())
     }
 
     #[test]
-    fn incr_and_get() -> Result<()> {
+    fn get_reads_count_at_profile_coordinate() -> Result<()> {
         // Human verification status: unverified
-        let mut c = make_counts();
-        // Start zero
-        assert_eq!(c.get(0, 0, 20)?, 0.0);
-        // Increment integer
-        c.incr(0, 0, 20)?;
-        assert_eq!(c.get(0, 0, 20)?, 1.0);
-        // Increment weighted
-        c.incr_weighted(0, 0, 20, 2.5)?;
-        approx_eq(c.get(0, 0, 20)?, 3.5, 1e-6);
-        // Other bin unaffected
-        assert_eq!(c.get(0, 0, 50)?, 0.0);
+        let mut counts = make_counts();
+
+        assert_eq!(counts.get(0, 0, 20)?, 0.0);
+
+        let target_idx = counts.index_of(3, 2, 55)?;
+        counts.counts[target_idx] = 2.75;
+
+        approx_eq(counts.get(3, 2, 55)?, 2.75, 1e-6);
+        assert_eq!(counts.get(3, 2, 20)?, 0.0);
         Ok(())
     }
 
     #[test]
-    fn incr_errors_on_oob() {
+    fn get_rejects_out_of_bounds_coordinates() {
         // Human verification status: unverified
-        let mut c = make_counts();
-        // Length out of bounds
-        assert!(c.incr(0, 0, 19).is_err());
-        assert!(c.incr_weighted(0, 0, 100, 1.0).is_err());
-        // Position/group out of bounds
-        assert!(c.incr(5, 0, 20).is_err());
-        assert!(c.incr(0, 3, 20).is_err());
+        let counts = make_counts();
+
+        assert!(counts.get(0, 0, 19).is_err());
+        assert!(counts.get(0, 0, 100).is_err());
+        assert!(counts.get(5, 0, 20).is_err());
+        assert!(counts.get(0, 3, 20).is_err());
     }
 
     #[test]
-    fn zeroed_like_copies_shape_and_zeros() -> Result<()> {
+    fn ndarray3_view_exposes_group_length_position_layout() -> Result<()> {
         // Human verification status: unverified
-        let mut c = make_counts();
-        c.incr(1, 2, 55)?; // bin 1
-        let z = c.zeroed_like();
-        assert_eq!(z.counts.len(), c.counts.len());
-        assert_eq!(z.n_groups(), c.n_groups());
-        assert_eq!(z.n_positions(), c.n_positions());
-        assert_eq!(z.n_lengths(), c.n_lengths());
-        assert!(z.counts.iter().all(|&v| v == 0.0));
+        let mut counts = make_counts();
+
+        let first_idx = counts.index_of(4, 2, 21)?;
+        let second_idx = counts.index_of(0, 1, 90)?;
+        let third_idx = counts.index_of(3, 0, 60)?;
+        counts.counts[first_idx] = 1.5;
+        counts.counts[second_idx] = 1.0;
+        counts.counts[third_idx] = 2.25;
+
+        let viewed = counts.view_ndarray3_group_len_pos();
+        assert_eq!(viewed.shape(), &[3, 2, 5]);
+
+        approx_eq(viewed[(2, 0, 4)], 1.5, 1e-6);
+        approx_eq(viewed[(1, 1, 0)], 1.0, 1e-6);
+        approx_eq(viewed[(0, 1, 3)], 2.25, 1e-6);
+
+        assert_eq!(viewed[(2, 1, 4)], 0.0);
+        assert_eq!(viewed[(1, 0, 0)], 0.0);
         Ok(())
     }
 
     #[test]
-    fn merge_from_adds_elementwise() -> Result<()> {
+    fn ndarray3_view_matches_flat_index_formula_for_all_coordinates() {
         // Human verification status: unverified
-        let mut a = make_counts();
-        let mut b = make_counts();
-        a.incr(2, 1, 49)?; // bin 0
-        a.incr_weighted(2, 1, 60, 0.5)?; // bin 1
-        b.incr(2, 1, 49)?; // same cells
-        b.incr_weighted(2, 1, 60, 1.25)?;
-        a.merge_from(&b)?;
-        // Check both positions merged
-        approx_eq(a.get(2, 1, 49)?, 2.0, 1e-6);
-        approx_eq(a.get(2, 1, 60)?, 1.75, 1e-6);
-        Ok(())
-    }
+        let mut counts = make_counts();
 
-    #[test]
-    fn merge_incompatible_fails() {
-        // Human verification status: unverified
-        let a = make_counts();
-        // Different window size
-        let b = ProfileGroupsCounts::new(6, 3, length_axis(vec![20, 50, 100]));
-        assert!(a.clone().merge_from(&b).is_err());
-        // Different groups
-        let b = ProfileGroupsCounts::new(5, 2, length_axis(vec![20, 50, 100]));
-        assert!(a.clone().merge_from(&b).is_err());
-        // Different bins
-        let b = ProfileGroupsCounts::new(5, 3, length_axis(vec![20, 60, 100]));
-        assert!(a.clone().merge_from(&b).is_err());
-    }
-
-    #[test]
-    fn collapse_sums_many() -> Result<()> {
-        // Human verification status: unverified
-        let mut a = make_counts();
-        let mut b = make_counts();
-        let mut c = make_counts();
-        a.incr(0, 0, 20)?;
-        b.incr(0, 0, 20)?;
-        c.incr_weighted(0, 0, 20, 3.0)?;
-        let total = ProfileGroupsCounts::collapse([&a, &b, &c])?;
-        approx_eq(total.get(0, 0, 20)?, 5.0, 1e-6);
-        Ok(())
-    }
-
-    #[test]
-    fn reshape_to_3d_group_len_pos() -> Result<()> {
-        // Human verification status: unverified
-        let mut c = make_counts(); // G=3, P=5, L=2
-
-        // Fill a few distinct cells we can verify after reshape.
-        // (group=2, pos=4, len in bin 0)
-        c.incr_weighted(4, 2, 21, 1.5)?;
-        // (group=1, pos=0, len in bin 1)
-        c.incr(0, 1, 90)?;
-        // (group=0, pos=3, len in bin 1)
-        c.incr_weighted(3, 0, 60, 2.25)?;
-
-        let m = c.to_3d_group_len_pos();
-        assert_eq!(m.len(), 3); // groups
-        assert_eq!(m[0].len(), 2); // length bins
-        assert_eq!(m[0][0].len(), 5); // positions
-
-        // Check values landed at (group, len_bin, pos)
-        approx_eq(m[2][0][4], 1.5, 1e-6); // group 2, bin 0, pos 4
-        approx_eq(m[1][1][0], 1.0, 1e-6); // group 1, bin 1, pos 0
-        approx_eq(m[0][1][3], 2.25, 1e-6); // group 0, bin 1, pos 3
-
-        // And some zeros elsewhere
-        assert_eq!(m[2][1][4], 0.0);
-        assert_eq!(m[1][0][0], 0.0);
-        Ok(())
-    }
-
-    #[test]
-    fn ndarray3_view_matches_allocating_copy_for_all_cells() -> Result<()> {
-        // Human verification status: unverified
-        let mut c = make_counts(); // G=3, P=5, L=2 => flat layout has 30 cells
-
-        // Fill every flat cell with a unique value so any stride mistake shows up immediately.
-        // Internal layout is (group, position, length_bin), so the flat index is:
-        //   idx = group * (P * L) + position * L + len_bin
-        for (idx, value) in c.counts.iter_mut().enumerate() {
-            *value = idx as f32 + 0.25;
+        // A unique value per flat index makes axis-order mistakes visible
+        for (flat_idx, value) in counts.counts.iter_mut().enumerate() {
+            *value = flat_idx as f32 + 0.25;
         }
 
-        let copied = c.to_3d_group_len_pos();
-        let viewed = c.view_ndarray3_group_len_pos();
+        let viewed = counts.view_ndarray3_group_len_pos();
 
         assert_eq!(viewed.shape(), &[3, 2, 5]);
 
-        // Spot-check a few hand-derived cells before comparing the whole array:
-        // - (g=0, len=0, pos=0) -> idx = 0*(5*2) + 0*2 + 0 = 0
-        // - (g=1, len=1, pos=3) -> idx = 1*(5*2) + 3*2 + 1 = 17
-        // - (g=2, len=0, pos=4) -> idx = 2*(5*2) + 4*2 + 0 = 28
-        approx_eq(viewed[(0, 0, 0)], 0.25, 1e-6);
-        approx_eq(viewed[(1, 1, 3)], 17.25, 1e-6);
-        approx_eq(viewed[(2, 0, 4)], 28.25, 1e-6);
+        let group_stride: usize = 2 * 5;
+        let length_bin_stride: usize = 5;
+
+        // The test fills `counts` by flat index, so the viewed value should be `flat_idx + 0.25`
+        let origin_idx = 0 * group_stride + 0 * length_bin_stride + 0;
+        let group_1_bin_1_pos_3_idx = group_stride + length_bin_stride + 3;
+        let group_2_bin_0_pos_4_idx = 2 * group_stride + 0 * length_bin_stride + 4;
+
+        approx_eq(viewed[(0, 0, 0)], origin_idx as f32 + 0.25, 1e-6);
+        approx_eq(
+            viewed[(1, 1, 3)],
+            group_1_bin_1_pos_3_idx as f32 + 0.25,
+            1e-6,
+        );
+        approx_eq(
+            viewed[(2, 0, 4)],
+            group_2_bin_0_pos_4_idx as f32 + 0.25,
+            1e-6,
+        );
 
         for group_idx in 0..3 {
-            for len_bin in 0..2 {
+            for length_bin_idx in 0..2 {
                 for position in 0..5 {
+                    let flat_idx =
+                        group_idx * group_stride + length_bin_idx * length_bin_stride + position;
                     approx_eq(
-                        viewed[(group_idx, len_bin, position)],
-                        copied[group_idx][len_bin][position],
+                        viewed[(group_idx, length_bin_idx, position)],
+                        flat_idx as f32 + 0.25,
                         1e-6,
                     );
                 }
             }
         }
-
-        Ok(())
     }
 
     #[test]
     fn display_has_shape_info() {
         // Human verification status: unverified
-        let c = make_counts();
-        let s = format!("{}", c);
-        // Basic shape strings are present
-        assert!(s.contains("ProfileGroupsCounts("));
-        assert!(s.contains("groups:[0..=2]"));
-        assert!(s.contains("pos:[0..=4]"));
-        // Inclusive max length in the textual form
-        assert!(s.contains("len:[20..50...=99]") || s.contains("len:[20..=99]"));
+        let counts = make_counts();
+        let display_text = format!("{}", counts);
+
+        assert!(display_text.contains("ProfileGroupsCounts("));
+        assert!(display_text.contains("groups:[0..=2]"));
+        assert!(display_text.contains("pos:[0..=4]"));
+        assert!(display_text.contains("len:[20..50...=99]"));
     }
 }

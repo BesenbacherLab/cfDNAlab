@@ -116,7 +116,7 @@ pub struct MidpointsConfig {
     /// Chromosomes are processed in tiles of this size to reduce memory usage.
     #[cfg_attr(
         feature = "cli",
-        clap(long, default_value = "63000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
+        clap(long, default_value = "20000000", value_parser = clap::value_parser!(u32).range(1000000..), help_heading="Core"))]
     pub tile_size: u32,
 
     #[cfg_attr(feature = "cli", clap(flatten))]

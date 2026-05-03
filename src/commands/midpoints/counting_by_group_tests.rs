@@ -18,7 +18,7 @@ fn make_sparse_counts() -> SparseProfileGroupsCounts {
     SparseProfileGroupsCounts::new(5, 3, length_axis())
 }
 
-fn write_sparse_partial(
+fn write_sparse_partial_file(
     path: &Path,
     idx: &[u64],
     data: &[f32],
@@ -66,11 +66,16 @@ fn sparse_and_dense_indexing_match() -> Result<()> {
     assert!(dense.index_of(0, 3, 20).is_err());
     assert!(sparse.index_of(0, 3, 20).is_err());
 
+    assert_eq!(dense.index_of(0, 0, 20)?, 0);
+    assert_eq!(dense.index_of(4, 0, 20)?, 4);
+    assert_eq!(dense.index_of(0, 0, 50)?, 5);
+    assert_eq!(dense.index_of(0, 1, 20)?, 10);
+
     Ok(())
 }
 
 #[test]
-fn sparse_increment_accumulates_duplicate_cells() -> Result<()> {
+fn sparse_increment_accumulates_duplicate_entries() -> Result<()> {
     let mut sparse = make_sparse_counts();
 
     sparse.incr_weighted(2, 1, 49, 1.25)?;
@@ -86,7 +91,7 @@ fn sparse_increment_accumulates_duplicate_cells() -> Result<()> {
 #[test]
 fn sparse_temp_write_read_roundtrip_keeps_sorted_indices_values_and_shape() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
-    let path = temp_dir.path().join("partial.npz");
+    let path = temp_dir.path().join("partial_file.npz");
     let mut sparse = make_sparse_counts();
 
     sparse.incr_weighted(4, 2, 99, 3.5)?;
@@ -95,46 +100,55 @@ fn sparse_temp_write_read_roundtrip_keeps_sorted_indices_values_and_shape() -> R
     sparse.write_npz(&path)?;
 
     let dense = make_dense_counts();
-    let partial = read_sparse_profile_partial(&path, [3, 5, 2], dense.counts.len())?;
+    let partial_file = read_sparse_profile_partial_file(&path, [3, 2, 5], dense.counts.len())?;
     let expected_indices = vec![
         dense.index_of(0, 0, 20)? as u64,
         dense.index_of(3, 1, 50)? as u64,
         dense.index_of(4, 2, 99)? as u64,
     ];
 
-    assert_eq!(partial.idx, expected_indices);
-    assert_eq!(partial.data, vec![1.0, 2.25, 3.5]);
+    assert_eq!(partial_file.idx, expected_indices);
+    assert_eq!(partial_file.data, vec![1.0, 2.25, 3.5]);
 
     Ok(())
 }
 
 #[test]
-fn sparse_partial_reader_rejects_malformed_partials() -> Result<()> {
+fn sparse_partial_file_reader_rejects_malformed_partial_files() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let dense = make_dense_counts();
-    let expected_shape = [3, 5, 2];
-    let dest_len = dense.counts.len();
+    let expected_shape = [3, 2, 5];
+    let destination_len = dense.counts.len();
 
     let mismatched_lengths = temp_dir.path().join("mismatched_lengths.npz");
-    write_sparse_partial(&mismatched_lengths, &[0, 1], &[1.0], &expected_shape)?;
-    assert!(read_sparse_profile_partial(&mismatched_lengths, expected_shape, dest_len).is_err());
+    write_sparse_partial_file(&mismatched_lengths, &[0, 1], &[1.0], &expected_shape)?;
+    assert!(
+        read_sparse_profile_partial_file(&mismatched_lengths, expected_shape, destination_len)
+            .is_err()
+    );
 
     let wrong_shape = temp_dir.path().join("wrong_shape.npz");
-    write_sparse_partial(&wrong_shape, &[0], &[1.0], &[3, 6, 2])?;
-    assert!(read_sparse_profile_partial(&wrong_shape, expected_shape, dest_len).is_err());
+    write_sparse_partial_file(&wrong_shape, &[0], &[1.0], &[3, 3, 5])?;
+    assert!(
+        read_sparse_profile_partial_file(&wrong_shape, expected_shape, destination_len).is_err()
+    );
 
     let descending = temp_dir.path().join("descending.npz");
-    write_sparse_partial(&descending, &[2, 1], &[1.0, 1.0], &expected_shape)?;
-    assert!(read_sparse_profile_partial(&descending, expected_shape, dest_len).is_err());
+    write_sparse_partial_file(&descending, &[2, 1], &[1.0, 1.0], &expected_shape)?;
+    assert!(
+        read_sparse_profile_partial_file(&descending, expected_shape, destination_len).is_err()
+    );
 
     let out_of_bounds = temp_dir.path().join("out_of_bounds.npz");
-    write_sparse_partial(
+    write_sparse_partial_file(
         &out_of_bounds,
-        &[u64::try_from(dest_len)?],
+        &[u64::try_from(destination_len)?],
         &[1.0],
         &expected_shape,
     )?;
-    assert!(read_sparse_profile_partial(&out_of_bounds, expected_shape, dest_len).is_err());
+    assert!(
+        read_sparse_profile_partial_file(&out_of_bounds, expected_shape, destination_len).is_err()
+    );
 
     Ok(())
 }
@@ -149,13 +163,13 @@ fn parallel_sparse_merge_sums_overlaps_across_chunks() -> Result<()> {
         2,
         Arc::new(LengthAxis::new(vec![20, 50, 100]).expect("test length axis should be valid")),
     );
-    let shape = [2, 4, 2];
+    let shape = [2, 2, 4];
     let first_idx = dense.index_of(0, 0, 20)? as u64;
     let middle_idx = dense.index_of(1, 0, 50)? as u64;
     let last_idx = dense.index_of(3, 1, 50)? as u64;
 
-    write_sparse_partial(&first_path, &[first_idx, last_idx], &[1.0, 2.0], &shape)?;
-    write_sparse_partial(
+    write_sparse_partial_file(&first_path, &[first_idx, last_idx], &[1.0, 2.0], &shape)?;
+    write_sparse_partial_file(
         &second_path,
         &[first_idx, middle_idx, last_idx],
         &[3.0, 4.0, 5.0],

@@ -19,26 +19,9 @@ Pre-release semantic/docs:
 Post-release performance/scalability:
 
 - G-006: sparse-window GC reference pruning.
-- M-001A: internal dense per-tile profile storage can be too large for sparse targeted runs.
 - M-001B: optional sparse final output would help very large group, width, and length-bin shapes.
 
 ## Findings
-
-### M-001A - High - Per-tile profile storage is dense across all groups, positions, and length bins
-
-Every active tile allocates a full `ProfileGroupsCounts` for the complete output shape ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L432-L434)). The flattened allocation is `num_groups * window_size * num_length_bins` `f32`s ([counting_by_group.rs](../../src/commands/midpoints/counting_by_group.rs#L63-L69)), and each tile writes that full dense vector to a temp `.npy` even when only a few groups or positions were touched ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L660-L663)). The final merge then allocates the same full shape again and reads every dense tile file back ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L263-L266)).
-
-Impact: targeted midpoint profiles can become memory- and disk-bound long before BAM iteration is the bottleneck. With many groups, a 2001 bp profile, and range-style length bins, each active tile currently pays the complete output-shape cost even if that tile only touches a small subset of groups, positions, or length bins. The help text warns only that memory increases with the number of bins ([config.rs](../../src/commands/midpoints/config.rs#L84-L98)), but the internal execution cost also includes groups, window size, thread count, and the number of active tile temp files.
-
-Recommended tasks:
-
-- Add a sparse per-tile accumulator for midpoint profile counts. Use the existing flattened profile index or an explicit `(group_idx, length_bin_idx, position)` key, whichever keeps merging simplest and least error-prone.
-- Write sparse tile partials to temp files instead of dense per-tile `.npy` vectors. A compact `.npz` with indices and values is enough if the final output remains dense.
-- Merge sparse tile partials into the existing dense final `ProfileGroupsCounts`, preserving the current default final `.npy` shape `(group, length_bin, position)`.
-- Keep the dense per-tile path only if benchmarks show it is materially faster for high-density runs and the added branch is still worth maintaining.
-- Add shape and temp-file estimates before counting starts. The estimate should report final dense bytes, current or selected per-tile partial strategy, and approximate worst-case thread-local memory.
-- Fail fast or warn at a clear threshold rather than allowing hidden OOM or runaway temp disk usage.
-- Add focused coverage for large declared shapes with few observed counts, checking that sparse internal partials produce the same dense final output as the old dense path.
 
 ### M-001B - Medium - Very large final profile shapes need an optional sparse output format
 
@@ -73,4 +56,4 @@ Recommended fix:
 
 The command already has broad integration coverage: length-bin parsing, default MAPQ, paired/unpaired parity, group index ordering, even-length midpoint edge placement, blacklist midpoint behavior, real GC packages, GC tags, GC/scaling multiplication, scaling TSV validation, tile-boundary behavior, chromosome-end fetch narrowing, CLI smoke output, and cross-command BAM/fragment roundtrips are all represented.
 
-The most important midpoint-specific missing tests from this review are memory-shape guardrails for large group/bin configurations and the chosen even-midpoint blacklist semantics if that contract changes. The deferred skipped-tile GC reference pruning optimization is tracked in G-006 in `00_shared_package_notes.md`.
+The most important midpoint-specific missing tests from this review are sparse final-output roundtrips if M-001B is implemented and the chosen even-midpoint blacklist semantics if that contract changes. The deferred skipped-tile GC reference pruning optimization is tracked in G-006 in `00_shared_package_notes.md`.

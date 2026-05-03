@@ -57,21 +57,32 @@ const COMMAND_TARGET: &str = "midpoints";
 
 /// Execute the grouped midpoint profiling pipeline end-to-end.
 ///
+/// The command produces dense midpoint profiles for grouped BED intervals. Internally, tile
+/// workers count into sparse accumulators and write sparse `.npz` temporary files. After all tiles
+/// finish, those sparse partial files are merged into one dense `ProfileGroupsCounts` and written
+/// as the public `.midpoint_profiles.npy` output with axes `(group, length_bin, position)`.
+///
 /// Implementation details:
+///
 /// - Resolves chromosomes, loads grouped BED windows, and prepares optional blacklist and scaling
 ///   data before spawning parallel tiles.
-/// - Streams fragments through per-tile accumulators, writing sparse temporary partials that are
-///   merged into a final 3D array and companion group index.
+/// - Streams fragments through per-tile accumulators, writing sparse temporary partial files that
+///   are merged into a final 3D array and companion group index.
 /// - Applies fragment length, blacklist, and scaling filters during aggregation so downstream tools
 ///   can consume ready-to-use profiles.
 ///
-/// Parameters:
-/// - `opt`: Fully resolved configuration for the `profile-groups` command.
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Fully resolved configuration for the `profile-groups` command.
 ///
-/// Returns:
-/// - `Ok(())` when the output `npy` and group-index files are written successfully.
+/// Returns
+/// -------
+/// - `Ok(())`:
+///     The output `npy` and group-index files were written successfully.
 ///
-/// Errors:
+/// Errors
+/// ------
 /// - Returns an error if any input cannot be read, the grouped BED is invalid, or writing the
 ///   outputs fails.
 pub fn run(opt: &MidpointsConfig) -> Result<()> {
@@ -98,7 +109,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         &chromosomes,
     )?;
 
-    // Load sites from BED file
+    // Load grouped fixed-size windows from BED
     info!(target: COMMAND_TARGET, "Loading fixed-size intervals");
     let (windows_map, group_idx_to_name) = load_grouped_windows_from_bed(
         opt.intervals.clone(),
@@ -118,12 +129,14 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
     // Ensure all windows have the same length
     let window_size = ensure_uniform_window_len(&windows_map)?;
+    // The grouped BED loader preserves group ids in IndexedInterval.idx. Moving the inner vectors
+    // avoids cloning millions of intervals before tiling
     let indexed_windows_map: FxHashMap<String, Vec<IndexedInterval<u64>>> = windows_map
         .into_iter()
         .map(|(chromosome, grouped_windows)| (chromosome, grouped_windows.into_inner()))
         .collect();
 
-    // Parse and validate fragment length bins once so all tiles share one lookup table.
+    // Parse and validate fragment length bins once so all tiles share one lookup table
     let length_axis = Arc::new(LengthAxis::new(opt.resolve_length_bins()?)?);
     let min_fragment_length = length_axis.min_fragment_length();
     let max_fragment_length = length_axis.max_fragment_length();
@@ -159,7 +172,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
     let temp_dir = temp_dir_guard.path();
 
-    // Build tiles
+    // Build tiles with a pairing halo wide enough for any accepted fragment
     let halo_bp: u32 = max_fragment_length; // Safe halo for pairing
     let (tiles, _) = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, None)?;
     let total_tiles = tiles.len();
@@ -172,7 +185,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         0,
     ));
 
-    // Where per-tile files go
+    // Per-tile sparse partial files live in the temp directory
     let tmp_prefix = dot_join(&[prefix, "midpoint_profiles.tile"]);
     let tmp_prefix = tmp_prefix.as_str();
 
@@ -189,11 +202,8 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(total_tiles as u64));
 
-    // Configure global thread‐pool size
+    // Configure global thread-pool size
     init_global_pool(opt.ioc.n_threads)?;
-
-    // Prepare per-bin counts and metadata
-    let mut global_counter = ProfileGroupsCounters::default();
 
     info!(target: COMMAND_TARGET, "Counting per chromosome");
 
@@ -207,7 +217,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<(_, _)> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
-            // Per-chrom projections
+            // Borrow chromosome-local data for this tile worker
             let windows_chr: &[IndexedInterval<u64>] = indexed_windows_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
@@ -221,7 +231,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
 
-            // Windowed tmp outputs for faster reducer later on
+            // Sparse tile partial file path. Empty tiles skip writing this file
             let tile_counts_out = temp_dir.join(format!(
                 "{prefix}.{chr}.{idx}.npz",
                 prefix = tmp_prefix,
@@ -250,8 +260,11 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
     pb.finish_with_message("| Finished counting");
 
+    // Initialize global counter for accumulation across tiles
+    let mut global_counter = ProfileGroupsCounters::default();
+
+    // Collect temp paths and counters after Rayon returns to the main thread
     let mut all_tmp_count_paths: Vec<PathBuf> = Vec::with_capacity(total_tiles);
-    // Collect results (in chromosome order) back into the global vectors
     for (counter, tmp_counts_path) in tile_results {
         if let Some(tmp_path) = tmp_counts_path {
             all_tmp_count_paths.push(tmp_path);
@@ -264,7 +277,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
         "Merging temporary tile files to final output"
     );
 
-    // Initialize count array and load+fill with tmp counts
+    // Allocate the single final dense profile and merge sparse tile partial files into it
     let mut all_counts =
         ProfileGroupsCounts::new(window_size, num_groups, Arc::clone(&length_axis));
     all_counts.add_from_sparse_npz_files_parallel(all_tmp_count_paths)?;
@@ -335,6 +348,55 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     Ok(())
 }
 
+/// Count midpoint contributions for one genomic tile.
+///
+/// This function is the per-tile worker body used by the parallel `run` loop. It opens a
+/// chromosome-scoped BAM reader, narrows the fetch span to windows that can contribute to this
+/// tile, streams fragments, and writes one sparse midpoint partial file when the tile has nonzero
+/// counts.
+///
+/// The main counting flow is:
+///
+/// 1. Build per-tile helper state, including optional GC prefixes and scaling intervals.
+/// 2. Narrow the BAM fetch to the extrema of windows overlapping the tile core.
+/// 3. Stream paired or unpaired fragments from the BAM reader.
+/// 4. Apply blacklist, midpoint-core, GC, and optional scaling filters.
+/// 5. Convert each midpoint to a window-relative position and group index.
+/// 6. Accumulate weighted counts in `SparseProfileGroupsCounts`.
+/// 7. Write a sorted sparse `.npz` partial file, unless the tile had no counts.
+///
+/// Parameters
+/// ----------
+/// - `opt`:
+///     Command configuration. The worker reads filters, IO paths, and correction options from it.
+/// - `tile`:
+///     Genomic tile whose core owns midpoint counts and whose fetch band includes pairing halo.
+/// - `tile_counts_out`:
+///     Destination path for the sparse tile partial file if the tile produces any counts.
+/// - `window_size`:
+///     Number of midpoint positions per grouped BED window.
+/// - `num_groups`:
+///     Number of group ids represented in the grouped BED input.
+/// - `length_axis`:
+///     Shared length-bin lookup used by the sparse accumulator.
+/// - `windows`:
+///     Chromosome-local grouped windows, sorted by coordinate.
+/// - `tile_window_span`:
+///     Optional precomputed slice range for windows that can overlap this tile.
+/// - `blacklist_intervals`:
+///     Chromosome-local blacklist intervals used before midpoint counting.
+/// - `scaling_chr`:
+///     Chromosome-local genomic scaling bins. Empty means no scaling is applied.
+/// - `gc_corrector_opt`:
+///     Optional file-based GC corrector for fragment-level weights.
+/// - `gc_tag`:
+///     Optional BAM tag name for tag-based GC weights.
+///
+/// Returns
+/// -------
+/// - `out`:
+///     Tile-local run counters and an optional sparse temp-file path. The path is `None` when the
+///     tile had no overlapping windows or no counted midpoint cells.
 fn process_tile(
     opt: &MidpointsConfig,
     tile: &Tile,
@@ -364,7 +426,7 @@ fn process_tile(
         let seq_bytes = read_seq_in_range(
             ref_2bit,
             &tile.chr,
-            // NOTE: Need for full fetch span to get GC of overlapping fragments!
+            // NOTE: Need the full fetch span to get GC of overlapping fragments!
             (tile.fetch_start() as usize)..(tile.fetch_end() as usize),
         )?;
         Some(build_gc_prefixes(&seq_bytes))
@@ -372,26 +434,26 @@ fn process_tile(
         None
     };
 
-    // The overlap finder only needs checked BED-like intervals here.
+    // The overlap finder only needs checked BED-like intervals here
     //
     // In BED mode, `find_overlapping_windows(...)` stores the scan position in the supplied slice
-    // as `OverlappingWindow.idx`; it does not read `IndexedInterval.idx`. Because this temporary
+    // as `OverlappingWindow.idx`. It does not read `IndexedInterval.idx`. Because this temporary
     // list is built in the same order as `scaling_chr`, those scan positions already line up with
-    // the chromosome-local indices used later to index back into `scaling_chr`.
+    // the chromosome-local indices used later to index back into `scaling_chr`
     //
-    // So the carried `IndexedInterval.idx` value is intentionally a placeholder.
+    // So the carried `IndexedInterval.idx` value is intentionally a placeholder
     let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
         .iter()
         .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
         .collect::<crate::Result<_>>()?;
 
     // Extract min/max fragment lengths once so fetch shrinking and fragment filtering share the
-    // same bounds.
+    // same bounds
     let min_fragment_length = length_axis.min_fragment_length();
     let max_fragment_length = length_axis.max_fragment_length();
 
-    // Adapt the fetch coordinates to the present windows
-    // When no windows are present, skip this tile
+    // Narrow the BAM fetch to windows that overlap the tile core. Tiles without contributing
+    // windows return immediately and do not produce a sparse temp file
     let Some((core_overlapping_windows, fetch_span)) =
         get_overlapping_sites_and_adapt_fetch_to_extremes(
             windows,
@@ -423,7 +485,7 @@ fn process_tile(
     // Initialize sparse count map
     let mut counts = SparseProfileGroupsCounts::new(window_size, num_groups, length_axis);
 
-    // Streaming pointers
+    // Streaming pointers let sorted interval scans resume near the previous fragment
     let mut bl_ptr = 0; // Blacklist interval
     let mut wd_ptr = tile_window_span
         .and_then(|span| (!span.is_empty()).then_some(span.first_idx))
@@ -461,6 +523,7 @@ fn process_tile(
     let get_gc_weight = {
         let gc_corrector = gc_corrector_opt.as_ref();
         let gc_prefixes = gc_prefixes_opt.as_ref();
+        // File-based GC correction shifts fragment coordinates into the fetched reference slice
         move |fragment: &Fragment, fetch_start: u32| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
@@ -478,7 +541,7 @@ fn process_tile(
     let correct_gc_from_file = opt.gc.gc_file.is_some();
     let fetch_start = tile.fetch_start();
 
-    // Iterate fragments and add coverage
+    // Iterate fragments and count up midpoints
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
         let fragment_length = fragment.len();
@@ -496,12 +559,12 @@ fn process_tile(
             continue;
         }
 
-        // Determine fragment midpoint
-        // Uses deterministic coordinate-derived random rounding for even-sized fragments
+        // Determine fragment midpoint. Even-sized fragments use deterministic coordinate-derived
+        // random rounding so tie positions are not always rounded in the same direction
         let midpoint =
             midpoint_random_even_for_fragment(&tile.chr, fragment.start(), fragment_length);
 
-        // Only keep fragments with midpoints within the tile
+        // Keep only the fragments with midpoints within the tile
         if midpoint < tile.core_start() || midpoint >= tile.core_end() {
             continue;
         }
@@ -622,7 +685,7 @@ fn process_tile(
                 )?;
             }
         } else {
-            // When no scaling, increment counter by the overlap fraction for each window / bin
+            // When no scaling, increment counter by the GC weight for each window / bin
             for overlapped_window in overlapping_windows.windows {
                 let overlapped_window_idx = overlapped_window.idx;
                 let window = core_overlapping_windows[overlapped_window_idx];
@@ -649,14 +712,16 @@ fn process_tile(
         }
     }
 
-    // Get counters from iterator
+    // Add read and pairing counters captured by the fragment iterator
     counter.add_from_snapshot(iter.counters_snapshot());
 
+    // Empty sparse accumulators do not produce temp files. The final merge only receives paths for
+    // tiles with at least one observed midpoint cell
     if counts.is_empty() {
         return Ok((counter, None));
     }
 
-    // Write sparse tile counts to temp dir
+    // Write a sorted sparse partial file to the temporary directory
     counts
         .write_npz(&tile_counts_out)
         .context("Write midpoint tile counts fail")?;
