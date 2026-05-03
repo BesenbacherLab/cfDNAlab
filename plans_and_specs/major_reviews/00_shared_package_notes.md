@@ -75,3 +75,17 @@ Recommended fix:
 - Pick explicit two-byte tag names for GC, coverage scaling, count scaling, and fragment length, then update CLI docs, README/docs, converter writers, and downstream consumers to use those names.
 - Add tests that inspect the actual serialized AUX tag keys, for example through `aux_iter()` or a SAM text roundtrip, rather than querying overlong names.
 - Decide and document what should happen when an input record already has one of the chosen tags. Silent replacement would be risky; a clear fail-fast error or an explicit overwrite flag would be easier to reason about.
+
+#### G-018 - Medium - Converter temporary files use raw chromosome names as path components
+
+`bam-to-frag` resolves chromosome names from the BAM header or user selection ([cli_common.rs](../../src/commands/cli_common.rs#L570-L606), [cli_common.rs](../../src/commands/cli_common.rs#L994-L1002)) and then creates per-chromosome temporary files with `temp_dir.join(format!("{chr}.frag.tsv.zst"))` ([bam_to_frag.rs](../../src/commands/bam_to_frag/bam_to_frag.rs#L256-L267)). `frag-to-bam` accepts chromosome names from `--chrom-sizes` without filename sanitization ([reference.rs](../../src/shared/reference.rs#L149-L187)) and creates temporary files with `temp_dir.join(format!("{}.frag.tmp", frag.chrom))` ([frag_to_bam.rs](../../src/commands/frag_to_bam/frag_to_bam.rs#L289-L295)).
+
+Because those names are interpolated into filesystem paths rather than encoded as filenames, chromosome names containing `/`, `..`, or an absolute-looking path are interpreted as path components. Normal human genome names will not trigger this, but custom references, malformed inputs, or hostile files can cause temp-file creation to fail, create unexpected subdirectories, or write outside the per-run temp directory.
+
+Impact: a converter can be made to write temporary files outside the intended temp directory before the final output is produced. In the common non-hostile case this is more likely to show up as a confusing failure for unusual contig names with slashes, but the safer invariant is that reference names should never control filesystem paths directly.
+
+Recommended fix:
+
+- Name per-chromosome temp files by a trusted ordinal or generated token, for example `chrom.000001.frag.tmp`, and keep the real chromosome name only in an in-memory map.
+- Add regression coverage for a chromosome name containing `/` and one containing `..`, proving the command either handles the name safely or rejects it with a direct validation error before writing temp files.
+- Prefer one shared helper for per-contig temp filenames so future converter and tiled-command code does not reintroduce raw path components.
