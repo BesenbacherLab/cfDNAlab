@@ -1,72 +1,67 @@
-# `cfdna bam-to-bam` pipeline
+# `cfdna bam-to-bam`
 
-Purpose: read an indexed coordinate-sorted BAM, apply cfDNAlab fragment filters and optional correction weights, and write a BAM containing the surviving original records with fragment-level AUX metadata.
+Apply cfDNAlab fragment filters and optional correction weights to an existing BAM file. The command writes the surviving original BAM records with fragment-level metadata attached as AUX tags.
 
-## Flow
+## Pipeline
 
 ```mermaid
 flowchart TD
-    input["Input BAM<br/>plus BAI/CSI index"]
-    validate["Validate command configuration<br/>fragment lengths, GC reference, paired/unpaired constraints"]
-    resolve["Resolve selected chromosomes<br/>and BAM contig lengths"]
-    load["Load optional run-wide inputs<br/>BED windows, blacklists, scaling TSVs, GC package, 2bit reference"]
-    writer["Open output BAM writer<br/>using the input BAM header"]
+    input["Input BAM<br/>coordinate-sorted and indexed"]
+    setup["Prepare run<br/>validate options, resolve chromosomes, load side files"]
+    output_writer["Open output BAM<br/>with the input header"]
 
-    input --> validate --> resolve --> load --> writer
+    input --> setup --> output_writer
 
-    subgraph per_chromosome["Per selected chromosome"]
-        chrom_reader["Open indexed chromosome reader"]
-        fetch["Fetch reads<br/>whole chromosome or BED span plus fragment-length halo"]
-        stream["Stream records<br/>in coordinate order"]
-        read_filter{"Read passes<br/>always-on filters?"}
-        skip_read["Drop read"]
-        fragment_mode{"Fragment mode"}
-        paired["Paired-end mode<br/>pair by qname, require inward orientation<br/>span = forward.pos to reverse.reference_end"]
-        unpaired["Unpaired mode<br/>one read is one fragment<br/>span = read.pos to read.reference_end"]
-        fragment_filter{"Fragment passes filters?<br/>length, blacklist, optional BED overlap"}
-        skip_fragment["Drop fragment"]
-        weights["Compute optional fragment weights<br/>GC, coverage scaling, count scaling"]
-        tags["Attach fragment-level tag payload<br/>to each surviving BAM record"]
-        sort_buffer["Bounded coordinate sorter<br/>orders records within the chromosome"]
-        flush["Flush chromosome tail"]
-
-        chrom_reader --> fetch --> stream --> read_filter
-        read_filter -- "no" --> skip_read
-        read_filter -- "yes" --> fragment_mode
-        fragment_mode -- "paired BAM" --> paired
-        fragment_mode -- "reads are fragments" --> unpaired
-        paired --> fragment_filter
-        unpaired --> fragment_filter
-        fragment_filter -- "no" --> skip_fragment
-        fragment_filter -- "yes" --> weights --> tags --> sort_buffer --> flush
+    subgraph side_inputs["Optional side inputs"]
+        windows["BED windows<br/>keep overlapping fragments"]
+        blacklist["Blacklist BED<br/>exclude problematic regions"]
+        scaling["Scaling TSVs<br/>coverage and fragment-count weights"]
+        gc["GC package + 2bit reference<br/>sample-specific GC correction"]
     end
 
-    writer --> chrom_reader
-    flush --> output["Output BAM<br/>plus terminal/log fragment statistics"]
+    windows --> setup
+    blacklist --> setup
+    scaling --> setup
+    gc --> setup
 
-    sorted_warning["Review note B2B-001<br/>chromosome processing order can break BAM header target-id sortedness"]
-    writer -.-> sorted_warning
+    subgraph chromosome_pass["Chromosome pass"]
+        fetch["Fetch selected reads<br/>whole chromosome or BED-focused span"]
+        read_filter{"Read-level filters"}
+        assemble["Build fragments<br/>paired-end or reads-as-fragments"]
+        fragment_filter{"Fragment-level filters"}
+        weight["Compute fragment metadata<br/>length, GC weight, scaling weights"]
+        tag_records["Attach metadata<br/>to each surviving BAM record"]
+        sort_records["Sort records within chromosome"]
 
-    tag_warning["Review note G-017<br/>public AUX tag names need two-byte BAM-safe names"]
-    tags -.-> tag_warning
+        fetch --> read_filter
+        read_filter -- "pass" --> assemble
+        read_filter -- "fail" --> dropped_read["Drop read"]
+        assemble --> fragment_filter
+        fragment_filter -- "pass" --> weight --> tag_records --> sort_records
+        fragment_filter -- "fail" --> dropped_fragment["Drop fragment"]
+    end
 
-    classDef inputOutput fill:#edf6ff,stroke:#3b73b9,color:#10233f;
-    classDef process fill:#f7f7f4,stroke:#777,color:#202020;
-    classDef decision fill:#fff4d6,stroke:#b88700,color:#2f2500;
+    output_writer --> fetch
+    sort_records --> final_bam["Filtered and tagged BAM"]
+    final_bam --> stats["Run statistics<br/>fragments included, skipped, and filtered"]
+
+    classDef core fill:#eef5ff,stroke:#3b73b9,color:#10233f;
+    classDef optional fill:#f7f7f4,stroke:#777,color:#202020;
+    classDef decision fill:#fff5d9,stroke:#b88700,color:#2f2500;
     classDef drop fill:#fbe7e7,stroke:#b84545,color:#3a1111;
-    classDef warning fill:#f3e8ff,stroke:#7c3fb2,color:#241033;
+    classDef output fill:#e9f8ef,stroke:#3e8f57,color:#102a17;
 
-    class input,output inputOutput;
-    class validate,resolve,load,writer,chrom_reader,fetch,stream,paired,unpaired,weights,tags,sort_buffer,flush process;
-    class read_filter,fragment_mode,fragment_filter decision;
-    class skip_read,skip_fragment drop;
-    class sorted_warning,tag_warning warning;
+    class input,setup,output_writer,fetch,assemble,weight,tag_records,sort_records core;
+    class windows,blacklist,scaling,gc optional;
+    class read_filter,fragment_filter decision;
+    class dropped_read,dropped_fragment drop;
+    class final_bam,stats output;
 ```
 
-## Notes
+## What Is Preserved
 
-`bam-to-bam` keeps the original BAM records, flags, CIGARs, sequences, qualities, and mate fields for surviving fragments. Paired-end fragments write both mates; unpaired `--reads-are-fragments` mode writes the single read.
+For each surviving fragment, `bam-to-bam` writes the original BAM record or records. It preserves flags, CIGARs, sequences, qualities, mate fields, and read names.
 
-The command currently preserves the input BAM header while choosing its own chromosome processing order. Review finding B2B-001 tracks the resulting coordinate-sort risk.
+## What Is Added
 
-The documented multi-character AUX tag names are under review in G-017. BAM AUX tag keys are two bytes, so the public tag vocabulary needs to be made explicit before release.
+Each surviving record receives the fragment length. When requested, records also receive GC correction weights, coverage-scaling weights, and fragment-count-scaling weights. Paired-end fragments write the same fragment-level metadata to both mates. Unpaired `--reads-are-fragments` mode writes one record per fragment.
