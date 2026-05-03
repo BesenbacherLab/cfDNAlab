@@ -57,3 +57,21 @@ Recommended future fix:
 - Move fetch-span adaptation before GC-prefix construction.
 - Build GC prefixes over the narrowed fetch span and shift fragment coordinates relative to that narrowed span.
 - Add a shared helper-level regression, or one command-level regression per fetch helper family, proving no reference sequence is requested for a no-window tile.
+
+## Converter review additions (2026-05-04)
+
+### Pre-release correctness/safety
+
+#### G-017 - High - Converter AUX tag names are longer than the BAM tag field
+
+`bam-to-bam` documents output tags named `COV`, `CNT`, and `FLEN` ([config.rs](../../src/commands/bam_to_bam/config.rs#L23-L35)), and its writer constants use those same byte strings ([sorted_writer.rs](../../src/commands/bam_to_bam/sorted_writer.rs#L9-L12)) before passing them to `Record::push_aux()` ([sorted_writer.rs](../../src/commands/bam_to_bam/sorted_writer.rs#L201-L218)). `frag-to-bam` uses the same `COV`, `CNT`, and `FLEN` byte strings when converting frag rows back to BAM records ([frag_to_bam.rs](../../src/commands/frag_to_bam/frag_to_bam.rs#L501-L523)).
+
+The package currently depends on `rust-htslib = "0.50.0"` ([Cargo.toml](../../Cargo.toml#L71)). The `rust-htslib` `Record::aux()` contract says only the first two bytes of a tag are used for lookup ([rust-htslib 0.50.0 docs](https://docs.rs/rust-htslib/0.50.0/rust_htslib/bam/record/struct.Record.html#method.aux)). That matches the BAM AUX field shape: the tag key is two bytes. By inspection, `COV`, `CNT`, and `FLEN` therefore do not create three- or four-character BAM tags. They are effectively written and read as `CO`, `CN`, and `FL`.
+
+Impact: downstream tools that inspect normal BAM/SAM optional fields will not see the documented `COV`, `CNT`, or `FLEN` names. The current tests can miss this because they also query with overlong byte strings such as `b"COV"` and `b"CNT"` ([test_bam_to_bam_command.rs](../../tests/test_bam_to_bam_command.rs#L643-L647), [test_bam_to_bam_command.rs](../../tests/test_bam_to_bam_command.rs#L682-L685), [test_bam_to_bam_command.rs](../../tests/test_bam_to_bam_command.rs#L727-L729)), which exercises the same first-two-byte lookup behavior instead of proving the serialized tag names.
+
+Recommended fix:
+
+- Pick explicit two-byte tag names for GC, coverage scaling, count scaling, and fragment length, then update CLI docs, README/docs, converter writers, and downstream consumers to use those names.
+- Add tests that inspect the actual serialized AUX tag keys, for example through `aux_iter()` or a SAM text roundtrip, rather than querying overlong names.
+- Decide and document what should happen when an input record already has one of the chosen tags. Silent replacement would be risky; a clear fail-fast error or an explicit overwrite flag would be easier to reason about.
