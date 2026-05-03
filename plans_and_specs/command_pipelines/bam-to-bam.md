@@ -7,33 +7,26 @@ Apply cfDNAlab fragment filters and optional correction weights to an existing B
 ```mermaid
 flowchart TD
     input["Input BAM<br/>coordinate-sorted and indexed"]
-    setup["Prepare run<br/>validate options, resolve chromosomes, load side files"]
-    output_writer["Open output BAM<br/>with the input header"]
-
-    input --> setup --> output_writer
+    reads["Read alignments<br/>from selected chromosomes"]
 
     subgraph side_inputs["Optional side inputs"]
         windows["BED windows<br/>keep overlapping fragments"]
         blacklist["Blacklist BED<br/>exclude problematic regions"]
         scaling["Scaling TSVs<br/>coverage and fragment-count weights"]
-        gc["GC package + 2bit reference<br/>sample-specific GC correction"]
+        gc["GC package + 2bit reference<br/>GC weights"]
     end
 
-    windows --> setup
-    blacklist --> setup
-    scaling --> setup
-    gc --> setup
+    input --> reads
 
-    subgraph chromosome_pass["Chromosome pass"]
-        fetch["Fetch selected reads<br/>whole chromosome or BED-focused span"]
+    subgraph fragment_flow["Fragment flow"]
         read_filter{"Read-level filters"}
-        assemble["Build fragments<br/>paired-end or reads-as-fragments"]
+        assemble["Build fragments<br/>pair inward-facing mates or use each read as a fragment"]
         fragment_filter{"Fragment-level filters"}
-        weight["Compute fragment metadata<br/>length, GC weight, scaling weights"]
-        tag_records["Attach metadata<br/>to each surviving BAM record"]
-        sort_records["Sort records within chromosome"]
+        weight["Compute fragment metadata<br/>fragment length and optional correction weights"]
+        tag_records["Attach metadata<br/>to the original BAM records"]
+        sort_records["Write records<br/>in coordinate order"]
 
-        fetch --> read_filter
+        reads --> read_filter
         read_filter -- "pass" --> assemble
         read_filter -- "fail" --> dropped_read["Drop read"]
         assemble --> fragment_filter
@@ -41,7 +34,11 @@ flowchart TD
         fragment_filter -- "fail" --> dropped_fragment["Drop fragment"]
     end
 
-    output_writer --> fetch
+    windows --> fragment_filter
+    blacklist --> fragment_filter
+    scaling --> weight
+    gc --> weight
+
     sort_records --> final_bam["Filtered and tagged BAM"]
     final_bam --> stats["Run statistics<br/>fragments included, skipped, and filtered"]
 
@@ -51,7 +48,7 @@ flowchart TD
     classDef drop fill:#fbe7e7,stroke:#b84545,color:#3a1111;
     classDef output fill:#e9f8ef,stroke:#3e8f57,color:#102a17;
 
-    class input,setup,output_writer,fetch,assemble,weight,tag_records,sort_records core;
+    class input,reads,assemble,weight,tag_records,sort_records core;
     class windows,blacklist,scaling,gc optional;
     class read_filter,fragment_filter decision;
     class dropped_read,dropped_fragment drop;
