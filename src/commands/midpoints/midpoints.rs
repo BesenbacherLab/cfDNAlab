@@ -108,7 +108,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     let total_windows: usize = windows_map.values().map(|gw| gw.len()).sum();
     info!(
         target: COMMAND_TARGET,
-        "       Num. chromosomes: {:?} | Num. windows: {:?} | Num. groups: {:?}",
+        "  Num. chromosomes: {:?} | Num. windows: {:?} | Num. groups: {:?}",
         windows_map.keys().len(),
         total_windows,
         num_groups,
@@ -116,11 +116,10 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
 
     // Ensure all windows have the same length
     let window_size = ensure_uniform_window_len(&windows_map)?;
-    let mut indexed_windows_map: FxHashMap<String, Vec<IndexedInterval<u64>>> =
-        FxHashMap::default();
-    for (chromosome, grouped_windows) in &windows_map {
-        indexed_windows_map.insert(chromosome.clone(), grouped_windows.as_slice().to_vec());
-    }
+    let indexed_windows_map: FxHashMap<String, Vec<IndexedInterval<u64>>> = windows_map
+        .into_iter()
+        .map(|(chromosome, grouped_windows)| (chromosome, grouped_windows.into_inner()))
+        .collect();
 
     // Parse and validate fragment length bins once so all tiles use the same edges
     let length_bins = opt.resolve_length_bins()?;

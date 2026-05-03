@@ -464,7 +464,7 @@ pub fn load_grouped_windows_from_bed(
     let mut reader = open_text_reader(bed.as_ref())?; // Works with &Path, PathBuf, &str
 
     // Optional whitelist of chromosomes
-    let mut vec_mapping: FxHashMap<String, Vec<(u64, u64, u64)>> = FxHashMap::default();
+    let mut vec_mapping: FxHashMap<String, Vec<IndexedInterval<u64>>> = FxHashMap::default();
     let allowed_chromosomes: Option<FxHashSet<&str>> = chromosomes.map(|chr_list| {
         let mut allowed = FxHashSet::with_capacity_and_hasher(chr_list.len(), Default::default());
         for chr in chr_list {
@@ -618,10 +618,14 @@ pub fn load_grouped_windows_from_bed(
             continue;
         }
 
+        let checked_window = IndexedInterval::new(start, end, group_idx).with_context(|| {
+            format!("BED parse error at line {}: invalid interval [{start},{end})", lineno)
+        })?;
+
         vec_mapping
             .entry(chr.to_string())
             .or_default()
-            .push((start, end, group_idx));
+            .push(checked_window);
     }
 
     if let Some(expected_num_windows) = exp_num_windows {
@@ -633,12 +637,12 @@ pub fn load_grouped_windows_from_bed(
         );
     }
 
-    // Convert parsed tuples into typed grouped windows.
-    // GroupedWindows::from_tuples delegates to GroupedWindows::new, which sorts internally.
+    // Convert parsed checked intervals into grouped windows.
+    // GroupedWindows::new sorts internally and caches the chromosome span.
     let windows_mapping: FxHashMap<String, GroupedWindows> = vec_mapping
         .into_iter()
-        .map(|(chr, windows)| Ok((chr.to_string(), GroupedWindows::from_tuples(&windows)?)))
-        .collect::<crate::Result<_>>()?;
+        .map(|(chr, windows)| (chr, GroupedWindows::new(windows)))
+        .collect();
 
     // Invert the group mapping to allow getting the group name from the group index
     let group_idx_to_name: FxHashMap<u64, String> = group_name_to_idx
