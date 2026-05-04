@@ -58,6 +58,8 @@ The following commands are currently available:
 
 ### Feature extraction
 
+Extract fragmentomics features:
+
 <dl>
   <hr>
   <dt><img
@@ -98,12 +100,14 @@ The following commands are currently available:
 
 ### Normalization
 
+Precompute GC-bias correction and genomic smoothing scaling factors:
+
 <dl>
   <hr>
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20gc--bias-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna gc-bias"
-  width="165"
+  width="162"
 />, <img
   src="https://img.shields.io/badge/%24-cfdna%20ref--gc--bias-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna ref-gc-bias"
