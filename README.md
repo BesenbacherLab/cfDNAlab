@@ -58,27 +58,33 @@ The following commands are currently available:
 
 ### Feature extraction
 
-<img
-  src="https://img.shields.io/badge/%24-cfdna%20fcoverage-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
-  alt="cfdna fcoverage"
-  width="150"
-/>
-
 <dl>
-  <dt><code>cfdna fcoverage</code></dt>
-  <dd>Count <i>fragment</i> coverage per position or aggregated in windows</dd>
-
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20fcoverage-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna fcoverage"
-  width="150"
+  width="200"
+/></dt>
+  <dd>Count <i>fragment</i> coverage per position or aggregated in windows</dd>
+
+  <dt><img
+  src="https://img.shields.io/badge/%24-cfdna%20midpoints-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  alt="cfdna midpoints"
+  width="200"
 /></dt>
   <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome<br>E.g., transcription factor binding sites, aggregated per transcription factor<br>Fast alternative to <i>Griffin</i></dd>
 
-  <dt><code>cfdna ends</code></dt>
+  <dt><img
+  src="https://img.shields.io/badge/%24-cfdna%20ends-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  alt="cfdna ends"
+  width="200"
+/></dt>
   <dd>Count fragment end- and breakpoint-motifs</dd>
 
-  <dt><code>cfdna lengths</code></dt>
+  <dt><img
+  src="https://img.shields.io/badge/%24-cfdna%20lengths-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  alt="cfdna lengths"
+  width="200"
+/></dt>
   <dd>Count fragment lengths<br>Defined as: <code>end(reverse) - start(forward)</code> for inwardly directed pairs only</dd>
 </dl>
 
