@@ -58,25 +58,21 @@ The following commands are currently available:
 
 ### Feature extraction
 
-![cfdna coverage](https://img.shields.io/badge/$-cfdna%20fcoverage-2f363d?style=flat&logo=gnubash&logoColor=white)
-
-<img
-  src="https://img.shields.io/badge/$-cfdna%20fcoverage-2f363d?style=flat&logo=gnubash&logoColor=white"
-  alt="cfdna coverage"
-  width="260"
-/>
-
 <img
   src="https://img.shields.io/badge/%24-cfdna%20fcoverage-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna fcoverage"
-  width="260"
+  width="150"
 />
 
 <dl>
   <dt><code>cfdna fcoverage</code></dt>
   <dd>Count <i>fragment</i> coverage per position or aggregated in windows</dd>
 
-  <dt><code>cfdna midpoints</code></dt>
+  <dt><img
+  src="https://img.shields.io/badge/%24-cfdna%20fcoverage-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  alt="cfdna fcoverage"
+  width="150"
+/></dt>
   <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome<br>E.g., transcription factor binding sites, aggregated per transcription factor<br>Fast alternative to <i>Griffin</i></dd>
 
   <dt><code>cfdna ends</code></dt>
