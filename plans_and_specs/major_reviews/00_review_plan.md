@@ -35,6 +35,7 @@ Unreleased commands should be ignored except when released commands depend on th
 - Use source links with line references for every concrete finding.
 - Separate bugs, scientific/semantic risks, performance risks, documentation inconsistencies, and test gaps.
 - Keep active findings triaged into pre-release correctness/safety, pre-release docs/API polish, and post-release performance optimization. Do not leave completed findings in the active queue.
+- Do not flag multiple outputs or auxiliary files as a problem by themselves. Only track output-related issues when they overwrite another output, obscure the documented output contract, make a requested primary artifact unavailable, or otherwise create a concrete correctness/safety risk.
 - Treat backwards compatibility as out of scope unless explicitly requested.
 - Do not run tests during review. Test suggestions should be derived by reading code and existing test coverage.
 

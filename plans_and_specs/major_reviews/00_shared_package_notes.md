@@ -4,7 +4,7 @@ Date: 2026-04-24
 
 Scope: package-level findings discovered while reviewing released commands. Do not duplicate these findings in command-specific review files unless there is a command-specific consequence that needs separate handling.
 
-This file now tracks only active shared findings. Findings that were already implemented have been removed from the active queue.
+This file now tracks only active shared findings. Findings that were already implemented have been removed from the active queue. Points that were reviewed and deliberately rejected as findings are listed separately so they are not re-added in later command reviews.
 
 Implemented findings removed from active tracking:
 
@@ -13,7 +13,6 @@ Implemented findings removed from active tracking:
 - G-004: `--gc-file` lacks shared fail-fast validation for the required `--ref-2bit`.
 - G-005: shared even-fragment midpoint tie-breaking is not reproducible.
 - G-007: plain BED modes need a shared no-surviving-windows guard.
-- G-008: feature-gated QC plots were previously listed as resolved; the active remaining issue is now tracked as G-020.
 - G-010: GC correction packages cannot identify the sample or inputs they were built from.
 - G-011: scaling-factor TSV compatibility metadata is minimal but sufficient for first release.
 - G-012: short final stride bins are length-weighted only in the numerator.
@@ -21,6 +20,10 @@ Implemented findings removed from active tracking:
 - G-014: smoothing-weight TSV writes do not explicitly flush the final writer.
 - G-015: all-zero smoothing runs fail with a misleading normalization error.
 - G-016: smoothing-weight commands cannot match `fcoverage --ignore-gap` segmentation.
+
+Reviewed and deliberately not tracked:
+
+- G-020: release builds with `plotters` can create QC plots or other auxiliary files by default. This is not a review finding by itself. Commands may legitimately have multiple outputs, and automated pipelines should depend on the specific required input/output artifacts they consume rather than failing because extra files are present. Do not re-add this as an issue unless a command overwrites a primary output, hides a required output contract, or makes a requested primary artifact unavailable.
 
 ## Pre-release docs/API polish
 
@@ -122,16 +125,44 @@ Recommended fix:
 - Reuse the same validator anywhere tag names are written or read.
 - Add `ApplyGCArgs` tests for invalid tag lengths and at least one command-level regression proving an overlong tag is rejected before reading the BAM.
 
-### Pre-release docs/API polish
+#### G-022 - Medium - Output prefixes can escape the output directory
 
-#### G-020 - Low - Release builds with `plotters` still create QC plots by default
+Output prefixes are described as sample/file prefixes, but the shared `dot_join()` helper only trims and dot-joins text; it does not reject path separators, `..`, or absolute-looking path components ([io.rs](../../src/shared/io.rs#L14-L27)). Commands then join those names directly under the requested output directory. Confirmed examples include final `ends` output paths ([write.rs](../../src/commands/ends/write.rs#L47-L64), [ends.rs](../../src/commands/ends/ends.rs#L460-L477)), `midpoints` output paths ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L189-L200)), `fcoverage` output paths ([fcoverage.rs](../../src/commands/fcoverage/fcoverage.rs#L349-L359)), `lengths` output paths ([lengths.rs](../../src/commands/lengths/lengths.rs#L527-L563), [writer.rs](../../src/commands/lengths/writer.rs#L80-L83)), the `ref-gc-bias` package output path ([ref_gc_bias.rs](../../src/commands/ref_gc_bias/ref_gc_bias.rs#L355-L357)), `gc-bias` correction, intermediate, and plot paths ([gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L742-L746), [gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L1460-L1467), [plotting.rs](../../src/commands/gc_bias/plotting.rs#L140-L180)), and scaling-weight final output/internal source directories used by `fragment-count-weights` and `coverage-weights` ([coverage_weights.rs](../../src/commands/coverage_weights/coverage_weights.rs#L135-L178)). The same prefix also feeds temporary directory names in tiled runs through `TempDirGuard` ([ends.rs](../../src/commands/ends/ends.rs#L291-L294), [lengths.rs](../../src/commands/lengths/lengths.rs#L323-L327), [tiled_run.rs](../../src/shared/tiled_run.rs#L642-L656)).
 
-The README install/build commands explicitly enable `plotters` ([README.md](../../README.md#L40-L48)). In that build, several released commands still write plot files as a default side effect. `midpoints` defaults `plot_groups` to `[0]` in both CLI and programmatic config ([config.rs](../../src/commands/midpoints/config.rs#L201-L216), [config.rs](../../src/commands/midpoints/config.rs#L240-L247)) and invokes plotting after writing the main outputs ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L301-L318)). `lengths` always writes an overall fragment-length PNG when `plotters` is enabled and bins are available ([lengths.rs](../../src/commands/lengths/lengths.rs#L568-L627)). `gc-bias` likewise plots correction summaries under the same feature gate ([gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L748-L765)).
+Because the prefix string is interpolated into filenames before `Path::join()`, values containing `/` or `..` are interpreted as path components. A normal sample name is fine, but a mistaken or hostile prefix can write final outputs or temporary directories outside the intended output directory.
 
-Impact: users following the documented installation path get extra PNG outputs even when they only requested machine-readable artifacts. This is not a scientific correctness issue, but it is still a default side effect and can surprise automated pipelines.
+Impact: commands do not fully enforce the user-facing invariant that outputs land inside `--output-dir`. This is lower risk than raw chromosome names from input files because the prefix is user-supplied CLI/config text, but automated pipelines commonly pass sample names from metadata, so it should still fail fast.
 
 Recommended fix:
 
-- Make plot output opt-in, or add a shared `--no-plots`/`--plots` policy and document it consistently.
-- If plots remain enabled by default in `plotters` builds, list the PNG outputs explicitly in command docs and README examples.
-- Add smoke coverage for the chosen default so this does not drift silently again.
+- Add one shared validator for output prefixes and other filename-stem inputs that rejects empty path components, `/`, platform path separators, `..`, and absolute paths.
+- Use the validator before any `dot_join()` result is passed to `Path::join()`.
+- Add command-level or shared helper regressions showing that prefixes such as `../sample` and `nested/sample` are rejected before output or temporary directories are created.
+
+#### G-023 - High - Reference GC packages do not record or check reference identity
+
+`ref-gc-bias` writes the reference package with the count matrices, smoothing/interpolation settings, length range, end offset, and `chromosomes_json` ([ref_gc_bias.rs](../../src/commands/ref_gc_bias/ref_gc_bias.rs#L388-L427)). It does not write a reference genome identity, contig-length fingerprint, or sequence fingerprint. The `gc-bias` loader reads those same fields and exposes only the chromosome names in `ReferenceGCMetadata` ([load_reference_bias.rs](../../src/commands/gc_bias/load_reference_bias.rs#L96-L177)).
+
+The consuming `gc-bias` command validates only that the package chromosome set equals the currently selected chromosome set ([gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L264-L272), [gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L811-L823)). It later writes the downstream correction package with a signature computed from the current `--ref-2bit` ([gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L732-L741)), so a correction matrix whose expected reference counts came from one 2bit can be repackaged as if it matched another 2bit.
+
+Impact: a reference GC package built from the wrong assembly or a custom reference with the same selected chromosome names can be accepted silently. The resulting GC correction matrix is then scientifically wrong, and downstream feature commands receive a correction package that appears to match the current reference.
+
+Recommended fix:
+
+- Add reference identity metadata to `ref_gc_package.npz`. At minimum, store a selected-contig name/length fingerprint; a content-aware sequence digest is stronger because reference GC bias depends on bases, not only contig names and lengths.
+- In `gc-bias`, compare the package reference identity against the current `--ref-2bit` before any counting or output creation, and fail fast on mismatch.
+- Add a regression where a package built from one 2bit is consumed with another 2bit that has the same chromosome names. The run should fail before producing a GC correction package.
+
+#### G-024 - High - GC correction package reference mismatches are warning-only
+
+File-based GC correction packages now carry a `reference_contig_signature`, and `load_gc_corrector()` computes the signature of the current `--ref-2bit` while loading a package ([correct.rs](../../src/commands/gc_bias/correct.rs#L587-L597), [correct.rs](../../src/commands/gc_bias/correct.rs#L631-L646)). On mismatch, however, the loader only emits a warning and still returns a usable corrector.
+
+The same loader is used by commands that apply GC correction from a package, including `bam-to-bam` ([bam_to_bam.rs](../../src/commands/bam_to_bam/bam_to_bam.rs#L149-L158)). That means a run can compute fragment GC percentages from one reference while applying a correction matrix fitted against another reference. A log warning is easy to miss in automated pipelines, and the output then looks like a successful corrected run.
+
+Impact: a detectable wrong-reference GC correction can proceed and produce scientifically invalid weights. This is separate from G-023: G-023 concerns upstream reference-GC packages that lack identity metadata, while this finding concerns final GC correction packages that do have detectable identity metadata but do not fail on mismatch.
+
+Recommended fix:
+
+- Treat `reference_contig_signature` mismatches as hard errors before chromosome processing or output creation.
+- If a permissive mode is needed for debugging or legacy packages, make it an explicit opt-in flag with warning-level CLI help.
+- Add one shared loader regression and one command-level smoke regression proving a mismatched package/reference pair fails before producing corrected output.

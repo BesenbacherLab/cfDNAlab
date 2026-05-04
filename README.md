@@ -144,6 +144,7 @@ cfdna <command>
   --ref-2bit <path>/hg38.2bit \                 # Reference genome in 2bit format
   --min-fragment-length <int> \                 # Minimum fragment length
   --max-fragment-length <int> \                 # Maximum fragment length
+  --length-bins <ints | start:stop:step> \      # OR fragment length bins (replaces min/max)
   --chromosomes chr1,chr2,chr3... \             # Chromosomes to include (default: chr1-chr22)
   --min-mapq <int> \                            # Minimum read mapping quality
   --by-size | --by-bed | --by-grouped-bed \     # Feature window definition (default: global)

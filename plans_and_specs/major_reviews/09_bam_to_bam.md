@@ -7,6 +7,7 @@ Scope: `src/commands/bam_to_bam/*`, CLI dispatch, shared BAM pairing and read-fi
 Shared findings that affect this command:
 
 - G-017 in `00_shared_package_notes.md`: converter AUX tag names are longer than the BAM tag field.
+- G-024 in `00_shared_package_notes.md`: GC correction package reference mismatches are warning-only.
 
 ## Release triage
 
@@ -14,6 +15,7 @@ Pre-release correctness/safety:
 
 - B2B-001: default lexicographic chromosome processing can produce output that is not coordinate-sorted by BAM header target id.
 - G-017: documented converter AUX tag names are not the actual serialized BAM tag keys.
+- G-024: wrong-reference GC correction packages can be loaded with only a warning.
 
 Pre-release docs/API polish:
 
@@ -44,3 +46,25 @@ Recommended fix:
 ## Existing coverage notes
 
 The command has direct coverage for MAPQ filtering, blacklist filtering, BED inclusion filtering, default MAPQ behavior, chromosome-order behavior, multi-chromosome output, scaling tags, paired/unpaired scaling equivalence, GC correction, neutralizing invalid GC, combined filters, scaling-file metadata mismatches, and scaling TSV chromosome coverage. The important gap from this review is that tag tests query overlong tag names and chromosome-order tests assert record name order without verifying BAM header target-id sortedness.
+
+## Released-command re-review additions (2026-05-04)
+
+### Shared findings reviewed for this command
+
+- G-017 applies directly: `bam-to-bam` writes `COV`, `CNT`, and `FLEN` through BAM AUX APIs that only serialize two-byte tag keys ([sorted_writer.rs](../../src/commands/bam_to_bam/sorted_writer.rs#L9-L12), [sorted_writer.rs](../../src/commands/bam_to_bam/sorted_writer.rs#L201-L218)).
+- G-024 applies directly: `bam-to-bam` calls `load_gc_corrector()` for `--gc-file` packages ([bam_to_bam.rs](../../src/commands/bam_to_bam/bam_to_bam.rs#L149-L158)), and that shared loader only warns on reference signature mismatch.
+
+Reviewed shared findings that do not apply:
+
+- G-018/G-019 do not apply to this command's current output path: `bam-to-bam` writes directly to `--out-bam` and does not create per-chromosome temporary files.
+- G-021 does not apply because the command uses file-only GC correction options and does not expose `--gc-tag`.
+- G-022 does not apply because the command takes an explicit `--out-bam` path rather than an output directory plus unchecked output prefix.
+
+### Release triage additions
+
+Pre-release correctness/safety:
+
+- B2B-001 remains the command-specific release blocker from this pass.
+- G-017 and G-024 are the active shared pre-release issues that affect this command.
+
+No additional `bam-to-bam`-specific correctness finding was found in this re-review beyond B2B-001.

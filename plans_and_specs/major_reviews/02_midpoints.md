@@ -193,7 +193,6 @@ The most important midpoint-specific missing tests from this review are sparse f
 Shared findings that affect this command:
 
 - G-019 in `00_shared_package_notes.md`: tiled temporary files use raw chromosome names as path components.
-- G-020 in `00_shared_package_notes.md`: release builds with `plotters` still create QC plots by default.
 - G-021 in `00_shared_package_notes.md`: `--gc-tag` accepts overlong BAM AUX tag names and silently reads the first two bytes.
 
 ### Release triage additions
@@ -202,10 +201,6 @@ Pre-release correctness/safety:
 
 - G-021: overlong `--gc-tag` values should fail fast instead of being interpreted by their first two bytes.
 - G-019: raw chromosome names in per-tile temporary filenames.
-
-Pre-release docs/API polish:
-
-- G-020: default QC plot side effects remain active in the documented `cli,plotters` build.
 
 Post-release performance:
 

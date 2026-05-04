@@ -13,7 +13,7 @@ flowchart TD
     fragment_filter{"Fragment-level filters"}
     weight["Compute fragment metadata<br/>fragment length and optional correction weights"]
     tag_records["Attach metadata<br/>to the original BAM records"]
-    sort_records["Write records<br/>in coordinate order"]
+    write_records["Write tagged records<br/>to output BAM"]
     final_bam["Filtered and tagged BAM"]
     stats["Run statistics<br/>fragments included, skipped, and filtered"]
 
@@ -23,7 +23,7 @@ flowchart TD
     input --> reads --> read_filter
     read_filter -- "pass" --> assemble --> fragment_filter
     read_filter -- "fail" --> dropped_read["Drop read"]
-    fragment_filter -- "pass" --> weight --> tag_records --> sort_records --> final_bam --> stats
+    fragment_filter -- "pass" --> weight --> tag_records --> write_records --> final_bam --> stats
     fragment_filter -- "fail" --> dropped_fragment["Drop fragment"]
 
     filter_inputs -.-> fragment_filter
@@ -35,7 +35,7 @@ flowchart TD
     classDef drop fill:#fbe7e7,stroke:#b84545,color:#3a1111;
     classDef output fill:#e9f8ef,stroke:#3e8f57,color:#102a17;
 
-    class input,reads,assemble,weight,tag_records,sort_records core;
+    class input,reads,assemble,weight,tag_records,write_records core;
     class filter_inputs,weight_inputs optional;
     class read_filter,fragment_filter decision;
     class dropped_read,dropped_fragment drop;
