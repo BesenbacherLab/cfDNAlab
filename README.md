@@ -56,49 +56,10 @@ target/release/cfdna --help
 
 The following commands are currently available:
 
-```mermaid
-flowchart LR
-  subgraph normalization["Normalization"]
-    direction TB
-    gc_bias["`**cfdna gc-bias**, **cfdna ref-gc-bias**
-Calculate GC-bias for correcting a sample in the main commands`"]
-    fragment_count_weights["`**cfdna fragment-count-weights**
-Calculate fragment count-based scaling factors for normalizing/smoothing fragment counts across the genome`"]
-    coverage_weights["`**cfdna coverage-weights**
-Calculate fragment coverage-based scaling factors for normalizing/smoothing coverage across the genome`"]
-  end
-
-  subgraph feature_extraction["Feature extraction"]
-    direction TB
-    fcoverage["`**cfdna fcoverage**
-Count *fragment* coverage per position or aggregated in windows`"]
-    midpoints["`**cfdna midpoints**
-Count fragment *midpoint* coverage in fixed-size intervals, collapsed by groups across the genome
-E.g. transcription factor binding sites, aggregated per transcription factor
-Fast alternative to *Griffin*`"]
-    ends["`**cfdna ends**
-Count fragment end- and breakpoint-motifs`"]
-    lengths["`**cfdna lengths**
-Count fragment lengths
-Defined as: end(reverse) - start(forward) for inwardly directed pairs only`"]
-  end
-
-  subgraph conversion["Conversion"]
-    direction TB
-    bam_to_bam["`**cfdna bam-to-bam**
-Apply our filters and/or write GC correction and coverage weight tags to a BAM file`"]
-    bam_to_frag["`**cfdna bam-to-frag**
-Write fragment coordinates to a &quot;frag&quot; file (bed-like tsv file)`"]
-    frag_to_bam["`**cfdna frag-to-bam**
-Convert fragment coordinates to a single-read unpaired BAM file`"]
-  end
-
-  gc_bias --> fcoverage
-  gc_bias --> midpoints
-  fragment_count_weights --> midpoints
-  coverage_weights --> fcoverage
-  bam_to_frag --> frag_to_bam
-```
+<dl>
+  <dt>cfdna **fcoverage</dt>
+  <dd>Count *fragment* coverage per position or aggregated in windows</dd>
+</dl>
 
 | Command                              | Description                                                                                                                                                                                                            |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
