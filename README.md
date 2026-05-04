@@ -56,6 +56,31 @@ target/release/cfdna --help
 
 The following commands are currently available:
 
+```mermaid
+flowchart TB
+  subgraph feature_extraction["**Feature extraction**<br />Extract fragmentomics features"]
+    fcoverage["`cfdna fcoverage`<br />Count *fragment* coverage per position or aggregated in windows"]
+    midpoints["`cfdna midpoints`<br />Count fragment *midpoint* coverage in fixed-size intervals, collapsed by groups across the genome<br />E.g. transcription factor binding sites, aggregated per transcription factor<br />Fast alternative to *Griffin*"]
+    ends["`cfdna ends`<br />Count fragment end- and breakpoint-motifs"]
+    lengths["`cfdna lengths`<br />Count fragment lengths<br />Defined as: `end(reverse) - start(forward)` for inwardly directed pairs only"]
+  end
+
+  subgraph normalization["**Normalization**<br />Precompute normalization/correction factors to enable their use in the feature extraction commands"]
+    gc_bias["`cfdna gc-bias`, `cfdna ref-gc-bias`<br />Calculate GC-bias for correcting a sample in the main commands"]
+    fragment_count_weights["`cfdna fragment-count-weights`<br />Calculate fragment count-based scaling factors for normalizing/smoothing fragment counts across the genome"]
+    coverage_weights["`cfdna coverage-weights`<br />Calculate fragment coverage-based scaling factors for normalizing/smoothing coverage across the genome"]
+  end
+
+  subgraph conversion["**Conversion**<br />Convert BAM > frag > BAM or BAM > BAM"]
+    bam_to_bam["`cfdna bam-to-bam`<br />Apply our filters and/or write GC correction and coverage weight tags to a BAM file"]
+    bam_to_frag["`cfdna bam-to-frag`<br />Write fragment coordinates to a &quot;frag&quot; file (bed-like tsv file)"]
+    frag_to_bam["`cfdna frag-to-bam`<br />Convert fragment coordinates to a single-read unpaired BAM file"]
+  end
+
+  normalization --> feature_extraction
+  bam_to_frag --> frag_to_bam
+```
+
 | Command                              | Description                                                                                                                                                                                                            |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Feature extraction**               | Extract fragmentomics features                                                                                                                                                                                         |
