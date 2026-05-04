@@ -90,7 +90,7 @@ The following commands are currently available:
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20lengths-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna lengths"
-  width="155"
+  width="160"
 /></dt>
   <dd>Count fragment lengths<br>Defined as: <code>end(reverse) - start(forward)</code> for inwardly directed pairs only</dd>
   <hr>
@@ -103,7 +103,7 @@ The following commands are currently available:
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20gc--bias-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna gc-bias"
-  width="155"
+  width="165"
 />, <img
   src="https://img.shields.io/badge/%24-cfdna%20ref--gc--bias-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna ref-gc-bias"
@@ -148,7 +148,7 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20bam--to--frag-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna bam-to-frag"
-  width="215"
+  width="210"
 /></dt>
   <dd>Write fragment coordinates to a "frag" file (bed-like tsv file)</dd>
 
@@ -157,7 +157,7 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20frag--to--frag-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna frag-to-frag"
-  width="216"
+  width="210"
 /></dt>
   <dd>Convert fragment coordinates to a single-read unpaired BAM file</dd>
   <hr>
