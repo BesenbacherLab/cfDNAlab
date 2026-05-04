@@ -57,8 +57,8 @@ target/release/cfdna --help
 The following commands are currently available:
 
 <dl>
-  <dt>cfdna **fcoverage</dt>
-  <dd>Count *fragment* coverage per position or aggregated in windows</dd>
+  <dt><code>cfdna fcoverage</code></dt>
+  <dd>Count <i>fragment</i> coverage per position or aggregated in windows</dd>
 </dl>
 
 | Command                              | Description                                                                                                                                                                                                            |
