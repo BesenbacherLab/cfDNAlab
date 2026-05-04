@@ -58,7 +58,13 @@ The following commands are currently available:
 
 ### Feature extraction
 
-![command](https://img.shields.io/badge/$-cfdna%fcoverarage-2f363d?style=flat&logo=gnubash&logoColor=white)
+![cfdna coverage](https://img.shields.io/badge/$-cfdna%20fcoverage-2f363d?style=flat&logo=gnubash&logoColor=white)
+
+<img
+  src="https://img.shields.io/badge/$-cfdna%20fcoverage-2f363d?style=flat&logo=gnubash&logoColor=white"
+  alt="cfdna coverage"
+  height="40"
+/>
 
 <dl>
   <dt><code>cfdna fcoverage</code></dt>
