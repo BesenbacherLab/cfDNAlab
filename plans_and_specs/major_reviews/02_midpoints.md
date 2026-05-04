@@ -187,3 +187,30 @@ Overall: the Claude findings are mostly low-severity cleanup and statistics-cons
 The command already has broad integration coverage: length-bin parsing, default MAPQ, paired/unpaired parity, group index ordering, even-length midpoint edge placement, blacklist midpoint behavior, real GC packages, GC tags, GC/scaling multiplication, scaling TSV validation, tile-boundary behavior, chromosome-end fetch narrowing, CLI smoke output, and cross-command BAM/fragment roundtrips are all represented.
 
 The most important midpoint-specific missing tests from this review are sparse final-output roundtrips if M-001B is implemented and the chosen even-midpoint blacklist semantics if that contract changes. The deferred skipped-tile GC reference pruning optimization is tracked in G-006 in `00_shared_package_notes.md`.
+
+## Re-review additions (2026-05-04)
+
+Shared findings that affect this command:
+
+- G-019 in `00_shared_package_notes.md`: tiled temporary files use raw chromosome names as path components.
+- G-020 in `00_shared_package_notes.md`: release builds with `plotters` still create QC plots by default.
+- G-021 in `00_shared_package_notes.md`: `--gc-tag` accepts overlong BAM AUX tag names and silently reads the first two bytes.
+
+### Release triage additions
+
+Pre-release correctness/safety:
+
+- G-021: overlong `--gc-tag` values should fail fast instead of being interpreted by their first two bytes.
+- G-019: raw chromosome names in per-tile temporary filenames.
+
+Pre-release docs/API polish:
+
+- G-020: default QC plot side effects remain active in the documented `cli,plotters` build.
+
+Post-release performance:
+
+- G-006 remains the only midpoint-specific performance item from this pass.
+
+### Command-specific findings
+
+No new midpoints-only counting correctness finding was added in this pass. The new issues found while re-reading `midpoints` are shared input/output contract issues and are tracked in `00_shared_package_notes.md` to avoid duplicating them across affected commands.

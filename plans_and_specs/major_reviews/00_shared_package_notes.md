@@ -13,7 +13,7 @@ Implemented findings removed from active tracking:
 - G-004: `--gc-file` lacks shared fail-fast validation for the required `--ref-2bit`.
 - G-005: shared even-fragment midpoint tie-breaking is not reproducible.
 - G-007: plain BED modes need a shared no-surviving-windows guard.
-- G-008: feature-gated QC plots are default command side effects.
+- G-008: feature-gated QC plots were previously listed as resolved; the active remaining issue is now tracked as G-020.
 - G-010: GC correction packages cannot identify the sample or inputs they were built from.
 - G-011: scaling-factor TSV compatibility metadata is minimal but sufficient for first release.
 - G-012: short final stride bins are length-weighted only in the numerator.
@@ -89,3 +89,49 @@ Recommended fix:
 - Name per-chromosome temp files by a trusted ordinal or generated token, for example `chrom.000001.frag.tmp`, and keep the real chromosome name only in an in-memory map.
 - Add regression coverage for a chromosome name containing `/` and one containing `..`, proving the command either handles the name safely or rejects it with a direct validation error before writing temp files.
 - Prefer one shared helper for per-contig temp filenames so future converter and tiled-command code does not reintroduce raw path components.
+
+## Released-command re-review additions (2026-05-04)
+
+### Pre-release correctness/safety
+
+#### G-019 - Medium - Tiled command temporary files use raw chromosome names as path components
+
+Several released tiled commands interpolate BAM/reference chromosome names directly into per-tile temporary filenames. Confirmed sites include `fcoverage` ([fcoverage.rs](../../src/commands/fcoverage/fcoverage.rs#L457-L482)), `midpoints` ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L234-L240)), `ends` ([ends.rs](../../src/commands/ends/ends.rs#L607-L612)), and `lengths` ([tiling.rs](../../src/commands/lengths/tiling.rs#L52-L85)). `prepare-windows` already shows the safer direction by sanitizing `/` before creating chromosome temp files ([writers.rs](../../src/commands/prepare_windows/writers.rs#L105-L108)), though a more complete shared helper should handle `..` and other path-component edge cases as well.
+
+Because chromosome names are not filesystem-safe by definition, names containing `/`, `..`, or other path separators can turn one intended filename into nested path components. Normal references will not trigger this, but custom references or hostile inputs can cause confusing write failures or writes outside the intended per-run temp directory.
+
+Impact: tiled commands can fail or write intermediate files in unexpected locations before final output is produced. This is the same class of issue as G-018, but it affects the tiled command path rather than the converter-specific temp files.
+
+Recommended fix:
+
+- Introduce one shared per-contig temp-name helper that maps chromosome names to safe ordinals or escaped tokens.
+- Use that helper in `fcoverage`, `midpoints`, `ends`, `lengths`, and converter temp-file creation so the same invariant is enforced everywhere.
+- Add regression coverage with chromosome names containing `/` and `..`, proving the commands either encode names safely or reject them before creating temp files.
+
+#### G-021 - Medium - `--gc-tag` accepts overlong BAM AUX tag names and silently reads the first two bytes
+
+`ApplyGCArgs::validate()` rejects `--gc-file`/`--gc-tag` conflicts and missing `--ref-2bit` for GC files, but it does not validate the supplied `gc_tag` string itself ([cli_common.rs](../../src/commands/cli_common.rs#L705-L713)). Commands then pass the raw string bytes into fragment iteration. In `midpoints`, for example, `gc_tag.as_bytes()` is passed through to `fragments_from_bam()` ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L495-L515)), and the shared read mappers pass those bytes directly to `read_gc_tag_from_record()` ([minimal_fragment.rs](../../src/shared/fragment/minimal_fragment.rs#L49-L58), [segment_fragment.rs](../../src/shared/fragment/segment_fragment.rs#L167-L178), [ends_fragment.rs](../../src/shared/fragment/ends_fragment.rs#L114-L124)).
+
+`read_gc_tag_from_record()` calls `Record::aux(tag)` without checking the tag length ([gc_tag.rs](../../src/shared/gc_tag.rs#L171-L193)). The same `rust-htslib` behavior noted in G-017 applies here: BAM AUX tags are two-byte keys, and overlong lookup strings are effectively interpreted by their first two bytes. A user typo such as `--gc-tag GCP` can therefore read `GC` instead of failing fast.
+
+Impact: GC-tag correction can silently use a different tag than the user requested. In the common case users pass `GC`, so this does not affect normal GCParagon/GCfix usage. It matters for typo detection and for pipelines that expose tag names as configuration.
+
+Recommended fix:
+
+- Add shared validation for `--gc-tag`: exactly two ASCII bytes, with a direct error for empty, one-byte, overlong, or non-ASCII values.
+- Reuse the same validator anywhere tag names are written or read.
+- Add `ApplyGCArgs` tests for invalid tag lengths and at least one command-level regression proving an overlong tag is rejected before reading the BAM.
+
+### Pre-release docs/API polish
+
+#### G-020 - Low - Release builds with `plotters` still create QC plots by default
+
+The README install/build commands explicitly enable `plotters` ([README.md](../../README.md#L40-L48)). In that build, several released commands still write plot files as a default side effect. `midpoints` defaults `plot_groups` to `[0]` in both CLI and programmatic config ([config.rs](../../src/commands/midpoints/config.rs#L201-L216), [config.rs](../../src/commands/midpoints/config.rs#L240-L247)) and invokes plotting after writing the main outputs ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L301-L318)). `lengths` always writes an overall fragment-length PNG when `plotters` is enabled and bins are available ([lengths.rs](../../src/commands/lengths/lengths.rs#L568-L627)). `gc-bias` likewise plots correction summaries under the same feature gate ([gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L748-L765)).
+
+Impact: users following the documented installation path get extra PNG outputs even when they only requested machine-readable artifacts. This is not a scientific correctness issue, but it is still a default side effect and can surprise automated pipelines.
+
+Recommended fix:
+
+- Make plot output opt-in, or add a shared `--no-plots`/`--plots` policy and document it consistently.
+- If plots remain enabled by default in `plotters` builds, list the PNG outputs explicitly in command docs and README examples.
+- Add smoke coverage for the chosen default so this does not drift silently again.
