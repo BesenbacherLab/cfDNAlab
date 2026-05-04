@@ -56,7 +56,9 @@ target/release/cfdna --help
 
 The following commands are currently available:
 
-### Feature extractio
+### Feature extraction
+
+![command](https://img.shields.io/badge/$-cfdna%fcoverarage-2f363d?style=flat&logo=gnubash&logoColor=white)
 
 <dl>
   <dt><code>cfdna fcoverage</code></dt>
