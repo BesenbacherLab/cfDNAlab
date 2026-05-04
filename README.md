@@ -58,11 +58,13 @@ The following commands are currently available:
 
 ### Feature extraction
 
+<kbd><code>$ cfdna fcoverage</code></kbd>
+
 <dl>
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20fcoverage-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna fcoverage"
-  width="190"
+  width="185"
 /></dt>
   <dd>Count <i>fragment</i> coverage per position or aggregated in windows</dd>
 
