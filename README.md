@@ -107,7 +107,7 @@ Precompute GC-bias correction and genomic smoothing scaling factors:
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20gc--bias-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna gc-bias"
-  width="162"
+  width="160"
 />, <img
   src="https://img.shields.io/badge/%24-cfdna%20ref--gc--bias-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna ref-gc-bias"
@@ -128,7 +128,7 @@ Precompute GC-bias correction and genomic smoothing scaling factors:
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20coverage--weights-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna coverage-weights"
-  width="240"
+  width="245"
 /></dt>
   <dd>Calculate fragment coverage-based scaling factors for normalizing/smoothing coverage across the genome</dd>
   <hr>
