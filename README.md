@@ -56,18 +56,51 @@ target/release/cfdna --help
 
 The following commands are currently available:
 
+### Feature extractio
+
 <dl>
   <dt><code>cfdna fcoverage</code></dt>
   <dd>Count <i>fragment</i> coverage per position or aggregated in windows</dd>
 
   <dt><code>cfdna midpoints</code></dt>
-  <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome<br>E.g. transcription factor binding sites, aggregated per transcription factor<br>Fast alternative to <i>Griffin</i></dd>
+  <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome<br>E.g., transcription factor binding sites, aggregated per transcription factor<br>Fast alternative to <i>Griffin</i></dd>
 
   <dt><code>cfdna ends</code></dt>
   <dd>Count fragment end- and breakpoint-motifs</dd>
 
   <dt><code>cfdna lengths</code></dt>
   <dd>Count fragment lengths<br>Defined as: <code>end(reverse) - start(forward)</code> for inwardly directed pairs only</dd>
+</dl>
+
+### Normalization
+
+<dl>
+  <dt><code>cfdna gc-bias</code>, <code>cfdna ref-gc-bias</code></dt>
+  <dd>Calculate GC-bias for correcting a sample in the feature extraction commands</dd>
+
+  <dt><code>cfdna fragment-count-weights</code></dt>
+  <dd>Calculate fragment count-based scaling factors for normalizing/smoothing fragment counts across the genome</dd>
+
+  <dt><code>cfdna coverage-weights</code></dt>
+  <dd>Calculate fragment coverage-based scaling factors for normalizing/smoothing coverage across the genome</dd>
+
+  <dt><code>cfdna lengths</code></dt>
+  <dd>Count fragment lengths<br>Defined as: <code>end(reverse) - start(forward)</code> for inwardly directed pairs only</dd>
+</dl>
+
+### Conversion
+
+Convert BAM files to frag files, frag files to BAM files, and BAM files to tagged BAM files:
+
+<dl>
+  <dt><code>cfdna bam-to-bam</code></dt>
+  <dd>Apply our filters and/or write GC correction and coverage weight tags to a BAM file</dd>
+
+  <dt><code>cfdna bam-to-frag</code></dt>
+  <dd>Write fragment coordinates to a "frag" file (bed-like tsv file)</dd>
+
+  <dt><code>cfdna frag-to-bam</code></dt>
+  <dd>Convert fragment coordinates to a single-read unpaired BAM file</dd>
 </dl>
 
 | Command                              | Description                                                                                                                                                                                                            |
