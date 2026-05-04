@@ -63,7 +63,13 @@ The following commands are currently available:
 <img
   src="https://img.shields.io/badge/$-cfdna%20fcoverage-2f363d?style=flat&logo=gnubash&logoColor=white"
   alt="cfdna coverage"
-  height="40"
+  width="260"
+/>
+
+<img
+  src="https://img.shields.io/badge/%24-cfdna%20fcoverage-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  alt="cfdna fcoverage"
+  width="260"
 />
 
 <dl>
