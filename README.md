@@ -99,17 +99,35 @@ The following commands are currently available:
 ### Normalization
 
 <dl>
-  <dt><code>cfdna gc-bias</code>, <code>cfdna ref-gc-bias</code></dt>
+  <hr>
+  <dt><img
+  src="https://img.shields.io/badge/%24-cfdna%20gc--bias-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  alt="cfdna gc-bias"
+  width="155"
+/>, <img
+  src="https://img.shields.io/badge/%24-cfdna%20ref--gc--bias-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  alt="cfdna ref-gc-bias"
+  width="200"
+/></dt>
   <dd>Calculate GC-bias for correcting a sample in the feature extraction commands</dd>
 
-  <dt><code>cfdna fragment-count-weights</code></dt>
+  <hr>
+  <dt><img
+  src="https://img.shields.io/badge/%24-cfdna%20fragment--count--weights-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  alt="cfdna fragment-count-weights"
+  width="300"
+/></dt>
   <dd>Calculate fragment count-based scaling factors for normalizing/smoothing fragment counts across the genome</dd>
 
-  <dt><code>cfdna coverage-weights</code></dt>
-  <dd>Calculate fragment coverage-based scaling factors for normalizing/smoothing coverage across the genome</dd>
+  <hr>
 
-  <dt><code>cfdna lengths</code></dt>
-  <dd>Count fragment lengths<br>Defined as: <code>end(reverse) - start(forward)</code> for inwardly directed pairs only</dd>
+  <dt><img
+  src="https://img.shields.io/badge/%24-cfdna%20coverage--weights-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  alt="cfdna coverage-weights"
+  width="240"
+/></dt>
+  <dd>Calculate fragment coverage-based scaling factors for normalizing/smoothing coverage across the genome</dd>
+  <hr>
 </dl>
 
 ### Conversion
@@ -117,14 +135,32 @@ The following commands are currently available:
 Convert BAM files to frag files, frag files to BAM files, and BAM files to tagged BAM files:
 
 <dl>
-  <dt><code>cfdna bam-to-bam</code></dt>
+  <hr>
+  <dt><img
+  src="https://img.shields.io/badge/%24-cfdna%20bam--to--bam-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  alt="cfdna bam-to-bam"
+  width="210"
+/></dt>
   <dd>Apply our filters and/or write GC correction and coverage weight tags to a BAM file</dd>
 
-  <dt><code>cfdna bam-to-frag</code></dt>
+  <hr>
+
+  <dt><img
+  src="https://img.shields.io/badge/%24-cfdna%20bam--to--frag-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  alt="cfdna bam-to-frag"
+  width="220"
+/></dt>
   <dd>Write fragment coordinates to a "frag" file (bed-like tsv file)</dd>
 
-  <dt><code>cfdna frag-to-bam</code></dt>
+  <hr>
+
+  <dt><img
+  src="https://img.shields.io/badge/%24-cfdna%20frag--to--frag-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  alt="cfdna frag-to-frag"
+  width="230"
+/></dt>
   <dd>Convert fragment coordinates to a single-read unpaired BAM file</dd>
+  <hr>
 </dl>
 
 | Command                              | Description                                                                                                                                                                                                            |
