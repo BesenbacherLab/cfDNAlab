@@ -42,10 +42,14 @@
   display: grid;
   place-items: center;
   padding: 2rem 1rem;
-  background:
+  background-image:
+    var(--hero-background-logo),
     radial-gradient(circle at 20% 20%, rgba(25, 93, 127, 0.15), transparent 40%),
     radial-gradient(circle at 80% 70%, rgba(30, 107, 147, 0.12), transparent 45%),
     linear-gradient(180deg, #f7fbfd 0%, #eef5f8 100%);
+  background-repeat: repeat, no-repeat, no-repeat, no-repeat;
+  background-size: 96px auto, auto, auto, auto;
+  background-position: top left, 20% 20%, 80% 70%, center;
 }
 
 .heroInner {
@@ -57,6 +61,14 @@
   width: min(520px, 80vw);
   height: auto;
   margin-bottom: 1rem;
+  -webkit-mask-image:
+    linear-gradient(to right, transparent 0, black 5px, black calc(100% - 5px), transparent 100%),
+    linear-gradient(to bottom, transparent 0, black 5px, black calc(100% - 5px), transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(to right, transparent 0, black 5px, black calc(100% - 5px), transparent 100%),
+    linear-gradient(to bottom, transparent 0, black 5px, black calc(100% - 5px), transparent 100%);
+  mask-composite: intersect;
 }
 
 .heroInner h1 {

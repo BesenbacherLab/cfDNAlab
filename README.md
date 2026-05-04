@@ -1,7 +1,7 @@
 <br>
 
 <p align="center">
-  <img src="cfdnalab_logo_750x500_150dpi.png" height="475" />
+  <img src="cfdnalab_logo_750x500_150dpi.png" height="400" />
 </p>
 
 <p align="center">
