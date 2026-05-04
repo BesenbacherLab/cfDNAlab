@@ -20,7 +20,7 @@ function HeroButtons() {
 }
 
 export default function Home() {
-  const logoUrl = useBaseUrl('/img/cfdnalab_logo_400x255_144dpi.png');
+  const logoUrl = useBaseUrl('/img/cfdnalab_logo_750x500_150dpi.png');
 
   return (
     <Layout
