@@ -107,7 +107,7 @@ The following commands are currently available:
 />, <img
   src="https://img.shields.io/badge/%24-cfdna%20ref--gc--bias-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna ref-gc-bias"
-  width="200"
+  width="190"
 /></dt>
   <dd>Calculate GC-bias for correcting a sample in the feature extraction commands</dd>
 
@@ -148,7 +148,7 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20bam--to--frag-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna bam-to-frag"
-  width="220"
+  width="215"
 /></dt>
   <dd>Write fragment coordinates to a "frag" file (bed-like tsv file)</dd>
 
@@ -157,7 +157,7 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20frag--to--frag-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna frag-to-frag"
-  width="230"
+  width="220"
 /></dt>
   <dd>Convert fragment coordinates to a single-read unpaired BAM file</dd>
   <hr>
