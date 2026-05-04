@@ -74,16 +74,14 @@ The following commands are currently available:
   <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome<br>E.g., transcription factor binding sites, aggregated per transcription factor<br>Fast alternative to <i>Griffin</i></dd>
 
   <dt><img
-  src="https://img.shields.io/badge/%24-cfdna%20ends-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  src="https://img.shields.io/badge/%24-cfdna%20ends-2f363d?style=for-the-badge&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna ends"
-  width="160"
 /></dt>
   <dd>Count fragment end- and breakpoint-motifs</dd>
 
   <dt><img
-  src="https://img.shields.io/badge/%24-cfdna%20lengths-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
+  src="https://img.shields.io/badge/%24-cfdna%20lengths-2f363d?style=for-the-badge&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna lengths"
-  width="190"
 /></dt>
   <dd>Count fragment lengths<br>Defined as: <code>end(reverse) - start(forward)</code> for inwardly directed pairs only</dd>
 </dl>
