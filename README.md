@@ -76,14 +76,14 @@ The following commands are currently available:
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20ends-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna ends"
-  width="135"
+  width="140"
 /></dt>
   <dd>Count fragment end- and breakpoint-motifs</dd>
 
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20lengths-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna lengths"
-  width="150"
+  width="155"
 /></dt>
   <dd>Count fragment lengths<br>Defined as: <code>end(reverse) - start(forward)</code> for inwardly directed pairs only</dd>
 </dl>
