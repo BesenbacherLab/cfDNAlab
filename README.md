@@ -1,7 +1,7 @@
 <br>
 
 <p align="center">
-  <img src="cfdnalab_logo_400x255_144dpi.png" height="255" />
+  <img src="cfdnalab_logo_2_650x443_144dpi.png" height="355" />
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@
 
 <br>
 
-Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, **fragment end-motifs**, and **fragment lengths** across the whole genome (or in windows) in mere seconds or minutes. All commands integrate options for sample-specific GC correction and large-scale genomic smoothing.
+Ultra-fast command-line tools for analysis of cell-free DNA. Extract **fragment coverage**, **midpoint coverage**, **fragment end-motifs**, and **fragment lengths** across the whole genome or in windows in mere seconds or minutes. All commands integrate options for sample-specific GC correction and large-scale genomic smoothing.
 
 Works on cfDNA **fragments** from either *paired-end* sequencing data or unpaired data where each read represents a full fragment. Written in rust for *speed*.
 
