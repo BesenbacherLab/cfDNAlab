@@ -107,7 +107,7 @@ The following commands are currently available:
 />, <img
   src="https://img.shields.io/badge/%24-cfdna%20ref--gc--bias-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna ref-gc-bias"
-  width="190"
+  width="185"
 /></dt>
   <dd>Calculate GC-bias for correcting a sample in the feature extraction commands</dd>
 
@@ -115,7 +115,7 @@ The following commands are currently available:
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20fragment--count--weights-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna fragment-count-weights"
-  width="300"
+  width="295"
 /></dt>
   <dd>Calculate fragment count-based scaling factors for normalizing/smoothing fragment counts across the genome</dd>
 
@@ -157,27 +157,11 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20frag--to--frag-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna frag-to-frag"
-  width="220"
+  width="216"
 /></dt>
   <dd>Convert fragment coordinates to a single-read unpaired BAM file</dd>
   <hr>
 </dl>
-
-| Command                              | Description                                                                                                                                                                                                            |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Feature extraction**               | Extract fragmentomics features                                                                                                                                                                                         |
-| `cfdna fcoverage`                    | Count *fragment* coverage per position or aggregated in windows                                                                                                                                                        |
-| `cfdna midpoints`                    | Count fragment *midpoint* coverage in fixed-size intervals, collapsed by groups across the genome<br />E.g. transcription factor binding sites, aggregated per transcription factor<br />Fast alternative to *Griffin* |
-| `cfdna ends`                         | Count fragment end- and breakpoint-motifs                                                                                                                                                                              |
-| `cfdna lengths`                      | Count fragment lengths<br />Defined as: `end(reverse) - start(forward)` for inwardly directed pairs only                                                                                                               |
-| **Normalization**                    | Precompute normalization/correction factors to enable their use in the feature extraction commands                                                                                                                     |
-| `cfdna gc-bias`, `cfdna ref-gc-bias` | Calculate GC-bias for correcting a sample in the main commands                                                                                                                                                         |
-| `cfdna fragment-count-weights`       | Calculate fragment count-based scaling factors for normalizing/smoothing fragment counts across the genome                                                                                                             |
-| `cfdna coverage-weights`             | Calculate fragment coverage-based scaling factors for normalizing/smoothing coverage across the genome                                                                                                                 |
-| **Conversion**                       | Convert BAM > frag > BAM or BAM > BAM                                                                                                                                                                                  |
-| `cfdna bam-to-bam`                   | Apply our filters and/or write GC correction and coverage weight tags to a BAM file                                                                                                                                    |
-| `cfdna bam-to-frag`                  | Write fragment coordinates to a "frag" file (bed-like tsv file)                                                                                                                                                        |
-| `cfdna frag-to-bam`                  | Convert fragment coordinates to a single-read unpaired BAM file                                                                                                                                                        |
 
 Planned: `cfdna fragment-kmers` (count kmers within fragments), `cfdna wps-peaks` (call windowed protection score peaks). Let us know what other fragmentomics features you would like to extract with `cfDNAlab`.
 
