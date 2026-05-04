@@ -6,30 +6,30 @@ Build a reusable reference GC package for a genome assembly. The command samples
 
 ```mermaid
 flowchart TD
-    input["Reference genome<br/>2bit file"]
-    setup["Define reference model<br/>chromosomes, length range, end offset"]
-    regions["Select usable genome<br/>all bases or merged BED regions"]
-    sample["Sample start positions<br/>same starts reused across lengths"]
-    tiles["Scan reference in tiles<br/>with max-length sequence halos"]
-    mask["Mask excluded bases<br/>blacklists and ambiguous sequence"]
-    count["Count reference fragments<br/>GC by fragment length"]
-    merge["Merge tile counts<br/>one genome-wide reference table"]
-    smooth["Smooth raw GC counts<br/>optional length-row kernel"]
-    percent["Convert to GC percentage<br/>with bin-width correction"]
-    support["Build support masks<br/>impossible bins and sparse bins"]
-    interpolate["Interpolate sparse bins<br/>optional per-length filling"]
-    package["Reference GC package<br/>ref_gc_package.npz"]
-    consumer["Used by gc-bias<br/>to fit sample-specific correction"]
+    input["Reference genome<br/>2bit file"];
+    setup["Define reference model<br/>chromosomes, length range, end offset"];
+    regions["Select usable genome<br/>all bases or merged BED regions"];
+    sample["Sample start positions<br/>same starts reused across lengths"];
+    tiles["Scan reference in tiles<br/>with max-length sequence halos"];
+    mask["Mask excluded bases<br/>blacklists and ambiguous sequence"];
+    count["Count reference fragments<br/>GC by fragment length"];
+    merge["Merge tile counts<br/>one genome-wide reference table"];
+    smooth["Smooth raw GC counts<br/>optional length-row kernel"];
+    percent["Convert to GC percentage<br/>with bin-width correction"];
+    support["Build support masks<br/>impossible bins and sparse bins"];
+    interpolate["Interpolate sparse bins<br/>optional per-length filling"];
+    package["Reference GC package<br/>ref_gc_package.npz"];
+    consumer["Used by gc-bias<br/>to fit sample-specific correction"];
 
-    region_inputs["Optional region inputs<br/>BED include regions and blacklists"]
-    run_inputs["Optional run controls<br/>sampling target, seed, threads"]
+    region_inputs["Optional region inputs<br/>BED include regions and blacklists"];
+    run_inputs["Optional run controls<br/>sampling target, seed, threads"];
 
-    input --> setup --> regions --> sample --> tiles --> mask --> count --> merge --> smooth --> percent --> support --> interpolate --> package --> consumer
+    input --> setup --> regions --> sample --> tiles --> mask --> count --> merge --> smooth --> percent --> support --> interpolate --> package --> consumer;
 
-    region_inputs -.-> regions
-    region_inputs -.-> mask
-    run_inputs -.-> sample
-    run_inputs -.-> tiles
+    region_inputs -.-> regions;
+    region_inputs -.-> mask;
+    run_inputs -.-> sample;
+    run_inputs -.-> tiles;
 
     classDef core fill:#eef5ff,stroke:#3b73b9,color:#10233f;
     classDef optional fill:#f7f7f4,stroke:#777,color:#202020;
