@@ -17,14 +17,14 @@ flowchart TD
     smooth["Smooth raw GC counts<br/>optional length-row kernel"];
     percent["Convert to GC percentage<br/>with bin-width correction"];
     support["Build support masks<br/>impossible bins and sparse bins"];
-    interpolate["Interpolate sparse bins<br/>optional per-length filling"];
+    fill_sparse_bins["Interpolate sparse bins<br/>optional per-length filling"];
     package["Reference GC package<br/>ref_gc_package.npz"];
     consumer["Used by gc-bias<br/>to fit sample-specific correction"];
 
     region_inputs["Optional region inputs<br/>BED include regions and blacklists"];
     run_inputs["Optional run controls<br/>sampling target, seed, threads"];
 
-    input --> setup --> regions --> sample --> tiles --> mask --> count --> merge --> smooth --> percent --> support --> interpolate --> package --> consumer;
+    input --> setup --> regions --> sample --> tiles --> mask --> count --> merge --> smooth --> percent --> support --> fill_sparse_bins --> package --> consumer;
 
     region_inputs -.-> regions;
     region_inputs -.-> mask;
@@ -35,7 +35,7 @@ flowchart TD
     classDef optional fill:#f7f7f4,stroke:#777,color:#202020;
     classDef outputClass fill:#e9f8ef,stroke:#3e8f57,color:#102a17;
 
-    class input,setup,regions,sample,tiles,mask,count,merge,smooth,percent,support,interpolate core;
+    class input,setup,regions,sample,tiles,mask,count,merge,smooth,percent,support,fill_sparse_bins core;
     class region_inputs,run_inputs optional;
     class package,consumer outputClass;
 ```
