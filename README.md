@@ -67,7 +67,7 @@ Extract fragmentomics features:
   alt="cfdna fcoverage"
   width="185"
 /></dt>
-  <dd>Count <i>fragment</i> coverage per position or aggregated in windows</dd>
+  <dd>Count <i>fragment</i> coverage per position or aggregated in windows.</dd>
   
   <hr>
 
@@ -76,7 +76,7 @@ Extract fragmentomics features:
   alt="cfdna midpoints"
   width="185"
 /></dt>
-  <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome<br>E.g., transcription factor binding sites, aggregated per transcription factor<br>Fast alternative to <i>Griffin</i></dd>
+  <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome<br>E.g., transcription factor binding sites, aggregated per transcription factor<br>Fast alternative to <i>Griffin</i>.</dd>
   
   <hr>
 
@@ -85,7 +85,7 @@ Extract fragmentomics features:
   alt="cfdna ends"
   width="140"
 /></dt>
-  <dd>Count fragment end- and breakpoint-motifs</dd>
+  <dd>Count fragment end- and breakpoint-motifs.</dd>
   
   <hr>
   
@@ -94,7 +94,7 @@ Extract fragmentomics features:
   alt="cfdna lengths"
   width="160"
 /></dt>
-  <dd>Count fragment lengths<br>Defined as: <code>end(reverse) - start(forward)</code> for inwardly directed pairs only</dd>
+  <dd>Count fragment lengths.<br>In paired-end, this is defined as: <code>end(reverse) - start(forward)</code> for inwardly directed pairs only.</dd>
   <hr>
 </dl>
 
@@ -107,13 +107,13 @@ Precompute GC-bias correction and genomic smoothing scaling factors:
   <dt><img
   src="https://img.shields.io/badge/%24-cfdna%20gc--bias-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna gc-bias"
-  width="160"
+  width="158"
 />, <img
   src="https://img.shields.io/badge/%24-cfdna%20ref--gc--bias-2f363d?style=flat&amp;logo=gnubash&amp;logoColor=white"
   alt="cfdna ref-gc-bias"
   width="185"
 /></dt>
-  <dd>Calculate GC-bias for correcting a sample in the feature extraction commands</dd>
+  <dd>Calculate GC-bias for correcting a sample in the feature extraction commands.</dd>
 
   <hr>
   <dt><img
@@ -121,7 +121,7 @@ Precompute GC-bias correction and genomic smoothing scaling factors:
   alt="cfdna fragment-count-weights"
   width="295"
 /></dt>
-  <dd>Calculate fragment count-based scaling factors for normalizing/smoothing fragment counts across the genome</dd>
+  <dd>Calculate fragment count-based scaling factors for normalizing/smoothing fragment counts across the genome.</dd>
 
   <hr>
 
@@ -130,7 +130,7 @@ Precompute GC-bias correction and genomic smoothing scaling factors:
   alt="cfdna coverage-weights"
   width="245"
 /></dt>
-  <dd>Calculate fragment coverage-based scaling factors for normalizing/smoothing coverage across the genome</dd>
+  <dd>Calculate fragment coverage-based scaling factors for normalizing/smoothing coverage across the genome.</dd>
   <hr>
 </dl>
 
@@ -145,7 +145,7 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   alt="cfdna bam-to-bam"
   width="210"
 /></dt>
-  <dd>Apply our filters and/or write GC correction and coverage weight tags to a BAM file</dd>
+  <dd>Apply our filters and/or write GC correction and coverage weight tags to a BAM file.</dd>
 
   <hr>
 
@@ -154,7 +154,7 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   alt="cfdna bam-to-frag"
   width="210"
 /></dt>
-  <dd>Write fragment coordinates to a "frag" file (bed-like tsv file)</dd>
+  <dd>Write fragment coordinates to a "frag" file (bed-like tsv file).</dd>
 
   <hr>
 
@@ -163,7 +163,7 @@ Convert BAM files to frag files, frag files to BAM files, and BAM files to tagge
   alt="cfdna frag-to-frag"
   width="210"
 /></dt>
-  <dd>Convert fragment coordinates to a single-read unpaired BAM file</dd>
+  <dd>Convert fragment coordinates to a single-read unpaired BAM file.</dd>
   <hr>
 </dl>
 
