@@ -1130,7 +1130,7 @@ mod tests_bam_to_frag {
         // - The fixture contains one paired fragment spanning [20, 80).
         // - The scaling TSV has one chromosome-wide factor of 2.0.
         // - `bam-to-frag` averages scaling over the full fragment span, which stays 2.0.
-        // - `bam-to-bam` writes the same full-fragment scaling as the `COV` tag on both mates.
+        // - `bam-to-bam` writes the same full-fragment scaling as the `cw` tag on both mates.
         // - So the two released transformers should encode the same weight for the same fragment.
 
         let frag_out_dir = work.path().join("frag_out");
@@ -1170,9 +1170,9 @@ mod tests_bam_to_frag {
         let mut cov_tags = Vec::new();
         for record in reader.records() {
             let record = record?;
-            match record.aux(b"COV") {
+            match record.aux(b"cw") {
                 Ok(Aux::Float(value)) => cov_tags.push(value),
-                other => panic!("expected COV float tag on every mate, got {other:?}"),
+                other => panic!("expected cw float tag on every mate, got {other:?}"),
             }
         }
         assert_eq!(cov_tags, vec![2.0_f32, 2.0_f32]);
@@ -1196,7 +1196,7 @@ mod tests_bam_to_frag {
         // - The fixture contains one paired fragment spanning [20, 80).
         // - The count-scaling TSV has one chromosome-wide factor of 0.5.
         // - `bam-to-frag` averages count scaling over the full fragment span, which stays 0.5.
-        // - `bam-to-bam` writes the same full-fragment count scaling as the `CNT` tag on both mates.
+        // - `bam-to-bam` writes the same full-fragment count scaling as the `nw` tag on both mates.
         let frag_out_dir = work.path().join("frag_out");
         std::fs::create_dir_all(&frag_out_dir)?;
         let frag_ioc = IOCArgs {
@@ -1235,9 +1235,9 @@ mod tests_bam_to_frag {
         let mut cnt_tags = Vec::new();
         for record in reader.records() {
             let record = record?;
-            match record.aux(b"CNT") {
+            match record.aux(b"nw") {
                 Ok(Aux::Float(value)) => cnt_tags.push(value),
-                other => panic!("expected CNT float tag on every mate, got {other:?}"),
+                other => panic!("expected nw float tag on every mate, got {other:?}"),
             }
         }
         assert_eq!(cnt_tags, vec![0.5_f32, 0.5_f32]);
@@ -1390,7 +1390,7 @@ mod tests_bam_to_frag {
         //   scaling is also 2.0.
         // - Therefore:
         //   - `bam-to-frag` should emit `chr1 20 80 60 + 3 2`
-        //   - `bam-to-bam` should emit `GC=3.0`, `COV=2.0`, and `FLEN=60` on both mates.
+        //   - `bam-to-bam` should emit `GC=3.0`, `cw=2.0`, and `fl=60` on both mates.
 
         let frag_out_dir = work.path().join("frag_combined_out");
         std::fs::create_dir_all(&frag_out_dir)?;
@@ -1454,13 +1454,13 @@ mod tests_bam_to_frag {
                 Ok(Aux::Float(value)) => value,
                 other => panic!("expected GC float tag on every mate, got {other:?}"),
             };
-            let scaling = match record.aux(b"COV") {
+            let scaling = match record.aux(b"cw") {
                 Ok(Aux::Float(value)) => value,
-                other => panic!("expected COV float tag on every mate, got {other:?}"),
+                other => panic!("expected cw float tag on every mate, got {other:?}"),
             };
-            let flen = match record.aux(b"FLEN") {
+            let flen = match record.aux(b"fl") {
                 Ok(Aux::U32(value)) => value,
-                other => panic!("expected FLEN u32 tag on every mate, got {other:?}"),
+                other => panic!("expected fl u32 tag on every mate, got {other:?}"),
             };
             observed_tags.push((gc, scaling, flen));
         }
@@ -1481,9 +1481,9 @@ mod tests_bam_to_frag {
             );
             assert!(
                 (scaling - 2.0).abs() < 1e-6,
-                "mate {mate_idx} COV tag: expected 2.0, got {scaling}"
+                "mate {mate_idx} cw tag: expected 2.0, got {scaling}"
             );
-            assert_eq!(flen, 60, "mate {mate_idx} FLEN tag: expected 60");
+            assert_eq!(flen, 60, "mate {mate_idx} fl tag: expected 60");
         }
 
         Ok(())
@@ -1584,16 +1584,16 @@ mod tests_bam_to_frag {
         let mut cov_tags = Vec::new();
         for record in reader.records() {
             let record = record?;
-            match record.aux(b"COV") {
+            match record.aux(b"cw") {
                 Ok(Aux::Float(value)) => cov_tags.push(value as f64),
-                other => panic!("expected COV float tag on every mate, got {other:?}"),
+                other => panic!("expected cw float tag on every mate, got {other:?}"),
             }
         }
         assert_eq!(cov_tags.len(), 2);
         for (mate_idx, value) in cov_tags.iter().enumerate() {
             assert!(
                 (*value - expected_weight).abs() < 1e-6,
-                "bam-to-bam COV tag for mate {mate_idx}: expected {expected_weight}, got {value}"
+                "bam-to-bam cw tag for mate {mate_idx}: expected {expected_weight}, got {value}"
             );
         }
 
@@ -1722,7 +1722,7 @@ mod tests_bam_to_frag {
             );
             assert!(
                 (*frag_cnt - *bam_cnt).abs() <= 1e-6,
-                "fragment start {frag_start}: bam-to-frag and bam-to-bam should encode the same fragment-level CNT weight, got {frag_cnt} vs {bam_cnt}"
+                "fragment start {frag_start}: bam-to-frag and bam-to-bam should encode the same fragment-level nw weight, got {frag_cnt} vs {bam_cnt}"
             );
         }
 
@@ -1918,7 +1918,7 @@ mod tests_bam_to_frag {
         // - So both released converters must preserve the fragment unchanged apart from encoding
         //   the explicit neutral GC weight:
         //     `bam-to-frag`: row `chr1 20 80 60 + 1`
-        //     `bam-to-bam`: both mates tagged with `GC=1.0` and `FLEN=60`
+        //     `bam-to-bam`: both mates tagged with `GC=1.0` and `fl=60`
 
         let frag_out_dir = work.path().join("frag_real_gc");
         std::fs::create_dir_all(&frag_out_dir)?;
@@ -1977,9 +1977,9 @@ mod tests_bam_to_frag {
                 Ok(Aux::Float(value)) => value,
                 other => panic!("expected GC float tag on every mate, got {other:?}"),
             };
-            let flen = match record.aux(b"FLEN") {
+            let flen = match record.aux(b"fl") {
                 Ok(Aux::U32(value)) => value,
-                other => panic!("expected FLEN u32 tag on every mate, got {other:?}"),
+                other => panic!("expected fl u32 tag on every mate, got {other:?}"),
             };
             observed_gc_tags.push(gc);
             observed_flen_tags.push(flen);
@@ -2119,9 +2119,9 @@ mod tests_bam_to_frag {
                 Ok(Aux::Float(value)) => value,
                 other => panic!("expected GC float tag on every mate, got {other:?}"),
             };
-            let flen = match record.aux(b"FLEN") {
+            let flen = match record.aux(b"fl") {
                 Ok(Aux::U32(value)) => value,
-                other => panic!("expected FLEN u32 tag on every mate, got {other:?}"),
+                other => panic!("expected fl u32 tag on every mate, got {other:?}"),
             };
             observed_gc_tags.push(gc);
             observed_flen_tags.push(flen);
@@ -2338,13 +2338,13 @@ mod tests_bam_to_frag {
                 .expect("synthetic BAM qnames should be valid UTF-8")
                 .to_string();
             let start = record.pos() as u64;
-            let flen = match record.aux(b"FLEN") {
+            let flen = match record.aux(b"fl") {
                 Ok(Aux::U32(value)) => value,
-                other => panic!("expected FLEN u32 tag on every mate, got {other:?}"),
+                other => panic!("expected fl u32 tag on every mate, got {other:?}"),
             };
-            let cnt = match record.aux(b"CNT") {
+            let cnt = match record.aux(b"nw") {
                 Ok(Aux::Float(value)) => value as f64,
-                other => panic!("expected CNT float tag on every mate, got {other:?}"),
+                other => panic!("expected nw float tag on every mate, got {other:?}"),
             };
             per_qname.entry(qname).or_default().push((start, flen, cnt));
         }
@@ -2364,11 +2364,11 @@ mod tests_bam_to_frag {
             for (_, flen, cnt) in &entries[1..] {
                 assert_eq!(
                     *flen, expected_flen,
-                    "mates should agree on FLEN for qname {qname}"
+                    "mates should agree on fl for qname {qname}"
                 );
                 assert!(
                     (*cnt - expected_cnt).abs() <= 1e-12,
-                    "mates should carry identical CNT tags for qname {qname}, got {expected_cnt} vs {cnt}"
+                    "mates should carry identical nw tags for qname {qname}, got {expected_cnt} vs {cnt}"
                 );
             }
 

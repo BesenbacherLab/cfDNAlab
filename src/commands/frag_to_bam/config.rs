@@ -18,11 +18,11 @@ use std::path::PathBuf;
 ///
 /// - `gc_weight` -> `GC`
 ///
-/// - `coverage_scaling_weight` -> `COV`
+/// - `coverage_scaling_weight` -> `cw`
 ///
-/// - `count_scaling_weight` -> `CNT`
+/// - `count_scaling_weight` -> `nw`
 ///
-/// - `flen` -> `FLEN`
+/// - `flen` -> `fl`
 ///
 /// ## BAM file
 ///

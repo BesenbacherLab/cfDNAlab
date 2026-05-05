@@ -23,6 +23,46 @@ pub fn parse_output_prefix(raw_value: &str) -> std::result::Result<String, Strin
     Ok(prefix.to_string())
 }
 
+/// Parse a SAM/BAM AUX tag name supplied on the command line.
+///
+/// BAM stores exactly two bytes for each AUX tag key. Validating here keeps typos
+/// such as `GCP` from being interpreted by the lower-level BAM API as `GC`.
+pub fn parse_sam_aux_tag_name(raw_value: &str) -> std::result::Result<String, String> {
+    let tag = raw_value.trim();
+    validate_sam_aux_tag_name(tag).map_err(|error| error.to_string())?;
+    Ok(tag.to_string())
+}
+
+/// Validate an already parsed SAM/BAM AUX tag name.
+///
+/// Programmatic configs can bypass clap parsing, so command startup validation
+/// should call this before passing tag bytes to rust-htslib.
+pub fn validate_sam_aux_tag_name(tag: &str) -> Result<()> {
+    ensure!(
+        tag.len() == 2,
+        "SAM/BAM AUX tag names must be exactly two ASCII bytes, got `{}`",
+        tag
+    );
+    let mut bytes = tag.bytes();
+    let first = bytes
+        .next()
+        .expect("length was checked before reading first AUX tag byte");
+    let second = bytes
+        .next()
+        .expect("length was checked before reading second AUX tag byte");
+    ensure!(
+        first.is_ascii_alphabetic(),
+        "SAM/BAM AUX tag `{}` is invalid: first character must be an ASCII letter",
+        tag
+    );
+    ensure!(
+        second.is_ascii_alphanumeric(),
+        "SAM/BAM AUX tag `{}` is invalid: second character must be an ASCII letter or digit",
+        tag
+    );
+    Ok(())
+}
+
 /// Validate an already parsed output prefix.
 ///
 /// Programmatic configs can bypass clap parsing, so command startup validation should call this
@@ -717,6 +757,9 @@ pub struct ApplyGCArgs {
 
     /// Optional aux tag to get GC weight from when using external GC correction packages `[string]`
     ///
+    /// The tag name must be exactly two ASCII characters matching the SAM/BAM AUX tag format:
+    /// first character is a letter, second character is a letter or digit.
+    ///
     /// Packages like `GCParagon` and `GCfix` allow saving GC weights directly to the reads
     /// in a BAM file. They often assign a "GC" aux tag.
     ///
@@ -727,7 +770,7 @@ pub struct ApplyGCArgs {
         feature = "cli",
         clap(
             long,
-            value_parser,
+            value_parser = parse_sam_aux_tag_name,
             group = "gc_correction",
             help_heading = "GC Correction (select max. one source)"
         )
@@ -752,6 +795,9 @@ impl ApplyGCArgs {
     pub fn validate(&self, ref_2bit: Option<&Path>) -> Result<()> {
         if self.gc_file.is_some() && self.gc_tag.is_some() {
             bail!("--gc-file and --gc-tag cannot be used together");
+        }
+        if let Some(gc_tag) = &self.gc_tag {
+            validate_sam_aux_tag_name(gc_tag)?;
         }
         validate_gc_file_reference(self.gc_file.as_deref(), ref_2bit)?;
         Ok(())

@@ -247,15 +247,15 @@ fn read_aux_tags(path: &Path) -> Result<Vec<AuxTags>> {
             Ok(Aux::Float(value)) => Some(value),
             _ => None,
         };
-        let coverage_scaling_weight = match record.aux(b"COV") {
+        let coverage_scaling_weight = match record.aux(b"cw") {
             Ok(Aux::Float(value)) => Some(value),
             _ => None,
         };
-        let count_scaling_weight = match record.aux(b"CNT") {
+        let count_scaling_weight = match record.aux(b"nw") {
             Ok(Aux::Float(value)) => Some(value),
             _ => None,
         };
-        let fragment_length = match record.aux(b"FLEN") {
+        let fragment_length = match record.aux(b"fl") {
             Ok(Aux::U32(value)) => Some(value),
             _ => None,
         };
@@ -267,6 +267,54 @@ fn read_aux_tags(path: &Path) -> Result<Vec<AuxTags>> {
         });
     }
     Ok(tags)
+}
+
+fn assert_first_record_has_exact_aux_tags(path: &Path, expected_tags: &[&[u8; 2]]) -> Result<()> {
+    let aux_tags = read_first_record_aux_tag_names(path)?;
+    for expected_tag in expected_tags {
+        assert!(
+            aux_tags
+                .iter()
+                .any(|observed_tag| observed_tag.as_slice() == expected_tag.as_slice()),
+            "expected first record in {} to contain exact AUX tag {:?}, observed {:?}",
+            path.display(),
+            std::str::from_utf8(expected_tag.as_slice()).unwrap(),
+            aux_tags
+        );
+    }
+    Ok(())
+}
+
+fn assert_first_record_lacks_aux_tags(path: &Path, unexpected_tags: &[&[u8; 2]]) -> Result<()> {
+    let aux_tags = read_first_record_aux_tag_names(path)?;
+    for unexpected_tag in unexpected_tags {
+        assert!(
+            !aux_tags
+                .iter()
+                .any(|observed_tag| observed_tag.as_slice() == unexpected_tag.as_slice()),
+            "first record in {} should not contain old truncated AUX tag {:?}, observed {:?}",
+            path.display(),
+            std::str::from_utf8(unexpected_tag.as_slice()).unwrap(),
+            aux_tags
+        );
+    }
+    Ok(())
+}
+
+fn read_first_record_aux_tag_names(path: &Path) -> Result<Vec<Vec<u8>>> {
+    let mut reader = bam::Reader::from_path(path)?;
+    let record = reader
+        .records()
+        .next()
+        .context("expected BAM to contain at least one record")??;
+    record
+        .aux_iter()
+        .map(|aux_result| {
+            aux_result
+                .map(|(tag, _aux_value)| tag.to_vec())
+                .map_err(Into::into)
+        })
+        .collect()
 }
 
 fn assert_optional_f32_eq(actual: Option<f32>, expected: Option<f32>, label: &str) {
@@ -569,7 +617,7 @@ fn given_unsupported_extra_columns_and_ignore_extras_when_run_then_conversion_su
     // Same unsupported header as the previous test, but `--ignore-extras` is enabled.
     // Hand-derived expectation:
     // - The fragment [10,20) passes all filters and becomes one BAM record.
-    // - Extra column `gc` is ignored, so GC/COV/FLEN tags are absent.
+    // - Extra column `gc` is ignored, so GC/cw/fl tags are absent.
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -604,7 +652,7 @@ fn given_unsupported_extra_columns_and_ignore_extras_when_run_then_conversion_su
 
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
@@ -618,8 +666,8 @@ fn given_inline_header_with_unknown_extra_and_allow_unknown_extras_when_run_then
     // Inline header has unknown `gc` and known `flen`.
     // Hand-derived expectation:
     // - Unknown `gc` is ignored
-    // - Known `flen` still maps to FLEN=30
-    // - GC and COV tags are absent
+    // - Known `flen` still maps to fl=30
+    // - GC and cw tags are absent
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -653,7 +701,7 @@ fn given_inline_header_with_unknown_extra_and_allow_unknown_extras_when_run_then
     assert_unpaired_full_match_record(&rows[0], "chr1", 10, 40, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, Some(30));
 
     Ok(())
@@ -666,8 +714,8 @@ fn given_supported_extra_column_names_when_run_then_gc_cov_and_flen_are_transfer
     // Arrange:
     // Header uses the three supported extra names exactly.
     // Hand-derived tag expectations:
-    // Row 1 -> GC=0.25, COV=1.5, FLEN=10
-    // Row 2 -> GC=None ("na"), COV=None ("."), FLEN=11
+    // Row 1 -> GC=0.25, cw=1.5, fl=10
+    // Row 2 -> GC=None ("na"), cw=None ("."), fl=11
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -703,11 +751,13 @@ fn given_supported_extra_column_names_when_run_then_gc_cov_and_flen_are_transfer
 
     assert_eq!(aux_tags.len(), 2);
     assert_optional_f32_eq(aux_tags[0].gc_weight, Some(0.25), "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, Some(1.5), "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, Some(1.5), "cw");
     assert_eq!(aux_tags[0].fragment_length, Some(10));
     assert_optional_f32_eq(aux_tags[1].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[1].fragment_length, Some(11));
+    assert_first_record_has_exact_aux_tags(&output_bam_path, &[b"GC", b"cw", b"fl"])?;
+    assert_first_record_lacks_aux_tags(&output_bam_path, &[b"CO", b"FL"])?;
 
     Ok(())
 }
@@ -718,8 +768,8 @@ fn given_fragment_count_scaling_column_when_run_then_cnt_aux_tag_is_written() ->
     // Arrange:
     // Header includes the new recognized fragment-count scaling column.
     // Hand-derived tag expectations:
-    // Row 1 -> COV=1.5, CNT=0.5, FLEN=10
-    // Row 2 -> COV=None, CNT=2.0, FLEN=11
+    // Row 1 -> cw=1.5, nw=0.5, fl=10
+    // Row 2 -> cw=None, nw=2.0, fl=11
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -754,12 +804,14 @@ fn given_fragment_count_scaling_column_when_run_then_cnt_aux_tag_is_written() ->
     assert_unpaired_full_match_record(&rows[1], "chr1", 20, 31, 40, '-', "fragment_2");
 
     assert_eq!(aux_tags.len(), 2);
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, Some(1.5), "COV");
-    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "CNT");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, Some(1.5), "cw");
+    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "nw");
     assert_eq!(aux_tags[0].fragment_length, Some(10));
-    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "COV");
-    assert_optional_f32_eq(aux_tags[1].count_scaling_weight, Some(2.0), "CNT");
+    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "cw");
+    assert_optional_f32_eq(aux_tags[1].count_scaling_weight, Some(2.0), "nw");
     assert_eq!(aux_tags[1].fragment_length, Some(11));
+    assert_first_record_has_exact_aux_tags(&output_bam_path, &[b"cw", b"nw", b"fl"])?;
+    assert_first_record_lacks_aux_tags(&output_bam_path, &[b"CO", b"CN", b"FL"])?;
 
     Ok(())
 }
@@ -771,9 +823,9 @@ fn given_inline_header_with_only_count_scaling_when_run_then_only_cnt_aux_tag_is
     // Arrange:
     // Inline header defines only the count-scaling extra column.
     // Hand-derived expectations:
-    // - Row 1 -> CNT=0.5
-    // - Row 2 -> CNT absent because value is "."
-    // - GC, COV, and FLEN remain absent for both rows
+    // - Row 1 -> nw=0.5
+    // - Row 2 -> nw absent because value is "."
+    // - GC, cw, and fl remain absent for both rows
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -809,12 +861,12 @@ fn given_inline_header_with_only_count_scaling_when_run_then_only_cnt_aux_tag_is
 
     assert_eq!(aux_tags.len(), 2);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
-    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "CNT");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
+    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "nw");
     assert_eq!(aux_tags[0].fragment_length, None);
     assert_optional_f32_eq(aux_tags[1].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "COV");
-    assert_optional_f32_eq(aux_tags[1].count_scaling_weight, None, "CNT");
+    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "cw");
+    assert_optional_f32_eq(aux_tags[1].count_scaling_weight, None, "nw");
     assert_eq!(aux_tags[1].fragment_length, None);
 
     Ok(())
@@ -832,7 +884,7 @@ fn given_no_header_and_extra_columns_when_run_then_extra_columns_are_ignored_and
     // Hand-derived expectation:
     // - One fragment [10,20) is converted to one BAM record
     // - Trailing values `0.25 1.5 10` are ignored
-    // - GC, COV, and FLEN tags are absent
+    // - GC, cw, and fl tags are absent
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.tsv");
@@ -859,7 +911,7 @@ fn given_no_header_and_extra_columns_when_run_then_extra_columns_are_ignored_and
     assert_unpaired_full_match_record(&rows[0], "chr1", 10, 20, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
@@ -871,9 +923,9 @@ fn given_inline_header_with_only_flen_when_run_then_only_flen_aux_tag_is_written
     // Arrange:
     // Inline header defines only one supported extra column (`flen`).
     // Hand-derived expectation:
-    // - Row 1 has flen=80 so FLEN=80 is written
-    // - Row 2 has flen="." so FLEN is absent
-    // - GC and COV remain absent for both rows
+    // - Row 1 has flen=80 so fl=80 is written
+    // - Row 2 has flen="." so fl is absent
+    // - GC and cw remain absent for both rows
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -909,10 +961,10 @@ fn given_inline_header_with_only_flen_when_run_then_only_flen_aux_tag_is_written
 
     assert_eq!(aux_tags.len(), 2);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, Some(80));
     assert_optional_f32_eq(aux_tags[1].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[1].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[1].fragment_length, None);
 
     Ok(())
@@ -924,8 +976,8 @@ fn given_explicit_header_with_only_flen_when_run_then_only_flen_aux_tag_is_writt
     // Arrange:
     // Frag file has no inline header. We pass an explicit header file that maps column 6 to `flen`.
     // Hand-derived expectation:
-    // - One fragment [10,60) with FLEN=50
-    // - GC and COV remain absent
+    // - One fragment [10,60) with fl=50
+    // - GC and cw remain absent
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -958,7 +1010,7 @@ fn given_explicit_header_with_only_flen_when_run_then_only_flen_aux_tag_is_writt
     assert_unpaired_full_match_record(&rows[0], "chr1", 10, 60, 42, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, Some(50));
 
     Ok(())
@@ -1018,7 +1070,7 @@ fn given_explicit_header_with_unsupported_extra_column_and_ignore_extras_when_ru
     // With --ignore-extras, the header is accepted and only the core five columns are used.
     // Hand-derived expectation:
     // - One fragment [10,20) is written
-    // - GC, COV, and FLEN tags are absent
+    // - GC, cw, and fl tags are absent
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -1052,7 +1104,7 @@ fn given_explicit_header_with_unsupported_extra_column_and_ignore_extras_when_ru
     assert_unpaired_full_match_record(&rows[0], "chr1", 10, 20, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
@@ -1066,7 +1118,7 @@ fn given_explicit_header_with_unknown_extra_and_allow_unknown_extras_when_run_th
     // Explicit header has unknown `gc` and known `flen`.
     // Hand-derived expectation:
     // - Unknown `gc` is ignored
-    // - Known `flen` maps to FLEN=30
+    // - Known `flen` maps to fl=30
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -1100,7 +1152,7 @@ fn given_explicit_header_with_unknown_extra_and_allow_unknown_extras_when_run_th
     assert_unpaired_full_match_record(&rows[0], "chr1", 5, 35, 60, '-', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, Some(30));
 
     Ok(())
@@ -1114,8 +1166,8 @@ fn given_companion_header_with_only_flen_when_run_then_only_flen_aux_tag_is_writ
     // No explicit header is configured and frag has no inline header.
     // The companion header path is auto-detected from `<prefix>.frag.tsv`.
     // Hand-derived expectation:
-    // - One record [20,70) with FLEN=50 from the 6th column
-    // - GC and COV remain absent
+    // - One record [20,70) with fl=50 from the 6th column
+    // - GC and cw remain absent
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("sample.frag.tsv");
@@ -1147,7 +1199,7 @@ fn given_companion_header_with_only_flen_when_run_then_only_flen_aux_tag_is_writ
     assert_unpaired_full_match_record(&rows[0], "chr1", 20, 70, 39, '-', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, Some(50));
 
     Ok(())
@@ -1161,8 +1213,8 @@ fn given_companion_header_with_only_count_scaling_when_run_then_only_cnt_aux_tag
     // No explicit header and no inline header. The companion header therefore defines the
     // count-scaling column.
     // Hand-derived expectations:
-    // - one fragment [20,70) gets CNT=0.5
-    // - GC, COV, and FLEN remain absent
+    // - one fragment [20,70) gets nw=0.5
+    // - GC, cw, and fl remain absent
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("sample.frag.tsv");
@@ -1194,8 +1246,8 @@ fn given_companion_header_with_only_count_scaling_when_run_then_only_cnt_aux_tag
     assert_unpaired_full_match_record(&rows[0], "chr1", 20, 70, 39, '-', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
-    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "CNT");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
+    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "nw");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
@@ -1210,7 +1262,7 @@ fn given_companion_header_with_unsupported_extra_column_and_ignore_extras_when_r
     // With --ignore-extras, conversion should continue using only core columns.
     // Hand-derived expectation:
     // - One fragment [10,20) is written
-    // - GC, COV, and FLEN tags are absent
+    // - GC, cw, and fl tags are absent
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("sample.frag.tsv");
@@ -1243,7 +1295,7 @@ fn given_companion_header_with_unsupported_extra_column_and_ignore_extras_when_r
     assert_unpaired_full_match_record(&rows[0], "chr1", 10, 20, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
@@ -1257,7 +1309,7 @@ fn given_companion_header_with_unknown_extra_and_allow_unknown_extras_when_run_t
     // Companion header has unknown `gc` and known `flen`.
     // Hand-derived expectation:
     // - Unknown `gc` is ignored
-    // - Known `flen` maps to FLEN=30
+    // - Known `flen` maps to fl=30
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("sample.frag.tsv");
@@ -1290,7 +1342,7 @@ fn given_companion_header_with_unknown_extra_and_allow_unknown_extras_when_run_t
     assert_unpaired_full_match_record(&rows[0], "chr1", 5, 35, 60, '-', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
     assert_eq!(aux_tags[0].fragment_length, Some(30));
 
     Ok(())
@@ -1399,7 +1451,7 @@ fn given_explicit_and_companion_headers_when_run_then_explicit_header_takes_prec
     // Priority order uses explicit `--frag-header` first.
     //
     // Hand-derived expectation:
-    // - Fragment converts and FLEN=30 is written
+    // - Fragment converts and fl=30 is written
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("sample.frag.tsv");
@@ -1438,7 +1490,7 @@ fn given_explicit_and_companion_headers_when_run_then_explicit_header_takes_prec
     assert_eq!(aux_tags.len(), 1);
     assert_eq!(aux_tags[0].fragment_length, Some(30));
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
 
     Ok(())
 }
@@ -2585,8 +2637,8 @@ fn bam_frag_bam_roundtrip_preserves_coverage_tags_for_same_span() -> Result<()> 
     //
     // `bam-to-bam` always tags each emitted record with fragment-level values, so the scientific
     // contract is:
-    // - original paired BAM -> 2 records, each with COV = 4/3 and FLEN = 60
-    // - restored unpaired BAM -> 1 record, with COV = 4/3 and FLEN = 60
+    // - original paired BAM -> 2 records, each with cw = 4/3 and fl = 60
+    // - restored unpaired BAM -> 1 record, with cw = 4/3 and fl = 60
     //
     // Record counts differ because pair structure is not representable through FRAG, but the
     // fragment tags must stay identical for the same physical span.
@@ -2645,14 +2697,14 @@ fn bam_frag_bam_roundtrip_preserves_coverage_tags_for_same_span() -> Result<()> 
     assert_eq!(original_tags.len(), 2);
     assert_eq!(restored_tags.len(), 1);
     for tags in &original_tags {
-        assert_optional_f32_eq(tags.coverage_scaling_weight, expected_cov, "paired COV");
+        assert_optional_f32_eq(tags.coverage_scaling_weight, expected_cov, "paired cw");
         assert_optional_f32_eq(tags.gc_weight, None, "paired GC");
         assert_eq!(tags.fragment_length, Some(60));
     }
     assert_optional_f32_eq(
         restored_tags[0].coverage_scaling_weight,
         expected_cov,
-        "restored COV",
+        "restored cw",
     );
     assert_optional_f32_eq(restored_tags[0].gc_weight, None, "restored GC");
     assert_eq!(restored_tags[0].fragment_length, Some(60));
@@ -2683,9 +2735,9 @@ fn bam_frag_bam_roundtrip_preserves_count_tags_for_same_span() -> Result<()> {
     //   (20 * 2.0 + 40 * 1.0) / 60 = 4/3
     //
     // The scientific contract is therefore:
-    // - original paired BAM -> 2 records, each with CNT = 4/3 and FLEN = 60
-    // - restored unpaired BAM -> 1 record, with CNT = 4/3 and FLEN = 60
-    // - COV stays absent in both outputs because only count scaling is configured
+    // - original paired BAM -> 2 records, each with nw = 4/3 and fl = 60
+    // - restored unpaired BAM -> 1 record, with nw = 4/3 and fl = 60
+    // - cw stays absent in both outputs because only count scaling is configured
     let (source_bam, _restored_dir, restored_bam_path) = roundtrip_simple_inward_to_unpaired_bam()?;
     let work = TempDir::new()?;
     let original_out = work.path().join("original_count_tagged.bam");
@@ -2741,20 +2793,20 @@ fn bam_frag_bam_roundtrip_preserves_count_tags_for_same_span() -> Result<()> {
     assert_eq!(original_tags.len(), 2);
     assert_eq!(restored_tags.len(), 1);
     for tags in &original_tags {
-        assert_optional_f32_eq(tags.count_scaling_weight, expected_cnt, "paired CNT");
-        assert_optional_f32_eq(tags.coverage_scaling_weight, None, "paired COV");
+        assert_optional_f32_eq(tags.count_scaling_weight, expected_cnt, "paired nw");
+        assert_optional_f32_eq(tags.coverage_scaling_weight, None, "paired cw");
         assert_optional_f32_eq(tags.gc_weight, None, "paired GC");
         assert_eq!(tags.fragment_length, Some(60));
     }
     assert_optional_f32_eq(
         restored_tags[0].count_scaling_weight,
         expected_cnt,
-        "restored CNT",
+        "restored nw",
     );
     assert_optional_f32_eq(
         restored_tags[0].coverage_scaling_weight,
         None,
-        "restored COV",
+        "restored cw",
     );
     assert_optional_f32_eq(restored_tags[0].gc_weight, None, "restored GC");
     assert_eq!(restored_tags[0].fragment_length, Some(60));
@@ -3237,8 +3289,8 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
     // - `frag-to-bam` auto-detects that companion header and restores one unpaired BAM record
     //   with:
     //     GC   = 3.0
-    //     COV  = 2.0
-    //     FLEN absent (because `bam-to-frag` does not emit a `flen` column)
+    //     cw  = 2.0
+    //     fl absent (because `bam-to-frag` does not emit a `flen` column)
     let source_bam = fixtures::simple_inward_bam()?;
     let reference = simple_reference_twobit()?;
     let bam_to_frag_out = TempDir::new()?;
@@ -3317,7 +3369,7 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
     assert_unpaired_full_match_record(&rows[0], "chr1", 20, 80, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, Some(3.0), "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, Some(2.0), "COV");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, Some(2.0), "cw");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())
@@ -3338,8 +3390,8 @@ fn given_bam_to_frag_with_count_scaling_output_when_frag_to_bam_runs_then_compan
     // - `bam-to-frag` writes one FRAG row for [20, 80)
     // - the companion header advertises `count_scaling_weight`
     // - `frag-to-bam` auto-detects that companion header and restores one unpaired BAM record
-    //   with CNT = 0.5
-    // - GC, COV, and FLEN stay absent
+    //   with nw = 0.5
+    // - GC, cw, and fl stay absent
     let source_bam = fixtures::simple_inward_bam()?;
     let bam_to_frag_out = TempDir::new()?;
     let frag_to_bam_out = TempDir::new()?;
@@ -3400,8 +3452,8 @@ fn given_bam_to_frag_with_count_scaling_output_when_frag_to_bam_runs_then_compan
     assert_unpaired_full_match_record(&rows[0], "chr1", 20, 80, 60, '+', "fragment_1");
     assert_eq!(aux_tags.len(), 1);
     assert_optional_f32_eq(aux_tags[0].gc_weight, None, "GC");
-    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "COV");
-    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "CNT");
+    assert_optional_f32_eq(aux_tags[0].coverage_scaling_weight, None, "cw");
+    assert_optional_f32_eq(aux_tags[0].count_scaling_weight, Some(0.5), "nw");
     assert_eq!(aux_tags[0].fragment_length, None);
 
     Ok(())

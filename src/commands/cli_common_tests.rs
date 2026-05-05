@@ -1,6 +1,7 @@
 use super::{
     ApplyGCArgFileOnly, ApplyGCArgs, ChromosomeArgs, ContigSource, FragmentLengthArgs,
-    parse_length_bins, parse_output_prefix, resolve_length_bin_edges, validate_output_prefix,
+    parse_length_bins, parse_output_prefix, parse_sam_aux_tag_name, resolve_length_bin_edges,
+    validate_output_prefix,
 };
 use crate::shared::constants::MAX_SUPPORTED_FRAGMENT_LENGTH;
 use std::io::Write;
@@ -413,6 +414,54 @@ fn apply_gc_args_allows_gc_tag_without_ref_2bit() {
 
     args.validate(None)
         .expect("GC-tag correction should not require a reference genome");
+}
+
+#[test]
+fn apply_gc_args_allows_lowercase_local_gc_tag() {
+    let args = ApplyGCArgs {
+        gc_file: None,
+        gc_tag: Some("gc".to_string()),
+        neutralize_invalid_gc: false,
+    };
+
+    args.validate(None)
+        .expect("lowercase local AUX tags should be valid SAM/BAM tags");
+}
+
+#[test]
+fn apply_gc_args_rejects_overlong_gc_tag() {
+    let args = ApplyGCArgs {
+        gc_file: None,
+        gc_tag: Some("GCP".to_string()),
+        neutralize_invalid_gc: false,
+    };
+
+    let error = args
+        .validate(None)
+        .expect_err("overlong AUX tags should fail before BAM lookup");
+    let message = error.to_string();
+
+    assert!(
+        message.contains("exactly two ASCII bytes"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn parse_sam_aux_tag_name_rejects_invalid_shapes() {
+    // `GC` is the common external GC-weight tag. `cw` is a local/private tag shape.
+    assert_eq!(parse_sam_aux_tag_name("GC").unwrap(), "GC");
+    assert_eq!(parse_sam_aux_tag_name("cw").unwrap(), "cw");
+
+    for invalid_tag in ["", "G", "GCP", "1G", "G_", "åC"] {
+        let error = parse_sam_aux_tag_name(invalid_tag)
+            .expect_err("invalid SAM/BAM AUX tag shapes should be rejected");
+        let message = error.to_string();
+        assert!(
+            message.contains("SAM/BAM AUX tag"),
+            "unexpected error for {invalid_tag:?}: {message}"
+        );
+    }
 }
 
 #[test]

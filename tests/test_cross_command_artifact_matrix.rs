@@ -204,11 +204,11 @@ fn read_bam_tags(path: &Path) -> Result<Vec<(Option<f32>, Option<f32>, Option<u3
             Ok(Aux::Float(value)) => Some(value),
             _ => None,
         };
-        let cov = match record.aux(b"COV") {
+        let cov = match record.aux(b"cw") {
             Ok(Aux::Float(value)) => Some(value),
             _ => None,
         };
-        let flen = match record.aux(b"FLEN") {
+        let flen = match record.aux(b"fl") {
             Ok(Aux::U32(value)) => Some(value),
             _ => None,
         };
@@ -241,7 +241,7 @@ fn bam_to_bam_consumes_shared_real_artifacts_with_expected_fragment_tags() -> Re
     //
     // `bam-to-bam` writes fragment-level metadata on both mates, so the expected output is:
     // - two records
-    // - each tagged with GC=1.0, COV=2146/2745, FLEN=61
+    // - each tagged with GC=1.0, cw=2146/2745, fl=61
     let artifacts = build_shared_real_artifacts()?;
     let out_bam = artifacts.tempdir.path().join("tagged.bam");
 
@@ -274,11 +274,11 @@ fn bam_to_bam_consumes_shared_real_artifacts_with_expected_fragment_tags() -> Re
     for (mate_index, (gc, cov, flen)) in tags.into_iter().enumerate() {
         assert_eq!(gc, Some(1.0), "mate {mate_index} GC tag");
         assert_close_f32(
-            cov.expect("COV tag should be present"),
+            cov.expect("cw tag should be present"),
             EXPECTED_FRAGMENT_AVERAGE as f32,
-            &format!("mate {mate_index} COV tag"),
+            &format!("mate {mate_index} cw tag"),
         );
-        assert_eq!(flen, Some(61), "mate {mate_index} FLEN tag");
+        assert_eq!(flen, Some(61), "mate {mate_index} fl tag");
     }
 
     Ok(())

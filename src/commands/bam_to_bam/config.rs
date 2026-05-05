@@ -23,16 +23,16 @@ use std::path::PathBuf;
 /// ## Coverage-based genomic smoothing (--coverage-scaling-factors)
 ///
 /// The coverage-based weight that would normally be **multiplied** with the fragment's count value
-/// (`1.0` or the corrected value) is written as the AUX tag "`COV`" in the read(s).
+/// (`1.0` or the corrected value) is written as the AUX tag "`cw`" in the read(s).
 ///
 /// ## Fragment count-based genomic smoothing (--count-scaling-factors)
 ///
 /// The fragment-count-based weight that would normally be **multiplied** with the fragment's count
-/// value (`1.0` or the corrected value) is written as the AUX tag "`CNT`" in the read(s).
+/// value (`1.0` or the corrected value) is written as the AUX tag "`nw`" in the read(s).
 ///
 /// ## Fragment length
 ///
-/// The fragment length is written to the AUX tag "`FLEN`".
+/// The fragment length is written to the AUX tag "`fl`".
 ///
 /// Definition:
 ///

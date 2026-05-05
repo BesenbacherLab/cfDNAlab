@@ -4,7 +4,7 @@ mod fixtures;
 
 use std::{collections::HashMap, fs, path::Path};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 #[cfg(feature = "cmd_coverage_weights")]
 use cfdnalab::commands::coverage_weights::{
     config::CoverageWeightsConfig, coverage_weights::run as run_coverage_weights,
@@ -70,7 +70,7 @@ fn filters_on_mapping_quality_and_fragment_membership() -> Result<()> {
     let lengths = read_fragment_lengths(&out_bam)?;
     assert!(
         lengths.iter().all(|&len| len == 160),
-        "Surviving reads must carry the FLEN AUX tag"
+        "Surviving reads must carry the fl AUX tag"
     );
 
     Ok(())
@@ -643,7 +643,7 @@ fn writes_coverage_weight_when_scaling_factors_provided() -> Result<()> {
     cfg.set_coverage_scaling_factors(Some(scaling));
 
     run_inner(&cfg)?;
-    let weights = read_tag_values(&out_bam, b"COV")?;
+    let weights = read_tag_values(&out_bam, b"cw")?;
     assert_eq!(
         weights,
         vec![2.0f32, 2.0f32],
@@ -660,8 +660,8 @@ fn writes_count_weight_when_count_scaling_factors_provided() -> Result<()> {
     // One paired fragment spanning [0, 100) and one chromosome-wide count-scaling factor 0.5.
     //
     // Expected:
-    // - both mates receive CNT = 0.5
-    // - no COV tags are written when only count scaling is configured
+    // - both mates receive nw = 0.5
+    // - no cw tags are written when only count scaling is configured
     let fragment = paired_fragment(0, 100, 40);
     let bam = bam_from_specs(
         vec![("chr1".to_string(), 500)],
@@ -682,10 +682,10 @@ fn writes_count_weight_when_count_scaling_factors_provided() -> Result<()> {
     run_inner(&cfg)?;
 
     // Assert
-    assert_eq!(read_tag_values(&out_bam, b"CNT")?, vec![0.5_f32, 0.5_f32]);
+    assert_eq!(read_tag_values(&out_bam, b"nw")?, vec![0.5_f32, 0.5_f32]);
     assert!(
-        read_tag_values(&out_bam, b"COV")?.is_empty(),
-        "COV tags should be absent when only count scaling is configured"
+        read_tag_values(&out_bam, b"cw")?.is_empty(),
+        "cw tags should be absent when only count scaling is configured"
     );
 
     Ok(())
@@ -697,13 +697,13 @@ fn writes_coverage_and_fragment_count_scaling_to_separate_aux_tags() -> Result<(
     // Arrange:
     // Use one simple paired fragment spanning [0, 100) and provide two chromosome-wide scaling
     // files with different constants:
-    // - coverage scaling       -> 2.0, expected on tag COV
-    // - count-based scaling -> 0.5, expected on tag CNT
+    // - coverage scaling       -> 2.0, expected on tag cw
+    // - count-based scaling -> 0.5, expected on tag nw
     //
     // Both mates should carry both tags, so the per-record expectations are:
-    // - COV  = 2.0
-    // - CNT  = 0.5
-    // - FLEN = 100
+    // - cw  = 2.0
+    // - nw  = 0.5
+    // - fl = 100
     let fragment = paired_fragment(0, 100, 40);
     let bam = bam_from_specs(
         vec![("chr1".to_string(), 500)],
@@ -727,9 +727,11 @@ fn writes_coverage_and_fragment_count_scaling_to_separate_aux_tags() -> Result<(
     run_inner(&cfg)?;
 
     // Assert
-    assert_eq!(read_tag_values(&out_bam, b"COV")?, vec![2.0_f32, 2.0_f32]);
-    assert_eq!(read_tag_values(&out_bam, b"CNT")?, vec![0.5_f32, 0.5_f32]);
+    assert_eq!(read_tag_values(&out_bam, b"cw")?, vec![2.0_f32, 2.0_f32]);
+    assert_eq!(read_tag_values(&out_bam, b"nw")?, vec![0.5_f32, 0.5_f32]);
     assert_eq!(read_fragment_lengths(&out_bam)?, vec![100_u32, 100_u32]);
+    assert_first_record_has_exact_aux_tags(&out_bam, &[b"cw", b"nw", b"fl"])?;
+    assert_first_record_lacks_aux_tags(&out_bam, &[b"CO", b"CN", b"FL"])?;
 
     Ok(())
 }
@@ -756,8 +758,8 @@ fn paired_and_unpaired_fragment_modes_apply_same_full_fragment_scaling_for_same_
     //   (20 * 2.0 + 40 * 1.0) / 60 = 80 / 60 = 4/3
     //
     // Therefore:
-    // - paired mode must emit two records, each tagged with COV = 4/3 and FLEN = 60
-    // - unpaired mode must emit one record tagged with COV = 4/3 and FLEN = 60
+    // - paired mode must emit two records, each tagged with cw = 4/3 and fl = 60
+    // - unpaired mode must emit one record tagged with cw = 4/3 and fl = 60
     let paired_bam = simple_inward_bam()?;
     let unpaired_bam = bam_from_specs(
         vec![("chr1".to_string(), 200)],
@@ -813,8 +815,8 @@ chr1\t80\t200\t1.0\n",
     run_inner(&unpaired_cfg)?;
 
     // Assert
-    let paired_cov = read_tag_values(&paired_out, b"COV")?;
-    let unpaired_cov = read_tag_values(&unpaired_out, b"COV")?;
+    let paired_cov = read_tag_values(&paired_out, b"cw")?;
+    let unpaired_cov = read_tag_values(&unpaired_out, b"cw")?;
     let paired_flen = read_fragment_lengths(&paired_out)?;
     let unpaired_flen = read_fragment_lengths(&unpaired_out)?;
     let expected_cov = 4.0_f32 / 3.0_f32;
@@ -852,9 +854,9 @@ fn paired_and_unpaired_fragment_modes_apply_same_full_fragment_count_scaling_for
     //   (20 * 2.0 + 40 * 1.0) / 60 = 4/3
     //
     // Expected:
-    // - paired mode writes CNT = 4/3 on both mates
-    // - unpaired mode writes CNT = 4/3 on the single fragment record
-    // - COV is absent in both runs
+    // - paired mode writes nw = 4/3 on both mates
+    // - unpaired mode writes nw = 4/3 on the single fragment record
+    // - cw is absent in both runs
     let paired_bam = simple_inward_bam()?;
     let unpaired_bam = bam_from_specs(
         vec![("chr1".to_string(), 200)],
@@ -910,8 +912,8 @@ chr1\t80\t200\t1.0\n",
     run_inner(&unpaired_cfg)?;
 
     // Assert
-    let paired_cnt = read_tag_values(&paired_out, b"CNT")?;
-    let unpaired_cnt = read_tag_values(&unpaired_out, b"CNT")?;
+    let paired_cnt = read_tag_values(&paired_out, b"nw")?;
+    let unpaired_cnt = read_tag_values(&unpaired_out, b"nw")?;
     let paired_flen = read_fragment_lengths(&paired_out)?;
     let unpaired_flen = read_fragment_lengths(&unpaired_out)?;
     // The fragment spans [20,80), so it overlaps:
@@ -934,12 +936,12 @@ chr1\t80\t200\t1.0\n",
         unpaired_cnt[0]
     );
     assert!(
-        read_tag_values(&paired_out, b"COV")?.is_empty(),
-        "paired count-scaling-only output should not write COV tags"
+        read_tag_values(&paired_out, b"cw")?.is_empty(),
+        "paired count-scaling-only output should not write cw tags"
     );
     assert!(
-        read_tag_values(&unpaired_out, b"COV")?.is_empty(),
-        "unpaired count-scaling-only output should not write COV tags"
+        read_tag_values(&unpaired_out, b"cw")?.is_empty(),
+        "unpaired count-scaling-only output should not write cw tags"
     );
     assert_eq!(paired_flen, vec![60_u32, 60_u32]);
     assert_eq!(unpaired_flen, vec![60_u32]);
@@ -993,7 +995,7 @@ fn gc_file_neutralize_invalid_writes_gc_tag_one_on_both_mates() -> Result<()> {
     assert_eq!(
         lengths,
         vec![60_u32, 60_u32],
-        "the fragment should still be emitted with its FLEN tags"
+        "the fragment should still be emitted with its fl tags"
     );
 
     Ok(())
@@ -1044,7 +1046,7 @@ fn gc_file_default_behavior_skips_fragment_entirely() -> Result<()> {
     );
     assert!(
         read_fragment_lengths(&out_bam)?.is_empty(),
-        "no FLEN tags should be written when every fragment is skipped"
+        "no fl tags should be written when every fragment is skipped"
     );
 
     Ok(())
@@ -1076,9 +1078,9 @@ fn gc_file_and_scaling_factors_write_identical_gc_cov_and_flen_tags_on_both_mate
     }
 
     // Manual expectations:
-    // - `simple_inward_bam()` contains one fragment spanning [20,80), so FLEN must be 60
+    // - `simple_inward_bam()` contains one fragment spanning [20,80), so fl must be 60
     // - the whole-chrom scaling TSV sets factor 4/3 everywhere, so both mates must receive
-    //   identical `COV = 4/3`
+    //   identical `cw = 4/3`
     // - the helper GC package has:
     //     length bins [10,60) and [60,200]
     //     GC bins     [0,50) and [50,101]
@@ -1086,13 +1088,13 @@ fn gc_file_and_scaling_factors_write_identical_gc_cov_and_flen_tags_on_both_mate
     // - the repeated ACGT reference gives GC%=50 for any 60 bp fragment, so the fragment lands in
     //   the second GC bin and both mates must receive `GC = 10`
     // - because `bam-to-bam` tags per fragment, both output records must carry the same
-    //   `GC`, `COV`, and `FLEN` values
+    //   `GC`, `cw`, and `fl` values
     let counters = run_inner(&cfg)?;
 
     assert_eq!(counters.base.counted_fragments, 1);
     assert_eq!(read_tag_values(&out_bam, b"GC")?, vec![10.0_f32, 10.0_f32]);
     assert_eq!(
-        read_tag_values(&out_bam, b"COV")?,
+        read_tag_values(&out_bam, b"cw")?,
         vec![4.0_f32 / 3.0_f32, 4.0_f32 / 3.0_f32]
     );
     assert_eq!(read_fragment_lengths(&out_bam)?, vec![60_u32, 60_u32]);
@@ -1128,19 +1130,19 @@ fn gc_file_and_count_scaling_factors_write_identical_gc_cnt_and_flen_tags_on_bot
 
     // Manual expectations:
     // - same fragment and GC derivation as the matching coverage-based test
-    // - both mates must receive GC = 10 and CNT = 4/3
-    // - COV stays absent when only count scaling is configured
+    // - both mates must receive GC = 10 and nw = 4/3
+    // - cw stays absent when only count scaling is configured
     let counters = run_inner(&cfg)?;
 
     assert_eq!(counters.base.counted_fragments, 1);
     assert_eq!(read_tag_values(&out_bam, b"GC")?, vec![10.0_f32, 10.0_f32]);
     assert_eq!(
-        read_tag_values(&out_bam, b"CNT")?,
+        read_tag_values(&out_bam, b"nw")?,
         vec![4.0_f32 / 3.0_f32, 4.0_f32 / 3.0_f32]
     );
     assert!(
-        read_tag_values(&out_bam, b"COV")?.is_empty(),
-        "COV tags should be absent when only count scaling is configured"
+        read_tag_values(&out_bam, b"cw")?.is_empty(),
+        "cw tags should be absent when only count scaling is configured"
     );
     assert_eq!(read_fragment_lengths(&out_bam)?, vec![60_u32, 60_u32]);
 
@@ -1161,8 +1163,8 @@ fn real_fragment_count_weights_tsv_is_applied_per_fragment_in_bam_to_bam() -> Re
     // - long covered bins scaling factor = 1.5
     //
     // `bam-to-bam` averages scaling over the full fragment span, so:
-    // - short fragment gets CNT = 0.5
-    // - long fragment gets CNT = 1.5
+    // - short fragment gets nw = 0.5
+    // - long fragment gets nw = 1.5
     let bam = mixed_length_fragment_bam("bam_to_bam_real_count_weights")?;
     let work = tempdir()?;
     let weights_out_dir = work.path().join("weights_out");
@@ -1210,13 +1212,13 @@ fn real_fragment_count_weights_tsv_is_applied_per_fragment_in_bam_to_bam() -> Re
     let mut observed = Vec::new();
     for record in reader.records() {
         let record = record?;
-        let cnt = match record.aux(b"CNT") {
+        let cnt = match record.aux(b"nw") {
             Ok(Aux::Float(value)) => value,
-            other => panic!("expected CNT float tag on every read, got {other:?}"),
+            other => panic!("expected nw float tag on every read, got {other:?}"),
         };
-        let flen = match record.aux(b"FLEN") {
+        let flen = match record.aux(b"fl") {
             Ok(Aux::U32(value)) => value,
-            other => panic!("expected FLEN u32 tag on every read, got {other:?}"),
+            other => panic!("expected fl u32 tag on every read, got {other:?}"),
         };
         observed.push((flen, cnt));
     }
@@ -1232,12 +1234,12 @@ fn real_fragment_count_weights_tsv_is_applied_per_fragment_in_bam_to_bam() -> Re
         assert_eq!(*flen, expected_flen);
         assert!(
             (*cnt - expected_cnt).abs() <= 1e-6,
-            "unexpected CNT for FLEN {expected_flen}: expected {expected_cnt}, got {cnt}"
+            "unexpected nw for fl {expected_flen}: expected {expected_cnt}, got {cnt}"
         );
     }
     assert!(
-        read_tag_values(&out_bam, b"COV")?.is_empty(),
-        "COV tags should be absent when consuming fragment-count weights"
+        read_tag_values(&out_bam, b"cw")?.is_empty(),
+        "cw tags should be absent when consuming fragment-count weights"
     );
 
     Ok(())
@@ -1309,8 +1311,8 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_bam_to_bam_in_expected_directio
     // - GC%=100 -> weight 5/9
     //
     // `bam-to-bam` writes one tagged BAM record per input read, so the expected output is:
-    // - first mate pair tagged GC=5.0, FLEN=10
-    // - remaining nine mate pairs tagged GC=5/9, FLEN=10
+    // - first mate pair tagged GC=5.0, fl=10
+    // - remaining nine mate pairs tagged GC=5/9, fl=10
     let reference = twobit_from_sequences(
         "bam_to_bam_real_non_neutral_reference",
         vec![(
@@ -1424,8 +1426,8 @@ fn bed_blacklist_scaling_and_gc_together_keep_only_the_expected_tagged_fragment(
     // - fragment C spans [220,280): outside BED -> removed before tagging
     // - the kept fragment still sees the same repeated-ACGT reference semantics as above:
     //     GC%=50 -> `GC = 10`
-    //     scaling factor is uniform -> `COV = 4/3`
-    //     fragment length -> `FLEN = 60`
+    //     scaling factor is uniform -> `cw = 4/3`
+    //     fragment length -> `fl = 60`
     let counters = run_inner(&cfg)?;
 
     assert_eq!(counters.base.counted_fragments, 1);
@@ -1436,7 +1438,7 @@ fn bed_blacklist_scaling_and_gc_together_keep_only_the_expected_tagged_fragment(
     );
     assert_eq!(read_tag_values(&out_bam, b"GC")?, vec![10.0_f32, 10.0_f32]);
     assert_eq!(
-        read_tag_values(&out_bam, b"COV")?,
+        read_tag_values(&out_bam, b"cw")?,
         vec![4.0_f32 / 3.0_f32, 4.0_f32 / 3.0_f32]
     );
     assert_eq!(read_fragment_lengths(&out_bam)?, vec![60_u32, 60_u32]);
@@ -1480,8 +1482,8 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_t
     //   chr2 weight = 25/24
     //
     // It writes one tag set per emitted read, so the final BAM must contain:
-    // - two chr1 reads with COV = 275/432 and FLEN = 60
-    // - two chr2 reads with COV = 25/24   and FLEN = 20
+    // - two chr1 reads with cw = 275/432 and fl = 60
+    // - two chr2 reads with cw = 25/24   and fl = 20
     let mut chr2_fragment = paired_fragment(20, 20, 10);
     chr2_fragment = fragment_on_tid(chr2_fragment, 1);
 
@@ -1549,13 +1551,13 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_t
         let record = record_result?;
         let tid = record.tid() as u32;
         let chromosome = std::str::from_utf8(header.tid2name(tid))?.to_string();
-        let scaling = match record.aux(b"COV") {
+        let scaling = match record.aux(b"cw") {
             Ok(Aux::Float(value)) => value,
-            other => panic!("expected COV float tag on every read, got {other:?}"),
+            other => panic!("expected cw float tag on every read, got {other:?}"),
         };
-        let flen = match record.aux(b"FLEN") {
+        let flen = match record.aux(b"fl") {
             Ok(Aux::U32(value)) => value,
-            other => panic!("expected FLEN u32 tag on every read, got {other:?}"),
+            other => panic!("expected fl u32 tag on every read, got {other:?}"),
         };
         observed.push((chromosome, scaling, flen));
     }
@@ -1578,7 +1580,7 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_t
         );
         assert_eq!(
             *flen, expected_flen,
-            "unexpected FLEN for {expected_chrom}: expected {expected_flen}, got {flen}"
+            "unexpected fl for {expected_chrom}: expected {expected_flen}, got {flen}"
         );
     }
 
@@ -1778,7 +1780,7 @@ fn read_fragment_lengths(path: &Path) -> Result<Vec<u32>> {
     let mut values = Vec::new();
     for rec in reader.records() {
         let rec = rec?;
-        if let Ok(Aux::U32(value)) = rec.aux(b"FLEN") {
+        if let Ok(Aux::U32(value)) = rec.aux(b"fl") {
             values.push(value);
         }
     }
@@ -1795,6 +1797,54 @@ fn read_tag_values(path: &Path, tag: &[u8]) -> Result<Vec<f32>> {
         }
     }
     Ok(values)
+}
+
+fn assert_first_record_has_exact_aux_tags(path: &Path, expected_tags: &[&[u8; 2]]) -> Result<()> {
+    let aux_tags = read_first_record_aux_tag_names(path)?;
+    for expected_tag in expected_tags {
+        assert!(
+            aux_tags
+                .iter()
+                .any(|observed_tag| observed_tag.as_slice() == expected_tag.as_slice()),
+            "expected first record in {} to contain exact AUX tag {:?}, observed {:?}",
+            path.display(),
+            std::str::from_utf8(expected_tag.as_slice()).unwrap(),
+            aux_tags
+        );
+    }
+    Ok(())
+}
+
+fn assert_first_record_lacks_aux_tags(path: &Path, unexpected_tags: &[&[u8; 2]]) -> Result<()> {
+    let aux_tags = read_first_record_aux_tag_names(path)?;
+    for unexpected_tag in unexpected_tags {
+        assert!(
+            !aux_tags
+                .iter()
+                .any(|observed_tag| observed_tag.as_slice() == unexpected_tag.as_slice()),
+            "first record in {} should not contain old truncated AUX tag {:?}, observed {:?}",
+            path.display(),
+            std::str::from_utf8(unexpected_tag.as_slice()).unwrap(),
+            aux_tags
+        );
+    }
+    Ok(())
+}
+
+fn read_first_record_aux_tag_names(path: &Path) -> Result<Vec<Vec<u8>>> {
+    let mut reader = bam::Reader::from_path(path)?;
+    let record = reader
+        .records()
+        .next()
+        .context("expected BAM to contain at least one record")??;
+    record
+        .aux_iter()
+        .map(|aux_result| {
+            aux_result
+                .map(|(tag, _aux_value)| tag.to_vec())
+                .map_err(Into::into)
+        })
+        .collect()
 }
 
 fn fragment_on_tid(mut fragment: FragmentSpec, tid: usize) -> FragmentSpec {

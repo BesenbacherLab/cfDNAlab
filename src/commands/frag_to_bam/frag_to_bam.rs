@@ -6,6 +6,10 @@ use crate::{
     shared::{
         blacklist::is_blacklisted,
         cli_output,
+        constants::{
+            COVERAGE_WEIGHT_AUX_TAG, FRAGMENT_COUNT_WEIGHT_AUX_TAG, FRAGMENT_LENGTH_AUX_TAG,
+            GC_WEIGHT_AUX_TAG,
+        },
         interval::Interval,
         io::{dot_join, open_text_reader},
         reference::load_chrom_sizes_with_order,
@@ -497,7 +501,7 @@ fn make_record(frag: &ParsedFragment, tid: i32, prefix: &str, idx: u64) -> Resul
 
     if let Some(gc_weight) = frag.gc_weight {
         record
-            .push_aux(b"GC", Aux::Float(gc_weight))
+            .push_aux(GC_WEIGHT_AUX_TAG, Aux::Float(gc_weight))
             .with_context(|| {
                 format!(
                     "Failed writing GC aux tag for fragment {}:{}-{}",
@@ -507,30 +511,33 @@ fn make_record(frag: &ParsedFragment, tid: i32, prefix: &str, idx: u64) -> Resul
     }
     if let Some(coverage_scaling_weight) = frag.coverage_scaling_weight {
         record
-            .push_aux(b"COV", Aux::Float(coverage_scaling_weight))
+            .push_aux(COVERAGE_WEIGHT_AUX_TAG, Aux::Float(coverage_scaling_weight))
             .with_context(|| {
                 format!(
-                    "Failed writing COV aux tag for fragment {}:{}-{}",
+                    "Failed writing cw aux tag for fragment {}:{}-{}",
                     frag.chrom, frag.start, frag.end
                 )
             })?;
     }
     if let Some(count_scaling_weight) = frag.count_scaling_weight {
         record
-            .push_aux(b"CNT", Aux::Float(count_scaling_weight))
+            .push_aux(
+                FRAGMENT_COUNT_WEIGHT_AUX_TAG,
+                Aux::Float(count_scaling_weight),
+            )
             .with_context(|| {
                 format!(
-                    "Failed writing CNT aux tag for fragment {}:{}-{}",
+                    "Failed writing nw aux tag for fragment {}:{}-{}",
                     frag.chrom, frag.start, frag.end
                 )
             })?;
     }
     if let Some(fragment_length_tag) = frag.flen {
         record
-            .push_aux(b"FLEN", Aux::U32(fragment_length_tag))
+            .push_aux(FRAGMENT_LENGTH_AUX_TAG, Aux::U32(fragment_length_tag))
             .with_context(|| {
                 format!(
-                    "Failed writing FLEN aux tag for fragment {}:{}-{}",
+                    "Failed writing fl aux tag for fragment {}:{}-{}",
                     frag.chrom, frag.start, frag.end
                 )
             })?;
