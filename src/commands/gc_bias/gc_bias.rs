@@ -42,7 +42,7 @@ use crate::{
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
-        reference::twobit_contig_signature,
+        reference::{ContigFootprintEntry, twobit_contig_footprint},
         thread_pool::init_global_pool,
         tiled_run::{
             TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
@@ -270,6 +270,11 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         metadata: reference_metadata,
     } = load_reference_gc_data(&opt.ref_gc_file)?;
     validate_reference_chromosomes(&reference_metadata.chromosomes, &chromosomes)?;
+    validate_fixed_size_window_for_reference(&window_opt, &reference_metadata)?;
+    validate_reference_contig_footprint(
+        &reference_metadata,
+        &twobit_contig_footprint(&opt.ref_genome.ref_2bit)?,
+    )?;
     let avg_norm_ref_counts = mean_scale_per_length_array(
         &reference_counts,
         0.,
@@ -737,7 +742,6 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         correction_matrix.clone(),
         length_bin_frequencies.clone(),
         &reference_metadata,
-        twobit_contig_signature(&opt.ref_genome.ref_2bit)?,
     )?;
     correction_pkg.write_npz(
         opt.ioc
@@ -819,6 +823,32 @@ fn validate_reference_chromosomes(
         "Reference GC package was built for chromosomes [{}], but this run selected [{}]",
         reference_chromosomes.join(","),
         run_chromosomes.join(",")
+    );
+    Ok(())
+}
+
+fn validate_fixed_size_window_for_reference(
+    window_opt: &WindowSpec,
+    reference_metadata: &ReferenceGCMetadata,
+) -> Result<()> {
+    if let WindowSpec::Size(window_bp) = window_opt {
+        ensure!(
+            *window_bp >= reference_metadata.max_fragment_length as u64,
+            "--by-size ({}) must be >= max fragment length from --ref-gc-file ({}) for gc-bias fixed-size windowing",
+            window_bp,
+            reference_metadata.max_fragment_length
+        );
+    }
+    Ok(())
+}
+
+fn validate_reference_contig_footprint(
+    reference_metadata: &ReferenceGCMetadata,
+    run_reference_contig_footprint: &[ContigFootprintEntry],
+) -> Result<()> {
+    ensure!(
+        reference_metadata.reference_contig_footprint == run_reference_contig_footprint,
+        "Reference GC package was built against a different reference contig footprint than --ref-2bit"
     );
     Ok(())
 }

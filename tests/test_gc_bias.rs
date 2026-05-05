@@ -34,7 +34,10 @@ mod tests_gc_bias {
     use cfdnalab::shared::constants::{
         GC_CORRECTION_SCHEMA_VERSION, MIN_ACGT_BASES_FOR_GC_FRACTION,
     };
-    use cfdnalab::shared::interval::Interval;
+    use cfdnalab::shared::{
+        interval::Interval,
+        reference::{ContigFootprintEntry, twobit_contig_footprint},
+    };
 
     const GC_COMMAND_F64_TOL: f64 = 1e-6;
 
@@ -289,6 +292,7 @@ mod tests_gc_bias {
             max_fragment_length: 31,
             end_offset: 10,
             chromosomes: vec!["chr1".to_string()],
+            reference_contig_footprint: Vec::new(),
             skip_interpolation: false,
             smoothing_sigma: 0.55,
             smoothing_radius: 2,
@@ -304,7 +308,6 @@ mod tests_gc_bias {
                 array![[invalid_weight]],
                 array![1.0_f64],
                 &reference_metadata,
-                [0, 0],
             )
             .expect_err("invalid correction weight should fail package construction");
 
@@ -337,7 +340,7 @@ mod tests_gc_bias {
             gc_edges: gc_edges.clone(),
             correction_matrix,
             length_bin_frequencies: array![1.0_f64, 1.0_f64],
-            reference_contig_signature: [0, 0],
+            reference_contig_footprint: Vec::new(),
         };
         let tmp_dir = tempdir()?;
         let pkg_path = tmp_dir.path().join("gc_package.npz");
@@ -436,7 +439,7 @@ mod tests_gc_bias {
             gc_edges: vec![0, 50, 100],
             correction_matrix,
             length_bin_frequencies: array![0.2_f64, 0.8_f64],
-            reference_contig_signature: [0, 0],
+            reference_contig_footprint: Vec::new(),
         }
     }
 
@@ -618,7 +621,7 @@ mod tests_gc_bias {
                 [6.0_f64, 60.0_f64, 600.0_f64],
             ],
             length_bin_frequencies: array![0.5_f64, 0.125_f64, 0.375_f64],
-            reference_contig_signature: [0, 0],
+            reference_contig_footprint: Vec::new(),
         };
         let corrector = GCCorrector::from_package(&package)?;
 
@@ -1606,7 +1609,12 @@ mod tests_gc_bias {
         )?;
 
         let ref_gc_dir = TempDir::new()?;
-        write_two_bin_reference_gc_package(ref_gc_dir.path(), (10, 10), &["chr1", "chr2"])?;
+        write_two_bin_reference_gc_package(
+            ref_gc_dir.path(),
+            (10, 10),
+            &["chr1", "chr2"],
+            twobit_contig_footprint(&reference.path)?,
+        )?;
 
         let bed_dir = TempDir::new()?;
         let bed_path = bed_dir.path().join("windows.bed");
@@ -2923,6 +2931,124 @@ mod tests_gc_bias {
     }
 
     #[test]
+    fn gc_bias_run_rejects_by_size_smaller_than_reference_max_fragment_length() -> Result<()> {
+        // Human verification status: verified
+        // Manual expectations:
+        // - The reference package fixture covers fragment lengths 30..=31, so gc-bias inherits
+        //   max_fragment_length = 31.
+        // - A fixed window size of 30 cannot preserve the fixed-size two-buffer counting invariant.
+        // - The command should fail directly after loading the reference package, before creating
+        //   the output directory.
+        let bam = fixtures::simple_inward_bam()?;
+        let reference = fixtures::simple_reference_twobit()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_gc_package_fixture(ref_gc_dir.path(), ReferencePackageFixture::default())?;
+        let output_parent = TempDir::new()?;
+        let output_dir = output_parent.path().join("not_created");
+        let mut cfg = make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), &output_dir);
+        cfg.set_windows(GCWindowsArgs {
+            by_size: Some(30),
+            by_bed: None,
+            global: false,
+        });
+
+        let err = run_gc_bias(&cfg).expect_err("too-small fixed window should fail");
+        let msg = err.to_string();
+
+        assert!(
+            msg.contains("--by-size (30) must be >= max fragment length from --ref-gc-file (31)"),
+            "unexpected error message: {msg}"
+        );
+        assert!(
+            !output_dir.exists(),
+            "fixed-window validation should fail before creating output_dir"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn gc_bias_run_rejects_reference_gc_package_from_different_reference_footprint() -> Result<()> {
+        // Human verification status: verified
+        // Manual expectations:
+        // - The reference GC package is built from `reference_a`, whose 2bit footprint is stored
+        //   in the package.
+        // - The run uses `reference_b`, which has the same selected chromosome name but a different
+        //   contig footprint.
+        // - `gc-bias` should reject the mismatch before creating the output directory or writing a
+        //   downstream correction package.
+        let reference_a = fixtures::simple_reference_twobit()?;
+        let reference_b = fixtures::twobit_from_sequences(
+            "gc_bias_reference_footprint_mismatch",
+            vec![("chr1".to_string(), "ACGT".repeat(80))],
+        )?;
+        let bam = fixtures::simple_inward_bam()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_package_for_single_length(&reference_a.path, &ref_gc_dir, 60, 0)?;
+        let output_parent = TempDir::new()?;
+        let output_dir = output_parent.path().join("not_created");
+        let cfg = make_gc_bias_cfg(&bam.bam, &reference_b.path, ref_gc_dir.path(), &output_dir);
+
+        let err = run_gc_bias(&cfg).expect_err("reference-footprint mismatch should fail");
+        let msg = err.to_string();
+
+        assert!(
+            msg.contains(
+                "Reference GC package was built against a different reference contig footprint"
+            ),
+            "unexpected error message: {msg}"
+        );
+        assert!(
+            !output_dir.exists(),
+            "reference-footprint validation should fail before creating output_dir"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn gc_bias_transfers_reference_gc_package_footprint_to_correction_package() -> Result<()> {
+        // Human verification status: verified
+        // Manual expectations:
+        // - `ref-gc-bias` writes the 2bit contig footprint into the reference package.
+        // - `gc-bias` validates that footprint against its current `--ref-2bit`.
+        // - The final GC correction package should carry forward that validated footprint exactly.
+        let reference = fixtures::simple_reference_twobit()?;
+        let bam = fixtures::simple_inward_bam()?;
+        let ref_gc_dir = TempDir::new()?;
+        write_reference_package_for_single_length(&reference.path, &ref_gc_dir, 60, 0)?;
+        let out_dir = TempDir::new()?;
+        let mut cfg =
+            make_gc_bias_cfg(&bam.bam, &reference.path, ref_gc_dir.path(), out_dir.path());
+        cfg.set_windows(GCWindowsArgs {
+            by_size: None,
+            by_bed: None,
+            global: true,
+        });
+        cfg.set_num_extreme_gc_bins(0);
+        cfg.set_num_short_length_bins(0);
+        cfg.outlier_method = cfdnalab::commands::gc_bias::config::OutlierMethodArg::None;
+
+        run_gc_bias(&cfg)?;
+
+        let expected_footprint = twobit_contig_footprint(&reference.path)?;
+        let reference_data = load_reference_gc_data(&ref_gc_dir.path().join("ref_gc_package.npz"))?;
+        let correction_package =
+            GCCorrectionPackage::from_file(out_dir.path().join("gc_bias_correction.npz"))?;
+
+        assert_eq!(
+            reference_data.metadata.reference_contig_footprint,
+            expected_footprint
+        );
+        assert_eq!(
+            correction_package.reference_contig_footprint,
+            expected_footprint
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn apply_outliers_per_length_winsorizes_rows() {
         // Human verification status: unverified
         let mut matrix = array![[1.0_f64, 2.0_f64, 100.0_f64], [1.0_f64, 5.0_f64, 6.0_f64]];
@@ -3133,6 +3259,7 @@ mod tests_gc_bias {
         chromosomes: Vec<String>,
         length_range: [u32; 2],
         end_offset: u32,
+        reference_contig_footprint: Vec<ContigFootprintEntry>,
     }
 
     impl Default for ReferencePackageFixture {
@@ -3146,6 +3273,7 @@ mod tests_gc_bias {
                 chromosomes: vec!["chr1".to_string()],
                 length_range: [30, 31],
                 end_offset: 10,
+                reference_contig_footprint: Vec::new(),
             }
         }
     }
@@ -3192,6 +3320,7 @@ mod tests_gc_bias {
             &ndarray::Array1::from(fixture.skip_smoothing),
         )?;
         write_reference_chromosomes_json(&mut npz, &fixture.chromosomes)?;
+        write_reference_contig_footprint(&mut npz, &fixture.reference_contig_footprint)?;
         npz.finish()?;
         Ok(())
     }
@@ -3206,6 +3335,17 @@ mod tests_gc_bias {
             .collect();
         let chromosomes_json = serde_json::to_vec(&chromosome_names)?;
         npz.add_array("chromosomes_json", &ndarray::Array1::from(chromosomes_json))?;
+        Ok(())
+    }
+
+    fn write_reference_contig_footprint(
+        npz: &mut NpzWriter<std::fs::File>,
+        reference_contig_footprint: &[ContigFootprintEntry],
+    ) -> Result<()> {
+        npz.add_array(
+            "reference_contig_footprint_json",
+            &ndarray::Array1::from(serde_json::to_vec(reference_contig_footprint)?),
+        )?;
         Ok(())
     }
 
@@ -3233,6 +3373,7 @@ mod tests_gc_bias {
         npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
         npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
         write_reference_chromosomes_json(&mut npz, &["chr1"])?;
+        write_reference_contig_footprint(&mut npz, &[])?;
         npz.finish()?;
         Ok(())
     }
@@ -3241,6 +3382,7 @@ mod tests_gc_bias {
         out_dir: &std::path::Path,
         length_range: (u32, u32),
         chromosomes: &[&str],
+        reference_contig_footprint: Vec<ContigFootprintEntry>,
     ) -> Result<()> {
         let package_path = out_dir.join("ref_gc_package.npz");
         let n_lengths = (length_range.1 - length_range.0 + 1) as usize;
@@ -3277,11 +3419,15 @@ mod tests_gc_bias {
         npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
         npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
         write_reference_chromosomes_json(&mut npz, chromosomes)?;
+        write_reference_contig_footprint(&mut npz, &reference_contig_footprint)?;
         npz.finish()?;
         Ok(())
     }
 
-    fn write_balanced_two_length_reference_gc_package(out_dir: &std::path::Path) -> Result<()> {
+    fn write_balanced_two_length_reference_gc_package(
+        out_dir: &std::path::Path,
+        reference_contig_footprint: Vec<ContigFootprintEntry>,
+    ) -> Result<()> {
         let package_path = out_dir.join("ref_gc_package.npz");
 
         // Hand-built but still realistic reference package for run-level outlier tests.
@@ -3337,11 +3483,15 @@ mod tests_gc_bias {
         npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
         npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
         write_reference_chromosomes_json(&mut npz, &["chr1"])?;
+        write_reference_contig_footprint(&mut npz, &reference_contig_footprint)?;
         npz.finish()?;
         Ok(())
     }
 
-    fn write_three_bin_reference_gc_package(out_dir: &std::path::Path) -> Result<()> {
+    fn write_three_bin_reference_gc_package(
+        out_dir: &std::path::Path,
+        reference_contig_footprint: Vec<ContigFootprintEntry>,
+    ) -> Result<()> {
         let package_path = out_dir.join("ref_gc_package.npz");
 
         // One fragment length, with reference mass only at GC% 0, 50, and 100.
@@ -3381,6 +3531,7 @@ mod tests_gc_bias {
         npz.add_array("smoothing_sigma", &ndarray::Array1::from(vec![0.55_f64]))?;
         npz.add_array("skip_smoothing", &ndarray::Array1::from(vec![true]))?;
         write_reference_chromosomes_json(&mut npz, &["chr1"])?;
+        write_reference_contig_footprint(&mut npz, &reference_contig_footprint)?;
         npz.finish()?;
         Ok(())
     }
@@ -3554,6 +3705,7 @@ mod tests_gc_bias {
         assert_eq!(loaded.metadata.max_fragment_length, 31);
         assert_eq!(loaded.metadata.end_offset, 10);
         assert_eq!(loaded.metadata.chromosomes, vec!["chr1".to_string()]);
+        assert_eq!(loaded.metadata.reference_contig_footprint, Vec::new());
         assert!(!loaded.metadata.skip_interpolation);
         assert_eq!(loaded.metadata.smoothing_radius, 2);
         assert!((loaded.metadata.smoothing_sigma - 0.55).abs() < 1e-12);
@@ -3793,7 +3945,10 @@ mod tests_gc_bias {
         //      [1.0, 1.0]]
         let (reference, bam) = make_two_length_outlier_fixture()?;
         let ref_gc_dir = TempDir::new()?;
-        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+        write_balanced_two_length_reference_gc_package(
+            ref_gc_dir.path(),
+            twobit_contig_footprint(&reference.path)?,
+        )?;
 
         let out_none = TempDir::new()?;
         let out_quantile = TempDir::new()?;
@@ -3918,7 +4073,10 @@ mod tests_gc_bias {
         //      [1.0, 1.0]]
         let (reference, bam) = make_two_length_outlier_fixture()?;
         let ref_gc_dir = TempDir::new()?;
-        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+        write_balanced_two_length_reference_gc_package(
+            ref_gc_dir.path(),
+            twobit_contig_footprint(&reference.path)?,
+        )?;
 
         let out_per_length = TempDir::new()?;
         let out_global = TempDir::new()?;
@@ -4035,7 +4193,10 @@ mod tests_gc_bias {
         //    [1.0, 1.0]]
         let (reference, bam) = make_two_length_outlier_fixture()?;
         let ref_gc_dir = TempDir::new()?;
-        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+        write_balanced_two_length_reference_gc_package(
+            ref_gc_dir.path(),
+            twobit_contig_footprint(&reference.path)?,
+        )?;
 
         let out_dir = TempDir::new()?;
         let mut cfg =
@@ -4100,7 +4261,10 @@ mod tests_gc_bias {
         //    [1.0,   1.0]]
         let (reference, bam) = make_two_length_outlier_fixture()?;
         let ref_gc_dir = TempDir::new()?;
-        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+        write_balanced_two_length_reference_gc_package(
+            ref_gc_dir.path(),
+            twobit_contig_footprint(&reference.path)?,
+        )?;
 
         let out_dir = TempDir::new()?;
         let mut cfg =
@@ -4174,7 +4338,10 @@ mod tests_gc_bias {
         //    [1.0,               1.0]]
         let (reference, bam) = make_two_length_outlier_fixture()?;
         let ref_gc_dir = TempDir::new()?;
-        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+        write_balanced_two_length_reference_gc_package(
+            ref_gc_dir.path(),
+            twobit_contig_footprint(&reference.path)?,
+        )?;
 
         let out_dir = TempDir::new()?;
         let mut cfg =
@@ -4280,7 +4447,12 @@ mod tests_gc_bias {
         )?;
 
         let ref_gc_dir = TempDir::new()?;
-        write_two_bin_reference_gc_package(ref_gc_dir.path(), (10, 10), &["chr1"])?;
+        write_two_bin_reference_gc_package(
+            ref_gc_dir.path(),
+            (10, 10),
+            &["chr1"],
+            twobit_contig_footprint(&reference.path)?,
+        )?;
 
         let out_dir = TempDir::new()?;
         let mut cfg =
@@ -4342,7 +4514,10 @@ mod tests_gc_bias {
         //   [1 / 0.6, 1 / 1.4] = [5/3, 5/7]
         let (reference, bam) = make_two_length_outlier_fixture()?;
         let ref_gc_dir = TempDir::new()?;
-        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+        write_balanced_two_length_reference_gc_package(
+            ref_gc_dir.path(),
+            twobit_contig_footprint(&reference.path)?,
+        )?;
 
         let out_dir = TempDir::new()?;
         let mut cfg =
@@ -4402,7 +4577,10 @@ mod tests_gc_bias {
         // neutral row `[1, 1]`, while the longer row stays `[1, 1]`.
         let (reference, bam) = make_two_length_outlier_fixture()?;
         let ref_gc_dir = TempDir::new()?;
-        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+        write_balanced_two_length_reference_gc_package(
+            ref_gc_dir.path(),
+            twobit_contig_footprint(&reference.path)?,
+        )?;
 
         let baseline_out = TempDir::new()?;
         let masked_out = TempDir::new()?;
@@ -4497,7 +4675,10 @@ mod tests_gc_bias {
         // completely neutralizes the matrix rather than leaving any informative GC correction.
         let (reference, bam) = make_two_length_outlier_fixture()?;
         let ref_gc_dir = TempDir::new()?;
-        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+        write_balanced_two_length_reference_gc_package(
+            ref_gc_dir.path(),
+            twobit_contig_footprint(&reference.path)?,
+        )?;
 
         let baseline_out = TempDir::new()?;
         let masked_out = TempDir::new()?;
@@ -4606,7 +4787,10 @@ mod tests_gc_bias {
         //   [1 / (1/3), 1 / (5/3)] = [3, 3/5]
         let (reference, bam) = make_two_length_low_mass_tail_fixture()?;
         let ref_gc_dir = TempDir::new()?;
-        write_balanced_two_length_reference_gc_package(ref_gc_dir.path())?;
+        write_balanced_two_length_reference_gc_package(
+            ref_gc_dir.path(),
+            twobit_contig_footprint(&reference.path)?,
+        )?;
 
         let baseline_out = TempDir::new()?;
         let merged_out = TempDir::new()?;
@@ -4718,7 +4902,10 @@ mod tests_gc_bias {
         //   [2, 2/3]
         let (reference, bam) = make_three_gc_bin_fixture()?;
         let ref_gc_dir = TempDir::new()?;
-        write_three_bin_reference_gc_package(ref_gc_dir.path())?;
+        write_three_bin_reference_gc_package(
+            ref_gc_dir.path(),
+            twobit_contig_footprint(&reference.path)?,
+        )?;
 
         let baseline_out = TempDir::new()?;
         let merged_out = TempDir::new()?;

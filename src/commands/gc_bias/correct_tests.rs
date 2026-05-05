@@ -13,7 +13,7 @@ fn one_bin_corrector() -> GCCorrector {
         gc_edges: vec![0, 100],
         correction_matrix: array![[2.0_f64]],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_signature: [0, 0],
+        reference_contig_footprint: Vec::new(),
     };
     GCCorrector::from_package(&package).expect("valid one-bin correction package")
 }
@@ -37,7 +37,7 @@ fn length_trim_corrector(
         correction_matrix: Array2::from_shape_vec((num_bins, 1), correction_values)
             .expect("test correction matrix shape should be valid"),
         length_bin_frequencies: Array1::from(length_bin_frequencies),
-        reference_contig_signature: [0, 0],
+        reference_contig_footprint: Vec::new(),
     };
     GCCorrector::from_package(&package).expect("valid length-trim correction package")
 }

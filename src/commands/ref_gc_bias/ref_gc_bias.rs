@@ -47,7 +47,9 @@ use crate::{
         interval::{IndexedInterval, Interval},
         io::dot_join,
         progress::ProgressFactory,
-        reference::{read_seq_in_range, twobit_contig_lengths},
+        reference::{
+            ContigFootprintEntry, read_seq_in_range, twobit_contig_footprint, twobit_contig_lengths,
+        },
         sampling::{sample_starts_in_core, sampling_density},
         thread_pool::init_global_pool,
         tiled_run::{
@@ -367,6 +369,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         opt.smoothing_sigma,
         opt.skip_smoothing,
         &chromosomes,
+        &twobit_contig_footprint(&opt.ref_genome.ref_2bit)?,
     )
     .context("Writing reference GC package failed")?;
 
@@ -399,6 +402,7 @@ fn write_reference_gc_package(
     smoothing_sigma: f64,
     skip_smoothing: bool,
     chromosomes: &[String],
+    reference_contig_footprint: &[ContigFootprintEntry],
 ) -> Result<()> {
     let file = std::fs::File::create(path)?;
     let mut npz = NpzWriter::new(file);
@@ -424,6 +428,10 @@ fn write_reference_gc_package(
     npz.add_array("skip_smoothing", &Array1::from(vec![skip_smoothing]))?;
     let chromosomes_json = serde_json::to_vec(chromosomes)?;
     npz.add_array("chromosomes_json", &Array1::from(chromosomes_json))?;
+    npz.add_array(
+        "reference_contig_footprint_json",
+        &Array1::from(serde_json::to_vec(reference_contig_footprint)?),
+    )?;
     npz.finish()?;
     Ok(())
 }

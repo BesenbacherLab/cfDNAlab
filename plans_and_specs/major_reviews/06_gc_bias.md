@@ -52,23 +52,8 @@ Reviewed shared findings that do not currently apply:
 Pre-release correctness/safety:
 
 - G-023: wrong reference GC package can be accepted and repackaged under the current 2bit signature.
-- GB-007: fixed-size window counting can miss fragment contributions when valid window sizes are smaller than fragment spans.
 - G-022: unchecked output prefixes can write files outside the requested output directory.
 
 Post-release performance:
 
 - GB-006 remains a post-release performance item; no new correctness issue was found in that path.
-
-### GB-007 - Medium - Fixed-size windowing can miss windows when fragments span more than two bins
-
-The fixed-size `gc-bias` path uses a streaming implementation with only two live window buffers: the current fixed window and the next fixed window ([windows.rs](../../src/commands/gc_bias/windows.rs#L196-L263), [windows.rs](../../src/commands/gc_bias/windows.rs#L425-L432)). During fragment counting, it computes overlap against only those two buffers and can increment only `current` and `next` ([gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L965-L1084)).
-
-That assumption is not enforced by the CLI. `--by-size` accepts any `u64` and defaults to 100000 only when absent ([cli_common.rs](../../src/commands/cli_common.rs#L343-L405)). The default assignment is `count-overlap` ([cli_common.rs](../../src/commands/cli_common.rs#L456-L489)), so a valid command such as a small-bin `gc-bias --by-size 50` run can have fragments that overlap three or more fixed windows. In that case, fixed-size counting silently drops the third and later window contributions. The BED/global path does not share this limitation because it calls `find_overlapping_windows()` and iterates every returned overlap ([gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L1146-L1185)).
-
-Impact: default 100 kb windows are not affected for the current fragment-length defaults, but user-requested small fixed windows can produce undercounted sample GC tables and therefore wrong correction factors.
-
-Recommended fix:
-
-- Keep the two-buffer fixed-size streaming branch. That design is the right performance invariant for this command; small `gc-bias` windows are not an important use case.
-- Add a validation guard before counting that rejects fixed window sizes too small to preserve the two-buffer invariant. A conservative rule would require `--by-size >= max_fragment_length`; an exact coordinate proof could allow the tight half-open boundary case, but it should still guarantee that any assignment interval can overlap only the current and next window.
-- Add a focused validation test proving an invalid small `--by-size` run fails fast with a direct message, instead of expanding the streaming implementation for an edge case.

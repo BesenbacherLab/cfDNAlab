@@ -1,4 +1,7 @@
-use crate::shared::constants::{GC_CORRECTION_SCHEMA_VERSION, MIN_ACGT_BASES_FOR_GC_FRACTION};
+use crate::shared::{
+    constants::{GC_CORRECTION_SCHEMA_VERSION, MIN_ACGT_BASES_FOR_GC_FRACTION},
+    reference::ContigFootprintEntry,
+};
 use anyhow::{Context, Result, ensure};
 use ndarray::{Array1, Array2};
 use ndarray_npy::NpzReader;
@@ -19,6 +22,7 @@ pub struct ReferenceGCMetadata {
     pub max_fragment_length: usize,
     pub end_offset: u8,
     pub chromosomes: Vec<String>,
+    pub reference_contig_footprint: Vec<ContigFootprintEntry>,
     pub skip_interpolation: bool,
     pub smoothing_sigma: f64,
     pub smoothing_radius: u8,
@@ -96,6 +100,9 @@ fn read_reference_gc_package(
     let chromosomes_json: Array1<u8> = reader
         .by_name("chromosomes_json")
         .context("missing chromosomes_json in reference GC package")?;
+    let reference_contig_footprint_json: Array1<u8> = reader
+        .by_name("reference_contig_footprint_json")
+        .context("missing reference_contig_footprint_json in reference GC package")?;
     ensure!(
         version_arr.len() == 1,
         "version should be length 1. Found len={}",
@@ -170,11 +177,18 @@ fn read_reference_gc_package(
         !chromosomes.is_empty(),
         "chromosomes_json must contain at least one chromosome"
     );
+    let reference_contig_footprint: Vec<ContigFootprintEntry> = serde_json::from_slice(
+        reference_contig_footprint_json
+            .as_slice()
+            .context("reference_contig_footprint_json should be contiguous")?,
+    )
+    .context("invalid reference_contig_footprint_json in reference GC package")?;
     let metadata = ReferenceGCMetadata {
         min_fragment_length,
         max_fragment_length,
         end_offset,
         chromosomes,
+        reference_contig_footprint,
         skip_interpolation: skip_interpolation_arr[0] as bool,
         smoothing_radius: smoothing_radius_arr[0] as u8,
         smoothing_sigma: smoothing_sigma_arr[0] as f64,

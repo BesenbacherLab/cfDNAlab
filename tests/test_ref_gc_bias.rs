@@ -17,6 +17,7 @@ use cfdnalab::{
     shared::{
         blacklist::apply_blacklist_mask_to_seq,
         interval::{IndexedInterval, Interval},
+        reference::{ContigFootprintEntry, twobit_contig_footprint},
     },
 };
 mod fixtures;
@@ -375,6 +376,13 @@ fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Res
     let smoothing_sigma: ndarray::Array1<f64> = npz.by_name("smoothing_sigma")?;
     let skip_smoothing: ndarray::Array1<bool> = npz.by_name("skip_smoothing")?;
     let chromosomes_json: ndarray::Array1<u8> = npz.by_name("chromosomes_json")?;
+    let reference_contig_footprint_json: ndarray::Array1<u8> =
+        npz.by_name("reference_contig_footprint_json")?;
+    let reference_contig_footprint: Vec<ContigFootprintEntry> = serde_json::from_slice(
+        reference_contig_footprint_json
+            .as_slice()
+            .expect("reference_contig_footprint_json should be contiguous"),
+    )?;
     let chromosomes: Vec<String> = serde_json::from_slice(
         chromosomes_json
             .as_slice()
@@ -397,6 +405,10 @@ fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Res
     assert_eq!(smoothing_sigma.to_vec(), vec![0.55]);
     assert_eq!(skip_smoothing.to_vec(), vec![true]);
     assert_eq!(chromosomes, vec!["chr1".to_string()]);
+    assert_eq!(
+        reference_contig_footprint,
+        twobit_contig_footprint(&reference.path)?
+    );
 
     let expected_theoretical_bins = [
         vec![0_usize, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],

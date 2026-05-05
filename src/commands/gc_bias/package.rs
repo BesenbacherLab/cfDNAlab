@@ -3,7 +3,7 @@ use crate::{
         binning::{BinnedAxis, compute_bin_edges},
         load_reference_bias::ReferenceGCMetadata,
     },
-    shared::constants::GC_CORRECTION_SCHEMA_VERSION,
+    shared::{constants::GC_CORRECTION_SCHEMA_VERSION, reference::ContigFootprintEntry},
 };
 use anyhow::{Context, Result, bail, ensure};
 use ndarray::{Array1, Array2};
@@ -18,7 +18,7 @@ pub struct GCCorrectionPackage {
     pub gc_edges: Vec<u32>,
     pub correction_matrix: Array2<f64>,
     pub length_bin_frequencies: Array1<f64>,
-    pub reference_contig_signature: [u64; 2],
+    pub reference_contig_footprint: Vec<ContigFootprintEntry>,
 }
 
 impl GCCorrectionPackage {
@@ -29,7 +29,6 @@ impl GCCorrectionPackage {
         correction_matrix: Array2<f64>,
         length_bin_frequencies: Array1<f64>,
         reference_metadata: &ReferenceGCMetadata,
-        reference_contig_signature: [u64; 2],
     ) -> Result<Self> {
         let length_edges = compute_bin_edges(
             length_bins,
@@ -45,7 +44,7 @@ impl GCCorrectionPackage {
             gc_edges,
             correction_matrix,
             length_bin_frequencies,
-            reference_contig_signature,
+            reference_contig_footprint: reference_metadata.reference_contig_footprint.clone(),
         })
     }
 
@@ -62,8 +61,8 @@ impl GCCorrectionPackage {
             &Array1::from(self.length_bin_frequencies.clone()),
         )?;
         npz.add_array(
-            "reference_contig_signature",
-            &Array1::from(self.reference_contig_signature.to_vec()),
+            "reference_contig_footprint_json",
+            &Array1::from(serde_json::to_vec(&self.reference_contig_footprint)?),
         )?;
         npz.finish()?;
         Ok(())
@@ -108,16 +107,17 @@ impl GCCorrectionPackage {
         ensure!(
             array_names
                 .iter()
-                .any(|name| name == "reference_contig_signature"),
-            "Missing reference_contig_signature in GC correction package. Rebuild the package with the current schema."
+                .any(|name| name == "reference_contig_footprint_json"),
+            "Missing reference_contig_footprint_json in GC correction package. Rebuild the package with the current schema."
         );
-        let signature_arr: Array1<u64> = reader.by_name("reference_contig_signature")?;
-        ensure!(
-            signature_arr.len() == 2,
-            "reference_contig_signature should contain two u64 values. Found len={}",
-            signature_arr.len()
-        );
-        let reference_contig_signature = [signature_arr[0], signature_arr[1]];
+        let reference_contig_footprint_json: Array1<u8> =
+            reader.by_name("reference_contig_footprint_json")?;
+        let reference_contig_footprint: Vec<ContigFootprintEntry> = serde_json::from_slice(
+            reference_contig_footprint_json
+                .as_slice()
+                .context("reference_contig_footprint_json should be contiguous")?,
+        )
+        .context("invalid reference_contig_footprint_json in GC correction package")?;
 
         let length_edges = length_edges_arr.to_vec();
         let gc_edges = gc_edges_arr.to_vec();
@@ -148,7 +148,7 @@ impl GCCorrectionPackage {
             gc_edges,
             correction_matrix,
             length_bin_frequencies: length_bin_frequencies_arr,
-            reference_contig_signature,
+            reference_contig_footprint,
         })
     }
 }

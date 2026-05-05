@@ -332,7 +332,7 @@ pub fn write_constant_gc_package(path: &Path, fragment_length: u32, weight: f64)
         length_edges: vec![fragment_length, fragment_length + 1],
         gc_edges: vec![0, 101],
         length_bin_frequencies: ndarray::array![1.0_f64],
-        reference_contig_signature: [0, 0],
+        reference_contig_footprint: Vec::new(),
         correction_matrix: ndarray::array![[weight]],
     };
     package.write_npz(path)?;
@@ -352,7 +352,7 @@ pub fn write_two_bin_gc_package(
         length_edges: vec![fragment_length, fragment_length + 1],
         gc_edges: vec![0, 51, 101],
         length_bin_frequencies: ndarray::array![1.0_f64],
-        reference_contig_signature: [0, 0],
+        reference_contig_footprint: Vec::new(),
         correction_matrix: ndarray::array![[low_gc_weight, high_gc_weight]],
     };
     package.write_npz(path)?;

@@ -5,7 +5,7 @@ use crate::commands::gc_bias::{
 };
 use crate::shared::gc_tag::{SanitizedGCWeight, sanitize_gc_weight};
 use crate::shared::interval::Interval;
-use crate::shared::reference::twobit_contig_signature;
+use crate::shared::reference::twobit_contig_footprint;
 use anyhow::{Context, Result, anyhow, ensure};
 use ndarray::{Array1, Array2, Axis};
 use std::str::FromStr;
@@ -636,8 +636,8 @@ fn warn_on_reference_contig_mismatch<P: AsRef<std::path::Path>>(
         return Ok(());
     };
 
-    let run_signature = twobit_contig_signature(ref_2bit)?;
-    if run_signature != package.reference_contig_signature {
+    let run_footprint = twobit_contig_footprint(ref_2bit)?;
+    if run_footprint != package.reference_contig_footprint {
         warn!(
             target: "gc-bias",
             "GC correction package was built against a reference contig set that differs from --ref-2bit. GC weights may be invalid if the package and input reference are from different assemblies."

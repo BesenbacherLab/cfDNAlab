@@ -1260,7 +1260,7 @@ fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range
         length_edges: vec![10, 59],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_signature: [0, 0],
+        reference_contig_footprint: Vec::new(),
         correction_matrix: array![[1.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -1600,7 +1600,7 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
         length_edges: vec![10, 200],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_signature: [0, 0],
+        reference_contig_footprint: Vec::new(),
         correction_matrix: array![[1.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -1848,7 +1848,7 @@ fn build_gc_package(path: &Path, end_offset: u64) -> Result<()> {
         length_edges: vec![10, 60, 200],
         gc_edges: vec![0, 50, 101],
         length_bin_frequencies: array![1.0_f64, 3.0_f64],
-        reference_contig_signature: [0, 0],
+        reference_contig_footprint: Vec::new(),
         correction_matrix: array![[1.0_f64, 1.0_f64], [2.0_f64, 10.0_f64]],
     };
     package.write_npz(path)?;

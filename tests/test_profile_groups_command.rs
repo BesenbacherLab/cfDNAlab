@@ -207,7 +207,7 @@ fn write_minimal_gc_package_excluding_length_61(path: &std::path::Path) -> Resul
         gc_edges: vec![0, 101],
         correction_matrix: array![[1.0_f64]],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_signature: [0, 0],
+        reference_contig_footprint: Vec::new(),
     };
     package.write_npz(path)?;
     Ok(())
@@ -1266,7 +1266,7 @@ fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
         gc_edges: vec![0, 101],
         correction_matrix: array![[1.0_f64]],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_signature: [0, 0],
+        reference_contig_footprint: Vec::new(),
     };
     package.write_npz(&gc_path)?;
 
@@ -1699,7 +1699,7 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
         length_edges: vec![61, 62],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_signature: [0, 0],
+        reference_contig_footprint: Vec::new(),
         correction_matrix: array![[3.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -1800,7 +1800,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
         length_edges: vec![61, 62],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_signature: [0, 0],
+        reference_contig_footprint: Vec::new(),
         correction_matrix: array![[3.0_f64]],
     };
     package.write_npz(&gc_path)?;
