@@ -489,7 +489,7 @@ fn finalize_grouped_value(action: CoverageWindowAction, accum: GroupedAggregateA
     match action {
         CoverageWindowAction::Average | CoverageWindowAction::AverageOnUniqueBases => {
             if accum.eligible_positions == 0 {
-                0.0
+                f64::NAN
             } else {
                 accum.coverage_sum / accum.eligible_positions as f64
             }

@@ -5853,6 +5853,44 @@ fn grouped_bed_total_is_invariant_when_plain_group_segments_cross_tiles() -> Res
 }
 
 #[test]
+fn grouped_bed_errors_when_chromosome_filter_excludes_every_group() -> Result<()> {
+    // Human verification status: verified
+    // Manual expectations:
+    // - `base_config` selects only `chr1`.
+    // - The grouped BED contains one valid grouped row on `chr2`.
+    // - Chromosome filtering removes that row before grouping, leaving no selected grouped
+    //   windows. The command should fail directly instead of writing header-only outputs.
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_all_rows_filtered.bed");
+    write_bed(&grouped_bed, &[("chr2", 0, 100, "filtered")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(0);
+    cfg.set_per_window(CoverageWindowAction::Total);
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+
+    let error = match run_inner(&cfg) {
+        Ok(_) => panic!("grouped BED with no selected rows should fail"),
+        Err(error) => error,
+    };
+    let message = error.to_string();
+
+    assert!(
+        message.contains(
+            "grouped BED file did not contain any valid windows on the selected chromosomes"
+        ),
+        "unexpected error: {message}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn grouped_bed_ignores_groups_on_filtered_out_chromosomes() -> Result<()> {
     // Human verification status: unverified
     // Manual expectations:
@@ -6251,6 +6289,108 @@ fn grouped_bed_average_on_unique_bases_with_blacklist_uses_only_eligible_positio
         vec!["1", "40", "5", "35"]
     );
     assert_close(rows_by_name["delta"][4].parse::<f64>()?, 3.0 / 7.0, 1e-6);
+
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_average_writes_nan_when_group_has_no_eligible_positions() -> Result<()> {
+    // Human verification status: verified
+    // Manual expectations:
+    // - The single fragment covers [20, 80) with per-base coverage 1.
+    // - Group `masked` covers [20, 50) and is fully blacklisted:
+    //     span_positions = blacklisted_positions = 30
+    //     eligible_positions = 0
+    //     average_coverage = NaN because no denominator exists
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir.path().join("grouped_average_fully_masked.bed");
+    write_bed(&grouped_bed, &[("chr1", 20, 50, "masked")])?;
+    let blacklist_bed = out_dir
+        .path()
+        .join("grouped_average_fully_masked_blacklist.bed");
+    write_bed(&blacklist_bed, &[("chr1", 20, 50, "fully_masked")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(3);
+    cfg.set_per_window(CoverageWindowAction::Average);
+    cfg.set_blacklist(Some(vec![blacklist_bed]));
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(&out_dir.path().join("testcov.fcoverage.average.tsv.zst"))?;
+    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+
+    assert_eq!(
+        rows_by_name["masked"]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["0", "30", "30", "0", "NaN"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn grouped_bed_average_on_unique_bases_writes_nan_when_group_has_no_eligible_positions()
+-> Result<()> {
+    // Human verification status: verified
+    // Manual expectations:
+    // - The single fragment covers [20, 80) with per-base coverage 1.
+    // - Group `masked` has [20, 50) and [40, 80). Under `average-on-unique-bases`,
+    //   same-group overlaps collapse to the union [20, 80).
+    // - The blacklist fully masks [20, 80), so:
+    //     span_positions = blacklisted_positions = 60
+    //     eligible_positions = 0
+    //     average_coverage = NaN because no denominator exists
+    let bam = simple_inward_bam()?;
+    let out_dir = TempDir::new()?;
+    let grouped_bed = out_dir
+        .path()
+        .join("grouped_unique_bases_average_fully_masked.bed");
+    write_bed(
+        &grouped_bed,
+        &[("chr1", 20, 50, "masked"), ("chr1", 40, 80, "masked")],
+    )?;
+    let blacklist_bed = out_dir
+        .path()
+        .join("grouped_unique_bases_average_fully_masked_blacklist.bed");
+    write_bed(&blacklist_bed, &[("chr1", 20, 80, "fully_masked")])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path());
+    cfg.set_decimals(3);
+    cfg.set_per_window(CoverageWindowAction::AverageOnUniqueBases);
+    cfg.set_blacklist(Some(vec![blacklist_bed]));
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: None,
+        by_grouped_bed: Some(grouped_bed),
+    });
+
+    run(&cfg)?;
+
+    let output = read_zst_to_string(
+        &out_dir
+            .path()
+            .join("testcov.fcoverage.average_on_unique_bases.tsv.zst"),
+    )?;
+    let sidecar = std::fs::read_to_string(out_dir.path().join("testcov.group_index.tsv"))?;
+    let rows_by_name = grouped_rows_by_name(&output, &sidecar);
+
+    assert_eq!(
+        rows_by_name["masked"]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        vec!["0", "60", "60", "0", "NaN"]
+    );
 
     Ok(())
 }

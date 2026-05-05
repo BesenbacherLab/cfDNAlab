@@ -1,5 +1,9 @@
 use super::*;
-use crate::shared::{bam::Contigs, bed::Windows, interval::IndexedInterval};
+use crate::shared::{
+    bam::Contigs,
+    bed::{GroupedWindows, Windows},
+    interval::IndexedInterval,
+};
 use std::path::PathBuf;
 
 fn contigs_with_lengths(entries: &[(&str, u32)]) -> Contigs {
@@ -112,6 +116,39 @@ fn ensure_plain_bed_windows_not_empty_accepts_one_surviving_window() -> Result<(
 
     // Act / Assert
     ensure_plain_bed_windows_not_empty(&windows_map)?;
+    Ok(())
+}
+
+#[test]
+fn ensure_grouped_bed_windows_not_empty_errors_when_no_grouped_windows_survive() -> Result<()> {
+    // Arrange
+    let mut windows_map = FxHashMap::default();
+    windows_map.insert("chr1".to_string(), GroupedWindows::from_tuples(&[])?);
+    windows_map.insert("chr2".to_string(), GroupedWindows::from_tuples(&[])?);
+
+    // Act
+    let result = ensure_grouped_bed_windows_not_empty(&windows_map);
+
+    // Assert
+    let err = result.expect_err("empty selected grouped BED windows should error");
+    assert!(err.to_string().contains(
+        "grouped BED file did not contain any valid windows on the selected chromosomes"
+    ));
+    Ok(())
+}
+
+#[test]
+fn ensure_grouped_bed_windows_not_empty_accepts_one_surviving_grouped_window() -> Result<()> {
+    // Arrange
+    let mut windows_map = FxHashMap::default();
+    windows_map.insert("chr1".to_string(), GroupedWindows::from_tuples(&[])?);
+    windows_map.insert(
+        "chr2".to_string(),
+        GroupedWindows::from_tuples(&[(10, 20, 0)])?,
+    );
+
+    // Act / Assert
+    ensure_grouped_bed_windows_not_empty(&windows_map)?;
     Ok(())
 }
 

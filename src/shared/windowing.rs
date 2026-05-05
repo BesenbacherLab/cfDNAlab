@@ -126,6 +126,21 @@ pub fn ensure_plain_bed_windows_not_empty(windows_map: &FxHashMap<String, Window
     Ok(())
 }
 
+/// Validate that a grouped BED map contains at least one selected window.
+///
+/// Grouped BED loaders keep empty chromosome entries when a chromosome whitelist is supplied. This
+/// checks the actual surviving grouped windows so commands fail early when every grouped BED row is
+/// removed by chromosome filtering.
+pub fn ensure_grouped_bed_windows_not_empty(
+    windows_map: &FxHashMap<String, GroupedWindows>,
+) -> Result<()> {
+    ensure!(
+        windows_map.values().any(|windows| !windows.is_empty()),
+        "grouped BED file did not contain any valid windows on the selected chromosomes"
+    );
+    Ok(())
+}
+
 /// Build per-window metadata (coordinates, blacklist overlap, etc.) for downstream consumers.
 ///
 /// When running in BED mode the `original_idx` embedded in the loaded windows is preserved so the

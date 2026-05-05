@@ -45,7 +45,7 @@ use crate::{
             load_windows_from_bed, write_group_idx_to_name_tsv,
         },
         thread_pool::init_global_pool,
-        windowing::ensure_plain_bed_windows_not_empty,
+        windowing::{ensure_grouped_bed_windows_not_empty, ensure_plain_bed_windows_not_empty},
         writers::open_zstd_auto_writer,
     },
 };
@@ -241,6 +241,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
             info!(target: COMMAND_TARGET, "Loading grouped window coordinates");
             let (grouped_windows_by_chr, group_idx_to_name) =
                 load_grouped_windows_from_bed(bed, Some(chromosomes.as_slice()), None, None)?;
+            ensure_grouped_bed_windows_not_empty(&grouped_windows_by_chr)?;
             grouped_layout = Some(build_grouped_coverage_layout(
                 &grouped_windows_by_chr,
                 &group_idx_to_name,
