@@ -52,7 +52,11 @@ use fxhash::FxHashMap;
 use ndarray_npy::write_npy;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{path::Path, sync::Arc, time::Instant};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
+};
 use tracing::info;
 
 const COMMAND_TARGET: &str = "lengths";
@@ -74,8 +78,38 @@ struct TileCounts {
 #[derive(Clone)]
 struct TileOutputs {
     counters: LengthsCounters,
+    chr: String,
     global_counts: Option<(String, LengthCounts)>,
     grouped_counts: Option<FxHashMap<u64, LengthCounts>>,
+    partial_path: Option<PathBuf>,
+    cross_path: Option<PathBuf>,
+}
+
+fn reduce_tile_partials_for_chr(
+    chr: &str,
+    tile_results: &[TileOutputs],
+    n_windows: usize,
+    template_counts: &LengthCounts,
+) -> Result<Vec<LengthCounts>> {
+    let mut partial_paths: Vec<PathBuf> = Vec::new();
+    let mut cross_paths: Vec<PathBuf> = Vec::new();
+
+    for tile_out in tile_results.iter().filter(|tile_out| tile_out.chr == chr) {
+        if let Some(partial_path) = &tile_out.partial_path {
+            partial_paths.push(partial_path.clone());
+        }
+        if let Some(cross_path) = &tile_out.cross_path {
+            cross_paths.push(cross_path.clone());
+        }
+    }
+
+    reduce_partials_for_chr(
+        chr,
+        partial_paths.as_slice(),
+        cross_paths.as_slice(),
+        n_windows,
+        template_counts,
+    )
 }
 
 /// Maximum reference-coordinate reach a counted fragment can require.
@@ -423,11 +457,9 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                     .map(|&(_, len)| len as u64)
                     .context("missing contig length")?;
                 let n_windows = chrom_len.div_ceil(*window_bp) as usize;
-                let counts = reduce_partials_for_chr(
+                let counts = reduce_tile_partials_for_chr(
                     chr,
-                    temp_dir,
-                    partials_prefix,
-                    cross_prefix,
+                    tile_results.as_slice(),
                     n_windows,
                     &template_counts,
                 )?;
@@ -453,11 +485,9 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 if wchr_slice.is_empty() {
                     continue;
                 }
-                let counts = reduce_partials_for_chr(
+                let counts = reduce_tile_partials_for_chr(
                     chr,
-                    temp_dir,
-                    partials_prefix,
-                    cross_prefix,
+                    tile_results.as_slice(),
                     wchr_slice.len(),
                     &template_counts,
                 )?;
@@ -706,8 +736,11 @@ fn process_tile(
         // Skip tiles with no relevant windows
         return Ok(TileOutputs {
             counters: counter,
+            chr: tile.chr.clone(),
             global_counts: None,
             grouped_counts: None,
+            partial_path: None,
+            cross_path: None,
         });
     };
     let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
@@ -1165,20 +1198,26 @@ fn process_tile(
             .unwrap_or_else(|| template.zeroed_like());
         return Ok(TileOutputs {
             counters: counter,
+            chr: tile.chr.clone(),
             global_counts: Some((tile.chr.clone(), chr_counts)),
             grouped_counts: None,
+            partial_path: None,
+            cross_path: None,
         });
     }
 
     if matches!(window_opt, DistributionWindowSpec::GroupedBed(_)) {
         return Ok(TileOutputs {
             counters: counter,
+            chr: tile.chr.clone(),
             global_counts: None,
             grouped_counts: Some(counts_by_group),
+            partial_path: None,
+            cross_path: None,
         });
     }
 
-    let _ = write_partials_npz(
+    let partial_path = write_partials_npz(
         temp_dir,
         partials_prefix,
         &tile.chr,
@@ -1187,7 +1226,7 @@ fn process_tile(
         &contained_flags,
         &counts,
     )?;
-    let _ = write_cross_npy(
+    let cross_path = write_cross_npy(
         temp_dir,
         cross_prefix,
         &tile.chr,
@@ -1197,8 +1236,11 @@ fn process_tile(
 
     Ok(TileOutputs {
         counters: counter,
+        chr: tile.chr.clone(),
         global_counts: None,
         grouped_counts: None,
+        partial_path,
+        cross_path,
     })
 }
 

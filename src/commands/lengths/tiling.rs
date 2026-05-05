@@ -1,10 +1,13 @@
-use std::{fs::File, path::Path};
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, ensure};
 use ndarray::{Array1, Array2, ArrayView1};
 use ndarray_npy::{NpzReader, NpzWriter, ReadNpyExt};
 
-use crate::{commands::lengths::counting::LengthCounts, shared::tiled_run::parse_tile_index};
+use crate::commands::lengths::counting::LengthCounts;
 
 /// Write per-tile partial length counts as an NPZ archive.
 ///
@@ -93,9 +96,8 @@ pub fn write_cross_npy(
 /// `n_windows` must equal the total number of window indices for the chromosome (scan order).
 pub fn reduce_partials_for_chr(
     chr: &str,
-    temp_dir: &Path,
-    partials_prefix: &str,
-    cross_prefix: &str,
+    partial_paths: &[PathBuf],
+    cross_paths: &[PathBuf],
     n_windows: usize,
     template: &LengthCounts,
 ) -> Result<Vec<LengthCounts>> {
@@ -109,24 +111,9 @@ pub fn reduce_partials_for_chr(
         .collect();
 
     // First accumulate contributions from crossing windows
-    for entry in
-        std::fs::read_dir(temp_dir).with_context(|| format!("Listing {}", temp_dir.display()))?
-    {
-        let path = entry?.path();
-        if !path.is_file() {
-            continue;
-        }
-        let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if !fname.starts_with(cross_prefix) || !fname.contains(&format!(".{chr}.")) {
-            continue;
-        }
-        // Skip files that do not carry a numeric tile index suffix
-        if parse_tile_index(fname).is_none() {
-            continue;
-        }
-
+    for path in cross_paths {
         let file =
-            File::open(&path).with_context(|| format!("Opening cross file {}", path.display()))?;
+            File::open(path).with_context(|| format!("Opening cross file {}", path.display()))?;
         let arr: Array1<u64> = Array1::read_npy(file)
             .with_context(|| format!("Reading cross file {}", path.display()))?;
         for idx in arr.iter() {
@@ -142,24 +129,9 @@ pub fn reduce_partials_for_chr(
     }
 
     // Then sum partial counts
-    for entry in
-        std::fs::read_dir(temp_dir).with_context(|| format!("Listing {}", temp_dir.display()))?
-    {
-        let path = entry?.path();
-        if !path.is_file() {
-            continue;
-        }
-        let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if !fname.starts_with(partials_prefix) || !fname.contains(&format!(".{chr}.")) {
-            continue;
-        }
-        // Skip files that do not carry a numeric tile index suffix
-        if parse_tile_index(fname).is_none() {
-            continue;
-        }
-
+    for path in partial_paths {
         let file =
-            File::open(&path).with_context(|| format!("Opening partials {}", path.display()))?;
+            File::open(path).with_context(|| format!("Opening partials {}", path.display()))?;
         let mut npz =
             NpzReader::new(file).with_context(|| format!("Reading partials {}", path.display()))?;
         let idxs: Array1<u64> = npz

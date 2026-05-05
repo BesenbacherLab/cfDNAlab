@@ -4657,8 +4657,8 @@ mod tests_lengths_tiling_reducer {
     };
     use ndarray::{Array1, Array2, ShapeBuilder};
     use ndarray_npy::NpzWriter;
-    use std::fs::File;
     use std::sync::Arc;
+    use std::{fs::File, path::PathBuf};
     use tempfile::TempDir;
 
     fn exact_axis(min_length: u32, max_length: u32) -> Arc<LengthAxis> {
@@ -4676,6 +4676,10 @@ mod tests_lengths_tiling_reducer {
         lc
     }
 
+    fn expect_written_path(path: Option<PathBuf>, label: &str) -> PathBuf {
+        path.unwrap_or_else(|| panic!("{label} should have been written"))
+    }
+
     #[test]
     fn reducer_accepts_contained_only() -> Result<()> {
         // Human verification status: unverified
@@ -4685,10 +4689,13 @@ mod tests_lengths_tiling_reducer {
 
         let counts = vec![counts_with_value(2.0)];
         let contained = vec![true];
-        write_partials_npz(dir, "partials", "chr1", 0, &[0], &contained, &counts)?;
+        let partial_path = expect_written_path(
+            write_partials_npz(dir, "partials", "chr1", 0, &[0], &contained, &counts)?,
+            "contained partial",
+        );
         // No cross file because window is contained
 
-        let reduced = reduce_partials_for_chr("chr1", dir, "partials", "cross", 1, &template)?;
+        let reduced = reduce_partials_for_chr("chr1", &[partial_path], &[], 1, &template)?;
         assert_eq!(reduced.len(), 1);
         assert!((reduced[0].counts[0] - 2.0).abs() < 1e-6);
         Ok(())
@@ -4719,12 +4726,34 @@ mod tests_lengths_tiling_reducer {
         let counts = vec![counts_with_value(1.0)];
         let contained = vec![false];
         // Two tiles, both crossing the same window
-        write_partials_npz(dir, "partials", "chr1", 0, &[0], &contained, &counts)?;
-        write_partials_npz(dir, "partials", "chr1", 1, &[0], &contained, &counts)?;
-        write_cross_npy(dir, "cross", "chr1", 0, &[0])?;
-        write_cross_npy(dir, "cross", "chr1", 1, &[0])?;
+        let partial_paths = vec![
+            expect_written_path(
+                write_partials_npz(dir, "partials", "chr1", 0, &[0], &contained, &counts)?,
+                "first crossing partial",
+            ),
+            expect_written_path(
+                write_partials_npz(dir, "partials", "chr1", 1, &[0], &contained, &counts)?,
+                "second crossing partial",
+            ),
+        ];
+        let cross_paths = vec![
+            expect_written_path(
+                write_cross_npy(dir, "cross", "chr1", 0, &[0])?,
+                "first cross",
+            ),
+            expect_written_path(
+                write_cross_npy(dir, "cross", "chr1", 1, &[0])?,
+                "second cross",
+            ),
+        ];
 
-        let reduced = reduce_partials_for_chr("chr1", dir, "partials", "cross", 1, &template)?;
+        let reduced = reduce_partials_for_chr(
+            "chr1",
+            partial_paths.as_slice(),
+            cross_paths.as_slice(),
+            1,
+            &template,
+        )?;
         assert_eq!(reduced.len(), 1);
         assert!((reduced[0].counts[0] - 2.0).abs() < 1e-6);
         Ok(())
@@ -4739,11 +4768,28 @@ mod tests_lengths_tiling_reducer {
 
         let contained_counts = vec![counts_with_value(1.0)];
         let crossing_counts = vec![counts_with_value(3.0)];
-        write_partials_npz(dir, "partials", "chr1", 0, &[0], &[true], &contained_counts)?;
-        write_partials_npz(dir, "partials", "chr1", 1, &[0], &[false], &crossing_counts)?;
-        write_cross_npy(dir, "cross", "chr1", 1, &[0])?;
+        let partial_paths = vec![
+            expect_written_path(
+                write_partials_npz(dir, "partials", "chr1", 0, &[0], &[true], &contained_counts)?,
+                "contained partial",
+            ),
+            expect_written_path(
+                write_partials_npz(dir, "partials", "chr1", 1, &[0], &[false], &crossing_counts)?,
+                "crossing partial",
+            ),
+        ];
+        let cross_paths = vec![expect_written_path(
+            write_cross_npy(dir, "cross", "chr1", 1, &[0])?,
+            "cross index",
+        )];
 
-        let reduced = reduce_partials_for_chr("chr1", dir, "partials", "cross", 1, &template)?;
+        let reduced = reduce_partials_for_chr(
+            "chr1",
+            partial_paths.as_slice(),
+            cross_paths.as_slice(),
+            1,
+            &template,
+        )?;
         assert_eq!(reduced.len(), 1);
         // Expect 1 contained contribution and 1 crossing contribution => sum counts
         assert!((reduced[0].counts[0] - 4.0).abs() < 1e-6);
@@ -4753,12 +4799,10 @@ mod tests_lengths_tiling_reducer {
     #[test]
     fn reducer_errors_when_contribution_missing() {
         // Human verification status: unverified
-        let tmp = TempDir::new().unwrap();
-        let dir = tmp.path();
         let template = template_counts();
 
         // No partials written -> zero contributions
-        let err = reduce_partials_for_chr("chr1", dir, "partials", "cross", 1, &template)
+        let err = reduce_partials_for_chr("chr1", &[], &[], 1, &template)
             .expect_err("should fail when contributions are missing");
         assert!(err.to_string().contains("expected 1"));
     }
@@ -4771,9 +4815,12 @@ mod tests_lengths_tiling_reducer {
         let template = template_counts();
 
         // Cross file claims one contribution, but no partial exists
-        write_cross_npy(dir, "cross", "chr1", 0, &[0]).unwrap();
+        let cross_path = expect_written_path(
+            write_cross_npy(dir, "cross", "chr1", 0, &[0]).unwrap(),
+            "cross",
+        );
 
-        let err = reduce_partials_for_chr("chr1", dir, "partials", "cross", 1, &template)
+        let err = reduce_partials_for_chr("chr1", &[], &[cross_path], 1, &template)
             .expect_err("should fail when expected contributions not met");
         assert!(err.to_string().contains("expected 1"));
     }
@@ -4796,7 +4843,7 @@ mod tests_lengths_tiling_reducer {
         npz.add_array("counts", &counts).unwrap();
         npz.finish().unwrap();
 
-        let err = reduce_partials_for_chr("chr1", dir, "partials", "cross", 1, &template)
+        let err = reduce_partials_for_chr("chr1", &[path], &[], 1, &template)
             .expect_err("should fail on counts width mismatch");
         assert!(err.to_string().contains("counts width mismatch"));
     }
@@ -4821,7 +4868,7 @@ mod tests_lengths_tiling_reducer {
         npz.add_array("counts", &counts).unwrap();
         npz.finish().unwrap();
 
-        let err = reduce_partials_for_chr("chr1", dir, "partials", "cross", 1, &template)
+        let err = reduce_partials_for_chr("chr1", &[path], &[], 1, &template)
             .expect_err("should fail on non-contiguous counts rows");
         assert!(err.to_string().contains("counts row not contiguous"));
     }
@@ -4835,13 +4882,57 @@ mod tests_lengths_tiling_reducer {
 
         let counts = vec![counts_with_value(1.0)];
         let contained = vec![true];
-        write_partials_npz(dir, "partials", "chr1", 0, &[0], &contained, &counts)?;
+        let partial_path = expect_written_path(
+            write_partials_npz(dir, "partials", "chr1", 0, &[0], &contained, &counts)?,
+            "chr1 partial",
+        );
 
-        // Stray files for chr2 that should be filtered out by the chr-specific prefix match
+        // Stray files for another chromosome are not passed to the reducer because the command
+        // now records exact output paths from each tile.
         write_partials_npz(dir, "partials", "chr2", 0, &[0], &contained, &counts)?;
         write_cross_npy(dir, "cross", "chr2", 0, &[0])?;
 
-        let reduced = reduce_partials_for_chr("chr1", dir, "partials", "cross", 1, &template)?;
+        let reduced = reduce_partials_for_chr("chr1", &[partial_path], &[], 1, &template)?;
+        assert_eq!(reduced.len(), 1);
+        assert!((reduced[0].counts[0] - 1.0).abs() < 1e-6);
+        Ok(())
+    }
+
+    #[test]
+    fn reducer_uses_explicit_paths_for_overlapping_chromosome_names() -> Result<()> {
+        // Human verification status: verified
+        // Manual expectations:
+        // - `chr1` contributes one contained count with value 1.
+        // - `chr1.extra` contributes one contained count with value 5.
+        // - Old dotted-substring discovery for `chr1` could also match `partials.chr1.extra.0.npz`.
+        // - Passing explicit paths means the `chr1.extra` file is ignored unless the caller provides
+        //   it, so the reduced `chr1` count remains 1.
+        let tmp = TempDir::new()?;
+        let dir = tmp.path();
+        let template = template_counts();
+
+        let contained = vec![true];
+        let chr1_counts = vec![counts_with_value(1.0)];
+        let chr1_extra_counts = vec![counts_with_value(5.0)];
+        let chr1_partial_path = expect_written_path(
+            write_partials_npz(dir, "partials", "chr1", 0, &[0], &contained, &chr1_counts)?,
+            "chr1 partial",
+        );
+        let _chr1_extra_partial_path = expect_written_path(
+            write_partials_npz(
+                dir,
+                "partials",
+                "chr1.extra",
+                0,
+                &[0],
+                &contained,
+                &chr1_extra_counts,
+            )?,
+            "chr1.extra partial",
+        );
+
+        let reduced = reduce_partials_for_chr("chr1", &[chr1_partial_path], &[], 1, &template)?;
+
         assert_eq!(reduced.len(), 1);
         assert!((reduced[0].counts[0] - 1.0).abs() < 1e-6);
         Ok(())
@@ -4871,9 +4962,12 @@ mod tests_lengths_tiling_reducer {
         let counts = vec![counts_with_value(1.0)];
         let contained = vec![false];
         // Write a partial with idx outside n_windows=1
-        write_partials_npz(dir, "partials", "chr1", 0, &[2], &contained, &counts).unwrap();
+        let partial_path = expect_written_path(
+            write_partials_npz(dir, "partials", "chr1", 0, &[2], &contained, &counts).unwrap(),
+            "out-of-bounds partial",
+        );
 
-        let err = reduce_partials_for_chr("chr1", dir, "partials", "cross", 1, &template)
+        let err = reduce_partials_for_chr("chr1", &[partial_path], &[], 1, &template)
             .expect_err("should fail on out-of-bounds idx");
         assert!(err.to_string().contains("out of bounds"));
     }
@@ -4885,8 +4979,11 @@ mod tests_lengths_tiling_reducer {
         let dir = tmp.path();
         let template = template_counts();
 
-        write_cross_npy(dir, "cross", "chr1", 0, &[3]).unwrap();
-        let err = reduce_partials_for_chr("chr1", dir, "partials", "cross", 1, &template)
+        let cross_path = expect_written_path(
+            write_cross_npy(dir, "cross", "chr1", 0, &[3]).unwrap(),
+            "out-of-bounds cross",
+        );
+        let err = reduce_partials_for_chr("chr1", &[], &[cross_path], 1, &template)
             .expect_err("should fail on cross index out of bounds");
         assert!(err.to_string().contains("Cross index"));
     }
@@ -4903,10 +5000,18 @@ mod tests_lengths_tiling_reducer {
         let contained = vec![true];
 
         // Window 0 contained in tile 0, window 1 contained in tile 1
-        write_partials_npz(dir, "partials", "chr1", 0, &[0], &contained, &counts0)?;
-        write_partials_npz(dir, "partials", "chr1", 1, &[1], &contained, &counts1)?;
+        let partial_paths = vec![
+            expect_written_path(
+                write_partials_npz(dir, "partials", "chr1", 0, &[0], &contained, &counts0)?,
+                "first window partial",
+            ),
+            expect_written_path(
+                write_partials_npz(dir, "partials", "chr1", 1, &[1], &contained, &counts1)?,
+                "second window partial",
+            ),
+        ];
 
-        let reduced = reduce_partials_for_chr("chr1", dir, "partials", "cross", 2, &template)?;
+        let reduced = reduce_partials_for_chr("chr1", partial_paths.as_slice(), &[], 2, &template)?;
         assert_eq!(reduced.len(), 2);
         assert!((reduced[0].counts[0] - 1.0).abs() < 1e-6);
         assert!((reduced[1].counts[0] - 2.0).abs() < 1e-6);
@@ -4922,7 +5027,7 @@ mod tests_lengths_tiling_reducer {
         let res = write_partials_npz(dir, "partials", "chr1", 0, &[], &[], &[])?;
         assert!(res.is_none());
         // Ensure reducer still errors because nothing was written
-        let err = reduce_partials_for_chr("chr1", dir, "partials", "cross", 1, &template)
+        let err = reduce_partials_for_chr("chr1", &[], &[], 1, &template)
             .expect_err("should fail when nothing written");
         assert!(err.to_string().contains("expected 1"));
         Ok(())
