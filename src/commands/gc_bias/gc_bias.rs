@@ -254,6 +254,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
     let prefix = opt.output_prefix.trim();
+    validate_output_prefix(prefix)?;
     let window_opt = opt.windows.resolve_windows();
     let mut intermediate_saver = IntermediateFileSaver::new(
         opt.save_intermediates,

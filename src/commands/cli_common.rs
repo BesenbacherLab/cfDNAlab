@@ -12,6 +12,50 @@ use std::{path::Path, path::PathBuf, str::FromStr};
 
 pub use crate::shared::logging::{LogSpec, LoggingArgs};
 
+/// Parse a CLI output prefix into the exact filename stem prefix used by commands.
+///
+/// Empty prefixes are allowed because commands use them to write unprefixed output names. Non-empty
+/// prefixes are restricted to ASCII letters, numbers, `.`, `_`, and `-`, with no `..` sequence.
+/// That keeps prefix parsing separate from filename assembly helpers such as `dot_join()`.
+pub fn parse_output_prefix(raw_value: &str) -> std::result::Result<String, String> {
+    let prefix = raw_value.trim();
+    validate_output_prefix(prefix).map_err(|error| error.to_string())?;
+    Ok(prefix.to_string())
+}
+
+/// Validate an already parsed output prefix.
+///
+/// Programmatic configs can bypass clap parsing, so command startup validation should call this
+/// before creating output paths or temporary directories.
+pub fn validate_output_prefix(prefix: &str) -> Result<()> {
+    let prefix = prefix.trim();
+    if prefix.is_empty() {
+        return Ok(());
+    }
+
+    ensure!(
+        !prefix.contains(".."),
+        "--output-prefix cannot contain '..'"
+    );
+    ensure!(
+        !prefix.contains('/') && !prefix.contains('\\'),
+        "--output-prefix cannot contain path separators"
+    );
+
+    for character in prefix.chars() {
+        ensure!(
+            character.is_ascii_alphanumeric()
+                || character == '.'
+                || character == '_'
+                || character == '-',
+            "--output-prefix contains invalid character '{}'. Use ASCII letters, numbers, '.', '_', or '-'",
+            character
+        );
+    }
+
+    Ok(())
+}
+
 /// Args for in-/output and core (threads).
 #[cfg_attr(feature = "cli", derive(clap::Args))]
 #[derive(Debug, Clone)]

@@ -42,6 +42,7 @@ pub struct FragmentKmersSharedArgs {
             short = 'x',
             default_value_t = String::new(),
             hide_default_value = true,
+            value_parser = crate::commands::cli_common::parse_output_prefix,
             help_heading = "Core"
         )
     )]

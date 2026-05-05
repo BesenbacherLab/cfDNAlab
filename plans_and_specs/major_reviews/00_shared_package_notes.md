@@ -20,6 +20,7 @@ Implemented findings removed from active tracking:
 - G-014: smoothing-weight TSV writes do not explicitly flush the final writer.
 - G-015: all-zero smoothing runs fail with a misleading normalization error.
 - G-016: smoothing-weight commands cannot match `fcoverage --ignore-gap` segmentation.
+- G-022: output prefixes can escape the output directory.
 
 Reviewed and deliberately not tracked:
 
@@ -96,17 +97,3 @@ Recommended fix:
 - Add shared validation for `--gc-tag`: exactly two ASCII bytes, with a direct error for empty, one-byte, overlong, or non-ASCII values.
 - Reuse the same validator anywhere tag names are written or read.
 - Add `ApplyGCArgs` tests for invalid tag lengths and at least one command-level regression proving an overlong tag is rejected before reading the BAM.
-
-#### G-022 - Medium - Output prefixes can escape the output directory
-
-Output prefixes are described as sample/file prefixes, but the shared `dot_join()` helper only trims and dot-joins text; it does not reject path separators, `..`, or absolute-looking path components ([io.rs](../../src/shared/io.rs#L14-L27)). Commands then join those names directly under the requested output directory. Confirmed examples include final `ends` output paths ([write.rs](../../src/commands/ends/write.rs#L47-L64), [ends.rs](../../src/commands/ends/ends.rs#L460-L477)), `midpoints` output paths ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L189-L200)), `fcoverage` output paths ([fcoverage.rs](../../src/commands/fcoverage/fcoverage.rs#L349-L359)), `lengths` output paths ([lengths.rs](../../src/commands/lengths/lengths.rs#L527-L563), [writer.rs](../../src/commands/lengths/writer.rs#L80-L83)), the `ref-gc-bias` package output path ([ref_gc_bias.rs](../../src/commands/ref_gc_bias/ref_gc_bias.rs#L355-L357)), `gc-bias` correction, intermediate, and plot paths ([gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L742-L746), [gc_bias.rs](../../src/commands/gc_bias/gc_bias.rs#L1460-L1467), [plotting.rs](../../src/commands/gc_bias/plotting.rs#L140-L180)), and scaling-weight final output/internal source directories used by `fragment-count-weights` and `coverage-weights` ([coverage_weights.rs](../../src/commands/coverage_weights/coverage_weights.rs#L135-L178)). The same prefix also feeds temporary directory names in tiled runs through `TempDirGuard` ([ends.rs](../../src/commands/ends/ends.rs#L291-L294), [lengths.rs](../../src/commands/lengths/lengths.rs#L323-L327), [tiled_run.rs](../../src/shared/tiled_run.rs#L642-L656)).
-
-Because the prefix string is interpolated into filenames before `Path::join()`, values containing `/` or `..` are interpreted as path components. A normal sample name is fine, but a mistaken or hostile prefix can write final outputs or temporary directories outside the intended output directory.
-
-Impact: commands do not fully enforce the user-facing invariant that outputs land inside `--output-dir`. This is lower risk than raw chromosome names from input files because the prefix is user-supplied CLI/config text, but automated pipelines commonly pass sample names from metadata, so it should still fail fast.
-
-Recommended fix:
-
-- Add one shared validator for output prefixes and other filename-stem inputs that rejects empty path components, `/`, platform path separators, `..`, and absolute paths.
-- Use the validator before any `dot_join()` result is passed to `Path::join()`.
-- Add command-level or shared helper regressions showing that prefixes such as `../sample` and `nested/sample` are rejected before output or temporary directories are created.

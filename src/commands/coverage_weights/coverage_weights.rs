@@ -1,6 +1,6 @@
 use crate::{
     commands::{
-        cli_common::{ensure_output_dir, resolve_chromosomes_and_contigs},
+        cli_common::{ensure_output_dir, resolve_chromosomes_and_contigs, validate_output_prefix},
         coverage_weights::scaling_weights_config::ScalingWeightsArgs,
         coverage_weights::striding::{
             StrideBin, fill_triangular_overlap, normalize_average_overlap_by_global_mean,
@@ -128,6 +128,7 @@ pub(crate) fn run_with_fcoverage(
     if source_ignore_gap.unwrap_or(false) && opt.unpaired.reads_are_fragments {
         bail!("--ignore-gap cannot be used with --reads-are-fragments");
     }
+    validate_output_prefix(opt.output_prefix.trim())?;
 
     // Keep all intermediate files under the user-chosen output directory so disk usage stays
     // within the filesystem location the user already selected for results.

@@ -8,7 +8,7 @@ use crate::{
     commands::{
         cli_common::{
             WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
-            resolve_chromosomes_and_contigs,
+            resolve_chromosomes_and_contigs, validate_output_prefix,
         },
         counters::FragmentKmersCounters,
         fragment_kmers::{
@@ -94,6 +94,7 @@ pub fn run(opt: &FragmentKmersConfig) -> Result<()> {
     opt.shared_args
         .gc
         .validate(Some(opt.shared_args.ref_genome.ref_2bit.as_path()))?;
+    validate_output_prefix(opt.shared_args.output_prefix.trim())?;
     let global_counter = run_inner(opt)?;
     let elapsed = start_time.elapsed();
     print_fragment_run_statistics(
@@ -157,6 +158,7 @@ fn run_inner_with_reporting(
         .clone()
         .into_positional_specs()?;
     let prefix = opt.shared_args.output_prefix.trim();
+    validate_output_prefix(prefix)?;
 
     // Create output directory
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;

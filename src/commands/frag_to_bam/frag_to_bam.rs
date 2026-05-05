@@ -1,6 +1,6 @@
 use crate::{
     commands::{
-        cli_common::{ContigSource, ensure_output_dir, load_blacklist_map},
+        cli_common::{ContigSource, ensure_output_dir, load_blacklist_map, validate_output_prefix},
         frag_to_bam::config::FragToBamConfig,
     },
     shared::{
@@ -121,6 +121,7 @@ pub fn run(opt: &FragToBamConfig) -> Result<()> {
 
 fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
     opt.fragment_lengths.validate()?;
+    validate_output_prefix(opt.output_prefix.trim())?;
     ensure_output_dir(&opt.output_dir)?;
     let column_layout = resolve_frag_column_layout(opt)?;
 

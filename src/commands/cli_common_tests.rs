@@ -1,6 +1,6 @@
 use super::{
     ApplyGCArgFileOnly, ApplyGCArgs, ChromosomeArgs, ContigSource, FragmentLengthArgs,
-    parse_length_bins, resolve_length_bin_edges,
+    parse_length_bins, parse_output_prefix, resolve_length_bin_edges, validate_output_prefix,
 };
 use crate::shared::constants::MAX_SUPPORTED_FRAGMENT_LENGTH;
 use std::io::Write;
@@ -44,6 +44,62 @@ fn fragment_length_args_accepts_max_supported_fragment_length() {
 
     args.validate()
         .expect("the configured maximum supported fragment length should be valid");
+}
+
+#[test]
+fn parse_output_prefix_trims_valid_filename_stem_prefix() {
+    let prefix = parse_output_prefix(" sample.v1_alpha-2 ")
+        .expect("simple filename-stem prefix should parse");
+
+    assert_eq!(prefix, "sample.v1_alpha-2");
+}
+
+#[test]
+fn validate_output_prefix_accepts_empty_and_single_separator_prefixes() {
+    validate_output_prefix("").expect("empty prefix should keep unprefixed output names valid");
+    validate_output_prefix(".").expect("single dot should be allowed");
+    validate_output_prefix("_").expect("single underscore should be allowed");
+    validate_output_prefix("-").expect("single dash should be allowed");
+}
+
+#[test]
+fn validate_output_prefix_rejects_parent_directory_sequence() {
+    let error = validate_output_prefix("sample..v2")
+        .expect_err("double dots should not be accepted in output prefixes");
+    let message = error.to_string();
+
+    assert!(
+        message.contains("--output-prefix cannot contain '..'"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn validate_output_prefix_rejects_path_separators() {
+    for prefix in ["nested/sample", r"nested\sample"] {
+        let error = validate_output_prefix(prefix)
+            .expect_err("path separators should not be accepted in output prefixes");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("--output-prefix cannot contain path separators"),
+            "unexpected error for {prefix}: {message}"
+        );
+    }
+}
+
+#[test]
+fn validate_output_prefix_rejects_non_filename_stem_symbols() {
+    for prefix in ["sample name", "sample:v1", "sample*"] {
+        let error = validate_output_prefix(prefix)
+            .expect_err("non-token symbols should not be accepted in output prefixes");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("--output-prefix contains invalid character"),
+            "unexpected error for {prefix}: {message}"
+        );
+    }
 }
 
 #[test]

@@ -30,7 +30,7 @@ use crate::shared::writers::open_zstd_auto_writer;
 use crate::{
     commands::cli_common::{
         WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
-        resolve_chromosomes_and_contigs,
+        resolve_chromosomes_and_contigs, validate_output_prefix,
     },
     commands::counters::WPSCounters,
     commands::run_statistics::{
@@ -122,6 +122,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         &opt.shared_args.ioc.bam.as_path(),
     )?;
     let prefix = opt.shared_args.output_prefix.trim();
+    validate_output_prefix(prefix)?;
     let window_opt = opt.shared_args.windows.resolve_windows();
     let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
 

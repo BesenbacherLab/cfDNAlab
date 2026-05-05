@@ -107,7 +107,7 @@ pub struct LengthsConfig {
     ///   `<prefix>.length_counts.npy`
     #[cfg_attr(
         feature = "cli",
-        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, help_heading = "Core")
+        clap(long, short = 'x', default_value_t = String::new(), hide_default_value = true, value_parser = crate::commands::cli_common::parse_output_prefix, help_heading = "Core")
     )]
     pub output_prefix: String,
 

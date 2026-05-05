@@ -4,7 +4,7 @@
 
 use crate::commands::cli_common::{
     WindowSpec, ensure_output_dir, load_blacklist_map, load_scaling_map,
-    resolve_chromosomes_and_contigs,
+    resolve_chromosomes_and_contigs, validate_output_prefix,
 };
 use crate::commands::counters::WPSPeaksCounters;
 use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
@@ -70,6 +70,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
         &opt.shared_args.ioc.bam.as_path(),
     )?;
     let prefix = opt.shared_args.output_prefix.trim();
+    validate_output_prefix(prefix)?;
     let window_opt = opt.shared_args.windows.resolve_windows();
     let windowed = matches!(window_opt, WindowSpec::Bed(_) | WindowSpec::Size(_));
 

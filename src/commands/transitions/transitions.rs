@@ -1,6 +1,6 @@
 use crate::{
     commands::{
-        cli_common::ensure_output_dir,
+        cli_common::{ensure_output_dir, validate_output_prefix},
         fragment_kmers::{config::*, fragment_kmers},
         run_statistics::{
             DEFAULT_FRAGMENT_STATISTICS_LABELS, FragmentRunStatisticsOptions, GCStatisticsSummary,
@@ -134,6 +134,7 @@ pub fn run(opt: &TransitionsConfig) -> Result<()> {
     opt.shared_args.fragment_lengths.validate()?;
 
     let prefix = opt.shared_args.output_prefix.trim();
+    validate_output_prefix(prefix)?;
 
     // Create output directory
     ensure_output_dir(&opt.shared_args.ioc.output_dir)?;

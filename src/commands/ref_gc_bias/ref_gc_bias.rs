@@ -78,6 +78,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
         "--n-positions must be greater than zero"
     );
     let prefix = opt.output_prefix.trim();
+    validate_output_prefix(prefix)?;
     let chromosomes = opt
         .chromosomes
         .resolve_chromosomes(Some(ContigSource::ref_2bit(&opt.ref_genome.ref_2bit)))?;
