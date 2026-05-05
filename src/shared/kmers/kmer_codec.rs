@@ -37,7 +37,7 @@ impl KmerOrientation {
 // Helpers
 // -----------------------------------------------------------------------------
 impl Kmer {
-    /// Human-readable string representation.
+    /// User-readable string representation.
     /// Requires a `KmerSpec` table to know how to decode arbitrary k.
     pub fn to_string(&self, specs: &FxHashMap<u8, KmerSpec>) -> String {
         let motif = specs[&self.k].decode_kmer(self.code);

@@ -1,11 +1,23 @@
 use super::{
     SummaryStatsRow, coverage_cv_overflow_label, derive_coefficient_of_variation_coverage,
     derive_nonnegative_variance_coverage, derive_summary_stats, write_bedgraph_runs,
+    write_bed_aggregate_output, write_grouped_bed_aggregate_output,
     write_summary_stats_row, write_windowed_runs,
 };
+use crate::commands::fcoverage::{
+    reducer::TileAggregateTempFiles, window_results::CoverageWindowAction,
+};
 use crate::shared::base::{ZEROISH_F32_TOLERANCE, ZEROISH_F64_TOLERANCE};
-use crate::shared::interval::Interval;
-use std::io::{Error, ErrorKind, Result as IoResult, Write};
+use crate::shared::{
+    bed::{GroupedCoverageLayout, Windows},
+    interval::{IndexedInterval, Interval},
+    io::open_text_reader,
+};
+use anyhow::Result;
+use fxhash::FxHashMap;
+use std::io::{Error, ErrorKind, Read, Result as IoResult, Write};
+use std::path::Path;
+use tempfile::TempDir;
 
 struct FailingWriter;
 
@@ -20,6 +32,230 @@ impl Write for FailingWriter {
     fn flush(&mut self) -> IoResult<()> {
         Ok(())
     }
+}
+
+fn write_text(path: &Path, text: &str) -> Result<()> {
+    std::fs::write(path, text)?;
+    Ok(())
+}
+
+fn read_text(path: &Path) -> Result<String> {
+    let mut reader = open_text_reader(path)?;
+    let mut text = String::new();
+    reader.read_to_string(&mut text)?;
+    Ok(text)
+}
+
+fn grouped_layout_for_writer_tests() -> Result<GroupedCoverageLayout> {
+    let mut segments_by_chr = FxHashMap::default();
+    segments_by_chr.insert(
+        "chr1".to_string(),
+        Windows::new(vec![
+            IndexedInterval::new(0_u64, 10_u64, 0_u64)?,
+            IndexedInterval::new(20_u64, 30_u64, 1_u64)?,
+        ]),
+    );
+
+    let mut segment_idx_to_group_idx = FxHashMap::default();
+    segment_idx_to_group_idx.insert(0, 5);
+    segment_idx_to_group_idx.insert(1, 5);
+
+    let mut group_span_positions = FxHashMap::default();
+    group_span_positions.insert(5, 20);
+
+    let mut group_idx_to_name = FxHashMap::default();
+    group_idx_to_name.insert(5, "alpha".to_string());
+
+    Ok(GroupedCoverageLayout {
+        segments_by_chr,
+        segment_idx_to_group_idx,
+        group_span_positions,
+        group_idx_to_name,
+    })
+}
+
+#[test]
+fn grouped_writer_folds_explicit_segment_tile_outputs_into_group_rows() -> Result<()> {
+    // Arrange
+    // Grouped output has two stages: explicit tile segment rows are reduced, then segment rows are
+    // folded into stable group rows. This test pins the second stage at the final writer boundary.
+    //
+    // Group 5 has two segments with total represented span 20. The tile rows contribute:
+    //   segment 0: coverage_sum 4, eligible 10
+    //   segment 1: coverage_sum 6, eligible 10
+    // So group 5 total_coverage = 10 and eligible_positions = 20.
+    let temp_dir = TempDir::new()?;
+    let out_dir = TempDir::new()?;
+    let partials_path = temp_dir.path().join("group_segment_rows");
+    write_text(&partials_path, "0\t4\t10\t0\n1\t6\t10\t0\n")?;
+    write_text(
+        &temp_dir.path().join("run.part.chrom-000000.9.tsv"),
+        "0\t999\t999\t0\n",
+    )?;
+
+    let mut tile_outputs_by_chr = FxHashMap::default();
+    tile_outputs_by_chr.insert(
+        "chr1".to_string(),
+        vec![TileAggregateTempFiles {
+            tile_index: 0,
+            partials_path,
+            cross_index_path: None,
+        }],
+    );
+    let grouped_layout = grouped_layout_for_writer_tests()?;
+    let final_path = out_dir.path().join("grouped_total.tsv.zst");
+
+    // Act
+    write_grouped_bed_aggregate_output(
+        &final_path,
+        &tile_outputs_by_chr,
+        &grouped_layout,
+        &["chr1".to_string()],
+        CoverageWindowAction::Total,
+        0,
+        1,
+        None,
+    )?;
+    let text = read_text(&final_path)?;
+
+    // Assert
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec![
+            "group_idx\tspan_positions\tblacklisted_positions\teligible_positions\ttotal_coverage",
+            "5\t20\t0\t20\t10",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn grouped_summary_writer_folds_explicit_raw_moments_before_deriving_stats() -> Result<()> {
+    // Arrange
+    // Summary grouped output must carry raw moments through segment reduction and group folding
+    // before deriving final statistics. The two segment rows represent coverage values:
+    //   segment 0: ten eligible positions, coverage_sum=4, sum_of_squares=4
+    //   segment 1: ten eligible positions, coverage_sum=6, sum_of_squares=10
+    // Group totals:
+    //   span_positions = eligible_positions = 20
+    //   nonzero_positions = 8
+    //   coverage_sum = 10
+    //   coverage_sum_of_squares = 14
+    // Derived:
+    //   average = 10 / 20 = 0.5
+    //   total = 10
+    //   variance = 14 / 20 - 0.5^2 = 0.45
+    //   covered_fraction = 8 / 20 = 0.4
+    let temp_dir = TempDir::new()?;
+    let out_dir = TempDir::new()?;
+    let partials_path = temp_dir.path().join("group_segment_summary_rows");
+    write_text(&partials_path, "0\t4\t10\t0\t3\t4\n1\t6\t10\t0\t5\t10\n")?;
+
+    let mut tile_outputs_by_chr = FxHashMap::default();
+    tile_outputs_by_chr.insert(
+        "chr1".to_string(),
+        vec![TileAggregateTempFiles {
+            tile_index: 0,
+            partials_path,
+            cross_index_path: None,
+        }],
+    );
+    let grouped_layout = grouped_layout_for_writer_tests()?;
+    let final_path = out_dir.path().join("grouped_summary.tsv.zst");
+
+    // Act
+    write_grouped_bed_aggregate_output(
+        &final_path,
+        &tile_outputs_by_chr,
+        &grouped_layout,
+        &["chr1".to_string()],
+        CoverageWindowAction::SummaryStats,
+        6,
+        1,
+        None,
+    )?;
+    let text = read_text(&final_path)?;
+    let rows: Vec<Vec<_>> = text
+        .lines()
+        .map(|line| line.split('\t').collect::<Vec<_>>())
+        .collect();
+
+    // Assert
+    assert_eq!(rows[1][0..5], ["5", "20", "0", "20", "8"]);
+    assert_eq!(rows[1][5], "10");
+    assert_eq!(rows[1][6], "14");
+    assert_eq!(rows[1][7], "0.5");
+    assert_eq!(rows[1][8], "10");
+    assert_eq!(rows[1][9], "0.45");
+    assert_eq!(rows[1][12], "0.4");
+
+    Ok(())
+}
+
+#[test]
+fn bed_writer_errors_when_windows_have_no_returned_tile_outputs() -> Result<()> {
+    // Arrange
+    // With explicit returned paths, a chromosome that has BED windows should also have aggregate
+    // tile outputs. Missing outputs are an upstream contract error, not a valid zero-coverage row.
+    let out_dir = TempDir::new()?;
+    let mut windows_by_chr = FxHashMap::default();
+    windows_by_chr.insert(
+        "chr1".to_string(),
+        Windows::new(vec![IndexedInterval::new(0_u64, 10_u64, 0_u64)?]),
+    );
+    let tile_outputs_by_chr = FxHashMap::default();
+
+    // Act
+    let err = write_bed_aggregate_output(
+        &out_dir.path().join("missing_outputs.tsv.zst"),
+        &tile_outputs_by_chr,
+        &windows_by_chr,
+        &["chr1".to_string()],
+        true,
+        CoverageWindowAction::Total,
+        0,
+        1,
+        None,
+    )
+    .expect_err("BED windows without returned aggregate tile outputs should fail");
+
+    // Assert
+    let message = err.to_string();
+    assert!(message.contains("No returned BED aggregate tile outputs"));
+    assert!(message.contains("chr1"));
+
+    Ok(())
+}
+
+#[test]
+fn grouped_writer_errors_when_segments_have_no_returned_tile_outputs() -> Result<()> {
+    // Arrange
+    // Group span is seeded from the layout before reduction. If segment outputs are missing, the
+    // writer must fail rather than write the seeded span with zero coverage-derived fields.
+    let out_dir = TempDir::new()?;
+    let tile_outputs_by_chr = FxHashMap::default();
+    let grouped_layout = grouped_layout_for_writer_tests()?;
+
+    // Act
+    let err = write_grouped_bed_aggregate_output(
+        &out_dir.path().join("missing_grouped_outputs.tsv.zst"),
+        &tile_outputs_by_chr,
+        &grouped_layout,
+        &["chr1".to_string()],
+        CoverageWindowAction::Total,
+        0,
+        1,
+        None,
+    )
+    .expect_err("grouped segments without returned aggregate tile outputs should fail");
+
+    // Assert
+    let message = err.to_string();
+    assert!(message.contains("No returned grouped BED aggregate tile outputs"));
+    assert!(message.contains("chr1"));
+
+    Ok(())
 }
 
 #[test]

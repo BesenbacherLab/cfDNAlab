@@ -1,10 +1,11 @@
 use super::{
-    build_summary_prefixes, coverage_sum_and_counts, finalize_value, merge_scaled_positional_tiles,
+    TileTempFile, TileTempFileKind, build_summary_prefixes,
+    concat_aligned_size_tile_final_outputs, coverage_sum_and_counts, finalize_value,
+    merge_positional_tile_outputs_with_optional_scaling,
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::shared::{
-    temp_chrom_names::TempChromNameMap, coverage::Coverage, interval::Interval,
-    io::open_text_reader,
+    coverage::Coverage, interval::Interval, io::open_text_reader,
 };
 use anyhow::Result;
 use std::io::{Read, Write};
@@ -26,16 +27,6 @@ fn read_text(path: &std::path::Path) -> Result<String> {
     let mut text = String::new();
     reader.read_to_string(&mut text)?;
     Ok(text)
-}
-
-fn temp_chrom_name_map(chromosomes: &[&str]) -> TempChromNameMap {
-    TempChromNameMap::from_contigs(
-        &chromosomes
-            .iter()
-            .map(|chromosome| chromosome.to_string())
-            .collect::<Vec<_>>(),
-    )
-    .expect("test contig temp name map should be valid")
 }
 
 fn dense_bedgraph(text: &str, chromosome: &str, chromosome_length: usize) -> Vec<f64> {
@@ -262,7 +253,7 @@ fn finalize_value_returns_sum_for_total_modes_even_when_denominators_are_zero() 
 }
 
 #[test]
-fn merge_scaled_positional_tiles_orders_tiles_and_scales_values() -> Result<()> {
+fn positional_explicit_merge_orders_tiles_and_scales_values() -> Result<()> {
     // Arrange
     let temp_dir = TempDir::new()?;
     let out_dir = TempDir::new()?;
@@ -288,20 +279,43 @@ fn merge_scaled_positional_tiles_orders_tiles_and_scales_values() -> Result<()> 
         "cov.pos.chrom-000001.0.bedgraph.zst",
         &["chr2\t0\t10\t0.25"],
     )?;
-    let temp_chrom_name_map = temp_chrom_name_map(&["chr1", "chr2"]);
+    let tile_outputs = vec![
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr2".to_string(),
+            tile_index: 1,
+            path: temp_dir.path().join("cov.pos.chrom-000001.1.bedgraph.zst"),
+        },
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr1".to_string(),
+            tile_index: 1,
+            path: temp_dir.path().join("cov.pos.chrom-000000.1.bedgraph.zst"),
+        },
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr1".to_string(),
+            tile_index: 0,
+            path: temp_dir.path().join("cov.pos.chrom-000000.0.bedgraph.zst"),
+        },
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr2".to_string(),
+            tile_index: 0,
+            path: temp_dir.path().join("cov.pos.chrom-000001.0.bedgraph.zst"),
+        },
+    ];
 
     // Act
-    let merged_path = merge_scaled_positional_tiles(
-        temp_dir.path(),
+    let merged_path = merge_positional_tile_outputs_with_optional_scaling(
         out_dir.path(),
         &["chr1".to_string(), "chr2".to_string()],
-        "cov.pos",
+        &tile_outputs,
         "merged.bedgraph.zst",
-        3.0,
+        Some(3.0),
         false,
         2,
         1,
-        &temp_chrom_name_map,
     )?;
     let text = read_text(&merged_path)?;
 
@@ -320,7 +334,7 @@ fn merge_scaled_positional_tiles_orders_tiles_and_scales_values() -> Result<()> 
 }
 
 #[test]
-fn merge_scaled_positional_tiles_keeps_indexed_window_column() -> Result<()> {
+fn positional_explicit_merge_keeps_indexed_window_column() -> Result<()> {
     // Arrange
     let temp_dir = TempDir::new()?;
     let out_dir = TempDir::new()?;
@@ -334,20 +348,31 @@ fn merge_scaled_positional_tiles_keeps_indexed_window_column() -> Result<()> {
         "cov.pos.chrom-000000.0.tsv.zst",
         &["chr1\t0\t10\t1.25\t3"],
     )?;
-    let temp_chrom_name_map = temp_chrom_name_map(&["chr1"]);
+    let tile_outputs = vec![
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr1".to_string(),
+            tile_index: 1,
+            path: temp_dir.path().join("cov.pos.chrom-000000.1.tsv.zst"),
+        },
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr1".to_string(),
+            tile_index: 0,
+            path: temp_dir.path().join("cov.pos.chrom-000000.0.tsv.zst"),
+        },
+    ];
 
     // Act
-    let merged_path = merge_scaled_positional_tiles(
-        temp_dir.path(),
+    let merged_path = merge_positional_tile_outputs_with_optional_scaling(
         out_dir.path(),
         &["chr1".to_string()],
-        "cov.pos",
+        &tile_outputs,
         "merged.tsv.zst",
-        4.0,
+        Some(4.0),
         true,
         3,
         1,
-        &temp_chrom_name_map,
     )?;
     let text = read_text(&merged_path)?;
 
@@ -360,7 +385,7 @@ fn merge_scaled_positional_tiles_keeps_indexed_window_column() -> Result<()> {
 }
 
 #[test]
-fn merge_scaled_positional_tiles_is_basewise_invariant_to_tile_segmentation() -> Result<()> {
+fn positional_explicit_merge_is_basewise_invariant_to_tile_segmentation() -> Result<()> {
     // Arrange
     let first_temp_dir = TempDir::new()?;
     let second_temp_dir = TempDir::new()?;
@@ -395,32 +420,71 @@ fn merge_scaled_positional_tiles_is_basewise_invariant_to_tile_segmentation() ->
         "cov.pos.chrom-000000.2.bedgraph.zst",
         &["chr1\t15\t18\t0.25", "chr1\t18\t20\t0.25"],
     )?;
-    let temp_chrom_name_map = temp_chrom_name_map(&["chr1"]);
+    let first_tile_outputs = vec![
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr1".to_string(),
+            tile_index: 0,
+            path: first_temp_dir
+                .path()
+                .join("cov.pos.chrom-000000.0.bedgraph.zst"),
+        },
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr1".to_string(),
+            tile_index: 1,
+            path: first_temp_dir
+                .path()
+                .join("cov.pos.chrom-000000.1.bedgraph.zst"),
+        },
+    ];
+    let second_tile_outputs = vec![
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr1".to_string(),
+            tile_index: 0,
+            path: second_temp_dir
+                .path()
+                .join("cov.pos.chrom-000000.0.bedgraph.zst"),
+        },
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr1".to_string(),
+            tile_index: 1,
+            path: second_temp_dir
+                .path()
+                .join("cov.pos.chrom-000000.1.bedgraph.zst"),
+        },
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr1".to_string(),
+            tile_index: 2,
+            path: second_temp_dir
+                .path()
+                .join("cov.pos.chrom-000000.2.bedgraph.zst"),
+        },
+    ];
 
     // Act
-    let first_merged = merge_scaled_positional_tiles(
-        first_temp_dir.path(),
+    let first_merged = merge_positional_tile_outputs_with_optional_scaling(
         first_out_dir.path(),
         &["chr1".to_string()],
-        "cov.pos",
+        &first_tile_outputs,
         "merged_a.bedgraph.zst",
-        2.0,
+        Some(2.0),
         false,
         2,
         1,
-        &temp_chrom_name_map,
     )?;
-    let second_merged = merge_scaled_positional_tiles(
-        second_temp_dir.path(),
+    let second_merged = merge_positional_tile_outputs_with_optional_scaling(
         second_out_dir.path(),
         &["chr1".to_string()],
-        "cov.pos",
+        &second_tile_outputs,
         "merged_b.bedgraph.zst",
-        2.0,
+        Some(2.0),
         false,
         2,
         1,
-        &temp_chrom_name_map,
     )?;
     let first_text = read_text(&first_merged)?;
     let second_text = read_text(&second_merged)?;
@@ -441,5 +505,236 @@ fn merge_scaled_positional_tiles_is_basewise_invariant_to_tile_segmentation() ->
     };
     assert_eq!(dense_bedgraph(&first_text, "chr1", 20), expected);
     assert_eq!(dense_bedgraph(&second_text, "chr1", 20), expected);
+    Ok(())
+}
+
+#[test]
+fn global_positional_merge_uses_explicit_tile_outputs_and_ignores_matching_decoys() -> Result<()> {
+    // Arrange
+    // Global fcoverage is positional, not aggregate. It has no cross-index reducer, but it should
+    // still consume the exact tile output paths returned by tile processing instead of scanning the
+    // temp directory by prefix and chromosome token.
+    let temp_dir = TempDir::new()?;
+    let out_dir = TempDir::new()?;
+    write_zstd_lines(&temp_dir, "tile1.positional_rows", &["chr1\t10\t20\t2"])?;
+    write_zstd_lines(&temp_dir, "tile0.positional_rows", &["chr1\t0\t10\t1"])?;
+
+    // This decoy is named like an old discoverable positional tile. The intended explicit-input
+    // merge must ignore it completely.
+    write_zstd_lines(
+        &temp_dir,
+        "cov.pos.chrom-000000.9.bedgraph.zst",
+        &["chr1\t20\t30\t999"],
+    )?;
+
+    let tile_outputs = vec![
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr1".to_string(),
+            tile_index: 1,
+            path: temp_dir.path().join("tile1.positional_rows"),
+        },
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr1".to_string(),
+            tile_index: 0,
+            path: temp_dir.path().join("tile0.positional_rows"),
+        },
+    ];
+
+    // Act
+    let merged_path = merge_positional_tile_outputs_with_optional_scaling(
+        out_dir.path(),
+        &["chr1".to_string()],
+        &tile_outputs,
+        "merged.bedgraph.zst",
+        None,
+        false,
+        0,
+        1,
+    )?;
+    let text = read_text(&merged_path)?;
+
+    // Assert
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec!["chr1\t0\t10\t1", "chr1\t10\t20\t2"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn positional_merge_orders_explicit_tile_outputs_by_requested_chromosomes_and_tile_index()
+-> Result<()> {
+    // Arrange
+    // Returned positional tile outputs can arrive in worker-completion order. The merge contract is
+    // still requested chromosome order, then tile index within chromosome.
+    let temp_dir = TempDir::new()?;
+    let out_dir = TempDir::new()?;
+    write_zstd_lines(&temp_dir, "chr2.tile1", &["chr2\t10\t20\t4"])?;
+    write_zstd_lines(&temp_dir, "chr1.tile1", &["chr1\t10\t20\t2"])?;
+    write_zstd_lines(&temp_dir, "chr2.tile0", &["chr2\t0\t10\t3"])?;
+    write_zstd_lines(&temp_dir, "chr1.tile0", &["chr1\t0\t10\t1"])?;
+
+    let tile_outputs = vec![
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr2".to_string(),
+            tile_index: 1,
+            path: temp_dir.path().join("chr2.tile1"),
+        },
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr1".to_string(),
+            tile_index: 1,
+            path: temp_dir.path().join("chr1.tile1"),
+        },
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr2".to_string(),
+            tile_index: 0,
+            path: temp_dir.path().join("chr2.tile0"),
+        },
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr1".to_string(),
+            tile_index: 0,
+            path: temp_dir.path().join("chr1.tile0"),
+        },
+    ];
+
+    // Act
+    let merged_path = merge_positional_tile_outputs_with_optional_scaling(
+        out_dir.path(),
+        &["chr1".to_string(), "chr2".to_string()],
+        &tile_outputs,
+        "merged_multichr.bedgraph.zst",
+        None,
+        false,
+        0,
+        1,
+    )?;
+    let text = read_text(&merged_path)?;
+
+    // Assert
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec![
+            "chr1\t0\t10\t1",
+            "chr1\t10\t20\t2",
+            "chr2\t0\t10\t3",
+            "chr2\t10\t20\t4",
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn positional_explicit_merge_applies_restore_mean_scaling_and_keeps_index_column() -> Result<()> {
+    // Arrange
+    // Restore-mean positional output is a late merge concern. The explicit-path merge must keep
+    // the same scaling and indexed-row semantics as the old prefix-based scaled merge.
+    let temp_dir = TempDir::new()?;
+    let out_dir = TempDir::new()?;
+    write_zstd_lines(
+        &temp_dir,
+        "cov.pos.chrom-000000.0.tsv.zst",
+        &["chr1\t0\t5\t0.5\t7"],
+    )?;
+    write_zstd_lines(
+        &temp_dir,
+        "cov.pos.chrom-000000.1.tsv.zst",
+        &["chr1\t5\t10\t1.25\t8"],
+    )?;
+
+    let tile_outputs = vec![
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr1".to_string(),
+            tile_index: 1,
+            path: temp_dir.path().join("cov.pos.chrom-000000.1.tsv.zst"),
+        },
+        TileTempFile {
+            kind: TileTempFileKind::Positional,
+            chromosome: "chr1".to_string(),
+            tile_index: 0,
+            path: temp_dir.path().join("cov.pos.chrom-000000.0.tsv.zst"),
+        },
+    ];
+
+    // Act
+    let merged_path = merge_positional_tile_outputs_with_optional_scaling(
+        out_dir.path(),
+        &["chr1".to_string()],
+        &tile_outputs,
+        "merged_scaled_indexed.tsv.zst",
+        Some(4.0),
+        true,
+        2,
+        1,
+    )?;
+    let text = read_text(&merged_path)?;
+
+    // Assert
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec!["chr1\t0\t5\t2\t7", "chr1\t5\t10\t5\t8"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn aligned_by_size_final_concat_uses_explicit_final_paths() -> Result<()> {
+    // Arrange
+    // Non-restore aligned by-size runs write final per-tile rows and concatenate them. That fast
+    // path needs explicit returned final paths too, not prefix discovery.
+    let temp_dir = TempDir::new()?;
+    let out_dir = TempDir::new()?;
+    write_zstd_lines(&temp_dir, "chr1.tile1.finals", &["chr1\t40\t80\t8\t0"])?;
+    write_zstd_lines(&temp_dir, "chr1.tile0.finals", &["chr1\t0\t40\t4\t0"])?;
+    write_zstd_lines(
+        &temp_dir,
+        "cov.fin.chrom-000000.9.tsv.zst",
+        &["chr1\t80\t120\t999\t0"],
+    )?;
+
+    let tile_finals = vec![
+        TileTempFile {
+            kind: TileTempFileKind::SizeFinal,
+            chromosome: "chr1".to_string(),
+            tile_index: 1,
+            path: temp_dir.path().join("chr1.tile1.finals"),
+        },
+        TileTempFile {
+            kind: TileTempFileKind::SizeFinal,
+            chromosome: "chr1".to_string(),
+            tile_index: 0,
+            path: temp_dir.path().join("chr1.tile0.finals"),
+        },
+    ];
+
+    // Act
+    let merged_path = concat_aligned_size_tile_final_outputs(
+        out_dir.path(),
+        &["chr1".to_string()],
+        &tile_finals,
+        "merged_aligned.tsv.zst",
+        "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+    )?;
+    let text = read_text(&merged_path)?;
+
+    // Assert
+    assert_eq!(
+        text.lines().collect::<Vec<_>>(),
+        vec![
+            "chromosome\tstart\tend\ttotal_coverage\tblacklisted_positions",
+            "chr1\t0\t40\t4\t0",
+            "chr1\t40\t80\t8\t0",
+        ]
+    );
+
     Ok(())
 }

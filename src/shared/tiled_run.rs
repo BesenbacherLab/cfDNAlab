@@ -635,7 +635,7 @@ fn random_suffix(n: usize) -> String {
 ///
 /// # Parameters
 /// - `base_out`: Root directory that should contain the temporary directory.
-/// - `prefix`: Human-readable prefix used when building the directory name.
+/// - `prefix`: User-readable prefix used when building the directory name.
 ///
 /// # Returns
 /// Path to the created temporary directory.

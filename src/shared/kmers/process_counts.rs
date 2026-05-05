@@ -183,7 +183,7 @@ pub fn split_and_decode_counts(
     let mut count_bins: FxHashMap<u8, FxHashMap<String, f64>> = FxHashMap::default();
 
     for (&kmer, &cnt) in counts {
-        // Human-readable motif, e.g. "ACG"
+        // User-readable motif, e.g. "ACG"
         let motif = kmer.to_string(kmer_specs);
 
         // Drop N's

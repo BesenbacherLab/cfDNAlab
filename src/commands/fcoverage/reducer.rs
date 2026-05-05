@@ -3,19 +3,27 @@ use fxhash::{FxBuildHasher, FxHashMap};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::fmt::Display;
-use std::io::{BufRead, Write};
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use crate::commands::fcoverage::tiling::finalize_value;
-use crate::commands::fcoverage::window_results::CoverageWindowAction;
-use crate::commands::fcoverage::writers::write_final_row;
-use crate::shared::formatters::round_to;
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::open_text_reader;
-use crate::shared::temp_chrom_names::TempChromNameMap;
 
 type StreamHeap = BinaryHeap<Reverse<(u64, usize)>>;
+
+/// Returned aggregate temp paths for one tile.
+///
+/// `partials_path` points at tile-local contribution rows, not BED records. The row identity
+/// depends on the reducer family. BED rows are keyed by stable `orig_idx`, and fixed-size rows are
+/// keyed by the logical full-bin start. `cross_index_path` is optional because aligned single-tile
+/// contributions use the reducer rule that missing cross-index entries mean one contribution.
+#[derive(Debug, Clone)]
+pub(crate) struct TileAggregateTempFiles {
+    pub tile_index: u32,
+    pub partials_path: PathBuf,
+    pub cross_index_path: Option<PathBuf>,
+}
 
 /// Parse one tab-delimited column with consistent missing/invalid diagnostics.
 ///
@@ -507,6 +515,30 @@ fn open_partials_streams(
     Ok((streams, current_rows, heap))
 }
 
+fn files_by_tile_from_outputs(
+    tile_outputs: &[TileAggregateTempFiles],
+) -> Result<FxHashMap<u32, TileFiles>> {
+    let mut files_by_tile: FxHashMap<u32, TileFiles> =
+        FxHashMap::with_hasher(FxBuildHasher::default());
+
+    for output in tile_outputs {
+        let previous = files_by_tile.insert(
+            output.tile_index,
+            TileFiles {
+                partials_path: Some(output.partials_path.clone()),
+                cross_index_path: output.cross_index_path.clone(),
+            },
+        );
+        anyhow::ensure!(
+            previous.is_none(),
+            "duplicate tile index {} in explicit aggregate tile outputs",
+            output.tile_index
+        );
+    }
+
+    Ok(files_by_tile)
+}
+
 /// Advance one stream after its current row was consumed and push the next visible row into the heap.
 ///
 /// Keeping this as a tiny helper makes the merge loops read as "consume current row, maybe emit,
@@ -524,66 +556,54 @@ fn push_next_row_for_stream(
     Ok(())
 }
 
-/// Finalize one reduced raw row into the public non-summary aggregate output schema.
+/// Reduce BED partial rows for one chromosome into complete raw aggregate rows.
 ///
-/// BED and fixed-size reducers share the same last-mile policy here:
-/// - derive `average` or `total` from the exact reduced raw totals
-/// - use the full reduced interval length as the unmasked span
-/// - keep blacklist counts as their own output column
+/// The reducer consumes the exact tile paths returned by tile processing. It does not discover
+/// files from a temp directory, so stale or decoy files cannot enter the reduction.
 ///
-/// Keeping this in one helper lets both public wrappers stay as small adapter layers for callers
-/// such as `fcoverage` and `wps`, without spreading the numeric finalization policy back across
-/// multiple modules.
-fn write_reduced_value_row<W: Write>(
-    out: &mut W,
-    chr: &str,
-    row: ReducedAggregateRow,
-    masked: bool,
-    mode: &CoverageWindowAction,
-    decimals: i32,
-) -> Result<()> {
-    let interval = row.interval;
-    let unmasked_span_bp = interval.len();
-    let value = finalize_value(
-        row.coverage_sum,
-        row.eligible_positions,
-        unmasked_span_bp,
-        masked,
-        mode,
-    );
-    let value = round_to(value, decimals);
-    write_final_row(
-        out,
-        chr,
-        interval,
-        value,
-        row.blacklisted_positions,
-        decimals,
-    )?;
-    Ok(())
-}
-
-/// Reduce BED partials for one chromosome into complete raw rows.
+/// The row identity rule is unchanged by explicit paths. BED reduction always groups by stable
+/// `orig_idx`, then recovers the final interval from `windows_chr` after every expected tile
+/// contribution has arrived.
 ///
-/// `summary` selects only the on-disk schema. The row identity rule does not change:
-/// BED reduction always groups by stable `orig_idx`, then recovers the final interval from
-/// `coords_by_idx` once the reducer has seen every expected tile contribution.
+/// About ordering:
+/// - the merge heap reads the smallest visible `orig_idx` from the open streams
+/// - final emission waits for the expected number of contributions for that `orig_idx`
+/// - correctness does not depend on every partials stream being globally sorted
+/// - ordinary BED windows keep their original file indices, so callers must not assume final
+///   output is coordinate-sorted unless the windows were explicitly reindexed upstream
+///
+/// Cross-index logic:
+/// - sidecars list only boundary-crossing rows
+/// - windows fully contained in one tile are absent from all sidecars, so the reducer expects one
+///   contribution
+/// - boundary windows appear in each crossed tile's sidecar, and that sidecar count is the
+///   expected number of partial rows
 ///
 /// This engine intentionally stays separate from the fixed-size engine. Both engines share the
 /// same high-level merge pattern, but BED reduction has one BED-specific responsibility that size
 /// reduction does not: recover the final interval from `orig_idx` after reduction.
-fn reduce_bed_rows_internal(
+///
+/// Parameters
+/// ----------
+/// - `chr`:
+///     Chromosome label used in diagnostics.
+/// - `tile_outputs`:
+///     Returned partial and optional cross-index paths for this chromosome.
+/// - `windows_chr`:
+///     BED windows with the same `orig_idx` identities written in the partial rows.
+/// - `summary`:
+///     Selects the on-disk partial schema only. It does not change row identity.
+/// - `on_row`:
+///     Callback receiving exact additive raw rows.
+pub(crate) fn reduce_bed_rows(
     chr: &str,
-    temp_dir: &Path,
-    partials_prefix: &str,
+    tile_outputs: &[TileAggregateTempFiles],
     windows_chr: &[IndexedInterval<u64>],
-    temp_chrom_name_map: &TempChromNameMap,
     summary: bool,
     mut on_row: impl FnMut(ReducedAggregateRow) -> Result<()>,
 ) -> Result<()> {
     let coords_by_idx = build_bed_coords_by_idx(chr, windows_chr)?;
-    let files_by_tile =
-        discover_tile_files_for_chr(temp_dir, chr, partials_prefix, temp_chrom_name_map)?;
+    let files_by_tile = files_by_tile_from_outputs(tile_outputs)?;
     let expected_contributions = load_expected_contributions(&files_by_tile)?;
     let schema = if summary {
         PartialsSchema::BedSummary
@@ -648,136 +668,52 @@ fn reduce_bed_rows_internal(
     Ok(())
 }
 
-/// Reduce non-summary BED partials for one chromosome into complete raw window rows.
-///
-/// This follows the same cross-tile bookkeeping as the summary-stats BED reducer, but it keeps
-/// the temp-file schema narrow on disk. The callback still receives the shared reduced-row shape,
-/// with the summary-only fields explicitly zeroed in memory.
-pub(crate) fn reduce_bed_basic_with_cross_index_for_chr_rows(
-    chr: &str,
-    temp_dir: &Path,
-    partials_prefix: &str,
-    windows_chr: &[IndexedInterval<u64>],
-    temp_chrom_name_map: &TempChromNameMap,
-    on_row: impl FnMut(ReducedAggregateRow) -> Result<()>,
-) -> Result<()> {
-    reduce_bed_rows_internal(
-        chr,
-        temp_dir,
-        partials_prefix,
-        windows_chr,
-        temp_chrom_name_map,
-        false,
-        on_row,
-    )
-}
-
-/// Reduce summary-stats BED partials for one chromosome into complete raw window rows.
-///
-/// Each tile writes one partial row per overlapping BED segment. This reducer stitches those
-/// tile-local contributions back into one exact raw row per original BED window by grouping on
-/// stable `orig_idx` until the expected contribution count is reached.
-pub(crate) fn reduce_bed_with_cross_index_for_chr_rows(
-    chr: &str,
-    temp_dir: &Path,
-    partials_prefix: &str,
-    windows_chr: &[IndexedInterval<u64>],
-    temp_chrom_name_map: &TempChromNameMap,
-    on_row: impl FnMut(ReducedAggregateRow) -> Result<()>,
-) -> Result<()> {
-    reduce_bed_rows_internal(
-        chr,
-        temp_dir,
-        partials_prefix,
-        windows_chr,
-        temp_chrom_name_map,
-        true,
-        on_row,
-    )
-}
-
-/// Reduce non-summary BED aggregates for one chromosome using:
-///  * Per-tile **partials** files
-///  * Per-tile **cross-index** files: list `orig_idx` that are NOT fully contained in that tile core
-///
-/// Goal
-///  * Merge cross-tile contributions back into full windows without buffering all windows or
-///    scanning every possible index
-///
-/// About ordering
-///  * The heap key is the current row's `orig_idx` from each open stream
-///  * Correctness does not depend on every partials stream being globally sorted by `orig_idx`
-///  * Rows are accumulated by `orig_idx` and written only after the expected contribution count
-///    has been reached for that window
-///  * When window indices were reindexed into coordinate order upstream, that also gives an
-///    increasing-`orig_idx` output order
-///  * Ordinary BED windows keep their original file indices, so callers must not rely on the
-///    final output being sorted by `orig_idx`
-///
-/// Cross-index logic
-///  * For windows fully contained in a single tile core: they appear in exactly one partials file
-///    and are absent from all cross-index files -> expected contributions = 1
-///  * For windows that cross tile core boundaries: the window appears in each overlapped tile's
-///    partials file and is listed in each of those tiles' cross-index files -> expected contributions
-///    equals the total number of tiles it overlaps
-///
-/// Requirements
-///  * `windows_chr` must describe the same window identities that were written into the partials
-///    files for this chromosome
-///
-/// Output columns already have their header written by the caller:
-/// `chromosome  start  end  value  blacklisted_positions`
-pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
-    chr: &str,
-    temp_dir: &Path,
-    partials_prefix: &str,
-    windows_chr: &[IndexedInterval<u64>],
-    masked: bool,
-    mode: CoverageWindowAction,
-    decimals: i32,
-    temp_chrom_name_map: &TempChromNameMap,
-    final_writer: &mut W,
-) -> Result<()> {
-    anyhow::ensure!(
-        matches!(
-            mode,
-            CoverageWindowAction::Average | CoverageWindowAction::Total
-        ),
-        "Reducer supports only 'average' or 'total'"
-    );
-
-    reduce_bed_basic_with_cross_index_for_chr_rows(
-        chr,
-        temp_dir,
-        partials_prefix,
-        windows_chr,
-        temp_chrom_name_map,
-        |row| write_reduced_value_row(final_writer, chr, row, masked, &mode, decimals),
-    )
-}
-
 /* By-size reducer (when windows don't align) */
 
-/// Reduce fixed-size partials for one chromosome into complete raw bin rows.
+/// Reduce fixed-size partial rows for one chromosome into complete raw bin rows.
 ///
-/// `summary` again chooses only the on-disk schema. The row identity rule stays fixed:
-/// size reduction always groups by the full bin `start`, not by the clipped overlap stored by
-/// one tile, and it clips the final bin to chromosome end only after reduction.
+/// The reducer consumes the exact tile paths returned by tile processing. It does not discover
+/// files from a temp directory.
+///
+/// The row identity rule stays fixed. Size reduction groups by the logical full-bin `start`, not
+/// by any clipped tile-local overlap. Partial rows must therefore carry the full `bin_start` and
+/// `bin_end`. Changing those bounds to clipped pieces would break cross-tile merging.
+///
+/// Cross-index sidecars count how many tiles contribute to each full bin start. If a bin is not
+/// listed in any cross-index file, the reducer expects exactly one contribution. Missing
+/// cross-index files are valid for aligned single-contribution partials.
+///
+/// Ordering comes from the same streaming heap as the BED reducer. `BinaryHeap` is a max-heap, so
+/// the reader heap stores `Reverse((start, stream_id))` to read the smallest visible logical bin
+/// start first.
+///
+/// The final fixed-size bin can extend past chromosome end. The reducer clips that interval after
+/// all contributions have been combined so downstream writers see the true genomic span.
 ///
 /// This engine intentionally stays separate from the BED engine. Both engines share the same
 /// merge rhythm, but fixed-size reduction has one size-specific responsibility that BED reduction
 /// does not: clip the final bin after reduction using the true chromosome end.
-fn reduce_size_rows_internal(
+///
+/// Parameters
+/// ----------
+/// - `chr`:
+///     Chromosome label used in diagnostics.
+/// - `tile_outputs`:
+///     Returned partial and optional cross-index paths for this chromosome.
+/// - `chrom_len`:
+///     True chromosome length used to clip the final bin.
+/// - `summary`:
+///     Selects the on-disk partial schema only. It does not change row identity.
+/// - `on_row`:
+///     Callback receiving exact additive raw rows.
+pub(crate) fn reduce_size_rows(
     chr: &str,
-    temp_dir: &Path,
-    partials_prefix: &str,
+    tile_outputs: &[TileAggregateTempFiles],
     chrom_len: u64,
-    temp_chrom_name_map: &TempChromNameMap,
     summary: bool,
     mut on_row: impl FnMut(ReducedAggregateRow) -> Result<()>,
 ) -> Result<()> {
-    let files_by_tile =
-        discover_tile_files_for_chr(temp_dir, chr, partials_prefix, temp_chrom_name_map)?;
+    let files_by_tile = files_by_tile_from_outputs(tile_outputs)?;
     let expected_contributions = load_expected_contributions(&files_by_tile)?;
     let schema = if summary {
         PartialsSchema::SizeSummary
@@ -849,101 +785,6 @@ fn reduce_size_rows_internal(
     Ok(())
 }
 
-/// Reduce summary-stats `--by-size` partials for one chromosome into complete raw bin rows.
-///
-/// Tile counting writes one partial row per fixed-size bin that overlaps a tile core. This
-/// reducer merges those partial rows back into one raw summary-stats row per full bin start.
-pub(crate) fn reduce_aggregates_by_size_with_cross_index_for_chr_rows(
-    chr: &str,
-    temp_dir: &Path,
-    partials_prefix: &str,
-    chrom_len: u64,
-    temp_chrom_name_map: &TempChromNameMap,
-    on_row: impl FnMut(ReducedAggregateRow) -> Result<()>,
-) -> Result<()> {
-    reduce_size_rows_internal(
-        chr,
-        temp_dir,
-        partials_prefix,
-        chrom_len,
-        temp_chrom_name_map,
-        true,
-        on_row,
-    )
-}
-
-/// Reduce non-summary `--by-size` partials for one chromosome into complete raw bin rows.
-///
-/// This is the lighter fixed-bin counterpart to the summary-stats reducer. The temp files stay
-/// narrow on disk, while the callback still receives the shared reduced-row shape with zeroed
-/// summary-only fields.
-pub(crate) fn reduce_aggregates_by_size_basic_with_cross_index_for_chr_rows(
-    chr: &str,
-    temp_dir: &Path,
-    partials_prefix: &str,
-    chrom_len: u64,
-    temp_chrom_name_map: &TempChromNameMap,
-    on_row: impl FnMut(ReducedAggregateRow) -> Result<()>,
-) -> Result<()> {
-    reduce_size_rows_internal(
-        chr,
-        temp_dir,
-        partials_prefix,
-        chrom_len,
-        temp_chrom_name_map,
-        false,
-        on_row,
-    )
-}
-
-/// Reduce non-summary `--by-size` partials for one chromosome in strictly ascending `start` order.
-///
-/// Ordering is guaranteed by a K-way merge across sorted per-tile partials.
-/// A priority queue (`BinaryHeap`) is used as a min-heap via `Reverse((start, stream_id))`:
-/// the smallest start is popped first. This keeps peak memory low while preserving order.
-///
-/// The cross-index counts how many tiles contribute to each full bin start:
-/// - If a bin is not listed in any cross-index file, we expect exactly 1 contribution.
-/// - If it appears N times, we wait for N contributions before writing that bin.
-///
-/// Important
-/// - The partial rows must carry the full `bin_start` and `bin_end`, not the clipped
-///   tile-local overlap for that bin. The reducer keys on `start`, so changing the
-///   partial row bounds to clipped pieces will silently break cross-tile merging.
-///
-/// The final bin is truncated to the chromosome end, it may be shorter than `window_bp`.
-pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
-    chr: &str,
-    temp_dir: &Path,
-    partials_prefix: &str,
-    masked: bool,
-    mode: CoverageWindowAction,
-    chrom_len: u64,
-    decimals: i32,
-    temp_chrom_name_map: &TempChromNameMap,
-    out: &mut W,
-) -> Result<()> {
-    anyhow::ensure!(
-        matches!(
-            mode,
-            CoverageWindowAction::Average | CoverageWindowAction::Total
-        ),
-        "Reducer supports only 'average' or 'total'"
-    );
-
-    reduce_aggregates_by_size_basic_with_cross_index_for_chr_rows(
-        chr,
-        temp_dir,
-        partials_prefix,
-        chrom_len,
-        temp_chrom_name_map,
-        |row| {
-            debug_assert!(row.interval.len() >= 1);
-            write_reduced_value_row(out, chr, row, masked, &mode, decimals)
-        },
-    )
-}
-
 /// Sidecar type information for one tile
 #[derive(Default, Clone)]
 struct TileFiles {
@@ -951,50 +792,7 @@ struct TileFiles {
     pub cross_index_path: Option<PathBuf>,
 }
 
-/// Find per-tile files for a chromosome
-///
-/// Definitions
-/// - **Partials**: the per-tile contributions for windows/bins (tsv or tsv.zst)
-/// - **Cross-index**: a side list that marks which windows/bins cross tile core boundaries
-///   The reducer uses it to know how many tile contributions to expect for each window/bin
-///
-/// Filenames
-/// - Must start with `per_tile_prefix` and contain `.{chr}.`
-/// - We detect `.cross.` in the name to classify the sidecar
-fn discover_tile_files_for_chr(
-    temp_dir: &Path,
-    chr: &str,
-    per_tile_prefix: &str,
-    temp_chrom_name_map: &TempChromNameMap,
-) -> Result<FxHashMap<u32, TileFiles>> {
-    let mut files_by_tile: FxHashMap<u32, TileFiles> =
-        FxHashMap::with_hasher(FxBuildHasher::default());
-    let chr_token = temp_chrom_name_map.token_for(chr)?;
-
-    for entry in std::fs::read_dir(temp_dir)? {
-        let path = entry?.path();
-        if !path.is_file() {
-            continue;
-        }
-
-        let file_name = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("");
-        if !file_name.starts_with(per_tile_prefix) || !file_name.contains(&format!(".{chr_token}."))
-        {
-            continue;
-        }
-
-        if let Some(tile_idx) = crate::shared::tiled_run::parse_tile_index(file_name) {
-            // Recognize cross files by the marker in the name
-            if file_name.contains(".cross.") {
-                files_by_tile.entry(tile_idx).or_default().cross_index_path = Some(path);
-            } else if file_name.ends_with(".tsv") || file_name.ends_with(".tsv.zst") {
-                files_by_tile.entry(tile_idx).or_default().partials_path = Some(path);
-            }
-        }
-    }
-
-    Ok(files_by_tile)
+#[cfg(test)]
+mod tests {
+    include!("reducer_tests.rs");
 }

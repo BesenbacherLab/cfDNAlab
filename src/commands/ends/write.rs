@@ -317,7 +317,7 @@ fn effective_indel_filter_name(
     }
 }
 
-/// Format a proportion threshold in a stable human-readable form.
+/// Format a proportion threshold in a stable user-readable form.
 ///
 /// This avoids scientific notation and trims noisy trailing zeros so the
 /// settings sidecar stays easy to read and stable across runs.

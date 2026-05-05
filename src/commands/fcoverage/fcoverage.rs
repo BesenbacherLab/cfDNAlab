@@ -1,8 +1,9 @@
 use crate::commands::fcoverage::config::FCoverageConfig;
+use crate::commands::fcoverage::reducer::TileAggregateTempFiles;
 use crate::commands::fcoverage::tiling::{
-    adapt_fetch_to_extreme_windows, build_summary_prefixes, clip_interval_to_core_and_localize,
-    coverage_sum_and_counts, coverage_summary_and_counts, finalize_value,
-    merge_positional_tiles_with_optional_scaling,
+    TileTempFile, TileTempFileKind, adapt_fetch_to_extreme_windows, build_summary_prefixes,
+    clip_interval_to_core_and_localize, coverage_sum_and_counts, coverage_summary_and_counts,
+    finalize_value, merge_positional_tile_outputs_with_optional_scaling,
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::{
@@ -69,6 +70,26 @@ pub struct FCoverageRunResult {
     pub counters: FCoverageCounters,
     pub mean_normalization_length: Option<f64>,
     pub final_out_path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct FCoverageTileResult {
+    counters: FCoverageCounters,
+    temp_output: Option<FCoverageTileTempOutput>,
+}
+
+#[derive(Debug, Clone)]
+enum FCoverageTileTempOutput {
+    Positional(TileTempFile),
+    BedAggregate {
+        chromosome: String,
+        files: TileAggregateTempFiles,
+    },
+    SizeAggregate {
+        chromosome: String,
+        files: TileAggregateTempFiles,
+    },
+    SizeFinal(TileTempFile),
 }
 
 /// Execute the fragment coverage pipeline end-to-end.
@@ -409,10 +430,10 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     let tile_window_spans_for_threads = tile_window_spans.clone();
     let gc_tag = opt.gc.gc_tag.as_deref();
 
-    let tile_results: Vec<FCoverageCounters> = tiles
+    let tile_results: Vec<FCoverageTileResult> = tiles
         .par_iter()
         .enumerate()
-        .map(|(tile_idx, tile)| -> Result<FCoverageCounters> {
+        .map(|(tile_idx, tile)| -> Result<FCoverageTileResult> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
             let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
                 .as_ref()
@@ -426,13 +447,16 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
 
-            let counter = if matches!(
+            let tile_result = if matches!(
                 window_opt,
                 DistributionWindowSpec::Bed(_) | DistributionWindowSpec::GroupedBed(_)
             ) && windows_chr.map_or(true, |windows| windows.is_empty())
             {
                 // Skip this no-window tile and just return an empty counter
-                FCoverageCounters::default()
+                FCoverageTileResult {
+                    counters: FCoverageCounters::default(),
+                    temp_output: None,
+                }
             } else {
                 // Decide tile mode and filename
                 let (action_prefix, extensions) = if windowed {
@@ -570,7 +594,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                 )?
             };
             pb.inc(1);
-            Ok(counter)
+            Ok(tile_result)
         })
         .collect::<anyhow::Result<_>>()?; // Short-circuits on the first Err
 
@@ -585,8 +609,12 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     drop(gc_corrector);
 
     // Collect counters
-    for counter in tile_results {
-        global_counter += counter;
+    let mut tile_temp_outputs = Vec::new();
+    for tile_result in tile_results {
+        global_counter += tile_result.counters;
+        if let Some(temp_output) = tile_result.temp_output {
+            tile_temp_outputs.push(temp_output);
+        }
     }
 
     if opt.uses_length_normalization() {
@@ -632,48 +660,45 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
 
     let final_out_path = if !windowed {
         // Whole-genome positional coverage
-        merge_positional_tiles_with_optional_scaling(
-            temp_dir,
+        let positional_outputs = positional_tile_outputs(&tile_temp_outputs);
+        merge_positional_tile_outputs_with_optional_scaling(
             &opt.ioc.output_dir,
             &chromosomes,
-            positional_prefix,
+            &positional_outputs,
             final_bedgraph_pos_name.as_str(),
             restore_mean_multiplier,
             false,
             decimals_to_use,
             opt.ioc.n_threads,
-            &temp_chrom_name_map,
         )?
     } else {
         match opt.per_window {
             CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
                 // Windowed positional (unique and non-indexed)
-                merge_positional_tiles_with_optional_scaling(
-                    temp_dir,
+                let positional_outputs = positional_tile_outputs(&tile_temp_outputs);
+                merge_positional_tile_outputs_with_optional_scaling(
                     &opt.ioc.output_dir,
                     &chromosomes,
-                    positional_prefix,
+                    &positional_outputs,
                     final_bedgraph_pos_name.as_str(),
                     restore_mean_multiplier,
                     false,
                     decimals_to_use,
                     opt.ioc.n_threads,
-                    &temp_chrom_name_map,
                 )?
             }
             CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
                 // Windowed positional with orig_idx column
-                merge_positional_tiles_with_optional_scaling(
-                    temp_dir,
+                let positional_outputs = positional_tile_outputs(&tile_temp_outputs);
+                merge_positional_tile_outputs_with_optional_scaling(
                     &opt.ioc.output_dir,
                     &chromosomes,
-                    positional_prefix,
+                    &positional_outputs,
                     final_tsv_pos_name.as_str(),
                     restore_mean_multiplier,
                     true,
                     decimals_to_use,
                     opt.ioc.n_threads,
-                    &temp_chrom_name_map,
                 )?
             }
             CoverageWindowAction::Average
@@ -687,8 +712,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                 match &window_opt {
                     DistributionWindowSpec::Bed(_) => write_bed_aggregate_output(
                         &final_path,
-                        temp_dir,
-                        partials_prefix,
+                        &bed_aggregate_tile_outputs_by_chr(&tile_temp_outputs),
                         windows_map
                             .as_ref()
                             .context("BED aggregate reduction requires loaded windows")?,
@@ -698,12 +722,10 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                         decimals_to_use,
                         opt.ioc.n_threads,
                         restore_mean_multiplier,
-                        &temp_chrom_name_map,
                     )?,
                     DistributionWindowSpec::GroupedBed(_) => write_grouped_bed_aggregate_output(
                         &final_path,
-                        temp_dir,
-                        partials_prefix,
+                        &bed_aggregate_tile_outputs_by_chr(&tile_temp_outputs),
                         grouped_layout
                             .as_ref()
                             .context("grouped aggregate reduction requires grouped layout")?,
@@ -712,13 +734,11 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                         decimals_to_use,
                         opt.ioc.n_threads,
                         restore_mean_multiplier,
-                        &temp_chrom_name_map,
                     )?,
                     DistributionWindowSpec::Size(_) => write_size_aggregate_output(
                         &final_path,
-                        temp_dir,
-                        partials_prefix,
-                        finals_prefix,
+                        &size_aggregate_tile_outputs_by_chr(&tile_temp_outputs),
+                        &size_final_tile_outputs(&tile_temp_outputs),
                         &chromosomes,
                         &contigs,
                         masked,
@@ -727,7 +747,6 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                         opt.ioc.n_threads,
                         tile_and_window_boundaries_align,
                         restore_mean_multiplier,
-                        &temp_chrom_name_map,
                     )?,
                     DistributionWindowSpec::Global => {
                         bail!("unexpected global aggregate path in windowed fcoverage output")
@@ -777,7 +796,7 @@ fn process_tile(
     gc_tag: Option<&str>,
     mode: TileMode,
     decimals: i32,
-) -> Result<FCoverageCounters> {
+) -> Result<FCoverageTileResult> {
     // Open a fresh BAM reader for this thread
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
     debug_assert!(_tid_check == tile.tid as u32);
@@ -811,7 +830,10 @@ fn process_tile(
         opt.fragment_lengths.max_fragment_length as u64,
     )?
     else {
-        return Ok(counter);
+        return Ok(FCoverageTileResult {
+            counters: counter,
+            temp_output: None,
+        });
     };
     let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
 
@@ -1003,7 +1025,7 @@ fn process_tile(
     // Get counters from iterator
     counter.add_from_snapshot(iter.counters_snapshot());
 
-    match mode {
+    let temp_output = match mode {
         TileMode::Positional {
             windows,
             out_path,
@@ -1089,6 +1111,12 @@ fn process_tile(
             }
 
             w.flush()?;
+            FCoverageTileTempOutput::Positional(TileTempFile {
+                kind: TileTempFileKind::Positional,
+                chromosome: tile.chr.clone(),
+                tile_index: tile.index,
+                path: out_path,
+            })
         }
 
         TileMode::AggregatesByBed {
@@ -1199,6 +1227,14 @@ fn process_tile(
 
             w_part.flush()?;
             w_cross.flush()?;
+            FCoverageTileTempOutput::BedAggregate {
+                chromosome: tile.chr.clone(),
+                files: TileAggregateTempFiles {
+                    tile_index: tile.index,
+                    partials_path: partials_out,
+                    cross_index_path: Some(cross_idx_out),
+                },
+            }
         }
 
         TileMode::AggregatesBySize {
@@ -1327,6 +1363,12 @@ fn process_tile(
                 }
 
                 w_fin.flush()?;
+                FCoverageTileTempOutput::SizeFinal(TileTempFile {
+                    kind: TileTempFileKind::SizeFinal,
+                    chromosome: tile.chr.clone(),
+                    tile_index: tile.index,
+                    path: finals_out,
+                })
             } else {
                 let mut w_part = open_zstd_auto_writer(&partials_out, 3, None)?;
                 let mut w_cross = if guaranteed_aligned {
@@ -1417,11 +1459,72 @@ fn process_tile(
                 if let Some(mut w_cross) = w_cross {
                     w_cross.flush()?;
                 }
+                FCoverageTileTempOutput::SizeAggregate {
+                    chromosome: tile.chr.clone(),
+                    files: TileAggregateTempFiles {
+                        tile_index: tile.index,
+                        partials_path: partials_out,
+                        cross_index_path: (!guaranteed_aligned).then_some(cross_idx_out),
+                    },
+                }
             }
         }
-    }
+    };
 
-    Ok(counter)
+    Ok(FCoverageTileResult {
+        counters: counter,
+        temp_output: Some(temp_output),
+    })
+}
+
+fn positional_tile_outputs(tile_outputs: &[FCoverageTileTempOutput]) -> Vec<TileTempFile> {
+    tile_outputs
+        .iter()
+        .filter_map(|tile_output| match tile_output {
+            FCoverageTileTempOutput::Positional(output) => Some(output.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn bed_aggregate_tile_outputs_by_chr(
+    tile_outputs: &[FCoverageTileTempOutput],
+) -> FxHashMap<String, Vec<TileAggregateTempFiles>> {
+    let mut by_chr: FxHashMap<String, Vec<TileAggregateTempFiles>> = FxHashMap::default();
+    for tile_output in tile_outputs {
+        if let FCoverageTileTempOutput::BedAggregate { chromosome, files } = tile_output {
+            by_chr
+                .entry(chromosome.clone())
+                .or_default()
+                .push(files.clone());
+        }
+    }
+    by_chr
+}
+
+fn size_aggregate_tile_outputs_by_chr(
+    tile_outputs: &[FCoverageTileTempOutput],
+) -> FxHashMap<String, Vec<TileAggregateTempFiles>> {
+    let mut by_chr: FxHashMap<String, Vec<TileAggregateTempFiles>> = FxHashMap::default();
+    for tile_output in tile_outputs {
+        if let FCoverageTileTempOutput::SizeAggregate { chromosome, files } = tile_output {
+            by_chr
+                .entry(chromosome.clone())
+                .or_default()
+                .push(files.clone());
+        }
+    }
+    by_chr
+}
+
+fn size_final_tile_outputs(tile_outputs: &[FCoverageTileTempOutput]) -> Vec<TileTempFile> {
+    tile_outputs
+        .iter()
+        .filter_map(|tile_output| match tile_output {
+            FCoverageTileTempOutput::SizeFinal(output) => Some(output.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Return whether this fragment is owned by the current tile for normalization statistics.

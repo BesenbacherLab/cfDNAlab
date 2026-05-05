@@ -26,7 +26,7 @@ use crate::shared::plotters::{
 /// - `length_bins`:
 ///     Length bin edges matching the counts.
 /// - `group_idx_to_name`:
-///     Mapping from group index to human-readable name.
+///     Mapping from group index to user-readable name.
 /// - `counts`:
 ///     Midpoint counts shaped `(group, length_bin, position)`.
 pub fn plot_midpoint_profiles(

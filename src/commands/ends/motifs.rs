@@ -111,7 +111,7 @@ impl CountedEndFlags {
 /// - `k`:
 ///   Requested k-mer size for one motif half
 /// - `label`:
-///   Human-readable side name used in error messages
+///   User-readable side name used in error messages
 ///
 /// Returns
 /// -------

@@ -1,13 +1,12 @@
-use crate::commands::fcoverage::reducer::{
-    reduce_aggregates_by_size_with_cross_index_for_chr, reduce_bed_with_cross_index_for_chr,
-};
+use crate::commands::fcoverage::reducer::TileAggregateTempFiles;
 use crate::commands::fcoverage::tiling::{
-    adapt_fetch_to_extreme_windows, concat_aligned_size_tile_finals, finalize_value,
-    merge_positional_tiles,
+    TileTempFile, TileTempFileKind, adapt_fetch_to_extreme_windows, finalize_value,
+    merge_positional_tile_outputs_with_optional_scaling,
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::commands::fcoverage::writers::{
-    write_bedgraph_runs, write_final_row, write_windowed_runs,
+    write_bed_aggregate_output, write_bedgraph_runs, write_final_row, write_size_aggregate_output,
+    write_windowed_runs,
 };
 use crate::commands::gc_bias::correct::{GCCorrector, load_gc_corrector};
 use crate::commands::gc_bias::counting::build_gc_prefixes;
@@ -48,10 +47,52 @@ use fxhash::FxHashMap;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
 use std::io::Write;
-use std::{sync::Arc, time::Instant};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 use tracing::info;
 
 const COMMAND_TARGET: &str = "wps";
+
+#[derive(Debug, Clone)]
+struct WpsTileResult {
+    counters: WPSCounters,
+    temp_output: Option<WpsTileTempOutput>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum WpsTileTempOutput {
+    Positional {
+        chromosome: String,
+        tile_index: u32,
+        path: PathBuf,
+    },
+    AggregatesByBed {
+        chromosome: String,
+        tile_index: u32,
+        partials_path: PathBuf,
+        cross_index_path: Option<PathBuf>,
+    },
+    AggregatesBySize {
+        chromosome: String,
+        tile_index: u32,
+        partials_path: PathBuf,
+        cross_index_path: Option<PathBuf>,
+    },
+    SizeFinal {
+        chromosome: String,
+        tile_index: u32,
+        path: PathBuf,
+    },
+}
+
+impl WpsTileTempOutput {
+    fn is_bed_aggregate(&self) -> bool {
+        matches!(self, Self::AggregatesByBed { .. })
+    }
+
+    fn is_size_aggregate(&self) -> bool {
+        matches!(self, Self::AggregatesBySize { .. })
+    }
+}
 
 /// Execute the windowed protection scores pipeline end-to-end.
 ///
@@ -320,10 +361,10 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
 
     let tile_window_spans_for_threads = tile_window_spans.clone();
 
-    let tile_results: Vec<WPSCounters> = tiles
+    let tile_results: Vec<WpsTileResult> = tiles
         .par_iter()
         .enumerate()
-        .map(|(tile_idx, tile)| -> Result<WPSCounters> {
+        .map(|(tile_idx, tile)| -> Result<WpsTileResult> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
             // Per-chrom projections
             let windows_chr: Option<&[IndexedInterval<u64>]> = windows_map
@@ -338,10 +379,13 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
 
-            let counter = if matches!(window_opt, WindowSpec::Bed(_))
+            let tile_result = if matches!(window_opt, WindowSpec::Bed(_))
                 && windows_chr.map_or(true, |windows| windows.is_empty())
             {
-                WPSCounters::default()
+                WpsTileResult {
+                    counters: WPSCounters::default(),
+                    temp_output: None,
+                }
             } else {
                 // Decide tile mode and filename
                 let (action_prefix, extensions) = if windowed {
@@ -453,7 +497,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     }
                 };
 
-                let (counter, _, _) = wps_for_tile(
+                let (counters, temp_output, _, _) = wps_for_tile(
                     &opt.shared_args,
                     &opt.per_window,
                     opt.keep_zero_runs,
@@ -467,18 +511,25 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     0,
                     false,
                 )?;
-                counter
+                WpsTileResult {
+                    counters,
+                    temp_output,
+                }
             };
             pb.inc(1);
-            Ok(counter)
+            Ok(tile_result)
         })
         .collect::<anyhow::Result<_>>()?;
 
     pb.finish_with_message("| Finished counting");
 
-    // Collect counters
-    for counter in tile_results {
-        global_counter += counter;
+    // Collect counters and the temp paths returned by tile processing.
+    let mut tile_temp_outputs = Vec::new();
+    for tile_result in tile_results {
+        global_counter += tile_result.counters;
+        if let Some(temp_output) = tile_result.temp_output {
+            tile_temp_outputs.push(temp_output);
+        }
     }
 
     info!(
@@ -493,24 +544,28 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         match action {
             CoverageWindowAction::OnlyIncludeThesePositionsUnique => {
                 // Windowed positional (unique and non-indexed)
-                merge_positional_tiles(
-                    temp_dir,
+                merge_positional_tile_outputs_with_optional_scaling(
                     &opt.shared_args.ioc.output_dir,
                     &chromosomes,
-                    positional_prefix,
+                    &wps_positional_tile_outputs(&tile_temp_outputs),
                     final_bedgraph_pos_name.as_str(),
-                    &temp_chrom_name_map,
+                    None,
+                    false,
+                    decimals_to_use,
+                    opt.shared_args.ioc.n_threads as usize,
                 )?
             }
             CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
                 // Windowed positional with orig_idx column
-                merge_positional_tiles(
-                    temp_dir,
+                merge_positional_tile_outputs_with_optional_scaling(
                     &opt.shared_args.ioc.output_dir,
                     &chromosomes,
-                    positional_prefix,
+                    &wps_positional_tile_outputs(&tile_temp_outputs),
                     final_tsv_pos_name.as_str(),
-                    &temp_chrom_name_map,
+                    None,
+                    true,
+                    decimals_to_use,
+                    opt.shared_args.ioc.n_threads as usize,
                 )?
             }
             CoverageWindowAction::Average | CoverageWindowAction::Total => {
@@ -521,100 +576,44 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     _ => unreachable!(),
                 });
 
-                // Header value-column name
-                let value_col = match action {
-                    CoverageWindowAction::Average => "average_coverage",
-                    CoverageWindowAction::Total => "total_coverage",
-                    _ => unreachable!(),
-                };
-
-                let header = format!(
-                    "chromosome\tstart\tend\t{}\tblacklisted_positions",
-                    value_col
-                );
-
                 // Reduce by window source
                 match &window_opt {
                     WindowSpec::Bed(_) => {
-                        let mut positional_writer = open_zstd_auto_writer(
-                            &final_path,
-                            3,
-                            Some(opt.shared_args.ioc.n_threads as u32),
-                        )?;
-
-                        // Write header
-                        writeln!(positional_writer, "{}", header)?;
-
                         let win_map = windows_map
                             .as_ref()
                             .context("BED WPS reduction requires loaded windows")?;
-                        for chr in &chromosomes {
-                            if let Some(wchr) = win_map.get(chr) {
-                                reduce_bed_with_cross_index_for_chr(
-                                    chr,
-                                    temp_dir,
-                                    partials_prefix,
-                                    wchr.as_slice(),
-                                    true,
-                                    action,
-                                    decimals_to_use,
-                                    &temp_chrom_name_map,
-                                    &mut positional_writer,
-                                )?;
-                            }
-                        }
-                        positional_writer.flush()?;
+                        write_bed_aggregate_output(
+                            &final_path,
+                            &collect_wps_aggregate_tile_outputs_by_chromosome(
+                                &tile_temp_outputs,
+                                WpsTileTempOutput::is_bed_aggregate,
+                            )?,
+                            win_map,
+                            &chromosomes,
+                            true,
+                            action,
+                            decimals_to_use,
+                            opt.shared_args.ioc.n_threads as usize,
+                            None,
+                        )?;
                     }
                     WindowSpec::Size(_) => {
-                        if tile_and_window_boundaries_align {
-                            let _ = concat_aligned_size_tile_finals(
-                                temp_dir,
-                                &opt.shared_args.ioc.output_dir,
-                                &chromosomes,
-                                finals_prefix,
-                                match action {
-                                    CoverageWindowAction::Average => final_average_name.as_str(),
-                                    CoverageWindowAction::Total => final_total_name.as_str(),
-                                    _ => unreachable!(),
-                                },
-                                &header,
-                                &temp_chrom_name_map,
-                            )?;
-                        } else {
-                            let mut positional_writer = open_zstd_auto_writer(
-                                &final_path,
-                                3,
-                                Some(opt.shared_args.ioc.n_threads as u32),
-                            )?;
-
-                            // Write header
-                            writeln!(positional_writer, "{}", header)?;
-
-                            for chr in &chromosomes {
-                                let chrom_len = contigs
-                                    .contigs
-                                    .get(chr)
-                                    .map(|&(_, len)| len as u64)
-                                    .ok_or_else(|| {
-                                        anyhow::anyhow!(
-                                            "Chromosome '{}' not found in contig map",
-                                            chr
-                                        )
-                                    })?;
-                                reduce_aggregates_by_size_with_cross_index_for_chr(
-                                    chr,
-                                    temp_dir,
-                                    partials_prefix,
-                                    true,
-                                    action,
-                                    chrom_len,
-                                    decimals_to_use,
-                                    &temp_chrom_name_map,
-                                    &mut positional_writer,
-                                )?;
-                            }
-                            positional_writer.flush()?;
-                        }
+                        write_size_aggregate_output(
+                            &final_path,
+                            &collect_wps_aggregate_tile_outputs_by_chromosome(
+                                &tile_temp_outputs,
+                                WpsTileTempOutput::is_size_aggregate,
+                            )?,
+                            &wps_size_final_tile_outputs(&tile_temp_outputs),
+                            &chromosomes,
+                            &contigs,
+                            true,
+                            action,
+                            decimals_to_use,
+                            opt.shared_args.ioc.n_threads as usize,
+                            tile_and_window_boundaries_align,
+                            None,
+                        )?;
                     }
                     _ => unreachable!(),
                 }
@@ -627,13 +626,15 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         }
     } else {
         // Whole-genome positional coverage
-        merge_positional_tiles(
-            temp_dir,
+        merge_positional_tile_outputs_with_optional_scaling(
             &opt.shared_args.ioc.output_dir,
             &chromosomes,
-            positional_prefix,
+            &wps_positional_tile_outputs(&tile_temp_outputs),
             final_bedgraph_pos_name.as_str(),
-            &temp_chrom_name_map,
+            None,
+            false,
+            decimals_to_use,
+            opt.shared_args.ioc.n_threads as usize,
         )?
     };
     info!(
@@ -674,8 +675,94 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
     Ok(())
 }
 
+fn wps_positional_tile_outputs(tile_outputs: &[WpsTileTempOutput]) -> Vec<TileTempFile> {
+    tile_outputs
+        .iter()
+        .filter_map(|tile_output| match tile_output {
+            WpsTileTempOutput::Positional {
+                chromosome,
+                tile_index,
+                path,
+            } => Some(TileTempFile {
+                kind: TileTempFileKind::Positional,
+                chromosome: chromosome.clone(),
+                tile_index: *tile_index,
+                path: path.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn wps_size_final_tile_outputs(tile_outputs: &[WpsTileTempOutput]) -> Vec<TileTempFile> {
+    tile_outputs
+        .iter()
+        .filter_map(|tile_output| match tile_output {
+            WpsTileTempOutput::SizeFinal {
+                chromosome,
+                tile_index,
+                path,
+            } => Some(TileTempFile {
+                kind: TileTempFileKind::SizeFinal,
+                chromosome: chromosome.clone(),
+                tile_index: *tile_index,
+                path: path.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn collect_wps_aggregate_tile_outputs_by_chromosome(
+    tile_outputs: &[WpsTileTempOutput],
+    include_output: fn(&WpsTileTempOutput) -> bool,
+) -> Result<FxHashMap<String, Vec<TileAggregateTempFiles>>> {
+    let mut by_chromosome: FxHashMap<String, Vec<TileAggregateTempFiles>> = FxHashMap::default();
+
+    for tile_output in tile_outputs.iter().filter(|output| include_output(output)) {
+        match tile_output {
+            WpsTileTempOutput::AggregatesByBed {
+                chromosome,
+                tile_index,
+                partials_path,
+                cross_index_path,
+            }
+            | WpsTileTempOutput::AggregatesBySize {
+                chromosome,
+                tile_index,
+                partials_path,
+                cross_index_path,
+            } => {
+                by_chromosome
+                    .entry(chromosome.clone())
+                    .or_default()
+                    .push(TileAggregateTempFiles {
+                        tile_index: *tile_index,
+                        partials_path: partials_path.clone(),
+                        cross_index_path: cross_index_path.clone(),
+                    })
+            }
+            WpsTileTempOutput::Positional { .. } | WpsTileTempOutput::SizeFinal { .. } => {}
+        }
+    }
+
+    for (chromosome, outputs) in &by_chromosome {
+        let mut tile_indices = fxhash::FxHashSet::default();
+        for output in outputs {
+            anyhow::ensure!(
+                tile_indices.insert(output.tile_index),
+                "duplicate WPS aggregate tile index {} for chromosome '{}'",
+                output.tile_index,
+                chromosome
+            );
+        }
+    }
+
+    Ok(by_chromosome)
+}
+
 /// Process one tile: pair reads, build coverage, and write/return outputs for this tile
-pub fn wps_for_tile(
+pub(crate) fn wps_for_tile(
     opt: &WPSSharedConfig,
     per_window_wps_action: &Option<CoverageWindowAction>,
     keep_zero_runs: bool,
@@ -688,7 +775,12 @@ pub fn wps_for_tile(
     decimals: i32,
     extra_halo_bp: u32,
     return_wps_instead: bool, // Don't save and aggregate, just return the WPS values
-) -> Result<(WPSCounters, Option<Vec<f32>>, Option<Vec<u8>>)> {
+) -> Result<(
+    WPSCounters,
+    Option<WpsTileTempOutput>,
+    Option<Vec<f32>>,
+    Option<Vec<u8>>,
+)> {
     // Open a fresh BAM reader for this thread
     let (mut reader, tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
     debug_assert!(tid_check == tile.tid as u32);
@@ -721,7 +813,7 @@ pub fn wps_for_tile(
         opt.max_fragment_length as u64,
     )?
     else {
-        return Ok((counter, None, None));
+        return Ok((counter, None, None, None));
     };
     let (fetch_from, fetch_to) = fetch_span.try_to_i64()?.as_tuple();
 
@@ -744,12 +836,12 @@ pub fn wps_for_tile(
     let dilated_start_abs = tile.core_start().saturating_sub(context_left);
     let dilated_end_abs = ((tile.core_end() as u64) + context_right as u64).min(chrom_len) as u32;
     if dilated_start_abs >= dilated_end_abs {
-        return Ok((counter, None, None));
+        return Ok((counter, None, None, None));
     }
 
     let dilated_span_len = (dilated_end_abs - dilated_start_abs) as usize; // Length of the dilated buffer (exclusive end)
     if dilated_span_len == 0 {
-        return Ok((counter, None, None));
+        return Ok((counter, None, None, None));
     }
 
     // Offsets of the original core within the dilated span. These values are measured relative
@@ -938,14 +1030,14 @@ pub fn wps_for_tile(
     counter.add_from_snapshot(iter.counters_snapshot());
 
     if return_wps_instead {
-        return Ok((counter, Some(wps_values), mask));
+        return Ok((counter, None, Some(wps_values), mask));
     }
 
     let mut prefix_all_cache: Option<Vec<f64>> = None;
     let mut prefix_allowed_cache: Option<Vec<f64>> = None;
     let mut prefix_allowed_cnt_cache: Option<Vec<u32>> = None;
 
-    match mode {
+    let temp_output = match mode {
         TileMode::Positional {
             windows,
             out_path,
@@ -1017,6 +1109,11 @@ pub fn wps_for_tile(
             }
 
             positional_writer.flush()?;
+            WpsTileTempOutput::Positional {
+                chromosome: tile.chr.clone(),
+                tile_index: tile.index,
+                path: out_path,
+            }
         }
 
         TileMode::AggregatesByBed {
@@ -1095,6 +1192,12 @@ pub fn wps_for_tile(
 
             partials_writer.flush()?;
             cross_index_writer.flush()?;
+            WpsTileTempOutput::AggregatesByBed {
+                chromosome: tile.chr.clone(),
+                tile_index: tile.index,
+                partials_path: partials_out,
+                cross_index_path: Some(cross_idx_out),
+            }
         }
 
         TileMode::AggregatesBySize {
@@ -1182,6 +1285,11 @@ pub fn wps_for_tile(
                 }
 
                 finals_writer.flush()?;
+                WpsTileTempOutput::SizeFinal {
+                    chromosome: tile.chr.clone(),
+                    tile_index: tile.index,
+                    path: finals_out,
+                }
             } else {
                 let mut partials_writer = open_zstd_auto_writer(&partials_out, 3, None)?;
                 let mut cross_index_writer = open_zstd_auto_writer(&cross_idx_out, 3, None)?;
@@ -1226,11 +1334,17 @@ pub fn wps_for_tile(
 
                 partials_writer.flush()?;
                 cross_index_writer.flush()?;
+                WpsTileTempOutput::AggregatesBySize {
+                    chromosome: tile.chr.clone(),
+                    tile_index: tile.index,
+                    partials_path: partials_out,
+                    cross_index_path: Some(cross_idx_out),
+                }
             }
         }
-    }
+    };
 
-    return Ok((counter, None, None));
+    Ok((counter, Some(temp_output), None, None))
 }
 
 // TODO: Add title to docstring
@@ -1415,4 +1529,9 @@ fn clip_window_to_core_and_localize(
         local_end_idx: local_end,
         clipped_abs_interval: Interval::new(start, end)?,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    include!("wps_tests.rs");
 }

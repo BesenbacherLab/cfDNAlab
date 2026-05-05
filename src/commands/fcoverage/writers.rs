@@ -1,6 +1,5 @@
 use crate::shared::formatters::{CompactNumber, round_to, round_to_with_precomputed_factor};
 use crate::shared::interval::Interval;
-use crate::shared::temp_chrom_names::TempChromNameMap;
 use crate::shared::writers::open_zstd_auto_writer;
 use anyhow::{Result, bail};
 use fxhash::FxHashMap;
@@ -9,13 +8,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::commands::fcoverage::reducer::{
-    ReducedAggregateRow, reduce_aggregates_by_size_basic_with_cross_index_for_chr_rows,
-    reduce_aggregates_by_size_with_cross_index_for_chr,
-    reduce_aggregates_by_size_with_cross_index_for_chr_rows,
-    reduce_bed_basic_with_cross_index_for_chr_rows, reduce_bed_with_cross_index_for_chr,
-    reduce_bed_with_cross_index_for_chr_rows,
+    ReducedAggregateRow, TileAggregateTempFiles, reduce_bed_rows, reduce_size_rows,
 };
-use crate::commands::fcoverage::tiling::{concat_aligned_size_tile_finals, finalize_value};
+use crate::commands::fcoverage::tiling::{
+    TileTempFile, concat_aligned_size_tile_final_outputs, finalize_value,
+};
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
 use crate::shared::base::{ZEROISH_F32_TOLERANCE, ZEROISH_F64_TOLERANCE};
 use crate::shared::bed::{GroupedCoverageLayout, Windows};
@@ -105,7 +102,7 @@ pub struct SummaryStatsRow {
 ///
 /// Most summary-stat fields should stay fully numeric, but CV has a special readability issue:
 /// when the mean is extremely small, the exact finite ratio can become so large that it no
-/// longer helps humans compare windows. This formatter keeps ordinary values numeric and only
+/// longer helps users compare windows. This formatter keeps ordinary values numeric and only
 /// switches to the sentinel string `>1e6` for truly extreme finite CV values.
 struct CoverageCoefficientOfVariation {
     value: f64,
@@ -325,8 +322,8 @@ fn write_summary_stats_fields<W: Write>(
 /// Derive summary statistics from one reduced raw row and write the final TSV row.
 ///
 /// Reducers intentionally stop at exact additive raw values. This helper keeps the writer-side
-/// summary path compact while preserving that separation: derive the human-facing statistics only
-/// once the full reduced row is known, then write them in the public output schema.
+/// summary path compact while preserving that separation: derive summary statistics only once the
+/// full reduced row is known, then write them in the public output schema.
 fn write_reduced_summary_stats_row<W: Write>(
     w: &mut W,
     chr: &str,
@@ -359,16 +356,16 @@ fn scale_reduced_row(
     }
 }
 
-fn write_scaled_non_summary_reduced_row<W: Write>(
+fn write_non_summary_reduced_row<W: Write>(
     writer: &mut W,
     chromosome: &str,
     row: ReducedAggregateRow,
     masked: bool,
     action: CoverageWindowAction,
     decimals: i32,
-    restore_mean_multiplier: f64,
+    restore_mean_multiplier: Option<f64>,
 ) -> Result<()> {
-    let row = scale_reduced_row(row, Some(restore_mean_multiplier));
+    let row = scale_reduced_row(row, restore_mean_multiplier);
     let value = finalize_value(
         row.coverage_sum,
         row.eligible_positions,
@@ -515,46 +512,60 @@ fn chromosome_length_u64(contigs: &crate::shared::bam::Contigs, chromosome: &str
         .ok_or_else(|| anyhow::anyhow!("Chromosome '{}' not found in contig map", chromosome))
 }
 
-/// Write one final BED aggregate output file across all requested chromosomes.
+fn aggregate_tile_outputs_for_chromosome<'a>(
+    tile_outputs_by_chr: &'a FxHashMap<String, Vec<TileAggregateTempFiles>>,
+    chromosome: &str,
+    output_kind: &str,
+) -> Result<&'a [TileAggregateTempFiles]> {
+    let tile_outputs = tile_outputs_by_chr.get(chromosome).ok_or_else(|| {
+        anyhow::anyhow!(
+            "No returned {} aggregate tile outputs for chromosome '{}'",
+            output_kind,
+            chromosome
+        )
+    })?;
+    anyhow::ensure!(
+        !tile_outputs.is_empty(),
+        "Returned {} aggregate tile output list is empty for chromosome '{}'",
+        output_kind,
+        chromosome
+    );
+    Ok(tile_outputs.as_slice())
+}
+
+/// Write one final BED aggregate output across all requested chromosomes.
 ///
 /// This is the top-level writer for ordinary `--by-bed` aggregate outputs after tile counting has
-/// finished. It opens the final compressed output file, writes the correct header for the selected
-/// action, and then streams one chromosome at a time through the matching reducer path.
+/// returned explicit temp paths. It opens the final compressed output file, writes the selected
+/// header, and reduces each chromosome through the BED reducer using only the returned tile paths.
 ///
-/// Summary-stats uses the raw-row reducer and derives the final statistics here, because the
-/// reducer itself should stay responsible only for exact additive raw moments. `average` and
-/// `total` use the lighter reducer that can write final numeric values directly.
+/// Summary-stats keeps the reducer focused on exact additive raw rows. The writer derives mean,
+/// nonzero, and dispersion columns immediately before writing each final TSV row. `average` and
+/// `total` use the same raw reducer but finalize only the requested scalar value.
 ///
 /// Parameters
 /// ----------
 /// - `final_path`:
 ///     Final compressed output path to create.
-/// - `temp_dir`:
-///     Directory that holds the per-tile partial files.
-/// - `partials_prefix`:
-///     Shared filename prefix used to discover partial rows for this output mode.
+/// - `tile_outputs_by_chr`:
+///     Returned aggregate tile paths grouped by chromosome.
 /// - `windows_by_chr`:
-///     BED windows keyed by chromosome. These windows must match the identities written during
-///     tile counting.
+///     BED windows keyed by chromosome. These identities must match the partial rows.
 /// - `chromosomes`:
 ///     Chromosome order to reduce and write.
 /// - `masked`:
-///     Whether blacklist masking was active. Needed for the non-summary reducer path.
+///     Whether blacklist masking was active. Needed for scalar finalization.
 /// - `action`:
 ///     Requested aggregate mode for these BED windows.
 /// - `decimals`:
 ///     Decimal precision used in the final output.
 /// - `n_threads`:
 ///     Compression worker count for the output writer.
-///
-/// Returns
-/// -------
-/// - `()`:
-///     Completes once every requested chromosome has been reduced and written to `final_path`.
+/// - `restore_mean_multiplier`:
+///     Optional late multiplier applied to raw coverage sums before finalization.
 pub(crate) fn write_bed_aggregate_output(
     final_path: &Path,
-    temp_dir: &Path,
-    partials_prefix: &str,
+    tile_outputs_by_chr: &FxHashMap<String, Vec<TileAggregateTempFiles>>,
     windows_by_chr: &FxHashMap<String, Windows>,
     chromosomes: &[String],
     masked: bool,
@@ -562,134 +573,99 @@ pub(crate) fn write_bed_aggregate_output(
     decimals: i32,
     n_threads: usize,
     restore_mean_multiplier: Option<f64>,
-    temp_chrom_name_map: &TempChromNameMap,
 ) -> Result<()> {
     let mut writer = open_zstd_auto_writer(final_path, 3, Some(n_threads as u32))?;
     if action.is_summary_stats() {
-        // Summary-stats keeps the reducer focused on exact additive raw rows.
-        // We derive the human-facing metrics here, right before writing the final TSV row.
+        // Summary-stats derives final columns from exact reduced sums and moments.
         writeln!(writer, "{}", summary_stats_header())?;
         for chromosome in chromosomes {
-            if let Some(windows_for_chr) = windows_by_chr.get(chromosome) {
-                reduce_bed_with_cross_index_for_chr_rows(
-                    chromosome,
-                    temp_dir,
-                    partials_prefix,
-                    windows_for_chr.as_slice(),
-                    temp_chrom_name_map,
-                    |row| {
-                        write_reduced_summary_stats_row(
-                            &mut writer,
-                            chromosome,
-                            scale_reduced_row(row, restore_mean_multiplier),
-                            decimals,
-                        )
-                    },
-                )?;
+            let Some(windows_for_chr) = windows_by_chr.get(chromosome) else {
+                continue;
+            };
+            if windows_for_chr.is_empty() {
+                continue;
             }
+            let tile_outputs =
+                aggregate_tile_outputs_for_chromosome(tile_outputs_by_chr, chromosome, "BED")?;
+            reduce_bed_rows(
+                chromosome,
+                tile_outputs,
+                windows_for_chr.as_slice(),
+                true,
+                |row| {
+                    write_reduced_summary_stats_row(
+                        &mut writer,
+                        chromosome,
+                        scale_reduced_row(row, restore_mean_multiplier),
+                        decimals,
+                    )
+                },
+            )?;
         }
     } else {
-        // `average` and `total` can use the lighter reducer path because they do not need raw
-        // moments such as `nonzero_positions` or `coverage_sum_of_squares`.
+        // Average and total use the same raw reducer, then write only the requested scalar.
         writeln!(
             writer,
             "chromosome\tstart\tend\t{}\tblacklisted_positions",
             aggregate_value_header(action)
         )?;
         for chromosome in chromosomes {
-            if let Some(windows_for_chr) = windows_by_chr.get(chromosome) {
-                if let Some(restore_mean_multiplier) = restore_mean_multiplier {
-                    reduce_bed_basic_with_cross_index_for_chr_rows(
+            let Some(windows_for_chr) = windows_by_chr.get(chromosome) else {
+                continue;
+            };
+            if windows_for_chr.is_empty() {
+                continue;
+            }
+            let tile_outputs =
+                aggregate_tile_outputs_for_chromosome(tile_outputs_by_chr, chromosome, "BED")?;
+            reduce_bed_rows(
+                chromosome,
+                tile_outputs,
+                windows_for_chr.as_slice(),
+                false,
+                |row| {
+                    write_non_summary_reduced_row(
+                        &mut writer,
                         chromosome,
-                        temp_dir,
-                        partials_prefix,
-                        windows_for_chr.as_slice(),
-                        temp_chrom_name_map,
-                        |row| {
-                            write_scaled_non_summary_reduced_row(
-                                &mut writer,
-                                chromosome,
-                                row,
-                                masked,
-                                action,
-                                decimals,
-                                restore_mean_multiplier,
-                            )
-                        },
-                    )?;
-                } else {
-                    reduce_bed_with_cross_index_for_chr(
-                        chromosome,
-                        temp_dir,
-                        partials_prefix,
-                        windows_for_chr.as_slice(),
+                        row,
                         masked,
                         action,
                         decimals,
-                        temp_chrom_name_map,
-                        &mut writer,
-                    )?;
-                }
-            }
+                        restore_mean_multiplier,
+                    )
+                },
+            )?;
         }
     }
     writer.flush()?;
     Ok(())
 }
 
-/// Write one final grouped BED aggregate output file across all requested chromosomes.
+/// Write one final grouped BED aggregate output across all requested chromosomes.
 ///
-/// Grouped BED outputs are reduced in two stages:
-/// 1. reduce each chromosome's segment-level partial rows back into exact per-segment totals
-/// 2. fold those segment totals into per-group accumulators using `segment_idx -> group_idx`
+/// Grouped BED output is a second pass over ordinary BED reduction. The reducer first reconstructs
+/// exact per-segment rows from the returned tile paths. Those rows are then added to their owning
+/// groups using the grouped layout's `segment_idx -> group_idx` map.
 ///
-/// This writer owns the second stage. It preloads one accumulator per group with that group's
-/// total span, walks the segment reducers chromosome by chromosome, merges each reduced segment
-/// into its group, and finally writes one row per `group_idx` in deterministic order.
+/// Group span is not recomputed from observed segment rows. It is initialized from
+/// `group_span_positions` so groups with no reduced coverage rows still keep their represented
+/// span and write zero coverage-derived fields. Final rows are written in ascending `group_idx`.
 ///
-/// Summary-stats keeps the full raw moments through the group fold and derives the final
-/// statistics only once the complete grouped row is known. Non-summary grouped actions keep only
-/// the fields needed for final `average` or `total`.
-///
-/// Parameters
-/// ----------
-/// - `final_path`:
-///     Final compressed output path to create.
-/// - `temp_dir`:
-///     Directory that holds the per-tile partial files.
-/// - `partials_prefix`:
-///     Shared filename prefix used to discover partial rows for this output mode.
-/// - `grouped_layout`:
-///     Precomputed grouped segment layout, including `segment_idx -> group_idx` and stable group
-///     metadata.
-/// - `chromosomes`:
-///     Chromosome order to reduce and write.
-/// - `action`:
-///     Requested grouped aggregate mode.
-/// - `decimals`:
-///     Decimal precision used in the final output.
-/// - `n_threads`:
-///     Compression worker count for the output writer.
-///
-/// Returns
-/// -------
-/// - `()`:
-///     Completes once every reduced segment has been folded into its group and all grouped rows
-///     have been written to `final_path`.
+/// Basic and summary reducers share the same fold because basic partial rows are expanded into the
+/// same in-memory accumulator shape with summary-only fields set to zero. Summary-stats derives
+/// final statistics after all segments in a group have been folded.
 pub(crate) fn write_grouped_bed_aggregate_output(
     final_path: &Path,
-    temp_dir: &Path,
-    partials_prefix: &str,
+    tile_outputs_by_chr: &FxHashMap<String, Vec<TileAggregateTempFiles>>,
     grouped_layout: &GroupedCoverageLayout,
     chromosomes: &[String],
     action: CoverageWindowAction,
     decimals: i32,
     n_threads: usize,
     restore_mean_multiplier: Option<f64>,
-    temp_chrom_name_map: &TempChromNameMap,
 ) -> Result<()> {
-    // Start every group accumulator with its known span. Segment reduction will fill in the
-    // coverage-derived fields later, but span positions come from the grouped layout itself.
+    // Start each group with the span declared by the grouped layout. Segment rows fill in only the
+    // coverage-derived fields.
     let mut grouped_accums: FxHashMap<u64, GroupedAggregateAccum> = FxHashMap::default();
     for (group_idx, span_positions) in &grouped_layout.group_span_positions {
         grouped_accums.insert(
@@ -701,21 +677,27 @@ pub(crate) fn write_grouped_bed_aggregate_output(
         );
     }
 
-    // First reduce chromosome-level segment rows back to exact raw values, then fold those
-    // reduced segments into their owning groups. The accumulation logic is identical for basic
-    // and summary outputs because basic reducers already zero the summary-only fields in memory.
+    // Reduce chromosome-level segment rows back to exact raw values, then fold those reduced
+    // segments into their owning groups. Basic and summary outputs use the same accumulation loop
+    // because basic reducers fill summary-only fields with zeroes in memory.
     for chromosome in chromosomes {
         let Some(windows_for_chr) = grouped_layout.segments_by_chr.get(chromosome) else {
             continue;
         };
+        if windows_for_chr.is_empty() {
+            continue;
+        }
+        // A chromosome with grouped segments must have returned tile outputs. Missing outputs
+        // would turn an upstream mismatch into zero coverage.
+        let tile_outputs =
+            aggregate_tile_outputs_for_chromosome(tile_outputs_by_chr, chromosome, "grouped BED")?;
 
         if action.is_summary_stats() {
-            reduce_bed_with_cross_index_for_chr_rows(
+            reduce_bed_rows(
                 chromosome,
-                temp_dir,
-                partials_prefix,
+                tile_outputs,
                 windows_for_chr.as_slice(),
-                temp_chrom_name_map,
+                true,
                 |row| {
                     fold_reduced_segment_into_group(
                         grouped_layout,
@@ -725,12 +707,11 @@ pub(crate) fn write_grouped_bed_aggregate_output(
                 },
             )?;
         } else {
-            reduce_bed_basic_with_cross_index_for_chr_rows(
+            reduce_bed_rows(
                 chromosome,
-                temp_dir,
-                partials_prefix,
+                tile_outputs,
                 windows_for_chr.as_slice(),
-                temp_chrom_name_map,
+                false,
                 |row| {
                     fold_reduced_segment_into_group(
                         grouped_layout,
@@ -742,8 +723,8 @@ pub(crate) fn write_grouped_bed_aggregate_output(
         }
     }
 
-    // Always write groups in stable ascending `group_idx` order, regardless of chromosome order
-    // or the order in which segment reductions completed.
+    // Output order is the stable group index order from the grouped layout, not chromosome order
+    // or hash-map iteration order.
     let mut sorted_group_indices: Vec<u64> =
         grouped_layout.group_idx_to_name.keys().copied().collect();
     sorted_group_indices.sort_unstable();
@@ -752,8 +733,8 @@ pub(crate) fn write_grouped_bed_aggregate_output(
     if action.is_summary_stats() {
         writeln!(writer, "{}", grouped_summary_stats_header())?;
         for group_idx in sorted_group_indices {
-            // Missing groups default to all-zero accumulators. That only matters for groups that
-            // exist in the layout but received no reduced segment contributions in this run.
+            // Groups without segment contributions still write one row. Their span was seeded
+            // from the layout above, while coverage-derived fields remain zero.
             let accum = grouped_accums.get(&group_idx).copied().unwrap_or_default();
             let stats = derive_summary_stats(
                 accum.span_positions,
@@ -773,8 +754,8 @@ pub(crate) fn write_grouped_bed_aggregate_output(
         )?;
         for group_idx in sorted_group_indices {
             let accum = grouped_accums.get(&group_idx).copied().unwrap_or_default();
-            // Group-level `average` and `total` are derived only after all reduced segments have
-            // been folded into the group accumulator.
+            // Finalize average or total only after every reduced segment has been folded into the
+            // group accumulator.
             let value = finalize_grouped_value(action, accum);
             write_grouped_value_row(
                 &mut writer,
@@ -791,52 +772,23 @@ pub(crate) fn write_grouped_bed_aggregate_output(
     Ok(())
 }
 
-/// Write one final fixed-size aggregate output file across all requested chromosomes.
+/// Write one final fixed-size aggregate output across all requested chromosomes.
 ///
-/// This is the top-level writer for `--by-size` aggregate outputs. It has two distinct paths:
-/// - when tile and bin boundaries are guaranteed to align, it concatenates pre-finalized per-tile
-///   files directly for speed
-/// - otherwise, it opens the final output and runs the matching cross-tile reducer per chromosome
+/// This writer has two paths. When tile and bin boundaries are guaranteed to align and no
+/// restore-mean multiplier is needed, every tile already wrote complete final rows, so the writer
+/// concatenates those returned final paths directly. Otherwise it opens the final output and runs
+/// the fixed-size reducer per chromosome using the returned partial paths.
 ///
-/// Summary-stats again derives the final human-facing metrics only after exact raw rows have been
-/// reduced. Non-summary outputs use the lighter reducer path.
+/// Restore-mean intentionally bypasses the aligned fast path. In that mode aligned tiles write
+/// exact raw partial rows, and the reducer path applies the late multiplier with the same final
+/// semantics as non-aligned runs. Missing cross-index files still mean one contribution per bin.
 ///
-/// Parameters
-/// ----------
-/// - `final_path`:
-///     Final compressed output path to create.
-/// - `temp_dir`:
-///     Directory that holds per-tile finals or partial files.
-/// - `partials_prefix`:
-///     Shared filename prefix used to discover cross-tile partial rows when reduction is needed.
-/// - `finals_prefix`:
-///     Shared filename prefix used to discover already-finalized aligned tile outputs.
-/// - `chromosomes`:
-///     Chromosome order to reduce or concatenate.
-/// - `contigs`:
-///     Contig metadata used to recover chromosome lengths for the reducer path.
-/// - `masked`:
-///     Whether blacklist masking was active. Needed for the non-summary reducer path.
-/// - `action`:
-///     Requested aggregate mode for the fixed-size bins.
-/// - `decimals`:
-///     Decimal precision used in the final output.
-/// - `n_threads`:
-///     Compression worker count for the output writer.
-/// - `tile_and_window_boundaries_align`:
-///     Whether every tile final already matches complete fixed-size bins and can therefore be
-///     concatenated directly without any cross-tile reduction.
-///
-/// Returns
-/// -------
-/// - `()`:
-///     Completes once all requested chromosomes have been concatenated or reduced into
-///     `final_path`.
+/// Summary-stats derives mean, nonzero, and dispersion columns only after exact raw rows have been
+/// reduced. Non-summary outputs finalize `average` or `total` from the reduced raw sums.
 pub(crate) fn write_size_aggregate_output(
     final_path: &Path,
-    temp_dir: &Path,
-    partials_prefix: &str,
-    finals_prefix: &str,
+    tile_outputs_by_chr: &FxHashMap<String, Vec<TileAggregateTempFiles>>,
+    final_tile_outputs: &[TileTempFile],
     chromosomes: &[String],
     contigs: &crate::shared::bam::Contigs,
     masked: bool,
@@ -845,7 +797,6 @@ pub(crate) fn write_size_aggregate_output(
     n_threads: usize,
     tile_and_window_boundaries_align: bool,
     restore_mean_multiplier: Option<f64>,
-    temp_chrom_name_map: &TempChromNameMap,
 ) -> Result<()> {
     if tile_and_window_boundaries_align && restore_mean_multiplier.is_none() {
         // Fast path: every tile already wrote complete fixed-size bins, so we can concatenate the
@@ -864,53 +815,49 @@ pub(crate) fn write_size_aggregate_output(
                 aggregate_value_header(action)
             )
         };
-        let _ = concat_aligned_size_tile_finals(
-            temp_dir,
+        let _ = concat_aligned_size_tile_final_outputs(
             &final_path.parent().map(PathBuf::from).ok_or_else(|| {
                 anyhow::anyhow!("missing parent directory for {}", final_path.display())
             })?,
             chromosomes,
-            finals_prefix,
+            final_tile_outputs,
             final_path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .ok_or_else(|| anyhow::anyhow!("invalid final output filename"))?,
             header.as_str(),
-            temp_chrom_name_map,
         )?;
         return Ok(());
     }
 
-    // General path: some bins crossed tile boundaries, so we have to reduce the partial rows back
-    // into complete fixed-size bins chromosome by chromosome.
+    // General path: reduce raw partial rows back into complete fixed-size bins chromosome by
+    // chromosome. This is required when bins cross tile boundaries.
     //
     // This same path also handles aligned `restore-mean` runs. In that case there is still no
     // cross-tile reduction to do, but reusing the reducer/finalizer avoids a second raw-row
     // writer path with the same final semantics.
     let mut writer = open_zstd_auto_writer(final_path, 3, Some(n_threads as u32))?;
     if action.is_summary_stats() {
+        // Summary-stats derives final columns from exact reduced sums and moments.
         writeln!(writer, "{}", summary_stats_header())?;
         for chromosome in chromosomes {
             let chrom_len = chromosome_length_u64(contigs, chromosome)?;
-            // Summary-stats keeps the reducer focused on exact raw moments, then derives the final
-            // metrics here once the full bin row is known.
-            reduce_aggregates_by_size_with_cross_index_for_chr_rows(
-                chromosome,
-                temp_dir,
-                partials_prefix,
-                chrom_len,
-                temp_chrom_name_map,
-                |row| {
-                    write_reduced_summary_stats_row(
-                        &mut writer,
-                        chromosome,
-                        scale_reduced_row(row, restore_mean_multiplier),
-                        decimals,
-                    )
-                },
-            )?;
+            if chrom_len == 0 {
+                continue;
+            }
+            let tile_outputs =
+                aggregate_tile_outputs_for_chromosome(tile_outputs_by_chr, chromosome, "size")?;
+            reduce_size_rows(chromosome, tile_outputs, chrom_len, true, |row| {
+                write_reduced_summary_stats_row(
+                    &mut writer,
+                    chromosome,
+                    scale_reduced_row(row, restore_mean_multiplier),
+                    decimals,
+                )
+            })?;
         }
     } else {
+        // Average and total use the same raw reducer, then write only the requested scalar.
         writeln!(
             writer,
             "chromosome\tstart\tend\t{}\tblacklisted_positions",
@@ -918,40 +865,22 @@ pub(crate) fn write_size_aggregate_output(
         )?;
         for chromosome in chromosomes {
             let chrom_len = chromosome_length_u64(contigs, chromosome)?;
-            // `average` and `total` can use the lighter reducer because they do not need the
-            // summary-only raw moments.
-            if let Some(restore_mean_multiplier) = restore_mean_multiplier {
-                reduce_aggregates_by_size_basic_with_cross_index_for_chr_rows(
+            if chrom_len == 0 {
+                continue;
+            }
+            let tile_outputs =
+                aggregate_tile_outputs_for_chromosome(tile_outputs_by_chr, chromosome, "size")?;
+            reduce_size_rows(chromosome, tile_outputs, chrom_len, false, |row| {
+                write_non_summary_reduced_row(
+                    &mut writer,
                     chromosome,
-                    temp_dir,
-                    partials_prefix,
-                    chrom_len,
-                    temp_chrom_name_map,
-                    |row| {
-                        write_scaled_non_summary_reduced_row(
-                            &mut writer,
-                            chromosome,
-                            row,
-                            masked,
-                            action,
-                            decimals,
-                            restore_mean_multiplier,
-                        )
-                    },
-                )?;
-            } else {
-                reduce_aggregates_by_size_with_cross_index_for_chr(
-                    chromosome,
-                    temp_dir,
-                    partials_prefix,
+                    row,
                     masked,
                     action,
-                    chrom_len,
                     decimals,
-                    temp_chrom_name_map,
-                    &mut writer,
-                )?;
-            }
+                    restore_mean_multiplier,
+                )
+            })?;
         }
     }
     writer.flush()?;

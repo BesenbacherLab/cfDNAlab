@@ -935,7 +935,7 @@ pub fn peaks_for_tile(
         indexed: false,
     };
 
-    let (counter, wps_opt, mask_opt) = wps_for_tile(
+    let (counter, _, wps_opt, mask_opt) = wps_for_tile(
         &opt.shared_args,
         &None, // Ignored
         false, // Ignored
