@@ -76,7 +76,7 @@ Extract fragmentomics features:
   alt="cfdna midpoints"
   width="185"
 /></dt>
-  <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome.<br>E.g., transcription factor binding sites, aggregated per transcription factor.<br>Fast alternative to <i>Griffin</i>.</dd>
+  <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome.<br>E.g., transcription factor binding sites, aggregated per transcription factor.<br>Fast alternative to [Griffin](https://github.com/adoebley/Griffin) when combined with `cfdna gc-bias` and `cfdna fragment-count-weights`.</dd>
   
   <hr>
 
