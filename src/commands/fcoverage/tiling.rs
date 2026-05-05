@@ -9,6 +9,7 @@ use crate::{
     shared::formatters::{CompactNumber, round_to},
     shared::interval::Interval,
     shared::io::open_text_reader,
+    shared::temp_chrom_names::TempChromNameMap,
     shared::tiled_run::{
         Tile, TileMode, TileWindowSpan, clamp_fetch_to_window_span, parse_tile_index,
     },
@@ -23,8 +24,10 @@ fn sorted_tile_files_for_chromosome(
     temp_dir: &std::path::Path,
     chromosome: &str,
     per_tile_prefix: &str,
+    temp_chrom_name_map: &TempChromNameMap,
 ) -> Result<Vec<(u32, std::path::PathBuf)>> {
     let mut chromosome_files = Vec::new();
+    let chromosome_token = temp_chrom_name_map.token_for(chromosome)?;
     for entry in std::fs::read_dir(temp_dir)
         .with_context(|| format!("Listing temp_dir: {}", temp_dir.display()))?
     {
@@ -37,7 +40,7 @@ fn sorted_tile_files_for_chromosome(
             .and_then(|name| name.to_str())
             .unwrap_or("");
         if file_name.starts_with(per_tile_prefix)
-            && file_name.contains(&format!(".{chromosome}."))
+            && file_name.contains(&format!(".{chromosome_token}."))
             && let Some(tile_index) = parse_tile_index(file_name)
         {
             chromosome_files.push((tile_index, path));
@@ -68,6 +71,7 @@ pub fn merge_positional_tiles(
     chromosomes: &[String],
     per_tile_prefix: &str, // e.g. "coverage.pos" (whole-genome) or "coverage.pos.win" (windowed)
     final_name: &str,      // e.g. "coverage.per_position.tsv"
+    temp_chrom_name_map: &TempChromNameMap,
 ) -> Result<std::path::PathBuf> {
     let final_path = out_dir.join(final_name);
     let mut out = BufWriter::new(
@@ -76,7 +80,8 @@ pub fn merge_positional_tiles(
     );
 
     for chr in chromosomes {
-        let chr_files = sorted_tile_files_for_chromosome(temp_dir, chr, per_tile_prefix)?;
+        let chr_files =
+            sorted_tile_files_for_chromosome(temp_dir, chr, per_tile_prefix, temp_chrom_name_map)?;
 
         // Stream copy each tile into the final file
         for (_idx, path) in chr_files {
@@ -110,13 +115,15 @@ pub fn merge_scaled_positional_tiles(
     indexed: bool,
     decimals: i32,
     n_threads: usize,
+    temp_chrom_name_map: &TempChromNameMap,
 ) -> Result<std::path::PathBuf> {
     let final_path = out_dir.join(final_name);
     let mut out = open_zstd_auto_writer(&final_path, 3, Some(n_threads as u32))?;
     let mut line = String::new();
 
     for chr in chromosomes {
-        let chr_files = sorted_tile_files_for_chromosome(temp_dir, chr, per_tile_prefix)?;
+        let chr_files =
+            sorted_tile_files_for_chromosome(temp_dir, chr, per_tile_prefix, temp_chrom_name_map)?;
         for (_idx, path) in chr_files {
             let mut reader = open_text_reader(&path)?;
             loop {
@@ -214,6 +221,7 @@ pub fn merge_positional_tiles_with_optional_scaling(
     indexed: bool,
     decimals: i32,
     n_threads: usize,
+    temp_chrom_name_map: &TempChromNameMap,
 ) -> Result<std::path::PathBuf> {
     if let Some(multiplier) = restore_mean_multiplier {
         merge_scaled_positional_tiles(
@@ -226,9 +234,17 @@ pub fn merge_positional_tiles_with_optional_scaling(
             indexed,
             decimals,
             n_threads,
+            temp_chrom_name_map,
         )
     } else {
-        merge_positional_tiles(temp_dir, out_dir, chromosomes, per_tile_prefix, final_name)
+        merge_positional_tiles(
+            temp_dir,
+            out_dir,
+            chromosomes,
+            per_tile_prefix,
+            final_name,
+            temp_chrom_name_map,
+        )
     }
 }
 
@@ -254,6 +270,7 @@ pub fn concat_aligned_size_tile_finals(
     per_tile_prefix: &str, // e.g., "<prefix>.fin"
     final_name: &str,      // e.g., "<prefix>.average.tsv.zst"
     header_line: &str,     // single header line without trailing newline
+    temp_chrom_name_map: &TempChromNameMap,
 ) -> Result<std::path::PathBuf> {
     let final_path = out_dir.join(final_name);
     let mut out = BufWriter::new(
@@ -270,7 +287,8 @@ pub fn concat_aligned_size_tile_finals(
 
     // Then append each tile's compressed frame in genomic order
     for chr in chromosomes {
-        let chr_files = sorted_tile_files_for_chromosome(temp_dir, chr, per_tile_prefix)?;
+        let chr_files =
+            sorted_tile_files_for_chromosome(temp_dir, chr, per_tile_prefix, temp_chrom_name_map)?;
 
         // Copy bytes verbatim (frame concatenation)
         for (_i, p) in chr_files {

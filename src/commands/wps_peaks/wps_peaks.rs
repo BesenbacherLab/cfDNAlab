@@ -22,6 +22,7 @@ use crate::shared::bed::load_windows_from_bed;
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::dot_join;
 use crate::shared::progress::ProgressFactory;
+use crate::shared::temp_chrom_names::TempChromNameMap;
 use crate::shared::thread_pool::init_global_pool;
 use crate::shared::tiled_run::{
     TempDirGuard, Tile, TileMode, TileWindowSpan, build_tiles, precompute_tile_window_spans,
@@ -200,6 +201,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
             _ => None,
         },
     )?;
+    let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
 
     let windows_lookup = windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
@@ -285,7 +287,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
                 None
             };
 
-            let path = tile_peaks_path(temp_dir, prefix, tile, tile_idx);
+            let path = tile_peaks_path(temp_dir, prefix, tile, tile_idx, &temp_chrom_name_map)?;
             if peaks.is_empty() {
                 File::create(&path).context("create empty tile peak file")?;
             } else {
@@ -454,14 +456,20 @@ pub struct WindowStatsContribution {
     pub distance_histogram: BTreeMap<u32, u32>,
 }
 
-pub fn tile_peaks_path(root: &Path, prefix: &str, tile: &Tile, tile_idx: usize) -> PathBuf {
-    let safe_chr = tile.chr.replace('/', "_");
-    root.join(format!(
+pub fn tile_peaks_path(
+    root: &Path,
+    prefix: &str,
+    tile: &Tile,
+    tile_idx: usize,
+    temp_chrom_name_map: &TempChromNameMap,
+) -> Result<PathBuf> {
+    let chr_token = temp_chrom_name_map.token_for(tile.chr.as_str())?;
+    Ok(root.join(format!(
         "{prefix}.tile.{safe_chr}.{tile_idx:05}.peaks.tmp",
         prefix = prefix,
-        safe_chr = safe_chr,
+        safe_chr = chr_token,
         tile_idx = tile_idx
-    ))
+    )))
 }
 
 pub fn stream_tile_peaks<F>(path: &Path, mut handler: F) -> Result<()>

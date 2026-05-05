@@ -36,6 +36,7 @@ use crate::{
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
         scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
+        temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
         tiled_run::{
             TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
@@ -331,6 +332,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         max_fragment_reach_bp,
         align_bp,
     )?;
+    let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
 
     let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(tiles.len() as u64));
@@ -398,6 +400,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
                 temp_dir,
                 partials_prefix,
                 cross_prefix,
+                &temp_chrom_name_map,
             )?;
             pb.inc(1);
             Ok(counter)
@@ -694,6 +697,7 @@ fn process_tile(
     temp_dir: &Path,
     partials_prefix: &str,
     cross_prefix: &str,
+    temp_chrom_name_map: &TempChromNameMap,
 ) -> Result<TileOutputs> {
     let fetch_window_opt = window_opt.as_fetch_window_spec();
     let max_fragment_reach_bp = configured_max_fragment_reach_bp(opt, length_axis.as_ref()) as u64;
@@ -1222,6 +1226,7 @@ fn process_tile(
         partials_prefix,
         &tile.chr,
         tile.index,
+        temp_chrom_name_map,
         &window_idxs_chr,
         &contained_flags,
         &counts,
@@ -1231,6 +1236,7 @@ fn process_tile(
         cross_prefix,
         &tile.chr,
         tile.index,
+        temp_chrom_name_map,
         &crossing_window_idxs_chr,
     )?;
 

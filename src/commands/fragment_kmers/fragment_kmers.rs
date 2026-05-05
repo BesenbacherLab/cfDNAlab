@@ -48,6 +48,7 @@ use crate::{
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
         scale_genome::apply_scaling_to_coverage_in_place,
+        temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
         tiled_run::{
             TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
@@ -251,6 +252,7 @@ fn run_inner_with_reporting(
         halo_bp,
         by_size_bp,
     )?;
+    let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
 
     let windows_lookup = windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
@@ -295,10 +297,11 @@ fn run_inner_with_reporting(
         .enumerate()
         .map(|(tile_idx, tile)| -> Result<TileResult> {
             let tile_span = tile_window_spans_for_threads[tile_idx];
+            let chr_token = temp_chrom_name_map.token_for(tile.chr.as_str())?;
             let counts_path = temp_dir.join(format!(
                 "{prefix}.{chr}.{idx}.counts.bin",
                 prefix = prefix,
-                chr = tile.chr.as_str(),
+                chr = chr_token,
                 idx = tile.index
             ));
 

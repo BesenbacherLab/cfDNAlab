@@ -4,6 +4,7 @@ use crate::commands::prepare_windows::{
     prepare_windows::Window,
 };
 use crate::shared::io::{TextWriter, create_text_writer, stdout_text_writer};
+use crate::shared::temp_chrom_names::temp_chrom_token;
 use anyhow::{Context, Result};
 use fxhash::FxHashMap;
 use std::{
@@ -17,9 +18,9 @@ use std::{
 /// Streaming each chromosome through its own writer keeps memory usage low and
 /// lets the pipeline defer global policies until the final concatenation pass.
 ///
-/// The writer wraps a 1 MiB `BufWriter<File>` pointing at a sanitized path under
-/// the run's temp directory. Callers borrow the writer when writing rows and
-/// later reuse the stored path during concatenation.
+/// The writer wraps a 1 MiB `BufWriter<File>` pointing at an opaque-token path under the run's
+/// temp directory. Callers borrow the writer when writing rows and later reuse the stored path
+/// during concatenation.
 #[derive(Debug)]
 pub struct ChromTempWriter {
     path: PathBuf,
@@ -87,8 +88,8 @@ pub fn write_windows<W: Write>(
 /// The helper creates the writer lazily the first time a chromosome appears and
 /// reuses it for subsequent chunks.
 ///
-/// It sanitizes the chromosome name, opens the file inside `temp_dir`, and wraps
-/// it in a 1 MiB buffer to keep I/O efficient.
+/// It assigns an opaque chromosome token, opens the file inside `temp_dir`, and wraps it in a
+/// 1 MiB buffer to keep I/O efficient.
 ///
 /// # Parameters
 /// - `chrom`: chromosome identifier (e.g., `chr7`).
@@ -103,9 +104,8 @@ pub fn ensure_temp_writer_for_chrom<'a>(
     temp_writers: &'a mut FxHashMap<String, ChromTempWriter>,
 ) -> Result<&'a mut ChromTempWriter> {
     if !temp_writers.contains_key(chrom) {
-        let sanitized = chrom.replace('/', "_");
-        // Temp filename is "chrom.<sanitized>.bed.tmp", for example "chrom.chr1.bed.tmp" or "chrom.chr1_KI270706v1_random.bed.tmp"
-        let path = temp_dir.join(format!("chrom.{sanitized}.bed.tmp"));
+        let token = temp_chrom_token(temp_writers.len());
+        let path = temp_dir.join(format!("chrom.{token}.bed.tmp"));
         let file = File::create(&path)
             .with_context(|| format!("creating temp file for chromosome {}", chrom))?;
         let writer = BufWriter::with_capacity(1 << 20, file);

@@ -4674,8 +4674,10 @@ mod tests_lengths_tiling_reducer {
     use anyhow::Result;
     use cfdnalab::commands::lengths::counting::{LengthAxis, LengthCounts};
     use cfdnalab::commands::lengths::tiling::{
-        reduce_partials_for_chr, write_cross_npy, write_partials_npz,
+        reduce_partials_for_chr, write_cross_npy as write_cross_npy_inner,
+        write_partials_npz as write_partials_npz_inner,
     };
+    use cfdnalab::shared::temp_chrom_names::TempChromNameMap;
     use ndarray::{Array1, Array2, ShapeBuilder};
     use ndarray_npy::NpzWriter;
     use std::sync::Arc;
@@ -4699,6 +4701,76 @@ mod tests_lengths_tiling_reducer {
 
     fn expect_written_path(path: Option<PathBuf>, label: &str) -> PathBuf {
         path.unwrap_or_else(|| panic!("{label} should have been written"))
+    }
+
+    fn temp_chrom_name_map(chromosomes: &[&str]) -> TempChromNameMap {
+        TempChromNameMap::from_contigs(
+            &chromosomes
+                .iter()
+                .map(|chromosome| chromosome.to_string())
+                .collect::<Vec<_>>(),
+        )
+        .expect("test contig temp name map should be valid")
+    }
+
+    fn write_partials_npz(
+        temp_dir: &std::path::Path,
+        prefix: &str,
+        chr: &str,
+        tile_idx: u32,
+        window_idxs_chr: &[u64],
+        contained_flags: &[bool],
+        counts: &[LengthCounts],
+    ) -> Result<Option<PathBuf>> {
+        write_partials_npz_inner(
+            temp_dir,
+            prefix,
+            chr,
+            tile_idx,
+            &temp_chrom_name_map(&[chr]),
+            window_idxs_chr,
+            contained_flags,
+            counts,
+        )
+    }
+
+    fn write_partials_npz_with_chromosomes(
+        chromosomes: &[&str],
+        temp_dir: &std::path::Path,
+        prefix: &str,
+        chr: &str,
+        tile_idx: u32,
+        window_idxs_chr: &[u64],
+        contained_flags: &[bool],
+        counts: &[LengthCounts],
+    ) -> Result<Option<PathBuf>> {
+        write_partials_npz_inner(
+            temp_dir,
+            prefix,
+            chr,
+            tile_idx,
+            &temp_chrom_name_map(chromosomes),
+            window_idxs_chr,
+            contained_flags,
+            counts,
+        )
+    }
+
+    fn write_cross_npy(
+        temp_dir: &std::path::Path,
+        prefix: &str,
+        chr: &str,
+        tile_idx: u32,
+        crossing_window_idxs_chr: &[u64],
+    ) -> Result<Option<PathBuf>> {
+        write_cross_npy_inner(
+            temp_dir,
+            prefix,
+            chr,
+            tile_idx,
+            &temp_chrom_name_map(&[chr]),
+            crossing_window_idxs_chr,
+        )
     }
 
     #[test]
@@ -4936,11 +5008,21 @@ mod tests_lengths_tiling_reducer {
         let chr1_counts = vec![counts_with_value(1.0)];
         let chr1_extra_counts = vec![counts_with_value(5.0)];
         let chr1_partial_path = expect_written_path(
-            write_partials_npz(dir, "partials", "chr1", 0, &[0], &contained, &chr1_counts)?,
+            write_partials_npz_with_chromosomes(
+                &["chr1", "chr1.extra"],
+                dir,
+                "partials",
+                "chr1",
+                0,
+                &[0],
+                &contained,
+                &chr1_counts,
+            )?,
             "chr1 partial",
         );
         let _chr1_extra_partial_path = expect_written_path(
-            write_partials_npz(
+            write_partials_npz_with_chromosomes(
+                &["chr1", "chr1.extra"],
                 dir,
                 "partials",
                 "chr1.extra",

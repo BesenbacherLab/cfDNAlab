@@ -7,7 +7,9 @@ use anyhow::{Context, Result, ensure};
 use ndarray::{Array1, Array2, ArrayView1};
 use ndarray_npy::{NpzReader, NpzWriter, ReadNpyExt};
 
-use crate::commands::lengths::counting::LengthCounts;
+use crate::{
+    commands::lengths::counting::LengthCounts, shared::temp_chrom_names::TempChromNameMap,
+};
 
 /// Write per-tile partial length counts as an NPZ archive.
 ///
@@ -20,6 +22,7 @@ pub fn write_partials_npz(
     prefix: &str,
     chr: &str,
     tile_idx: u32,
+    temp_chrom_name_map: &TempChromNameMap,
     window_idxs_chr: &[u64],
     contained_flags: &[bool],
     counts: &[LengthCounts],
@@ -52,7 +55,8 @@ pub fn write_partials_npz(
         tile_idx
     );
 
-    let path = temp_dir.join(format!("{prefix}.{chr}.{tile_idx}.npz"));
+    let chr_token = temp_chrom_name_map.token_for(chr)?;
+    let path = temp_dir.join(format!("{prefix}.{chr_token}.{tile_idx}.npz"));
     let file = File::create(&path)?;
     let mut npz = NpzWriter::new(file);
 
@@ -80,12 +84,14 @@ pub fn write_cross_npy(
     prefix: &str,
     chr: &str,
     tile_idx: u32,
+    temp_chrom_name_map: &TempChromNameMap,
     crossing_window_idxs_chr: &[u64],
 ) -> Result<Option<std::path::PathBuf>> {
     if crossing_window_idxs_chr.is_empty() {
         return Ok(None);
     }
-    let path = temp_dir.join(format!("{prefix}.{chr}.{tile_idx}.npy"));
+    let chr_token = temp_chrom_name_map.token_for(chr)?;
+    let path = temp_dir.join(format!("{prefix}.{chr_token}.{tile_idx}.npy"));
     let arr = Array1::from(crossing_window_idxs_chr.to_vec());
     ndarray_npy::write_npy(&path, &arr)?;
     Ok(Some(path))

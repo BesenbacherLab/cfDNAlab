@@ -22,6 +22,7 @@ use crate::shared::progress::ProgressFactory;
 use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
+use crate::shared::temp_chrom_names::TempChromNameMap;
 use crate::shared::tiled_run::{
     TempDirGuard, Tile, TileMode, TileWindowSpan, build_tiles, overlapping_windows_for_tile,
     precompute_tile_window_spans,
@@ -240,6 +241,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
         halo_bp,
         by_size_bp,
     )?;
+    let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
 
     let windows_lookup = windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
@@ -365,10 +367,11 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     (positional_prefix, "bedgraph.zst")
                 };
 
+                let chr_token = temp_chrom_name_map.token_for(tile.chr.as_str())?;
                 let out_path = temp_dir.join(format!(
                     "{prefix}.{chr}.{idx}.{extensions}",
                     prefix = action_prefix,
-                    chr = tile.chr,
+                    chr = chr_token,
                     idx = tile.index
                 ));
 
@@ -376,19 +379,19 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                 let partials_out = temp_dir.join(format!(
                     "{prefix}.{chr}.{idx}.{extensions}",
                     prefix = partials_prefix,
-                    chr = tile.chr,
+                    chr = chr_token,
                     idx = tile.index
                 ));
                 let cross_idx_out = temp_dir.join(format!(
                     "{prefix}.cross.{chr}.{idx}.cross.zst", // Needs this extension!
                     prefix = partials_prefix,
-                    chr = tile.chr,
+                    chr = chr_token,
                     idx = tile.index
                 ));
                 let finals_out = temp_dir.join(format!(
                     "{prefix}.{chr}.{idx}.{extensions}",
                     prefix = finals_prefix,
-                    chr = tile.chr,
+                    chr = chr_token,
                     idx = tile.index
                 ));
 
@@ -496,6 +499,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     &chromosomes,
                     positional_prefix,
                     final_bedgraph_pos_name.as_str(),
+                    &temp_chrom_name_map,
                 )?
             }
             CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
@@ -506,6 +510,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                     &chromosomes,
                     positional_prefix,
                     final_tsv_pos_name.as_str(),
+                    &temp_chrom_name_map,
                 )?
             }
             CoverageWindowAction::Average | CoverageWindowAction::Total => {
@@ -553,6 +558,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                                     true,
                                     action,
                                     decimals_to_use,
+                                    &temp_chrom_name_map,
                                     &mut positional_writer,
                                 )?;
                             }
@@ -572,6 +578,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                                     _ => unreachable!(),
                                 },
                                 &header,
+                                &temp_chrom_name_map,
                             )?;
                         } else {
                             let mut positional_writer = open_zstd_auto_writer(
@@ -602,6 +609,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
                                     action,
                                     chrom_len,
                                     decimals_to_use,
+                                    &temp_chrom_name_map,
                                     &mut positional_writer,
                                 )?;
                             }
@@ -625,6 +633,7 @@ pub fn run(opt: &WPSConfig) -> Result<()> {
             &chromosomes,
             positional_prefix,
             final_bedgraph_pos_name.as_str(),
+            &temp_chrom_name_map,
         )?
     };
     info!(

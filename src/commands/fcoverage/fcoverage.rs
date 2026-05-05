@@ -24,6 +24,7 @@ use crate::shared::progress::ProgressFactory;
 use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::read_seq_in_range;
 use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
+use crate::shared::temp_chrom_names::TempChromNameMap;
 use crate::shared::tiled_run::{
     TempDirGuard, Tile, TileMode, TileWindowSpan, build_tiles, overlapping_windows_for_tile,
     precompute_tile_window_spans,
@@ -313,6 +314,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     let halo_bp: u32 = opt.fragment_lengths.max_fragment_length; // Safe halo for pairing/segments
     let (tiles, tile_and_window_boundaries_align) =
         build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, by_size_bp)?;
+    let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
 
     let windows_lookup = windows_map.as_ref();
     let tile_window_spans = Arc::new(precompute_tile_window_spans(
@@ -455,10 +457,11 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                     (positional_prefix, "bedgraph.zst")
                 };
 
+                let chr_token = temp_chrom_name_map.token_for(tile.chr.as_str())?;
                 let out_path = temp_dir.join(format!(
                     "{prefix}.{chr}.{idx}.{extensions}",
                     prefix = action_prefix,
-                    chr = tile.chr,
+                    chr = chr_token,
                     idx = tile.index
                 ));
 
@@ -466,19 +469,19 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                 let partials_out = temp_dir.join(format!(
                     "{prefix}.{chr}.{idx}.{extensions}",
                     prefix = partials_prefix,
-                    chr = tile.chr,
+                    chr = chr_token,
                     idx = tile.index
                 ));
                 let cross_idx_out = temp_dir.join(format!(
                     "{prefix}.cross.{chr}.{idx}.cross.zst", // Needs this extension!
                     prefix = partials_prefix,
-                    chr = tile.chr,
+                    chr = chr_token,
                     idx = tile.index
                 ));
                 let finals_out = temp_dir.join(format!(
                     "{prefix}.{chr}.{idx}.{extensions}",
                     prefix = finals_prefix,
-                    chr = tile.chr,
+                    chr = chr_token,
                     idx = tile.index
                 ));
 
@@ -639,6 +642,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
             false,
             decimals_to_use,
             opt.ioc.n_threads,
+            &temp_chrom_name_map,
         )?
     } else {
         match opt.per_window {
@@ -654,6 +658,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                     false,
                     decimals_to_use,
                     opt.ioc.n_threads,
+                    &temp_chrom_name_map,
                 )?
             }
             CoverageWindowAction::OnlyIncludeThesePositionsIndexed => {
@@ -668,6 +673,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                     true,
                     decimals_to_use,
                     opt.ioc.n_threads,
+                    &temp_chrom_name_map,
                 )?
             }
             CoverageWindowAction::Average
@@ -692,6 +698,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                         decimals_to_use,
                         opt.ioc.n_threads,
                         restore_mean_multiplier,
+                        &temp_chrom_name_map,
                     )?,
                     DistributionWindowSpec::GroupedBed(_) => write_grouped_bed_aggregate_output(
                         &final_path,
@@ -705,6 +712,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                         decimals_to_use,
                         opt.ioc.n_threads,
                         restore_mean_multiplier,
+                        &temp_chrom_name_map,
                     )?,
                     DistributionWindowSpec::Size(_) => write_size_aggregate_output(
                         &final_path,
@@ -719,6 +727,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                         opt.ioc.n_threads,
                         tile_and_window_boundaries_align,
                         restore_mean_multiplier,
+                        &temp_chrom_name_map,
                     )?,
                     DistributionWindowSpec::Global => {
                         bail!("unexpected global aggregate path in windowed fcoverage output")

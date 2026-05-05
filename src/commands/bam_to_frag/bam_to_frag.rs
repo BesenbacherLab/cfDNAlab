@@ -32,6 +32,7 @@ use crate::{
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq,
         scale_genome::compute_window_scaling_over_fragment,
+        temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
         tiled_run::TempDirGuard,
         windowing::ensure_plain_bed_windows_not_empty,
@@ -92,6 +93,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
     }
     let (chromosomes, contigs) =
         resolve_chromosomes_and_contigs(&opt.chromosomes, opt.ioc.bam.as_path())?;
+    let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
     let prefix = opt.output_prefix.trim();
     let window_opt = opt.resolve_windows();
 
@@ -196,6 +198,7 @@ pub fn run_inner(opt: &BamToFragConfig) -> Result<BamToFragCounters> {
                     .map(|v| v.as_slice())
                     .unwrap_or(&[]),
                 gc_corrector.clone(),
+                &temp_chrom_name_map,
             )?;
             pb.inc(1);
             Ok(out)
@@ -262,8 +265,9 @@ fn process_chrom(
     coverage_scaling_chr: &[(u64, u64, f32)],
     count_scaling_chr: &[(u64, u64, f32)],
     gc_corrector_opt: Option<GCCorrector>,
+    temp_chrom_name_map: &TempChromNameMap,
 ) -> anyhow::Result<(PathBuf, BamToFragCounters)> {
-    let out_path = temp_dir.join(format!("{chr}.frag.tsv.zst"));
+    let out_path = temp_chrom_name_map.path_with_suffix(temp_dir, chr, "frag.tsv.zst")?;
 
     if matches!(opt.resolve_windows(), WindowSpec::Bed(_))
         && windows.is_none_or(|window_slice| window_slice.is_empty())

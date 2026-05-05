@@ -79,37 +79,9 @@ Recommended fix:
 - Add tests that inspect the actual serialized AUX tag keys, for example through `aux_iter()` or a SAM text roundtrip, rather than querying overlong names.
 - Decide and document what should happen when an input record already has one of the chosen tags. Silent replacement would be risky; a clear fail-fast error or an explicit overwrite flag would be easier to reason about.
 
-#### G-018 - Medium - Converter temporary files use raw chromosome names as path components
-
-`bam-to-frag` resolves chromosome names from the BAM header or user selection ([cli_common.rs](../../src/commands/cli_common.rs#L570-L606), [cli_common.rs](../../src/commands/cli_common.rs#L994-L1002)) and then creates per-chromosome temporary files with `temp_dir.join(format!("{chr}.frag.tsv.zst"))` ([bam_to_frag.rs](../../src/commands/bam_to_frag/bam_to_frag.rs#L256-L267)). `frag-to-bam` accepts chromosome names from `--chrom-sizes` without filename sanitization ([reference.rs](../../src/shared/reference.rs#L149-L187)) and creates temporary files with `temp_dir.join(format!("{}.frag.tmp", frag.chrom))` ([frag_to_bam.rs](../../src/commands/frag_to_bam/frag_to_bam.rs#L289-L295)).
-
-Because those names are interpolated into filesystem paths rather than encoded as filenames, chromosome names containing `/`, `..`, or an absolute-looking path are interpreted as path components. Normal human genome names will not trigger this, but custom references, malformed inputs, or hostile files can cause temp-file creation to fail, create unexpected subdirectories, or write outside the per-run temp directory.
-
-Impact: a converter can be made to write temporary files outside the intended temp directory before the final output is produced. In the common non-hostile case this is more likely to show up as a confusing failure for unusual contig names with slashes, but the safer invariant is that reference names should never control filesystem paths directly.
-
-Recommended fix:
-
-- Name per-chromosome temp files by a trusted ordinal or generated token, for example `chrom.000001.frag.tmp`, and keep the real chromosome name only in an in-memory map.
-- Add regression coverage for a chromosome name containing `/` and one containing `..`, proving the command either handles the name safely or rejects it with a direct validation error before writing temp files.
-- Prefer one shared helper for per-contig temp filenames so future converter and tiled-command code does not reintroduce raw path components.
-
 ## Released-command re-review additions (2026-05-04)
 
 ### Pre-release correctness/safety
-
-#### G-019 - Medium - Tiled command temporary files use raw chromosome names as path components
-
-Several released tiled commands interpolate BAM/reference chromosome names directly into per-tile temporary filenames. Confirmed sites include `fcoverage` ([fcoverage.rs](../../src/commands/fcoverage/fcoverage.rs#L457-L482)), `midpoints` ([midpoints.rs](../../src/commands/midpoints/midpoints.rs#L234-L240)), `ends` ([ends.rs](../../src/commands/ends/ends.rs#L607-L612)), and `lengths` ([tiling.rs](../../src/commands/lengths/tiling.rs#L52-L85)). `prepare-windows` already shows the safer direction by sanitizing `/` before creating chromosome temp files ([writers.rs](../../src/commands/prepare_windows/writers.rs#L105-L108)), though a more complete shared helper should handle `..` and other path-component edge cases as well.
-
-Because chromosome names are not filesystem-safe by definition, names containing `/`, `..`, or other path separators can turn one intended filename into nested path components. Normal references will not trigger this, but custom references or hostile inputs can cause confusing write failures or writes outside the intended per-run temp directory.
-
-Impact: tiled commands can fail or write intermediate files in unexpected locations before final output is produced. This is the same class of issue as G-018, but it affects the tiled command path rather than the converter-specific temp files.
-
-Recommended fix:
-
-- Introduce one shared per-contig temp-name helper that maps chromosome names to safe ordinals or escaped tokens.
-- Use that helper in `fcoverage`, `midpoints`, `ends`, `lengths`, and converter temp-file creation so the same invariant is enforced everywhere.
-- Add regression coverage with chromosome names containing `/` and `..`, proving the commands either encode names safely or reject them before creating temp files.
 
 #### G-021 - Medium - `--gc-tag` accepts overlong BAM AUX tag names and silently reads the first two bytes
 
@@ -138,4 +110,3 @@ Recommended fix:
 - Add one shared validator for output prefixes and other filename-stem inputs that rejects empty path components, `/`, platform path separators, `..`, and absolute paths.
 - Use the validator before any `dot_join()` result is passed to `Path::join()`.
 - Add command-level or shared helper regressions showing that prefixes such as `../sample` and `nested/sample` are rejected before output or temporary directories are created.
-

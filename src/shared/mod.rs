@@ -26,6 +26,7 @@ pub mod read;
 pub mod reference;
 pub mod sampling;
 pub mod scale_genome;
+pub mod temp_chrom_names;
 pub mod thread_pool;
 pub mod tiled_run;
 pub mod visualization;

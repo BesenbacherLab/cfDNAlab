@@ -35,6 +35,7 @@ use crate::{
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
         scale_genome::compute_window_scaling_over_fragment,
+        temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
         tiled_run::{
             TempDirGuard, Tile, TileWindowSpan, build_tiles, clamp_fetch_to_window_span,
@@ -175,6 +176,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     // Build tiles with a pairing halo wide enough for any accepted fragment
     let halo_bp: u32 = max_fragment_length; // Safe halo for pairing
     let (tiles, _) = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, None)?;
+    let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
     let total_tiles = tiles.len();
 
     let windows_lookup = &indexed_windows_map;
@@ -232,10 +234,11 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
                 .unwrap_or(&[]);
 
             // Sparse tile partial file path. Empty tiles skip writing this file
+            let chr_token = temp_chrom_name_map.token_for(tile.chr.as_str())?;
             let tile_counts_out = temp_dir.join(format!(
                 "{prefix}.{chr}.{idx}.npz",
                 prefix = tmp_prefix,
-                chr = tile.chr,
+                chr = chr_token,
                 idx = tile.index
             ));
 

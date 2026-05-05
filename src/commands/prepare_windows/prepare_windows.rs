@@ -40,10 +40,10 @@ use fxhash::{FxHashMap, FxHashSet};
 use indicatif::ProgressStyle;
 use std::collections::hash_map::Entry;
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
-use std::{env, fs, mem};
+use std::{env, mem};
 
 /// Window representation used throughout the prepare pipeline.
 ///

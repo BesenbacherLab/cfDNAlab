@@ -1,5 +1,6 @@
 use crate::shared::formatters::{CompactNumber, round_to, round_to_with_precomputed_factor};
 use crate::shared::interval::Interval;
+use crate::shared::temp_chrom_names::TempChromNameMap;
 use crate::shared::writers::open_zstd_auto_writer;
 use anyhow::{Result, bail};
 use fxhash::FxHashMap;
@@ -561,6 +562,7 @@ pub(crate) fn write_bed_aggregate_output(
     decimals: i32,
     n_threads: usize,
     restore_mean_multiplier: Option<f64>,
+    temp_chrom_name_map: &TempChromNameMap,
 ) -> Result<()> {
     let mut writer = open_zstd_auto_writer(final_path, 3, Some(n_threads as u32))?;
     if action.is_summary_stats() {
@@ -574,6 +576,7 @@ pub(crate) fn write_bed_aggregate_output(
                     temp_dir,
                     partials_prefix,
                     windows_for_chr.as_slice(),
+                    temp_chrom_name_map,
                     |row| {
                         write_reduced_summary_stats_row(
                             &mut writer,
@@ -601,6 +604,7 @@ pub(crate) fn write_bed_aggregate_output(
                         temp_dir,
                         partials_prefix,
                         windows_for_chr.as_slice(),
+                        temp_chrom_name_map,
                         |row| {
                             write_scaled_non_summary_reduced_row(
                                 &mut writer,
@@ -622,6 +626,7 @@ pub(crate) fn write_bed_aggregate_output(
                         masked,
                         action,
                         decimals,
+                        temp_chrom_name_map,
                         &mut writer,
                     )?;
                 }
@@ -681,6 +686,7 @@ pub(crate) fn write_grouped_bed_aggregate_output(
     decimals: i32,
     n_threads: usize,
     restore_mean_multiplier: Option<f64>,
+    temp_chrom_name_map: &TempChromNameMap,
 ) -> Result<()> {
     // Start every group accumulator with its known span. Segment reduction will fill in the
     // coverage-derived fields later, but span positions come from the grouped layout itself.
@@ -709,6 +715,7 @@ pub(crate) fn write_grouped_bed_aggregate_output(
                 temp_dir,
                 partials_prefix,
                 windows_for_chr.as_slice(),
+                temp_chrom_name_map,
                 |row| {
                     fold_reduced_segment_into_group(
                         grouped_layout,
@@ -723,6 +730,7 @@ pub(crate) fn write_grouped_bed_aggregate_output(
                 temp_dir,
                 partials_prefix,
                 windows_for_chr.as_slice(),
+                temp_chrom_name_map,
                 |row| {
                     fold_reduced_segment_into_group(
                         grouped_layout,
@@ -837,6 +845,7 @@ pub(crate) fn write_size_aggregate_output(
     n_threads: usize,
     tile_and_window_boundaries_align: bool,
     restore_mean_multiplier: Option<f64>,
+    temp_chrom_name_map: &TempChromNameMap,
 ) -> Result<()> {
     if tile_and_window_boundaries_align && restore_mean_multiplier.is_none() {
         // Fast path: every tile already wrote complete fixed-size bins, so we can concatenate the
@@ -867,6 +876,7 @@ pub(crate) fn write_size_aggregate_output(
                 .and_then(|name| name.to_str())
                 .ok_or_else(|| anyhow::anyhow!("invalid final output filename"))?,
             header.as_str(),
+            temp_chrom_name_map,
         )?;
         return Ok(());
     }
@@ -889,6 +899,7 @@ pub(crate) fn write_size_aggregate_output(
                 temp_dir,
                 partials_prefix,
                 chrom_len,
+                temp_chrom_name_map,
                 |row| {
                     write_reduced_summary_stats_row(
                         &mut writer,
@@ -915,6 +926,7 @@ pub(crate) fn write_size_aggregate_output(
                     temp_dir,
                     partials_prefix,
                     chrom_len,
+                    temp_chrom_name_map,
                     |row| {
                         write_scaled_non_summary_reduced_row(
                             &mut writer,
@@ -936,6 +948,7 @@ pub(crate) fn write_size_aggregate_output(
                     action,
                     chrom_len,
                     decimals,
+                    temp_chrom_name_map,
                     &mut writer,
                 )?;
             }

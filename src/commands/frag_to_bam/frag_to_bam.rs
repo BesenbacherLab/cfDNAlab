@@ -9,6 +9,7 @@ use crate::{
         interval::Interval,
         io::{dot_join, open_text_reader},
         reference::load_chrom_sizes_with_order,
+        temp_chrom_names::TempChromNameMap,
         tiled_run::TempDirGuard,
     },
 };
@@ -139,6 +140,7 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
             bail!("Chromosome '{}' missing from chrom sizes file", chr);
         }
     }
+    let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
 
     // Chromosome membership, used to ensure inputs only contain expected chromosomes
     let allowed_chromosomes: FxHashSet<String> = chromosomes.iter().cloned().collect();
@@ -289,7 +291,11 @@ fn run_inner(opt: &FragToBamConfig) -> Result<(FragToBamCounters, PathBuf)> {
         let writer = match temp_writers.entry(frag.chrom.clone()) {
             Entry::Occupied(o) => o.into_mut(),
             Entry::Vacant(v) => {
-                let path = temp_dir.join(format!("{}.frag.tmp", frag.chrom));
+                let path = temp_chrom_name_map.path_with_suffix(
+                    &temp_dir,
+                    frag.chrom.as_str(),
+                    "frag.tmp",
+                )?;
                 temp_paths.insert(frag.chrom.clone(), path.clone());
                 let file = File::create(&path)
                     .with_context(|| format!("Creating temp frag file {}", path.display()))?;

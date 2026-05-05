@@ -48,6 +48,7 @@ use crate::{
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
         scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
+        temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
         tiled_run::{
             TempDirGuard, Tile, TileWindowSpan, build_tiles, precompute_tile_window_spans,
@@ -242,6 +243,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
 
     // Build tiles (core plus halo)
     let (tiles, _) = build_tiles(&chromosomes, &contigs, opt.tile_size, halo_bp, align_bp)?;
+    let temp_chrom_name_map = TempChromNameMap::from_contigs(&chromosomes)?;
 
     let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(tiles.len() as u64));
@@ -335,6 +337,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                 raw_shifted_gc_length_warning_issued.clone(),
                 temp_dir,
                 counts_prefix,
+                &temp_chrom_name_map,
                 inside_spec.as_ref(),
                 outside_spec.as_ref(),
             )?;
@@ -592,6 +595,7 @@ fn process_tile(
     raw_shifted_gc_length_warning_issued: Arc<AtomicBool>,
     temp_dir: &Path,
     counts_prefix: &str,
+    temp_chrom_name_map: &TempChromNameMap,
     inside_spec: Option<&crate::shared::kmers::kmer_codec::KmerSpec>,
     outside_spec: Option<&crate::shared::kmers::kmer_codec::KmerSpec>,
 ) -> Result<Option<TileResult>> {
@@ -604,10 +608,11 @@ fn process_tile(
 
     // Counters
     let mut counter = EndsCounters::default();
+    let chr_token = temp_chrom_name_map.token_for(tile.chr.as_str())?;
     let counts_path = temp_dir.join(format!(
         "{prefix}.{chr}.{idx}.counts.bin",
         prefix = counts_prefix,
-        chr = tile.chr.as_str(),
+        chr = chr_token,
         idx = tile.index
     ));
 

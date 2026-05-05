@@ -6,7 +6,6 @@ use crate::{
             process_counts::{DecodedCounts, split_and_decode_counts},
         },
         positioning::PositionGroup,
-        tiled_run::Tile,
     },
 };
 use anyhow::{Context, Result, bail};

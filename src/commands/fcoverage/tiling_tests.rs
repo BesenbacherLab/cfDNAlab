@@ -2,7 +2,10 @@ use super::{
     build_summary_prefixes, coverage_sum_and_counts, finalize_value, merge_scaled_positional_tiles,
 };
 use crate::commands::fcoverage::window_results::CoverageWindowAction;
-use crate::shared::{coverage::Coverage, interval::Interval, io::open_text_reader};
+use crate::shared::{
+    temp_chrom_names::TempChromNameMap, coverage::Coverage, interval::Interval,
+    io::open_text_reader,
+};
 use anyhow::Result;
 use std::io::{Read, Write};
 use tempfile::TempDir;
@@ -23,6 +26,16 @@ fn read_text(path: &std::path::Path) -> Result<String> {
     let mut text = String::new();
     reader.read_to_string(&mut text)?;
     Ok(text)
+}
+
+fn temp_chrom_name_map(chromosomes: &[&str]) -> TempChromNameMap {
+    TempChromNameMap::from_contigs(
+        &chromosomes
+            .iter()
+            .map(|chromosome| chromosome.to_string())
+            .collect::<Vec<_>>(),
+    )
+    .expect("test contig temp name map should be valid")
 }
 
 fn dense_bedgraph(text: &str, chromosome: &str, chromosome_length: usize) -> Vec<f64> {
@@ -257,24 +270,25 @@ fn merge_scaled_positional_tiles_orders_tiles_and_scales_values() -> Result<()> 
     // Within each tile the rows stay coordinate-sorted, matching the real positional writers.
     write_zstd_lines(
         &temp_dir,
-        "cov.pos.chr2.1.bedgraph.zst",
+        "cov.pos.chrom-000001.1.bedgraph.zst",
         &["chr2\t10\t20\t1.25"],
     )?;
     write_zstd_lines(
         &temp_dir,
-        "cov.pos.chr1.1.bedgraph.zst",
+        "cov.pos.chrom-000000.1.bedgraph.zst",
         &["chr1\t10\t15\t0.5"],
     )?;
     write_zstd_lines(
         &temp_dir,
-        "cov.pos.chr1.0.bedgraph.zst",
+        "cov.pos.chrom-000000.0.bedgraph.zst",
         &["chr1\t0\t5\t0.3333", "", "chr1\t5\t10\t2"],
     )?;
     write_zstd_lines(
         &temp_dir,
-        "cov.pos.chr2.0.bedgraph.zst",
+        "cov.pos.chrom-000001.0.bedgraph.zst",
         &["chr2\t0\t10\t0.25"],
     )?;
+    let temp_chrom_name_map = temp_chrom_name_map(&["chr1", "chr2"]);
 
     // Act
     let merged_path = merge_scaled_positional_tiles(
@@ -287,6 +301,7 @@ fn merge_scaled_positional_tiles_orders_tiles_and_scales_values() -> Result<()> 
         false,
         2,
         1,
+        &temp_chrom_name_map,
     )?;
     let text = read_text(&merged_path)?;
 
@@ -311,14 +326,15 @@ fn merge_scaled_positional_tiles_keeps_indexed_window_column() -> Result<()> {
     let out_dir = TempDir::new()?;
     write_zstd_lines(
         &temp_dir,
-        "cov.pos.chr1.1.tsv.zst",
+        "cov.pos.chrom-000000.1.tsv.zst",
         &["chr1\t10\t20\t0.5\t7"],
     )?;
     write_zstd_lines(
         &temp_dir,
-        "cov.pos.chr1.0.tsv.zst",
+        "cov.pos.chrom-000000.0.tsv.zst",
         &["chr1\t0\t10\t1.25\t3"],
     )?;
+    let temp_chrom_name_map = temp_chrom_name_map(&["chr1"]);
 
     // Act
     let merged_path = merge_scaled_positional_tiles(
@@ -331,6 +347,7 @@ fn merge_scaled_positional_tiles_keeps_indexed_window_column() -> Result<()> {
         true,
         3,
         1,
+        &temp_chrom_name_map,
     )?;
     let text = read_text(&merged_path)?;
 
@@ -354,30 +371,31 @@ fn merge_scaled_positional_tiles_is_basewise_invariant_to_tile_segmentation() ->
     // [0,5) -> 0.5, [5,15) -> 1.0, [15,20) -> 0.25
     write_zstd_lines(
         &first_temp_dir,
-        "cov.pos.chr1.0.bedgraph.zst",
+        "cov.pos.chrom-000000.0.bedgraph.zst",
         &["chr1\t0\t5\t0.5", "chr1\t5\t10\t1"],
     )?;
     write_zstd_lines(
         &first_temp_dir,
-        "cov.pos.chr1.1.bedgraph.zst",
+        "cov.pos.chrom-000000.1.bedgraph.zst",
         &["chr1\t10\t15\t1", "chr1\t15\t20\t0.25"],
     )?;
 
     write_zstd_lines(
         &second_temp_dir,
-        "cov.pos.chr1.0.bedgraph.zst",
+        "cov.pos.chrom-000000.0.bedgraph.zst",
         &["chr1\t0\t3\t0.5", "chr1\t3\t5\t0.5"],
     )?;
     write_zstd_lines(
         &second_temp_dir,
-        "cov.pos.chr1.1.bedgraph.zst",
+        "cov.pos.chrom-000000.1.bedgraph.zst",
         &["chr1\t5\t8\t1", "chr1\t8\t15\t1"],
     )?;
     write_zstd_lines(
         &second_temp_dir,
-        "cov.pos.chr1.2.bedgraph.zst",
+        "cov.pos.chrom-000000.2.bedgraph.zst",
         &["chr1\t15\t18\t0.25", "chr1\t18\t20\t0.25"],
     )?;
+    let temp_chrom_name_map = temp_chrom_name_map(&["chr1"]);
 
     // Act
     let first_merged = merge_scaled_positional_tiles(
@@ -390,6 +408,7 @@ fn merge_scaled_positional_tiles_is_basewise_invariant_to_tile_segmentation() ->
         false,
         2,
         1,
+        &temp_chrom_name_map,
     )?;
     let second_merged = merge_scaled_positional_tiles(
         second_temp_dir.path(),
@@ -401,6 +420,7 @@ fn merge_scaled_positional_tiles_is_basewise_invariant_to_tile_segmentation() ->
         false,
         2,
         1,
+        &temp_chrom_name_map,
     )?;
     let first_text = read_text(&first_merged)?;
     let second_text = read_text(&second_merged)?;

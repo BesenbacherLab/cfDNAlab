@@ -13,6 +13,7 @@ use crate::commands::fcoverage::writers::write_final_row;
 use crate::shared::formatters::round_to;
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::open_text_reader;
+use crate::shared::temp_chrom_names::TempChromNameMap;
 
 type StreamHeap = BinaryHeap<Reverse<(u64, usize)>>;
 
@@ -576,11 +577,13 @@ fn reduce_bed_rows_internal(
     temp_dir: &Path,
     partials_prefix: &str,
     windows_chr: &[IndexedInterval<u64>],
+    temp_chrom_name_map: &TempChromNameMap,
     summary: bool,
     mut on_row: impl FnMut(ReducedAggregateRow) -> Result<()>,
 ) -> Result<()> {
     let coords_by_idx = build_bed_coords_by_idx(chr, windows_chr)?;
-    let files_by_tile = discover_tile_files_for_chr(temp_dir, chr, partials_prefix)?;
+    let files_by_tile =
+        discover_tile_files_for_chr(temp_dir, chr, partials_prefix, temp_chrom_name_map)?;
     let expected_contributions = load_expected_contributions(&files_by_tile)?;
     let schema = if summary {
         PartialsSchema::BedSummary
@@ -655,9 +658,18 @@ pub(crate) fn reduce_bed_basic_with_cross_index_for_chr_rows(
     temp_dir: &Path,
     partials_prefix: &str,
     windows_chr: &[IndexedInterval<u64>],
+    temp_chrom_name_map: &TempChromNameMap,
     on_row: impl FnMut(ReducedAggregateRow) -> Result<()>,
 ) -> Result<()> {
-    reduce_bed_rows_internal(chr, temp_dir, partials_prefix, windows_chr, false, on_row)
+    reduce_bed_rows_internal(
+        chr,
+        temp_dir,
+        partials_prefix,
+        windows_chr,
+        temp_chrom_name_map,
+        false,
+        on_row,
+    )
 }
 
 /// Reduce summary-stats BED partials for one chromosome into complete raw window rows.
@@ -670,9 +682,18 @@ pub(crate) fn reduce_bed_with_cross_index_for_chr_rows(
     temp_dir: &Path,
     partials_prefix: &str,
     windows_chr: &[IndexedInterval<u64>],
+    temp_chrom_name_map: &TempChromNameMap,
     on_row: impl FnMut(ReducedAggregateRow) -> Result<()>,
 ) -> Result<()> {
-    reduce_bed_rows_internal(chr, temp_dir, partials_prefix, windows_chr, true, on_row)
+    reduce_bed_rows_internal(
+        chr,
+        temp_dir,
+        partials_prefix,
+        windows_chr,
+        temp_chrom_name_map,
+        true,
+        on_row,
+    )
 }
 
 /// Reduce non-summary BED aggregates for one chromosome using:
@@ -714,6 +735,7 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
     masked: bool,
     mode: CoverageWindowAction,
     decimals: i32,
+    temp_chrom_name_map: &TempChromNameMap,
     final_writer: &mut W,
 ) -> Result<()> {
     anyhow::ensure!(
@@ -729,6 +751,7 @@ pub fn reduce_bed_with_cross_index_for_chr<W: Write>(
         temp_dir,
         partials_prefix,
         windows_chr,
+        temp_chrom_name_map,
         |row| write_reduced_value_row(final_writer, chr, row, masked, &mode, decimals),
     )
 }
@@ -749,10 +772,12 @@ fn reduce_size_rows_internal(
     temp_dir: &Path,
     partials_prefix: &str,
     chrom_len: u64,
+    temp_chrom_name_map: &TempChromNameMap,
     summary: bool,
     mut on_row: impl FnMut(ReducedAggregateRow) -> Result<()>,
 ) -> Result<()> {
-    let files_by_tile = discover_tile_files_for_chr(temp_dir, chr, partials_prefix)?;
+    let files_by_tile =
+        discover_tile_files_for_chr(temp_dir, chr, partials_prefix, temp_chrom_name_map)?;
     let expected_contributions = load_expected_contributions(&files_by_tile)?;
     let schema = if summary {
         PartialsSchema::SizeSummary
@@ -833,9 +858,18 @@ pub(crate) fn reduce_aggregates_by_size_with_cross_index_for_chr_rows(
     temp_dir: &Path,
     partials_prefix: &str,
     chrom_len: u64,
+    temp_chrom_name_map: &TempChromNameMap,
     on_row: impl FnMut(ReducedAggregateRow) -> Result<()>,
 ) -> Result<()> {
-    reduce_size_rows_internal(chr, temp_dir, partials_prefix, chrom_len, true, on_row)
+    reduce_size_rows_internal(
+        chr,
+        temp_dir,
+        partials_prefix,
+        chrom_len,
+        temp_chrom_name_map,
+        true,
+        on_row,
+    )
 }
 
 /// Reduce non-summary `--by-size` partials for one chromosome into complete raw bin rows.
@@ -848,9 +882,18 @@ pub(crate) fn reduce_aggregates_by_size_basic_with_cross_index_for_chr_rows(
     temp_dir: &Path,
     partials_prefix: &str,
     chrom_len: u64,
+    temp_chrom_name_map: &TempChromNameMap,
     on_row: impl FnMut(ReducedAggregateRow) -> Result<()>,
 ) -> Result<()> {
-    reduce_size_rows_internal(chr, temp_dir, partials_prefix, chrom_len, false, on_row)
+    reduce_size_rows_internal(
+        chr,
+        temp_dir,
+        partials_prefix,
+        chrom_len,
+        temp_chrom_name_map,
+        false,
+        on_row,
+    )
 }
 
 /// Reduce non-summary `--by-size` partials for one chromosome in strictly ascending `start` order.
@@ -877,6 +920,7 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
     mode: CoverageWindowAction,
     chrom_len: u64,
     decimals: i32,
+    temp_chrom_name_map: &TempChromNameMap,
     out: &mut W,
 ) -> Result<()> {
     anyhow::ensure!(
@@ -892,6 +936,7 @@ pub fn reduce_aggregates_by_size_with_cross_index_for_chr<W: Write>(
         temp_dir,
         partials_prefix,
         chrom_len,
+        temp_chrom_name_map,
         |row| {
             debug_assert!(row.interval.len() >= 1);
             write_reduced_value_row(out, chr, row, masked, &mode, decimals)
@@ -920,9 +965,11 @@ fn discover_tile_files_for_chr(
     temp_dir: &Path,
     chr: &str,
     per_tile_prefix: &str,
+    temp_chrom_name_map: &TempChromNameMap,
 ) -> Result<FxHashMap<u32, TileFiles>> {
     let mut files_by_tile: FxHashMap<u32, TileFiles> =
         FxHashMap::with_hasher(FxBuildHasher::default());
+    let chr_token = temp_chrom_name_map.token_for(chr)?;
 
     for entry in std::fs::read_dir(temp_dir)? {
         let path = entry?.path();
@@ -934,7 +981,8 @@ fn discover_tile_files_for_chr(
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or("");
-        if !file_name.starts_with(per_tile_prefix) || !file_name.contains(&format!(".{chr}.")) {
+        if !file_name.starts_with(per_tile_prefix) || !file_name.contains(&format!(".{chr_token}."))
+        {
             continue;
         }
 
