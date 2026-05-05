@@ -76,7 +76,7 @@ Extract fragmentomics features:
   alt="cfdna midpoints"
   width="185"
 /></dt>
-  <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome<br>E.g., transcription factor binding sites, aggregated per transcription factor<br>Fast alternative to <i>Griffin</i>.</dd>
+  <dd>Count fragment <i>midpoint</i> coverage in fixed-size intervals, collapsed by groups across the genome.<br>E.g., transcription factor binding sites, aggregated per transcription factor.<br>Fast alternative to <i>Griffin</i>.</dd>
   
   <hr>
 
@@ -94,7 +94,7 @@ Extract fragmentomics features:
   alt="cfdna lengths"
   width="160"
 /></dt>
-  <dd>Count fragment lengths.<br>In paired-end, this is defined as: <code>end(reverse) - start(forward)</code> for inwardly directed pairs only.</dd>
+  <dd>Count fragment lengths.<br>In paired-end, the length is defined as <code>end(reverse) - start(forward)</code> for inwardly directed pairs only.</dd>
   <hr>
 </dl>
 
