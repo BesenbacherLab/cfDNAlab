@@ -6,6 +6,7 @@ use anyhow::Result;
 use cfdnalab::commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, WindowsArgs};
 use cfdnalab::commands::fragment_kmers::{config::FragmentKmersConfig, fragment_kmers::run};
 use cfdnalab::shared::io::dot_join;
+use cfdnalab::shared::reference::twobit_contig_footprint;
 use fixtures::{
     ReadSpec, bam_from_specs, late_origin_gc_reference_sequence, simple_inward_bam,
     simple_reference_twobit, twobit_from_sequences, write_bed, write_two_bin_gc_package,
@@ -120,7 +121,13 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
     let bed_path = out_dir.path().join("late_window.bed");
     let gc_path = out_dir.path().join("two_bin_gc_package.npz");
     write_bed(&bed_path, &[("chr1", 900, 961, "late")])?;
-    write_two_bin_gc_package(&gc_path, 61, 2.0, 7.0)?;
+    write_two_bin_gc_package(
+        &gc_path,
+        61,
+        2.0,
+        7.0,
+        twobit_contig_footprint(&reference.path)?,
+    )?;
 
     let mut cfg = FragmentKmersConfig::new(
         IOCArgs {

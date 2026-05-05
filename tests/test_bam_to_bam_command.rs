@@ -18,7 +18,10 @@ use cfdnalab::commands::{
     cli_common::{ApplyGCArgFileOnly, ChromosomeArgs},
     gc_bias::package::GCCorrectionPackage,
 };
-use cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
+use cfdnalab::shared::{
+    constants::GC_CORRECTION_SCHEMA_VERSION,
+    reference::{ContigFootprintEntry, twobit_contig_footprint},
+};
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, build_real_non_neutral_gc_package, paired_fragment,
     simple_inward_bam, simple_reference_twobit, twobit_from_sequences,
@@ -952,7 +955,7 @@ fn gc_file_neutralize_invalid_writes_gc_tag_one_on_both_mates() -> Result<()> {
     let work = tempdir()?;
     let out_bam = work.path().join("gc_fallback.bam");
     let gc_path = work.path().join("gc_pkg.npz");
-    build_gc_package(&gc_path, 26)?;
+    build_gc_package(&gc_path, 26, twobit_contig_footprint(&ref_twobit.path)?)?;
 
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.set_gc(ApplyGCArgFileOnly {
@@ -1004,7 +1007,7 @@ fn gc_file_default_behavior_skips_fragment_entirely() -> Result<()> {
     let work = tempdir()?;
     let out_bam = work.path().join("gc_drop_invalid.bam");
     let gc_path = work.path().join("gc_pkg.npz");
-    build_gc_package(&gc_path, 26)?;
+    build_gc_package(&gc_path, 26, twobit_contig_footprint(&ref_twobit.path)?)?;
 
     let mut cfg = base_config(&bam.bam, &out_bam);
     cfg.set_gc(ApplyGCArgFileOnly {
@@ -1056,7 +1059,7 @@ fn gc_file_and_scaling_factors_write_identical_gc_cov_and_flen_tags_on_both_mate
     let out_bam = work.path().join("gc_and_cov.bam");
     let gc_path = work.path().join("gc_pkg.npz");
     let scaling_path = work.path().join("scaling.tsv");
-    build_gc_package(&gc_path, 0)?;
+    build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
     write_scaling_file(&scaling_path, "chr1", 200, 4.0_f32 / 3.0_f32)?;
 
     let mut cfg = base_config(&bam.bam, &out_bam);
@@ -1107,7 +1110,7 @@ fn gc_file_and_count_scaling_factors_write_identical_gc_cnt_and_flen_tags_on_bot
     let out_bam = work.path().join("gc_and_cnt.bam");
     let gc_path = work.path().join("gc_pkg.npz");
     let scaling_path = work.path().join("count_scaling.tsv");
-    build_gc_package(&gc_path, 0)?;
+    build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
     write_scaling_file(&scaling_path, "chr1", 200, 4.0_f32 / 3.0_f32)?;
 
     let mut cfg = base_config(&bam.bam, &out_bam);
@@ -1260,7 +1263,7 @@ fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range
         length_edges: vec![10, 59],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
         correction_matrix: array![[1.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -1395,7 +1398,7 @@ fn bed_blacklist_scaling_and_gc_together_keep_only_the_expected_tagged_fragment(
     let scaling_path = work.path().join("scaling.tsv");
     let bed_path = work.path().join("windows.bed");
     let blacklist_path = work.path().join("blacklist.bed");
-    build_gc_package(&gc_path, 0)?;
+    build_gc_package(&gc_path, 0, twobit_contig_footprint(&reference.path)?)?;
     write_scaling_file(&scaling_path, "chr1", 300, 4.0_f32 / 3.0_f32)?;
     write_bed(&bed_path, &[(0, 180)])?;
     fs::write(&blacklist_path, "chr1\t120\t130\n")?;
@@ -1600,7 +1603,7 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
         length_edges: vec![10, 200],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
         correction_matrix: array![[1.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -1701,7 +1704,7 @@ fn count_scaling_tsv_with_uncorrected_metadata_rejects_gc_corrected_bam_to_bam_r
     let out_bam = work.path().join("count_scaling_gc_mismatch.bam");
     let scaling_path = work.path().join("uncorrected_count_scaling.tsv");
     let gc_path = work.path().join("gc_pkg.npz");
-    build_gc_package(&gc_path, 0)?;
+    build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
     fs::write(
         &scaling_path,
         "# gc_mode=uncorrected\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t200\t1.0\n",
@@ -1841,14 +1844,18 @@ fn write_scaling_file(path: &Path, chr: &str, len: u64, factor: f32) -> Result<(
     Ok(())
 }
 
-fn build_gc_package(path: &Path, end_offset: u64) -> Result<()> {
+fn build_gc_package(
+    path: &Path,
+    end_offset: u64,
+    reference_contig_footprint: Vec<ContigFootprintEntry>,
+) -> Result<()> {
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
         end_offset,
         length_edges: vec![10, 60, 200],
         gc_edges: vec![0, 50, 101],
         length_bin_frequencies: array![1.0_f64, 3.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint,
         correction_matrix: array![[1.0_f64, 1.0_f64], [2.0_f64, 10.0_f64]],
     };
     package.write_npz(path)?;

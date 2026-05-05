@@ -1451,7 +1451,7 @@ fn gc_file_weights_each_counted_end_motif_by_the_fragment_gc_correction() -> Res
         length_edges: vec![10, 11, 20],
         gc_edges: vec![0, 51, 100],
         length_bin_frequencies: array![1.0_f64, 1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -1508,7 +1508,13 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
     let bed_path = out_dir.path().join("late_window.bed");
     let gc_path = out_dir.path().join("two_bin_gc_package.npz");
     write_bed(&bed_path, &[("chr1", 900, 961, "late")])?;
-    write_two_bin_gc_package(&gc_path, 61, 2.0, 7.0)?;
+    write_two_bin_gc_package(
+        &gc_path,
+        61,
+        2.0,
+        7.0,
+        twobit_contig_footprint(&reference.path)?,
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
     cfg.set_ref_2bit(Some(reference.path.clone()));
@@ -1850,7 +1856,7 @@ fn blacklist_gc_and_scaling_weights_combine_to_the_exact_expected_endpoint_count
         length_edges: vec![10, 11, 20],
         gc_edges: vec![0, 1, 50, 51, 100],
         length_bin_frequencies: array![1.0_f64, 1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![
             [2.0_f64, 1.0_f64, 4.0_f64, 3.0_f64],
             [1.0_f64, 1.0_f64, 1.0_f64, 1.0_f64]
@@ -1976,7 +1982,7 @@ fn default_gc_behavior_skips_fragments_when_gc_correction_cannot_be_computed() -
         length_edges: vec![10, 11, 20],
         gc_edges: vec![0, 51, 100],
         length_bin_frequencies: array![1.0_f64, 1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[2.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -6384,7 +6390,7 @@ fn grouped_bed_gc_correction_weights_each_grouped_end_motif() -> Result<()> {
         length_edges: vec![10, 11, 20],
         gc_edges: vec![0, 51, 100],
         length_bin_frequencies: array![1.0_f64, 1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
     };
     package.write_npz(&gc_path)?;

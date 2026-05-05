@@ -7,6 +7,7 @@ use cfdnalab::commands::cli_common::{ApplyGCArgs, ChromosomeArgs, IOCArgs, Windo
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
 use cfdnalab::commands::wps::config::WPSConfig;
 use cfdnalab::commands::wps::wps::run as run_fn;
+use cfdnalab::shared::reference::twobit_contig_footprint;
 use fixtures::{
     BamFixture, FragmentSpec, ReadSpec, bam_from_specs, late_origin_gc_reference_sequence,
     long_fragment_bam, read_zst_to_string, twobit_from_sequences, write_bed,
@@ -235,7 +236,13 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
     let bed_path = out_dir.path().join("late_window.bed");
     let gc_path = out_dir.path().join("two_bin_gc_package.npz");
     write_bed(&bed_path, &[("chr1", 925, 936, "late")])?;
-    write_two_bin_gc_package(&gc_path, 61, 2.0, 7.0)?;
+    write_two_bin_gc_package(
+        &gc_path,
+        61,
+        2.0,
+        7.0,
+        twobit_contig_footprint(&reference.path)?,
+    )?;
 
     let mut cfg = make_config(10, false, &bam.bam, out_dir.path(), "late_gc");
     cfg.set_windows(WindowsArgs {

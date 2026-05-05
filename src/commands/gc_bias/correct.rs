@@ -9,7 +9,6 @@ use crate::shared::reference::twobit_contig_footprint;
 use anyhow::{Context, Result, anyhow, ensure};
 use ndarray::{Array1, Array2, Axis};
 use std::str::FromStr;
-use tracing::warn;
 
 /// Fraction of selected length-bin frequency mass used to group practical ties.
 ///
@@ -592,7 +591,7 @@ pub fn load_gc_corrector<P: AsRef<std::path::Path>>(
 ) -> Result<Option<GCCorrector>> {
     if let Some(path) = gc_file {
         let package = GCCorrectionPackage::from_file(path)?;
-        warn_on_reference_contig_mismatch(&package, ref_2bit)?;
+        validate_reference_contig_match(&package, ref_2bit)?;
         validate_gc_package_compatibility(&package, min_fragment_length, max_fragment_length)?;
         Ok(Some(GCCorrector::from_package(&package)?))
     } else {
@@ -611,7 +610,7 @@ pub fn load_length_agnostic_gc_corrector<P: AsRef<std::path::Path>>(
 ) -> Result<Option<LengthAgnosticGCCorrector>> {
     if let Some(path) = gc_file {
         let package = GCCorrectionPackage::from_file(path)?;
-        warn_on_reference_contig_mismatch(&package, ref_2bit)?;
+        validate_reference_contig_match(&package, ref_2bit)?;
         validate_gc_package_compatibility(&package, min_fragment_length, max_fragment_length)?;
         let gc_corrector = GCCorrector::from_package(&package)?;
         let length_agnostic_gc_corrector = LengthAgnosticGCCorrector::from_gc_corrector(
@@ -628,7 +627,7 @@ pub fn load_length_agnostic_gc_corrector<P: AsRef<std::path::Path>>(
     }
 }
 
-fn warn_on_reference_contig_mismatch<P: AsRef<std::path::Path>>(
+fn validate_reference_contig_match<P: AsRef<std::path::Path>>(
     package: &GCCorrectionPackage,
     ref_2bit: Option<&P>,
 ) -> Result<()> {
@@ -637,12 +636,10 @@ fn warn_on_reference_contig_mismatch<P: AsRef<std::path::Path>>(
     };
 
     let run_footprint = twobit_contig_footprint(ref_2bit)?;
-    if run_footprint != package.reference_contig_footprint {
-        warn!(
-            target: "gc-bias",
-            "GC correction package was built against a reference contig set that differs from --ref-2bit. GC weights may be invalid if the package and input reference are from different assemblies."
-        );
-    }
+    ensure!(
+        run_footprint == package.reference_contig_footprint,
+        "GC correction package was built against a different reference contig than --ref-2bit."
+    );
     Ok(())
 }
 

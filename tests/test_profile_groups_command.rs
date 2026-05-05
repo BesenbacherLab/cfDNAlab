@@ -15,7 +15,10 @@ use cfdnalab::commands::coverage_weights::{
 use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
 use cfdnalab::commands::midpoints::config::MidpointsConfig;
 use cfdnalab::commands::midpoints::midpoints::run;
-use cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
+use cfdnalab::shared::{
+    constants::GC_CORRECTION_SCHEMA_VERSION,
+    reference::{ContigFootprintEntry, twobit_contig_footprint},
+};
 use fixtures::{
     FragmentSpec, ReadSpec, bam_from_specs, bam_from_specs_strict_identity,
     build_real_neutral_gc_package, build_real_neutral_gc_package_for_range,
@@ -197,7 +200,10 @@ fn read_group_index_map(path: &std::path::Path) -> Result<HashMap<String, usize>
     Ok(out)
 }
 
-fn write_minimal_gc_package_excluding_length_61(path: &std::path::Path) -> Result<()> {
+fn write_minimal_gc_package_excluding_length_61(
+    path: &std::path::Path,
+    reference_contig_footprint: Vec<ContigFootprintEntry>,
+) -> Result<()> {
     // Smallest possible valid GC package that only covers fragment lengths 10..=60 and a single
     // GC bin spanning 0..=100.
     let package = GCCorrectionPackage {
@@ -207,7 +213,7 @@ fn write_minimal_gc_package_excluding_length_61(path: &std::path::Path) -> Resul
         gc_edges: vec![0, 101],
         correction_matrix: array![[1.0_f64]],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint,
     };
     package.write_npz(path)?;
     Ok(())
@@ -1010,7 +1016,13 @@ fn gc_file_late_tile_site_uses_reference_coordinates_after_fetch_narrowing() -> 
     let bed_path = temp.path().join("late_site.bed");
     let gc_path = temp.path().join("two_bin_gc_package.npz");
     write_bed(&bed_path, &[("chr1", 925, 936, "late")])?;
-    write_two_bin_gc_package(&gc_path, 61, 2.0, 7.0)?;
+    write_two_bin_gc_package(
+        &gc_path,
+        61,
+        2.0,
+        7.0,
+        twobit_contig_footprint(&reference.path)?,
+    )?;
 
     let mut cfg = MidpointsConfig::new(
         IOCArgs {
@@ -1209,7 +1221,10 @@ fn midpoints_rejects_gc_package_when_length_bins_are_outside_supported_range() -
     let bed_path = temp.path().join("windows.bed");
     write_bed(&bed_path, &[("chr1", 45, 56, "groupA")])?;
     let gc_path = temp.path().join("too_short_gc_package.npz");
-    write_minimal_gc_package_excluding_length_61(&gc_path)?;
+    write_minimal_gc_package_excluding_length_61(
+        &gc_path,
+        twobit_contig_footprint(&reference.path)?,
+    )?;
 
     let mut cfg = MidpointsConfig::new(
         IOCArgs {
@@ -1266,7 +1281,7 @@ fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
         gc_edges: vec![0, 101],
         correction_matrix: array![[1.0_f64]],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
     };
     package.write_npz(&gc_path)?;
 
@@ -1699,7 +1714,7 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
         length_edges: vec![61, 62],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -1800,7 +1815,7 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
         length_edges: vec![61, 62],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64]],
     };
     package.write_npz(&gc_path)?;

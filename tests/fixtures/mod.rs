@@ -345,6 +345,7 @@ pub fn write_two_bin_gc_package(
     fragment_length: u32,
     low_gc_weight: f64,
     high_gc_weight: f64,
+    reference_contig_footprint: Vec<cfdnalab::shared::reference::ContigFootprintEntry>,
 ) -> Result<()> {
     let package = cfdnalab::commands::gc_bias::package::GCCorrectionPackage {
         version: cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION,
@@ -352,7 +353,7 @@ pub fn write_two_bin_gc_package(
         length_edges: vec![fragment_length, fragment_length + 1],
         gc_edges: vec![0, 51, 101],
         length_bin_frequencies: ndarray::array![1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint,
         correction_matrix: ndarray::array![[low_gc_weight, high_gc_weight]],
     };
     package.write_npz(path)?;

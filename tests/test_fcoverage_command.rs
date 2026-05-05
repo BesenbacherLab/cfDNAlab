@@ -20,11 +20,14 @@ use cfdnalab::commands::fcoverage::fcoverage::{run, run_inner};
 use cfdnalab::commands::fcoverage::window_results::CoverageWindowAction;
 use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
 use cfdnalab::commands::lengths::{config::LengthsConfig, lengths::run as run_lengths};
-use cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
 use cfdnalab::shared::fragment::minimal_fragment::{MinimalReadInfo, collect_fragment};
 use cfdnalab::shared::indel_mode::IndelMode;
 use cfdnalab::shared::io::dot_join;
 use cfdnalab::shared::read::default_include_read_paired_end;
+use cfdnalab::shared::{
+    constants::GC_CORRECTION_SCHEMA_VERSION,
+    reference::{ContigFootprintEntry, twobit_contig_footprint},
+};
 use fixtures::{
     BamFixture, FragmentSpec, LONG_FRAGMENT_LENGTH, LONG_FRAGMENT_STARTS, ReadSpec, bam_from_specs,
     bam_from_specs_strict_identity, build_real_neutral_gc_package,
@@ -396,14 +399,18 @@ fn bam_with_gc_tags(base_bam: &Path, name: &str, tags: &[Option<f32>]) -> Result
     })
 }
 
-fn build_gc_package(path: &Path, end_offset: u64) -> Result<()> {
+fn build_gc_package(
+    path: &Path,
+    end_offset: u64,
+    reference_contig_footprint: Vec<ContigFootprintEntry>,
+) -> Result<()> {
     let package = GCCorrectionPackage {
         version: GC_CORRECTION_SCHEMA_VERSION,
         end_offset,
         length_edges: vec![10, 60, 200],
         gc_edges: vec![0, 50, 101],
         length_bin_frequencies: array![1.0_f64, 3.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint,
         correction_matrix: array![[1.0_f64, 1.0_f64], [2.0_f64, 10.0_f64]],
     };
     package.write_npz(path)?;
@@ -624,7 +631,7 @@ fn normalize_by_length_and_gc_file_weights_multiply_per_position() -> Result<()>
         length_edges: vec![61, 62],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
         correction_matrix: array![[3.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -702,7 +709,13 @@ fn gc_file_windowed_late_tile_uses_reference_coordinates_after_fetch_narrowing()
     let bed_path = out_dir.path().join("late_window.bed");
     let gc_path = out_dir.path().join("two_bin_gc_package.npz");
     write_bed(&bed_path, &[("chr1", 930, 941, "late")])?;
-    write_two_bin_gc_package(&gc_path, 61, 2.0, 7.0)?;
+    write_two_bin_gc_package(
+        &gc_path,
+        61,
+        2.0,
+        7.0,
+        twobit_contig_footprint(&reference.path)?,
+    )?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(0);
@@ -1032,7 +1045,7 @@ fn normalize_by_length_segmented_fragment_still_multiplies_gc_and_scaling() -> R
         length_edges: vec![50, 51],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
         correction_matrix: array![[2.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -1897,7 +1910,7 @@ fn restore_mean_segmented_fragment_still_multiplies_gc_and_scaling() -> Result<(
         length_edges: vec![50, 51],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
         correction_matrix: array![[2.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -3637,7 +3650,7 @@ fn by_size_total_aligned_fast_path_matches_general_path_with_blacklist_scaling_a
             &scaling_path,
             &[("chr1", 0, 50, 2.0_f32), ("chr1", 50, 200, 3.0_f32)],
         )?;
-        build_gc_package(&gc_path, 0)?;
+        build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
 
         let mut scale_genome = ScaleGenomeArgs::default();
         scale_genome.scaling_factors = Some(scaling_path);
@@ -4826,7 +4839,7 @@ fn bam_to_bam_gc_file_output_drives_fcoverage_gc_tag_same_as_original_gc_file() 
         length_edges: vec![60, 61],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint: twobit_contig_footprint(&reference.path)?,
         correction_matrix: array![[3.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -5066,7 +5079,8 @@ fn gc_file_requires_ref_2bit() -> Result<()> {
     let bam = simple_inward_bam()?;
     let out_dir = TempDir::new()?;
     let gc_path = out_dir.path().join("gc_pkg.npz");
-    build_gc_package(&gc_path, 0)?;
+    let ref_twobit = simple_reference_twobit()?;
+    build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_gc(ApplyGCArgs {
@@ -5089,7 +5103,7 @@ fn gc_file_weights_positional_output_from_reference_package() -> Result<()> {
     let ref_twobit = simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
     let gc_path = out_dir.path().join("gc_pkg.npz");
-    build_gc_package(&gc_path, 0)?;
+    build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
 
     let mut cfg = base_config(&bam.bam, out_dir.path());
     cfg.set_decimals(0);
@@ -5135,7 +5149,7 @@ fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range
         length_edges: vec![10, 59],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
         correction_matrix: array![[1.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -5183,7 +5197,7 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
         length_edges: vec![10, 200],
         gc_edges: vec![0, 101],
         length_bin_frequencies: array![1.0_f64],
-        reference_contig_footprint: Vec::new(),
+        reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
         correction_matrix: array![[1.0_f64]],
     };
     package.write_npz(&gc_path)?;
@@ -5381,7 +5395,7 @@ fn gc_file_invalid_weights_skip_by_default_or_neutralize() -> Result<()> {
     for (name, neutralize_invalid_gc, expected_lines) in scenarios {
         let out_dir = TempDir::new()?;
         let gc_path = out_dir.path().join(format!("gc_pkg_{name}.npz"));
-        build_gc_package(&gc_path, 26)?;
+        build_gc_package(&gc_path, 26, twobit_contig_footprint(&ref_twobit.path)?)?;
 
         let mut cfg = base_config(&bam.bam, out_dir.path());
         cfg.set_decimals(0);
@@ -7347,7 +7361,7 @@ fn grouped_summary_stats_on_unique_bases_supports_downstream_pearson_with_gc_sca
     )?;
     let out_dir = TempDir::new()?;
     let gc_path = out_dir.path().join("three_chr_gc_pkg.npz");
-    build_gc_package(&gc_path, 0)?;
+    build_gc_package(&gc_path, 0, twobit_contig_footprint(&reference.path)?)?;
     let scaling_path = out_dir.path().join("three_chr_scaling.tsv");
     write_scaling_factors(
         &scaling_path,

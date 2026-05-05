@@ -44,7 +44,10 @@ mod tests_bam_to_frag {
         fragment_count_weights::run as run_fragment_count_weights,
     };
     use cfdnalab::commands::gc_bias::package::GCCorrectionPackage;
-    use cfdnalab::shared::constants::GC_CORRECTION_SCHEMA_VERSION;
+    use cfdnalab::shared::{
+        constants::GC_CORRECTION_SCHEMA_VERSION,
+        reference::{ContigFootprintEntry, twobit_contig_footprint},
+    };
     #[cfg(feature = "cmd_bam_to_bam")]
     use rust_htslib::bam::Read;
     #[cfg(feature = "cmd_bam_to_bam")]
@@ -824,7 +827,7 @@ mod tests_bam_to_frag {
         std::fs::create_dir_all(&out_dir)?;
 
         let gc_path = out_dir.join("gc_pkg.npz");
-        build_gc_package(&gc_path, 26)?;
+        build_gc_package(&gc_path, 26, twobit_contig_footprint(&ref_twobit.path)?)?;
 
         let ioc = IOCArgs {
             bam: bam.bam.clone(),
@@ -886,7 +889,7 @@ mod tests_bam_to_frag {
         std::fs::create_dir_all(&out_dir)?;
 
         let gc_path = out_dir.join("gc_pkg.npz");
-        build_gc_package(&gc_path, 26)?;
+        build_gc_package(&gc_path, 26, twobit_contig_footprint(&ref_twobit.path)?)?;
 
         let ioc = IOCArgs {
             bam: bam.bam.clone(),
@@ -961,7 +964,7 @@ mod tests_bam_to_frag {
             length_edges: vec![10, 59],
             gc_edges: vec![0, 101],
             length_bin_frequencies: array![1.0_f64],
-            reference_contig_footprint: Vec::new(),
+            reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
             correction_matrix: array![[1.0_f64]],
         };
         package.write_npz(&gc_path)?;
@@ -1023,7 +1026,7 @@ mod tests_bam_to_frag {
             length_edges: vec![10, 200],
             gc_edges: vec![0, 101],
             length_bin_frequencies: array![1.0_f64],
-            reference_contig_footprint: Vec::new(),
+            reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
             correction_matrix: array![[1.0_f64]],
         };
         package.write_npz(&gc_path)?;
@@ -1370,7 +1373,7 @@ mod tests_bam_to_frag {
             length_edges: vec![10, 61, 100],
             gc_edges: vec![0, 51, 100],
             length_bin_frequencies: array![1.0_f64, 1.0_f64],
-            reference_contig_footprint: Vec::new(),
+            reference_contig_footprint: twobit_contig_footprint(&ref_twobit.path)?,
             correction_matrix: array![[3.0_f64, 1.0_f64], [1.0_f64, 1.0_f64]],
         };
         package.write_npz(&gc_path)?;
@@ -2252,7 +2255,7 @@ mod tests_bam_to_frag {
         fs::create_dir_all(&out_dir)?;
         let scaling_path = out_dir.join("uncorrected_count_scaling.tsv");
         let gc_path = out_dir.join("gc_pkg.npz");
-        build_gc_package(&gc_path, 0)?;
+        build_gc_package(&gc_path, 0, twobit_contig_footprint(&ref_twobit.path)?)?;
         fs::write(
             &scaling_path,
             "# gc_mode=uncorrected\nchromosome\tstart\tend\tscaling_factor\nchr1\t0\t200\t1.0\n",
@@ -2297,14 +2300,18 @@ mod tests_bam_to_frag {
         Ok(())
     }
 
-    fn build_gc_package(path: &Path, end_offset: u64) -> Result<()> {
+    fn build_gc_package(
+        path: &Path,
+        end_offset: u64,
+        reference_contig_footprint: Vec<ContigFootprintEntry>,
+    ) -> Result<()> {
         let package = GCCorrectionPackage {
             version: GC_CORRECTION_SCHEMA_VERSION,
             end_offset,
             length_edges: vec![10, 60, 200],
             gc_edges: vec![0, 50, 101],
             length_bin_frequencies: array![1.0_f64, 3.0_f64],
-            reference_contig_footprint: Vec::new(),
+            reference_contig_footprint,
             correction_matrix: array![[1.0_f64, 1.0_f64], [2.0_f64, 10.0_f64]],
         };
         package.write_npz(path)?;

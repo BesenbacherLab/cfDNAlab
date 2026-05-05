@@ -17,7 +17,8 @@ mod tests_gc_bias {
             config::GCConfig,
             correct::{
                 GCCorrector, GCLengthRange, LengthAgnosticGCCorrector,
-                MarginalizeLengthsWeightingScheme,
+                MarginalizeLengthsWeightingScheme, load_gc_corrector,
+                load_length_agnostic_gc_corrector,
             },
             counting::{build_gc_prefixes, gc_percent_widths},
             gc_bias::{get_fragment_gc, interpolate_masked_corrections, run as run_gc_bias},
@@ -374,6 +375,58 @@ mod tests_gc_bias {
             (weight_len39_gc80 - 0.75).abs() < f64::EPSILON,
             "length 39 / GC 80 should map to 0.75"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn gc_correction_loaders_reject_reference_footprint_mismatch() -> Result<()> {
+        // Human verification status: verified
+        // Manual expectations:
+        // - The correction package carries the footprint from `reference_a`.
+        // - The loaders are asked to apply it with `reference_b`, whose chr1 length differs.
+        // - Both loaders should fail before returning a usable correction matrix.
+        let reference_a = fixtures::simple_reference_twobit()?;
+        let reference_b = fixtures::twobit_from_sequences(
+            "gc_correction_loader_reference_mismatch",
+            vec![("chr1".to_string(), "ACGT".repeat(80))],
+        )?;
+        let package = GCCorrectionPackage {
+            version: GC_CORRECTION_SCHEMA_VERSION,
+            end_offset: 0,
+            length_edges: vec![30, 31],
+            gc_edges: vec![0, 101],
+            correction_matrix: array![[1.0_f64]],
+            length_bin_frequencies: array![1.0_f64],
+            reference_contig_footprint: twobit_contig_footprint(&reference_a.path)?,
+        };
+        let tmp_dir = tempdir()?;
+        let package_path = tmp_dir.path().join("gc_package.npz");
+        package.write_npz(&package_path)?;
+
+        let standard_error =
+            load_gc_corrector(Some(&package_path), Some(&reference_b.path), 30, 30)
+                .expect_err("mismatched package should fail standard GC correction loading");
+        let length_agnostic_error = load_length_agnostic_gc_corrector(
+            Some(&package_path),
+            Some(&reference_b.path),
+            &MarginalizeLengthsWeightingScheme::Equal,
+            GCLengthRange::Package,
+            0.0,
+            30,
+            30,
+        )
+        .expect_err("mismatched package should fail length-agnostic GC correction loading");
+
+        for error in [standard_error, length_agnostic_error] {
+            let message = error.to_string();
+            assert!(
+                message.contains(
+                    "GC correction package was built against a different reference contig than --ref-2bit."
+                ),
+                "unexpected error message: {message}"
+            );
+        }
 
         Ok(())
     }
