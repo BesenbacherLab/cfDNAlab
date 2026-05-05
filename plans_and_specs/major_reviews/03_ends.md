@@ -6,6 +6,8 @@ Scope: `src/commands/ends/*`, the `ends` CLI configuration, and directly used sh
 
 Shared findings that affect this command:
 
+- None active.
+
 Post-release performance optimizations that affect this command:
 
 - G-006 in `00_shared_package_notes.md`: sparse-window reference sequence reads happen before no-window pruning.
@@ -38,11 +40,7 @@ Motif reference narrowing for skipped sparse-window tiles and shared GC referenc
 
 ## Released-command re-review additions (2026-05-04)
 
-Shared findings that affect this command:
-
-- G-019 in `00_shared_package_notes.md`: `ends` writes per-tile temporary count files using the raw chromosome name in the filename ([ends.rs](../../src/commands/ends/ends.rs#L607-L612)).
-- G-021 in `00_shared_package_notes.md`: `ends` passes `--gc-tag` directly as bytes to the end-fragment iterator ([ends.rs](../../src/commands/ends/ends.rs#L726-L735)), so overlong tag names follow the shared first-two-byte BAM AUX lookup behavior.
-- G-022 in `00_shared_package_notes.md`: `ends` uses the raw output prefix for final outputs and sidecars ([write.rs](../../src/commands/ends/write.rs#L47-L64), [ends.rs](../../src/commands/ends/ends.rs#L460-L477)) and for the per-run temporary directory path ([ends.rs](../../src/commands/ends/ends.rs#L291-L294)).
+The shared raw-chromosome temporary filename issue (G-019), overlong `--gc-tag` issue (G-021), and unchecked output-prefix issue (G-022) originally noted here have since been implemented through shared temporary chromosome tokens, shared AUX-tag validation, and shared output-prefix validation.
 
 No new `ends`-only pre-release correctness issue was found in this re-review. The previously tracked `ends` performance issue E-003 still stands, and the shared sparse-window GC preload issue remains tracked as G-006.
 

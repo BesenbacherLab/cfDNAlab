@@ -6,6 +6,8 @@ Scope: `src/commands/fcoverage/*`, the CLI dispatch for `fcoverage`, and directl
 
 Shared findings that affect this command:
 
+- None active.
+
 Post-release performance optimizations that affect this command:
 
 - G-006 in `00_shared_package_notes.md`: sparse-window reference sequence reads happen before no-window pruning.
@@ -22,15 +24,13 @@ The command already has unusually broad end-to-end coverage in `tests/test_fcove
 
 ## Re-review additions (2026-05-04)
 
-Shared findings that affect this command:
-
-- G-019 in `00_shared_package_notes.md`: tiled temporary files use raw chromosome names as path components.
+The raw-chromosome temporary filename issue originally noted here as G-019 has since been implemented through shared temporary chromosome tokens.
 
 ### Release triage additions
 
 Pre-release correctness/safety:
 
-- G-019: raw chromosome names in per-tile temporary filenames.
+- None active from this re-review.
 
 Post-release performance:
 

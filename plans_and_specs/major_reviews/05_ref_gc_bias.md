@@ -6,7 +6,7 @@ Scope: `src/commands/ref_gc_bias/*`, the reference GC package writer/loader boun
 
 Shared findings that affect this command:
 
-- G-002 in `00_shared_package_notes.md`: README OPTIONS blocks need clearer alternative-choice labeling.
+- None active. The README OPTIONS labeling issue originally noted here as G-002 has since been implemented.
 
 Post-release performance optimizations that affect this command:
 
@@ -16,7 +16,7 @@ Post-release performance optimizations that affect this command:
 
 Pre-release semantic/docs:
 
-- G-002: README OPTIONS blocks should keep their current structure but clarify alternative choices.
+- None active.
 
 Post-release performance:
 
@@ -34,22 +34,13 @@ The deferred sparse-window reference pruning optimization is tracked in G-006 in
 
 ## Released-command re-review additions (2026-05-04)
 
-Shared findings that affect this command:
-
-- G-022 in `00_shared_package_notes.md`: `--output-prefix` can escape the output directory for the `.ref_gc_package.npz` output.
-- G-023 in `00_shared_package_notes.md`: reference GC packages do not record or check the reference identity later used by `gc-bias`.
-
-Shared findings reviewed and not applied:
-
-- G-019 does not affect `ref-gc-bias`: this command tiles in memory and does not write per-chromosome temporary tile files.
-- G-021 does not affect `ref-gc-bias`: this command does not read BAM GC tags.
+The shared unchecked output-prefix issue (G-022) and reference package identity issue (G-023) originally noted here have since been implemented. G-019 did not affect `ref-gc-bias` because this command tiles in memory, and G-021 did not affect it because this command does not read BAM GC tags.
 
 ### Release triage additions
 
 Pre-release correctness/safety:
 
-- G-023: reference GC package/reference genome identity mismatch can pass silently into `gc-bias`.
-- G-022: unchecked output prefix for the package output path.
+- None active from this re-review.
 
 Post-release performance:
 
@@ -57,4 +48,4 @@ Post-release performance:
 
 ### Command-specific findings
 
-No new command-specific findings beyond the shared artifact and prefix findings above.
+No new command-specific findings remain active from this re-review.

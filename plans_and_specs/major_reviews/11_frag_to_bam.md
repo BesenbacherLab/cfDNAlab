@@ -6,15 +6,13 @@ Scope: `src/commands/frag_to_bam/*`, chromosome-size loading, frag column/header
 
 Shared findings that affect this command:
 
-- G-017 in `00_shared_package_notes.md`: converter AUX tag names are longer than the BAM tag field.
-- G-018 in `00_shared_package_notes.md`: converter temporary files use raw chromosome names as path components.
+- None active. The converter AUX-tag issue (G-017) and temporary path issue (G-018) originally noted here have since been implemented.
 
 ## Release triage
 
 Pre-release correctness/safety:
 
-- G-017: documented extra-column tag names `COV`, `CNT`, and `FLEN` are not valid serialized BAM tag keys.
-- G-018: per-chromosome temporary file paths are built from raw chromosome names.
+- None active from shared findings.
 
 Pre-release docs/API polish:
 
@@ -30,7 +28,7 @@ Post-release performance:
 
 The CLI help says `frag-to-bam` accepts headerless 5-column frag files when no inline, explicit, or companion header is found, and says to use `--ignore-extras` when intentionally ignoring columns after the first five ([config.rs](../../src/commands/frag_to_bam/config.rs#L77-L91)). With no header source, the implementation resolves a fixed five-column layout and sets all recognized extra-column indices to `None` ([frag_to_bam.rs](../../src/commands/frag_to_bam/frag_to_bam.rs#L637-L691), [frag_to_bam.rs](../../src/commands/frag_to_bam/frag_to_bam.rs#L800-L811)). `parse_frag_line()` then parses required fields by index but does not reject additional trailing columns ([frag_to_bam.rs](../../src/commands/frag_to_bam/frag_to_bam.rs#L405-L465)).
 
-There is an existing test that locks in the behavior: an `input.tsv` row with eight columns is accepted and the trailing values are ignored with no GC/COV/FLEN tags written ([test_frag_to_bam_command.rs](../../tests/test_frag_to_bam_command.rs#L821-L864)). That may be intentional, but it weakens the fail-fast story. A missing companion header or a mistyped filename can silently drop metadata that looks like `gc_weight`, scaling weights, or fragment length values.
+There is an existing test that locks in the behavior: an `input.tsv` row with eight columns is accepted and the trailing values are ignored with no GC/cw/fl tags written ([test_frag_to_bam_command.rs](../../tests/test_frag_to_bam_command.rs#L821-L864)). That may be intentional, but it weakens the fail-fast story. A missing companion header or a mistyped filename can silently drop metadata that looks like `gc_weight`, scaling weights, or fragment length values.
 
 Impact: not a BAM corruption bug, but a user can lose extra metadata without realizing it. This is especially easy when moving `bam-to-frag` output away from its companion `*.frag.header.tsv` file or renaming the frag file so companion-header auto-detection no longer applies.
 
@@ -44,4 +42,4 @@ Recommended fix:
 
 The command has direct coverage for basic conversion, chromosome filtering, length and MAPQ filters, blacklist filtering, chromosome ordering checks, chromosome-size bounds, inline and explicit headers, companion header detection, supported and unsupported extra columns, `--ignore-extras`, `--allow-unknown-extras`, optional missing extra values, and cross-command `bam-to-frag` round-trips.
 
-The important gaps from this pass are serialized AUX-key inspection for G-017, path-safety coverage for G-018, and fail-fast coverage for headerless files that contain trailing metadata columns.
+The serialized AUX-key and temporary path-safety gaps from this pass have since been implemented. The remaining important gap is fail-fast coverage for headerless files that contain trailing metadata columns.

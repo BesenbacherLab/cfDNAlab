@@ -6,7 +6,7 @@ Scope: `src/commands/lengths/*`, the `lengths` CLI configuration, and directly u
 
 Shared findings that affect this command:
 
-- G-002 in `00_shared_package_notes.md`: README OPTIONS blocks need clearer alternative-choice labeling.
+- None active. The README OPTIONS labeling issue originally noted here as G-002 has since been implemented.
 
 Post-release performance optimizations that affect this command:
 
@@ -16,7 +16,7 @@ Post-release performance optimizations that affect this command:
 
 Pre-release docs/API polish:
 
-- G-002: README OPTIONS blocks should keep their current structure but clarify alternative choices.
+- None active.
 
 Post-release performance:
 
@@ -30,21 +30,13 @@ The deferred sparse-window GC reference pruning optimization is tracked in G-006
 
 ## Released-command re-review additions (2026-05-04)
 
-Shared findings that affect this command:
-
-- G-019 in `00_shared_package_notes.md`: tiled temporary files use raw chromosome names as filename components.
-- G-022 in `00_shared_package_notes.md`: `--output-prefix` can escape the output directory for final outputs and temporary directories.
-
-Shared findings reviewed and not applied:
-
-- G-021 does not affect `lengths`: this command uses file-only GC correction arguments and does not expose `--gc-tag`.
+The shared raw-chromosome temporary filename issue (G-019) and unchecked output-prefix issue (G-022) originally noted here have since been implemented. The overlong `--gc-tag` issue (G-021) did not affect `lengths` because this command uses file-only GC correction arguments.
 
 ### Release triage additions
 
 Pre-release correctness/safety:
 
-- G-019: raw chromosome names in tiled temporary filenames.
-- G-022: unchecked output prefixes for final outputs and temp directories.
+- None active from this re-review.
 
 Post-release performance:
 

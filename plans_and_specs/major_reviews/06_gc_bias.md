@@ -39,20 +39,18 @@ The missing coverage from this review is avoiding BAM-reader opens for no-window
 
 ### Shared findings that affect this command
 
-- G-022: `gc-bias` uses the shared unchecked output prefix for the correction package, optional intermediates, and plot files.
-- G-023: `gc-bias` consumes reference GC packages but currently checks only chromosome-name set equality against the current run.
+The shared unchecked output-prefix issue (G-022) and reference package identity issue (G-023) originally noted here have since been implemented.
 
 Reviewed shared findings that do not currently apply:
 
 - G-019: `gc-bias` crossing-window temp files are named by tile index, not raw chromosome name.
-- G-021: `gc-bias` does not expose `--gc-tag`.
+- G-021 did not affect `gc-bias` because this command does not expose `--gc-tag`.
 
 ### Release triage additions
 
 Pre-release correctness/safety:
 
-- G-023: wrong reference GC package can be accepted and repackaged under the current 2bit signature.
-- G-022: unchecked output prefixes can write files outside the requested output directory.
+- None active from this re-review.
 
 Post-release performance:
 

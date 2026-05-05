@@ -30,20 +30,13 @@ The important missing coverage from this review is standalone feature-matrix com
 
 ### Shared findings that affect this command
 
-- G-019: `coverage-weights` runs internal `fcoverage`, so it inherits the tiled raw-chromosome temporary filename issue from that path.
-- G-021: `coverage-weights` exposes shared GC correction options, including `--gc-tag`.
-- G-022: the final scaling TSV and the internal `fcoverage` source directory both use the unchecked output prefix.
-
-G-023 can affect the scientific validity of a provided GC correction package indirectly, but the correction-package identity fix belongs upstream in `gc-bias`.
+The shared raw-chromosome temporary filename issue (G-019), overlong `--gc-tag` issue (G-021), and unchecked output-prefix issue (G-022) originally noted here have since been implemented. G-023 is also implemented upstream through reference identity metadata and checks in the GC package flow.
 
 ### Release triage additions
 
 Pre-release correctness/safety:
 
 - CW-001: partially blacklisted stride bins are weighted as full-length support during smoothing and global normalization.
-- G-021: overlong `--gc-tag` values should fail before reading BAM records.
-- G-022: unchecked output prefixes can write files outside the requested output directory.
-- G-019: raw chromosome names can escape temporary filename boundaries through the internal `fcoverage` run.
 
 ### CW-001 - Medium - Partially blacklisted stride bins are treated as full-length support
 

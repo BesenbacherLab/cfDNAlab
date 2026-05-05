@@ -9,6 +9,7 @@ This file now tracks only active shared findings. Findings that were already imp
 Implemented findings removed from active tracking:
 
 - G-001: shared fragment length ranges can be inverted without a direct error.
+- G-002: README OPTIONS blocks need clearer alternative-choice labeling.
 - G-003: tiled commands clean temporary directories only on successful completion.
 - G-004: `--gc-file` lacks shared fail-fast validation for the required `--ref-2bit`.
 - G-005: shared even-fragment midpoint tie-breaking is not reproducible.
@@ -20,31 +21,17 @@ Implemented findings removed from active tracking:
 - G-014: smoothing-weight TSV writes do not explicitly flush the final writer.
 - G-015: all-zero smoothing runs fail with a misleading normalization error.
 - G-016: smoothing-weight commands cannot match `fcoverage --ignore-gap` segmentation.
+- G-017: converter AUX tag names are longer than the BAM tag field.
+- G-018: converter temporary files use raw chromosome names as path components.
+- G-019: tiled temporary files use raw chromosome names as filename components.
+- G-021: `--gc-tag` accepts overlong BAM AUX tag names and silently reads the first two bytes.
 - G-022: output prefixes can escape the output directory.
+- G-023: reference GC packages do not record or check the reference identity later used by `gc-bias`.
+- G-024: GC correction package reference mismatches are warning-only.
 
 Reviewed and deliberately not tracked:
 
 - G-020: release builds with `plotters` can create QC plots or other auxiliary files by default. This is not a review finding by itself. Commands may legitimately have multiple outputs, and automated pipelines should depend on the specific required input/output artifacts they consume rather than failing because extra files are present. Do not re-add this as an issue unless a command overwrites a primary output, hides a required output contract, or makes a requested primary artifact unavailable.
-
-## Pre-release docs/API polish
-
-### G-002 - Low - README OPTIONS blocks need clearer alternative-choice labeling
-
-The README examples are intentionally written as command skeletons with an `OPTIONS` section, not as many separate runnable snippets. That structure is acceptable and does not need a radical rewrite. The remaining issue is narrower: some OPTIONS groups list alternatives that a new user might read as cumulative unless the alternative-choice contract is stated explicitly.
-
-The `fcoverage` OPTIONS block lists mutually exclusive window selectors together: `--by-size`, `--by-bed`, and `--by-grouped-bed` ([README.md](../../README.md#L275-L294)).
-
-The `ends` and `lengths` OPTIONS blocks also list mutually exclusive window selectors together ([README.md](../../README.md#L316-L345), [README.md](../../README.md#L361-L385)). That is fine as long as the text makes clear that these are alternatives, not one command to run unchanged.
-
-The `midpoints` block shows two alternative `--length-bins` forms inside the OPTIONS section ([README.md](../../README.md#L397-L417)). The intent is clear to a careful reader, but a short note would make the contract explicit.
-
-This is documentation polish, not a code-correctness issue and not a reason to replace the OPTIONS format.
-
-Recommended fix:
-
-- Keep the current command-plus-OPTIONS structure.
-- Add one explicit sentence before the OPTIONS blocks: choose one option from each alternative group; do not run every OPTIONS line together.
-- Where alternatives are shown, label them as alternatives in prose or comments rather than implying they are cumulative arguments.
 
 ## Post-release performance optimizations
 
