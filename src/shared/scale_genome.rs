@@ -1,9 +1,27 @@
-use crate::shared::{bam::Contigs, interval::Interval, overlaps::OverlappingWindows};
-use anyhow::{Context, Result, bail};
+use crate::shared::{
+    bam::Contigs,
+    interval::Interval,
+    overlaps::{OverlappingWindow, OverlappingWindows},
+};
+use anyhow::{Context, Result, bail, ensure};
 use fxhash::{FxHashMap, FxHashSet};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use tracing::warn;
+
+/// Scaling weight assigned to one selected count window.
+///
+/// `window_interval` is the original count or assignment window. `scaling_interval`
+/// is the aligned-reference span used to average `scaling_weight`; these differ
+/// when clipped-only assignment windows are remapped to the nearest aligned base.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WindowScaling {
+    pub window_idx: usize,
+    pub window_interval: Interval<u64>,
+    pub scaling_interval: Interval<u64>,
+    pub scaling_weight: f64,
+    pub overlap_fraction_to_count: f64,
+}
 
 /// GC correction mode for how scaling factors were built.
 ///
@@ -133,33 +151,61 @@ pub fn apply_scaling_to_coverage_in_place(
 
 /// Compute per-window scaling factors averaged over the **overlapped span only**.
 ///
+/// By default, scaling is averaged over `count_overlaps`. Pass `scaling_overlaps`
+/// only when the count-window geometry and the scaling geometry intentionally differ.
+/// The two overlap collections must then have the same rows in the same order.
+///
 /// Returns
 /// -------
 /// For each count window that overlaps the fragment, returns:
-///     `(window_idx, avg_scaling_over_overlap, overlap_fraction)`
+///     `WindowScaling { window_idx, window_interval, scaling_interval, scaling_weight, overlap_fraction_to_count }`
 ///     where
-///         `avg_scaling_over_overlap` is the average per-base
-///         scaling evaluated over `overlap = window ∩ fragment`.
+///         `scaling_weight` is the average per-base
+///         scaling evaluated over the overlap between the scaling interval and
+///         the scaling geometry's query interval.
 #[inline]
-pub fn compute_window_scaling_over_overlap(
+pub fn compute_per_window_scaling_over_overlap(
     count_overlaps: &OverlappingWindows,
+    scaling_overlaps: Option<&OverlappingWindows>,
     scaling_bin_indices: &[usize],
     scaling_chr: &[(u64, u64, f32)],
-) -> Result<Vec<(usize, f64, f64)>> {
-    let fragment_start_bp = count_overlaps.query_start();
-    let fragment_end_bp = count_overlaps.query_end();
-    if scaling_bin_indices.is_empty() {
-        bail!("scaling_bin_indices is empty but scaling was requested");
-    }
+) -> Result<Vec<WindowScaling>> {
+    let scaling_overlaps = scaling_overlaps.unwrap_or(count_overlaps);
+    ensure!(
+        count_overlaps.windows.len() == scaling_overlaps.windows.len(),
+        "count and scaling overlap row counts differ: {} vs {}",
+        count_overlaps.windows.len(),
+        scaling_overlaps.windows.len()
+    );
+    let scaling_query_start_bp = scaling_overlaps.query_start();
+    let scaling_query_end_bp = scaling_overlaps.query_end();
 
     let mut per_window_scaling = Vec::with_capacity(count_overlaps.windows.len());
 
-    for window in &count_overlaps.windows {
-        let window_start_bp = window.start();
-        let window_end_bp = window.end();
+    for (count_window, scaling_window) in count_overlaps
+        .windows
+        .iter()
+        .zip(scaling_overlaps.windows.iter())
+    {
+        ensure!(
+            count_window.idx == scaling_window.idx,
+            "count and scaling overlap window indices differ: {} vs {}",
+            count_window.idx,
+            scaling_window.idx
+        );
+        ensure!(
+            count_window.overlap_fraction == scaling_window.overlap_fraction,
+            "count and scaling overlap fractions differ for window {}: {} vs {}",
+            count_window.idx,
+            count_window.overlap_fraction,
+            scaling_window.overlap_fraction
+        );
 
-        let overlap_start_bp = fragment_start_bp.max(window_start_bp);
-        let overlap_end_bp = fragment_end_bp.min(window_end_bp);
+        let scaling_window_start_bp = scaling_window.start();
+        let scaling_window_end_bp = scaling_window.end();
+
+        let overlap_start_bp = scaling_query_start_bp.max(scaling_window_start_bp);
+        let overlap_end_bp = scaling_query_end_bp.min(scaling_window_end_bp);
         if overlap_end_bp <= overlap_start_bp {
             continue; // No overlap with this window
         }
@@ -170,7 +216,14 @@ pub fn compute_window_scaling_over_overlap(
             scaling_bin_indices,
             scaling_chr,
         )?;
-        per_window_scaling.push((window.idx, avg_scaling, window.overlap_fraction));
+        let scaling_interval = Interval::new(overlap_start_bp, overlap_end_bp)?;
+        per_window_scaling.push(WindowScaling {
+            window_idx: count_window.idx,
+            window_interval: count_window.interval,
+            scaling_interval,
+            scaling_weight: avg_scaling,
+            overlap_fraction_to_count: count_window.overlap_fraction,
+        });
     }
 
     Ok(per_window_scaling)
@@ -181,24 +234,20 @@ pub fn compute_window_scaling_over_overlap(
 /// Returns
 /// -------
 /// For each count window that overlaps the fragment, returns:
-/// `(window_idx, avg_scaling_over_fragment, full_overlap_fraction)` where `avg_scaling_over_fragment` is the average per-base
+/// `WindowScaling { window_idx, window_interval, scaling_interval, scaling_weight, overlap_fraction_to_count }`
+/// where `scaling_weight` is the average per-base
 /// scaling evaluated over the **whole** fragment span `[fragment_start_bp, fragment_end_bp)`.
 /// This value is identical for every returned window of the same fragment.
-/// `full_overlap_fraction` is always `1.0`.
+/// `overlap_fraction_to_count` is always `1.0`.
 #[inline]
-pub fn compute_window_scaling_over_fragment(
+pub fn compute_per_window_scaling_over_fragment(
     fragment_interval: Interval<u64>,
     count_overlaps: &OverlappingWindows,
     scaling_bin_indices: &[usize],
     scaling_chr: &[(u64, u64, f32)],
-) -> Result<Vec<(usize, f64, f64)>> {
+) -> Result<Vec<WindowScaling>> {
     let fragment_start_bp = fragment_interval.start();
     let fragment_end_bp = fragment_interval.end();
-    if scaling_bin_indices.is_empty() {
-        bail!("scaling_bin_indices is empty but scaling was requested");
-    }
-
-    // Compute one average over the full fragment span.
     let avg_over_fragment = avg_scaling_over_span(
         fragment_start_bp,
         fragment_end_bp,
@@ -210,10 +259,93 @@ pub fn compute_window_scaling_over_fragment(
     let mut per_window_scaling = Vec::with_capacity(count_overlaps.windows.len());
     for window in &count_overlaps.windows {
         if window.end() > fragment_start_bp && window.start() < fragment_end_bp {
-            per_window_scaling.push((window.idx, avg_over_fragment, 1.0));
+            per_window_scaling.push(WindowScaling {
+                window_idx: window.idx,
+                window_interval: window.interval,
+                scaling_interval: fragment_interval,
+                scaling_weight: avg_over_fragment,
+                overlap_fraction_to_count: 1.0,
+            });
         }
     }
     Ok(per_window_scaling)
+}
+
+/// Compute one fragment-level scaling factor and apply it to every selected count window.
+///
+/// Use this when a command has already selected candidate windows with assignment geometry that
+/// may differ from the aligned fragment span used for scaling. The scaling average is still
+/// computed over `fragment_interval`, but every row in `count_overlaps.windows` is returned.
+#[inline]
+pub fn compute_per_window_scaling_over_fragment_for_selected_windows(
+    fragment_interval: Interval<u64>,
+    count_overlaps: &OverlappingWindows,
+    scaling_bin_indices: &[usize],
+    scaling_chr: &[(u64, u64, f32)],
+) -> Result<Vec<WindowScaling>> {
+    let avg_over_fragment = avg_scaling_over_span(
+        fragment_interval.start(),
+        fragment_interval.end(),
+        scaling_bin_indices,
+        scaling_chr,
+    )?;
+
+    let mut per_window_scaling = Vec::with_capacity(count_overlaps.windows.len());
+    for window in &count_overlaps.windows {
+        per_window_scaling.push(WindowScaling {
+            window_idx: window.idx,
+            window_interval: window.interval,
+            scaling_interval: fragment_interval,
+            scaling_weight: avg_over_fragment,
+            overlap_fraction_to_count: 1.0,
+        });
+    }
+    Ok(per_window_scaling)
+}
+
+/// Build a reference-based scaling view for assignment-selected overlap rows.
+///
+/// The returned rows keep each assignment window's `idx` and overlap fraction, but replace the
+/// interval with the aligned-reference span used to average scaling. Windows with no aligned
+/// overlap use the nearest aligned reference base.
+pub fn build_reference_based_scaling_overlaps_for_assignment_overlaps(
+    count_overlaps: &OverlappingWindows,
+    aligned_fragment_interval: Interval<u64>,
+) -> Result<OverlappingWindows> {
+    let left_nearest_base_interval = Interval::new(
+        aligned_fragment_interval.start(),
+        aligned_fragment_interval.start() + 1,
+    )?;
+    let right_nearest_base_interval = Interval::new(
+        aligned_fragment_interval.end() - 1,
+        aligned_fragment_interval.end(),
+    )?;
+
+    let mut scaling_overlaps = OverlappingWindows::new(aligned_fragment_interval);
+    for window in &count_overlaps.windows {
+        let scaling_interval = if let Some(aligned_overlap_interval) =
+            window.interval.clip_to(aligned_fragment_interval)
+        {
+            aligned_overlap_interval
+        } else if window.end() <= aligned_fragment_interval.start() {
+            left_nearest_base_interval
+        } else if window.start() >= aligned_fragment_interval.end() {
+            right_nearest_base_interval
+        } else {
+            bail!(
+                "assignment overlap window {} has no aligned overlap but is not outside aligned interval",
+                window.idx
+            );
+        };
+
+        scaling_overlaps.windows.push(OverlappingWindow::new(
+            window.idx,
+            scaling_interval,
+            window.overlap_fraction,
+        )?);
+    }
+
+    Ok(scaling_overlaps)
 }
 
 /// Average per-base scaling over an arbitrary span `[span_start_bp, span_end_bp)`.

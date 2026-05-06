@@ -31,11 +31,15 @@ use crate::{
         interval::{IndexedInterval, Interval},
         io::dot_join,
         midpoint::midpoint_random_even_for_fragment,
-        overlaps::{OverlappingWindow, OverlappingWindows, find_overlapping_windows},
+        overlaps::find_overlapping_windows,
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
-        scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
+        scale_genome::{
+            build_reference_based_scaling_overlaps_for_assignment_overlaps,
+            compute_per_window_scaling_over_fragment_for_selected_windows,
+            compute_per_window_scaling_over_overlap,
+        },
         temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
         tiled_run::{
@@ -134,48 +138,6 @@ fn configured_max_fragment_reach_bp(opt: &LengthsConfig, length_axis: &LengthAxi
     length_axis
         .max_fragment_length()
         .saturating_add(max_soft_clip_bases.max(max_deletion_bases))
-}
-
-/// Build the scaling-overlap view for `CountOverlap` under `clip_mode=adjust`.
-///
-/// The overlap fractions must still come from the clip-adjusted assignment
-/// geometry, but scaling itself should stay reference-based. So each counted
-/// window samples scaling from its aligned overlap with the fragment when
-/// possible, and otherwise from the nearest aligned reference base.
-fn build_reference_based_scaling_overlaps_for_clip_adjusted_count_overlap(
-    count_overlaps: &OverlappingWindows,
-    aligned_fragment_interval: Interval<u64>,
-) -> Result<OverlappingWindows> {
-    let left_nearest_base_interval = Interval::new(
-        aligned_fragment_interval.start(),
-        aligned_fragment_interval.start() + 1,
-    )?;
-    let right_nearest_base_interval = Interval::new(
-        aligned_fragment_interval.end() - 1,
-        aligned_fragment_interval.end(),
-    )?;
-
-    let mut scaling_overlaps = OverlappingWindows::new(aligned_fragment_interval);
-    for window in &count_overlaps.windows {
-        let scaling_sample_interval = if let Some(aligned_overlap_interval) =
-            window.interval.clip_to(aligned_fragment_interval)
-        {
-            aligned_overlap_interval
-        } else if window.end() <= aligned_fragment_interval.start() {
-            left_nearest_base_interval
-        } else {
-            debug_assert!(window.start() >= aligned_fragment_interval.end());
-            right_nearest_base_interval
-        };
-
-        scaling_overlaps.windows.push(OverlappingWindow::new(
-            window.idx,
-            scaling_sample_interval,
-            window.overlap_fraction,
-        )?);
-    }
-
-    Ok(scaling_overlaps)
 }
 
 fn reorder_bed_outputs_by_original_index(
@@ -704,7 +666,7 @@ fn process_tile(
     let max_fragment_reach_bp = configured_max_fragment_reach_bp(opt, length_axis.as_ref()) as u64;
     // One BAM reader per tile
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
-    debug_assert_eq!(_tid_check, tile.tid as u32);
+    tile.ensure_matches_bam_tid(_tid_check)?;
 
     // Counters
     let mut counter = LengthsCounters::default();
@@ -1051,30 +1013,32 @@ fn process_tile(
                 .collect();
 
             // Calculate the weight per overlapping count-window
-            // NOTE: `compute_window_scaling_over_fragment` always returns
-            // an overlap fraction of 1.0 (count full fragment)!
+            // NOTE: `compute_per_window_scaling_over_fragment_for_selected_windows` 
+            // always returns an overlap fraction of 1.0 (count full fragment)!
             let overlap_weights = match opt.window_assignment.assign_by {
                 WindowAssigner::CountOverlap => {
                     if matches!(opt.clip_mode, ClipMode::Adjust) {
                         let scaling_overlaps =
-                            build_reference_based_scaling_overlaps_for_clip_adjusted_count_overlap(
+                            build_reference_based_scaling_overlaps_for_assignment_overlaps(
                                 &overlapping_windows,
                                 aligned_fragment_interval,
                             )?;
-                        compute_window_scaling_over_overlap(
-                            &scaling_overlaps,
+                        compute_per_window_scaling_over_overlap(
+                            &overlapping_windows,
+                            Some(&scaling_overlaps),
                             &overlapping_scaling_bin_indices,
                             scaling_chr,
                         )?
                     } else {
-                        compute_window_scaling_over_overlap(
+                        compute_per_window_scaling_over_overlap(
                             &overlapping_windows,
+                            None,
                             &overlapping_scaling_bin_indices,
                             scaling_chr,
                         )?
                     }
                 }
-                _ => compute_window_scaling_over_fragment(
+                _ => compute_per_window_scaling_over_fragment_for_selected_windows(
                     aligned_fragment_interval,
                     &overlapping_windows,
                     &overlapping_scaling_bin_indices,
@@ -1083,10 +1047,11 @@ fn process_tile(
             };
 
             // Count up the weight per overlapping count-window
-            for (overlapped_window_idx, scaling_weight, overlap_fraction_to_count) in
-                overlap_weights
-            {
-                let count_weight = overlap_fraction_to_count * scaling_weight * gc_weight;
+            for window_scaling in overlap_weights {
+                let overlapped_window_idx = window_scaling.window_idx;
+                let count_weight = window_scaling.overlap_fraction_to_count
+                    * window_scaling.scaling_weight
+                    * gc_weight;
                 match window_opt {
                     DistributionWindowSpec::GroupedBed(_) => {
                         let windows_chr = windows_chr

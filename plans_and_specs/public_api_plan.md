@@ -95,8 +95,8 @@ Current commands either load a chromosome -> scaling-bin map, compute an average
 
 - `shared::scale_genome::load_scaling_factors_tsv`
 - `shared::scale_genome::apply_scaling_to_coverage_in_place`
-- `shared::scale_genome::compute_window_scaling_over_overlap`
-- `shared::scale_genome::compute_window_scaling_over_fragment`
+- `shared::scale_genome::compute_per_window_scaling_over_overlap`
+- `shared::scale_genome::compute_per_window_scaling_over_fragment`
 - `shared::overlaps::OverlappingWindows`
 - `shared::overlaps::OverlappingWindow`
 - `shared::overlaps::find_overlapping_windows`
@@ -225,8 +225,8 @@ Maps from current code:
 - Apply scaling to a positional signal in place
   - `shared::scale_genome::apply_scaling_to_coverage_in_place`
 - Average scaling over an interval or overlap span
-  - `shared::scale_genome::compute_window_scaling_over_overlap`
-  - `shared::scale_genome::compute_window_scaling_over_fragment`
+  - `shared::scale_genome::compute_per_window_scaling_over_overlap`
+  - `shared::scale_genome::compute_per_window_scaling_over_fragment`
 
 Notes:
 

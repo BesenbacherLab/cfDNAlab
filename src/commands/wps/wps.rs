@@ -784,7 +784,7 @@ pub(crate) fn wps_for_tile(
 )> {
     // Open a fresh BAM reader for this thread
     let (mut reader, tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
-    debug_assert!(tid_check == tile.tid as u32);
+    tile.ensure_matches_bam_tid(tid_check)?;
 
     let mut counter = WPSCounters::default();
 

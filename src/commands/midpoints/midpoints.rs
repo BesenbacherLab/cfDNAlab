@@ -34,7 +34,7 @@ use crate::{
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
-        scale_genome::compute_window_scaling_over_fragment,
+        scale_genome::compute_per_window_scaling_over_fragment,
         temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
         tiled_run::{
@@ -417,7 +417,7 @@ fn process_tile(
 ) -> anyhow::Result<(ProfileGroupsCounters, Option<PathBuf>)> {
     // Open a fresh BAM reader for this thread
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
-    debug_assert!(_tid_check == tile.tid as u32);
+    tile.ensure_matches_bam_tid(_tid_check)?;
 
     // Initialize counters (default -> 0s)
     let mut counter = ProfileGroupsCounters::default();
@@ -657,7 +657,7 @@ fn process_tile(
                 .collect();
 
             // Calculate the weight per overlapping count-window
-            let overlap_weights = compute_window_scaling_over_fragment(
+            let overlap_weights = compute_per_window_scaling_over_fragment(
                 fragment.interval.try_to_u64()?,
                 &overlapping_windows,
                 &overlapping_scaling_bin_indices,
@@ -665,7 +665,9 @@ fn process_tile(
             )?;
 
             // Count up the weight per overlapping count-window
-            for (overlapped_window_idx, scaling_weight, _) in overlap_weights {
+            for window_scaling in overlap_weights {
+                let overlapped_window_idx = window_scaling.window_idx;
+                let scaling_weight = window_scaling.scaling_weight;
                 let window = core_overlapping_windows[overlapped_window_idx];
                 let window_start = window.start();
                 let window_end = window.end();

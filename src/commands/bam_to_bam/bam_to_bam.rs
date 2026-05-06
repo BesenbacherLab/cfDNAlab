@@ -35,7 +35,7 @@ use crate::{
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq,
-        scale_genome::compute_window_scaling_over_fragment,
+        scale_genome::compute_per_window_scaling_over_fragment,
         windowing::ensure_plain_bed_windows_not_empty,
     },
 };
@@ -400,16 +400,16 @@ fn process_chrom(
                 .collect();
 
             // Calculate the weight per overlapping count-window
-            // NOTE: `compute_window_scaling_over_fragment` always returns
+            // NOTE: `compute_per_window_scaling_over_fragment` always returns
             // an overlap fraction of 1.0 (count full fragment)!
-            let scaling_weight = compute_window_scaling_over_fragment(
+            let scaling_weight = compute_per_window_scaling_over_fragment(
                 fragment.interval.try_to_u64()?,
                 &overlapping_windows,
                 &overlapping_scaling_bin_indices,
                 coverage_scaling_chr,
             )?
             .pop()
-            .map(|(_, w, _)| w)
+            .map(|window_scaling| window_scaling.scaling_weight)
             .expect("no overlapping scaling bins found");
 
             Some(scaling_weight)
@@ -435,14 +435,14 @@ fn process_chrom(
                 .map(|w| w.idx)
                 .collect();
 
-            let scaling_weight = compute_window_scaling_over_fragment(
+            let scaling_weight = compute_per_window_scaling_over_fragment(
                 fragment.interval.try_to_u64()?,
                 &overlapping_windows,
                 &overlapping_scaling_bin_indices,
                 count_scaling_chr,
             )?
             .pop()
-            .map(|(_, w, _)| w)
+            .map(|window_scaling| window_scaling.scaling_weight)
             .expect("no overlapping count-based scaling bins found");
 
             Some(scaling_weight)

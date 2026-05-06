@@ -2300,6 +2300,60 @@ fn endpoint_assigns_left_and_right_end_motifs_to_separate_windows() -> Result<()
 }
 
 #[test]
+fn scaled_endpoint_assignment_uses_each_selected_window_interval() -> Result<()> {
+    // Arrange: fragment [10,20) on ACGT-repeat reference with endpoint assignment.
+    // - left terminal base:  seq[10] = G  -> label "_G"
+    // - right terminal base: seq[19] = T  -> oriented right-end label "_A"
+    //
+    // Both BED rows overlap the fragment-level candidate interval, but each row contains only one
+    // endpoint. With a chromosome-wide scaling factor of 2.0, the scaled path must keep the
+    // selected window interval paired with its own output row:
+    // - row 0 [10,11) counts only the left endpoint at weight 2.0
+    // - row 1 [19,20) counts only the right endpoint at weight 2.0
+    let bam = simple_paired_fragment_bam("ends_scaled_endpoint_split", 10, 10, 4)?;
+    let reference = simple_reference_twobit()?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    let scaling_path = out_dir.path().join("scaling.tsv");
+    write_bed(
+        &windows_bed,
+        &[("chr1", 10, 11, "left"), ("chr1", 19, 20, "right")],
+    )?;
+    write_scaling_factors(&scaling_path, &[("chr1", 0, 256, 2.0)])?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_ref_2bit(Some(reference.path.clone()));
+    cfg.source_inside = KmerSource::Reference;
+    cfg.all_motifs = true;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+        by_grouped_bed: None,
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    cfg.set_scaling_factors(Some(scaling_path));
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 10;
+        lengths.max_fragment_length = 10;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(motifs, vec!["_A", "_C", "_G", "_T"]);
+    assert_eq!(matrix.shape(), &[2, 4]);
+    assert_eq!(motif_count(&matrix, &motifs, 0, "_G"), 2.0);
+    assert_eq!(motif_count(&matrix, &motifs, 1, "_A"), 2.0);
+    assert_eq!(matrix.sum(), 4.0);
+    Ok(())
+}
+
+#[test]
 fn midpoint_assigns_both_end_motifs_to_the_midpoint_window() -> Result<()> {
     // Arrange: fragment [10,20) has even midpoint 14 or 15, both inside [14,16).
     // So midpoint assignment should count both end motifs in that one window.
@@ -3887,6 +3941,305 @@ fn raw_shifted_boundary_endpoint_assignment_keeps_a_left_window_that_only_raw_re
     assert_eq!(matrix.shape(), &[1, 4]);
     assert_eq!(motif_count(&matrix, &motifs, 0, "_T"), 1.0);
     assert_eq!(matrix.sum(), 1.0);
+    Ok(())
+}
+
+#[test]
+fn scaled_raw_shifted_boundary_endpoint_counts_windows_reached_only_by_raw_clipping_with_aligned_fragment_scaling()
+-> Result<()> {
+    // Arrange: unpaired 2S10M2S at pos 10 with scaling enabled.
+    //
+    // Mental derivation:
+    // - aligned interval is [10,20), so non-CountOverlap scaling averages over those 10 bases
+    // - raw assignment interval is [8,22), so the endpoints are 8 and 21
+    // - BED windows [8,9) and [21,22) are candidates only because raw clipping shifts endpoints
+    //   there
+    // - scaling bins give aligned-fragment average (2*1 + 1*9) / 10 = 1.1
+    // - the shifted-only window would instead see 100.0, and nearest aligned base [10,11) would
+    //   see 2.0, so the left row distinguishes the intended branch from both wrong paths
+    // - the right row must use the same aligned-fragment average, not the nearest right base 1.0
+    //   or the shifted-only scaling factor 100.0
+    let bam = single_read_bam(
+        "ends_scaled_raw_left_of_aligned_span",
+        10,
+        vec![('S', 2), ('M', 10), ('S', 2)],
+        b"TTAAAAAAAAAAAA",
+    )?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    let scaling_path = out_dir.path().join("scaling.tsv");
+    write_bed(
+        &windows_bed,
+        &[
+            ("chr1", 8, 9, "left_raw_only"),
+            ("chr1", 21, 22, "right_raw_only"),
+        ],
+    )?;
+    write_scaling_factors(
+        &scaling_path,
+        &[
+            ("chr1", 0, 10, 100.0),
+            ("chr1", 10, 11, 2.0),
+            ("chr1", 11, 20, 1.0),
+            ("chr1", 20, 256, 100.0),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.tile_size = 10;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+        by_grouped_bed: None,
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Endpoint,
+    });
+    cfg.set_scaling_factors(Some(scaling_path));
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 14;
+        lengths.max_fragment_length = 14;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[2, 4]);
+    let expected_count = 11.0 / 10.0;
+    assert!((motif_count(&matrix, &motifs, 0, "_T") - expected_count).abs() < 1e-12);
+    assert!((motif_count(&matrix, &motifs, 1, "_T") - expected_count).abs() < 1e-12);
+    assert!((matrix.row(0).sum() - expected_count).abs() < 1e-12);
+    assert!((matrix.row(1).sum() - expected_count).abs() < 1e-12);
+    assert!((matrix.sum() - 2.0 * expected_count).abs() < 1e-12);
+    Ok(())
+}
+
+#[test]
+fn scaled_raw_shifted_boundary_midpoint_counts_window_reached_only_by_raw_clipping_with_aligned_fragment_scaling()
+-> Result<()> {
+    // Arrange: unpaired 20S10M at pos 20 with midpoint assignment.
+    //
+    // Mental derivation:
+    // - aligned interval is [20,30)
+    // - raw assignment interval is [0,30), so the even midpoint is either 14 or 15
+    // - BED window [14,16) is selected only because raw clipping shifts assignment left
+    // - scaling bins give aligned-fragment average (2*1 + 1*9) / 10 = 1.1
+    // - a wrong selected-window scaling path would see 100.0, and an old aligned-overlap filter
+    //   would drop the selected row entirely
+    // - both oriented end motifs are "_T", so the row sum is 2 * 1.1
+    let bam = single_read_bam(
+        "ends_scaled_raw_midpoint_left_of_aligned_span",
+        20,
+        vec![('S', 20), ('M', 10)],
+        b"TAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    )?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    let scaling_path = out_dir.path().join("scaling.tsv");
+    write_bed(&windows_bed, &[("chr1", 14, 16, "raw_midpoint_only")])?;
+    write_scaling_factors(
+        &scaling_path,
+        &[
+            ("chr1", 0, 20, 100.0),
+            ("chr1", 20, 21, 2.0),
+            ("chr1", 21, 30, 1.0),
+            ("chr1", 30, 256, 100.0),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.tile_size = 10;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+        by_grouped_bed: None,
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::Midpoint,
+    });
+    cfg.set_scaling_factors(Some(scaling_path));
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 30;
+        lengths.max_fragment_length = 30;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[1, 4]);
+    let expected_count = 2.0 * (11.0 / 10.0);
+    assert!((motif_count(&matrix, &motifs, 0, "_T") - expected_count).abs() < 1e-12);
+    assert!((matrix.sum() - expected_count).abs() < 1e-12);
+    Ok(())
+}
+
+#[test]
+fn scaled_raw_shifted_boundary_count_overlap_uses_nearest_aligned_base_for_clipped_only_window()
+-> Result<()> {
+    // Arrange: unpaired 2S10M2S at pos 10 with count-overlap assignment.
+    //
+    // Mental derivation:
+    // - aligned interval is [10,20)
+    // - raw assignment interval is [8,22), length 14
+    // - BED window [8,9) has assignment overlap fraction 1/14
+    // - the window is clipped-only, so scaling averages the nearest aligned base [10,11)
+    // - scaling factor at [10,11) is 2.0
+    // - CountOverlap counts both ends into the overlapping window, each with weight 2/14
+    let bam = single_read_bam(
+        "ends_scaled_raw_count_overlap_left_nearest",
+        10,
+        vec![('S', 2), ('M', 10), ('S', 2)],
+        b"TTAAAAAAAAAAAA",
+    )?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    let scaling_path = out_dir.path().join("scaling.tsv");
+    write_bed(&windows_bed, &[("chr1", 8, 9, "left_raw_only")])?;
+    write_scaling_factors(
+        &scaling_path,
+        &[
+            ("chr1", 0, 10, 100.0),
+            ("chr1", 10, 11, 2.0),
+            ("chr1", 11, 20, 1.0),
+            ("chr1", 20, 256, 100.0),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.tile_size = 10;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+        by_grouped_bed: None,
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::CountOverlap,
+    });
+    cfg.set_scaling_factors(Some(scaling_path));
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 14;
+        lengths.max_fragment_length = 14;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[1, 4]);
+    let expected_count = 2.0 * (2.0 / 14.0);
+    assert!((motif_count(&matrix, &motifs, 0, "_T") - expected_count).abs() < 1e-12);
+    assert!((matrix.sum() - expected_count).abs() < 1e-12);
+    Ok(())
+}
+
+#[test]
+fn scaled_raw_shifted_boundary_count_overlap_uses_reference_scaling_for_left_aligned_and_right_rows()
+-> Result<()> {
+    // Arrange: unpaired 2S10M2S at pos 10 with count-overlap assignment.
+    //
+    // Mental derivation:
+    // - aligned interval is [10,20)
+    // - raw assignment interval is [8,22), length 14
+    // - row 0 [8,9) is left clipped-only, so scaling averages [10,11) at weight 2.0
+    // - row 1 [14,16) overlaps aligned bases, so scaling averages [14,16) at weight 5.0
+    // - row 2 [21,22) is right clipped-only, so scaling averages [19,20) at weight 7.0
+    // - overlap_fraction remains assignment-space: 1/14, 2/14, and 1/14
+    // - CountOverlap counts both oriented end motifs into every overlapping row
+    let bam = single_read_bam(
+        "ends_scaled_raw_count_overlap_left_aligned_right",
+        10,
+        vec![('S', 2), ('M', 10), ('S', 2)],
+        b"TTAAAAAAAAAAAA",
+    )?;
+    let out_dir = TempDir::new()?;
+    let windows_bed = out_dir.path().join("windows.bed");
+    let scaling_path = out_dir.path().join("scaling.tsv");
+    write_bed(
+        &windows_bed,
+        &[
+            ("chr1", 8, 9, "left_raw_only"),
+            ("chr1", 14, 16, "aligned_overlap"),
+            ("chr1", 21, 22, "right_raw_only"),
+        ],
+    )?;
+    write_scaling_factors(
+        &scaling_path,
+        &[
+            ("chr1", 0, 10, 100.0),
+            ("chr1", 10, 11, 2.0),
+            ("chr1", 11, 14, 1.0),
+            ("chr1", 14, 16, 5.0),
+            ("chr1", 16, 19, 1.0),
+            ("chr1", 19, 20, 7.0),
+            ("chr1", 20, 256, 100.0),
+        ],
+    )?;
+
+    let mut cfg = base_config(&bam.bam, out_dir.path(), 1, 0);
+    cfg.set_unpaired(UnpairedArgs {
+        reads_are_fragments: true,
+    });
+    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.source_inside = KmerSource::Read;
+    cfg.all_motifs = true;
+    cfg.tile_size = 10;
+    cfg.set_windows(DistributionWindowsArgs {
+        by_size: None,
+        by_bed: Some(windows_bed),
+        by_grouped_bed: None,
+    });
+    cfg.set_window_assignment(AssignMotifToWindowArgs {
+        assign_by: WindowMotifAssigner::CountOverlap,
+    });
+    cfg.set_scaling_factors(Some(scaling_path));
+    {
+        let lengths = cfg.fragment_lengths_mut();
+        lengths.min_fragment_length = 14;
+        lengths.max_fragment_length = 14;
+    }
+
+    // Act
+    run(&cfg)?;
+    let (motifs, matrix) = read_dense_output(out_dir.path())?;
+
+    // Assert
+    assert_eq!(matrix.shape(), &[3, 4]);
+    let expected_left = 2.0 * (2.0 / 14.0);
+    let expected_aligned = 2.0 * (5.0 * 2.0 / 14.0);
+    let expected_right = 2.0 * (7.0 / 14.0);
+    assert!((motif_count(&matrix, &motifs, 0, "_T") - expected_left).abs() < 1e-12);
+    assert!((motif_count(&matrix, &motifs, 1, "_T") - expected_aligned).abs() < 1e-12);
+    assert!((motif_count(&matrix, &motifs, 2, "_T") - expected_right).abs() < 1e-12);
+    assert!((matrix.row(0).sum() - expected_left).abs() < 1e-12);
+    assert!((matrix.row(1).sum() - expected_aligned).abs() < 1e-12);
+    assert!((matrix.row(2).sum() - expected_right).abs() < 1e-12);
+    assert!((matrix.sum() - (expected_left + expected_aligned + expected_right)).abs() < 1e-12);
     Ok(())
 }
 

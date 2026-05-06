@@ -2471,6 +2471,80 @@ mod tests_lengths_command {
     }
 
     #[test]
+    fn clip_adjust_midpoint_with_scaling_counts_window_reached_only_by_soft_clip_extension()
+    -> Result<()> {
+        // Human verification status: verified by hand
+        // One unpaired 20S10M read-as-fragment at pos 20 with midpoint assignment.
+        //
+        // Mental derivation:
+        // - aligned interval is [20,30)
+        // - clip-adjust assignment interval is [0,30), so the even midpoint is either 14 or 15
+        // - BED window [14,16) is selected only because soft clipping extends assignment left
+        // - scaling still uses the aligned reference span
+        // - scaling bins give aligned-fragment average (2*1 + 1*9) / 10 = 1.1
+        // - an aligned-overlap filter would drop [14,16) and produce zero instead
+        let bam = single_read_fragment_bam_with_cigar(
+            "lengths_clip_adjust_scaled_midpoint_left_of_aligned_span",
+            20,
+            vec![('S', 20), ('M', 10)],
+            b"TAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_vec(),
+        )?;
+        let out_dir = TempDir::new()?;
+        let windows_bed = out_dir.path().join("windows.bed");
+        let scaling_path = out_dir.path().join("scaling.tsv");
+        write_bed(&windows_bed, &[("chr1", 14, 16, "raw_midpoint_only")])?;
+        write_scaling_factors(
+            &scaling_path,
+            &[
+                ("chr1", 0, 20, 100.0),
+                ("chr1", 20, 21, 2.0),
+                ("chr1", 21, 30, 1.0),
+                ("chr1", 30, 200, 100.0),
+            ],
+        )?;
+
+        let mut cfg = LengthsConfig::new(
+            IOCArgs {
+                bam: bam.bam.clone(),
+                output_dir: out_dir.path().to_path_buf(),
+                n_threads: 1,
+            },
+            base_chromosomes(&["chr1"]),
+        );
+        cfg.set_indel_mode(IndelMode::Ignore);
+        cfg.clip_mode = ClipMode::Adjust;
+        cfg.set_unpaired(UnpairedArgs {
+            reads_are_fragments: true,
+        });
+        cfg.set_windows(DistributionWindowsArgs {
+            by_size: None,
+            by_bed: Some(windows_bed),
+            by_grouped_bed: None,
+        });
+        cfg.set_window_assignment(AssignToWindowArgs {
+            assign_by: WindowAssigner::Midpoint,
+        });
+        cfg.set_scaling_factors(Some(scaling_path));
+        cfg.set_min_mapq(0);
+        cfg.set_require_proper_pair(false);
+        cfg.set_tile_size(10);
+        cfg.set_per_bp_length_bins(30, 30);
+
+        run(&cfg)?;
+
+        let npy_path = out_dir
+            .path()
+            .join(dot_join(&[cfg.output_prefix.trim(), "length_counts.npy"]));
+        let arr: Array2<f64> = read_npy(&npy_path)?;
+        assert_eq!(arr.shape(), &[1, 1]);
+        let expected_count = 11.0 / 10.0;
+        assert!((arr[(0, 0)] - expected_count).abs() < 1e-12);
+        assert!((arr.sum() - expected_count).abs() < 1e-12);
+
+        Ok(())
+    }
+
+    #[test]
     fn clip_adjust_count_overlap_scaling_uses_the_nearest_aligned_base_for_clipped_only_windows()
     -> Result<()> {
         // Human verification status: unverified
@@ -2482,7 +2556,7 @@ mod tests_lengths_command {
         // - [20,30): 2 / 14
         //
         // Scaling should remain reference-based:
-        // - the middle window samples its aligned overlap [10,20) => weight 3
+        // - the middle window averages its aligned overlap [10,20) => weight 3
         // - the clipped-only left/right windows have no aligned overlap, so they should use the
         //   nearest aligned base instead of the flanking bins
         // - with flanking bins set to 11 and 13, all three windows should still use weight 3

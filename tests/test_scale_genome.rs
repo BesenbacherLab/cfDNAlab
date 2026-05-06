@@ -234,7 +234,10 @@ mod tests_compute_window_scaling {
     use cfdnalab::shared::{
         interval::{IndexedInterval, Interval},
         overlaps::{OverlappingWindow, OverlappingWindows, find_overlapping_windows},
-        scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
+        scale_genome::{
+            build_reference_based_scaling_overlaps_for_assignment_overlaps,
+            compute_per_window_scaling_over_fragment, compute_per_window_scaling_over_overlap,
+        },
     };
 
     fn assert_f64_close(actual: f64, expected: f64, eps: f64, context: &str) {
@@ -270,8 +273,272 @@ mod tests_compute_window_scaling {
         Ok(overlaps)
     }
 
+    fn make_nontrivial_window_fragment_overlaps() -> anyhow::Result<OverlappingWindows> {
+        // Query/fragment interval is [20,90), length 70.
+        //
+        // Count windows:
+        // - idx 5, interval [0,50)    -> overlap [20,50) = 30 bp
+        // - idx 8, interval [50,100)  -> overlap [50,90) = 40 bp
+        //
+        // The deliberately non-sequential indices make this sensitive to row identity. A caller
+        // must not infer that output position and window index are interchangeable.
+        let fragment = Interval::new(20, 90)?;
+        let mut overlaps = OverlappingWindows::new(fragment);
+        overlaps.windows.push(OverlappingWindow::new(
+            5,
+            Interval::new(0, 50)?,
+            30.0 / 70.0,
+        )?);
+        overlaps.windows.push(OverlappingWindow::new(
+            8,
+            Interval::new(50, 100)?,
+            40.0 / 70.0,
+        )?);
+        Ok(overlaps)
+    }
+
     #[test]
-    fn compute_window_scaling_over_fragment_uses_explicit_full_fragment_span_for_every_overlapping_window()
+    fn reference_based_scaling_overlaps_use_aligned_overlap_or_nearest_aligned_base()
+    -> anyhow::Result<()> {
+        // Human verification status: verified by hand
+        // Arrange:
+        // Assignment interval [8,22) extends beyond aligned interval [10,20).
+        // Three selected assignment windows cover:
+        // - [8,9):   clipped-only left  -> average nearest aligned base [10,11)
+        // - [14,16): aligned overlap    -> average [14,16)
+        // - [21,22): clipped-only right -> average nearest aligned base [19,20)
+        //
+        // Scaling bins make those three scaling intervals distinguishable:
+        // - [10,11): 2
+        // - [14,16): 5
+        // - [19,20): 7
+        let mut assignment_overlaps = OverlappingWindows::new(Interval::new(8, 22)?);
+        assignment_overlaps.windows.push(OverlappingWindow::new(
+            5,
+            Interval::new(8, 9)?,
+            1.0 / 14.0,
+        )?);
+        assignment_overlaps.windows.push(OverlappingWindow::new(
+            6,
+            Interval::new(14, 16)?,
+            2.0 / 14.0,
+        )?);
+        assignment_overlaps.windows.push(OverlappingWindow::new(
+            7,
+            Interval::new(21, 22)?,
+            1.0 / 14.0,
+        )?);
+        let aligned_interval = Interval::new(10, 20)?;
+        let scaling_chr = vec![
+            (0_u64, 10_u64, 100.0_f32),
+            (10, 11, 2.0),
+            (11, 14, 1.0),
+            (14, 16, 5.0),
+            (16, 19, 1.0),
+            (19, 20, 7.0),
+            (20, 30, 100.0),
+        ];
+        let scaling_bin_indices = vec![1_usize, 2, 3, 4, 5];
+
+        // Act
+        let scaling_overlaps = build_reference_based_scaling_overlaps_for_assignment_overlaps(
+            &assignment_overlaps,
+            aligned_interval,
+        )?;
+        let scaled_rows = compute_per_window_scaling_over_overlap(
+            &assignment_overlaps,
+            Some(&scaling_overlaps),
+            &scaling_bin_indices,
+            &scaling_chr,
+        )?;
+
+        // Assert
+        assert_eq!(scaling_overlaps.interval, aligned_interval);
+        assert_eq!(scaling_overlaps.windows.len(), 3);
+        assert_eq!(scaling_overlaps.windows[0].idx, 5);
+        assert_eq!(scaling_overlaps.windows[0].interval, Interval::new(10, 11)?);
+        assert_f64_close(
+            scaling_overlaps.windows[0].overlap_fraction,
+            1.0 / 14.0,
+            1e-12,
+            "left clipped-only assignment fraction",
+        );
+        assert_eq!(scaling_overlaps.windows[1].idx, 6);
+        assert_eq!(scaling_overlaps.windows[1].interval, Interval::new(14, 16)?);
+        assert_f64_close(
+            scaling_overlaps.windows[1].overlap_fraction,
+            2.0 / 14.0,
+            1e-12,
+            "aligned assignment fraction",
+        );
+        assert_eq!(scaling_overlaps.windows[2].idx, 7);
+        assert_eq!(scaling_overlaps.windows[2].interval, Interval::new(19, 20)?);
+        assert_f64_close(
+            scaling_overlaps.windows[2].overlap_fraction,
+            1.0 / 14.0,
+            1e-12,
+            "right clipped-only assignment fraction",
+        );
+
+        assert_eq!(scaled_rows.len(), 3);
+        assert_eq!(scaled_rows[0].window_idx, 5);
+        assert_eq!(scaled_rows[0].window_interval, Interval::new(8, 9)?);
+        assert_eq!(scaled_rows[0].scaling_interval, Interval::new(10, 11)?);
+        assert_f64_close(
+            scaled_rows[0].scaling_weight,
+            2.0,
+            1e-12,
+            "left nearest weight",
+        );
+        assert_f64_close(
+            scaled_rows[0].overlap_fraction_to_count,
+            1.0 / 14.0,
+            1e-12,
+            "left overlap fraction to count",
+        );
+        assert_eq!(scaled_rows[1].window_idx, 6);
+        assert_eq!(scaled_rows[1].window_interval, Interval::new(14, 16)?);
+        assert_eq!(scaled_rows[1].scaling_interval, Interval::new(14, 16)?);
+        assert_f64_close(
+            scaled_rows[1].scaling_weight,
+            5.0,
+            1e-12,
+            "aligned overlap weight",
+        );
+        assert_f64_close(
+            scaled_rows[1].overlap_fraction_to_count,
+            2.0 / 14.0,
+            1e-12,
+            "aligned overlap fraction to count",
+        );
+        assert_eq!(scaled_rows[2].window_idx, 7);
+        assert_eq!(scaled_rows[2].window_interval, Interval::new(21, 22)?);
+        assert_eq!(scaled_rows[2].scaling_interval, Interval::new(19, 20)?);
+        assert_f64_close(
+            scaled_rows[2].scaling_weight,
+            7.0,
+            1e-12,
+            "right nearest weight",
+        );
+        assert_f64_close(
+            scaled_rows[2].overlap_fraction_to_count,
+            1.0 / 14.0,
+            1e-12,
+            "right overlap fraction to count",
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn compute_window_scaling_helpers_preserve_selected_window_row_identity() -> anyhow::Result<()>
+    {
+        // Human verification status: verified by hand
+        // Arrange:
+        // Use one fragment/query interval [20,90) and two count windows with non-sequential
+        // indices. The expected rows must stay in count-window order and carry the selected
+        // window interval directly:
+        // - row 0 carries window idx 5, interval [0,50), and overlap fraction 30/70
+        // - row 1 carries window idx 8, interval [50,100), and overlap fraction 40/70
+        //
+        // Scaling bins:
+        // - [0,30):   1
+        // - [30,70):  3
+        // - [70,120): 5
+        //
+        // Full-fragment average over [20,90):
+        //   ([20,30) 10 bp * 1 + [30,70) 40 bp * 3 + [70,90) 20 bp * 5) / 70
+        //   = (10 + 120 + 100) / 70 = 23/7.
+        //
+        // Overlap-only averages:
+        // - left overlap [20,50): 10 bp at 1 and 20 bp at 3
+        //   -> (10 + 60) / 30 = 7/3
+        // - right overlap [50,90): 20 bp at 3 and 20 bp at 5
+        //   -> (60 + 100) / 40 = 4
+        let count_overlaps = make_nontrivial_window_fragment_overlaps()?;
+        let scaling_chr = vec![(0_u64, 30_u64, 1.0_f32), (30, 70, 3.0), (70, 120, 5.0)];
+        let scaling_bin_indices = vec![0_usize, 1, 2];
+
+        // Act
+        let fragment_rows = compute_per_window_scaling_over_fragment(
+            Interval::new(20, 90)?,
+            &count_overlaps,
+            &scaling_bin_indices,
+            &scaling_chr,
+        )?;
+        let overlap_rows = compute_per_window_scaling_over_overlap(
+            &count_overlaps,
+            None,
+            &scaling_bin_indices,
+            &scaling_chr,
+        )?;
+
+        // Assert
+        assert_eq!(fragment_rows.len(), 2);
+        assert_eq!(fragment_rows[0].window_idx, 5);
+        assert_eq!(fragment_rows[0].window_interval, Interval::new(0, 50)?);
+        assert_f64_close(
+            fragment_rows[0].scaling_weight,
+            23.0 / 7.0,
+            1e-12,
+            "left full-fragment weight",
+        );
+        assert_f64_close(
+            fragment_rows[0].overlap_fraction_to_count,
+            1.0,
+            1e-12,
+            "left full-fragment overlap fraction",
+        );
+        assert_eq!(fragment_rows[1].window_idx, 8);
+        assert_eq!(fragment_rows[1].window_interval, Interval::new(50, 100)?);
+        assert_f64_close(
+            fragment_rows[1].scaling_weight,
+            23.0 / 7.0,
+            1e-12,
+            "right full-fragment weight",
+        );
+        assert_f64_close(
+            fragment_rows[1].overlap_fraction_to_count,
+            1.0,
+            1e-12,
+            "right full-fragment overlap fraction",
+        );
+
+        assert_eq!(overlap_rows.len(), 2);
+        assert_eq!(overlap_rows[0].window_idx, 5);
+        assert_eq!(overlap_rows[0].window_interval, Interval::new(0, 50)?);
+        assert_f64_close(
+            overlap_rows[0].scaling_weight,
+            7.0 / 3.0,
+            1e-12,
+            "left overlap-only weight",
+        );
+        assert_f64_close(
+            overlap_rows[0].overlap_fraction_to_count,
+            30.0 / 70.0,
+            1e-12,
+            "left overlap fraction",
+        );
+        assert_eq!(overlap_rows[1].window_idx, 8);
+        assert_eq!(overlap_rows[1].window_interval, Interval::new(50, 100)?);
+        assert_f64_close(
+            overlap_rows[1].scaling_weight,
+            4.0,
+            1e-12,
+            "right overlap-only weight",
+        );
+        assert_f64_close(
+            overlap_rows[1].overlap_fraction_to_count,
+            40.0 / 70.0,
+            1e-12,
+            "right overlap fraction",
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn compute_per_window_scaling_over_fragment_uses_explicit_full_fragment_span_for_every_overlapping_window()
     -> anyhow::Result<()> {
         // Human verification status: unverified
         // Arrange:
@@ -302,7 +569,7 @@ mod tests_compute_window_scaling {
         let scaling_bin_indices = vec![0_usize, 1, 2, 3, 4];
 
         // Act
-        let out = compute_window_scaling_over_fragment(
+        let out = compute_per_window_scaling_over_fragment(
             Interval::new(20, 81)?,
             &count_overlaps,
             &scaling_bin_indices,
@@ -312,28 +579,40 @@ mod tests_compute_window_scaling {
         // Assert
         assert_eq!(out.len(), 2);
         let expected_weight = 60.0_f64 / 61.0_f64;
-        assert_eq!(out[0].0, 0);
+        assert_eq!(out[0].window_idx, 0);
+        assert_eq!(out[0].window_interval, Interval::new(0, 50)?);
         assert_f64_close(
-            out[0].1,
+            out[0].scaling_weight,
             expected_weight,
             1e-12,
             "left full-fragment weight",
         );
-        assert_f64_close(out[0].2, 1.0, 1e-12, "left full-fragment overlap fraction");
-        assert_eq!(out[1].0, 1);
         assert_f64_close(
-            out[1].1,
+            out[0].overlap_fraction_to_count,
+            1.0,
+            1e-12,
+            "left full-fragment overlap fraction",
+        );
+        assert_eq!(out[1].window_idx, 1);
+        assert_eq!(out[1].window_interval, Interval::new(50, 100)?);
+        assert_f64_close(
+            out[1].scaling_weight,
             expected_weight,
             1e-12,
             "right full-fragment weight",
         );
-        assert_f64_close(out[1].2, 1.0, 1e-12, "right full-fragment overlap fraction");
+        assert_f64_close(
+            out[1].overlap_fraction_to_count,
+            1.0,
+            1e-12,
+            "right full-fragment overlap fraction",
+        );
 
         Ok(())
     }
 
     #[test]
-    fn compute_window_scaling_over_overlap_uses_each_window_overlap_span() -> anyhow::Result<()> {
+    fn compute_per_window_scaling_over_overlap_uses_each_window_overlap_span() -> anyhow::Result<()> {
         // Human verification status: unverified
         // Arrange:
         // Reuse the same fragment/query interval [20,81), count windows, and scaling bins as the
@@ -363,31 +642,39 @@ mod tests_compute_window_scaling {
         let scaling_bin_indices = vec![0_usize, 1, 2, 3, 4];
 
         // Act
-        let out = compute_window_scaling_over_overlap(
+        let out = compute_per_window_scaling_over_overlap(
             &count_overlaps,
+            None,
             &scaling_bin_indices,
             &scaling_chr,
         )?;
 
         // Assert
         assert_eq!(out.len(), 2);
-        assert_eq!(out[0].0, 0);
-        assert_f64_close(out[0].1, 1.0, 1e-12, "left overlap-only weight");
+        assert_eq!(out[0].window_idx, 0);
+        assert_eq!(out[0].window_interval, Interval::new(0, 50)?);
         assert_f64_close(
-            out[0].2,
+            out[0].scaling_weight,
+            1.0,
+            1e-12,
+            "left overlap-only weight",
+        );
+        assert_f64_close(
+            out[0].overlap_fraction_to_count,
             (30.0_f32 / 61.0_f32) as f64,
             1e-7,
             "left overlap fraction",
         );
-        assert_eq!(out[1].0, 1);
+        assert_eq!(out[1].window_idx, 1);
+        assert_eq!(out[1].window_interval, Interval::new(50, 100)?);
         assert_f64_close(
-            out[1].1,
+            out[1].scaling_weight,
             30.0_f64 / 31.0_f64,
             1e-12,
             "right overlap-only weight",
         );
         assert_f64_close(
-            out[1].2,
+            out[1].overlap_fraction_to_count,
             (31.0_f32 / 61.0_f32) as f64,
             1e-7,
             "right overlap fraction",
@@ -412,7 +699,7 @@ mod tests_compute_window_scaling {
         // 2. Build an ordered BED-mode window list from that table.
         // 3. Ask the overlap finder which scaling bins touch fragment [20,81).
         // 4. Recover the overlap finder scan indices from the result.
-        // 5. Feed those indices into `compute_window_scaling_over_fragment(...)`.
+        // 5. Feed those indices into `compute_per_window_scaling_over_fragment(...)`.
         //
         // In BED mode, `find_overlapping_windows(...)` returns the scan position inside the
         // supplied ordered window list, not `IndexedInterval.idx`. This still gives the correct
@@ -465,7 +752,7 @@ mod tests_compute_window_scaling {
             .map(|window| window.idx)
             .collect();
 
-        let per_window_scaling = compute_window_scaling_over_fragment(
+        let per_window_scaling = compute_per_window_scaling_over_fragment(
             fragment,
             &count_overlaps,
             &overlapping_scaling_bin_indices,
@@ -488,33 +775,33 @@ mod tests_compute_window_scaling {
             "both count windows should receive the fragment-level scaling weight"
         );
         assert_eq!(
-            per_window_scaling[0].0, 0,
+            per_window_scaling[0].window_idx, 0,
             "left count window should retain its original window index"
         );
         assert_eq!(
-            per_window_scaling[1].0, 1,
+            per_window_scaling[1].window_idx, 1,
             "right count window should retain its original window index"
         );
         assert_f64_close(
-            per_window_scaling[0].1,
+            per_window_scaling[0].scaling_weight,
             148.0 / 61.0,
             1e-12,
             "left window fragment-average scaling",
         );
         assert_f64_close(
-            per_window_scaling[1].1,
+            per_window_scaling[1].scaling_weight,
             148.0 / 61.0,
             1e-12,
             "right window fragment-average scaling",
         );
         assert_f64_close(
-            per_window_scaling[0].2,
+            per_window_scaling[0].overlap_fraction_to_count,
             1.0,
             1e-12,
             "left window full-fragment overlap fraction",
         );
         assert_f64_close(
-            per_window_scaling[1].2,
+            per_window_scaling[1].overlap_fraction_to_count,
             1.0,
             1e-12,
             "right window full-fragment overlap fraction",

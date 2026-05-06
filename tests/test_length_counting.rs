@@ -14,7 +14,7 @@ mod tests {
         interval::{IndexedInterval, Interval},
         midpoint::{midpoint_random_even, midpoint_random_even_for_fragment},
         overlaps::find_overlapping_windows,
-        scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
+        scale_genome::{compute_per_window_scaling_over_fragment, compute_per_window_scaling_over_overlap},
     };
     use rand::RngCore;
 
@@ -102,11 +102,10 @@ mod tests {
         let scaling_chr: Vec<(u64, u64, f32)> = vec![(0, 100, 1.25)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
-        // (idx, avg_scaling_over_overlap, overlap_fraction)
-        let w = compute_window_scaling_over_overlap(&overlaps, &sf_idx, &scaling_chr)?;
+        let w = compute_per_window_scaling_over_overlap(&overlaps, None, &sf_idx, &scaling_chr)?;
         assert_eq!(w.len(), 1);
-        approx_eq(w[0].1, 1.25, 1e-6); // full-window overlap -> avg scaling is the bin's weight
-        approx_eq(w[0].2, 1.0, 1e-6); // overlap_fraction relative to fragment length
+        approx_eq(w[0].scaling_weight, 1.25, 1e-6); // full-window overlap -> avg scaling is the bin's weight
+        approx_eq(w[0].overlap_fraction_to_count, 1.0, 1e-6); // overlap_fraction relative to fragment length
         Ok(())
     }
 
@@ -136,10 +135,10 @@ mod tests {
         let scaling_chr = vec![(0, 2, 2.0), (2, 10, 1.0)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
-        let w = compute_window_scaling_over_overlap(&overlaps, &sf_idx, &scaling_chr)?;
+        let w = compute_per_window_scaling_over_overlap(&overlaps, None, &sf_idx, &scaling_chr)?;
         assert_eq!(w.len(), 1);
-        approx_eq(w[0].1, 1.2, 1e-6); // length-weighted average scaling
-        approx_eq(w[0].2, 1.0, 1e-6); // full overlap of fragment with window
+        approx_eq(w[0].scaling_weight, 1.2, 1e-6); // length-weighted average scaling
+        approx_eq(w[0].overlap_fraction_to_count, 1.0, 1e-6); // full overlap of fragment with window
         Ok(())
     }
 
@@ -178,14 +177,16 @@ mod tests {
         let scaling_chr = vec![(0, 5, 2.0), (5, 10, 1.0)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
-        // (idx, avg_scaling_over_overlap, overlap_fraction)
-        let w = compute_window_scaling_over_overlap(&overlaps, &sf_idx, &scaling_chr)?;
+        let w = compute_per_window_scaling_over_overlap(&overlaps, None, &sf_idx, &scaling_chr)?;
         assert_eq!(w.len(), 2);
 
         // Map by window idx for stable assertions, and multiply avg_scaling by overlap_fraction
         let mut by_idx = std::collections::BTreeMap::new();
-        for (idx, avg_scaling, overlap_fraction) in w {
-            by_idx.insert(idx, avg_scaling * overlap_fraction);
+        for window_scaling in w {
+            by_idx.insert(
+                window_scaling.window_idx,
+                window_scaling.scaling_weight * window_scaling.overlap_fraction_to_count,
+            );
         }
 
         approx_eq(*by_idx.get(&0).unwrap(), (2.0 / 6.0) * 2.0, 1e-6); // [3,5) in first window
@@ -220,11 +221,11 @@ mod tests {
         let scaling_chr = vec![(0, 3, 1.0), (3, 6, 2.0), (6, 9, 0.5)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
-        let w = compute_window_scaling_over_overlap(&overlaps, &sf_idx, &scaling_chr)?;
+        let w = compute_per_window_scaling_over_overlap(&overlaps, None, &sf_idx, &scaling_chr)?;
         assert_eq!(w.len(), 1);
-        approx_eq(w[0].1, 8.0 / 6.0, 1e-6); // avg scaling over the overlapped span
+        approx_eq(w[0].scaling_weight, 8.0 / 6.0, 1e-6); // avg scaling over the overlapped span
         // Overlap_fraction is 1.0 here because the single window completely contains [2,8)
-        approx_eq(w[0].2, 1.0, 1e-6);
+        approx_eq(w[0].overlap_fraction_to_count, 1.0, 1e-6);
         Ok(())
     }
 
@@ -251,15 +252,16 @@ mod tests {
 
         let scaling_chr = vec![(0, 10, 1.0)];
         let valid_sf_idx = vec![0usize];
-        let ok_rows = compute_window_scaling_over_overlap(&overlaps, &valid_sf_idx, &scaling_chr)?;
+        let ok_rows =
+            compute_per_window_scaling_over_overlap(&overlaps, None, &valid_sf_idx, &scaling_chr)?;
         assert_eq!(ok_rows.len(), 1);
-        approx_eq(ok_rows[0].1, 1.0, 1e-6);
-        approx_eq(ok_rows[0].2, 1.0, 1e-6);
+        approx_eq(ok_rows[0].scaling_weight, 1.0, 1e-6);
+        approx_eq(ok_rows[0].overlap_fraction_to_count, 1.0, 1e-6);
 
         let sf_idx: Vec<usize> = Vec::new();
 
-        let err =
-            compute_window_scaling_over_overlap(&overlaps, &sf_idx, &scaling_chr).unwrap_err();
+        let err = compute_per_window_scaling_over_overlap(&overlaps, None, &sf_idx, &scaling_chr)
+            .unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("scaling_bin_indices is empty"),
@@ -364,7 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn compute_window_scaling_over_fragment_returns_same_avg_for_all_overlaps() -> Result<()> {
+    fn compute_per_window_scaling_over_fragment_returns_same_avg_for_all_overlaps() -> Result<()> {
         // Human verification status: unverified
         // Two count windows, one fragment crossing both.
         // Average scaling is computed over the FULL fragment, so both rows share the same avg.
@@ -390,16 +392,16 @@ mod tests {
         let scaling_chr = vec![(0, 4, 2.0), (4, 7, 1.0), (7, 10, 3.0)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
-        let rows = compute_window_scaling_over_fragment(
+        let rows = compute_per_window_scaling_over_fragment(
             query_interval(frag_start, frag_end),
             &overlaps,
             &sf_idx,
             &scaling_chr,
         )?;
         assert_eq!(rows.len(), 2);
-        for (_idx, avg, overlap_fraction) in rows {
-            approx_eq(avg, 13.0 / 7.0, 1e-6);
-            approx_eq(overlap_fraction, 1.0, 1e-6);
+        for window_scaling in rows {
+            approx_eq(window_scaling.scaling_weight, 13.0 / 7.0, 1e-6);
+            approx_eq(window_scaling.overlap_fraction_to_count, 1.0, 1e-6);
         }
         Ok(())
     }
@@ -685,16 +687,16 @@ mod tests {
         let scaling_chr = vec![(0, 10, 1.0), (10, 20, 2.0), (20, 30, 3.0)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
-        let rows = compute_window_scaling_over_fragment(
+        let rows = compute_per_window_scaling_over_fragment(
             query_interval(frag_start, frag_end),
             &overlaps,
             &sf_idx,
             &scaling_chr,
         )?;
         assert_eq!(rows.len(), 3);
-        for (_idx, avg, overlap_fraction) in rows {
-            approx_eq(avg, 2.0, 1e-6);
-            approx_eq(overlap_fraction, 1.0, 1e-6);
+        for window_scaling in rows {
+            approx_eq(window_scaling.scaling_weight, 2.0, 1e-6);
+            approx_eq(window_scaling.overlap_fraction_to_count, 1.0, 1e-6);
         }
         Ok(())
     }

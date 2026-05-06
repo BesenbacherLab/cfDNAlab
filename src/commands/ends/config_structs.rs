@@ -299,16 +299,14 @@ pub struct ClippingArgs {
     ///
     /// - `"aligned"`:
     ///   Use the aligned start and end positions (the usual `cfDNAlab` fragment definition).
-    ///   This trusts the aligner's choice and ignores clipped bases in the read sequences.
+    ///   This ignores clipped bases in the read sequences.
     ///   
     ///   **NOTE**: If the aligner clipped the actual DNA molecule, these motifs may not reflect
     ///   the actual fragment ends.
     ///
     /// - `"raw-aligned-boundary"`:
     ///   Use the raw read bases, including soft-clipped bases, but keep the
-    ///   **aligned** fragment-end boundary.
-    ///
-    ///   The aligned boundary is used for outside-base lookup,
+    ///   **aligned** fragment-end genomic boundary for outside-base lookup,
     ///   window assignment, and motif-level blacklist validation.
     ///
     ///   This setting is only supported with `--source-inside read`.
@@ -323,8 +321,9 @@ pub struct ClippingArgs {
     ///
     ///   File-based GC correction and scaling-factor weighting still use the
     ///   aligned reference span. If the aligned length falls outside the GC
-    ///   package range, the fragment is considered invalid and is included in
-    ///   the GC correction failure statistics.
+    ///   package range, the fragment is considered invalid and is included
+    ///   in the GC correction failure statistics. When `--assign-by count-overlap`,
+    ///   clipped-only window contributions use the nearest aligned reference base for scaling.
     #[cfg_attr(
         feature = "cli",
         clap(

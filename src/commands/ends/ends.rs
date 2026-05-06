@@ -47,7 +47,11 @@ use crate::{
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
-        scale_genome::{compute_window_scaling_over_fragment, compute_window_scaling_over_overlap},
+        scale_genome::{
+            build_reference_based_scaling_overlaps_for_assignment_overlaps,
+            compute_per_window_scaling_over_fragment_for_selected_windows,
+            compute_per_window_scaling_over_overlap,
+        },
         temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
         tiled_run::{
@@ -603,7 +607,7 @@ fn process_tile(
     let fetch_window_opt = window_opt.as_fetch_window_spec();
     // One BAM reader per tile
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
-    debug_assert_eq!(_tid_check, tile.tid as u32);
+    tile.ensure_matches_bam_tid(_tid_check)?;
 
     let max_fragment_length = opt.fragment_lengths.max_fragment_length;
 
@@ -714,11 +718,7 @@ fn process_tile(
 
     // Create fragment iterator with per-tile filtering and optional GC tag handling
     let unpaired = opt.unpaired.reads_are_fragments;
-    let max_soft_clips: u32 = opt
-        .clip
-        .max_soft_clips
-        .try_into()
-        .context("max_soft_clips does not fit in u32 for fragment iteration")?;
+    let max_soft_clips = u32::from(opt.clip.max_soft_clips);
     let include_read_fn: Box<dyn Fn(&Record) -> bool + Send + Sync> = if unpaired {
         let min_mapq = opt.min_mapq;
         Box::new(move |r: &Record| default_include_read_unpaired(r, min_mapq))
@@ -880,11 +880,10 @@ fn process_tile(
                 (Some(w), true) => w,
                 (None, true) => {
                     // Tried but failed to make a GC correction weight for the current fragment
+                    counter.gc_failed_fragments += 1;
                     if opt.gc.neutralize_invalid_gc {
-                        counter.gc_failed_fragments += 1;
                         1.0
                     } else {
-                        counter.gc_failed_fragments += 1;
                         continue;
                     }
                 }
@@ -922,42 +921,67 @@ fn process_tile(
                 .map(|w| w.idx)
                 .collect();
 
-            // Calculate the weight per overlapping count-window
-            // NOTE: `compute_window_scaling_over_fragment` always returns
-            // an overlap fraction of 1.0 (count full fragment)!
+            // Window selection and the amount counted can use assignment geometry, but
+            // scaling is always evaluated on aligned reference coordinates. CountOverlap
+            // gets one scaling average per selected window from the aligned bases in that
+            // window. If raw-shifted clipping selects a window with no aligned bases, the
+            // raw-shifted branch below remaps that row to the nearest aligned base. Other
+            // assignment modes use one scaling average over the full aligned fragment for
+            // every selected window
             let overlap_weights = match opt.window_assignment.assign_by {
-                WindowMotifAssigner::CountOverlap => compute_window_scaling_over_overlap(
-                    &overlapping_windows,
-                    &overlapping_scaling_bin_indices,
-                    scaling_chr,
-                )?,
-                _ => compute_window_scaling_over_fragment(
-                    fragment.interval.try_to_u64()?,
-                    &overlapping_windows,
-                    &overlapping_scaling_bin_indices,
-                    scaling_chr,
-                )?,
+                WindowMotifAssigner::CountOverlap => {
+                    if matches!(opt.clip.clip_strategy, ClipStrategy::RawShiftedBoundary) {
+                        // Remap only the interval used for scaling. Each row still carries the
+                        // assignment window idx, and its assignment-space overlap_fraction is
+                        // passed through unchanged, so passing `Some(&scaling_overlaps)` 
+                        // keeps the original assignment fraction and window interval, 
+                        // but averages the scaling weight over the remapped aligned-reference interval
+                        let scaling_overlaps =
+                            build_reference_based_scaling_overlaps_for_assignment_overlaps(
+                                &overlapping_windows,
+                                fragment.interval.try_to_u64()?,
+                            )?;
+                        compute_per_window_scaling_over_overlap(
+                            &overlapping_windows,
+                            Some(&scaling_overlaps),
+                            &overlapping_scaling_bin_indices,
+                            scaling_chr,
+                        )?
+                    } else {
+                        // Without shifted assignment geometry, the overlap rows already describe
+                        // the reference span used to average CountOverlap scaling.
+                        compute_per_window_scaling_over_overlap(
+                            &overlapping_windows,
+                            None,
+                            &overlapping_scaling_bin_indices,
+                            scaling_chr,
+                        )?
+                    }
+                }
+                _ => {
+                    // Non-CountOverlap modes count each selected window with full fragment weight.
+                    // The selected windows come from assignment geometry, while the one scaling
+                    // average still comes from the aligned reference fragment.
+                    compute_per_window_scaling_over_fragment_for_selected_windows(
+                        fragment.interval.try_to_u64()?,
+                        &overlapping_windows,
+                        &overlapping_scaling_bin_indices,
+                        scaling_chr,
+                    )?
+                }
             };
 
             // Count up the weight per overlapping count-window. `count_fragment_in_window(...)`
             // still decides whether each end is actually counted in the current window.
-            let overlapping_window_intervals: FxHashMap<usize, Interval<u64>> = overlapping_windows
-                .windows
-                .iter()
-                .map(|window| (window.idx, window.interval))
-                .collect();
-            for (overlapped_window_idx, scaling_weight, overlap_fraction_to_count) in
-                overlap_weights
-            {
-                let original_idx = window_context.original_idx(overlapped_window_idx);
-                let window_interval = *overlapping_window_intervals
-                    .get(&overlapped_window_idx)
-                    .expect("missing overlap interval for scaled count window");
-                let count_weight = overlap_fraction_to_count * scaling_weight * gc_weight;
+            for window_scaling in overlap_weights {
+                let original_idx = window_context.original_idx(window_scaling.window_idx);
+                let count_weight = window_scaling.overlap_fraction_to_count
+                    * window_scaling.scaling_weight
+                    * gc_weight;
                 counted_end_flags.merge(count_fragment_in_window(
                     &mut counts_by_window,
                     original_idx,
-                    window_interval,
+                    window_scaling.window_interval,
                     &fragment,
                     count_weight,
                     &motif_context,

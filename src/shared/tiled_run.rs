@@ -1,6 +1,7 @@
 use crate::shared::bam::Contigs;
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::dot_join;
+use anyhow::{Context, ensure};
 use rand::{Rng, distr::Alphanumeric};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -84,6 +85,24 @@ impl Tile {
     #[inline]
     pub fn fetch_end(&self) -> u32 {
         self.fetch.end()
+    }
+
+    /// Ensure a BAM reader opened for this tile resolved the same chromosome tid.
+    ///
+    /// `Tile::tid` is stored as `i32` because it follows the tiling inputs, while
+    /// rust-htslib returns BAM tids as `u32`. Keep the conversion and comparison
+    /// together so callers cannot accidentally wrap negative tids with `as u32`.
+    pub fn ensure_matches_bam_tid(&self, bam_tid: u32) -> anyhow::Result<()> {
+        let tile_tid =
+            u32::try_from(self.tid).context("tile tid is negative for BAM tid comparison")?;
+        ensure!(
+            bam_tid == tile_tid,
+            "BAM tid mismatch for chromosome {}: tile tid is {}, BAM tid is {}",
+            self.chr,
+            tile_tid,
+            bam_tid
+        );
+        Ok(())
     }
 }
 

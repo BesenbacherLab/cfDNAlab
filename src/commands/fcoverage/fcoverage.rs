@@ -800,7 +800,7 @@ fn process_tile(
 ) -> Result<FCoverageTileResult> {
     // Open a fresh BAM reader for this thread
     let (mut reader, _tid_check, chrom_len) = create_chromosome_reader(&opt.ioc.bam, &tile.chr)?;
-    debug_assert!(_tid_check == tile.tid as u32);
+    tile.ensure_matches_bam_tid(_tid_check)?;
 
     // Counters
     let mut counter = FCoverageCounters::default();
