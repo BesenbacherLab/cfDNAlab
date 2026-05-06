@@ -34,7 +34,7 @@ use crate::{
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
-        scale_genome::compute_per_window_scaling_over_fragment,
+        scale_genome::{ScalingBin, compute_per_window_scaling_over_fragment},
         temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
         tiled_run::{
@@ -147,7 +147,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
     if opt.scale_genome.scaling_factors.is_some() {
         info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
-    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
+    let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &opt.scale_genome,
         &chromosomes,
         &contigs,
@@ -229,7 +229,7 @@ pub fn run(opt: &MidpointsConfig) -> Result<()> {
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
-            let scaling_chr: &[(u64, u64, f32)] = scaling_map
+            let scaling_chr: &[ScalingBin] = scaling_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
@@ -411,7 +411,7 @@ fn process_tile(
     windows: &[IndexedInterval<u64>],
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_intervals: &[Interval<u64>],
-    scaling_chr: &[(u64, u64, f32)],
+    scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
     gc_tag: Option<&str>,
 ) -> anyhow::Result<(ProfileGroupsCounters, Option<PathBuf>)> {
@@ -448,8 +448,8 @@ fn process_tile(
     // So the carried `IndexedInterval.idx` value is intentionally a placeholder
     let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
         .iter()
-        .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
-        .collect::<crate::Result<_>>()?;
+        .map(|b| IndexedInterval::from_interval(b.interval, 0_u64))
+        .collect();
 
     // Extract min/max fragment lengths once so fetch shrinking and fragment filtering share the
     // same bounds

@@ -18,6 +18,7 @@ use crate::commands::wps_peaks::config::WPSPeaksConfig;
 use crate::commands::wps_peaks::normalize_wps::{normalize_wps, smoothe_wps};
 use crate::commands::wps_peaks::window_peak_results::PeaksWindowAction;
 use crate::shared::bam::Contigs;
+use crate::shared::scale_genome::ScalingBin;
 use crate::shared::bed::load_windows_from_bed;
 use crate::shared::interval::{IndexedInterval, Interval};
 use crate::shared::io::dot_join;
@@ -161,7 +162,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     if opt.shared_args.scale_genome.scaling_factors.is_some() {
         info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
-    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
+    let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &opt.shared_args.scale_genome,
         &chromosomes,
         &contigs,
@@ -924,7 +925,7 @@ pub fn peaks_for_tile(
     tile_span: Option<&TileWindowSpan>,
     windows: Option<&[IndexedInterval<u64>]>,
     blacklist_chr: &[Interval<u64>],
-    scaling_chr: &[(u64, u64, f32)],
+    scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
     extra_halo: u32,
     min_peak_height: f32,

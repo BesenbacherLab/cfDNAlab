@@ -49,6 +49,7 @@ use crate::{
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
         scale_genome::{
+            ScalingBin,
             build_reference_based_scaling_overlaps_for_assignment_overlaps,
             compute_per_window_scaling_over_fragment_for_selected_windows,
             compute_per_window_scaling_over_overlap,
@@ -210,7 +211,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     if opt.scale_genome.scaling_factors.is_some() {
         info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
-    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
+    let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &opt.scale_genome,
         &chromosomes,
         &contigs,
@@ -318,7 +319,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
-            let scaling_chr: &[(u64, u64, f32)] = scaling_map
+            let scaling_chr: &[ScalingBin] = scaling_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
@@ -592,7 +593,7 @@ fn process_tile(
     chr_window_idx_offset: u64,
     window_opt: &DistributionWindowSpec,
     blacklist_intervals: &[Interval<u64>],
-    scaling_chr: &[(u64, u64, f32)],
+    scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
     raw_shifted_gc_length_warning_issued: Arc<AtomicBool>,
     temp_dir: &Path,
@@ -704,8 +705,8 @@ fn process_tile(
     // So the carried `IndexedInterval.idx` value is intentionally a placeholder.
     let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
         .iter()
-        .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
-        .collect::<crate::Result<_>>()?;
+        .map(|b| IndexedInterval::from_interval(b.interval, 0_u64))
+        .collect();
 
     // Function for filtering fragments after pairing
     let fragment_filter = {

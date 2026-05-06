@@ -1174,7 +1174,7 @@ pub fn load_scaling_map(
     contigs: &Contigs,
     current_gc_mode: crate::shared::scale_genome::ScalingGCMode,
     current_ignore_gap: Option<bool>,
-) -> Result<FxHashMap<String, Vec<(u64, u64, f32)>>> {
+) -> Result<FxHashMap<String, Vec<crate::shared::scale_genome::ScalingBin>>> {
     if let Some(path) = &scale_args.scaling_factors {
         let loaded =
             load_scaling_factors_tsv(path, chromosomes, contigs).context("load scaling factors")?;

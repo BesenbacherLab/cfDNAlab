@@ -15,6 +15,7 @@ mod tests {
         midpoint::{midpoint_random_even, midpoint_random_even_for_fragment},
         overlaps::find_overlapping_windows,
         scale_genome::{
+            ScalingBin,
             compute_per_window_scaling_over_fragment, compute_per_window_scaling_over_overlap,
         },
     };
@@ -46,8 +47,12 @@ mod tests {
         Interval::new(start, end).expect("test query interval should be valid non-empty")
     }
 
+    fn sb(s: u64, e: u64, w: f32) -> ScalingBin {
+        ScalingBin::new(s, e, w).unwrap()
+    }
+
     fn scaling_indices_for_fragment(
-        scaling_chr: &[(u64, u64, f32)],
+        scaling_chr: &[ScalingBin],
         frag_start: u64,
         frag_end: u64,
     ) -> Result<Vec<usize>> {
@@ -58,10 +63,7 @@ mod tests {
         let scaling_bed: Vec<IndexedInterval<u64>> = scaling_chr
             .iter()
             .enumerate()
-            .map(|(window_idx, &(start, end, _))| {
-                IndexedInterval::new(start, end, window_idx as u64)
-                    .expect("scaling bins in tests should be valid non-empty intervals")
-            })
+            .map(|(window_idx, b)| IndexedInterval::from_interval(b.interval, window_idx as u64))
             .collect();
 
         let overlaps = find_overlapping_windows(
@@ -100,7 +102,7 @@ mod tests {
         )?
         .context("count overlaps")?;
 
-        let scaling_chr: Vec<(u64, u64, f32)> = vec![(0, 100, 1.25)];
+        let scaling_chr = vec![sb(0, 100, 1.25)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
         let w = compute_per_window_scaling_over_overlap(&overlaps, None, &sf_idx, &scaling_chr)?;
@@ -132,7 +134,7 @@ mod tests {
         )?
         .context("count overlaps")?;
 
-        let scaling_chr = vec![(0, 2, 2.0), (2, 10, 1.0)];
+        let scaling_chr = vec![sb(0, 2, 2.0), sb(2, 10, 1.0)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
         let w = compute_per_window_scaling_over_overlap(&overlaps, None, &sf_idx, &scaling_chr)?;
@@ -173,7 +175,7 @@ mod tests {
         )?
         .context("count overlaps")?;
 
-        let scaling_chr = vec![(0, 5, 2.0), (5, 10, 1.0)];
+        let scaling_chr = vec![sb(0, 5, 2.0), sb(5, 10, 1.0)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
         let w = compute_per_window_scaling_over_overlap(&overlaps, None, &sf_idx, &scaling_chr)?;
@@ -216,7 +218,7 @@ mod tests {
         )?
         .context("count overlaps")?;
 
-        let scaling_chr = vec![(0, 3, 1.0), (3, 6, 2.0), (6, 9, 0.5)];
+        let scaling_chr = vec![sb(0, 3, 1.0), sb(3, 6, 2.0), sb(6, 9, 0.5)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
         let w = compute_per_window_scaling_over_overlap(&overlaps, None, &sf_idx, &scaling_chr)?;
@@ -247,7 +249,7 @@ mod tests {
         )?
         .expect("count overlaps must be Some");
 
-        let scaling_chr = vec![(0, 10, 1.0)];
+        let scaling_chr = vec![sb(0, 10, 1.0)];
         let valid_sf_idx = vec![0usize];
         let ok_rows =
             compute_per_window_scaling_over_overlap(&overlaps, None, &valid_sf_idx, &scaling_chr)?;
@@ -382,7 +384,7 @@ mod tests {
 
         // Three bins over [0,10): [0,4)->2.0, [4,7)->1.0, [7,10)->3.0.
         // Avg over fragment [2,9): ([2,4)=2*2 + [4,7)=3*1 + [7,9)=2*3) / 7 = (4 + 3 + 6)/7 = 13/7
-        let scaling_chr = vec![(0, 4, 2.0), (4, 7, 1.0), (7, 10, 3.0)];
+        let scaling_chr = vec![sb(0, 4, 2.0), sb(4, 7, 1.0), sb(7, 10, 3.0)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
         let rows = compute_per_window_scaling_over_fragment(
@@ -672,7 +674,7 @@ mod tests {
 
         // Scaling bins across [0,30): [0,10)->1.0, [10,20)->2.0, [20,30)->3.0
         // Average over [5,25) = (5*1 + 10*2 + 5*3)/20 = (5 + 20 + 15)/20 = 40/20 = 2.0
-        let scaling_chr = vec![(0, 10, 1.0), (10, 20, 2.0), (20, 30, 3.0)];
+        let scaling_chr = vec![sb(0, 10, 1.0), sb(10, 20, 2.0), sb(20, 30, 3.0)];
         let sf_idx = scaling_indices_for_fragment(&scaling_chr, frag_start, frag_end)?;
 
         let rows = compute_per_window_scaling_over_fragment(

@@ -9,6 +9,33 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use tracing::warn;
 
+/// One bin in a per-chromosome scaling factor table.
+///
+/// Bins must be sorted, non-overlapping, and contiguous (validated on load).
+/// `weight_per_base` is a multiplicative factor applied to each base of coverage
+/// that falls within the bin (e.g., `1.0 / normalised_coverage`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScalingBin {
+    pub interval: Interval<u64>,
+    pub weight_per_base: f32,
+}
+
+impl ScalingBin {
+    pub fn new(start: u64, end: u64, weight_per_base: f32) -> anyhow::Result<Self> {
+        Ok(Self {
+            interval: Interval::new(start, end)?,
+            weight_per_base,
+        })
+    }
+
+    /// Unpack the bin as `(start, end, weight_per_base)`.
+    #[inline]
+    pub fn as_tuple(&self) -> (u64, u64, f32) {
+        let (start, end) = self.interval.as_tuple();
+        (start, end, self.weight_per_base)
+    }
+}
+
 /// Scaling weight assigned to one selected count window.
 ///
 /// `window_interval` is the original count or assignment window. `scaling_interval`
@@ -79,7 +106,7 @@ pub struct ScalingFactorsMetadata {
 /// Parsed scaling factors together with their file metadata.
 #[derive(Debug, Clone)]
 pub struct LoadedScalingFactors {
-    pub bins_by_chromosome: FxHashMap<String, Vec<(u64, u64, f32)>>,
+    pub bins_by_chromosome: FxHashMap<String, Vec<ScalingBin>>,
     pub metadata: ScalingFactorsMetadata,
 }
 
@@ -104,7 +131,7 @@ pub fn scaling_gc_mode_for_run(gc_file_enabled: bool, gc_tag_enabled: bool) -> S
 /// - core_start:
 ///     Absolute start of the tile core (0-based).
 /// - bins:
-///     Per-chromosome scaling bins `(start, end, sf)` with full coverage.
+///     Per-chromosome scaling bins with full coverage.
 ///
 /// Returns
 /// -------
@@ -114,7 +141,7 @@ pub fn scaling_gc_mode_for_run(gc_file_enabled: bool, gc_tag_enabled: bool) -> S
 pub fn apply_scaling_to_coverage_in_place(
     cov: &mut [f32],
     core_start: u32,
-    bins: &[(u64, u64, f32)],
+    bins: &[ScalingBin],
 ) {
     if cov.is_empty() || bins.is_empty() {
         return;
@@ -122,28 +149,29 @@ pub fn apply_scaling_to_coverage_in_place(
     let start_abs = core_start as u64;
     let end_abs = start_abs + cov.len() as u64;
 
-    // Find first bin with end > start_abs (upper_bound on `end`)
-    // First bin with end > start_abs (upper-bound on `end`)
-    // Note: partition_point gets first element (from left-right) where the condition is false
-    let mut i = bins.partition_point(|t| t.1 <= start_abs);
+    // Find first bin whose end > start_abs (upper-bound on `end`).
+    // partition_point returns the first index where the condition is false.
+    let mut i = bins.partition_point(|b| b.interval.end() <= start_abs);
 
     // Linear sweep over bins until we pass end_abs
     while i < bins.len() {
-        let (bin_start, bin_end, scaling_factor) = bins[i];
+        let bin_start = bins[i].interval.start();
+        let bin_end = bins[i].interval.end();
+        let scaling_factor = bins[i].weight_per_base;
         if bin_start >= end_abs {
             break;
         }
-        let overlap_start = bin_start.max(start_abs); // Overlap start
-        let overlap_end = bin_end.min(end_abs); // Overlap end
+        let overlap_start = bin_start.max(start_abs);
+        let overlap_end = bin_end.min(end_abs);
         if overlap_end > overlap_start {
-            let slice_start = (overlap_start - start_abs) as usize; // Slice start in cov
-            let slice_end = (overlap_end - start_abs) as usize; // Slice end in cov
+            let slice_start = (overlap_start - start_abs) as usize;
+            let slice_end = (overlap_end - start_abs) as usize;
             for v in &mut cov[slice_start..slice_end] {
-                *v *= scaling_factor; // Multiply by scaling factor
+                *v *= scaling_factor;
             }
         }
         if bin_end >= end_abs {
-            break; // Finished the tile
+            break;
         }
         i += 1;
     }
@@ -168,7 +196,7 @@ pub fn compute_per_window_scaling_over_overlap(
     count_overlaps: &OverlappingWindows,
     scaling_overlaps: Option<&OverlappingWindows>,
     scaling_bin_indices: &[usize],
-    scaling_chr: &[(u64, u64, f32)],
+    scaling_chr: &[ScalingBin],
 ) -> Result<Vec<WindowScaling>> {
     let scaling_overlaps = scaling_overlaps.unwrap_or(count_overlaps);
     ensure!(
@@ -244,7 +272,7 @@ pub fn compute_per_window_scaling_over_fragment(
     fragment_interval: Interval<u64>,
     count_overlaps: &OverlappingWindows,
     scaling_bin_indices: &[usize],
-    scaling_chr: &[(u64, u64, f32)],
+    scaling_chr: &[ScalingBin],
 ) -> Result<Vec<WindowScaling>> {
     let fragment_start_bp = fragment_interval.start();
     let fragment_end_bp = fragment_interval.end();
@@ -281,7 +309,7 @@ pub fn compute_per_window_scaling_over_fragment_for_selected_windows(
     fragment_interval: Interval<u64>,
     count_overlaps: &OverlappingWindows,
     scaling_bin_indices: &[usize],
-    scaling_chr: &[(u64, u64, f32)],
+    scaling_chr: &[ScalingBin],
 ) -> Result<Vec<WindowScaling>> {
     let avg_over_fragment = avg_scaling_over_span(
         fragment_interval.start(),
@@ -351,14 +379,13 @@ pub fn build_reference_based_scaling_overlaps_for_assignment_overlaps(
 /// Average per-base scaling over an arbitrary span `[span_start_bp, span_end_bp)`.
 ///
 /// - Uses `scaling_bin_indices` (sorted, non-empty) to limit work to bins that touch the fragment.
-/// - `scaling_chr` entries are `(bin_start_bp, bin_end_bp, weight_per_base)`.
 /// - `weight_per_base` is already the factor you want to multiply (e.g., 1.0 / normalized_coverage).
 #[inline]
 fn avg_scaling_over_span(
     span_start_bp: u64,
     span_end_bp: u64,
     scaling_bin_indices: &[usize],
-    scaling_chr: &[(u64, u64, f32)],
+    scaling_chr: &[ScalingBin],
 ) -> Result<f64> {
     if span_end_bp <= span_start_bp {
         bail!("avg_scaling_over_span called with empty or inverted span");
@@ -373,7 +400,7 @@ fn avg_scaling_over_span(
     // Walk only the intersecting scaling bins and accumulate:
     // weighted_sum_bp += overlap_len_bp * weight_per_base
     for &bin_idx in scaling_bin_indices {
-        let (bin_start_bp, bin_end_bp, weight_per_base) = scaling_chr[bin_idx];
+        let (bin_start_bp, bin_end_bp, weight_per_base) = scaling_chr[bin_idx].as_tuple();
 
         // Skip bins entirely left of the span
         if bin_end_bp <= span_start_bp {
@@ -486,7 +513,7 @@ pub fn load_scaling_factors_tsv(
     let want: FxHashSet<&str> = chromosomes.iter().map(|s| s.as_str()).collect();
 
     // Accumulator: per-chromosome bins (unsorted initially; sorted below)
-    let mut map: FxHashMap<String, Vec<(u64, u64, f32)>> =
+    let mut map: FxHashMap<String, Vec<ScalingBin>> =
         FxHashMap::with_hasher(Default::default());
 
     // Stream rows; reuse `line` to avoid allocations per row
@@ -569,7 +596,7 @@ pub fn load_scaling_factors_tsv(
         // Stash; we'll sort and validate contiguity/full coverage per chromosome below
         map.entry(chr.to_string())
             .or_default()
-            .push((start, end, sf));
+            .push(ScalingBin::new(start, end, sf)?);
     }
 
     // For each requested chromosome:
@@ -582,7 +609,7 @@ pub fn load_scaling_factors_tsv(
         })?;
 
         // Sort by start once; validation below assumes non-decreasing starts
-        v.sort_unstable_by_key(|t| t.0);
+        v.sort_unstable_by_key(|b| b.interval.start());
 
         // Chromosome length from the BAM-derived contig map.
         let chrom_len = contigs
@@ -592,14 +619,15 @@ pub fn load_scaling_factors_tsv(
             .ok_or_else(|| anyhow::anyhow!("missing contig info for '{}'", chr))?;
 
         // Must start at 0; `unwrap_or(1)` ensures a clean error if somehow empty
-        if v.first().map(|t| t.0).unwrap_or(1) != 0 {
+        if v.first().map(|b| b.interval.start()).unwrap_or(1) != 0 {
             anyhow::bail!("scaling TSV: bins on '{}' must start at 0", chr);
         }
 
-        // Sweep to ensure each bin begins exactly where the previous ended,
-        // and that each bin has positive length
+        // Sweep to ensure each bin begins exactly where the previous ended.
+        // (Positive length is already enforced by ScalingBin::new / Interval::new.)
         let mut prev_end = 0u64;
-        for &(s, e, _) in v.iter() {
+        for b in v.iter() {
+            let (s, e) = b.interval.as_tuple();
             if s != prev_end {
                 anyhow::bail!(
                     "scaling TSV: bins on '{}' are not contiguous at {}..{} (prev_end={})",
@@ -607,14 +635,6 @@ pub fn load_scaling_factors_tsv(
                     s,
                     e,
                     prev_end
-                );
-            }
-            if s >= e {
-                anyhow::bail!(
-                    "scaling TSV: invalid empty/negative bin on '{}' at {}..{}",
-                    chr,
-                    s,
-                    e
                 );
             }
             prev_end = e;

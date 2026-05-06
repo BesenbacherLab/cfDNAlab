@@ -47,7 +47,7 @@ use crate::{
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
-        scale_genome::apply_scaling_to_coverage_in_place,
+        scale_genome::{ScalingBin, apply_scaling_to_coverage_in_place},
         temp_chrom_names::TempChromNameMap,
         thread_pool::init_global_pool,
         tiled_run::{
@@ -213,7 +213,7 @@ fn run_inner_with_reporting(
     if opt.shared_args.scale_genome.scaling_factors.is_some() && show_progress_and_status {
         info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
-    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
+    let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &opt.shared_args.scale_genome,
         &chromosomes,
         &contigs,
@@ -486,7 +486,7 @@ fn process_tile(
     window_ctx: &WindowContext,
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_intervals: &[Interval<u64>],
-    scaling_chr: &[(u64, u64, f32)],
+    scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
     counts_path: &Path,
 ) -> anyhow::Result<TileResult> {

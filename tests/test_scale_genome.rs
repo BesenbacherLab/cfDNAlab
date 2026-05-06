@@ -1,6 +1,10 @@
 #[cfg(test)]
 mod tests_apply_scaling {
-    use cfdnalab::shared::scale_genome::apply_scaling_to_coverage_in_place;
+    use cfdnalab::shared::scale_genome::{ScalingBin, apply_scaling_to_coverage_in_place};
+
+    fn sb(s: u64, e: u64, w: f32) -> ScalingBin {
+        ScalingBin::new(s, e, w).unwrap()
+    }
 
     // Assert two slices are approximately equal within eps
     fn assert_slice_eq_eps(a: &[f32], b: &[f32], eps: f32) {
@@ -33,7 +37,7 @@ mod tests_apply_scaling {
         //   indices 5..15  *= 0.0  -> 0
         //   indices 15..20 *= 0.5  -> 5
         let core_start = 105u32;
-        let bins = vec![(90u64, 110u64, 2.0f32), (110, 120, 0.0), (120, 140, 0.5)];
+        let bins = vec![sb(90, 110, 2.0), sb(110, 120, 0.0), sb(120, 140, 0.5)];
         let mut cov = vec![10.0f32; 20];
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
 
@@ -54,7 +58,7 @@ mod tests_apply_scaling {
         // Bins: [0,100) sf=2.0, [100,200) sf=4.0
         // Tile: core_start=100, len=10 so all in second bin
         let core_start = 100u32;
-        let bins = vec![(0u64, 100u64, 2.0f32), (100, 200, 4.0)];
+        let bins = vec![sb(0, 100, 2.0), sb(100, 200, 4.0)];
         let mut cov = vec![8.0f32; 10];
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
 
@@ -66,7 +70,7 @@ mod tests_apply_scaling {
     fn scaling_zero_bin_covers_entire_tile() {
         // Entire tile lies in a zero-scaled bin
         let core_start = 60u32;
-        let bins = vec![(50u64, 150u64, 0.0f32)];
+        let bins = vec![sb(50, 150, 0.0)];
         let mut cov = (0..20).map(|i| i as f32 + 1.0).collect::<Vec<_>>();
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
 
@@ -87,7 +91,7 @@ mod tests_apply_scaling {
         apply_scaling_to_coverage_in_place(
             &mut cov_with_bins,
             core_start,
-            &[(90u64, 110u64, 2.0f32)],
+            &[sb(90, 110, 2.0)],
         );
         assert!(cov_with_bins.is_empty());
 
@@ -102,7 +106,7 @@ mod tests_apply_scaling {
         // This is the real no-op case with non-empty scaling input: the function must not touch
         // any element just because unrelated bins exist elsewhere on the chromosome.
         let core_start = 500u32;
-        let bins = vec![(100u64, 200u64, 2.0f32), (520u64, 600u64, 0.25f32)];
+        let bins = vec![sb(100, 200, 2.0), sb(520, 600, 0.25)];
         let mut cov = vec![1.0f32, 3.5, 2.0, 7.0, 0.5, 9.0, 4.0, 8.0, 6.0, 5.5];
         let expected = cov.clone();
 
@@ -116,11 +120,7 @@ mod tests_apply_scaling {
         // Tile aligns exactly to bin edges
         // Bins: [1000,1010) sf=2, [1010,1020) sf=0, [1020,1030) sf=0.5
         let core_start = 1000u32;
-        let bins = vec![
-            (1000u64, 1010u64, 2.0f32),
-            (1010, 1020, 0.0),
-            (1020, 1030, 0.5),
-        ];
+        let bins = vec![sb(1000, 1010, 2.0), sb(1010, 1020, 0.0), sb(1020, 1030, 0.5)];
         let mut cov = vec![6.0f32; 30]; // First 30 cover those bins
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
 
@@ -143,7 +143,7 @@ mod tests_apply_scaling {
         // Include one bin that touches the tile boundary exactly at `core_start` to prove the
         // implementation treats the bins as half-open and does not scale index 0 by mistake.
         let core_start = 500u32;
-        let bins = vec![(100u64, 200u64, 2.0f32), (490, 500, 0.5)];
+        let bins = vec![sb(100, 200, 2.0), sb(490, 500, 0.5)];
         let mut cov = vec![7.0f32, 1.0, 9.0, 3.5, 2.25, 4.0, 8.0, 6.5, 5.0, 10.0];
         let expected = cov.clone();
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
@@ -157,7 +157,7 @@ mod tests_apply_scaling {
         // Include one bin that starts exactly at the tile end to prove the half-open convention at
         // the right boundary.
         let core_start = 100u32;
-        let bins = vec![(108u64, 200u64, 2.0f32), (1000, 2000, 0.5)];
+        let bins = vec![sb(108, 200, 2.0), sb(1000, 2000, 0.5)];
         let mut cov = vec![4.0f32, 1.5, 7.0, 2.0, 9.0, 3.0, 8.5, 6.0];
         let expected = cov.clone();
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
@@ -170,7 +170,7 @@ mod tests_apply_scaling {
         // Bin overlaps only the left edge of the tile
         // Tile: [200, 210), Bin: [195, 205) sf=3.0 -> indices 0..5 scaled by 3
         let core_start = 200u32;
-        let bins = vec![(195u64, 205u64, 3.0f32)];
+        let bins = vec![sb(195, 205, 3.0)];
         let mut cov = vec![2.0f32; 10];
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
 
@@ -186,7 +186,7 @@ mod tests_apply_scaling {
         // Bin overlaps only the right edge of the tile
         // Tile: [300, 312), Bin: [308, 400) sf=0.25 -> indices 8..12 scaled by 0.25
         let core_start = 300u32;
-        let bins = vec![(308u64, 400u64, 0.25f32)];
+        let bins = vec![sb(308, 400, 0.25)];
         let mut cov = vec![20.0f32; 12];
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
 
@@ -203,10 +203,7 @@ mod tests_apply_scaling {
         let core_start = 1000u32;
         let bins = (1000u64..1010u64)
             .enumerate()
-            .map(|(i, s)| {
-                let sf = if i % 2 == 0 { 2.0f32 } else { 0.5f32 };
-                (s, s + 1, sf)
-            })
+            .map(|(i, s)| sb(s, s + 1, if i % 2 == 0 { 2.0 } else { 0.5 }))
             .collect::<Vec<_>>();
         let mut cov = vec![10.0f32; 10];
         apply_scaling_to_coverage_in_place(&mut cov, core_start, &bins);
@@ -224,6 +221,7 @@ mod tests_compute_window_scaling {
         interval::{IndexedInterval, Interval},
         overlaps::{OverlappingWindow, OverlappingWindows, find_overlapping_windows},
         scale_genome::{
+            ScalingBin,
             build_reference_based_scaling_overlaps_for_assignment_overlaps,
             compute_per_window_scaling_over_fragment, compute_per_window_scaling_over_overlap,
         },
@@ -235,6 +233,10 @@ mod tests_compute_window_scaling {
             diff <= eps,
             "{context}: got {actual}, expected {expected}, |diff|={diff}"
         );
+    }
+
+    fn sb(s: u64, e: u64, w: f32) -> ScalingBin {
+        ScalingBin::new(s, e, w).unwrap()
     }
 
     fn make_two_window_fragment_overlaps() -> anyhow::Result<OverlappingWindows> {
@@ -319,13 +321,13 @@ mod tests_compute_window_scaling {
         )?);
         let aligned_interval = Interval::new(10, 20)?;
         let scaling_chr = vec![
-            (0_u64, 10_u64, 100.0_f32),
-            (10, 11, 2.0),
-            (11, 14, 1.0),
-            (14, 16, 5.0),
-            (16, 19, 1.0),
-            (19, 20, 7.0),
-            (20, 30, 100.0),
+            sb(0, 10, 100.0),
+            sb(10, 11, 2.0),
+            sb(11, 14, 1.0),
+            sb(14, 16, 5.0),
+            sb(16, 19, 1.0),
+            sb(19, 20, 7.0),
+            sb(20, 30, 100.0),
         ];
         let scaling_bin_indices = vec![1_usize, 2, 3, 4, 5];
 
@@ -445,7 +447,7 @@ mod tests_compute_window_scaling {
         // - right overlap [50,90): 20 bp at 3 and 20 bp at 5
         //   -> (60 + 100) / 40 = 4
         let count_overlaps = make_nontrivial_window_fragment_overlaps()?;
-        let scaling_chr = vec![(0_u64, 30_u64, 1.0_f32), (30, 70, 3.0), (70, 120, 5.0)];
+        let scaling_chr = vec![sb(0, 30, 1.0), sb(30, 70, 3.0), sb(70, 120, 5.0)];
         let scaling_bin_indices = vec![0_usize, 1, 2];
 
         // Act
@@ -548,11 +550,11 @@ mod tests_compute_window_scaling {
         // window that overlaps the fragment, and the reported overlap fraction is always 1.0.
         let count_overlaps = make_two_window_fragment_overlaps()?;
         let scaling_chr = vec![
-            (0_u64, 20_u64, 0.0_f32),
-            (20, 40, 1.0),
-            (40, 60, 1.0),
-            (60, 80, 1.0),
-            (80, 200, 0.0),
+            sb(0, 20, 0.0),
+            sb(20, 40, 1.0),
+            sb(40, 60, 1.0),
+            sb(60, 80, 1.0),
+            sb(80, 200, 0.0),
         ];
         let scaling_bin_indices = vec![0_usize, 1, 2, 3, 4];
 
@@ -621,11 +623,11 @@ mod tests_compute_window_scaling {
         // - right = 31/61
         let count_overlaps = make_two_window_fragment_overlaps()?;
         let scaling_chr = vec![
-            (0_u64, 20_u64, 0.0_f32),
-            (20, 40, 1.0),
-            (40, 60, 1.0),
-            (60, 80, 1.0),
-            (80, 200, 0.0),
+            sb(0, 20, 0.0),
+            sb(20, 40, 1.0),
+            sb(40, 60, 1.0),
+            sb(60, 80, 1.0),
+            sb(80, 200, 0.0),
         ];
         let scaling_bin_indices = vec![0_usize, 1, 2, 3, 4];
 
@@ -707,17 +709,17 @@ mod tests_compute_window_scaling {
         let fragment = Interval::new(20_u64, 81_u64)?;
         let count_overlaps = make_two_window_fragment_overlaps()?;
         let scaling_chr = vec![
-            (0_u64, 20_u64, 0.0_f32),
-            (20, 40, 1.0),
-            (40, 60, 2.0),
-            (60, 80, 4.0),
-            (80, 200, 8.0),
+            sb(0, 20, 0.0),
+            sb(20, 40, 1.0),
+            sb(40, 60, 2.0),
+            sb(60, 80, 4.0),
+            sb(80, 200, 8.0),
         ];
         let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
             .iter()
             .enumerate()
-            .map(|(idx, (start, end, _))| IndexedInterval::new(*start, *end, idx as u64))
-            .collect::<cfdnalab::Result<_>>()?;
+            .map(|(idx, b)| IndexedInterval::from_interval(b.interval, idx as u64))
+            .collect();
 
         // Act:
         // Recover the overlapping scaling-bin indices through the same BED-mode overlap-finder
@@ -802,8 +804,12 @@ mod tests_compute_window_scaling {
 mod tests_load_scaling_factors_tsv {
     use cfdnalab::shared::{
         bam::Contigs,
-        scale_genome::{ScalingGCMode, load_scaling_factors_tsv},
+        scale_genome::{ScalingBin, ScalingGCMode, load_scaling_factors_tsv},
     };
+
+    fn sb(s: u64, e: u64, w: f32) -> ScalingBin {
+        ScalingBin::new(s, e, w).unwrap()
+    }
     use fxhash::FxHashMap;
     use std::io::Write;
     use tempfile::NamedTempFile;
@@ -843,7 +849,7 @@ mod tests_load_scaling_factors_tsv {
         assert_eq!(loaded.metadata.gc_mode, ScalingGCMode::Unknown);
         assert_eq!(
             loaded.bins_by_chromosome.get("chr1"),
-            Some(&vec![(0, 5, 1.25_f32), (5, 10, 0.75_f32)])
+            Some(&vec![sb(0, 5, 1.25), sb(5, 10, 0.75)])
         );
 
         Ok(())
@@ -867,7 +873,7 @@ mod tests_load_scaling_factors_tsv {
         );
         assert_eq!(
             loaded.bins_by_chromosome.get("chr1"),
-            Some(&vec![(0, 5, 1.25_f32), (5, 10, 0.75_f32)])
+            Some(&vec![sb(0, 5, 1.25), sb(5, 10, 0.75)])
         );
 
         Ok(())
@@ -887,7 +893,7 @@ mod tests_load_scaling_factors_tsv {
         assert_eq!(loaded.metadata.ignore_gap, Some(true));
         assert_eq!(
             loaded.bins_by_chromosome.get("chr1"),
-            Some(&vec![(0, 10, 1.0_f32)])
+            Some(&vec![sb(0, 10, 1.0)])
         );
 
         Ok(())
@@ -986,7 +992,7 @@ mod tests_load_scaling_factors_tsv {
 
         assert_eq!(
             loaded.bins_by_chromosome.get("chr1"),
-            Some(&vec![(0, 10, 1.5_f32)])
+            Some(&vec![sb(0, 10, 1.5)])
         );
 
         Ok(())
@@ -1078,7 +1084,7 @@ mod tests_load_scaling_factors_tsv {
 
         assert_eq!(
             loaded.bins_by_chromosome.get("chr1"),
-            Some(&vec![(0, 5, 1.25_f32), (5, 10, 0.75_f32)])
+            Some(&vec![sb(0, 5, 1.25), sb(5, 10, 0.75)])
         );
 
         Ok(())
@@ -1098,7 +1104,7 @@ mod tests_load_scaling_factors_tsv {
         assert_eq!(loaded.bins_by_chromosome.len(), 1);
         assert_eq!(
             loaded.bins_by_chromosome.get("chr1"),
-            Some(&vec![(0, 10, 1.0_f32)])
+            Some(&vec![sb(0, 10, 1.0)])
         );
 
         Ok(())

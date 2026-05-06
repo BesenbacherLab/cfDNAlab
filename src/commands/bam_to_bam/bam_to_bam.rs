@@ -35,7 +35,7 @@ use crate::{
         progress::ProgressFactory,
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq,
-        scale_genome::compute_per_window_scaling_over_fragment,
+        scale_genome::{ScalingBin, compute_per_window_scaling_over_fragment},
         windowing::ensure_plain_bed_windows_not_empty,
     },
 };
@@ -127,7 +127,7 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
     if coverage_scale_genome.scaling_factors.is_some() {
         info!(target: COMMAND_TARGET, "Loading coverage scaling factors");
     }
-    let coverage_scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
+    let coverage_scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &coverage_scale_genome,
         &chromosomes,
         &contigs,
@@ -138,7 +138,7 @@ pub fn run_inner(opt: &BamToBamConfig) -> Result<BamToBamCounters> {
     if count_scale_genome.scaling_factors.is_some() {
         info!(target: COMMAND_TARGET, "Loading count-based scaling factors");
     }
-    let count_scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
+    let count_scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &count_scale_genome,
         &chromosomes,
         &contigs,
@@ -215,8 +215,8 @@ fn process_chrom(
     opt: &BamToBamConfig,
     windows: Option<&[IndexedInterval<u64>]>,
     blacklist_intervals: &[Interval<u64>],
-    coverage_scaling_chr: &[(u64, u64, f32)],
-    count_scaling_chr: &[(u64, u64, f32)],
+    coverage_scaling_chr: &[ScalingBin],
+    count_scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
     writer: &mut bam::Writer,
 ) -> anyhow::Result<BamToBamCounters> {
@@ -253,12 +253,12 @@ fn process_chrom(
     // So the carried `IndexedInterval.idx` value is intentionally a placeholder.
     let coverage_scaling_with_bin_idx: Vec<IndexedInterval<u64>> = coverage_scaling_chr
         .iter()
-        .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
-        .collect::<crate::Result<_>>()?;
+        .map(|b| IndexedInterval::from_interval(b.interval, 0_u64))
+        .collect();
     let count_scaling_with_bin_idx: Vec<IndexedInterval<u64>> = count_scaling_chr
         .iter()
-        .map(|(start, end, _)| IndexedInterval::new(*start, *end, 0_u64))
-        .collect::<crate::Result<_>>()?;
+        .map(|b| IndexedInterval::from_interval(b.interval, 0_u64))
+        .collect();
 
     // Get coordinates to fetch reads from and to
     let (fetch_from, fetch_to) = if windows.is_some() {

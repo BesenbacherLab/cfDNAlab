@@ -24,7 +24,7 @@ use crate::shared::io::dot_join;
 use crate::shared::progress::ProgressFactory;
 use crate::shared::read::{default_include_read_paired_end, default_include_read_unpaired};
 use crate::shared::reference::read_seq_in_range;
-use crate::shared::scale_genome::apply_scaling_to_coverage_in_place;
+use crate::shared::scale_genome::{ScalingBin, apply_scaling_to_coverage_in_place};
 use crate::shared::temp_chrom_names::TempChromNameMap;
 use crate::shared::tiled_run::{
     TempDirGuard, Tile, TileMode, TileWindowSpan, build_tiles, overlapping_windows_for_tile,
@@ -286,7 +286,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
     if opt.scale_genome.scaling_factors.is_some() {
         info!(target: COMMAND_TARGET, "Loading scaling factors");
     }
-    let scaling_map: FxHashMap<String, Vec<(u64, u64, f32)>> = load_scaling_map(
+    let scaling_map: FxHashMap<String, Vec<ScalingBin>> = load_scaling_map(
         &opt.scale_genome,
         &chromosomes,
         &contigs,
@@ -443,7 +443,7 @@ pub fn run_inner(opt: &FCoverageConfig) -> Result<FCoverageRunResult> {
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
-            let scaling_chr: &[(u64, u64, f32)] = scaling_map
+            let scaling_chr: &[ScalingBin] = scaling_map
                 .get(&tile.chr)
                 .map(|v| v.as_slice())
                 .unwrap_or(&[]);
@@ -792,7 +792,7 @@ fn process_tile(
     tile: &Tile,
     tile_window_span: Option<&TileWindowSpan>,
     blacklist_chr: &[Interval<u64>],
-    scaling_chr: &[(u64, u64, f32)],
+    scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
     gc_tag: Option<&str>,
     mode: TileMode,
