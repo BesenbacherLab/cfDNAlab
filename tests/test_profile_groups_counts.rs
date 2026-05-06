@@ -27,7 +27,6 @@ mod tests {
 
     #[test]
     fn new_and_shape() {
-        // Human verification status: unverified
         let counts = make_counts();
         assert_eq!(counts.n_positions(), 5);
         assert_eq!(counts.n_groups(), 3);
@@ -40,7 +39,6 @@ mod tests {
 
     #[test]
     fn index_of_valid_and_bounds() -> Result<()> {
-        // Human verification status: unverified
         let counts = make_counts();
 
         // Layout is `(group, length_bin, position)`
@@ -61,7 +59,6 @@ mod tests {
 
     #[test]
     fn get_reads_count_at_profile_coordinate() -> Result<()> {
-        // Human verification status: unverified
         let mut counts = make_counts();
 
         assert_eq!(counts.get(0, 0, 20)?, 0.0);
@@ -76,7 +73,6 @@ mod tests {
 
     #[test]
     fn get_rejects_out_of_bounds_coordinates() {
-        // Human verification status: unverified
         let counts = make_counts();
 
         assert!(counts.get(0, 0, 19).is_err());
@@ -87,7 +83,6 @@ mod tests {
 
     #[test]
     fn ndarray3_view_exposes_group_length_position_layout() -> Result<()> {
-        // Human verification status: unverified
         let mut counts = make_counts();
 
         let first_idx = counts.index_of(4, 2, 21)?;
@@ -111,7 +106,6 @@ mod tests {
 
     #[test]
     fn ndarray3_view_matches_flat_index_formula_for_all_coordinates() {
-        // Human verification status: unverified
         let mut counts = make_counts();
 
         // A unique value per flat index makes axis-order mistakes visible
@@ -160,7 +154,6 @@ mod tests {
 
     #[test]
     fn display_has_shape_info() {
-        // Human verification status: unverified
         let counts = make_counts();
         let display_text = format!("{}", counts);
 

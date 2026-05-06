@@ -10,7 +10,6 @@ mod tests_transitions_frequency_calculations {
 
     #[test]
     fn computes_first_order_frequencies() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let counts = array![[[2.0, 1.0, 4.0, 3.0]]];
         let motifs = vec![
@@ -33,7 +32,6 @@ mod tests_transitions_frequency_calculations {
 
     #[test]
     fn computes_second_order_frequencies_with_multiple_positions() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let counts = array![
             [[4.0, 6.0, 2.0, 0.0], [0.0, 0.0, 5.0, 5.0],],
@@ -69,7 +67,6 @@ mod tests_transitions_frequency_calculations {
 
     #[test]
     fn errors_when_motif_axis_mismatches_counts() {
-        // Human verification status: unverified
         // Arrange
         let counts = array![[[1.0, 2.0]]];
         let motifs = vec!["AA".to_string()];
@@ -157,7 +154,6 @@ mod transitions_command_tests {
 
     #[test]
     fn run_transitions_produces_expected_frequencies() -> Result<()> {
-        // Human verification status: unverified
         // Reference repeats "AACGAGTTACGA" so the motifs at successive offsets are predictable
         // Reference is a repetition of "AACGAGTTACGA". Motifs encountered by the fragments:
         // Fragment A offsets 0,1,2 -> "AA", "AC", "CG"

@@ -15,7 +15,6 @@ fn make_template() -> GCCounts {
 
 #[test]
 fn prepares_fixed_size_streaming_buffers_for_last_partial_window() -> Result<()> {
-    // Human verification status: unverified
     // Chromosome length leaves a final partial 100 kb window
     // [114300000,114364328). The tile core lies in that last window, so there is no
     // valid window after it.
@@ -54,7 +53,6 @@ fn prepares_fixed_size_streaming_buffers_for_last_partial_window() -> Result<()>
 
 #[test]
 fn advances_fixed_size_streaming_buffers_into_last_partial_window() -> Result<()> {
-    // Human verification status: unverified
     // Current window is the second-to-last 100 kb bin, next is the last partial bin,
     // and advancing once more must not try to build [114400000,114364328).
     let template = make_template();
@@ -90,7 +88,6 @@ fn advances_fixed_size_streaming_buffers_into_last_partial_window() -> Result<()
 
 #[test]
 fn rejects_fixed_size_window_index_past_chromosome_end() -> Result<()> {
-    // Human verification status: unverified
     let err = fixed_size_window_interval(1144, 100_000, 114_364_328)
         .expect_err("out-of-range fixed window index should fail");
 
@@ -102,8 +99,8 @@ fn rejects_fixed_size_window_index_past_chromosome_end() -> Result<()> {
 }
 
 #[test]
-fn prepare_tile_windows_bed_keeps_a_right_halo_only_window_for_fragment_owned_models() -> Result<()> {
-    // Human verification status: unverified
+fn prepare_tile_windows_bed_keeps_a_right_halo_only_window_for_fragment_owned_models() -> Result<()>
+{
     // Manual derivation:
     // - `gc_bias` owns fragments by aligned start in tile core [10,20).
     // - A fragment starting at 19 with aligned length 4 can overlap BED window [22,23).
@@ -119,8 +116,14 @@ fn prepare_tile_windows_bed_keeps_a_right_halo_only_window_for_fragment_owned_mo
     };
     let window_opt = WindowSpec::Bed(PathBuf::from("windows.bed"));
 
-    let prepared =
-        prepare_tile_windows(&window_opt, Some(&windows), &tile, Some(&span), 200, &template)?;
+    let prepared = prepare_tile_windows(
+        &window_opt,
+        Some(&windows),
+        &tile,
+        Some(&span),
+        200,
+        &template,
+    )?;
 
     assert!(!prepared.skip_tile);
     assert!(prepared.streaming_buffers.is_none());
@@ -133,7 +136,6 @@ fn prepare_tile_windows_bed_keeps_a_right_halo_only_window_for_fragment_owned_mo
 
 #[test]
 fn set_window_acgt_uses_sequence_interval_as_prefix_origin() -> Result<()> {
-    // Human verification status: unverified
     // The prefix arrays are built from reference slice [900,961), not from chromosome start.
     // The observed interval [930,941) should therefore be counted as local [30,41).
     //
@@ -210,7 +212,6 @@ fn set_window_acgt_errors_when_observed_interval_misses_loaded_sequence() -> Res
 #[test]
 fn prepare_tile_windows_bed_keeps_core_and_right_halo_windows_together_for_fragment_owned_models()
 -> Result<()> {
-    // Human verification status: unverified
     // Manual derivation:
     // - BED window [10,11) overlaps the core and is fully contained.
     // - BED window [22,23) lies outside the core but is still reachable by a tile-owned fragment.
@@ -219,15 +220,24 @@ fn prepare_tile_windows_bed_keeps_core_and_right_halo_windows_together_for_fragm
     let template = make_template();
     let tile = Tile::from_coords("chr1".to_string(), 0, 0, 10, 20, 6, 24)
         .expect("test tile should be valid");
-    let windows = vec![IndexedInterval::new(10, 11, 0)?, IndexedInterval::new(22, 23, 1)?];
+    let windows = vec![
+        IndexedInterval::new(10, 11, 0)?,
+        IndexedInterval::new(22, 23, 1)?,
+    ];
     let span = TileWindowSpan {
         first_idx: 0,
         last_idx_exclusive: 2,
     };
     let window_opt = WindowSpec::Bed(PathBuf::from("windows.bed"));
 
-    let prepared =
-        prepare_tile_windows(&window_opt, Some(&windows), &tile, Some(&span), 200, &template)?;
+    let prepared = prepare_tile_windows(
+        &window_opt,
+        Some(&windows),
+        &tile,
+        Some(&span),
+        200,
+        &template,
+    )?;
 
     assert!(!prepared.skip_tile);
     assert!(prepared.streaming_buffers.is_none());
@@ -243,7 +253,6 @@ fn prepare_tile_windows_bed_keeps_core_and_right_halo_windows_together_for_fragm
 
 #[test]
 fn prepare_tile_windows_bed_errors_when_windows_are_missing() -> Result<()> {
-    // Human verification status: unverified
     // BED mode requires a chromosome window slice. The helper should fail loudly instead of
     // silently treating missing windows as an empty BED file.
     let template = make_template();
@@ -267,7 +276,6 @@ fn prepare_tile_windows_bed_errors_when_windows_are_missing() -> Result<()> {
 
 #[test]
 fn prepare_tile_windows_bed_skips_tile_for_empty_cached_span() -> Result<()> {
-    // Human verification status: unverified
     // An explicitly empty cached candidate span means BED precomputation already proved that the
     // tile has no relevant windows, so the helper should return skip=true without building states.
     let template = make_template();
@@ -280,8 +288,14 @@ fn prepare_tile_windows_bed_skips_tile_for_empty_cached_span() -> Result<()> {
     };
     let window_opt = WindowSpec::Bed(PathBuf::from("windows.bed"));
 
-    let prepared =
-        prepare_tile_windows(&window_opt, Some(&windows), &tile, Some(&span), 200, &template)?;
+    let prepared = prepare_tile_windows(
+        &window_opt,
+        Some(&windows),
+        &tile,
+        Some(&span),
+        200,
+        &template,
+    )?;
 
     assert!(prepared.skip_tile);
     assert!(prepared.windows.is_empty());
@@ -292,7 +306,6 @@ fn prepare_tile_windows_bed_skips_tile_for_empty_cached_span() -> Result<()> {
 #[test]
 fn prepare_tile_windows_bed_skips_tile_for_empty_window_slice_even_with_nonempty_span() -> Result<()>
 {
-    // Human verification status: unverified
     // This is a helper-level defensive case: the caller supplies a non-empty cached span but the
     // chromosome window slice itself is empty. The helper clamps nothing and reports skip=true.
     let template = make_template();
@@ -305,8 +318,14 @@ fn prepare_tile_windows_bed_skips_tile_for_empty_window_slice_even_with_nonempty
     };
     let window_opt = WindowSpec::Bed(PathBuf::from("windows.bed"));
 
-    let prepared =
-        prepare_tile_windows(&window_opt, Some(&windows), &tile, Some(&span), 200, &template)?;
+    let prepared = prepare_tile_windows(
+        &window_opt,
+        Some(&windows),
+        &tile,
+        Some(&span),
+        200,
+        &template,
+    )?;
 
     assert!(prepared.skip_tile);
     assert!(prepared.windows.is_empty());
@@ -316,22 +335,30 @@ fn prepare_tile_windows_bed_skips_tile_for_empty_window_slice_even_with_nonempty
 
 #[test]
 fn prepare_tile_windows_bed_clamps_candidate_span_to_available_window_slice() -> Result<()> {
-    // Human verification status: unverified
     // Manual derivation:
     // - The cached span says [1,4), but the chromosome slice has only two windows.
     // - The helper clamps that to the available suffix [1,2), so only the second window is built.
     let template = make_template();
     let tile = Tile::from_coords("chr1".to_string(), 0, 0, 10, 20, 6, 24)
         .expect("test tile should be valid");
-    let windows = vec![IndexedInterval::new(10, 11, 0)?, IndexedInterval::new(22, 23, 1)?];
+    let windows = vec![
+        IndexedInterval::new(10, 11, 0)?,
+        IndexedInterval::new(22, 23, 1)?,
+    ];
     let span = TileWindowSpan {
         first_idx: 1,
         last_idx_exclusive: 4,
     };
     let window_opt = WindowSpec::Bed(PathBuf::from("windows.bed"));
 
-    let prepared =
-        prepare_tile_windows(&window_opt, Some(&windows), &tile, Some(&span), 200, &template)?;
+    let prepared = prepare_tile_windows(
+        &window_opt,
+        Some(&windows),
+        &tile,
+        Some(&span),
+        200,
+        &template,
+    )?;
 
     assert!(!prepared.skip_tile);
     assert!(prepared.streaming_buffers.is_none());
@@ -345,7 +372,6 @@ fn prepare_tile_windows_bed_clamps_candidate_span_to_available_window_slice() ->
 #[test]
 fn prepare_tile_windows_bed_returns_empty_windows_when_clamped_span_starts_past_slice_end()
 -> Result<()> {
-    // Human verification status: unverified
     // Manual derivation:
     // - The cached span says [5,8), but the chromosome slice has length 2.
     // - Clamping both bounds to len=2 yields [2,2), so no windows are built.
@@ -353,15 +379,24 @@ fn prepare_tile_windows_bed_returns_empty_windows_when_clamped_span_starts_past_
     let template = make_template();
     let tile = Tile::from_coords("chr1".to_string(), 0, 0, 10, 20, 6, 24)
         .expect("test tile should be valid");
-    let windows = vec![IndexedInterval::new(10, 11, 0)?, IndexedInterval::new(22, 23, 1)?];
+    let windows = vec![
+        IndexedInterval::new(10, 11, 0)?,
+        IndexedInterval::new(22, 23, 1)?,
+    ];
     let span = TileWindowSpan {
         first_idx: 5,
         last_idx_exclusive: 8,
     };
     let window_opt = WindowSpec::Bed(PathBuf::from("windows.bed"));
 
-    let prepared =
-        prepare_tile_windows(&window_opt, Some(&windows), &tile, Some(&span), 200, &template)?;
+    let prepared = prepare_tile_windows(
+        &window_opt,
+        Some(&windows),
+        &tile,
+        Some(&span),
+        200,
+        &template,
+    )?;
 
     assert!(!prepared.skip_tile);
     assert!(prepared.streaming_buffers.is_none());
@@ -371,7 +406,6 @@ fn prepare_tile_windows_bed_returns_empty_windows_when_clamped_span_starts_past_
 
 #[test]
 fn prepare_tile_windows_bed_marks_exact_core_boundary_windows_as_contained() -> Result<()> {
-    // Human verification status: unverified
     // Manual derivation:
     // - Containment uses `start >= core_start && end <= core_end`.
     // - Therefore windows that start exactly at the core start or end exactly at the core end are
@@ -379,15 +413,24 @@ fn prepare_tile_windows_bed_marks_exact_core_boundary_windows_as_contained() -> 
     let template = make_template();
     let tile = Tile::from_coords("chr1".to_string(), 0, 0, 10, 20, 6, 24)
         .expect("test tile should be valid");
-    let windows = vec![IndexedInterval::new(10, 12, 0)?, IndexedInterval::new(18, 20, 1)?];
+    let windows = vec![
+        IndexedInterval::new(10, 12, 0)?,
+        IndexedInterval::new(18, 20, 1)?,
+    ];
     let span = TileWindowSpan {
         first_idx: 0,
         last_idx_exclusive: 2,
     };
     let window_opt = WindowSpec::Bed(PathBuf::from("windows.bed"));
 
-    let prepared =
-        prepare_tile_windows(&window_opt, Some(&windows), &tile, Some(&span), 200, &template)?;
+    let prepared = prepare_tile_windows(
+        &window_opt,
+        Some(&windows),
+        &tile,
+        Some(&span),
+        200,
+        &template,
+    )?;
 
     assert!(!prepared.skip_tile);
     assert_eq!(prepared.windows.len(), 2);

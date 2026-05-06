@@ -5,7 +5,6 @@ mod tests_merge_intervals {
 
     #[test]
     fn empty_input() -> anyhow::Result<()> {
-        // Human verification status: unverified
         let ivs: Vec<Interval<u64>> = vec![];
         assert!(merge_intervals(ivs)?.is_empty());
         Ok(())
@@ -13,7 +12,6 @@ mod tests_merge_intervals {
 
     #[test]
     fn single_interval() -> anyhow::Result<()> {
-        // Human verification status: unverified
         let ivs = vec![Interval::new(100, 200)?];
         assert_eq!(merge_intervals(ivs)?, vec![Interval::new(100, 200)?]);
         Ok(())
@@ -21,7 +19,6 @@ mod tests_merge_intervals {
 
     #[test]
     fn already_disjoint() -> anyhow::Result<()> {
-        // Human verification status: unverified
         let ivs = vec![
             Interval::new(10, 20)?,
             Interval::new(30, 40)?,
@@ -36,7 +33,6 @@ mod tests_merge_intervals {
 
     #[test]
     fn overlapping_intervals() -> anyhow::Result<()> {
-        // Human verification status: unverified
         // (10, 25) and (20, 40) overlap; (50, 55) is separate
         let ivs = vec![
             Interval::new(10, 25)?,
@@ -52,7 +48,6 @@ mod tests_merge_intervals {
 
     #[test]
     fn touching_intervals() -> anyhow::Result<()> {
-        // Human verification status: unverified
         // Adjacent intervals (end == start) must be coalesced
         let ivs = vec![
             Interval::new(0, 10)?,
@@ -65,7 +60,6 @@ mod tests_merge_intervals {
 
     #[test]
     fn chain_of_overlaps() -> anyhow::Result<()> {
-        // Human verification status: unverified
         // A -> B -> C where each overlaps the next
         let ivs = vec![
             Interval::new(1, 5)?,
@@ -78,7 +72,6 @@ mod tests_merge_intervals {
 
     #[test]
     fn mixed_sizes_and_overlaps() -> anyhow::Result<()> {
-        // Human verification status: unverified
         // Mix of single-base and larger intervals, some overlapping/touching
         //
         // Layout (sorted by start):
@@ -123,7 +116,6 @@ mod tests_seq_blacklisting {
 
     #[test]
     fn mask_simple() {
-        // Human verification status: unverified
         let mut seq = b"ACGTACGT".to_vec();
         let ivs = intervals(&[(2, 4), (6, 8)]); // mask "GT" and last "GT"
         apply_blacklist_mask_to_seq(&mut seq, &ivs, 0);
@@ -132,7 +124,6 @@ mod tests_seq_blacklisting {
 
     #[test]
     fn mask_past_end_is_safe() {
-        // Human verification status: unverified
         let mut seq = b"AAAA".to_vec();
         let ivs = intervals(&[(2, 10)]); // interval overhangs chromosome
         apply_blacklist_mask_to_seq(&mut seq, &ivs, 0);
@@ -141,7 +132,6 @@ mod tests_seq_blacklisting {
 
     #[test]
     fn no_intervals_no_change() {
-        // Human verification status: unverified
         let original = b"TGCA".to_vec();
         let mut seq = original.clone();
         apply_blacklist_mask_to_seq(&mut seq, &[], 0);
@@ -150,7 +140,6 @@ mod tests_seq_blacklisting {
 
     #[test]
     fn uses_correct_byte() {
-        // Human verification status: unverified
         let mut seq = b"GGGG".to_vec();
         let intervals = intervals(&[(0, 4)]);
         apply_blacklist_mask_to_seq(&mut seq, &intervals, 0);
@@ -159,7 +148,6 @@ mod tests_seq_blacklisting {
 
     #[test]
     fn masks_with_offset_slice() {
-        // Human verification status: unverified
         let mut seq = b"ACGTACGT".to_vec();
         let ivs = intervals(&[(4, 6)]);
         apply_blacklist_mask_to_seq(&mut seq, &ivs, 2);
@@ -184,7 +172,6 @@ mod tests_load_blacklists {
 
     #[test]
     fn should_filter_by_min_size_and_whitelist() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let bed = write_bed(&["chr1\t0\t3", "chr1\t10\t20", "chr2\t5\t30"])?;
         let whitelist = vec!["chr1".to_string()];
@@ -203,7 +190,6 @@ mod tests_load_blacklists {
 
     #[test]
     fn should_expand_by_halo_before_merging() -> Result<()> {
-        // Human verification status: unverified
         // Arrange
         let bed = write_bed(&["chrX\t100\t110", "chrX\t112\t120"])?;
 

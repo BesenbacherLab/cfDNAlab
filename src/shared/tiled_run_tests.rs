@@ -53,7 +53,6 @@ fn temp_dir_guard_remove_is_idempotent() -> anyhow::Result<()> {
 
 #[test]
 fn precompute_tile_window_spans_keeps_left_halo_only_windows_for_raw_end_reach() {
-    // Human verification status: unverified
     // Raw clipping can move the counted left endpoint left of the aligned fragment start.
     // For a tile core [10,20) and max-soft-clip reach of 2 bp, a BED window [8,9) must stay
     // visible even though it does not overlap the core itself.
@@ -69,7 +68,6 @@ fn precompute_tile_window_spans_keeps_left_halo_only_windows_for_raw_end_reach()
 
 #[test]
 fn precompute_tile_window_spans_excludes_windows_too_far_left_for_raw_end_reach() {
-    // Human verification status: unverified
     // Manual derivation:
     // - Tile core is [10,20).
     // - Raw left reach is 2 bp, so the left candidate bound is 8.
@@ -87,7 +85,6 @@ fn precompute_tile_window_spans_excludes_windows_too_far_left_for_raw_end_reach(
 
 #[test]
 fn precompute_tile_window_spans_keeps_far_right_halo_windows_for_raw_end_reach() {
-    // Human verification status: unverified
     // If a fragment starts inside core [10,20), aligned length is at most 4 bp, and the right end
     // may extend 10 bp farther in raw mode, then windows starting before 20 + 4 + 10 = 34 must
     // stay visible. A BED window [32,33) is therefore relevant even though it sits far outside
@@ -104,7 +101,6 @@ fn precompute_tile_window_spans_keeps_far_right_halo_windows_for_raw_end_reach()
 
 #[test]
 fn precompute_tile_window_spans_excludes_windows_too_far_right_for_raw_end_reach() {
-    // Human verification status: unverified
     // Manual derivation:
     // - Tile core is [10,20).
     // - Right raw reach is 14 bp, so candidate windows may start before 34.
@@ -122,7 +118,6 @@ fn precompute_tile_window_spans_excludes_windows_too_far_right_for_raw_end_reach
 
 #[test]
 fn precompute_tile_window_spans_has_no_left_reach_for_aligned_fragment_models() {
-    // Human verification status: unverified
     // Manual derivation:
     // - For aligned fragment-owned models like `lengths`, fragments start inside the core and have
     //   no left reach beyond that aligned start.
@@ -180,7 +175,6 @@ fn precompute_tile_window_spans_preserves_or_extends_span_in_example_when_right_
 
 #[test]
 fn precompute_tile_window_spans_keeps_boundary_crossing_windows_for_both_neighboring_tiles() {
-    // Human verification status: unverified
     // Manual derivation:
     // - Two neighboring tile cores are [10,20) and [20,30).
     // - Window [12,13) lies fully inside the first tile only.

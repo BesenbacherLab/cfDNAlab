@@ -139,7 +139,6 @@ fn site_weighted_r_from_raw_intervals(coverage: &[f64], raw_intervals: &[Interva
 
 #[test]
 fn given_overlapping_mask_intervals_when_merged_then_interval_formula_matches_positional_pearson() {
-    // Human verification status: unverified
     //
     // Arrange
     // -------
@@ -179,7 +178,8 @@ fn given_overlapping_mask_intervals_when_merged_then_interval_formula_matches_po
         (320, 348),
     ])
     .expect("fixture intervals must be valid");
-    let merged_intervals = merge_intervals(raw_intervals.clone(), TouchingMergePolicy::MergeTouching);
+    let merged_intervals =
+        merge_intervals(raw_intervals.clone(), TouchingMergePolicy::MergeTouching);
     let mask = build_mask_from_intervals(384, &merged_intervals);
     let coverage = build_simulated_coverage(mask.as_slice());
 
@@ -203,8 +203,8 @@ fn given_overlapping_mask_intervals_when_merged_then_interval_formula_matches_po
 }
 
 #[test]
-fn given_overlapping_raw_intervals_when_not_merged_then_site_weighted_formula_differs_from_binary_mask_pearson() {
-    // Human verification status: unverified
+fn given_overlapping_raw_intervals_when_not_merged_then_site_weighted_formula_differs_from_binary_mask_pearson()
+ {
     //
     // Arrange
     // -------
@@ -229,7 +229,8 @@ fn given_overlapping_raw_intervals_when_not_merged_then_site_weighted_formula_di
         (320, 348),
     ])
     .expect("fixture intervals must be valid");
-    let merged_intervals = merge_intervals(raw_intervals.clone(), TouchingMergePolicy::MergeTouching);
+    let merged_intervals =
+        merge_intervals(raw_intervals.clone(), TouchingMergePolicy::MergeTouching);
     let mask = build_mask_from_intervals(384, &merged_intervals);
     let coverage = build_simulated_coverage(mask.as_slice());
 

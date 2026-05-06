@@ -5,7 +5,6 @@ use cfdnalab::shared::interval::{
 
 #[test]
 fn creates_valid_half_open_interval_and_reports_bounds() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange
     let expected_start = 10_u32;
     let expected_end = 25_u32;
@@ -23,7 +22,6 @@ fn creates_valid_half_open_interval_and_reports_bounds() -> anyhow::Result<()> {
 
 #[test]
 fn creates_valid_half_open_span_and_reports_bounds() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange: spans may be empty, so start == end should be accepted here.
     let expected_start = 25_i64;
     let expected_end = 25_i64;
@@ -42,7 +40,6 @@ fn creates_valid_half_open_span_and_reports_bounds() -> anyhow::Result<()> {
 
 #[test]
 fn rejects_inverted_span() {
-    // Human verification status: unverified
     // Arrange
     let start = 30_u32;
     let end = 20_u32;
@@ -59,7 +56,6 @@ fn rejects_inverted_span() {
 
 #[test]
 fn converts_tuple_bounds_with_try_from() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange
     let bounds = (100_u32, 125_u32);
 
@@ -74,7 +70,6 @@ fn converts_tuple_bounds_with_try_from() -> anyhow::Result<()> {
 
 #[test]
 fn reports_interval_length_from_bounds() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange
     let start = 100_u32;
     let end = 125_u32;
@@ -89,7 +84,6 @@ fn reports_interval_length_from_bounds() -> anyhow::Result<()> {
 
 #[test]
 fn reports_indexed_interval_length_and_index() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange
     let start = 200_u64;
     let end = 260_u64;
@@ -108,7 +102,6 @@ fn reports_indexed_interval_length_and_index() -> anyhow::Result<()> {
 
 #[test]
 fn rejects_empty_interval_when_start_equals_end() {
-    // Human verification status: unverified
     // Arrange
     let coordinate = 42_u32;
 
@@ -124,7 +117,6 @@ fn rejects_empty_interval_when_start_equals_end() {
 
 #[test]
 fn rejects_interval_when_end_is_before_start() {
-    // Human verification status: unverified
     // Arrange
     let start = 25_u32;
     let end = 10_u32;
@@ -141,7 +133,6 @@ fn rejects_interval_when_end_is_before_start() {
 
 #[test]
 fn reports_set_relationships_for_intervals() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // - outer = [10,30), inner = [12,18), touching = [30,35), overlapping = [20,40).
     // - Half-open semantics mean 30 is excluded from outer, so touching must not intersect.
@@ -174,7 +165,6 @@ fn reports_set_relationships_for_intervals() -> anyhow::Result<()> {
 
 #[test]
 fn expands_interval_to_cover_other_interval() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange
     let left = Interval::new(12_u32, 20_u32)?;
     let right = Interval::new(5_u32, 18_u32)?;
@@ -189,7 +179,6 @@ fn expands_interval_to_cover_other_interval() -> anyhow::Result<()> {
 
 #[test]
 fn expands_interval_on_both_sides() -> anyhow::Result<()> {
-    // Human verification status: unverified
     let interval = Interval::new(12_u64, 20_u64)?;
 
     let expanded = interval.expand(3)?;
@@ -200,7 +189,6 @@ fn expands_interval_on_both_sides() -> anyhow::Result<()> {
 
 #[test]
 fn contracts_interval_on_both_sides() -> anyhow::Result<()> {
-    // Human verification status: unverified
     let interval = Interval::new(12_u64, 20_u64)?;
 
     let contracted = interval.contract(3);
@@ -211,7 +199,6 @@ fn contracts_interval_on_both_sides() -> anyhow::Result<()> {
 
 #[test]
 fn returns_none_when_contracted_interval_would_be_empty() -> anyhow::Result<()> {
-    // Human verification status: unverified
     let interval = Interval::new(12_u64, 20_u64)?;
 
     let contracted = interval.contract(4);
@@ -222,7 +209,6 @@ fn returns_none_when_contracted_interval_would_be_empty() -> anyhow::Result<()> 
 
 #[test]
 fn shifts_unsigned_interval_left() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange: shifting [20,40) left by 5 should preserve the length 20 and move both bounds
     // together to [15,35).
     let interval = Interval::new(20_u64, 40_u64)?;
@@ -237,7 +223,6 @@ fn shifts_unsigned_interval_left() -> anyhow::Result<()> {
 
 #[test]
 fn shifts_unsigned_interval_right() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange: shifting [20,40) right by 5 should preserve the length 20 and move both bounds
     // together to [25,45).
     let interval = Interval::new(20_u64, 40_u64)?;
@@ -253,7 +238,6 @@ fn shifts_unsigned_interval_right() -> anyhow::Result<()> {
 
 #[test]
 fn rejects_unsigned_left_shift_that_would_underflow() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange: shifting [3,8) left by 5 would try to move the start below zero, so the checked
     // shift must fail instead of wrapping the coordinates.
     let interval = Interval::new(3_u64, 8_u64)?;
@@ -273,7 +257,6 @@ fn rejects_unsigned_left_shift_that_would_underflow() -> anyhow::Result<()> {
 
 #[test]
 fn offsets_signed_interval_by_signed_delta() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange: signed intervals keep the generic `offset(...)` API, so shifting [20,40) by -5
     // should move it to [15,35).
     let interval = Interval::new(20_i64, 40_i64)?;
@@ -288,7 +271,6 @@ fn offsets_signed_interval_by_signed_delta() -> anyhow::Result<()> {
 
 #[test]
 fn converts_tuple_slice_into_checked_intervals() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange: all tuples are already valid half-open intervals, so conversion should preserve the
     // original order and bounds exactly.
     let bounds = [(5_u64, 10_u64), (10_u64, 20_u64), (25_u64, 40_u64)];
@@ -306,7 +288,6 @@ fn converts_tuple_slice_into_checked_intervals() -> anyhow::Result<()> {
 
 #[test]
 fn rejects_invalid_tuple_slice_when_building_intervals() {
-    // Human verification status: unverified
     // Arrange
     let bounds = [(5_u64, 10_u64), (20_u64, 20_u64)];
 
@@ -322,7 +303,6 @@ fn rejects_invalid_tuple_slice_when_building_intervals() {
 
 #[test]
 fn converts_unsigned_interval_to_signed_interval() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange: both bounds fit in i64, so only the numeric type should change.
     let interval = Interval::new(25_u64, 40_u64)?;
 
@@ -336,7 +316,6 @@ fn converts_unsigned_interval_to_signed_interval() -> anyhow::Result<()> {
 
 #[test]
 fn converts_u32_interval_to_u64_interval() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange: widening the coordinate type should preserve both bounds exactly.
     let interval = Interval::new(12_u32, 34_u32)?;
 
@@ -350,7 +329,6 @@ fn converts_u32_interval_to_u64_interval() -> anyhow::Result<()> {
 
 #[test]
 fn converts_u64_interval_to_usize_interval() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange: both bounds fit in usize, so the checked conversion should preserve them exactly.
     let interval = Interval::new(25_u64, 40_u64)?;
 
@@ -364,7 +342,6 @@ fn converts_u64_interval_to_usize_interval() -> anyhow::Result<()> {
 
 #[test]
 fn converts_i64_interval_to_usize_interval() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange: a non-negative signed interval should convert cleanly to usize.
     let interval = Interval::new(7_i64, 19_i64)?;
 
@@ -378,7 +355,6 @@ fn converts_i64_interval_to_usize_interval() -> anyhow::Result<()> {
 
 #[test]
 fn rejects_signed_interval_that_does_not_fit_in_usize() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange: negative bounds are invalid for usize conversion.
     let interval = Interval::new(-2_i64, -1_i64)?;
 
@@ -397,7 +373,6 @@ fn rejects_signed_interval_that_does_not_fit_in_usize() -> anyhow::Result<()> {
 
 #[test]
 fn rejects_unsigned_interval_that_does_not_fit_in_i64() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange: both bounds exceed i64::MAX, so the checked conversion must fail instead of
     // silently wrapping or truncating.
     let interval = Interval::new((i64::MAX as u64) + 1, (i64::MAX as u64) + 2)?;
@@ -421,7 +396,6 @@ fn rejects_unsigned_interval_that_does_not_fit_in_i64() -> anyhow::Result<()> {
 
 #[test]
 fn pushes_sorted_intervals_with_explicit_touching_policy() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // - Start with [10,20).
     // - [15,25) overlaps and should always merge into [10,25).
@@ -472,7 +446,6 @@ fn pushes_sorted_intervals_with_explicit_touching_policy() -> anyhow::Result<()>
 
 #[test]
 fn merges_sorted_intervals_without_resorting() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // - The input is already start-sorted.
     // - [5,10) and [10,12) touch, so they merge only under the touching-merge policy.
@@ -512,7 +485,6 @@ fn merges_sorted_intervals_without_resorting() -> anyhow::Result<()> {
 
 #[test]
 fn sorts_then_merges_unsorted_intervals() -> anyhow::Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // - The intervals arrive unsorted as [20,30), [5,10), [8,12).
     // - Sorting by (start, end) gives [5,10), [8,12), [20,30).

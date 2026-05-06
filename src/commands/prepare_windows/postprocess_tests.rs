@@ -20,7 +20,6 @@ fn win(chrom: &str, start: u32, end: u32) -> Window {
 
 #[test]
 fn build_coverage_index_combines_same_position_deltas_without_losing_coverage() {
-    // Human verification status: unverified
     // Arrange
     // The boundaries at 15 and 20 contain both starts and ends. In particular, the net delta at
     // 15 is zero, so the segment split must be preserved without changing the running depth.

@@ -268,7 +268,6 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 
 #[test]
 fn single_fragment_produces_central_plateau() -> Result<()> {
-    // Human verification status: unverified
     let fixture = make_fixture("wps_single_fragment", &[(10, 22)])?;
     let out_dir = TempDir::new()?;
     let cfg = make_config(4, false, &fixture.bam, out_dir.path(), "single_fragment");
@@ -295,7 +294,6 @@ fn single_fragment_produces_central_plateau() -> Result<()> {
 
 #[test]
 fn overlapping_fragments_stack_scores() -> Result<()> {
-    // Human verification status: unverified
     let fixture = make_fixture("wps_overlapping", &[(0, 20), (4, 12)])?;
     let out_dir = TempDir::new()?;
     let cfg = make_config(4, false, &fixture.bam, out_dir.path(), "overlapping");
@@ -328,7 +326,6 @@ fn overlapping_fragments_stack_scores() -> Result<()> {
 
 #[test]
 fn keep_zero_runs_emits_flat_segments() -> Result<()> {
-    // Human verification status: unverified
     let fixture = make_fixture("wps_keep_zero", &[(10, 22)])?;
     let out_dir = TempDir::new()?;
     let cfg = make_config(4, true, &fixture.bam, out_dir.path(), "keep_zero");
@@ -354,7 +351,6 @@ fn keep_zero_runs_emits_flat_segments() -> Result<()> {
 
 #[test]
 fn fragment_equal_to_window_removes_central_signal() -> Result<()> {
-    // Human verification status: unverified
     let fixture = make_fixture("wps_equal_window", &[(10, 14)])?;
     let out_dir = TempDir::new()?;
     let cfg = make_config(4, false, &fixture.bam, out_dir.path(), "equal_window");
@@ -379,7 +375,6 @@ fn fragment_equal_to_window_removes_central_signal() -> Result<()> {
 
 #[test]
 fn fragment_equal_to_window_with_zero_runs_emits_shoulders() -> Result<()> {
-    // Human verification status: unverified
     let fixture = make_fixture("wps_equal_window_zero_runs", &[(10, 14)])?;
     let out_dir = TempDir::new()?;
     let cfg = make_config(
@@ -411,7 +406,6 @@ fn fragment_equal_to_window_with_zero_runs_emits_shoulders() -> Result<()> {
 
 #[test]
 fn empty_bam_emits_single_zero_run_per_chromosome() -> Result<()> {
-    // Human verification status: unverified
     // Chromosomes long enough to admit two tiles each.
     let chrom_defs = vec![("chr1".to_string(), 400u32), ("chr2".to_string(), 400u32)];
     let tile_bp = 200u32;
@@ -454,7 +448,6 @@ fn empty_bam_emits_single_zero_run_per_chromosome() -> Result<()> {
 
 #[test]
 fn empty_bam_without_keep_zero_runs_outputs_nothing() -> Result<()> {
-    // Human verification status: unverified
     let chrom_defs = vec![("chr1".to_string(), 400u32), ("chr2".to_string(), 400u32)];
     let fixture = bam_from_specs(
         chrom_defs.clone(),
@@ -486,7 +479,6 @@ fn empty_bam_without_keep_zero_runs_outputs_nothing() -> Result<()> {
 
 #[test]
 fn long_fragment_fixture_produces_expected_wps_runs() -> Result<()> {
-    // Human verification status: unverified
     let fixture = long_fragment_bam("wps_long_fragment_fixture")?;
     let out_dir = TempDir::new()?;
     let mut cfg = make_config(
@@ -534,7 +526,6 @@ fn long_fragment_fixture_produces_expected_wps_runs() -> Result<()> {
 
 #[test]
 fn global_mode_handles_three_chromosomes() -> Result<()> {
-    // Human verification status: unverified
     let fixture =
         make_three_chrom_fixture("wps_three_chr_global", &[(10, 22), (10, 22), (10, 22)])?;
     let out_dir = TempDir::new()?;
@@ -568,7 +559,6 @@ fn global_mode_handles_three_chromosomes() -> Result<()> {
 
 #[test]
 fn by_size_total_handles_three_chromosomes() -> Result<()> {
-    // Human verification status: unverified
     let fixture =
         make_three_chrom_fixture("wps_three_chr_by_size", &[(10, 22), (10, 22), (10, 22)])?;
     let out_dir = TempDir::new()?;
@@ -609,7 +599,6 @@ fn by_size_total_handles_three_chromosomes() -> Result<()> {
 
 #[test]
 fn by_size_total_non_aligned_tiles_reduce_crossing_bins_by_logical_start() -> Result<()> {
-    // Human verification status: unverified
     let fixture = bam_from_specs(
         vec![("chr1".to_string(), 300u32)],
         Vec::new(),
@@ -659,7 +648,6 @@ fn by_size_total_non_aligned_tiles_reduce_crossing_bins_by_logical_start() -> Re
 
 #[test]
 fn by_bed_total_handles_three_chromosomes() -> Result<()> {
-    // Human verification status: unverified
     let fixture =
         make_three_chrom_fixture("wps_three_chr_by_bed", &[(10, 22), (10, 22), (10, 22)])?;
     let out_dir = TempDir::new()?;
@@ -705,7 +693,6 @@ fn by_bed_total_handles_three_chromosomes() -> Result<()> {
 
 #[test]
 fn by_bed_total_skips_chromosomes_without_windows_and_keeps_later_chromosomes() -> Result<()> {
-    // Human verification status: unverified
     let fixture = bam_from_specs(
         vec![("chr1".to_string(), 100), ("chr2".to_string(), 100)],
         vec![

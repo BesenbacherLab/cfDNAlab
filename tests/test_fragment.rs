@@ -85,7 +85,6 @@ mod test_minimal_fragment {
 
     #[test]
     fn test_collect_fragment_basic() {
-        // Human verification status: unverified
         // forward: 100..150 (50M), reverse: 120..170 (50M) => fragment 100..170 (len=70)
         let (f, r) = mk_pair_basic(
             0,
@@ -105,7 +104,6 @@ mod test_minimal_fragment {
 
     #[test]
     fn test_collect_fragment_uses_directional_pair_span_not_interval_union() {
-        // Human verification status: unverified
         // Forward 100..200 and reverse 150..180 are still an inward-oriented pair because the
         // forward start is left of the reverse start. Our fragment definition is directional:
         // [forward.start(), reverse.end()), so the fragment must end at 180 rather than taking
@@ -127,7 +125,6 @@ mod test_minimal_fragment {
 
     #[test]
     fn test_collect_fragment_invalid_orientation() {
-        // Human verification status: unverified
         // Both on same strand -> None
         let f = mk_rec(0, 100, false, cigar(&[('M', 30)]), &vec![b'A'; 30], b"1");
         let r = mk_rec(0, 140, false, cigar(&[('M', 30)]), &vec![b'A'; 30], b"1");
@@ -175,7 +172,6 @@ mod test_segmented_fragments {
 
     #[test]
     fn oriented_pair_generic_orders_fw_rev() {
-        // Human verification status: unverified
         let fwd = sri(0, 10, 20, false, false, 0, &[]);
         let rev = sri(0, 40, 50, true, false, 0, &[]);
 
@@ -190,7 +186,6 @@ mod test_segmented_fragments {
 
     #[test]
     fn collect_no_gaps_exclude_inter_mate_gap_segments_present() {
-        // Human verification status: unverified
         // forward 10..20, reverse 40..50, no ref gaps, do NOT include the inter-mate gap
         let fwd = sri(0, 10, 20, false, false, 0, &[]);
         let rev = sri(0, 40, 50, true, false, 0, &[]);
@@ -206,7 +201,6 @@ mod test_segmented_fragments {
 
     #[test]
     fn collect_no_gaps_include_inter_mate_gap_plain_span() {
-        // Human verification status: unverified
         // forward 10..20, reverse 40..50, include inter-mate gap -> whole span
         let fwd = sri(0, 10, 20, false, false, 0, &[]);
         let rev = sri(0, 40, 50, true, false, 0, &[]);
@@ -219,7 +213,6 @@ mod test_segmented_fragments {
 
     #[test]
     fn collect_with_ref_gap_include_inter_mate_gap_merges_right() {
-        // Human verification status: unverified
         // forward has a deletion making two ref-mapped blocks: [10..20], [25..30]
         // reverse is [40..50], include inter-mate gap (30..40)
         let fwd = sri(0, 10, 30, false, true, 5, &[(0, 10), (15, 5)]);
@@ -236,7 +229,6 @@ mod test_segmented_fragments {
 
     #[test]
     fn collect_with_ref_gap_exclude_inter_mate_gap_three_blocks() {
-        // Human verification status: unverified
         // Same as above but exclude the inter-mate gap
         let fwd = sri(0, 10, 30, false, true, 5, &[(0, 10), (15, 5)]);
         let rev = sri(0, 40, 50, true, false, 0, &[]);
@@ -253,7 +245,6 @@ mod test_segmented_fragments {
 
     #[test]
     fn collect_segments_uses_directional_fragment_span_not_interval_union() {
-        // Human verification status: unverified
         // Forward 100..200 and reverse 150..180 define a fragment span of [100,180) by project
         // convention, even though the aligned-interval union would extend to 200.
         let fwd = sri(0, 100, 200, false, false, 0, &[]);
@@ -275,7 +266,6 @@ mod test_frag_file_fragment {
 
     #[test]
     fn collect_frag_file_fragment_uses_directional_pair_span_not_interval_union() {
-        // Human verification status: unverified
         // Forward 100..200 and reverse 150..180 form an inward pair. The fragment written to the
         // frag file must follow the cfDNA definition [forward.start(), reverse.end()) rather than
         // the aligned-interval union.
@@ -371,7 +361,6 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn indelreadinfo_parses_deletions_and_insertions() {
-        // Human verification status: unverified
         // Forward read: start 100, cigar M50 D5 M45 => deletions at [150,155)
         let r = make_rec(0, 100, false, m_del_m(50, 5, 45));
         let info = IndelReadInfo::try_from(&r).expect("test indel read should be valid");
@@ -398,7 +387,6 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn orientation_and_inward_check() {
-        // Human verification status: unverified
         // Forward at 100..160, Reverse at 150..210 (inward: forward.pos <= reverse.pos)
         let f = IndelReadInfo::try_from(&make_rec(0, 100, false, m(60)))
             .expect("test indel read should be valid");
@@ -410,7 +398,6 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn collect_no_indels_fast_path() {
-        // Human verification status: unverified
         // No indels; expect zero adjustments.
         let f = make_rec(0, 100, false, m(60));
         let r = make_rec(0, 180, true, m(40));
@@ -432,7 +419,6 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn collect_skip_indels_filters_out() {
-        // Human verification status: unverified
         // Has insertion; skip_indels=true => None.
         let f = make_rec(0, 100, false, m_ins_m(20, 3, 20));
         let r = make_rec(0, 140, true, m(40));
@@ -443,7 +429,6 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn collect_count_indels_disabled_returns_zeroed() {
-        // Human verification status: unverified
         // Indels present but count_indels=false => fragment with zero adjustments.
         let f = make_rec(0, 100, false, m_ins_m(20, 3, 20));
         let r = make_rec(0, 140, true, m_del_m(10, 4, 30));
@@ -457,7 +442,6 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn nonoverlap_indels_counted_fully() {
-        // Human verification status: unverified
         // Non-overlapping mates: forward 100..120, reverse 140..160.
         // Forward has D3 at [110,113), Reverse has I4 at ref pos 150.
         let f = make_rec(0, 100, false, m_del_m(10, 3, 7)); // 100..120
@@ -479,7 +463,6 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn overlap_deletion_counts_intersection_only() {
-        // Human verification status: unverified
         // Overlapping mates: forward 100..180, reverse 160..220 -> overlap [160,180)
         // Forward deletion [170,175); Reverse deletion [172,178) -> intersection [172,175) len 3.
         let f = make_rec(0, 100, false, m_del_m(70, 5, 5)); // del at [170,175)
@@ -499,7 +482,6 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn deletion_crossing_overlap_start_splits_into_left_nonoverlap_and_supported_overlap() {
-        // Human verification status: unverified
         // Forward 100..180 and reverse 160..180 give aligned overlap [160,180).
         //
         // Forward deletion [150,170) crosses the overlap start:
@@ -538,7 +520,6 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn deletion_crossing_overlap_end_splits_into_right_nonoverlap_and_supported_overlap() {
-        // Human verification status: unverified
         // Forward 100..180 and reverse 160..220 give aligned overlap [160,180).
         //
         // Reverse deletion [170,190) crosses the overlap end:
@@ -577,7 +558,6 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn overlap_insertions_require_both_mates_same_ref_pos() {
-        // Human verification status: unverified
         // Overlap [160,180).
         // Forward insertion at ref 165 len 5; Reverse insertion at ref 165 len 3 -> min = 3 counted.
         // Forward insertion at ref 170 len 2; Reverse none at 170 -> discarded because overlap
@@ -597,7 +577,6 @@ mod tests_fragment_with_indel_counts {
 
     #[test]
     fn duplicate_insertions_at_same_pos_per_read_take_max_then_min_across_mates() {
-        // Human verification status: unverified
         // Overlap [160,200).
         // Forward has two insertions at ref 170: lengths 2 and 5 (separated by soft-clip); keep max=5.
         // Reverse has insertion at ref 170 length 3 -> min(5,3) = 3 counted.
@@ -724,7 +703,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn endreadinfo_reads_edge_clipping_hard_clips_and_gc_tag() {
-        // Human verification status: unverified
         let record = make_record(
             b"edge",
             0,
@@ -744,7 +722,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn aligned_paired_keeps_aligned_geometry_and_excludes_soft_clips_from_sequences() {
-        // Human verification status: unverified
         let forward = make_record(
             b"pair_aligned",
             0,
@@ -792,7 +769,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn raw_paired_expands_assignment_interval_and_uses_soft_clipped_bases() {
-        // Human verification status: unverified
         let forward = make_record(
             b"pair_raw",
             0,
@@ -840,7 +816,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn aligned_kept_ends_store_aligned_boundary_positions() {
-        // Human verification status: unverified
         let forward = make_record(
             b"pair_aligned_boundary",
             0,
@@ -884,7 +859,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn raw_kept_ends_store_raw_shifted_boundary_positions() {
-        // Human verification status: unverified
         let forward = make_record(
             b"pair_raw_boundary",
             0,
@@ -928,7 +902,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn raw_aligned_boundary_keeps_aligned_positions_but_uses_raw_inside_bases() {
-        // Human verification status: unverified
         let forward = make_record(
             b"pair_raw_aligned_boundary",
             0,
@@ -982,7 +955,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn drop_paired_drops_one_clipped_end_but_keeps_other_end() {
-        // Human verification status: unverified
         let forward = make_record(
             b"pair_drop_one",
             0,
@@ -1022,7 +994,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn drop_paired_returns_none_when_both_ends_are_skipped() {
-        // Human verification status: unverified
         let forward = make_record(
             b"pair_drop_both",
             0,
@@ -1059,7 +1030,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn max_soft_clips_skips_end_and_drops_boundary_adjustment() {
-        // Human verification status: unverified
         let forward = make_record(
             b"pair_max_clip",
             0,
@@ -1098,7 +1068,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn hard_clipped_pair_is_discarded() {
-        // Human verification status: unverified
         let forward = make_record(
             b"pair_hard_clip",
             0,
@@ -1135,7 +1104,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn left_indel_is_detected_inside_aligned_footprint() {
-        // Human verification status: unverified
         let record = make_record(
             b"left_indel",
             0,
@@ -1153,7 +1121,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn right_indel_is_detected_inside_aligned_footprint() {
-        // Human verification status: unverified
         let record = make_record(
             b"right_indel",
             0,
@@ -1171,7 +1138,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn refskip_is_treated_as_indel_inside_the_motif_footprint() {
-        // Human verification status: unverified
         // Left motif sees M2 then N3 before reaching 4 aligned bases, so it is indel-affected.
         // Right motif takes its first 4 aligned bases from the terminal M5 block and never reaches
         // the ref-skip.
@@ -1192,7 +1158,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn pad_is_ignored_when_scanning_for_indels() {
-        // Human verification status: unverified
         // Padding does not consume aligned motif bases and should not count as an indel.
         let record = make_record(
             b"pad_ignored",
@@ -1211,7 +1176,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn indel_outside_aligned_footprint_is_ignored() {
-        // Human verification status: unverified
         let record = make_record(
             b"indel_far",
             0,
@@ -1228,7 +1192,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn raw_reduces_indel_footprint_after_soft_clipping() {
-        // Human verification status: unverified
         let record = make_record(
             b"raw_reduces_indel",
             0,
@@ -1250,7 +1213,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn auto_read_source_keeps_indel_affected_end() {
-        // Human verification status: unverified
         let forward = make_record(
             b"auto_read",
             0,
@@ -1288,7 +1250,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn auto_reference_source_skips_indel_affected_end_and_keeps_aligned_boundary() {
-        // Human verification status: unverified
         let forward = make_record(
             b"auto_ref",
             0,
@@ -1326,7 +1287,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn skip_affected_end_in_raw_keeps_raw_assignment_boundary() {
-        // Human verification status: unverified
         let forward = make_record(
             b"raw_indel_skip",
             0,
@@ -1364,7 +1324,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn auto_reference_source_in_raw_keeps_raw_assignment_boundary_when_skipping_end() {
-        // Human verification status: unverified
         // Raw uses the soft-clipped bases in the motif but still skips this end in Auto mode when
         // the within source is reference and the aligned part of the motif crosses an insertion.
         let forward = make_record(
@@ -1404,7 +1363,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn skip_affected_fragment_drops_whole_fragment() {
-        // Human verification status: unverified
         let forward = make_record(
             b"skip_fragment",
             0,
@@ -1441,7 +1399,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn drop_clipping_outranks_indel_skip() {
-        // Human verification status: unverified
         let forward = make_record(
             b"drop_beats_indel",
             0,
@@ -1479,7 +1436,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn max_soft_clips_outranks_indel_skip_and_drops_raw_assignment_boundary() {
-        // Human verification status: unverified
         // The left end is both over the soft-clip threshold and indel-affected.
         // Max-soft-clips wins first, so assignment falls back to the aligned boundary rather than
         // keeping the raw outward shift.
@@ -1520,7 +1476,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn unpaired_aligned_exposes_both_ends() {
-        // Human verification status: unverified
         let record = make_record(
             b"single_aligned",
             0,
@@ -1558,7 +1513,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn unpaired_raw_expands_assignment_interval_on_both_sides() {
-        // Human verification status: unverified
         let record = make_record(
             b"single_raw",
             0,
@@ -1596,7 +1550,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn unpaired_raw_aligned_boundary_keeps_assignment_interval_aligned() {
-        // Human verification status: unverified
         let record = make_record(
             b"single_raw_aligned_boundary",
             0,
@@ -1634,7 +1587,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn hard_clipped_single_read_is_discarded() {
-        // Human verification status: unverified
         let record = make_record(
             b"single_hard_clip",
             0,
@@ -1661,7 +1613,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn paired_gc_tag_combines_to_fragment_average() {
-        // Human verification status: unverified
         let forward = make_record(
             b"pair_gc",
             0,
@@ -1698,7 +1649,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn unpaired_gc_tag_is_preserved() {
-        // Human verification status: unverified
         let record = make_record(
             b"single_gc",
             0,
@@ -1725,7 +1675,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn outwards_or_same_strand_pairs_are_rejected() {
-        // Human verification status: unverified
         let forward = make_record(
             b"bad_pair",
             0,
@@ -1784,7 +1733,6 @@ mod test_fragment_with_ends {
 
     #[test]
     fn insufficient_sequence_skips_end_and_returns_none_if_both_ends_fail() {
-        // Human verification status: unverified
         let record = make_record(
             b"too_short",
             0,
@@ -1867,7 +1815,6 @@ mod test_kmer_segments {
     }
     #[test]
     fn ignore_mode_without_gap_tracks_per_read_spans() {
-        // Human verification status: unverified
         let forward = make_record(0, 100, false, &[Cigar::Match(30)]);
         let reverse = make_record(0, 140, true, &[Cigar::Match(30)]);
         let frag = collect_pair(&forward, &reverse, IndelMode::Ignore, false, 0).expect("fragment");
@@ -1877,7 +1824,6 @@ mod test_kmer_segments {
     }
     #[test]
     fn ignore_mode_includes_gap_when_requested() {
-        // Human verification status: unverified
         let forward = make_record(0, 100, false, &[Cigar::Match(30)]);
         let reverse = make_record(0, 140, true, &[Cigar::Match(30)]);
         let frag = collect_pair(&forward, &reverse, IndelMode::Ignore, true, 0).expect("fragment");
@@ -1887,7 +1833,6 @@ mod test_kmer_segments {
     }
     #[test]
     fn skip_mode_filters_pairs_with_indels() {
-        // Human verification status: unverified
         let forward = make_record(
             0,
             100,
@@ -1899,7 +1844,6 @@ mod test_kmer_segments {
     }
     #[test]
     fn adjust_mode_preserves_touching_segments_from_insertions() {
-        // Human verification status: unverified
         let forward = make_record(
             0,
             100,
@@ -1914,7 +1858,6 @@ mod test_kmer_segments {
     }
     #[test]
     fn inter_mate_gap_not_merged_when_border_has_insertion() {
-        // Human verification status: unverified
         let forward = make_record(0, 100, false, &[Cigar::Match(20), Cigar::Ins(2)]);
         let reverse = make_record(0, 130, true, &[Cigar::Match(20)]);
         let frag = collect_pair(&forward, &reverse, IndelMode::Adjust, true, 0).expect("fragment");
@@ -1925,7 +1868,6 @@ mod test_kmer_segments {
     }
     #[test]
     fn end_offset_trims_segments_but_preserves_span() {
-        // Human verification status: unverified
         let forward = make_record(0, 100, false, &[Cigar::Match(40)]);
         let reverse = make_record(0, 120, true, &[Cigar::Match(40)]);
         let frag = collect_pair(&forward, &reverse, IndelMode::Ignore, true, 5).expect("fragment");
@@ -1936,7 +1878,6 @@ mod test_kmer_segments {
 
     #[test]
     fn adjust_mode_handles_mixed_insertions_and_deletions() {
-        // Human verification status: unverified
         // Segment derivation under `IndelMode::Adjust`:
         // 1. Insertions terminate the current reference segment without advancing the reference.
         // 2. Deletions terminate the current segment and then advance the reference by the deleted span.
@@ -2006,7 +1947,6 @@ mod test_kmer_segments {
 
     #[test]
     fn gap_kept_separate_when_both_mates_have_boundary_insertions() {
-        // Human verification status: unverified
         let forward = make_record(0, 100, false, &[Cigar::Match(15), Cigar::Ins(2)]);
         let reverse = make_record(0, 140, true, &[Cigar::Ins(3), Cigar::Match(18)]);
 
@@ -2019,7 +1959,6 @@ mod test_kmer_segments {
 
     #[test]
     fn returns_none_for_non_inward_orientation() {
-        // Human verification status: unverified
         let forward = make_record(0, 100, false, &[Cigar::Match(20)]);
         let reverse_same_strand = make_record(0, 140, false, &[Cigar::Match(20)]);
         assert!(collect_pair(&forward, &reverse_same_strand, IndelMode::Ignore, true, 0).is_none());
@@ -2039,7 +1978,6 @@ mod test_kmer_segments {
 
     #[test]
     fn end_offset_removing_all_sequence_returns_none() {
-        // Human verification status: unverified
         let forward = make_record(0, 100, false, &[Cigar::Match(20)]);
         let reverse = make_record(0, 120, true, &[Cigar::Match(20)]);
 
@@ -2048,7 +1986,6 @@ mod test_kmer_segments {
 
     #[test]
     fn overlap_consensus_indel_behaviour() {
-        // Human verification status: unverified
         // Segment derivation under `IndelMode::Adjust`:
         // 1. Each insertion closes the current segment but does not advance the reference.
         // 2. Each deletion closes the current segment and removes the deleted bases from the safe

@@ -234,7 +234,7 @@ fn kmer_source_name(source: KmerSource) -> &'static str {
 /// -------
 /// - `&'static str`:
 ///   Stable sidecar string for that setting
-fn clip_strategy_name(strategy: ClipStrategy) -> &'static str {
+pub(crate) fn clip_strategy_name(strategy: ClipStrategy) -> &'static str {
     match strategy {
         ClipStrategy::Aligned => "aligned",
         ClipStrategy::RawAlignedBoundary => "raw-aligned-boundary",

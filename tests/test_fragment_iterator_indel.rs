@@ -21,7 +21,6 @@ fn make_record(qname: &[u8], pos: i64, len: u32, is_reverse: bool) -> bam::Recor
 
 #[test]
 fn yields_unpaired_fragments_and_respects_filter() {
-    // Human verification status: unverified
     // Arrange
     let records = vec![
         Ok(make_record(b"r1", 5, 5, false)),  // length 5
@@ -55,7 +54,6 @@ fn yields_unpaired_fragments_and_respects_filter() {
 
 #[test]
 fn pairs_reads_and_yields_single_fragment() {
-    // Human verification status: unverified
     // Arrange
     let forward = Ok(make_record(b"r1", 10, 5, false)); // end 15
     let reverse = Ok(make_record(b"r1", 20, 5, true)); // end 25

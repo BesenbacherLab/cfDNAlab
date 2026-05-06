@@ -14,7 +14,9 @@ mod tests {
         interval::{IndexedInterval, Interval},
         midpoint::{midpoint_random_even, midpoint_random_even_for_fragment},
         overlaps::find_overlapping_windows,
-        scale_genome::{compute_per_window_scaling_over_fragment, compute_per_window_scaling_over_overlap},
+        scale_genome::{
+            compute_per_window_scaling_over_fragment, compute_per_window_scaling_over_overlap,
+        },
     };
     use rand::RngCore;
 
@@ -80,7 +82,6 @@ mod tests {
 
     #[test]
     fn single_window_single_bin_full_overlap_yields_bin_weight() -> Result<()> {
-        // Human verification status: unverified
         // Window covers the region, single scaling bin with weight=1.25 (already inverted).
         let chrom_len = 100;
         let count_wins = bed_windows(&[(0, 100)]);
@@ -111,7 +112,6 @@ mod tests {
 
     #[test]
     fn full_window_two_bins_averages_by_length() -> Result<()> {
-        // Human verification status: unverified
         // Window [0,10), scaling bins: [0,2)->2.0, [2,10)->1.0, fragment [0,10)
         // Expected average over overlap: (2*2 + 8*1) / 10 = 1.2
         // A wrong simple average over the two bins would give (2 + 1) / 2 = 1.5 instead.
@@ -144,7 +144,6 @@ mod tests {
 
     #[test]
     fn two_count_windows_partition_additivity() -> Result<()> {
-        // Human verification status: unverified
         // Count windows partition [0,10) into [0,5), [5,10)
         // Scaling bins: [0,5)->2.0, [5,10)->1.0
         // Fragment [3,9) crosses both windows (fragment len = 6).
@@ -197,7 +196,6 @@ mod tests {
 
     #[test]
     fn multi_bin_average_over_partial_window() -> Result<()> {
-        // Human verification status: unverified
         // Scaling bins: [0,3)->1.0, [3,6)->2.0, [6,9)->0.5
         // Window [0,9), Fragment [2,8) => segments: [2,3):1*1, [3,6):3*2, [6,8):2*0.5
         // Weighted sum = 1 + 6 + 1 = 8; avg = 8/6 = 1.333...
@@ -231,7 +229,6 @@ mod tests {
 
     #[test]
     fn error_on_empty_scaling_indices() -> Result<()> {
-        // Human verification status: unverified
         // Build a minimal valid count overlap, but pass empty sf indices
         let chrom_len = 100;
         let count_wins = bed_windows(&[(0, 10)]);
@@ -272,7 +269,6 @@ mod tests {
 
     #[test]
     fn no_scaling_single_window_uses_overlap_fraction_full_overlap() -> Result<()> {
-        // Human verification status: unverified
         // One count window fully covering the fragment -> overlap_fraction == 1.0
         // The fragment is strictly inside the window, so this is not an equality-at-boundary case.
         let chrom_len = 100;
@@ -302,7 +298,6 @@ mod tests {
 
     #[test]
     fn no_scaling_global_window_uses_overlap_fraction_full_overlap() -> Result<()> {
-        // Human verification status: unverified
         // In global mode `find_overlapping_windows` synthesizes one chromosome-wide window.
         // That path should also report a full overlap fraction for any non-empty fragment.
         let chrom_len = 100;
@@ -331,7 +326,6 @@ mod tests {
 
     #[test]
     fn no_scaling_two_windows_uses_overlap_fraction_partition() -> Result<()> {
-        // Human verification status: unverified
         // Count windows partition [0,10) into [0,5), [5,10)
         // Fragment [3,9) -> overlaps are lengths 2 and 4 over total len 6
         // Expected fractions: 2/6 and 4/6, summing to 1.0
@@ -367,7 +361,6 @@ mod tests {
 
     #[test]
     fn compute_per_window_scaling_over_fragment_returns_same_avg_for_all_overlaps() -> Result<()> {
-        // Human verification status: unverified
         // Two count windows, one fragment crossing both.
         // Average scaling is computed over the FULL fragment, so both rows share the same avg.
         let count_wins = bed_windows(&[(0, 5), (5, 10)]);
@@ -408,7 +401,6 @@ mod tests {
 
     #[test]
     fn find_overlapping_windows_respects_min_overlap_threshold() -> Result<()> {
-        // Human verification status: unverified
         // One window [0,100).
         // Note: min_overlap_fraction is the fraction of the *interval/fragment* overlapped by the window.
         let chrom_len = 1_000;
@@ -525,7 +517,6 @@ mod tests {
 
     #[test]
     fn midpoint_random_even_for_fragment_returns_one_of_two_centers() {
-        // Human verification status: unverified
         // Even-length fragment [start, start+len), len=6 -> centers are start+2 or start+3.
         let start = 1000u32;
         let len = 6u32;
@@ -566,7 +557,6 @@ mod tests {
 
     #[test]
     fn midpoint_random_even_can_choose_both_even_centers_with_controlled_rng() {
-        // Human verification status: unverified
         let start = 1000u32;
         let len = 6u32;
 
@@ -581,7 +571,6 @@ mod tests {
 
     #[test]
     fn indel_fragment_builder_fast_paths_and_counts() {
-        // Human verification status: unverified
         // Forward and reverse on same tid, inward.
         // Overlap will be [120,150) so ref pos 125 lies in the overlap.
         let fwd = IndelReadInfo {
@@ -663,7 +652,6 @@ mod tests {
 
     #[test]
     fn scaling_over_fragment_is_constant_per_fragment_even_with_many_windows() -> Result<()> {
-        // Human verification status: unverified
         // Three windows tile [0,30); fragment [5,25) overlaps all three.
         let chrom_len = 1000;
         let count_wins = bed_windows(&[(0, 10), (10, 20), (20, 30)]);
@@ -703,7 +691,6 @@ mod tests {
 
     #[test]
     fn synthetic_no_scaling_midpoint_assignment_counts_full() -> Result<()> {
-        // Human verification status: unverified
         // Midpoint assignment ignores overlap fraction and counts as 1.0 per overlapped window,
         // but here we simulate it by building the OverlappingWindows with a 1 bp interval.
         let chrom_len = 100;
@@ -731,7 +718,6 @@ mod tests {
 
     #[test]
     fn size_mode_basic_three_bins() -> Result<()> {
-        // Human verification status: unverified
         // Bins [0,10), [10,20), [20,30) via size-mode.
         // Fragment [3,27) overlaps 3 bins with lengths 7,10,7 -> fractions over fragment_len=24.
         let chrom_len = 1_000;
@@ -770,7 +756,6 @@ mod tests {
 
     #[test]
     fn size_mode_min_fraction_filters_bins() -> Result<()> {
-        // Human verification status: unverified
         // Same setup as above but require >= 0.3 fraction of the fragment per bin.
         // 7/24 ≈ 0.2917 (filtered), 10/24 ≈ 0.4167 (kept), 7/24 filtered.
         let chrom_len = 1_000;
@@ -796,7 +781,6 @@ mod tests {
 
     #[test]
     fn bed_mode_edge_touching_and_tiny_overlap() -> Result<()> {
-        // Human verification status: unverified
         // Window [20,30). A fragment [10,20) just touches -> no overlap.
         // A fragment [19,20) 1 bp long, [19,20)∩[20,30)=∅ -> no overlap.
         // A fragment [19,21) overlaps 1 bp -> fraction = 1/2.
@@ -851,7 +835,6 @@ mod tests {
 
     #[test]
     fn midpoint_mode_bed() -> Result<()> {
-        // Human verification status: unverified
         // “Midpoint” usage simulated by interval [m, m+1) and high min-overlap threshold.
         // Windows: [0,10), [10,20), [20,30). Midpoint m=17 hits only [10,20).
         let chrom_len = 10_000;
@@ -878,7 +861,6 @@ mod tests {
 
     #[test]
     fn midpoint_mode_size_bins() -> Result<()> {
-        // Human verification status: unverified
         // Same as above but with size-mode bins of 10 bp.
         let chrom_len = 10_000;
         let mut wd_ptr = 0usize;
@@ -904,7 +886,6 @@ mod tests {
 
     #[test]
     fn streaming_pointer_advances_past_lookback() -> Result<()> {
-        // Human verification status: unverified
         // Two windows: [0,100), [100,200). We'll feed two fragments in ascending order and
         // ensure wd_ptr advances so the second call doesn't re-check the first window.
         let chrom_len = 10_000;
@@ -944,7 +925,6 @@ mod tests {
 
     #[test]
     fn size_mode_one_bp_on_left_boundary_hits_left_bin() -> Result<()> {
-        // Human verification status: unverified
         // Bins [0,10) [10,20) ...
         // Fragment [9,10) (len=1) overlaps bin 0 only by 1 bp.
         let chrom_len = 1_000;
@@ -969,7 +949,6 @@ mod tests {
 
     #[test]
     fn size_mode_one_bp_on_right_boundary_hits_right_bin() -> Result<()> {
-        // Human verification status: unverified
         // Bins [0,10) [10,20) ...
         // Fragment [10,11) (len=1) overlaps bin 1 only by 1 bp.
         let chrom_len = 1_000;
@@ -994,7 +973,6 @@ mod tests {
 
     #[test]
     fn size_mode_one_bp_boundary_with_high_threshold() -> Result<()> {
-        // Human verification status: unverified
         // With min_overlap_fraction ~1.0 the 1 bp fragment still passes (1/1).
         let chrom_len = 1_000;
         let mut wd_ptr = 0usize;
@@ -1020,7 +998,6 @@ mod tests {
 
     #[test]
     fn look_back_allows_small_backtracking_without_losing_windows() -> Result<()> {
-        // Human verification status: unverified
         // BED windows [100,200) and [200,300).
         // First fragment [210,220) (hits bin 1).
         // Second fragment [150,160) (goes "backwards" but within look_back=100).
@@ -1064,7 +1041,6 @@ mod tests {
 
     #[test]
     fn big_fragment_spanning_many_bins_with_threshold_filters_edges() -> Result<()> {
-        // Human verification status: unverified
         // Size-mode bins of 10 bp. Fragment [5,95) has len=90 and touches bins 0..9.
         // Overlap lengths: edge bins have 5 bp each; middle bins have 10 bp.
         // With threshold 0.11:
@@ -1105,7 +1081,6 @@ mod tests {
 
     #[test]
     fn size_mode_overlap_fractions_sum_to_one_for_partition() -> Result<()> {
-        // Human verification status: unverified
         // Fragment [3,27) len=24 across bins of 10 bp.
         // Overlaps: 7,10,7 -> fractions sum to 1.0.
         let chrom_len = 1_000;

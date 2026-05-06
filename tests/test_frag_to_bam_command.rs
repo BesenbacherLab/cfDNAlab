@@ -420,7 +420,6 @@ fn run_blacklist_strategy_case(strategy: BlacklistStrategy) -> Result<Vec<u64>> 
 
 #[test]
 fn given_valid_frag_when_run_then_writes_expected_unpaired_bam_records() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Two fragments in input order chr1 then chr2.
     // Chrom sizes order is intentionally chr2 then chr1.
@@ -457,7 +456,6 @@ fn given_valid_frag_when_run_then_writes_expected_unpaired_bam_records() -> Resu
 
 #[test]
 fn given_filters_and_extra_columns_when_run_then_only_expected_fragments_remain() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // - Keep chromosomes: chr1 only.
     // - Keep mapq >= 20.
@@ -511,7 +509,6 @@ fn given_filters_and_extra_columns_when_run_then_only_expected_fragments_remain(
 #[test]
 fn given_length_bounds_when_run_then_only_fragments_within_inclusive_range_are_kept() -> Result<()>
 {
-    // Human verification status: unverified
     // Arrange:
     // Fragment lengths are:
     // - [0,9)   -> 9   (below min, excluded)
@@ -565,7 +562,6 @@ fn given_length_bounds_when_run_then_only_fragments_within_inclusive_range_are_k
 #[test]
 fn given_inline_header_with_unsupported_extra_column_when_run_then_returns_clear_error()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // The header contains one extra column `gc`.
     // Only these extra names are supported: gc_weight, coverage_scaling_weight,
@@ -612,7 +608,6 @@ fn given_inline_header_with_unsupported_extra_column_when_run_then_returns_clear
 #[test]
 fn given_unsupported_extra_columns_and_ignore_extras_when_run_then_conversion_succeeds_without_aux_tags()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Same unsupported header as the previous test, but `--ignore-extras` is enabled.
     // Hand-derived expectation:
@@ -661,7 +656,6 @@ fn given_unsupported_extra_columns_and_ignore_extras_when_run_then_conversion_su
 #[test]
 fn given_inline_header_with_unknown_extra_and_allow_unknown_extras_when_run_then_known_extras_are_still_transferred()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Inline header has unknown `gc` and known `flen`.
     // Hand-derived expectation:
@@ -710,7 +704,6 @@ fn given_inline_header_with_unknown_extra_and_allow_unknown_extras_when_run_then
 #[test]
 fn given_supported_extra_column_names_when_run_then_gc_cov_and_flen_are_transferred_to_aux_tags()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Header uses the three supported extra names exactly.
     // Hand-derived tag expectations:
@@ -764,7 +757,6 @@ fn given_supported_extra_column_names_when_run_then_gc_cov_and_flen_are_transfer
 
 #[test]
 fn given_fragment_count_scaling_column_when_run_then_cnt_aux_tag_is_written() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Header includes the new recognized fragment-count scaling column.
     // Hand-derived tag expectations:
@@ -819,7 +811,6 @@ fn given_fragment_count_scaling_column_when_run_then_cnt_aux_tag_is_written() ->
 #[test]
 fn given_inline_header_with_only_count_scaling_when_run_then_only_cnt_aux_tag_is_written()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Inline header defines only the count-scaling extra column.
     // Hand-derived expectations:
@@ -875,7 +866,6 @@ fn given_inline_header_with_only_count_scaling_when_run_then_only_cnt_aux_tag_is
 #[test]
 fn given_no_header_and_extra_columns_when_run_then_extra_columns_are_ignored_and_no_aux_tags_are_written()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // No inline header is present, no explicit header is configured, and no companion
     // header file exists for this filename. The parser therefore uses fixed 5-column
@@ -919,7 +909,6 @@ fn given_no_header_and_extra_columns_when_run_then_extra_columns_are_ignored_and
 
 #[test]
 fn given_inline_header_with_only_flen_when_run_then_only_flen_aux_tag_is_written() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Inline header defines only one supported extra column (`flen`).
     // Hand-derived expectation:
@@ -972,7 +961,6 @@ fn given_inline_header_with_only_flen_when_run_then_only_flen_aux_tag_is_written
 
 #[test]
 fn given_explicit_header_with_only_flen_when_run_then_only_flen_aux_tag_is_written() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Frag file has no inline header. We pass an explicit header file that maps column 6 to `flen`.
     // Hand-derived expectation:
@@ -1019,7 +1007,6 @@ fn given_explicit_header_with_only_flen_when_run_then_only_flen_aux_tag_is_writt
 #[test]
 fn given_explicit_header_with_unsupported_extra_column_when_run_then_returns_clear_error()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Explicit header is chosen first and contains unsupported extra name `gc`.
     // Hand-derived expectation is a validation error with the unsupported name.
@@ -1064,7 +1051,6 @@ fn given_explicit_header_with_unsupported_extra_column_when_run_then_returns_cle
 #[test]
 fn given_explicit_header_with_unsupported_extra_column_and_ignore_extras_when_run_then_conversion_succeeds_without_aux_tags()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Explicit header includes unsupported extra name `gc`.
     // With --ignore-extras, the header is accepted and only the core five columns are used.
@@ -1113,7 +1099,6 @@ fn given_explicit_header_with_unsupported_extra_column_and_ignore_extras_when_ru
 #[test]
 fn given_explicit_header_with_unknown_extra_and_allow_unknown_extras_when_run_then_known_extras_are_still_transferred()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Explicit header has unknown `gc` and known `flen`.
     // Hand-derived expectation:
@@ -1161,7 +1146,6 @@ fn given_explicit_header_with_unknown_extra_and_allow_unknown_extras_when_run_th
 #[test]
 fn given_companion_header_with_only_flen_when_run_then_only_flen_aux_tag_is_written() -> Result<()>
 {
-    // Human verification status: unverified
     // Arrange:
     // No explicit header is configured and frag has no inline header.
     // The companion header path is auto-detected from `<prefix>.frag.tsv`.
@@ -1208,7 +1192,6 @@ fn given_companion_header_with_only_flen_when_run_then_only_flen_aux_tag_is_writ
 #[test]
 fn given_companion_header_with_only_count_scaling_when_run_then_only_cnt_aux_tag_is_written()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // No explicit header and no inline header. The companion header therefore defines the
     // count-scaling column.
@@ -1256,7 +1239,6 @@ fn given_companion_header_with_only_count_scaling_when_run_then_only_cnt_aux_tag
 #[test]
 fn given_companion_header_with_unsupported_extra_column_and_ignore_extras_when_run_then_conversion_succeeds_without_aux_tags()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Companion header includes unsupported extra name `gc`.
     // With --ignore-extras, conversion should continue using only core columns.
@@ -1304,7 +1286,6 @@ fn given_companion_header_with_unsupported_extra_column_and_ignore_extras_when_r
 #[test]
 fn given_companion_header_with_unknown_extra_and_allow_unknown_extras_when_run_then_known_extras_are_still_transferred()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Companion header has unknown `gc` and known `flen`.
     // Hand-derived expectation:
@@ -1351,7 +1332,6 @@ fn given_companion_header_with_unknown_extra_and_allow_unknown_extras_when_run_t
 #[test]
 fn given_companion_header_with_unsupported_extra_column_when_run_then_returns_clear_error()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // No explicit header is set. Companion header is therefore selected.
     // Companion header contains unsupported extra name `gc`, so validation must fail.
@@ -1394,7 +1374,6 @@ fn given_companion_header_with_unsupported_extra_column_when_run_then_returns_cl
 
 #[test]
 fn given_companion_and_inline_headers_when_run_then_returns_header_conflict_error() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Both a companion header file and an inline header are present.
     // Hand-derived expectation:
@@ -1445,7 +1424,6 @@ fn given_companion_and_inline_headers_when_run_then_returns_header_conflict_erro
 #[test]
 fn given_explicit_and_companion_headers_when_run_then_explicit_header_takes_precedence()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Companion header is core-only. Explicit header maps the 6th column to flen.
     // Priority order uses explicit `--frag-header` first.
@@ -1497,7 +1475,6 @@ fn given_explicit_and_companion_headers_when_run_then_explicit_header_takes_prec
 
 #[test]
 fn given_explicit_and_inline_headers_when_run_then_returns_header_conflict_error() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Both --frag-header and inline header are present.
     // Hand-derived expectation:
@@ -1548,7 +1525,6 @@ fn given_explicit_and_inline_headers_when_run_then_returns_header_conflict_error
 
 #[test]
 fn given_blacklist_any_when_run_then_any_overlap_is_excluded() -> Result<()> {
-    // Human verification status: unverified
     // Any overlap excludes [5,15), [10,20), and [15,25), so only [0,10) remains.
     let kept_starts = run_blacklist_strategy_case(BlacklistStrategy::Any)?;
     assert_eq!(kept_starts, vec![0]);
@@ -1557,7 +1533,6 @@ fn given_blacklist_any_when_run_then_any_overlap_is_excluded() -> Result<()> {
 
 #[test]
 fn given_blacklist_all_when_run_then_only_fully_overlapped_fragments_are_excluded() -> Result<()> {
-    // Human verification status: unverified
     // Full overlap excludes only [10,20).
     let kept_starts = run_blacklist_strategy_case(BlacklistStrategy::All)?;
     assert_eq!(kept_starts, vec![0, 5, 15]);
@@ -1566,7 +1541,6 @@ fn given_blacklist_all_when_run_then_only_fully_overlapped_fragments_are_exclude
 
 #[test]
 fn given_blacklist_midpoint_when_run_then_midpoint_overlap_controls_exclusion() -> Result<()> {
-    // Human verification status: unverified
     // Midpoints:
     // - [5,15) midpoint=10 -> excluded
     // - [10,20) midpoint=15 -> excluded
@@ -1578,7 +1552,6 @@ fn given_blacklist_midpoint_when_run_then_midpoint_overlap_controls_exclusion() 
 
 #[test]
 fn given_blacklist_proportion_when_run_then_threshold_controls_exclusion() -> Result<()> {
-    // Human verification status: unverified
     // Overlap fractions are [0.0, 0.5, 1.0, 0.5] for the four fragments.
     // With threshold 0.6, only [10,20) is excluded.
     let kept_starts = run_blacklist_strategy_case(BlacklistStrategy::Proportion(0.6))?;
@@ -1589,7 +1562,6 @@ fn given_blacklist_proportion_when_run_then_threshold_controls_exclusion() -> Re
 #[test]
 fn given_touching_short_blacklists_in_separate_files_when_min_size_exceeds_each_then_filter_happens_before_merge()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // One fragment spans [0,10).
     //
@@ -1653,7 +1625,6 @@ fn given_touching_short_blacklists_in_separate_files_when_min_size_exceeds_each_
 #[test]
 fn given_same_blacklist_premerged_in_one_file_when_min_size_is_met_then_fragment_is_excluded()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Use the same logical masked region as the previous test, but this time pre-merge it in the
     // BED itself:
@@ -1710,7 +1681,6 @@ fn given_same_blacklist_premerged_in_one_file_when_min_size_is_met_then_fragment
 
 #[test]
 fn given_unsorted_fragments_within_chromosome_when_run_then_returns_order_error() -> Result<()> {
-    // Human verification status: unverified
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -1736,7 +1706,6 @@ fn given_unsorted_fragments_within_chromosome_when_run_then_returns_order_error(
 
 #[test]
 fn given_chromosome_reappears_when_run_then_returns_order_error() -> Result<()> {
-    // Human verification status: unverified
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -1769,7 +1738,6 @@ fn given_chromosome_reappears_when_run_then_returns_order_error() -> Result<()> 
 
 #[test]
 fn given_fragment_exceeds_chromosome_when_run_then_returns_bounds_error() -> Result<()> {
-    // Human verification status: unverified
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -1795,7 +1763,6 @@ fn given_fragment_exceeds_chromosome_when_run_then_returns_bounds_error() -> Res
 
 #[test]
 fn given_invalid_strand_when_run_then_returns_parse_error() -> Result<()> {
-    // Human verification status: unverified
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -1821,7 +1788,6 @@ fn given_invalid_strand_when_run_then_returns_parse_error() -> Result<()> {
 
 #[test]
 fn given_all_fragments_fail_mapq_when_run_then_writes_empty_bam() -> Result<()> {
-    // Human verification status: unverified
     let input_dir = TempDir::new()?;
     let output_dir = TempDir::new()?;
     let frag_path = input_dir.path().join("input.frag.tsv");
@@ -1851,7 +1817,6 @@ fn given_all_fragments_fail_mapq_when_run_then_writes_empty_bam() -> Result<()> 
 
 #[test]
 fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_twenty() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `frag-to-bam` intentionally defaults to `min_mapq = 0`.
     // Use two frag rows on chr1:
@@ -1934,7 +1899,6 @@ fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_twenty() -> 
 
 #[test]
 fn given_all_fragments_fail_chromosome_selection_when_run_then_returns_clear_error() -> Result<()> {
-    // Human verification status: unverified
     // The command raises "No fragments passed filters; no BAM to write" when
     // no chromosome survives selection and therefore no chromosome is observed.
     let input_dir = TempDir::new()?;
@@ -1963,7 +1927,6 @@ fn given_all_fragments_fail_chromosome_selection_when_run_then_returns_clear_err
 
 #[test]
 fn given_chromosomes_all_when_run_then_header_and_output_follow_chrom_sizes_order() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `--chromosomes all` in this command resolves to chrom-sizes order.
     // Chrom sizes file order: chr2, chr1, chr3.
@@ -2129,7 +2092,6 @@ fn roundtrip_single_paired_fragment_to_unpaired_bam(
 #[test]
 fn given_bam_to_frag_then_frag_to_bam_when_roundtrip_then_restores_all_available_fields()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // We create two inward fragments whose restorable fields are hand-derived:
     //
@@ -2285,7 +2247,6 @@ fn given_bam_to_frag_then_frag_to_bam_when_roundtrip_then_restores_all_available
 #[test]
 fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_then_roundtrip_matches_original()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam` contains exactly one inward fragment on chr1:
     // - forward read covers [20, 40)
@@ -2375,7 +2336,6 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_then_roundtrip_match
 #[test]
 fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_with_blacklist_then_roundtrip_matches_original()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam()` contains one fragment spanning [20, 80), length 60.
     // We apply a blacklist interval [25, 35), which overlaps that fragment.
@@ -2453,7 +2413,6 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_lengths_with_blacklist_then_
 #[test]
 fn given_bam_to_frag_then_frag_to_bam_when_counting_coverage_then_roundtrip_matches_original()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // The same `simple_inward_bam` roundtrip represents exactly one fragment/read spanning [20, 80).
     //
@@ -2532,7 +2491,6 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_coverage_then_roundtrip_matc
 #[test]
 fn given_bam_to_frag_then_frag_to_bam_when_counting_coverage_with_blacklist_then_roundtrip_matches_original()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam()` roundtrips to one unpaired fragment/read span [20, 80).
     // We blacklist [25, 35), which lies inside that covered span.
@@ -2615,7 +2573,6 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_coverage_with_blacklist_then
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_bam_to_bam"))]
 #[test]
 fn bam_frag_bam_roundtrip_preserves_coverage_tags_for_same_span() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // This test compares the same physical fragment represented in two different ways:
     // - the original paired BAM from `simple_inward_bam()`
@@ -2715,7 +2672,6 @@ fn bam_frag_bam_roundtrip_preserves_coverage_tags_for_same_span() -> Result<()> 
 #[cfg(all(feature = "cmd_bam_to_frag", feature = "cmd_bam_to_bam"))]
 #[test]
 fn bam_frag_bam_roundtrip_preserves_count_tags_for_same_span() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // This is the count-scaling mirror of the coverage-scaling roundtrip test above.
     // It again compares the same physical fragment represented as:
@@ -2818,7 +2774,6 @@ fn bam_frag_bam_roundtrip_preserves_count_tags_for_same_span() -> Result<()> {
 #[test]
 fn given_bam_to_frag_then_frag_to_bam_when_counting_midpoints_then_roundtrip_matches_original()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // We use one odd-length fragment so the midpoint is deterministic across both
     // representations:
@@ -2898,7 +2853,6 @@ fn given_bam_to_frag_then_frag_to_bam_when_counting_midpoints_then_roundtrip_mat
 #[test]
 fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_original_gc_file_weighting()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Start from one odd-length paired fragment spanning [20, 81), length 61. Its midpoint is
     // deterministic:
@@ -3065,7 +3019,6 @@ fn given_bam_to_frag_gc_weights_then_frag_to_bam_then_midpoints_gc_tag_matches_o
 #[test]
 fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_matches_original_gc_file_weighting()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Use a real non-neutral `ref-gc-bias -> gc-bias` package rather than a handcrafted constant
     // matrix.
@@ -3274,7 +3227,6 @@ fn given_bam_to_frag_real_non_neutral_gc_then_frag_to_bam_then_midpoints_gc_tag_
 #[test]
 fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then_companion_header_restores_both_aux_tags()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam()` contains one paired fragment spanning [20, 80), length 60.
     //
@@ -3379,7 +3331,6 @@ fn given_bam_to_frag_with_real_gc_and_scaling_outputs_when_frag_to_bam_runs_then
 #[test]
 fn given_bam_to_frag_with_count_scaling_output_when_frag_to_bam_runs_then_companion_header_restores_cnt_aux_tag()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam()` contains one paired fragment spanning [20, 80), length 60.
     //

@@ -22,7 +22,6 @@ fn write_twobit(fasta: &str) -> Result<NamedTempFile> {
 
 #[test]
 fn read_seq_reads_full_chromosome() -> Result<()> {
-    // Human verification status: unverified
     let twobit = write_twobit(SAMPLE_FASTA)?;
     let seq = read_seq(twobit.path(), "chr1")?;
     assert_eq!(seq, b"ACGTACGTNN");
@@ -31,7 +30,6 @@ fn read_seq_reads_full_chromosome() -> Result<()> {
 
 #[test]
 fn read_seq_in_range_reads_slice() -> Result<()> {
-    // Human verification status: unverified
     let twobit = write_twobit(SAMPLE_FASTA)?;
     let seq = read_seq_in_range(twobit.path(), "chr1", 2..8)?;
     assert_eq!(seq, b"GTACGT");
@@ -40,7 +38,6 @@ fn read_seq_in_range_reads_slice() -> Result<()> {
 
 #[test]
 fn read_seq_roundtrips_full_50bp_sequence_with_terminal_partial_byte() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // This sequence is 50 bp long, so the final .2bit packed byte stores only two real bases.
     // twobit previously had a bug that wrote the final base wrongly, so we keep a check of this going forward:
@@ -77,7 +74,6 @@ fn read_seq_roundtrips_full_50bp_sequence_with_terminal_partial_byte() -> Result
 
 #[test]
 fn read_seq_roundtrips_full_52bp_sequence_when_tail_byte_is_not_partial() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // This is the same logical fixture as the 50 bp regression above, but with two unused padding
     // bases appended so the chromosome length becomes divisible by 4. That keeps the important
@@ -110,7 +106,6 @@ fn read_seq_roundtrips_full_52bp_sequence_when_tail_byte_is_not_partial() -> Res
 
 #[test]
 fn twobit_contig_lengths_filters_requested_contigs() -> Result<()> {
-    // Human verification status: unverified
     let twobit = write_twobit(SAMPLE_FASTA)?;
     let lengths = twobit_contig_lengths(twobit.path(), &["chr1".to_string(), "chr3".to_string()])?;
     assert_eq!(lengths.len(), 1);
@@ -122,7 +117,6 @@ fn twobit_contig_lengths_filters_requested_contigs() -> Result<()> {
 
 #[test]
 fn twobit_contig_names_preserves_reference_order() -> Result<()> {
-    // Human verification status: unverified
     let twobit = write_twobit(">chrB\nACGT\n>chrA\nTTAA\n>chrTiny\nCC\n")?;
 
     let names = twobit_contig_names(twobit.path())?;
@@ -133,7 +127,6 @@ fn twobit_contig_names_preserves_reference_order() -> Result<()> {
 
 #[test]
 fn chromosome_args_all_resolves_from_twobit_source_order() -> Result<()> {
-    // Human verification status: unverified
     let twobit = write_twobit(">chrB\nACGT\n>chrA\nTTAA\n")?;
     let args = ChromosomeArgs {
         chromosomes: Some(vec!["all".to_string()]),
@@ -148,7 +141,6 @@ fn chromosome_args_all_resolves_from_twobit_source_order() -> Result<()> {
 
 #[test]
 fn load_chrom_sizes_valid_file() -> Result<()> {
-    // Human verification status: unverified
     let mut file = NamedTempFile::new()?;
     writeln!(
         file,
@@ -166,7 +158,6 @@ fn load_chrom_sizes_valid_file() -> Result<()> {
 
 #[test]
 fn load_chrom_sizes_invalid_file() -> Result<()> {
-    // Human verification status: unverified
     let mut file = NamedTempFile::new()?;
     writeln!(file, "chr1\tnot_a_number")?;
 

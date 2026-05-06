@@ -657,20 +657,17 @@ fn validate_gc_package_compatibility(
         .last()
         .context("GC correction package contained no length edges")?;
 
-    let min_length = min_fragment_length;
-    let max_length = max_fragment_length;
-
     let end_offset_twice = 2 * package.end_offset as u32;
 
     ensure!(
-        min_length > end_offset_twice,
-        "GC correction: minimum fragment length ({min_length}) must exceed twice the end-offset ({}) used when building the correction. \
+        min_fragment_length > end_offset_twice,
+        "GC correction: minimum fragment length ({min_fragment_length}) must exceed twice the end-offset ({}) used when building the correction. \
         Increase the requested minimum fragment length or rebuild the GC correction package with a smaller --end-offset.",
         end_offset_twice
     );
 
     ensure!(
-        min_length >= package_min_length && max_length <= package_max_length,
+        min_fragment_length >= package_min_length && max_fragment_length <= package_max_length,
         "GC correction: fragment length range [{}-{}] is outside the range covered by the correction package [{}-{}]. \
         Adjust the requested fragment length range or rebuild the GC correction package with matching limits.",
         min_fragment_length,

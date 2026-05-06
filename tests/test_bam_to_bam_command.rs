@@ -32,7 +32,6 @@ use tempfile::tempdir;
 
 #[test]
 fn filters_on_mapping_quality_and_fragment_membership() -> Result<()> {
-    // Human verification status: unverified
     let surviving = paired_fragment(50, 160, 40);
     let mut low_mapq = paired_fragment(300, 160, 40);
     low_mapq.forward.mapq = 5;
@@ -78,7 +77,6 @@ fn filters_on_mapping_quality_and_fragment_membership() -> Result<()> {
 
 #[test]
 fn blacklisting_removes_fragment_when_single_mate_overlaps() -> Result<()> {
-    // Human verification status: unverified
     let safe = paired_fragment(10, 120, 40);
     let with_blacklisted_mate = paired_fragment(200, 120, 40);
 
@@ -116,7 +114,6 @@ fn blacklisting_removes_fragment_when_single_mate_overlaps() -> Result<()> {
 
 #[test]
 fn blacklisting_removes_fragment_when_gap_is_blacklisted() -> Result<()> {
-    // Human verification status: unverified
     let safe = paired_fragment(10, 160, 40);
     let gap_hit = paired_fragment(300, 200, 40);
 
@@ -153,7 +150,6 @@ fn blacklisting_removes_fragment_when_gap_is_blacklisted() -> Result<()> {
 
 #[test]
 fn by_bed_excludes_chromosomes_without_any_windows() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Build one fragment on each chromosome:
     // - chr1: qname `frag0_20`, span [20, 80)
@@ -215,7 +211,6 @@ fn by_bed_excludes_chromosomes_without_any_windows() -> Result<()> {
 
 #[test]
 fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_thirty() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Build one inward fragment where both mates have MAPQ 20.
     //
@@ -275,7 +270,6 @@ fn default_min_mapq_matches_explicit_zero_and_differs_from_explicit_thirty() -> 
 
 #[test]
 fn respects_chromosome_sort_toggle() -> Result<()> {
-    // Human verification status: unverified
     let frag_chr2 = paired_fragment(10, 160, 40);
     let frag_chr10 = fragment_on_tid(paired_fragment(20, 160, 40), 1);
     let chroms = vec![("chr2".to_string(), 500), ("chr10".to_string(), 500)];
@@ -316,7 +310,6 @@ fn respects_chromosome_sort_toggle() -> Result<()> {
 
 #[test]
 fn chromosomes_all_default_sorts_lexicographically_instead_of_bam_header_order() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Build a BAM whose header/contig order is intentionally non-lexicographic:
     //   [chr2, chr10, chr1]
@@ -387,7 +380,6 @@ fn chromosomes_all_default_sorts_lexicographically_instead_of_bam_header_order()
 
 #[test]
 fn chromosomes_all_with_skip_sort_follows_bam_header_order() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Reuse the same intentionally non-lexicographic BAM header/contig order:
     //   [chr2, chr10, chr1]
@@ -456,7 +448,6 @@ fn chromosomes_all_with_skip_sort_follows_bam_header_order() -> Result<()> {
 
 #[test]
 fn windows_keep_fragment_when_single_read_is_inside() -> Result<()> {
-    // Human verification status: unverified
     let target = paired_fragment(20, 200, 40);
     let outside = paired_fragment(400, 200, 40);
     let bam = bam_from_specs(
@@ -490,7 +481,6 @@ fn windows_keep_fragment_when_single_read_is_inside() -> Result<()> {
 
 #[test]
 fn windows_count_overlap_spanning_gap_between_mates() -> Result<()> {
-    // Human verification status: unverified
     let target = paired_fragment(0, 200, 40);
     let outside = paired_fragment(400, 200, 40);
     let bam = bam_from_specs(
@@ -524,7 +514,6 @@ fn windows_count_overlap_spanning_gap_between_mates() -> Result<()> {
 
 #[test]
 fn global_mode_keeps_expected_fragments_across_three_chromosomes() -> Result<()> {
-    // Human verification status: unverified
     let bam = bam_from_specs(
         vec![
             ("chr1".to_string(), 1_000),
@@ -571,7 +560,6 @@ fn global_mode_keeps_expected_fragments_across_three_chromosomes() -> Result<()>
 
 #[test]
 fn bed_mode_filters_expected_fragments_across_three_chromosomes() -> Result<()> {
-    // Human verification status: unverified
     let bam = bam_from_specs(
         vec![
             ("chr1".to_string(), 1_000),
@@ -625,7 +613,6 @@ fn bed_mode_filters_expected_fragments_across_three_chromosomes() -> Result<()> 
 
 #[test]
 fn writes_coverage_weight_when_scaling_factors_provided() -> Result<()> {
-    // Human verification status: unverified
     let fragment = paired_fragment(0, 100, 40);
     let bam = bam_from_specs(
         vec![("chr1".to_string(), 500)],
@@ -655,7 +642,6 @@ fn writes_coverage_weight_when_scaling_factors_provided() -> Result<()> {
 
 #[test]
 fn writes_count_weight_when_count_scaling_factors_provided() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // One paired fragment spanning [0, 100) and one chromosome-wide count-scaling factor 0.5.
     //
@@ -693,7 +679,6 @@ fn writes_count_weight_when_count_scaling_factors_provided() -> Result<()> {
 
 #[test]
 fn writes_coverage_and_fragment_count_scaling_to_separate_aux_tags() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Use one simple paired fragment spanning [0, 100) and provide two chromosome-wide scaling
     // files with different constants:
@@ -739,7 +724,6 @@ fn writes_coverage_and_fragment_count_scaling_to_separate_aux_tags() -> Result<(
 #[test]
 fn paired_and_unpaired_fragment_modes_apply_same_full_fragment_scaling_for_same_span() -> Result<()>
 {
-    // Human verification status: unverified
     // Arrange:
     // We represent the same physical fragment span [20, 80) in two different supported input
     // modes:
@@ -843,7 +827,6 @@ chr1\t80\t200\t1.0\n",
 #[test]
 fn paired_and_unpaired_fragment_modes_apply_same_full_fragment_count_scaling_for_same_span()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Reuse the same physical fragment span [20, 80) in paired and unpaired modes and provide
     // a non-uniform count-scaling TSV:
@@ -951,7 +934,6 @@ chr1\t80\t200\t1.0\n",
 
 #[test]
 fn gc_file_neutralize_invalid_writes_gc_tag_one_on_both_mates() -> Result<()> {
-    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let ref_twobit = simple_reference_twobit()?;
     let work = tempdir()?;
@@ -1003,7 +985,6 @@ fn gc_file_neutralize_invalid_writes_gc_tag_one_on_both_mates() -> Result<()> {
 
 #[test]
 fn gc_file_default_behavior_skips_fragment_entirely() -> Result<()> {
-    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let ref_twobit = simple_reference_twobit()?;
     let work = tempdir()?;
@@ -1054,7 +1035,6 @@ fn gc_file_default_behavior_skips_fragment_entirely() -> Result<()> {
 
 #[test]
 fn gc_file_and_scaling_factors_write_identical_gc_cov_and_flen_tags_on_both_mates() -> Result<()> {
-    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let ref_twobit = simple_reference_twobit()?;
     let work = tempdir()?;
@@ -1105,7 +1085,6 @@ fn gc_file_and_scaling_factors_write_identical_gc_cov_and_flen_tags_on_both_mate
 #[test]
 fn gc_file_and_count_scaling_factors_write_identical_gc_cnt_and_flen_tags_on_both_mates()
 -> Result<()> {
-    // Human verification status: unverified
     let bam = simple_inward_bam()?;
     let ref_twobit = simple_reference_twobit()?;
     let work = tempdir()?;
@@ -1152,7 +1131,6 @@ fn gc_file_and_count_scaling_factors_write_identical_gc_cnt_and_flen_tags_on_bot
 #[cfg(feature = "cmd_fragment_count_weights")]
 #[test]
 fn real_fragment_count_weights_tsv_is_applied_per_fragment_in_bam_to_bam() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Use the same mixed-length fixture as the normalize-genome test:
     // - short fragment [0,20)
@@ -1247,7 +1225,6 @@ fn real_fragment_count_weights_tsv_is_applied_per_fragment_in_bam_to_bam() -> Re
 
 #[test]
 fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // The fixture contributes one fragment of length 60. We configure the converter to accept
     // exactly that length, then write the smallest valid GC package that only covers 10..=59.
@@ -1297,7 +1274,6 @@ fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range
 
 #[test]
 fn real_ref_gc_bias_then_gc_bias_package_changes_bam_to_bam_in_expected_direction() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Use the same real non-neutral producer workflow as the corresponding `gc-bias` test:
     // - reference: chr1[0,100) all A, chr1[100,200) all C
@@ -1379,7 +1355,6 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_bam_to_bam_in_expected_directio
 
 #[test]
 fn bed_blacklist_scaling_and_gc_together_keep_only_the_expected_tagged_fragment() -> Result<()> {
-    // Human verification status: unverified
     let reference = twobit_from_sequences(
         "bam_to_bam_combined_filters_reference",
         vec![("chr1".to_string(), "ACGT".repeat(75))],
@@ -1450,7 +1425,6 @@ fn bed_blacklist_scaling_and_gc_together_keep_only_the_expected_tagged_fragment(
 #[test]
 fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_to_bam() -> Result<()>
 {
-    // Human verification status: unverified
     // Arrange:
     // Reuse the same two-chromosome fixture and hand derivation as the matching `bam-to-frag`
     // workflow and the command-level `coverage-weights` shared-global-mean test.
@@ -1589,7 +1563,6 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_bam_t
 
 #[test]
 fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Build the smallest valid GC correction package shape, but with an intentionally
     // incompatible schema version. `bam-to-bam` should reject it while loading the package,
@@ -1632,7 +1605,6 @@ fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
 
 #[test]
 fn scaling_tsv_must_cover_requested_chromosome_end_in_bam_to_bam() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam()` uses chr1 length 200.
     // The shared scaling loader requires bins to cover the whole requested chromosome exactly.
@@ -1666,7 +1638,6 @@ fn scaling_tsv_must_cover_requested_chromosome_end_in_bam_to_bam() -> Result<()>
 
 #[test]
 fn count_scaling_tsv_must_cover_requested_chromosome_end_in_bam_to_bam() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // This mirrors the coverage-side truncated TSV regression, but through the separate
     // `--count-scaling-factors` loader path. The artifact contract is the same: bins must cover
@@ -1695,7 +1666,6 @@ fn count_scaling_tsv_must_cover_requested_chromosome_end_in_bam_to_bam() -> Resu
 
 #[test]
 fn count_scaling_tsv_with_uncorrected_metadata_rejects_gc_corrected_bam_to_bam_run() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // The BAM run uses `--gc-file`, so the current run is explicitly GC-corrected.
     // A count-scaling TSV marked `gc_mode=uncorrected` is therefore a known mismatch and should

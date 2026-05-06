@@ -1,3 +1,4 @@
+use crate::commands::ends::write::clip_strategy_name;
 use crate::shared::gc_tag::ClassifiedGCTagWeight;
 use crate::{
     commands::{
@@ -81,15 +82,6 @@ use std::{
 use tracing::{info, warn};
 
 const COMMAND_TARGET: &str = "ends";
-
-fn clip_strategy_name(strategy: ClipStrategy) -> &'static str {
-    match strategy {
-        ClipStrategy::Aligned => "aligned",
-        ClipStrategy::RawAlignedBoundary => "raw-aligned-boundary",
-        ClipStrategy::RawShiftedBoundary => "raw-shifted-boundary",
-        ClipStrategy::Skip => "skip",
-    }
-}
 
 fn outside_kmer_clip_strategy_warning(
     k_outside: usize,
@@ -253,6 +245,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     let progress = ProgressFactory::new();
     let pb = Arc::new(progress.default_bar(tiles.len() as u64));
 
+    // TODO: Add comment explaining these two halos. Mention reach and tile ownership
     let tile_span_left_halo = if opt.clip.clip_strategy.uses_shifted_boundary() {
         opt.clip.max_soft_clips as u64
     } else {
@@ -274,6 +267,8 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     ));
     let tile_window_spans_for_threads = tile_window_spans.clone();
     let raw_shifted_gc_length_warning_issued = Arc::new(AtomicBool::new(false));
+
+    // TODO: Improve the below comments so it also explains the diff between DistributionWindowSpec and WindowSpec handling here (And improve it in general)
     // Window rows are global across chromosomes. For fixed-size windows we therefore need a
     // per-chromosome row offset to turn chromosome-local overlap indices into global output rows.
     // BED windows already carry their own original indices, so their offsets stay at zero.
@@ -295,9 +290,11 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     let chr_offsets = Arc::new(chr_offsets_map);
     let chr_offsets_for_threads = chr_offsets.clone();
 
+    // Craete droppable temporary directory
     let temp_dir_guard =
         TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
     let temp_dir = temp_dir_guard.path();
+
     let counts_prefix = &dot_join(&[prefix, "counts"]);
     let inside_spec = build_optional_kmer_spec(opt.k_inside, "inside")?;
     let outside_spec = build_optional_kmer_spec(opt.k_outside, "outside")?;
@@ -933,8 +930,8 @@ fn process_tile(
                     if matches!(opt.clip.clip_strategy, ClipStrategy::RawShiftedBoundary) {
                         // Remap only the interval used for scaling. Each row still carries the
                         // assignment window idx, and its assignment-space overlap_fraction is
-                        // passed through unchanged, so passing `Some(&scaling_overlaps)` 
-                        // keeps the original assignment fraction and window interval, 
+                        // passed through unchanged, so passing `Some(&scaling_overlaps)`
+                        // keeps the original assignment fraction and window interval,
                         // but averages the scaling weight over the remapped aligned-reference interval
                         let scaling_overlaps =
                             build_reference_based_scaling_overlaps_for_assignment_overlaps(

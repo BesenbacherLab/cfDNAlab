@@ -33,7 +33,6 @@ fn make_record(pos: i64, cigar_ops: Vec<Cigar>) -> Record {
 
 #[test]
 fn inspect_cigar_indels_merges_touching_deletion_like_ops_and_keeps_insert_anchor() {
-    // Human verification status: unverified
     // Start at 100 with cigar 5M 2D 3N 4M 3I 2M.
     //
     // Reference walk:
@@ -72,7 +71,6 @@ fn inspect_cigar_indels_merges_touching_deletion_like_ops_and_keeps_insert_ancho
 
 #[test]
 fn inspect_cigar_indels_ignores_terminal_clips_and_pad_for_reference_walk() {
-    // Human verification status: unverified
     // Start at 50 with cigar 2S 4M 2I 3M 1P 2H.
     //
     // Reference walk:

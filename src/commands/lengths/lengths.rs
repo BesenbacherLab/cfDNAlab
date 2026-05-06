@@ -1013,7 +1013,7 @@ fn process_tile(
                 .collect();
 
             // Calculate the weight per overlapping count-window
-            // NOTE: `compute_per_window_scaling_over_fragment_for_selected_windows` 
+            // NOTE: `compute_per_window_scaling_over_fragment_for_selected_windows`
             // always returns an overlap fraction of 1.0 (count full fragment)!
             let overlap_weights = match opt.window_assignment.assign_by {
                 WindowAssigner::CountOverlap => {

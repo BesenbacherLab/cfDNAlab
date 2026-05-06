@@ -350,7 +350,6 @@ mod tests_lengths_command {
 
     #[test]
     fn counts_reference_lengths_global_window() -> Result<()> {
-        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -394,7 +393,6 @@ mod tests_lengths_command {
 
     #[test]
     fn counts_reference_lengths_size_single_window_misaligned_tiles() -> Result<()> {
-        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -443,7 +441,6 @@ mod tests_lengths_command {
 
     #[test]
     fn counts_reference_lengths_size_aligned_tiles_reduce_cross_tile_bins() -> Result<()> {
-        // Human verification status: unverified
         let bam = bam_from_specs(
             vec![("chr1".to_string(), 200)],
             vec![fixtures::paired_fragment(95, 40, 20)],
@@ -503,7 +500,6 @@ mod tests_lengths_command {
 
     #[test]
     fn counts_reference_lengths_bed_single_window() -> Result<()> {
-        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -553,7 +549,6 @@ mod tests_lengths_command {
 
     #[test]
     fn bed_windowing_counts_a_right_halo_only_window_reached_by_an_owned_fragment() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // - one unpaired fragment span [19,29), length 10
         // - tile size 10 gives the owning tile core [10,20)
@@ -606,7 +601,6 @@ mod tests_lengths_command {
 
     #[test]
     fn bed_windowing_does_not_count_a_window_starting_at_fragment_end() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // - one unpaired fragment span [19,29), length 10
         // - tile size 10 again gives the owning tile core [10,20)
@@ -659,7 +653,6 @@ mod tests_lengths_command {
 
     #[test]
     fn bed_windowing_must_not_shrink_fetch_to_unrelated_core_windows() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // - one unpaired fragment span [19,29), length 10
         // - tile size 10 again gives the owning tile core [10,20)
@@ -720,7 +713,6 @@ mod tests_lengths_command {
 
     #[test]
     fn bed_windowing_right_halo_only_count_is_tile_size_invariant() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // - one unpaired fragment span [19,29), length 10
         // - BED window [28,29) is the only counted row
@@ -778,7 +770,6 @@ mod tests_lengths_command {
 
     #[test]
     fn bed_windowing_mixed_core_and_right_halo_rows_are_tile_size_invariant() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // - one unpaired fragment span [19,29), length 10
         // - BED row [10,11) is upstream and must stay zero
@@ -842,7 +833,6 @@ mod tests_lengths_command {
 
     #[test]
     fn bed_windowing_right_boundary_zero_is_tile_size_invariant() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // - one unpaired fragment span [19,29), length 10
         // - BED window [29,30) touches fragment end only and must stay zero
@@ -898,7 +888,6 @@ mod tests_lengths_command {
 
     #[test]
     fn global_by_size_and_bed_full_chromosome_windows_match_exactly() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // `simple_inward_bam()` contains one fragment spanning [20, 80), length 60, on a single
         // 200 bp chromosome.
@@ -987,7 +976,6 @@ mod tests_lengths_command {
     #[test]
     fn lengths_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero()
     -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // Use three fragments with distinct lengths and MAPQ:
         // - [20, 80): length 60, MAPQ 60
@@ -1080,7 +1068,6 @@ mod tests_lengths_command {
 
     #[test]
     fn counts_reference_lengths_global_window_across_three_chromosomes() -> Result<()> {
-        // Human verification status: unverified
         let bam = three_chrom_length_fixture("lengths_three_chr_global")?;
         let out_dir = TempDir::new()?;
 
@@ -1131,7 +1118,6 @@ mod tests_lengths_command {
 
     #[test]
     fn unpaired_single_read_matches_paired_fragment_length_count_for_same_span() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // Compare two representations of the same physical fragment span [20, 80):
         // - paired-end fixture `simple_inward_bam()`
@@ -1196,7 +1182,6 @@ mod tests_lengths_command {
 
     #[test]
     fn counts_reference_lengths_size_single_window_across_three_chromosomes() -> Result<()> {
-        // Human verification status: unverified
         let bam = three_chrom_length_fixture("lengths_three_chr_size")?;
         let out_dir = TempDir::new()?;
 
@@ -1251,7 +1236,6 @@ mod tests_lengths_command {
 
     #[test]
     fn counts_reference_lengths_bed_single_window_across_three_chromosomes() -> Result<()> {
-        // Human verification status: unverified
         let bam = three_chrom_length_fixture("lengths_three_chr_bed")?;
         let out_dir = TempDir::new()?;
         let bed_path = out_dir.path().join("windows_three_chr.bed");
@@ -1315,7 +1299,6 @@ mod tests_lengths_command {
     #[test]
     fn by_size_and_bed_equivalent_full_chromosome_windows_match_across_three_chromosomes()
     -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // - three chromosomes of length 200
         // - one fragment per chromosome with lengths 60, 80, and 100
@@ -1391,7 +1374,6 @@ mod tests_lengths_command {
 
     #[test]
     fn counts_apply_scaling_factors() -> Result<()> {
-        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -1431,7 +1413,6 @@ mod tests_lengths_command {
 
     #[test]
     fn counts_are_zero_when_blacklisted() -> Result<()> {
-        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -1489,7 +1470,6 @@ mod tests_lengths_command {
 
     #[test]
     fn applies_gc_correction_weighting_modes() -> Result<()> {
-        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let gc_dir = TempDir::new()?;
@@ -1617,7 +1597,6 @@ mod tests_lengths_command {
 
     #[test]
     fn gc_length_range_controls_which_package_rows_are_marginalized() -> Result<()> {
-        // Human verification status: unverified
         // Package rows:
         // - [10,60): GC bin 50 correction = 1
         // - [60,200]: GC bin 50 correction = 10
@@ -1682,7 +1661,6 @@ mod tests_lengths_command {
     #[test]
     fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_lengths()
     -> Result<()> {
-        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let out_dir = TempDir::new()?;
@@ -1735,7 +1713,6 @@ mod tests_lengths_command {
 
     #[test]
     fn real_ref_gc_bias_then_gc_bias_package_changes_lengths_in_expected_direction() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // Use the same real non-neutral producer setup as the corresponding `gc-bias` test:
         // - A/C split reference with pure-start BED windows on the reference side
@@ -1821,7 +1798,6 @@ mod tests_lengths_command {
     #[cfg(feature = "cmd_coverage_weights")]
     #[test]
     fn gc_file_and_scaling_tsv_weights_multiply_in_lengths() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // Producer BAM:
         // - `simple_inward_bam()` contains one fragment [20, 80) on chr1.
@@ -1950,7 +1926,6 @@ mod tests_lengths_command {
     #[test]
     fn gc_file_rejects_package_when_fragment_length_range_is_outside_supported_range() -> Result<()>
     {
-        // Human verification status: unverified
         // Arrange:
         // `simple_inward_bam()` contains one fragment of length 60.
         // Give `lengths` a GC package that only covers fragment lengths 10..=59:
@@ -2007,7 +1982,6 @@ mod tests_lengths_command {
 
     #[test]
     fn gc_file_rejects_package_with_schema_version_mismatch() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // Build a minimal GC correction package with an intentionally incompatible schema version.
         // `lengths` should fail while loading the package, before any reference lookup or length
@@ -2061,7 +2035,6 @@ mod tests_lengths_command {
 
     #[test]
     fn gc_requires_ref_2bit_errors() -> Result<()> {
-        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let gc_dir = TempDir::new()?;
         let gc_path = gc_dir.path().join("gc_pkg.npz");
@@ -2099,7 +2072,6 @@ mod tests_lengths_command {
 
     #[test]
     fn gc_drop_invalid_reports_end_offset_validation_error() -> Result<()> {
-        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let ref_twobit = simple_reference_twobit()?;
         let gc_dir = TempDir::new()?;
@@ -2143,7 +2115,6 @@ mod tests_lengths_command {
 
     #[test]
     fn indel_adjust_counts_adjusted_length_and_skip_drops() -> Result<()> {
-        // Human verification status: unverified
         let bam = indel_bam_fixture()?;
         let out_dir = TempDir::new()?;
 
@@ -2201,7 +2172,6 @@ mod tests_lengths_command {
 
     #[test]
     fn max_deletion_bases_filters_indel_adjusted_fragments_before_counting() -> Result<()> {
-        // Human verification status: unverified
         // Reuse the indel fixture with one clean fragment, one insertion-bearing fragment,
         // and one deletion-bearing fragment.
         //
@@ -2248,7 +2218,6 @@ mod tests_lengths_command {
 
     #[test]
     fn clip_adjust_counts_adjusted_length_and_clip_skip_drops() -> Result<()> {
-        // Human verification status: unverified
         // One unpaired read-as-fragment with cigar 2S10M2S at pos 10.
         //
         // Mental derivation:
@@ -2327,7 +2296,6 @@ mod tests_lengths_command {
 
     #[test]
     fn clip_adjust_count_overlap_uses_the_adjusted_assignment_interval() -> Result<()> {
-        // Human verification status: unverified
         // One unpaired 2S10M2S fragment at pos 10.
         //
         // Aligned mode:
@@ -2412,7 +2380,6 @@ mod tests_lengths_command {
 
     #[test]
     fn clip_adjust_bins_by_adjusted_length_but_scales_over_aligned_span() -> Result<()> {
-        // Human verification status: unverified
         // One unpaired 2S10M2S fragment at pos 10.
         //
         // Mental derivation:
@@ -2547,7 +2514,6 @@ mod tests_lengths_command {
     #[test]
     fn clip_adjust_count_overlap_scaling_uses_the_nearest_aligned_base_for_clipped_only_windows()
     -> Result<()> {
-        // Human verification status: unverified
         // One unpaired 2S10M2S fragment at pos 10, counted against three 10 bp windows.
         //
         // Assignment in clip-adjust mode uses [8,22), so the count fractions are:
@@ -2628,7 +2594,6 @@ mod tests_lengths_command {
     #[test]
     fn max_soft_clips_filters_lengths_fragments_before_counting_clip_adjusted_lengths() -> Result<()>
     {
-        // Human verification status: unverified
         // One unpaired 2S10M fragment at pos 10.
         //
         // Mental derivation:
@@ -2697,7 +2662,6 @@ mod tests_lengths_command {
 
     #[test]
     fn indel_adjust_bins_by_adjusted_length_but_scales_over_reference_span() -> Result<()> {
-        // Human verification status: unverified
         let bam = indel_bam_fixture()?;
         let out_dir = TempDir::new()?;
         let scaling_path = out_dir.path().join("indel_adjust_scaling.tsv");
@@ -2745,7 +2709,6 @@ mod tests_lengths_command {
 
     #[test]
     fn indel_adjust_blacklist_uses_full_reference_span_not_only_adjusted_length() -> Result<()> {
-        // Human verification status: unverified
         let bam = indel_bam_fixture()?;
         let out_dir = TempDir::new()?;
         let blacklist_path = out_dir.path().join("indel_adjust_blacklist.bed");
@@ -2787,7 +2750,6 @@ mod tests_lengths_command {
 
     #[test]
     fn indel_adjust_blacklist_proportion_uses_reference_span_denominator() -> Result<()> {
-        // Human verification status: unverified
         let bam = indel_bam_fixture()?;
         let out_dir = TempDir::new()?;
         let blacklist_path = out_dir.path().join("indel_adjust_blacklist_proportion.bed");
@@ -2853,7 +2815,6 @@ mod tests_lengths_command {
 
     #[test]
     fn scaling_overlapping_bins_error() -> Result<()> {
-        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -2889,7 +2850,6 @@ mod tests_lengths_command {
 
     #[test]
     fn custom_output_prefix_is_used() -> Result<()> {
-        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -2988,7 +2948,6 @@ mod tests_lengths_command {
 
     #[test]
     fn multi_chrom_size_counts_mass_conserved() -> Result<()> {
-        // Human verification status: unverified
         let bam = multi_chrom_simple_bam()?;
         let out_dir = TempDir::new()?;
 
@@ -3034,7 +2993,6 @@ mod tests_lengths_command {
 
     #[test]
     fn assignment_modes_produce_distinct_counts() -> Result<()> {
-        // Human verification status: unverified
         let bam = simple_inward_bam()?;
         let window_bp = 40u64;
         let len_idx = 60 - 10;
@@ -3166,7 +3124,6 @@ mod tests_lengths_command {
 
     #[test]
     fn scaling_tsv_must_cover_requested_chromosome_end_in_lengths() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // `simple_inward_bam()` uses chr1 length 200.
         // A valid scaling TSV must cover every requested chromosome contiguously from 0 up to
@@ -3214,7 +3171,6 @@ mod tests_lengths_command {
     #[cfg(feature = "cmd_coverage_weights")]
     #[test]
     fn coverage_weights_tsv_in_count_overlap_mode_uses_overlap_span_scaling() -> Result<()> {
-        // Human verification status: unverified
         // Arrange:
         // Producer BAM:
         // - `simple_inward_bam()` has one fragment [20, 80).
@@ -4849,7 +4805,6 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_accepts_contained_only() -> Result<()> {
-        // Human verification status: unverified
         let tmp = TempDir::new()?;
         let dir = tmp.path();
         let template = template_counts();
@@ -4870,7 +4825,6 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn partial_writer_rejects_count_rows_without_matching_window_indices() {
-        // Human verification status: unverified
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
 
@@ -4885,7 +4839,6 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_counts_multiple_crossing_tiles() -> Result<()> {
-        // Human verification status: unverified
         let tmp = TempDir::new()?;
         let dir = tmp.path();
         let template = template_counts();
@@ -4928,7 +4881,6 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_combines_contained_and_cross() -> Result<()> {
-        // Human verification status: unverified
         let tmp = TempDir::new()?;
         let dir = tmp.path();
         let template = template_counts();
@@ -4965,7 +4917,6 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_errors_when_contribution_missing() {
-        // Human verification status: unverified
         let template = template_counts();
 
         // No partials written -> zero contributions
@@ -4976,7 +4927,6 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_errors_on_mismatched_counts() {
-        // Human verification status: unverified
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
         let template = template_counts();
@@ -4994,7 +4944,6 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_errors_on_counts_width_mismatch() {
-        // Human verification status: unverified
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
         let template = template_counts(); // width 1
@@ -5017,7 +4966,6 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_errors_on_non_contiguous_counts_rows() {
-        // Human verification status: unverified
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
         let template = LengthCounts::new(exact_axis(10, 11)); // two-length template
@@ -5042,7 +4990,6 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_ignores_files_from_other_chromosomes() -> Result<()> {
-        // Human verification status: unverified
         let tmp = TempDir::new()?;
         let dir = tmp.path();
         let template = template_counts();
@@ -5117,7 +5064,6 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn write_partials_rejects_mismatched_contained() {
-        // Human verification status: unverified
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
         let template = template_counts();
@@ -5131,7 +5077,6 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_errors_on_out_of_bounds_partial_idx() {
-        // Human verification status: unverified
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
         let template = template_counts();
@@ -5151,7 +5096,6 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_errors_on_out_of_bounds_cross_idx() {
-        // Human verification status: unverified
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
         let template = template_counts();
@@ -5167,7 +5111,6 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn reducer_separates_windows() -> Result<()> {
-        // Human verification status: unverified
         let tmp = TempDir::new()?;
         let dir = tmp.path();
         let template = template_counts();
@@ -5197,7 +5140,6 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn write_partials_skips_empty() -> Result<()> {
-        // Human verification status: unverified
         let tmp = TempDir::new()?;
         let dir = tmp.path();
         let template = template_counts();
@@ -5212,7 +5154,6 @@ mod tests_lengths_tiling_reducer {
 
     #[test]
     fn write_cross_skips_empty() -> Result<()> {
-        // Human verification status: unverified
         let tmp = TempDir::new()?;
         let dir = tmp.path();
         let res = write_cross_npy(dir, "cross", "chr1", 0, &[])?;
@@ -5243,7 +5184,6 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_size_mode_clamps_to_halo_and_chrom() {
-        // Human verification status: unverified
         // Tile: core 50-150, fetch 30-200 (halo 20 left, 50 right), chrom len 180
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 50, 150, 30, 200)
             .expect("test tile should be valid");
@@ -5265,7 +5205,6 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn build_tiles_aligns_to_bin_when_divisible() {
-        // Human verification status: unverified
         let mut contigs = FxHashMap::default();
         contigs.insert("chr1".to_string(), (0, 100u32));
         let contigs = Contigs { contigs };
@@ -5285,7 +5224,6 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn build_tiles_not_aligned_when_too_few_bins() {
-        // Human verification status: unverified
         let mut contigs = FxHashMap::default();
         contigs.insert("chr1".to_string(), (0, 50u32));
         let contigs = Contigs { contigs };
@@ -5299,7 +5237,6 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_for_tile_global_clamps_to_chrom() {
-        // Human verification status: unverified
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 0, 50, 0, 200)
             .expect("test tile should be valid");
         let span = fetch_span_for_tile(
@@ -5319,7 +5256,6 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_for_tile_bed_with_overlap() {
-        // Human verification status: unverified
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 100, 160, 80, 200)
             .expect("test tile should be valid");
         let windows = indexed_windows(&[(90, 110, 0), (150, 170, 1), (250, 300, 2)]);
@@ -5345,7 +5281,6 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_bed_none_when_no_overlap() {
-        // Human verification status: unverified
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 100, 150, 80, 170)
             .expect("test tile should be valid");
         // No windows overlap tile
@@ -5369,7 +5304,6 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn fetch_span_size_mode_none_when_tile_right_of_chromosome() {
-        // Human verification status: unverified
         let tile = Tile::from_coords("chr1".to_string(), 0, 0, 250, 260, 230, 270)
             .expect("test tile should be valid");
         let res = fetch_span_for_tile(
@@ -5387,7 +5321,6 @@ mod tests_lengths_tiling_helpers {
 
     #[test]
     fn tile_constructor_rejects_empty_core() {
-        // Human verification status: unverified
         let err = Tile::from_coords("chr1".to_string(), 0, 0, 100, 100, 80, 120).unwrap_err();
         assert!(format!("{err}").contains("interval end (100) must be greater than start (100)"));
     }

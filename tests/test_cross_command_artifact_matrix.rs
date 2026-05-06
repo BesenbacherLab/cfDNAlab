@@ -233,7 +233,6 @@ fn assert_close_f32(actual: f32, expected: f32, context: &str) {
 
 #[test]
 fn bam_to_bam_consumes_shared_real_artifacts_with_expected_fragment_tags() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // The shared builder gives us:
     // - one real neutral GC package with weight 1.0 for the only accepted fragment
@@ -286,7 +285,6 @@ fn bam_to_bam_consumes_shared_real_artifacts_with_expected_fragment_tags() -> Re
 
 #[test]
 fn lengths_consumes_shared_real_artifacts_with_expected_weighted_count() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // The shared real artifacts define exactly one accepted 61 bp fragment.
     // The real GC package is neutral, so `lengths` should only apply the real scaling average:
@@ -334,7 +332,6 @@ fn lengths_consumes_shared_real_artifacts_with_expected_weighted_count() -> Resu
 
 #[test]
 fn midpoints_consumes_shared_real_artifacts_with_expected_profile_mass() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // The shared consumer fragment is [20,81), so its midpoint is:
     //   20 + floor(61 / 2) = 50
@@ -397,7 +394,6 @@ fn midpoints_consumes_shared_real_artifacts_with_expected_profile_mass() -> Resu
 
 #[test]
 fn fcoverage_consumes_shared_real_artifacts_with_expected_per_base_profile() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `fcoverage` is intentionally different from the fragment-average consumers.
     // It applies the same real scaling artifact per covered base in place, not as one fragment

@@ -46,7 +46,6 @@ fn load_ref_gc_package_arrays(
 
 #[test]
 fn gc_prefix_helpers_return_prefix_differences_for_checked_intervals() -> Result<()> {
-    // Human verification status: unverified
     // Sequence A C N G T A:
     // - [1,5) = C N G T -> GC=2, ACGT=3
     // - [2,4) = N G     -> GC=1, ACGT=1
@@ -65,7 +64,6 @@ fn gc_prefix_helpers_return_prefix_differences_for_checked_intervals() -> Result
 
 #[test]
 fn gc_prefix_helpers_error_when_interval_exceeds_prefix_bounds() -> Result<()> {
-    // Human verification status: unverified
     // Sequence A C G T has prefix length 5, so the largest valid half-open interval end is 4.
     // Asking for [1,5) should therefore fail before any subtraction is attempted.
     let seq = b"ACGT".to_vec();
@@ -96,7 +94,6 @@ fn gc_prefix_helpers_error_when_interval_exceeds_prefix_bounds() -> Result<()> {
 
 #[test]
 fn gc_integer_percentage_window_returns_some_none_and_error() -> Result<()> {
-    // Human verification status: unverified
     // Sequence A C N G T:
     // - [0,5) = A C N G T -> GC=2, ACGT=4, so GC% = round(200/4) = 50
     // - [1,4) = C N G     -> GC=2, ACGT=2, so this stays valid when min_acgt_count=2
@@ -129,7 +126,6 @@ fn gc_integer_percentage_window_returns_some_none_and_error() -> Result<()> {
 
 #[test]
 fn counts_gc_for_each_window_with_end_offset() -> Result<()> {
-    // Human verification status: unverified
     // Arrange: Two windows of equal size with start positions seeded at each window start
     // End offset trims one base on each side so GC is counted on the inner span.
     let seq = b"ACGTACGTACGT".to_vec();
@@ -201,7 +197,6 @@ fn counts_gc_for_each_window_with_end_offset() -> Result<()> {
 
 #[test]
 fn reference_gc_counts_use_tile_local_prefix_coordinates_after_late_sequence_load() -> Result<()> {
-    // Human verification status: unverified
     // This mirrors ref-gc-bias after loading a late reference slice, e.g. absolute [900,964).
     // The count helper receives tile-local coordinates, so absolute window [930,941) is [30,41)
     // and absolute start 930 is local start 30.
@@ -241,7 +236,6 @@ fn reference_gc_counts_use_tile_local_prefix_coordinates_after_late_sequence_loa
 
 #[test]
 fn skips_counts_after_blacklist_removes_acgt_support() -> Result<()> {
-    // Human verification status: unverified
     // Arrange: Blacklist the middle of the fragment so only half the bases remain ACGT
     let mut seq = b"ACGT".to_vec();
     let blacklist_intervals = Interval::from_tuples(&[(1, 3)])?;
@@ -271,7 +265,6 @@ fn skips_counts_after_blacklist_removes_acgt_support() -> Result<()> {
 
 #[test]
 fn support_threshold_per_mb_steps_at_hundred_million_positions() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Use exactly 1 Mb of valid ACGT positions so the absolute threshold equals `threshold_per_mb`.
     // The row values are chosen so each threshold step changes exactly one additional support bit.
@@ -310,7 +303,6 @@ fn support_threshold_per_mb_steps_at_hundred_million_positions() -> Result<()> {
 
 #[test]
 fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Result<()> {
-    // Human verification status: unverified
     let reference = fixtures::simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
     let output_prefix = "unit_ref_gc";
@@ -475,7 +467,6 @@ fn ref_gc_bias_run_writes_expected_prefixed_package_metadata_and_shapes() -> Res
 
 #[test]
 fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Build a 200 bp chromosome with two pure regions:
     // - chr1[0,100)   = all A
@@ -618,7 +609,6 @@ fn ref_gc_bias_run_counts_expected_two_bin_reference_distribution() -> Result<()
 
 #[test]
 fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Start from the same exact-count setup as the previous test:
     // - chr1[0,100)   = all A
@@ -755,7 +745,6 @@ fn ref_gc_bias_run_blacklist_removes_exactly_the_overlapping_start_positions() -
 
 #[test]
 fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Build the same 200 bp pure-reference setup:
     // - chr1[0,100)   = all A
@@ -902,7 +891,6 @@ fn ref_gc_bias_run_end_offset_counts_expected_trimmed_two_bin_distribution() -> 
 
 #[test]
 fn ref_gc_bias_run_blacklist_with_end_offset_drops_only_trimmed_overlaps() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Reuse the trimmed-span setup from the previous test:
     // - chr1[0,100)   = all A
@@ -1270,7 +1258,6 @@ fn ref_gc_bias_run_interpolation_enabled_fills_between_equal_supported_anchors()
 
 #[test]
 fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run() -> Result<()> {
-    // Human verification status: unverified
     let reference = fixtures::simple_reference_twobit()?;
     let split_out_dir = TempDir::new()?;
     let merged_out_dir = TempDir::new()?;
@@ -1349,7 +1336,6 @@ fn overlapping_and_touching_bed_windows_match_explicitly_merged_ref_gc_bias_run(
 #[test]
 fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_ref_gc_bias_run()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `ref-gc-bias` flattens overlapping and touching BED intervals to unique positions before
     // counting. That flattening must stay correct even when a blacklist removes part of the
@@ -1435,7 +1421,6 @@ fn overlapping_and_touching_bed_windows_with_blacklist_match_explicitly_merged_r
 
 #[test]
 fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `ref-gc-bias` samples candidate fragment starts independently of windowing, then counts only
     // starts that land inside the configured windows. A single BED window spanning the whole
@@ -1510,7 +1495,6 @@ fn full_chromosome_bed_window_matches_global_ref_gc_bias_run() -> Result<()> {
 
 #[test]
 fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `ref-gc-bias` samples start positions first, then counts only the sampled starts that land
     // inside the configured logical region after blacklist masking. A single BED window spanning
@@ -1595,7 +1579,6 @@ fn full_chromosome_bed_window_with_blacklist_matches_global_ref_gc_bias_run() ->
 #[test]
 fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_bias_run()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `ref-gc-bias` uses the shared blacklist loader with:
     // - `min_size = 1`
@@ -1683,7 +1666,6 @@ fn multiple_blacklist_files_with_touching_intervals_match_single_merged_ref_gc_b
 
 #[test]
 fn rejects_n_positions_when_sampling_density_would_exceed_one() -> Result<()> {
-    // Human verification status: unverified
     let reference = fixtures::simple_reference_twobit()?;
     let out_dir = TempDir::new()?;
 
@@ -1733,7 +1715,6 @@ fn rejects_n_positions_when_sampling_density_would_exceed_one() -> Result<()> {
 
 #[test]
 fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
-    // Human verification status: unverified
     let reference = fixtures::simple_reference_twobit()?;
     let single_thread_out = TempDir::new()?;
     let two_thread_out = TempDir::new()?;
@@ -1797,7 +1778,6 @@ fn fixed_seed_ref_gc_bias_is_invariant_to_thread_count() -> Result<()> {
 
 #[test]
 fn fixed_seed_ref_gc_bias_with_blacklist_and_bed_is_invariant_to_thread_count() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // With a fixed seed, changing only thread count must not change the logical sampled starts or
     // the merged reference package, even when the command simultaneously has to:

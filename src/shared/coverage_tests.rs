@@ -101,7 +101,6 @@ fn max_abs_suffix(values: &[f32], suffix_start: usize) -> f32 {
 
 #[test]
 fn regression_tail_zero_region_should_survive_theoretical_cleanup_floor() {
-    // Human verification status: unverified
     // This fixes a deterministic fixture for the current delta accumulation path.
     //
     // Setup:
@@ -140,7 +139,6 @@ fn regression_tail_zero_region_should_survive_theoretical_cleanup_floor() {
 
 #[test]
 fn clamp_finite_coverage_below_to_zero_clamps_negative_and_subfloor_values() {
-    // Human verification status: unverified
     let mut cov = vec![-0.2, -1.0e-6, 0.0, 0.49, 0.5, f32::NAN, f32::INFINITY];
 
     clamp_finite_coverage_below_to_zero(&mut cov, 0.5);
@@ -156,7 +154,6 @@ fn clamp_finite_coverage_below_to_zero_clamps_negative_and_subfloor_values() {
 
 #[test]
 fn zero_sum_delta_stress_case_produces_only_zero_after_explicit_cleanup() {
-    // Human verification status: unverified
     let mut cov = build_zero_sum_delta_stress_coverage();
     let max_residue = cov.iter().copied().map(f32::abs).fold(0.0_f32, f32::max);
 

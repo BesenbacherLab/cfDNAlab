@@ -19,7 +19,6 @@ mod test_gc_tag_values {
 
     #[test]
     fn gc_tag_values_follow_supported_range_and_zero_snap_rules() {
-        // Human verification status: unverified
         // Arrange: start with a sane weight
         let mut rec_ok = Record::new();
         rec_ok.push_aux(b"GC", Aux::Float(2.5)).expect("set GC tag");
@@ -97,7 +96,6 @@ mod test_gc_tag_values {
 
     #[test]
     fn gc_tag_values_just_below_minimum_supported_weight_are_invalid() {
-        // Human verification status: unverified
         // Arrange: choose the nearest representable f32 below the supported lower bound.
         // This is a stronger boundary than "/10" because it proves the exact cutoff behavior.
         let just_below_min = f32::from_bits(MIN_REASONABLE_GC_WEIGHT.to_bits() - 1);
@@ -116,7 +114,6 @@ mod test_gc_tag_values {
 
     #[test]
     fn missing_gc_tag_is_reported_separately() {
-        // Human verification status: unverified
         let rec = Record::new();
         let missing = read_gc_tag_from_record(&rec, b"GC");
         assert!(missing.weight.is_none());
@@ -127,7 +124,6 @@ mod test_gc_tag_values {
 
     #[test]
     fn combining_valid_weights_averages_before_final_range_check() {
-        // Human verification status: unverified
         let mut rec_a = Record::new();
         rec_a.push_aux(b"GC", Aux::Float(2.0)).expect("set GC tag");
         let mut rec_b = Record::new();
@@ -144,7 +140,6 @@ mod test_gc_tag_values {
 
     #[test]
     fn combining_paired_tags_reuses_single_usable_mate_and_keeps_zero_precedence() {
-        // Human verification status: unverified
         let mut rec_zero = Record::new();
         rec_zero
             .push_aux(b"GC", Aux::Float(0.0))
@@ -180,7 +175,6 @@ mod test_gc_tag_values {
 
     #[test]
     fn gc_tag_classify_exposes_one_explicit_state() {
-        // Human verification status: unverified
         assert_eq!(
             GCTagValue {
                 weight: Some(2.5),
@@ -213,7 +207,6 @@ mod test_gc_tag_values {
 
     #[test]
     fn gc_tag_classify_rejects_inconsistent_internal_state() {
-        // Human verification status: unverified
         let err = GCTagValue {
             weight: None,
             was_missing: false,
@@ -232,7 +225,6 @@ mod test_gc_tag_values {
     #[cfg(feature = "cmd_gc_bias")]
     #[test]
     fn gc_file_weights_follow_the_same_sanity_rules() {
-        // Human verification status: unverified
         let prefixes = build_gc_prefixes(b"AAAAAAAAAA");
         let interval = Interval::new(0_u64, 10_u64).expect("valid interval");
         let scenarios = [
@@ -277,7 +269,6 @@ mod test_gc_tag_values {
     #[cfg(feature = "cmd_gc_bias")]
     #[test]
     fn gc_file_weights_just_below_minimum_supported_weight_are_invalid() {
-        // Human verification status: unverified
         // Arrange: use the nearest representable f64 below the exact f64 threshold used by the
         // sanitizer so this checks the boundary itself, not just a clearly too-small value.
         let just_below_min = f64::from_bits((MIN_REASONABLE_GC_WEIGHT as f64).to_bits() - 1);

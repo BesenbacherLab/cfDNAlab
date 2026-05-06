@@ -247,7 +247,6 @@ fn make_simple_coverage_weights_config(
 
 #[test]
 fn length_bin_range_spec_matches_brace_expansion_edges() -> Result<()> {
-    // Human verification status: unverified
     // Arrange: Hand-derived expected edges for 100..220 with step 10.
     // The end is an edge (not a counted length), so we expect:
     // 100, 110, 120, ..., 220.
@@ -276,7 +275,6 @@ fn length_bin_range_spec_matches_brace_expansion_edges() -> Result<()> {
 #[test]
 fn midpoints_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_zero() -> Result<()>
 {
-    // Human verification status: unverified
     // Arrange:
     // Count one group over one 11 bp window [45, 56). Use three identical 61 bp fragments
     // with midpoint exactly 50, so each accepted fragment contributes one count at profile
@@ -367,7 +365,6 @@ fn midpoints_default_min_mapq_matches_explicit_thirty_and_differs_from_explicit_
 
 #[test]
 fn unpaired_single_read_matches_paired_midpoint_profile_for_same_span() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Compare two representations of the same physical fragment span [20, 81):
     // - paired fragment of length 61
@@ -434,7 +431,6 @@ fn unpaired_single_read_matches_paired_midpoint_profile_for_same_span() -> Resul
 #[test]
 fn bed_sites_mixed_core_and_halo_rows_keep_only_the_core_midpoint_count_across_tile_sizes()
 -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // - one unpaired fragment span [5,16), so the deterministic midpoint is 10
     // - BED site [10,11) is the true core-overlap site and should receive one count at position 0
@@ -497,7 +493,6 @@ fn bed_sites_mixed_core_and_halo_rows_keep_only_the_core_midpoint_count_across_t
 
 #[test]
 fn later_tile_site_keeps_midpoint_count_when_window_span_starts_after_zero() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // - Two one-base sites are present on the chromosome, so the later tile's cached span starts
     //   at chromosome-wide window index 1.
@@ -742,7 +737,6 @@ fn blacklist_midpoint_filtering_uses_floor_midpoint_even_when_profile_placement_
 
 #[test]
 fn length_bin_start_end_list_format_is_rejected() {
-    // Human verification status: unverified
     // Arrange: This format was intentionally removed.
     let mut config = base_midpoints_config_for_length_bins();
     config.set_length_bins_spec("30-80,80-150");
@@ -761,7 +755,6 @@ fn length_bin_start_end_list_format_is_rejected() {
 
 #[test]
 fn midpoint_profiles_written_with_group_index() -> Result<()> {
-    // Human verification status: unverified
     let bam = complex_bam_fixture()?;
     let temp = TempDir::new()?;
     let bed_path = temp.path().join("windows.bed");
@@ -809,7 +802,6 @@ fn midpoint_profiles_written_with_group_index() -> Result<()> {
 
 #[test]
 fn group_index_axis_matches_first_group_encounter_order_and_collapsed_counts() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // BED rows are sorted by chromosome/start as required, but group names are intentionally
     // interleaved:
@@ -916,7 +908,6 @@ fn group_index_axis_matches_first_group_encounter_order_and_collapsed_counts() -
 #[test]
 fn real_ref_gc_bias_then_gc_bias_package_is_neutral_in_single_bin_case_for_midpoints() -> Result<()>
 {
-    // Human verification status: unverified
     // Arrange:
     // Use one odd-length fragment so midpoint placement is deterministic rather than randomly
     // split across the two central bases of an even-length fragment.
@@ -1061,7 +1052,6 @@ fn gc_file_late_tile_site_uses_reference_coordinates_after_fetch_narrowing() -> 
 
 #[test]
 fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Build a real non-neutral GC package, then consume it through `midpoints`.
     //
@@ -1202,7 +1192,6 @@ fn real_ref_gc_bias_then_gc_bias_package_changes_midpoints_in_expected_direction
 
 #[test]
 fn midpoints_rejects_gc_package_when_length_bins_are_outside_supported_range() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // The midpoint command resolves its fragment length range from the configured bin edges:
     //   [61, 62] -> counted fragment lengths are exactly 61 bp.
@@ -1263,7 +1252,6 @@ fn midpoints_rejects_gc_package_when_length_bins_are_outside_supported_range() -
 
 #[test]
 fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Build the smallest valid GC correction package shape, but with an intentionally
     // incompatible schema version. `midpoints` should fail while loading the package, before
@@ -1324,7 +1312,6 @@ fn midpoints_rejects_gc_package_with_schema_version_mismatch() -> Result<()> {
 #[test]
 fn coverage_weights_tsv_changes_midpoints_by_full_fragment_average_not_window_overlap() -> Result<()>
 {
-    // Human verification status: unverified
     // Arrange:
     // Producer BAM:
     // - `simple_inward_bam()` has exactly one fragment [20, 80) on a 200 bp chromosome.
@@ -1416,7 +1403,6 @@ fn coverage_weights_tsv_changes_midpoints_by_full_fragment_average_not_window_ov
 #[test]
 fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_midpoints() -> Result<()>
 {
-    // Human verification status: unverified
     // Arrange:
     // Build a real multi-chromosome scaling artifact, then consume it through `midpoints`.
     //
@@ -1573,7 +1559,6 @@ fn real_multi_chromosome_coverage_weights_tsv_is_applied_per_chromosome_in_midpo
 
 #[test]
 fn gc_tag_pair_average_sets_midpoint_profile_weight() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // - One paired fragment spans [20, 81), length 61, so the midpoint is deterministic:
     //     20 + floor(61 / 2) = 50.
@@ -1642,7 +1627,6 @@ fn gc_tag_pair_average_sets_midpoint_profile_weight() -> Result<()> {
 #[cfg(feature = "cmd_coverage_weights")]
 #[test]
 fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // Producer BAM:
     // - `simple_inward_bam()` contains one fragment [20, 80) on chr1.
@@ -1774,7 +1758,6 @@ fn gc_file_and_scaling_tsv_weights_multiply_in_midpoints() -> Result<()> {
 #[cfg(feature = "cmd_bam_to_bam")]
 #[test]
 fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // One paired fragment spans [20, 81), length 61, so the midpoint is deterministic:
     //   20 + floor(61 / 2) = 50
@@ -1906,7 +1889,6 @@ fn bam_to_bam_gc_file_output_drives_midpoints_gc_tag_same_as_original_gc_file() 
 
 #[test]
 fn scaling_tsv_must_cover_requested_chromosome_end_in_midpoints() -> Result<()> {
-    // Human verification status: unverified
     // Arrange:
     // `simple_inward_bam()` uses chr1 length 200.
     // `midpoints` loads scaling factors through the same shared TSV contract as the other
@@ -1962,7 +1944,6 @@ fn scaling_tsv_must_cover_requested_chromosome_end_in_midpoints() -> Result<()> 
 #[test]
 fn midpoint_fetch_narrowing_preserves_tile_halo_near_chromosome_end_on_three_chromosomes()
 -> Result<()> {
-    // Human verification status: unverified
     let bam = bam_from_specs(
         vec![
             ("chr1".to_string(), 95),
@@ -2040,7 +2021,6 @@ fn midpoint_fetch_narrowing_preserves_tile_halo_near_chromosome_end_on_three_chr
 #[test]
 fn midpoint_fetch_narrowing_reads_all_eligible_fragments_near_chromosome_end_on_three_chromosomes()
 -> Result<()> {
-    // Human verification status: unverified
     let bam = bam_from_specs(
         vec![
             ("chr1".to_string(), 95),

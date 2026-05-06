@@ -9,7 +9,6 @@ use fxhash::FxHashMap;
 
 #[test]
 fn partition_deletion_helper_splits_left_overlap_and_right_parts() {
-    // Human verification status: unverified
     // Fragment [100,220), aligned overlap [160,180), deletion [150,190):
     // - left non-overlap [150,160) => 10 bp
     // - overlap piece [160,180)
@@ -39,7 +38,6 @@ fn partition_deletion_helper_splits_left_overlap_and_right_parts() {
 
 #[test]
 fn partition_insertion_helper_splits_nonoverlap_and_keeps_overlap_max() {
-    // Human verification status: unverified
     // Fragment [100,220), aligned overlap [160,180):
     // - insertion at 120 is inside the fragment but outside the overlap => non-overlap +3
     // - insertions at 170 inside the overlap keep the maximum per read anchor => 5
@@ -88,7 +86,6 @@ fn partition_insertion_helper_splits_nonoverlap_and_keeps_overlap_max() {
 
 #[test]
 fn adjusted_len_applies_only_requested_indel_and_clip_adjustments() {
-    // Human verification status: unverified
     // Fragment interval [100,200) has aligned length 100.
     //
     // Indel adjustments:
@@ -135,7 +132,6 @@ fn adjusted_len_applies_only_requested_indel_and_clip_adjustments() {
 
 #[test]
 fn assignment_interval_with_clip_mode_shifts_only_in_adjust_mode() {
-    // Human verification status: unverified
     // Aligned interval is [100,200).
     // With left/right soft clips 3 and 2:
     // - aligned/skip keep [100,200)
@@ -173,7 +169,6 @@ fn assignment_interval_with_clip_mode_shifts_only_in_adjust_mode() {
 
 #[test]
 fn soft_clip_limit_is_applied_independently_to_both_fragment_ends() {
-    // Human verification status: unverified
     // The threshold is checked per relevant fragment end, not on the summed clipping.
     //
     // Case 1: left 3 bp and right 2 bp are both within a 4 bp limit => keep.
@@ -217,7 +212,6 @@ fn soft_clip_limit_is_applied_independently_to_both_fragment_ends() {
 
 #[test]
 fn deletion_base_limit_uses_total_supported_deletion_bases() {
-    // Human verification status: unverified
     // The deletion limit is applied to the fragment-level total used for length adjustment.
     //
     // Case 1: 6 non-overlap + 2 supported overlap bases = 8, equal to the limit => keep.

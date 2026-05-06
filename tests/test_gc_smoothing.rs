@@ -59,7 +59,6 @@ fn build_explicit_bins(mapping: &[(usize, Vec<usize>)]) -> BinnedAxis {
 
 #[test]
 fn preserves_uniform_input_when_kernel_is_normalized() {
-    // Human verification status: unverified
     // Arrange: a constant matrix should remain unchanged after smoothing because
     // the Gaussian kernel sums to one.
     let counts = array![[7.1, 7.1, 7.1], [7.1, 7.1, 7.1]];
@@ -73,7 +72,6 @@ fn preserves_uniform_input_when_kernel_is_normalized() {
 
 #[test]
 fn spreads_mass_to_neighbors_with_pseudo_count() {
-    // Human verification status: unverified
     // Arrange: a single bin carries almost all mass. Smoothing must redistribute it.
     let counts = array![[0.0, 0.0], [0.0, 4.0]];
     let expected = array![
@@ -90,7 +88,6 @@ fn spreads_mass_to_neighbors_with_pseudo_count() {
 
 #[test]
 fn targeted_kernel_and_small_pseudo_count_match_manual_expectation() {
-    // Human verification status: unverified
     // Arrange: 5x5 matrix with a simple peak around the center.
     let counts = array![
         [0.0, 0.0, 0.0, 0.0, 0.0],
@@ -234,7 +231,6 @@ mod collapse_bins_tests {
 
     #[test]
     fn collapses_rows_by_sum_without_weights() {
-        // Human verification status: unverified
         let counts = simple_counts();
         let bins = build_single_bin_axis(2);
         let collapsed = collapse_counts_by_bins(&counts, 0, &bins, CollapseAggregation::Sum, None)
@@ -245,7 +241,6 @@ mod collapse_bins_tests {
 
     #[test]
     fn collapses_rows_by_mean_without_weights() {
-        // Human verification status: unverified
         let counts = simple_counts();
         let bins = build_single_bin_axis(2);
         let collapsed = collapse_counts_by_bins(&counts, 0, &bins, CollapseAggregation::Mean, None)
@@ -256,7 +251,6 @@ mod collapse_bins_tests {
 
     #[test]
     fn collapses_rows_by_weighted_mean() {
-        // Human verification status: unverified
         let counts = simple_counts();
         let bins = build_single_bin_axis(2);
         let mass = array![[1.0, 1.0, 1.0], [3.0, 3.0, 3.0]];
@@ -279,7 +273,6 @@ mod collapse_bins_tests {
 
     #[test]
     fn collapses_columns_by_sum() {
-        // Human verification status: unverified
         let counts = simple_counts();
         let bins = build_explicit_bins(&[(0, vec![0, 1]), (1, vec![2])]);
         let collapsed = collapse_counts_by_bins(&counts, 1, &bins, CollapseAggregation::Sum, None)
@@ -290,7 +283,6 @@ mod collapse_bins_tests {
 
     #[test]
     fn collapses_columns_by_mean_without_weights() {
-        // Human verification status: unverified
         let counts = simple_counts();
         let bins = build_explicit_bins(&[(0, vec![0, 1]), (1, vec![2])]);
         let collapsed = collapse_counts_by_bins(&counts, 1, &bins, CollapseAggregation::Mean, None)
@@ -301,7 +293,6 @@ mod collapse_bins_tests {
 
     #[test]
     fn collapses_columns_by_weighted_mean() {
-        // Human verification status: unverified
         let counts = simple_counts();
         let bins = build_explicit_bins(&[(0, vec![0, 1]), (1, vec![2])]);
         let mass = array![[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]];
@@ -323,7 +314,6 @@ mod collapse_bins_tests {
 
     #[test]
     fn errors_when_weights_given_for_sum() {
-        // Human verification status: unverified
         let counts = simple_counts();
         let bins = build_single_bin_axis(2);
         let mass = array![[1.0, 1.0, 1.0], [1.0, 1.0, 1.0]];
@@ -344,7 +334,6 @@ mod binning_tests {
 
     #[test]
     fn bins_all_mass_into_single_bin_when_threshold_is_high() {
-        // Human verification status: unverified
         // Two rows each contribute exactly half the total mass (1 of 2).
         // Setting min_mass_pct to 99% forces all indices into one bin.
         let counts = array![[1.0, 0.0], [0.0, 1.0]];
@@ -359,7 +348,6 @@ mod binning_tests {
 
     #[test]
     fn splits_bins_when_mass_threshold_is_met() {
-        // Human verification status: unverified
         // First three rows contribute exactly 30 units of mass (out of 70 total),
         // so once row 2 is included the threshold is met and a new bin starts.
         // The remaining row becomes the second bin.
@@ -380,7 +368,6 @@ mod binning_tests {
 
     #[test]
     fn merges_partial_tail_into_previous_bin_when_threshold_not_met() {
-        // Human verification status: unverified
         // First three rows contribute 30 units of mass (out of 71 total ≈42%),
         // so a new bin begins at row 3 because that row is already large enough
         // to stand on its own. The trailing row is too small to satisfy the
@@ -408,7 +395,6 @@ mod binning_tests {
 
     #[test]
     fn handles_zero_total_mass() {
-        // Human verification status: unverified
         let counts = array![[0.0, 0.0], [0.0, 0.0]];
         let bins = bin_greedily_by_mass(&counts, 0, 10.0, 1).expect("binning should succeed");
         assert_eq!(bins.num_bins, 0, "No bins should be created for zero mass");
