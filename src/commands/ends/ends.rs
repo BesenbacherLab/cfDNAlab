@@ -291,7 +291,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
     let chr_offsets = Arc::new(chr_offsets_map);
     let chr_offsets_for_threads = chr_offsets.clone();
 
-    // Craete droppable temporary directory
+    // Create droppable temporary directory
     let temp_dir_guard =
         TempDirGuard::new(&opt.ioc.output_dir, prefix).context("create per-run temp dir")?;
     let temp_dir = temp_dir_guard.path();

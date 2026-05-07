@@ -17,6 +17,7 @@ This file is the authoritative entry point for repo-specific agent instructions.
 - Base answers about existing functionality on actual code behavior, not comments etc. that might be outdated.
 - For fragment code, preserve the project's domain semantics and vocabulary. Paired fragment spans are defined directionally as `forward.pos` to `reverse.reference_end`, and docs/comments should keep using `pos` / `end` / `reference_end` terminology even if the implementation stores checked intervals internally.
 - Read the Interval and IndexedInterval API and default to using the helpers when working on interval-logic.
+- Keep `.AI/docs/specs/` for concise current specs only. Do not put dated plan filenames there. Temporary plans, future ideas, review notes, and dated specs belong under `.AI/docs/future/` or another non-finalized docs folder. When implemented behavior becomes the current decision, distill only the lasting invariants into the relevant file under `.AI/docs/specs/`.
 - The minimum allowed fragment length possible is 10bp. Do not use smaller values than that in test fixtures. Note that commands often set a minimum fragment length inclusion filter of 30bp, so check up on that. In general, check argument constraints before setting them in fixtures.
 - Before doing anything due to "backwards compatibility", ask whether this is a concern first. In some cases it is, in some it's not and should not lead to clutter.
 
