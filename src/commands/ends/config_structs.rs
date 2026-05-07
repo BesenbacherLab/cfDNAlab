@@ -360,7 +360,7 @@ pub struct ClippingArgs {
 pub struct AssignMotifToWindowArgs {
     /// When to assign motifs to windows `[string]`
     ///
-    /// The default `"endpoint"` option assigns each motif by its own fragment-end position.
+    /// The default `"endpoint"` option assigns each motif separately by its own fragment-end position.
     ///
     /// The other modes ask which windows the **fragment** contributes to,
     /// and the fragment's motif(s) are then counted in those window(s).

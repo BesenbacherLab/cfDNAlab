@@ -21,7 +21,13 @@ use rust_htslib::bam::{
 /// One counted fragment end after clip handling has been resolved.
 #[derive(Debug, Clone)]
 pub struct ResolvedFragmentEnd {
-    /// Fragment boundary used by the selected clip strategy.
+    /// Boundary chosen by the selected clip strategy.
+    ///
+    /// This is the split point between inside-fragment and outside-fragment motif bases. For a
+    /// left end, it is the inclusive start of the clip-adjusted fragment span. For a right end,
+    /// it is the exclusive end of that span, matching the half-open convention `[start, end)`.
+    ///
+    /// Code that needs the right end's terminal base must use `boundary_pos - 1`.
     pub boundary_pos: u32,
     /// First `k_inside` bases adjacent to this end in BAM/reference storage orientation.
     pub inside_bases: Vec<u8>,

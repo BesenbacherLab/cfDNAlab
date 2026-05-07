@@ -906,7 +906,7 @@ fn process_tile(
                 &mut sf_ptr,
                 Some(&scaling_with_bin_idx),
                 None,
-                fragment.interval.try_to_u64()?, // Full fragment
+                fragment.interval.try_to_u64()?, // Full aligned fragment
                 1. / (max_fragment_length as f64 + 1.0), // Any overlap without rounding error issues
                 max_fragment_length.into(),
             )
@@ -931,8 +931,8 @@ fn process_tile(
             // scaling is always evaluated on aligned reference coordinates. CountOverlap
             // gets one scaling average per selected window from the aligned bases in that
             // window. If raw-shifted clipping selects a window with no aligned bases, the
-            // raw-shifted branch below remaps that row to the nearest aligned base. Other
-            // assignment modes use one scaling average over the full aligned fragment for
+            // raw-shifted branch below remaps that scaling query interval to the nearest aligned base.
+            // Other assignment modes use one scaling average over the full aligned fragment for
             // every selected window
             let overlap_weights = match opt.window_assignment.assign_by {
                 WindowMotifAssigner::CountOverlap => {
@@ -966,7 +966,7 @@ fn process_tile(
                 }
                 _ => {
                     // Non-CountOverlap modes count each selected window with full fragment weight.
-                    // The selected windows come from assignment coordinates, while the one scaling
+                    // The selected windows come from assignment coordinates, while the scaling
                     // average still comes from the aligned reference fragment.
                     compute_per_window_scaling_over_fragment_for_selected_windows(
                         fragment.interval.try_to_u64()?,

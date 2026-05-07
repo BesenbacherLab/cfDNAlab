@@ -365,6 +365,9 @@ pub(crate) fn count_fragment_in_window(
     }
 
     if let Some(right_end) = fragment.right_end.as_ref() {
+        // Endpoint assignment uses the terminal base coordinate. For the right end,
+        // `boundary_pos` is the split point after that base, so the terminal base is
+        // `boundary_pos - 1`.
         let right_endpoint_pos = right_end
             .boundary_pos
             .checked_sub(1)
@@ -612,7 +615,8 @@ fn masked_reference_span_is_valid(
 /// Parameters
 /// ----------
 /// - `boundary_pos`:
-///   Assignment boundary for the end
+///   Resolved split boundary for the end. Left outside bases end at this boundary, while right
+///   outside bases start at it
 /// - `end_side`:
 ///   Whether this is the left or right fragment end
 /// - `motif_context`:
