@@ -929,10 +929,10 @@ fn process_tile(
         let fragment_length = fragment.adjusted_len(opt.indel_mode, opt.clip_mode);
         let assignment_interval = fragment.assignment_interval_with_clip_mode(opt.clip_mode)?;
 
-        // Find all overlapping count-windows
-
-        // Calculate what part needs to overlap to some degree
-        let query_interval = match opt.window_assignment.assign_by {
+        // Find candidate count-windows from the interval implied by window assignment.
+        // Midpoint mode queries only the 1 bp midpoint, while the other modes query the
+        // full assignment interval.
+        let window_selection_interval = match opt.window_assignment.assign_by {
             WindowAssigner::Midpoint => {
                 let midpoint = midpoint_random_even_for_fragment(
                     &tile.chr,
@@ -955,7 +955,7 @@ fn process_tile(
             &mut wd_ptr,
             windows_chr,
             by_size,
-            query_interval,
+            window_selection_interval,
             min_overlap_fraction,
             max_fragment_reach_bp,
         )?;

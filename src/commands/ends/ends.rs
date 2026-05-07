@@ -815,10 +815,11 @@ fn process_tile(
             continue;
         }
 
-        // First find candidate windows from fragment coordinates alone. We intentionally do this
-        // before motif extraction so all later work only happens for windows that can actually
-        // receive counts.
-        let query_interval = match opt.window_assignment.assign_by {
+        // First find candidate windows from the interval implied by window assignment.
+        // Midpoint mode queries only the 1 bp midpoint, while the other modes query the
+        // full assignment interval. This runs before motif extraction so fragments with
+        // no candidate windows do not pay for motif work.
+        let window_selection_interval = match opt.window_assignment.assign_by {
             WindowMotifAssigner::Midpoint => {
                 let fragment_assignment_length = fragment.assignment_len();
                 let midpoint = midpoint_random_even_for_fragment(
@@ -843,7 +844,7 @@ fn process_tile(
             &mut wd_ptr,
             windows_chr,
             by_size,
-            query_interval,
+            window_selection_interval,
             min_overlap_fraction,
             max_fragment_length.into(),
         )?;

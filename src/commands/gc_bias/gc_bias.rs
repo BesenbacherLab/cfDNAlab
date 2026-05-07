@@ -1174,10 +1174,10 @@ fn process_tile(
                     continue;
                 };
 
-                // Find all overlapping windows
-
-                // Calculate what part needs to overlap to some degree
-                let query_interval = fragment_assignment_interval(
+                // Find candidate windows from the interval implied by window assignment.
+                // The helper collapses midpoint mode to a 1 bp midpoint and otherwise returns
+                // the fragment interval.
+                let window_selection_interval = fragment_assignment_interval(
                     &tile.chr,
                     &fragment,
                     opt.window_assignment.assign_by,
@@ -1187,7 +1187,7 @@ fn process_tile(
                     &mut window_ptr,
                     Some(tile_window_intervals.as_slice()),
                     None,
-                    query_interval,
+                    window_selection_interval,
                     min_overlap_fraction,
                     reference_metadata.max_fragment_length as u64,
                 )?;
