@@ -207,7 +207,7 @@ pub fn window_derived_fetch_extent_for_core_overlap(
 ///
 /// Counting or assignment interval assumption:
 /// - not interpreted here; the caller must prove that this BED extent plus the supplied halo is a
-///   safe aligned fetch interval for the active counting geometry
+///   safe aligned fetch interval for the active counting coordinate choice
 ///
 /// Aligned fetch narrowing:
 /// - allowed only because the caller has already proven that the candidate-window extent plus the
@@ -252,7 +252,7 @@ pub fn window_derived_fetch_extent_for_candidates(
 /// - not interpreted here; the caller has already decided that BED windows must not narrow fetch
 ///
 /// Counting or assignment interval assumption:
-/// - BED relevance may live in a different geometry from aligned BAM fetch
+/// - BED relevance may use different coordinates from aligned BAM fetch
 ///
 /// Aligned fetch narrowing:
 /// - not performed here

@@ -89,7 +89,7 @@ impl ReferenceFrame {
 /// Decide whether positions should come from reads or the reference span.
 ///
 /// This is shared between `fragment-kmers` and the visualization helper so the
-/// same geometry can be described and previewed with a single enum.
+/// same coordinate choice can be described and previewed with a single enum.
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BasesFrom {

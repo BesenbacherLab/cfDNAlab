@@ -317,7 +317,7 @@ pub fn collect_fragment_with_indel_counts_from_single_read(
 ///
 /// Concept
 /// -------
-/// 1) Require same contig, opposite strands, and **inward** geometry
+/// 1) Require same contig, opposite strands, and **inward-facing** read coordinates
 ///    (`forward.pos <= reverse.pos`). The fragment span is
 ///    `[forward.pos, reverse.end)` (end-exclusive).
 /// 2) Split each read's indels into:

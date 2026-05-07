@@ -180,7 +180,7 @@ pub fn apply_scaling_to_coverage_in_place(
 /// Compute per-window scaling factors averaged over the **overlapped span only**.
 ///
 /// By default, scaling is averaged over `count_overlaps`. Pass `scaling_overlaps`
-/// only when the count-window geometry and the scaling geometry intentionally differ.
+/// only when the count-window coordinates and the scaling coordinates intentionally differ.
 /// The two overlap collections must then have the same rows in the same order.
 ///
 /// Returns
@@ -190,7 +190,7 @@ pub fn apply_scaling_to_coverage_in_place(
 ///     where
 ///         `scaling_weight` is the average per-base
 ///         scaling evaluated over the overlap between the scaling interval and
-///         the scaling geometry's query interval.
+///         the query interval used for scaling.
 #[inline]
 pub fn compute_per_window_scaling_over_overlap(
     count_overlaps: &OverlappingWindows,
@@ -301,7 +301,7 @@ pub fn compute_per_window_scaling_over_fragment(
 
 /// Compute one fragment-level scaling factor and apply it to every selected count window.
 ///
-/// Use this when a command has already selected candidate windows with assignment geometry that
+/// Use this when a command has already selected candidate windows with assignment coordinates that
 /// may differ from the aligned fragment span used for scaling. The scaling average is still
 /// computed over `fragment_interval`, but every row in `count_overlaps.windows` is returned.
 #[inline]

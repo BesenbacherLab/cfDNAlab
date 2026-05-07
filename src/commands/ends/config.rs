@@ -66,7 +66,7 @@ Counts (`<outside>_<inside>`): `AT_CG: 1`, `GA_TG: 1`
     "## Blacklisting\n\n",
     "1) Skips fragments that overlap blacklisted regions with a given proportion.\n\n",
     "2) Skips motifs overlapping blacklisted regions.\n\n",
-    "Fragment-level blacklist filtering uses the same assignment geometry as the selected clip strategy. ",
+    "Fragment-level blacklist filtering uses the same assignment coordinates as the selected clip strategy. ",
     "With `--clip-strategy raw-shifted-boundary`, soft-clipped boundary shifts can therefore make a fragment overlap blacklisted regions outside its aligned span.\n\n",
     "With `--clip-strategy raw-aligned-boundary`, motif-level blacklist validation only checks the part of the inside motif that still overlaps reference coordinates.\n\n",
     "## Always-on exclusion criteria\n\n",

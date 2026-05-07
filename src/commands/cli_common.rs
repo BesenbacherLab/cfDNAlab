@@ -409,7 +409,8 @@ impl DistributionWindowsArgs {
 }
 
 impl DistributionWindowSpec {
-    /// Convert grouped-distribution window selection into the fetch/indexing geometry helpers use.
+    /// Convert grouped-distribution window selection into the BED coordinates used by fetch and
+    /// overlap helpers.
     ///
     /// Grouped BED behaves like ordinary BED coordinates for fetch narrowing and overlap lookup;
     /// only the downstream row identity changes from window index to group index.

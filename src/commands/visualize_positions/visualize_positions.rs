@@ -229,7 +229,7 @@ fn write_bam(temp_dir: &Path, reference: &[u8], fragments: &[FragmentSpec]) -> R
             .start()
             .checked_add(fragment_length)
             .and_then(|end| end.checked_sub(reverse_len))
-            .ok_or_else(|| anyhow!("invalid fragment geometry"))?;
+            .ok_or_else(|| anyhow!("invalid fragment coordinates"))?;
 
         let fragment_size = (fragment_length as i64).max(1);
         let qname = format!("frag{}_{}", idx, fragment.start());

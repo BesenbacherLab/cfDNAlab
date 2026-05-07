@@ -38,7 +38,7 @@ pub struct ResolvedFragmentEnd {
 #[derive(Debug, Clone)]
 pub struct FragmentWithEnds {
     pub tid: i32,
-    /// Aligned fragment interval used for length and GC-related fragment geometry.
+    /// Aligned fragment interval used for length and GC-related coordinate calculations.
     pub interval: Interval<u32>,
     /// Boundary-adjusted interval used for window assignment when clip strategy changes the ends.
     pub assignment_interval: Interval<u32>,
@@ -187,7 +187,7 @@ enum ResolvedEndOutcome {
     SkipEndKeepAssignmentBoundary { assignment_boundary_pos: u32 },
     /// Skip this end's motif and fall back to the aligned boundary for assignment.
     SkipEndDropAssignmentBoundary,
-    /// Keep both fragment geometry and this end's motif.
+    /// Keep both this end's assignment boundary and this end's motif.
     KeepEnd {
         assignment_boundary_pos: u32,
         end: ResolvedFragmentEnd,
@@ -429,7 +429,7 @@ fn motif_has_indels(
 /// - `ResolvedEndOutcome::SkipEndDropAssignmentBoundary` when this end is not trusted for motif
 ///   counting or assignment-boundary adjustment
 ///
-/// - `ResolvedEndOutcome::KeepEnd` when both fragment geometry and this end's motif are kept
+/// - `ResolvedEndOutcome::KeepEnd` when both this end's assignment boundary and this end's motif are kept
 fn resolve_fragment_end(
     read: &EndReadInfo,
     end_side: FragmentEndSide,

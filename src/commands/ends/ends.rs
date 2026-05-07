@@ -49,8 +49,7 @@ use crate::{
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
         scale_genome::{
-            ScalingBin,
-            build_reference_based_scaling_overlaps_for_assignment_overlaps,
+            ScalingBin, build_reference_based_scaling_overlaps_for_assignment_overlaps,
             compute_per_window_scaling_over_fragment_for_selected_windows,
             compute_per_window_scaling_over_overlap,
         },
@@ -639,7 +638,7 @@ fn process_tile(
     };
 
     // Narrow the BAM fetch to the part of the tile that can contribute to the current
-    // windows. In global/by-size modes this stays close/equal to the tile fetch span; in BED
+    // windows. In global/by-size modes this stays equal/close to the tile fetch span; in BED
     // mode it can shrink substantially.
     let bed_fetch_halo_bp = opt.fragment_lengths.max_fragment_length as u64;
     let Some(fetch_span) = fetch_span_for_tile(
@@ -673,7 +672,7 @@ fn process_tile(
         outside_spec,
     )?;
     let window_context = WindowContext {
-        spec: &fetch_window_opt,
+        spec: &fetch_window_opt, // global / size / bed
         windows: windows_chr,
         chr_idx_offset: chr_window_idx_offset,
     };
@@ -697,14 +696,19 @@ fn process_tile(
         WindowMotifAssigner::Proportion(p) => p,
     };
 
-    // The overlap finder only needs checked BED-like intervals here.
+    // Convert `scaling_chr` into the checked interval shape required by the overlap finder.
     //
-    // In BED mode, `find_overlapping_windows(...)` returns scan positions in the supplied slice as
-    // `OverlappingWindow.idx`; it does not use `IndexedInterval.idx`. This temporary list is built
-    // in the same order as `scaling_chr`, so those scan positions are already the correct
-    // chromosome-local indices for indexing back into `scaling_chr` later.
+    // The scaling bins already live in chromosome-local order in `scaling_chr`. Later code
+    // uses `OverlappingWindow.idx` to index that same slice and recover the matching scaling
+    // bins for a fragment.
     //
-    // So the carried `IndexedInterval.idx` value is intentionally a placeholder.
+    // That index comes from the overlap finder's BED-mode scan, not from the payload stored
+    // inside each `IndexedInterval`. `find_overlapping_windows(...)` walks the supplied
+    // interval slice and reports the matching slice position as `OverlappingWindow.idx`.
+    //
+    // This temporary vector therefore only needs valid interval coordinates. Its
+    // `IndexedInterval.idx` payload is not part of the lookup path, so each entry can carry
+    // the same placeholder value without changing which scaling bin is selected later.
     let scaling_with_bin_idx: Vec<IndexedInterval<u64>> = scaling_chr
         .iter()
         .map(|b| IndexedInterval::from_interval(b.interval, 0_u64))
@@ -792,12 +796,13 @@ fn process_tile(
     for fragment_res in iter.by_ref() {
         let fragment = fragment_res.context("reading fragment")?;
 
-        // Only count fragments whose start is inside the core to prevent double counting across tiles
+        // Tile-ownership model:
+        // Only count fragments whose *start is inside the core* to prevent double counting across tiles
         if fragment.start() < tile.core_start() || fragment.start() >= tile.core_end() {
             continue;
         }
 
-        // Fragment-level blacklist filtering follows the clip-strategy assignment geometry.
+        // Fragment-level blacklist filtering follows the clip-strategy assignment coordinates
         let in_blacklist = is_blacklisted(
             blacklist_intervals,
             opt.blacklist_strategy,
@@ -810,7 +815,7 @@ fn process_tile(
             continue;
         }
 
-        // First find candidate windows from fragment geometry alone. We intentionally do this
+        // First find candidate windows from fragment coordinates alone. We intentionally do this
         // before motif extraction so all later work only happens for windows that can actually
         // receive counts.
         let query_interval = match opt.window_assignment.assign_by {
@@ -921,7 +926,7 @@ fn process_tile(
                 .map(|w| w.idx)
                 .collect();
 
-            // Window selection and the amount counted can use assignment geometry, but
+            // Window selection and the amount counted can use assignment coordinates, but
             // scaling is always evaluated on aligned reference coordinates. CountOverlap
             // gets one scaling average per selected window from the aligned bases in that
             // window. If raw-shifted clipping selects a window with no aligned bases, the
@@ -948,7 +953,7 @@ fn process_tile(
                             scaling_chr,
                         )?
                     } else {
-                        // Without shifted assignment geometry, the overlap rows already describe
+                        // Without shifted assignment coordinates, the overlap rows already describe
                         // the reference span used to average CountOverlap scaling.
                         compute_per_window_scaling_over_overlap(
                             &overlapping_windows,
@@ -960,7 +965,7 @@ fn process_tile(
                 }
                 _ => {
                     // Non-CountOverlap modes count each selected window with full fragment weight.
-                    // The selected windows come from assignment geometry, while the one scaling
+                    // The selected windows come from assignment coordinates, while the one scaling
                     // average still comes from the aligned reference fragment.
                     compute_per_window_scaling_over_fragment_for_selected_windows(
                         fragment.interval.try_to_u64()?,
