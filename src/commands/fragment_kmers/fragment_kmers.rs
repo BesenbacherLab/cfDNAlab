@@ -36,7 +36,7 @@ use crate::{
         fragment::segment_kmer_fragment::FragmentWithKmerSegments,
         fragment_iterators::fragments_with_kmer_segments_from_bam,
         interval::Interval,
-        io::{create_text_writer, dot_join},
+        io::dot_join,
         kmers::{
             kmer_codec::{KmerCodes, KmerSpec, build_kmer_specs, build_left_aligned_codes_per_k},
             process_counts::{DecodedCounts, prepare_decoded_counts, split_and_decode_counts},
@@ -56,7 +56,7 @@ use crate::{
         window_fetch::{BedFetchPolicy, fetch_span_for_tile},
         windowing::{
             WindowContext, build_bin_info, compute_window_offsets,
-            ensure_plain_bed_windows_not_empty,
+            ensure_plain_bed_windows_not_empty, write_bin_info_tsv,
         },
     },
 };
@@ -64,7 +64,7 @@ use anyhow::{Context, Result, bail};
 use fxhash::FxHashMap;
 use rayon::prelude::*;
 use rust_htslib::bam::{Read, Record};
-use std::{convert::TryInto, io::Write, path::Path, sync::Arc, time::Instant};
+use std::{convert::TryInto, path::Path, sync::Arc, time::Instant};
 use tracing::info;
 
 const COMMAND_TARGET: &str = "fragment-kmers";
@@ -460,18 +460,7 @@ fn run_inner_with_reporting(
             .ioc
             .output_dir
             .join(dot_join(&[prefix, "bins.tsv"]));
-        let mut tsv_writer = create_text_writer(&bins_path).context("creating bins TSV")?;
-        writeln!(tsv_writer, "chrom\tstart\tend\tblacklisted_fraction")
-            .context("writing bins TSV header")?;
-        for (chr, start, end, _, blacklist_overlap_fraction) in &bin_info {
-            writeln!(
-                tsv_writer,
-                "{}\t{}\t{}\t{}",
-                chr, start, end, blacklist_overlap_fraction
-            )
-            .context("writing bins TSV row")?;
-        }
-        tsv_writer.finish().context("finalizing bins.tsv writer")?;
+        write_bin_info_tsv(bins_path, &bin_info)?;
     }
 
     Ok(global_counter)

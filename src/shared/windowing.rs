@@ -141,6 +141,19 @@ pub fn ensure_grouped_bed_windows_not_empty(
     Ok(())
 }
 
+/// Metadata for one ordinary output window.
+///
+/// `output_index` is the global output row index for fixed-size windows. In BED mode, it is the
+/// original BED window index preserved by the loader.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowBinInfo {
+    pub chromosome: String,
+    pub start: u64,
+    pub end: u64,
+    pub output_index: u64,
+    pub blacklisted_fraction: f64,
+}
+
 /// Build per-window metadata (coordinates, blacklist overlap, etc.) for downstream consumers.
 ///
 /// When running in BED mode the `original_idx` embedded in the loaded windows is preserved so the
@@ -152,7 +165,7 @@ pub fn build_bin_info(
     windows_map: Option<&FxHashMap<String, Windows>>,
     blacklist_map: &FxHashMap<String, Vec<Interval<u64>>>,
     chr_offsets: &FxHashMap<String, u64>,
-) -> Result<Vec<(String, u64, u64, u64, f64)>> {
+) -> Result<Vec<WindowBinInfo>> {
     let mut out = Vec::new();
 
     match window_opt {
@@ -179,13 +192,13 @@ pub fn build_bin_info(
                         0,
                         &mut blacklist_ptr,
                     );
-                    out.push((
-                        chr.clone(),
+                    out.push(WindowBinInfo {
+                        chromosome: chr.clone(),
                         start,
                         end,
-                        chr_window_idx_offset + local_idx,
-                        overlap,
-                    ));
+                        output_index: chr_window_idx_offset + local_idx,
+                        blacklisted_fraction: overlap,
+                    });
                     start += *size;
                     local_idx += 1;
                 }
@@ -210,10 +223,16 @@ pub fn build_bin_info(
                         0,
                         &mut blacklist_ptr,
                     );
-                    out.push((chr.clone(), start, end, original_idx, overlap));
+                    out.push(WindowBinInfo {
+                        chromosome: chr.clone(),
+                        start,
+                        end,
+                        output_index: original_idx,
+                        blacklisted_fraction: overlap,
+                    });
                 }
             }
-            out.sort_unstable_by_key(|entry| entry.3);
+            out.sort_unstable_by_key(|entry| entry.output_index);
             Ok(out)
         }
     }
@@ -222,17 +241,15 @@ pub fn build_bin_info(
 /// Write ordinary window metadata to a TSV next to matrix outputs.
 ///
 /// Output has header `chrom\tstart\tend\tblacklisted_fraction`.
-pub fn write_bin_info_tsv(
-    output_path: impl AsRef<Path>,
-    bin_info: &[(String, u64, u64, u64, f64)],
-) -> Result<()> {
+pub fn write_bin_info_tsv(output_path: impl AsRef<Path>, bin_info: &[WindowBinInfo]) -> Result<()> {
     let mut writer = create_text_writer(output_path.as_ref()).context("creating bins TSV")?;
     writeln!(writer, "chrom\tstart\tend\tblacklisted_fraction")
         .context("writing bins TSV header")?;
-    for (chr, start, end, _, blacklist_overlap_fraction) in bin_info {
+    for entry in bin_info {
         writeln!(
             writer,
-            "{chr}\t{start}\t{end}\t{blacklist_overlap_fraction}"
+            "{}\t{}\t{}\t{}",
+            entry.chromosome, entry.start, entry.end, entry.blacklisted_fraction
         )
         .context("writing bins TSV row")?;
     }

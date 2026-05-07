@@ -36,8 +36,7 @@ use crate::{
         read::{default_include_read_paired_end, default_include_read_unpaired},
         reference::read_seq_in_range,
         scale_genome::{
-            ScalingBin,
-            build_reference_based_scaling_overlaps_for_assignment_overlaps,
+            ScalingBin, build_reference_based_scaling_overlaps_for_assignment_overlaps,
             compute_per_window_scaling_over_fragment_for_selected_windows,
             compute_per_window_scaling_over_overlap,
         },
@@ -48,8 +47,9 @@ use crate::{
         },
         window_fetch::{BedFetchPolicy, fetch_span_for_tile},
         windowing::{
-            build_bin_info, compute_window_offsets, ensure_plain_bed_windows_not_empty,
-            write_bin_info_tsv, write_group_index_with_blacklist_tsv,
+            WindowBinInfo, build_bin_info, compute_window_offsets,
+            ensure_plain_bed_windows_not_empty, write_bin_info_tsv,
+            write_group_index_with_blacklist_tsv,
         },
     },
 };
@@ -67,14 +67,7 @@ use tracing::info;
 
 const COMMAND_TARGET: &str = "lengths";
 
-/// Window metadata entry used when pairing BED/window metadata with count arrays.
-///
-/// Fields are `(chromosome, start, end, original_window_index, blacklisted_fraction)`.
-/// The tuple shape matches `build_bin_info()` and `write_bin_info_tsv()`. The alias
-/// keeps the BED reordering helper tied to that shared metadata contract.
-type WindowMetadataEntry = (String, u64, u64, u64, f64);
-
-// Map orig_idx -> counts plus containment flag for this tile
+// Map original window index to counts plus containment flag for this tile
 #[derive(Clone)]
 struct TileCounts {
     counts: LengthCounts,
@@ -142,7 +135,7 @@ fn configured_max_fragment_reach_bp(opt: &LengthsConfig, length_axis: &LengthAxi
 }
 
 fn reorder_bed_outputs_by_original_index(
-    bin_info: &mut Vec<WindowMetadataEntry>,
+    bin_info: &mut Vec<WindowBinInfo>,
     all_bins: &mut Vec<LengthCounts>,
 ) -> Result<()> {
     ensure!(
@@ -156,7 +149,7 @@ fn reorder_bed_outputs_by_original_index(
         .into_iter()
         .zip(std::mem::take(all_bins))
         .collect();
-    paired.sort_unstable_by_key(|(info, _)| info.3);
+    paired.sort_unstable_by_key(|(info, _)| info.output_index);
 
     let (sorted_bin_info, sorted_bins) = paired.into_iter().unzip();
     *bin_info = sorted_bin_info;
@@ -490,7 +483,7 @@ pub fn run(opt: &LengthsConfig) -> Result<()> {
         }
     }
 
-    let mut bin_info: Vec<WindowMetadataEntry> = match &window_opt {
+    let mut bin_info: Vec<WindowBinInfo> = match &window_opt {
         DistributionWindowSpec::Global | DistributionWindowSpec::GroupedBed(_) => Vec::new(),
         _ => {
             let (_total_windows, chr_offsets) = compute_window_offsets(

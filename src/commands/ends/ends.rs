@@ -611,6 +611,8 @@ fn process_tile(
 
     // Counters
     let mut counter = EndsCounters::default();
+
+    // Temporary file
     let chr_token = temp_chrom_name_map.token_for(tile.chr.as_str())?;
     let counts_path = temp_dir.join(format!(
         "{prefix}.{chr}.{idx}.counts.bin",
@@ -628,7 +630,7 @@ fn process_tile(
         let seq_bytes = read_seq_in_range(
             ref_2bit,
             &tile.chr,
-            // NOTE: Need for full fetch span to get GC of overlapping fragments!
+            // NOTE: Need it for the full fetch span to get GC of overlapping fragments!
             (tile.fetch_start() as usize)..(tile.fetch_end() as usize),
         )?;
         Some(build_gc_prefixes(&seq_bytes))
@@ -636,8 +638,8 @@ fn process_tile(
         None
     };
 
-    // Narrow the BAM fetch to the part of the tile that can still contribute to the current
-    // windows. In global/by-size modes this usually stays close to the tile fetch span; in BED
+    // Narrow the BAM fetch to the part of the tile that can contribute to the current
+    // windows. In global/by-size modes this stays close/equal to the tile fetch span; in BED
     // mode it can shrink substantially.
     let bed_fetch_halo_bp = opt.fragment_lengths.max_fragment_length as u64;
     let Some(fetch_span) = fetch_span_for_tile(

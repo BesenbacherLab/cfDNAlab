@@ -21,11 +21,19 @@ use crate::{
 /// Here "window extent" means the smallest aligned interval running from the minimum relevant
 /// window start to the maximum relevant window end before any extra halo is applied.
 ///
+/// The second question matters because BAM fetching happens in aligned reference coordinates,
+/// while command-level window relevance may be decided in a different coordinate model. Some
+/// commands can safely say "these BED starts and ends bound every aligned read I need, plus halo".
+/// Other commands select windows from shifted, clipped, midpoint, or fragment-reach logic where
+/// BED coordinates alone are not enough to prove a smaller aligned fetch is safe.
+///
 /// The supported BED fetch policies are:
 ///
 /// - `CoreOverlap`:
-///   BED relevance is defined only by overlap with the tile core. This is the right model for
-///   commands whose tile/window ownership is purely geographic.
+///   BED relevance is defined only by overlap between the BED interval and the tile core. This is
+///   the right model when the command is asking "which windows physically intersect this tile's
+///   owned reference-coordinate region?", without using fragment start, endpoint, midpoint, or
+///   clipped-boundary reach to make windows relevant.
 /// - `CandidateWindowExtent`:
 ///   BED relevance has already been decided elsewhere, and BAM fetch narrowing should use the
 ///   min/max window extent of that candidate window set. The caller must supply a halo that is large

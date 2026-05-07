@@ -173,9 +173,36 @@ fn build_bin_info_uses_size_offsets_in_output_indices() -> Result<()> {
     )?;
 
     // Assert
-    assert_eq!(bins[0], ("chr1".to_string(), 0, 100, 0, 0.0));
-    assert_eq!(bins[1], ("chr1".to_string(), 100, 150, 1, 0.0));
-    assert_eq!(bins[2], ("chr2".to_string(), 0, 80, 2, 0.0));
+    assert_eq!(
+        bins[0],
+        WindowBinInfo {
+            chromosome: "chr1".to_string(),
+            start: 0,
+            end: 100,
+            output_index: 0,
+            blacklisted_fraction: 0.0,
+        }
+    );
+    assert_eq!(
+        bins[1],
+        WindowBinInfo {
+            chromosome: "chr1".to_string(),
+            start: 100,
+            end: 150,
+            output_index: 1,
+            blacklisted_fraction: 0.0,
+        }
+    );
+    assert_eq!(
+        bins[2],
+        WindowBinInfo {
+            chromosome: "chr2".to_string(),
+            start: 0,
+            end: 80,
+            output_index: 2,
+            blacklisted_fraction: 0.0,
+        }
+    );
     Ok(())
 }
 
@@ -203,7 +230,25 @@ fn build_bin_info_preserves_bed_original_indices_and_sorts_by_them() -> Result<(
     )?;
 
     // Assert
-    assert_eq!(bins[0], ("chr1".to_string(), 0, 10, 3, 0.0));
-    assert_eq!(bins[1], ("chr1".to_string(), 20, 30, 9, 0.0));
+    assert_eq!(
+        bins[0],
+        WindowBinInfo {
+            chromosome: "chr1".to_string(),
+            start: 0,
+            end: 10,
+            output_index: 3,
+            blacklisted_fraction: 0.0,
+        }
+    );
+    assert_eq!(
+        bins[1],
+        WindowBinInfo {
+            chromosome: "chr1".to_string(),
+            start: 20,
+            end: 30,
+            output_index: 9,
+            blacklisted_fraction: 0.0,
+        }
+    );
     Ok(())
 }

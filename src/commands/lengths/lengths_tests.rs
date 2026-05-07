@@ -1,10 +1,8 @@
-use super::{
-    WindowMetadataEntry, configured_max_fragment_reach_bp, reorder_bed_outputs_by_original_index,
-};
+use super::{configured_max_fragment_reach_bp, reorder_bed_outputs_by_original_index};
 use crate::commands::cli_common::{ChromosomeArgs, IOCArgs};
 use crate::commands::lengths::counting::{LengthAxis, LengthCounts};
 use crate::commands::lengths::config::LengthsConfig;
-use crate::shared::{clip_mode::ClipMode, indel_mode::IndelMode};
+use crate::shared::{clip_mode::ClipMode, indel_mode::IndelMode, windowing::WindowBinInfo};
 use std::sync::Arc;
 
 fn counts_with_value(value: f64) -> LengthCounts {
@@ -14,8 +12,14 @@ fn counts_with_value(value: f64) -> LengthCounts {
     counts
 }
 
-fn bin_info_entry(original_index: u64) -> WindowMetadataEntry {
-    ("chr1".to_string(), 0, 10, original_index, 0.0)
+fn bin_info_entry(original_index: u64) -> WindowBinInfo {
+    WindowBinInfo {
+        chromosome: "chr1".to_string(),
+        start: 0,
+        end: 10,
+        output_index: original_index,
+        blacklisted_fraction: 0.0,
+    }
 }
 
 fn test_config() -> LengthsConfig {
@@ -98,7 +102,7 @@ fn bed_output_reorder_keeps_counts_paired_with_original_window_index() {
         .expect("matching BED metadata and count vectors should reorder together");
 
     // Assert
-    let original_indices: Vec<u64> = bin_info.iter().map(|entry| entry.3).collect();
+    let original_indices: Vec<u64> = bin_info.iter().map(|entry| entry.output_index).collect();
     let first_column_counts: Vec<f64> = all_bins.iter().map(|counts| counts.counts[0]).collect();
     assert_eq!(original_indices, vec![3, 7]);
     assert_eq!(first_column_counts, vec![3.0, 7.0]);
