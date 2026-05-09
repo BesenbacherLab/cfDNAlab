@@ -48,16 +48,17 @@ The website is a Docusaurus documentation site whose command reference is genera
 
 ## Release Notes
 
-- `scripts/docs/generate_release_notes.sh` writes `website/docs/generated/release-notes.md`.
+- `website/scripts/generate_release_notes.sh` writes `website/docs/generated/release-notes.md`.
 - Source is `CHANGELOG`.
 - The generated page has an auto-generated marker and removes the top-level changelog title.
 
 ## CI Contract
 
-- `.github/workflows/docs.yml` regenerates CLI docs and release notes, then fails on git diff drift.
-- The docs build job regenerates docs again before installing Node dependencies and running `npm run build`.
-- Pull requests upload the generated site artifact.
-- Pushes to `main` deploy the built site to GitHub Pages.
+- `.github/workflows/docs.yml` builds docs on pull requests and pushes to `main`.
+- The docs build job regenerates CLI docs and release notes before installing Node dependencies and running `npm run build`.
+- Generated docs source files are build inputs in the GitHub Actions runner and are not required to be committed.
+- Pull requests validate the docs build without uploading a site artifact.
+- Pushes to `main` upload the built site artifact and deploy it to GitHub Pages.
 
 ## Editing Rules
 

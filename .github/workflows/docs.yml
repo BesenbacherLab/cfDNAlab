@@ -10,24 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  generate-cli-docs:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Generate CLI docs
-        run: ./scripts/docs/generate_cli_docs.sh
-
-      - name: Verify generated docs are committed
-        run: git diff --exit-code -- website/docs/generated/cli website/docs/generated/release-notes.md
-
   build-site:
     runs-on: ubuntu-latest
-    needs: generate-cli-docs
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,7 +20,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Generate CLI docs
-        run: ./scripts/docs/generate_cli_docs.sh
+        run: ./website/scripts/generate_cli_docs.sh
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -52,13 +36,6 @@ jobs:
       - name: Build docs site
         working-directory: website
         run: npm run build
-
-      - name: Upload site artifact
-        if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: docs-site
-          path: website/generated-site
 
       - name: Configure Pages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
