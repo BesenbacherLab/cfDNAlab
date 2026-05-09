@@ -237,8 +237,8 @@ fn kmer_source_name(source: KmerSource) -> &'static str {
 pub(crate) fn clip_strategy_name(strategy: ClipStrategy) -> &'static str {
     match strategy {
         ClipStrategy::Aligned => "aligned",
-        ClipStrategy::RawAlignedBoundary => "raw-aligned-boundary",
-        ClipStrategy::RawShiftedBoundary => "raw-shifted-boundary",
+        ClipStrategy::IncludeAtAlignedBoundary => "include-at-aligned-boundary",
+        ClipStrategy::IncludeAtShiftedBoundary => "include-at-shifted-boundary",
         ClipStrategy::Skip => "skip",
     }
 }

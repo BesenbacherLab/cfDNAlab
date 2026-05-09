@@ -129,11 +129,13 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
             );
         }
     }
-    if matches!(opt.clip.clip_strategy, ClipStrategy::RawAlignedBoundary)
-        && matches!(opt.source_inside, KmerSource::Reference)
+    if matches!(
+        opt.clip.clip_strategy,
+        ClipStrategy::IncludeAtAlignedBoundary
+    ) && matches!(opt.source_inside, KmerSource::Reference)
     {
         bail!(
-            "`--clip-strategy raw-aligned-boundary` cannot be combined with `--source-inside reference`"
+            "`--clip-strategy include-at-aligned-boundary` cannot be combined with `--source-inside reference`"
         );
     }
     if opt.ref_2bit.is_none() && motif_extraction_requires_reference(opt, opt.blacklist.is_some()) {
@@ -266,7 +268,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
         tile_span_right_halo,
     ));
     let tile_window_spans_for_threads = tile_window_spans.clone();
-    let raw_shifted_gc_length_warning_issued = Arc::new(AtomicBool::new(false));
+    let include_at_shifted_boundary_gc_length_warning_issued = Arc::new(AtomicBool::new(false));
 
     // TODO: Improve the below comments so it also explains the diff between DistributionWindowSpec and WindowSpec handling here (And improve it in general)
     // Window rows are global across chromosomes. For fixed-size windows we therefore need a
@@ -336,7 +338,7 @@ pub fn run(opt: &EndsConfig) -> Result<()> {
                 blacklist_chr,
                 scaling_chr,
                 gc_corrector.clone(),
-                raw_shifted_gc_length_warning_issued.clone(),
+                include_at_shifted_boundary_gc_length_warning_issued.clone(),
                 temp_dir,
                 counts_prefix,
                 &temp_chrom_name_map,
@@ -569,7 +571,7 @@ fn record_counted_fragment_stats(counter: &mut EndsCounters, counted_end_flags: 
 ///   Genomic scaling bins for this chromosome
 /// - `gc_corrector_opt`:
 ///   Optional GC corrector shared from the outer runner
-/// - `raw_shifted_gc_length_warning_issued`:
+/// - `include_at_shifted_boundary_gc_length_warning_issued`:
 ///   Shared guard that allows at most one aligned-GC length warning per run
 /// - `temp_dir`:
 ///   Temporary directory for tile payloads
@@ -594,7 +596,7 @@ fn process_tile(
     blacklist_intervals: &[Interval<u64>],
     scaling_chr: &[ScalingBin],
     gc_corrector_opt: Option<GCCorrector>,
-    raw_shifted_gc_length_warning_issued: Arc<AtomicBool>,
+    include_at_shifted_boundary_gc_length_warning_issued: Arc<AtomicBool>,
     temp_dir: &Path,
     counts_prefix: &str,
     temp_chrom_name_map: &TempChromNameMap,
@@ -752,9 +754,10 @@ fn process_tile(
         let gc_corrector = gc_corrector_opt.as_ref();
         let gc_prefixes = gc_prefixes_opt.as_ref();
         let fetch_start = tile.fetch_start();
-        let warn_on_aligned_length_miss =
-            matches!(opt.clip.clip_strategy, ClipStrategy::RawShiftedBoundary)
-                && opt.gc.gc_file.is_some();
+        let warn_on_aligned_length_miss = matches!(
+            opt.clip.clip_strategy,
+            ClipStrategy::IncludeAtShiftedBoundary
+        ) && opt.gc.gc_file.is_some();
         move |fragment: &FragmentWithEnds| -> Result<Option<f64>> {
             match (gc_corrector, gc_prefixes) {
                 (Some(corrector), Some(prefixes)) => {
@@ -763,16 +766,18 @@ fn process_tile(
                         .try_to_u64()?
                         .shift_left(fetch_start as u64)?;
                     if warn_on_aligned_length_miss
-                        && !raw_shifted_gc_length_warning_issued.load(Ordering::Relaxed)
+                        && !include_at_shifted_boundary_gc_length_warning_issued
+                            .load(Ordering::Relaxed)
                     {
                         let aligned_length = fetch_relative_fragment.len() as usize;
                         if !corrector.covers_fragment_length(aligned_length)
-                            && !raw_shifted_gc_length_warning_issued.swap(true, Ordering::Relaxed)
+                            && !include_at_shifted_boundary_gc_length_warning_issued
+                                .swap(true, Ordering::Relaxed)
                         {
                             let (package_min_length, package_max_length) = corrector.length_range();
                             warn!(
                                 target: COMMAND_TARGET,
-                                "`--clip-strategy raw-shifted-boundary` produced at least one fragment whose aligned length ({aligned_length}) is outside the GC package range [{package_min_length}-{package_max_length}]. File-based GC correction uses aligned reference length, so these fragments follow the invalid-GC handling path and are included in the GC correction failure statistics."
+                                "`--clip-strategy include-at-shifted-boundary` produced at least one fragment whose aligned length ({aligned_length}) is outside the GC package range [{package_min_length}-{package_max_length}]. File-based GC correction uses aligned reference length, so these fragments follow the invalid-GC handling path and are included in the GC correction failure statistics."
                             );
                         }
                     }
@@ -930,13 +935,16 @@ fn process_tile(
             // Window selection and the amount counted can use assignment coordinates, but
             // scaling is always evaluated on aligned reference coordinates. CountOverlap
             // gets one scaling average per selected window from the aligned bases in that
-            // window. If raw-shifted clipping selects a window with no aligned bases, the
-            // raw-shifted branch below remaps that scaling query interval to the nearest aligned base.
+            // window. If include-at-shifted-boundary clipping selects a window with no aligned bases, the
+            // include-at-shifted-boundary branch below remaps that scaling query interval to the nearest aligned base.
             // Other assignment modes use one scaling average over the full aligned fragment for
             // every selected window
             let overlap_weights = match opt.window_assignment.assign_by {
                 WindowMotifAssigner::CountOverlap => {
-                    if matches!(opt.clip.clip_strategy, ClipStrategy::RawShiftedBoundary) {
+                    if matches!(
+                        opt.clip.clip_strategy,
+                        ClipStrategy::IncludeAtShiftedBoundary
+                    ) {
                         // Remap only the interval used for scaling. Each row still carries the
                         // assignment window idx, and its assignment-space overlap_fraction is
                         // passed through unchanged, so passing `Some(&scaling_overlaps)`

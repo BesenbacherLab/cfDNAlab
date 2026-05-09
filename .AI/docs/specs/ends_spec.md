@@ -18,12 +18,12 @@
 
 - `skip` drops soft-clipped motifs at the affected end. This is the default.
 - `aligned` ignores soft-clipped bases and uses aligned boundaries.
-- `raw-aligned-boundary` uses raw read bases for inside sequence but keeps aligned genomic boundaries for outside lookup, window assignment, and motif-level blacklist validation.
-- `raw-shifted-boundary` uses raw read bases and shifts the fragment-end boundary outward by the soft-clipped length.
+- `include-at-aligned-boundary` includes soft-clipped read bases for inside sequence but keeps aligned genomic boundaries for outside lookup, window assignment, and motif-level blacklist validation.
+- `include-at-shifted-boundary` includes soft-clipped read bases and shifts the fragment-end boundary outward by the soft-clipped length.
 - Hard-clipped fragments are always discarded.
-- Raw clipping modes are supported only with `--source-inside read`.
+- Include-at-boundary clipping modes are supported only with `--source-inside read`.
 - File-based GC correction and genomic scaling still use aligned reference span even when motif assignment uses shifted raw boundaries.
-- For raw-shifted `count-overlap`, clipped-only window contributions use the nearest aligned reference base for scaling.
+- For include-at-shifted-boundary `count-overlap`, clipped-only window contributions use the nearest aligned reference base for scaling.
 
 ## Indels And Base Quality
 
@@ -42,7 +42,7 @@
 - Fragment-level blacklist filtering uses the assignment geometry implied by the clip strategy.
 - Motif-level blacklist validation always drops motifs whose reference-addressable motif bases overlap masked reference sequence.
 - Read-backed inside motifs still use read bases, but when a blacklist is active the reference-addressable inside portion is validated against masked reference.
-- In `raw-aligned-boundary`, clipped-only inside bases have no reference coordinate and are not checked by motif-level blacklist validation.
+- In `include-at-aligned-boundary`, clipped-only inside bases have no reference coordinate and are not checked by motif-level blacklist validation.
 - `--ref-2bit` is required when a blacklist is active and motif validation needs reference bases.
 
 ## Window Assignment

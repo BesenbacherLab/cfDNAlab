@@ -234,7 +234,7 @@ fn length_agnostic_corrector_errors_when_trim_requested_with_zero_selected_frequ
 #[test]
 fn correct_fragment_returns_none_when_fragment_length_is_below_package_range() {
     // Arrange: the package covers aligned lengths 30..=40, but the fragment's aligned reference
-    // span is only 28 bp. This can happen in `ends --clip-strategy raw-shifted-boundary`, where
+    // span is only 28 bp. This can happen in `ends --clip-strategy include-at-shifted-boundary`, where
     // assignment length includes soft clips but GC correction still uses aligned reference bases.
     let corrector = one_bin_corrector();
     let gc_prefixes = build_gc_prefixes(&vec![b'G'; 28]);
