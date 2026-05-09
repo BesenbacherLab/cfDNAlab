@@ -28,7 +28,7 @@ use crate::shared::thread_pool::init_global_pool;
 use crate::shared::tiled_run::{
     TempDirGuard, Tile, TileMode, TileWindowSpan, build_tiles, precompute_tile_window_spans,
 };
-use crate::shared::windowing::ensure_plain_bed_windows_not_empty;
+use crate::shared::windowing::{compute_window_offsets, ensure_plain_bed_windows_not_empty};
 use crate::shared::writers::open_zstd_auto_writer;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use fxhash::FxHashMap;
@@ -157,6 +157,9 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
         }
         _ => None,
     };
+    let (_total_windows, chr_offsets_map) =
+        compute_window_offsets(&window_opt, &chromosomes, &contigs, windows_map.as_ref())?;
+    let chr_offsets = Arc::new(chr_offsets_map);
 
     // Load genomic scaling factors
     if opt.shared_args.scale_genome.scaling_factors.is_some() {
@@ -230,6 +233,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
     let temp_dir = temp_dir_guard.path();
     let tile_window_spans_for_threads = tile_window_spans.clone();
     let stats_mode = matches!(opt.per_window, Some(PeaksWindowAction::Stats));
+    let chr_offsets_for_threads = Arc::clone(&chr_offsets);
 
     let tile_results: Vec<TileResult> = tiles
         .par_iter()
@@ -262,6 +266,13 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
 
             let stats_contributions = if stats_mode {
                 if let Some(bin_size) = fixed_window_bp {
+                    let index_offset =
+                        chr_offsets_for_threads
+                            .get(&tile.chr)
+                            .copied()
+                            .ok_or_else(|| {
+                                anyhow!("missing fixed-size index offset for {}", tile.chr)
+                            })?;
                     let chrom_len = contigs
                         .contigs
                         .get(&tile.chr)
@@ -270,6 +281,7 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
                     let windows = build_fixed_size_windows_for_tile(
                         bin_size,
                         chrom_len,
+                        index_offset,
                         tile.core_start() as u64,
                         tile.core_end() as u64,
                     )?;
@@ -351,12 +363,19 @@ pub fn run(opt: &WPSPeaksConfig) -> Result<()> {
                     )
                 }
                 WindowSpec::Size(bp) => {
+                    let index_offsets = (*chr_offsets).clone();
                     if tile_and_window_boundaries_align {
                         WindowSource::FixedSizeAligned(Arc::new(FixedSizeAlignedWindows::new(
-                            *bp as u64, &contigs,
+                            *bp as u64,
+                            &contigs,
+                            index_offsets,
                         )))
                     } else {
-                        WindowSource::FixedSizeBuffered(FixedSizeWindows::new(*bp as u64, &contigs))
+                        WindowSource::FixedSizeBuffered(FixedSizeWindows::new(
+                            *bp as u64,
+                            &contigs,
+                            index_offsets,
+                        ))
                     }
                 }
                 WindowSpec::Global => {
@@ -536,12 +555,14 @@ enum WindowSource {
 struct FixedSizeWindows {
     size: u64,
     chrom_lengths: FxHashMap<String, u64>,
+    index_offsets: FxHashMap<String, u64>,
     progress: FxHashMap<String, FixedChromProgress>,
 }
 
 struct FixedSizeAlignedWindows {
     size: u64,
     chrom_lengths: FxHashMap<String, u64>,
+    index_offsets: FxHashMap<String, u64>,
 }
 
 #[derive(Default)]
@@ -551,7 +572,7 @@ struct FixedChromProgress {
 }
 
 impl FixedSizeWindows {
-    fn new(size: u64, contigs: &Contigs) -> Self {
+    fn new(size: u64, contigs: &Contigs, index_offsets: FxHashMap<String, u64>) -> Self {
         let mut chrom_lengths = FxHashMap::default();
         for (chr, (_, len)) in contigs.contigs.iter() {
             chrom_lengths.insert(chr.clone(), *len as u64);
@@ -559,6 +580,7 @@ impl FixedSizeWindows {
         Self {
             size,
             chrom_lengths,
+            index_offsets,
             progress: FxHashMap::default(),
         }
     }
@@ -574,10 +596,18 @@ impl FixedSizeWindows {
             .chrom_lengths
             .get(chr)
             .ok_or_else(|| anyhow!("missing contig length for {}", chr))?;
+        let index_offset = self
+            .index_offsets
+            .get(chr)
+            .copied()
+            .ok_or_else(|| anyhow!("missing fixed-size index offset for {}", chr))?;
         let state = self
             .progress
             .entry(chr.to_string())
-            .or_insert_with(FixedChromProgress::default);
+            .or_insert(FixedChromProgress {
+                next_start: 0,
+                next_idx: index_offset,
+            });
 
         while state.next_start < tile_end && state.next_start < chrom_len {
             let window_start = state.next_start;
@@ -596,15 +626,24 @@ impl FixedSizeWindows {
         Ok(())
     }
 
-    fn ensure_progress(&mut self, chr: &str) {
+    fn ensure_progress(&mut self, chr: &str) -> Result<()> {
+        let index_offset = self
+            .index_offsets
+            .get(chr)
+            .copied()
+            .ok_or_else(|| anyhow!("missing fixed-size index offset for {}", chr))?;
         self.progress
             .entry(chr.to_string())
-            .or_insert_with(FixedChromProgress::default);
+            .or_insert(FixedChromProgress {
+                next_start: 0,
+                next_idx: index_offset,
+            });
+        Ok(())
     }
 }
 
 impl FixedSizeAlignedWindows {
-    fn new(size: u64, contigs: &Contigs) -> Self {
+    fn new(size: u64, contigs: &Contigs, index_offsets: FxHashMap<String, u64>) -> Self {
         let mut chrom_lengths = FxHashMap::default();
         for (chr, (_, len)) in contigs.contigs.iter() {
             chrom_lengths.insert(chr.clone(), *len as u64);
@@ -612,6 +651,7 @@ impl FixedSizeAlignedWindows {
         Self {
             size,
             chrom_lengths,
+            index_offsets,
         }
     }
 
@@ -620,6 +660,13 @@ impl FixedSizeAlignedWindows {
             .get(chr)
             .copied()
             .ok_or_else(|| anyhow!("missing contig length for {}", chr))
+    }
+
+    fn index_offset(&self, chr: &str) -> Result<u64> {
+        self.index_offsets
+            .get(chr)
+            .copied()
+            .ok_or_else(|| anyhow!("missing fixed-size index offset for {}", chr))
     }
 }
 
@@ -773,13 +820,15 @@ impl WindowOutputWriter {
                 self.write_aligned_unique(path, tile.chr.as_str())?;
             }
             WindowOutputMode::Indexed => {
-                self.write_aligned_indexed(path, fixed.size)?;
+                self.write_aligned_indexed(path, fixed)?;
             }
             WindowOutputMode::Stats => {
                 let chrom_len = fixed.chrom_len(tile.chr.as_str())?;
+                let index_offset = fixed.index_offset(tile.chr.as_str())?;
                 let windows = build_fixed_size_windows_for_tile(
                     fixed.size,
                     chrom_len,
+                    index_offset,
                     tile.core_start() as u64,
                     tile.core_end() as u64,
                 )?;
@@ -808,9 +857,14 @@ impl WindowOutputWriter {
         Ok(())
     }
 
-    fn write_aligned_indexed(&mut self, path: &Path, bin_size: u64) -> Result<()> {
+    fn write_aligned_indexed(
+        &mut self,
+        path: &Path,
+        fixed: &FixedSizeAlignedWindows,
+    ) -> Result<()> {
         stream_tile_peaks(path, |peak| {
-            let idx = peak.peak_position / bin_size;
+            let idx =
+                fixed.index_offset(peak.chromosome.as_str())? + peak.peak_position / fixed.size;
             writeln!(
                 self.writer,
                 "{}\t{}\t{}\t{}\t{}\t{}",
@@ -911,7 +965,9 @@ impl WindowOutputWriter {
             self.accumulator.reset_for_chromosome(tile.chr.clone());
             self.next_idx = 0;
             match &mut self.window_source {
-                WindowSource::FixedSizeBuffered(fixed) => fixed.ensure_progress(tile.chr.as_str()),
+                WindowSource::FixedSizeBuffered(fixed) => {
+                    fixed.ensure_progress(tile.chr.as_str())?
+                }
                 _ => {}
             };
         }
@@ -1060,6 +1116,7 @@ pub fn compute_window_stats_contributions(
 fn build_fixed_size_windows_for_tile(
     bin_size: u64,
     chrom_len: u64,
+    index_offset: u64,
     tile_start: u64,
     tile_end: u64,
 ) -> Result<Vec<IndexedInterval<u64>>> {
@@ -1075,7 +1132,7 @@ fn build_fixed_size_windows_for_tile(
     while start < tile_end && start < chrom_len {
         let window_start = start;
         let end = (start + bin_size).min(chrom_len);
-        let idx = window_start / bin_size;
+        let idx = index_offset + window_start / bin_size;
         windows.push(IndexedInterval::new(window_start, end, idx)?);
         start = start.saturating_add(bin_size);
     }

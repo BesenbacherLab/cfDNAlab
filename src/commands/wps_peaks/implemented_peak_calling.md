@@ -45,8 +45,8 @@ This generated report captures the behavior that currently ships in `cfdna wps-p
    - When windows are requested (`--by-bed` or `--by-size`), `WindowOutputWriter` orchestrates the merge:
      - **Window sources**
        - `WindowSource::Bed`: the BED entries are read once. If `--per-window unique-positions` is selected, overlapping BED windows are merged up front, otherwise they are kept as-is.
-       - `WindowSource::FixedSizeBuffered`: used when tile and window boundaries do not align. `FixedSizeWindows` streams windows per chromosome, maintains `next_start` and `next_idx`, and can spawn windows that begin before the current tile so long as they overlap it.
-       - `WindowSource::FixedSizeAligned`: used when tiles align with bins. Because windows are deterministic, stats do not need to examine peaks directly; the writer only needs the per-window contributions that `peaks_for_tile` precomputed.
+       - `WindowSource::FixedSizeBuffered`: used when tile and window boundaries do not align. `FixedSizeWindows` streams windows per chromosome, maintains `next_start` and a global `next_idx` initialized from that chromosome's fixed-size window offset, and can spawn windows that begin before the current tile so long as they overlap it.
+       - `WindowSource::FixedSizeAligned`: used when tiles align with bins. Because windows are deterministic, stats do not need to examine peaks directly; the writer only needs the per-window contributions that `peaks_for_tile` precomputed. Fixed-size window indices are global across the requested chromosome order.
      - **Output modes**
      - `Unique`: per-window merge of peaks by genomic position. Peaks sharing the same base keep only the highest height. Outputs `chromosome start end height` (start=end-1).
      - `Indexed`: all peaks inside a window are written individually along with the zero-based window index. Peaks are not deduplicated.

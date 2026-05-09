@@ -1988,7 +1988,7 @@ mod tests_writers {
             .unwrap()
             .to_string_lossy()
             .into_owned();
-        assert_eq!(filename, "chrom.chr_1.bed.tmp");
+        assert_eq!(filename, "chrom.chrom-000000.bed.tmp");
         Ok(())
     }
 
