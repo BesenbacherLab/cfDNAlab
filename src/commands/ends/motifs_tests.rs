@@ -312,7 +312,7 @@ fn validate_blacklist_for_read_inside_code_returns_masked_reference_code_for_rea
 }
 
 #[test]
-fn validate_blacklist_for_read_inside_code_ignores_clipped_only_prefix_in_raw_aligned_mode() {
+fn validate_blacklist_for_read_inside_code_ignores_clipped_only_prefix_in_include_at_aligned_boundary_mode() {
     // Arrange: the blacklist masks genomic position 1, but this left end only validates the
     // aligned-overlapping suffix at position 2. The clipped-only prefix must not trigger skipping.
     let inside_spec = spec_for_k(2);
@@ -451,12 +451,12 @@ fn motif_reference_span_for_tile_extends_full_tile_fetch_by_k_outside_when_align
 fn motif_reference_span_for_tile_keeps_aligned_padding_when_raw_boundary_stays_aligned() {
     // Mental derivation:
     // - tile fetch is [10, 30)
-    // - raw-aligned-boundary adds no soft-clip expansion to the reference preload
+    // - include-at-aligned-boundary adds no soft-clip expansion to the reference preload
     // - with k_outside=3, preload stays [10 - 3, 30 + 3) = [7, 33)
     let tile = Tile::from_coords("chr1".to_string(), 0, 0, 12, 28, 10, 30).expect("valid tile");
 
     let reference_span =
-        motif_reference_span_for_tile(&tile, 100, ClipStrategy::RawAlignedBoundary, 5, 3)
+        motif_reference_span_for_tile(&tile, 100, ClipStrategy::IncludeAtAlignedBoundary, 5, 3)
             .expect("reference span");
 
     assert_eq!(
@@ -476,7 +476,7 @@ fn motif_reference_span_for_tile_extends_full_tile_fetch_by_k_outside_and_soft_c
     let tile = Tile::from_coords("chr1".to_string(), 0, 0, 12, 28, 10, 30).expect("valid tile");
 
     let reference_span =
-        motif_reference_span_for_tile(&tile, 100, ClipStrategy::RawShiftedBoundary, 5, 3)
+        motif_reference_span_for_tile(&tile, 100, ClipStrategy::IncludeAtShiftedBoundary, 5, 3)
             .expect("reference span");
 
     assert_eq!(
@@ -494,7 +494,7 @@ fn motif_reference_span_for_tile_clamps_to_chromosome_edges() {
     let tile = Tile::from_coords("chr1".to_string(), 0, 0, 6, 16, 4, 18).expect("valid tile");
 
     let reference_span =
-        motif_reference_span_for_tile(&tile, 20, ClipStrategy::RawShiftedBoundary, 2, 4)
+        motif_reference_span_for_tile(&tile, 20, ClipStrategy::IncludeAtShiftedBoundary, 2, 4)
             .expect("reference span");
 
     assert_eq!(

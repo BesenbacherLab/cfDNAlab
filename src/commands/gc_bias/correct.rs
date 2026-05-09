@@ -314,7 +314,12 @@ impl LengthAgnosticGCCorrector {
         } else {
             return Ok(None);
         };
-        Ok(Some(self.get_correction_weight(gc_bin)?))
+        Ok(
+            match sanitize_gc_weight(self.get_correction_weight(gc_bin)?) {
+                SanitizedGCWeight::Usable(weight) => Some(weight),
+                SanitizedGCWeight::Unusable { .. } => None,
+            },
+        )
     }
 
     /// Get the GC correction weight for a GC percentage.
@@ -326,7 +331,9 @@ impl LengthAgnosticGCCorrector {
         // The GC index has the minimum value assigned at 0
         // So we offset the values by their minimum to get the index, which
         // in turn will give us the bin (for which we have correction factors)
-        let gc_idx = gc_pct - self.gc_min;
+        let gc_idx = self
+            .gc_offset_index(gc_pct)
+            .ok_or_else(|| anyhow!("GC correction: unexpected GC percentage {}", gc_pct))?;
         let gc_bin = self
             .gc_bins
             .index_to_bin
@@ -336,6 +343,14 @@ impl LengthAgnosticGCCorrector {
             .with_context(|| format!("GC range [{}-{}]", self.gc_min, self.gc_max))?;
 
         Ok(self.correction_vector[gc_bin])
+    }
+
+    #[inline]
+    fn gc_offset_index(&self, gc_pct: usize) -> Option<usize> {
+        if gc_pct < self.gc_min || gc_pct > self.gc_max {
+            return None;
+        }
+        Some(gc_pct - self.gc_min)
     }
 }
 

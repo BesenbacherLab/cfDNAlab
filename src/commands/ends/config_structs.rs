@@ -242,20 +242,20 @@ pub enum KmerSource {
 
 /// Select how clipped fragment ends should be interpreted.
 ///
-/// End motifs can either follow the aligned fragment span, use raw read bases
-/// with aligned genomic boundaries, use raw read bases with shifted genomic
-/// boundaries, or be skipped when clipping is present.
+/// End motifs can either follow the aligned fragment span, include clipped read
+/// bases at aligned genomic boundaries, include clipped read bases at shifted
+/// genomic boundaries, or be skipped when clipping is present.
 #[cfg_attr(feature = "cli", derive(ValueEnum))]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum ClipStrategy {
     /// Use the aligned fragment ends.
     Aligned,
 
-    /// Use raw read bases, but keep the aligned genomic boundary.
-    RawAlignedBoundary,
+    /// Include clipped read bases, but keep the aligned genomic boundary.
+    IncludeAtAlignedBoundary,
 
-    /// Use raw read bases and shift the genomic boundary outward.
-    RawShiftedBoundary,
+    /// Include clipped read bases and shift the genomic boundary outward.
+    IncludeAtShiftedBoundary,
 
     /// Skip motifs whose end is soft-clipped.
     #[default]
@@ -264,16 +264,16 @@ pub enum ClipStrategy {
 
 impl ClipStrategy {
     #[inline]
-    pub fn uses_raw_inside_bases(self) -> bool {
+    pub fn includes_clipped_inside_bases(self) -> bool {
         matches!(
             self,
-            ClipStrategy::RawAlignedBoundary | ClipStrategy::RawShiftedBoundary
+            ClipStrategy::IncludeAtAlignedBoundary | ClipStrategy::IncludeAtShiftedBoundary
         )
     }
 
     #[inline]
     pub fn uses_shifted_boundary(self) -> bool {
-        matches!(self, ClipStrategy::RawShiftedBoundary)
+        matches!(self, ClipStrategy::IncludeAtShiftedBoundary)
     }
 }
 
@@ -288,7 +288,7 @@ pub struct ClippingArgs {
     /// For extraction of **outside** bases, we suggest **skipping** fragments
     /// with soft clipping, as it is difficult to infer where on the
     /// reference genome the actual fragment end was. We do provide two
-    /// "raw"-modes for this, but neither is perfect.
+    /// include-at-boundary modes for this, but neither is perfect.
     ///
     /// **NOTE**: Fragments with **hard**-clipping are always discarded.
     ///
@@ -304,15 +304,15 @@ pub struct ClippingArgs {
     ///   **NOTE**: If the aligner clipped the actual DNA molecule, these motifs may not reflect
     ///   the actual fragment ends.
     ///
-    /// - `"raw-aligned-boundary"`:
-    ///   Use the raw read bases, including soft-clipped bases, but keep the
+    /// - `"include-at-aligned-boundary"`:
+    ///   Include soft-clipped read bases, but keep the
     ///   **aligned** fragment-end genomic boundary for outside-base lookup,
     ///   window assignment, and motif-level blacklist validation.
     ///
     ///   This setting is only supported with `--source-inside read`.
     ///
-    /// - `"raw-shifted-boundary"`:
-    ///   Use the raw read bases, including soft-clipped bases, and **move** the
+    /// - `"include-at-shifted-boundary"`:
+    ///   Include soft-clipped read bases, and **move** the
     ///   fragment-end boundary outside the aligned span by the clipped
     ///   length.
     ///

@@ -472,15 +472,16 @@ fn aligned_bq_filter_uses_aligned_inside_qualities_for_k_inside_gt_one() -> Resu
 }
 
 #[test]
-fn raw_aligned_boundary_bq_filter_uses_raw_inside_qualities_for_k_inside_gt_one() -> Result<()> {
+fn include_at_aligned_boundary_bq_filter_uses_raw_inside_qualities_for_k_inside_gt_one()
+-> Result<()> {
     // Arrange: the same 2S10M2S read should now use the raw terminal bases.
     //
     // Mental derivation for k_inside=3:
     // - raw left slice is [40, 35, 30], so `min in end >= 30` passes
     // - raw right slice is [30, 35, 40], so it also passes
-    // - if raw-aligned slicing regresses back to aligned slices, the count would drop to zero
+    // - if include-at-aligned-boundary slicing regresses back to aligned slices, the count would drop to zero
     let bam = single_read_bam_with_qualities(
-        "ends_raw_aligned_bq_k3",
+        "ends_include_at_aligned_boundary_bq_k3",
         10,
         vec![('S', 2), ('M', 10), ('S', 2)],
         b"TTAAAAAAAAAAAA",
@@ -491,7 +492,7 @@ fn raw_aligned_boundary_bq_filter_uses_raw_inside_qualities_for_k_inside_gt_one(
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtAlignedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.bq_filter = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
@@ -511,11 +512,12 @@ fn raw_aligned_boundary_bq_filter_uses_raw_inside_qualities_for_k_inside_gt_one(
 }
 
 #[test]
-fn raw_shifted_boundary_bq_filter_uses_raw_inside_qualities_for_k_inside_gt_one() -> Result<()> {
-    // Arrange: raw-shifted-boundary uses the same raw quality slices as raw-aligned-boundary but
+fn include_at_shifted_boundary_bq_filter_uses_raw_inside_qualities_for_k_inside_gt_one()
+-> Result<()> {
+    // Arrange: include-at-shifted-boundary uses the same raw quality slices as include-at-aligned-boundary but
     // keeps the shifted fragment length of 14 bp.
     let bam = single_read_bam_with_qualities(
-        "ends_raw_shifted_bq_k3",
+        "ends_include_at_shifted_boundary_bq_k3",
         10,
         vec![('S', 2), ('M', 10), ('S', 2)],
         b"TTAAAAAAAAAAAA",
@@ -526,7 +528,7 @@ fn raw_shifted_boundary_bq_filter_uses_raw_inside_qualities_for_k_inside_gt_one(
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.bq_filter = vec!["min in end >= 30".parse::<BaseQualityFilter>().unwrap()];
@@ -1550,13 +1552,13 @@ fn gc_file_late_tile_window_uses_reference_coordinates_after_fetch_narrowing() -
 
 #[cfg(all(feature = "cli", feature = "cmd_gc_bias"))]
 #[test]
-fn raw_shifted_gc_file_warns_once_and_counts_aligned_length_failures_across_tiles_and_chromosomes()
+fn include_at_shifted_boundary_gc_file_warns_once_and_counts_aligned_length_failures_across_tiles_and_chromosomes()
 -> Result<()> {
     // Arrange:
     // - each affected chr/tile has two valid 30M reads, one invalid 1S28M1S read, then two
     //   more valid 30M reads
     // - valid reads have assignment length 30 and aligned length 30, so GC correction succeeds
-    // - invalid reads have raw-shifted assignment length 30 but aligned length 28
+    // - invalid reads have include-at-shifted-boundary assignment length 30 but aligned length 28
     // - the GC package covers only length 30, so the four invalid reads are skipped as GC failures
     // - those failures are split across chr1/chr2 and two non-initial tiles to exercise the
     //   run-level once-only warning guard without relying on first-fragment behavior
@@ -1596,10 +1598,10 @@ fn raw_shifted_gc_file_warns_once_and_counts_aligned_length_failures_across_tile
         ],
         Vec::new(),
         reads,
-        "ends_raw_shifted_gc_length_warning",
+        "ends_include_at_shifted_boundary_gc_length_warning",
     )?;
     let reference = twobit_from_sequences(
-        "ends_raw_shifted_gc_length_warning_ref",
+        "ends_include_at_shifted_boundary_gc_length_warning_ref",
         vec![
             ("chr1".to_string(), "A".repeat(3_000_000)),
             ("chr2".to_string(), "A".repeat(3_000_000)),
@@ -1650,7 +1652,7 @@ fn raw_shifted_gc_file_warns_once_and_counts_aligned_length_failures_across_tile
             "--source-inside",
             "read",
             "--clip-strategy",
-            "raw-shifted-boundary",
+            "include-at-shifted-boundary",
             "--all-motifs",
             "--by-bed",
             windows_bed
@@ -1681,7 +1683,7 @@ fn raw_shifted_gc_file_warns_once_and_counts_aligned_length_failures_across_tile
             "2",
         ])
         .output()
-        .context("running cfdna ends CLI with raw-shifted file-based GC")?;
+        .context("running cfdna ends CLI with include-at-shifted-boundary file-based GC")?;
 
     // Assert
     assert!(
@@ -1692,11 +1694,11 @@ fn raw_shifted_gc_file_warns_once_and_counts_aligned_length_failures_across_tile
     );
     let stdout = String::from_utf8(output.stdout).context("stdout is not valid UTF-8")?;
     let stderr = String::from_utf8(output.stderr).context("stderr is not valid UTF-8")?;
-    let warning_needle = "`--clip-strategy raw-shifted-boundary` produced at least one fragment whose aligned length";
+    let warning_needle = "`--clip-strategy include-at-shifted-boundary` produced at least one fragment whose aligned length";
     assert_eq!(
         stderr.matches(warning_needle).count(),
         1,
-        "raw-shifted GC length warning should be emitted once per run\nstderr:\n{stderr}"
+        "include-at-shifted-boundary GC length warning should be emitted once per run\nstderr:\n{stderr}"
     );
     assert!(stdout.contains("GC correction failures (fragment skipped): 4"));
     assert!(stdout.contains("Fragments with one or more counted motifs: 16"));
@@ -3838,14 +3840,15 @@ fn config_docstring_visualization_example_counts_the_expected_motifs_with_and_wi
 }
 
 #[test]
-fn raw_shifted_boundary_endpoint_assignment_uses_the_shifted_assignment_boundaries() -> Result<()> {
+fn include_at_shifted_boundary_endpoint_assignment_uses_the_shifted_assignment_boundaries()
+-> Result<()> {
     // Arrange: unpaired read-as-fragment with 2S10M2S at pos 10.
     // - aligned interval [10,20)
     // - raw assignment interval [8,22)
     // - endpoint positions 8 and 21
     // The raw terminal bases are T on the left and A on the right, which both orient to "_T".
     let bam = single_read_bam(
-        "ends_raw_shifted",
+        "ends_include_at_shifted_boundary",
         10,
         vec![('S', 2), ('M', 10), ('S', 2)],
         b"TTAAAAAAAAAAAA",
@@ -3861,7 +3864,7 @@ fn raw_shifted_boundary_endpoint_assignment_uses_the_shifted_assignment_boundari
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.set_windows(DistributionWindowsArgs {
@@ -3891,7 +3894,7 @@ fn raw_shifted_boundary_endpoint_assignment_uses_the_shifted_assignment_boundari
 }
 
 #[test]
-fn raw_shifted_boundary_endpoint_assignment_keeps_a_left_window_that_only_raw_reach_can_touch()
+fn include_at_shifted_boundary_endpoint_assignment_keeps_a_left_window_that_only_raw_reach_can_touch()
 -> Result<()> {
     // Arrange: unpaired 2S10M2S at pos 10 with tile size 10.
     //
@@ -3915,7 +3918,7 @@ fn raw_shifted_boundary_endpoint_assignment_keeps_a_left_window_that_only_raw_re
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
@@ -3945,7 +3948,7 @@ fn raw_shifted_boundary_endpoint_assignment_keeps_a_left_window_that_only_raw_re
 }
 
 #[test]
-fn scaled_raw_shifted_boundary_endpoint_counts_windows_reached_only_by_raw_clipping_with_aligned_fragment_scaling()
+fn scaled_include_at_shifted_boundary_endpoint_counts_windows_reached_only_by_raw_clipping_with_aligned_fragment_scaling()
 -> Result<()> {
     // Arrange: unpaired 2S10M2S at pos 10 with scaling enabled.
     //
@@ -3989,7 +3992,7 @@ fn scaled_raw_shifted_boundary_endpoint_counts_windows_reached_only_by_raw_clipp
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
@@ -4024,7 +4027,7 @@ fn scaled_raw_shifted_boundary_endpoint_counts_windows_reached_only_by_raw_clipp
 }
 
 #[test]
-fn scaled_raw_shifted_boundary_midpoint_counts_window_reached_only_by_raw_clipping_with_aligned_fragment_scaling()
+fn scaled_include_at_shifted_boundary_midpoint_counts_window_reached_only_by_raw_clipping_with_aligned_fragment_scaling()
 -> Result<()> {
     // Arrange: unpaired 20S10M at pos 20 with midpoint assignment.
     //
@@ -4060,7 +4063,7 @@ fn scaled_raw_shifted_boundary_midpoint_counts_window_reached_only_by_raw_clippi
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
@@ -4092,7 +4095,7 @@ fn scaled_raw_shifted_boundary_midpoint_counts_window_reached_only_by_raw_clippi
 }
 
 #[test]
-fn scaled_raw_shifted_boundary_count_overlap_uses_nearest_aligned_base_for_clipped_only_window()
+fn scaled_include_at_shifted_boundary_count_overlap_uses_nearest_aligned_base_for_clipped_only_window()
 -> Result<()> {
     // Arrange: unpaired 2S10M2S at pos 10 with count-overlap assignment.
     //
@@ -4127,7 +4130,7 @@ fn scaled_raw_shifted_boundary_count_overlap_uses_nearest_aligned_base_for_clipp
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
@@ -4159,7 +4162,7 @@ fn scaled_raw_shifted_boundary_count_overlap_uses_nearest_aligned_base_for_clipp
 }
 
 #[test]
-fn scaled_raw_shifted_boundary_count_overlap_uses_reference_scaling_for_left_aligned_and_right_rows()
+fn scaled_include_at_shifted_boundary_count_overlap_uses_reference_scaling_for_left_aligned_and_right_rows()
 -> Result<()> {
     // Arrange: unpaired 2S10M2S at pos 10 with count-overlap assignment.
     //
@@ -4205,7 +4208,7 @@ fn scaled_raw_shifted_boundary_count_overlap_uses_reference_scaling_for_left_ali
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
@@ -4244,7 +4247,7 @@ fn scaled_raw_shifted_boundary_count_overlap_uses_reference_scaling_for_left_ali
 }
 
 #[test]
-fn raw_shifted_boundary_endpoint_left_only_window_is_tile_size_invariant() -> Result<()> {
+fn include_at_shifted_boundary_endpoint_left_only_window_is_tile_size_invariant() -> Result<()> {
     // Arrange:
     // - unpaired 2S10M2S at pos 10
     // - BED row [8,9) is reachable only through raw left clipping
@@ -4268,7 +4271,7 @@ fn raw_shifted_boundary_endpoint_left_only_window_is_tile_size_invariant() -> Re
         cfg.set_unpaired(UnpairedArgs {
             reads_are_fragments: true,
         });
-        cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+        cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;
@@ -4298,7 +4301,7 @@ fn raw_shifted_boundary_endpoint_left_only_window_is_tile_size_invariant() -> Re
 }
 
 #[test]
-fn raw_shifted_boundary_endpoint_assignment_does_not_count_a_window_ending_at_the_left_raw_boundary()
+fn include_at_shifted_boundary_endpoint_assignment_does_not_count_a_window_ending_at_the_left_raw_boundary()
 -> Result<()> {
     // Arrange: the same 2S10M2S read has raw left boundary 8, so BED window [7,8) touches the
     // boundary but does not contain the left endpoint under half-open semantics.
@@ -4316,7 +4319,7 @@ fn raw_shifted_boundary_endpoint_assignment_does_not_count_a_window_ending_at_th
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
@@ -4345,9 +4348,9 @@ fn raw_shifted_boundary_endpoint_assignment_does_not_count_a_window_ending_at_th
 }
 
 #[test]
-fn aligned_endpoint_assignment_ignores_raw_shifted_boundary_positions() -> Result<()> {
+fn aligned_endpoint_assignment_ignores_include_at_shifted_boundary_positions() -> Result<()> {
     // Arrange: the same 2S10M2S read uses aligned endpoints [10,19] under aligned clipping, so
-    // windows at the raw-shifted positions [8,9) and [21,22) should receive no counts.
+    // windows at the include-at-shifted-boundary positions [8,9) and [21,22) should receive no counts.
     let bam = single_read_bam(
         "ends_aligned_not_raw",
         10,
@@ -4393,13 +4396,14 @@ fn aligned_endpoint_assignment_ignores_raw_shifted_boundary_positions() -> Resul
 }
 
 #[test]
-fn raw_aligned_boundary_endpoint_assignment_uses_aligned_positions_with_raw_bases() -> Result<()> {
+fn include_at_aligned_boundary_endpoint_assignment_uses_aligned_positions_with_raw_bases()
+-> Result<()> {
     // Arrange: unpaired 2S10M2S at pos 10.
     // - aligned interval [10,20)
-    // - raw-aligned-boundary keeps aligned endpoint positions 10 and 19
+    // - include-at-aligned-boundary keeps aligned endpoint positions 10 and 19
     // - raw inside bases still use the clipped terminal bases, so both ends orient to "_T"
     let bam = single_read_bam(
-        "ends_raw_aligned_endpoint",
+        "ends_include_at_aligned_boundary_endpoint",
         10,
         vec![('S', 2), ('M', 10), ('S', 2)],
         b"TTAAAAAAAAAAAA",
@@ -4418,7 +4422,7 @@ fn raw_aligned_boundary_endpoint_assignment_uses_aligned_positions_with_raw_base
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtAlignedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.set_windows(DistributionWindowsArgs {
@@ -4448,13 +4452,13 @@ fn raw_aligned_boundary_endpoint_assignment_uses_aligned_positions_with_raw_base
 }
 
 #[test]
-fn raw_aligned_boundary_endpoint_assignment_does_not_count_windows_at_shifted_positions()
+fn include_at_aligned_boundary_endpoint_assignment_does_not_count_windows_at_shifted_positions()
 -> Result<()> {
     // Arrange: the same 2S10M2S read keeps aligned endpoint positions [10,19] in
-    // raw-aligned-boundary mode, so windows at the shifted positions [8,9) and [21,22) must stay
+    // include-at-aligned-boundary mode, so windows at the shifted positions [8,9) and [21,22) must stay
     // empty even though the inside bases come from the raw read.
     let bam = single_read_bam(
-        "ends_raw_aligned_not_shifted",
+        "ends_include_at_aligned_boundary_not_shifted",
         10,
         vec![('S', 2), ('M', 10), ('S', 2)],
         b"TTAAAAAAAAAAAA",
@@ -4473,7 +4477,7 @@ fn raw_aligned_boundary_endpoint_assignment_does_not_count_windows_at_shifted_po
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtAlignedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.set_windows(DistributionWindowsArgs {
@@ -4501,14 +4505,14 @@ fn raw_aligned_boundary_endpoint_assignment_does_not_count_windows_at_shifted_po
 }
 
 #[test]
-fn raw_aligned_boundary_endpoint_left_only_window_outside_aligned_reach_is_tile_size_invariant()
+fn include_at_aligned_boundary_endpoint_left_only_window_outside_aligned_reach_is_tile_size_invariant()
 -> Result<()> {
     // Arrange:
     // - unpaired 2S10M2S at pos 10 keeps aligned endpoint positions [10,19]
     // - BED row [8,9) is therefore outside aligned reach and must stay empty
     // - tile decomposition must not change that
     let bam = single_read_bam(
-        "ends_raw_aligned_left_only_tile_invariance",
+        "ends_include_at_aligned_boundary_left_only_tile_invariance",
         10,
         vec![('S', 2), ('M', 10), ('S', 2)],
         b"TTAAAAAAAAAAAA",
@@ -4525,7 +4529,7 @@ fn raw_aligned_boundary_endpoint_left_only_window_outside_aligned_reach_is_tile_
         cfg.set_unpaired(UnpairedArgs {
             reads_are_fragments: true,
         });
-        cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+        cfg.clip.clip_strategy = ClipStrategy::IncludeAtAlignedBoundary;
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;
@@ -4554,13 +4558,14 @@ fn raw_aligned_boundary_endpoint_left_only_window_outside_aligned_reach_is_tile_
 }
 
 #[test]
-fn raw_aligned_boundary_endpoint_assignment_keeps_an_aligned_right_halo_window() -> Result<()> {
+fn include_at_aligned_boundary_endpoint_assignment_keeps_an_aligned_right_halo_window() -> Result<()>
+{
     // Arrange:
     // - unpaired 10M10S at pos 19 has aligned interval [19,29)
-    // - raw-aligned-boundary keeps the right endpoint at 28
+    // - include-at-aligned-boundary keeps the right endpoint at 28
     // - the right inside base is raw read `A`, which reverse-complements to motif `_T`
     let bam = single_read_bam(
-        "ends_raw_aligned_right_halo",
+        "ends_include_at_aligned_boundary_right_halo",
         19,
         vec![('M', 10), ('S', 10)],
         b"AAAAAAAAAAAAAAAAAAAA",
@@ -4573,7 +4578,7 @@ fn raw_aligned_boundary_endpoint_assignment_keeps_an_aligned_right_halo_window()
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtAlignedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
@@ -4603,12 +4608,12 @@ fn raw_aligned_boundary_endpoint_assignment_keeps_an_aligned_right_halo_window()
 }
 
 #[test]
-fn raw_aligned_boundary_endpoint_assignment_does_not_count_a_far_right_window_beyond_aligned_reach()
+fn include_at_aligned_boundary_endpoint_assignment_does_not_count_a_far_right_window_beyond_aligned_reach()
 -> Result<()> {
     // Arrange: unpaired 10M10S at pos 10 keeps aligned endpoint positions [10,19] in
-    // raw-aligned-boundary mode, so BED row [29,30) must stay empty.
+    // include-at-aligned-boundary mode, so BED row [29,30) must stay empty.
     let bam = single_read_bam(
-        "ends_raw_aligned_far_right_window",
+        "ends_include_at_aligned_boundary_far_right_window",
         10,
         vec![('M', 10), ('S', 10)],
         b"AAAAAAAAAAAAAAAAAAAA",
@@ -4621,7 +4626,7 @@ fn raw_aligned_boundary_endpoint_assignment_does_not_count_a_far_right_window_be
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtAlignedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
@@ -4793,7 +4798,7 @@ fn skip_endpoint_assignment_keeps_a_right_halo_only_window_when_no_end_is_soft_c
 }
 
 #[test]
-fn fragment_length_filters_use_the_adjusted_assignment_length_in_raw_shifted_boundary_mode()
+fn fragment_length_filters_use_the_adjusted_assignment_length_in_include_at_shifted_boundary_mode()
 -> Result<()> {
     // Arrange: the same 2S10M2S read has aligned length 10 but raw assignment length 14.
     // Keeping only length 10 should therefore exclude the fragment.
@@ -4809,7 +4814,7 @@ fn fragment_length_filters_use_the_adjusted_assignment_length_in_raw_shifted_bou
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     {
@@ -4829,12 +4834,12 @@ fn fragment_length_filters_use_the_adjusted_assignment_length_in_raw_shifted_bou
 }
 
 #[test]
-fn fragment_length_filters_use_the_aligned_assignment_length_in_raw_aligned_boundary_mode()
+fn fragment_length_filters_use_the_aligned_assignment_length_in_include_at_aligned_boundary_mode()
 -> Result<()> {
-    // Arrange: the same 2S10M2S read has aligned assignment length 10 in raw-aligned-boundary
+    // Arrange: the same 2S10M2S read has aligned assignment length 10 in include-at-aligned-boundary
     // mode, so keeping only length 10 should retain the fragment.
     let bam = single_read_bam(
-        "ends_raw_aligned_length_filter",
+        "ends_include_at_aligned_boundary_length_filter",
         10,
         vec![('S', 2), ('M', 10), ('S', 2)],
         b"TTAAAAAAAAAAAA",
@@ -4845,7 +4850,7 @@ fn fragment_length_filters_use_the_aligned_assignment_length_in_raw_aligned_boun
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtAlignedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     {
@@ -4950,7 +4955,7 @@ fn max_soft_clips_skips_only_the_over_clipped_end() -> Result<()> {
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.clip.max_soft_clips = 1;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
@@ -4971,12 +4976,13 @@ fn max_soft_clips_skips_only_the_over_clipped_end() -> Result<()> {
 }
 
 #[test]
-fn raw_shifted_boundary_fragment_blacklist_uses_the_shifted_assignment_interval() -> Result<()> {
-    // Arrange: 2S10M at pos 10 has aligned span [10,20) but raw-shifted assignment span [8,20).
+fn include_at_shifted_boundary_fragment_blacklist_uses_the_shifted_assignment_interval()
+-> Result<()> {
+    // Arrange: 2S10M at pos 10 has aligned span [10,20) but include-at-shifted-boundary assignment span [8,20).
     // Blacklisting [8,9) should drop the whole fragment through fragment-level blacklist
     // filtering, even though the aligned span itself does not overlap the blacklist.
     let bam = single_read_bam(
-        "ends_raw_shifted_blacklist_assignment_interval",
+        "ends_include_at_shifted_boundary_blacklist_assignment_interval",
         10,
         vec![('S', 2), ('M', 10)],
         b"TTAAAAAAAAAT",
@@ -4991,7 +4997,7 @@ fn raw_shifted_boundary_fragment_blacklist_uses_the_shifted_assignment_interval(
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.blacklist = Some(vec![blacklist_bed]);
@@ -5013,14 +5019,14 @@ fn raw_shifted_boundary_fragment_blacklist_uses_the_shifted_assignment_interval(
 }
 
 #[test]
-fn raw_aligned_boundary_blacklist_validation_ignores_inside_bases_without_reference_overlap()
+fn include_at_aligned_boundary_blacklist_validation_ignores_inside_bases_without_reference_overlap()
 -> Result<()> {
-    // Arrange: left motif uses two fully clipped bases in raw-aligned-boundary mode.
+    // Arrange: left motif uses two fully clipped bases in include-at-aligned-boundary mode.
     // Blacklisting [8,10) covers only those clipped-only positions and must therefore not skip
     // the left endpoint motif, because blacklist validation only applies where the motif overlaps
     // reference.
     let bam = single_read_bam(
-        "ends_raw_aligned_blacklist_clipped_prefix",
+        "ends_include_at_aligned_boundary_blacklist_clipped_prefix",
         10,
         vec![('S', 2), ('M', 10)],
         b"TTAAAAAAAAAT",
@@ -5037,7 +5043,7 @@ fn raw_aligned_boundary_blacklist_validation_ignores_inside_bases_without_refere
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtAlignedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = false;
     cfg.blacklist = Some(vec![blacklist_bed]);
@@ -5068,10 +5074,10 @@ fn raw_aligned_boundary_blacklist_validation_ignores_inside_bases_without_refere
 }
 
 #[test]
-fn raw_aligned_boundary_forbids_reference_inside_source() -> Result<()> {
+fn include_at_aligned_boundary_forbids_reference_inside_source() -> Result<()> {
     // Arrange
     let bam = single_read_bam(
-        "ends_raw_aligned_reference_forbidden",
+        "ends_include_at_aligned_boundary_reference_forbidden",
         10,
         vec![('S', 2), ('M', 10)],
         b"TTAAAAAAAAAT",
@@ -5084,21 +5090,21 @@ fn raw_aligned_boundary_forbids_reference_inside_source() -> Result<()> {
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtAlignedBoundary;
     cfg.source_inside = KmerSource::Reference;
 
     // Act
-    let err = run(&cfg).expect_err("raw-aligned-boundary + reference source should fail");
+    let err = run(&cfg).expect_err("include-at-aligned-boundary + reference source should fail");
 
     // Assert
     assert!(err.to_string().contains(
-        "`--clip-strategy raw-aligned-boundary` cannot be combined with `--source-inside reference`"
+        "`--clip-strategy include-at-aligned-boundary` cannot be combined with `--source-inside reference`"
     ));
     Ok(())
 }
 
 #[test]
-fn max_soft_clips_keeps_a_raw_shifted_boundary_end_when_the_clip_count_equals_the_threshold()
+fn max_soft_clips_keeps_a_include_at_shifted_boundary_end_when_the_clip_count_equals_the_threshold()
 -> Result<()> {
     // Arrange: with max_soft_clips=2, a 2S10M read should still keep the clipped left end because
     // the documented rule is "higher number of soft-clipped bases than this".
@@ -5114,7 +5120,7 @@ fn max_soft_clips_keeps_a_raw_shifted_boundary_end_when_the_clip_count_equals_th
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.clip.max_soft_clips = 2;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
@@ -5151,7 +5157,7 @@ fn max_soft_clips_skips_the_fragment_when_both_ends_exceed_the_threshold() -> Re
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.clip.max_soft_clips = 1;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
@@ -5423,7 +5429,8 @@ fn right_edge_missing_outside_context_drops_the_right_endpoint_motif() -> Result
 }
 
 #[test]
-fn raw_shifted_boundary_shifting_still_applies_when_only_outside_bases_are_counted() -> Result<()> {
+fn include_at_shifted_boundary_shifting_still_applies_when_only_outside_bases_are_counted()
+-> Result<()> {
     // Arrange: with k_inside=0 and raw clipping, the shifted raw boundary should still control
     // endpoint assignment and outside-base extraction.
     //
@@ -5445,7 +5452,7 @@ fn raw_shifted_boundary_shifting_still_applies_when_only_outside_bases_are_count
         reads_are_fragments: true,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Reference;
     cfg.all_motifs = false;
     cfg.set_windows(DistributionWindowsArgs {
@@ -5474,14 +5481,14 @@ fn raw_shifted_boundary_shifting_still_applies_when_only_outside_bases_are_count
 }
 
 #[test]
-fn raw_aligned_boundary_outside_only_motifs_use_the_aligned_boundary() -> Result<()> {
-    // Arrange: with k_inside=0 and raw-aligned-boundary clipping, outside-base extraction should
+fn include_at_aligned_boundary_outside_only_motifs_use_the_aligned_boundary() -> Result<()> {
+    // Arrange: with k_inside=0 and include-at-aligned-boundary clipping, outside-base extraction should
     // still use the aligned boundary.
     //
     // 2S10M2S at pos 10 keeps the left endpoint at 10, so the base immediately outside is
     // seq[9] = C in the simple ACGT reference.
     let bam = single_read_bam(
-        "ends_raw_aligned_outside_only",
+        "ends_include_at_aligned_boundary_outside_only",
         10,
         vec![('S', 2), ('M', 10), ('S', 2)],
         b"TTAAAAAAAAAAAA",
@@ -5496,7 +5503,7 @@ fn raw_aligned_boundary_outside_only_motifs_use_the_aligned_boundary() -> Result
         reads_are_fragments: true,
     });
     cfg.set_ref_2bit(Some(reference.path.clone()));
-    cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtAlignedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = false;
     cfg.set_windows(DistributionWindowsArgs {
@@ -5525,7 +5532,7 @@ fn raw_aligned_boundary_outside_only_motifs_use_the_aligned_boundary() -> Result
 }
 
 #[test]
-fn raw_shifted_boundary_endpoint_assignment_keeps_a_far_right_window_beyond_aligned_reach()
+fn include_at_shifted_boundary_endpoint_assignment_keeps_a_far_right_window_beyond_aligned_reach()
 -> Result<()> {
     // Arrange: unpaired 10M10S at pos 10 with tile size 10.
     //
@@ -5549,7 +5556,7 @@ fn raw_shifted_boundary_endpoint_assignment_keeps_a_far_right_window_beyond_alig
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
@@ -5579,7 +5586,8 @@ fn raw_shifted_boundary_endpoint_assignment_keeps_a_far_right_window_beyond_alig
 }
 
 #[test]
-fn raw_shifted_boundary_endpoint_far_right_only_window_is_tile_size_invariant() -> Result<()> {
+fn include_at_shifted_boundary_endpoint_far_right_only_window_is_tile_size_invariant() -> Result<()>
+{
     // Arrange:
     // - unpaired 10M10S at pos 10
     // - BED row [29,30) is reachable only through raw right clipping
@@ -5602,7 +5610,7 @@ fn raw_shifted_boundary_endpoint_far_right_only_window_is_tile_size_invariant() 
         cfg.set_unpaired(UnpairedArgs {
             reads_are_fragments: true,
         });
-        cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+        cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;
@@ -5632,12 +5640,13 @@ fn raw_shifted_boundary_endpoint_far_right_only_window_is_tile_size_invariant() 
 }
 
 #[test]
-fn raw_aligned_boundary_endpoint_far_right_only_window_is_tile_size_invariant() -> Result<()> {
+fn include_at_aligned_boundary_endpoint_far_right_only_window_is_tile_size_invariant() -> Result<()>
+{
     // Arrange:
     // - unpaired 10M10S at pos 10 keeps aligned endpoint positions [10,19]
     // - BED row [29,30) is therefore always outside aligned reach
     let bam = single_read_bam(
-        "ends_raw_aligned_far_right_tile_invariance",
+        "ends_include_at_aligned_boundary_far_right_tile_invariance",
         10,
         vec![('M', 10), ('S', 10)],
         b"AAAAAAAAAAAAAAAAAAAA",
@@ -5654,7 +5663,7 @@ fn raw_aligned_boundary_endpoint_far_right_only_window_is_tile_size_invariant() 
         cfg.set_unpaired(UnpairedArgs {
             reads_are_fragments: true,
         });
-        cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+        cfg.clip.clip_strategy = ClipStrategy::IncludeAtAlignedBoundary;
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;
@@ -5683,7 +5692,7 @@ fn raw_aligned_boundary_endpoint_far_right_only_window_is_tile_size_invariant() 
 }
 
 #[test]
-fn raw_shifted_boundary_endpoint_assignment_does_not_count_a_window_starting_at_the_right_raw_boundary()
+fn include_at_shifted_boundary_endpoint_assignment_does_not_count_a_window_starting_at_the_right_raw_boundary()
 -> Result<()> {
     // Arrange: 10M10S at pos 10 has raw assignment interval [10,30), so the counted right-end
     // position is 29. BED window [30,31) starts exactly at the exclusive boundary and must remain
@@ -5702,7 +5711,7 @@ fn raw_shifted_boundary_endpoint_assignment_does_not_count_a_window_starting_at_
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
@@ -5731,7 +5740,7 @@ fn raw_shifted_boundary_endpoint_assignment_does_not_count_a_window_starting_at_
 }
 
 #[test]
-fn raw_shifted_boundary_endpoint_assignment_must_not_shrink_fetch_to_unrelated_core_windows()
+fn include_at_shifted_boundary_endpoint_assignment_must_not_shrink_fetch_to_unrelated_core_windows()
 -> Result<()> {
     // Arrange: unpaired 10M10S at pos 19 with tile size 10.
     //
@@ -5761,7 +5770,7 @@ fn raw_shifted_boundary_endpoint_assignment_must_not_shrink_fetch_to_unrelated_c
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
@@ -5792,7 +5801,7 @@ fn raw_shifted_boundary_endpoint_assignment_must_not_shrink_fetch_to_unrelated_c
 }
 
 #[test]
-fn raw_shifted_boundary_endpoint_mixed_core_and_far_right_rows_are_tile_size_invariant()
+fn include_at_shifted_boundary_endpoint_mixed_core_and_far_right_rows_are_tile_size_invariant()
 -> Result<()> {
     // Arrange:
     // - unpaired 10M10S at pos 19
@@ -5823,7 +5832,7 @@ fn raw_shifted_boundary_endpoint_mixed_core_and_far_right_rows_are_tile_size_inv
         cfg.set_unpaired(UnpairedArgs {
             reads_are_fragments: true,
         });
-        cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+        cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;
@@ -5854,13 +5863,13 @@ fn raw_shifted_boundary_endpoint_mixed_core_and_far_right_rows_are_tile_size_inv
 }
 
 #[test]
-fn raw_aligned_boundary_endpoint_mixed_core_and_far_right_rows_are_tile_size_invariant()
+fn include_at_aligned_boundary_endpoint_mixed_core_and_far_right_rows_are_tile_size_invariant()
 -> Result<()> {
     // Arrange:
     // - unpaired 10M10S at pos 19 keeps aligned endpoint positions [19,28]
     // - BED rows [10,11) and [38,39) are both non-target rows and must stay zero
     let bam = single_read_bam(
-        "ends_raw_aligned_mixed_tile_invariance",
+        "ends_include_at_aligned_boundary_mixed_tile_invariance",
         19,
         vec![('M', 10), ('S', 10)],
         b"AAAAAAAAAAAAAAAAAAAA",
@@ -5883,7 +5892,7 @@ fn raw_aligned_boundary_endpoint_mixed_core_and_far_right_rows_are_tile_size_inv
         cfg.set_unpaired(UnpairedArgs {
             reads_are_fragments: true,
         });
-        cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+        cfg.clip.clip_strategy = ClipStrategy::IncludeAtAlignedBoundary;
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;
@@ -5914,7 +5923,7 @@ fn raw_aligned_boundary_endpoint_mixed_core_and_far_right_rows_are_tile_size_inv
 }
 
 #[test]
-fn raw_shifted_boundary_endpoint_by_size_counts_the_previous_bin_reached_by_left_raw_clipping()
+fn include_at_shifted_boundary_endpoint_by_size_counts_the_previous_bin_reached_by_left_raw_clipping()
 -> Result<()> {
     // Arrange:
     // - unpaired 2S10M at pos 10 has raw endpoints at 8 and 19
@@ -5933,7 +5942,7 @@ fn raw_shifted_boundary_endpoint_by_size_counts_the_previous_bin_reached_by_left
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
@@ -5962,13 +5971,13 @@ fn raw_shifted_boundary_endpoint_by_size_counts_the_previous_bin_reached_by_left
 }
 
 #[test]
-fn raw_aligned_boundary_endpoint_by_size_keeps_both_ends_in_the_aligned_bin_with_left_clipping()
+fn include_at_aligned_boundary_endpoint_by_size_keeps_both_ends_in_the_aligned_bin_with_left_clipping()
 -> Result<()> {
     // Arrange:
     // - unpaired 2S10M at pos 10 keeps aligned endpoint positions 10 and 19
     // - fixed-size windows of 10 bp therefore keep both endpoints in [10,20)
     let bam = single_read_bam(
-        "ends_raw_aligned_by_size_left",
+        "ends_include_at_aligned_boundary_by_size_left",
         10,
         vec![('S', 2), ('M', 10)],
         b"TTAAAAAAAAAT",
@@ -5979,7 +5988,7 @@ fn raw_aligned_boundary_endpoint_by_size_keeps_both_ends_in_the_aligned_bin_with
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtAlignedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
@@ -6008,7 +6017,7 @@ fn raw_aligned_boundary_endpoint_by_size_keeps_both_ends_in_the_aligned_bin_with
 }
 
 #[test]
-fn raw_shifted_boundary_endpoint_by_size_counts_the_next_bin_reached_by_right_raw_clipping()
+fn include_at_shifted_boundary_endpoint_by_size_counts_the_next_bin_reached_by_right_raw_clipping()
 -> Result<()> {
     // Arrange:
     // - unpaired 10M10S at pos 10 has raw endpoints at 10 and 29
@@ -6026,7 +6035,7 @@ fn raw_shifted_boundary_endpoint_by_size_counts_the_next_bin_reached_by_right_ra
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
@@ -6055,13 +6064,13 @@ fn raw_shifted_boundary_endpoint_by_size_counts_the_next_bin_reached_by_right_ra
 }
 
 #[test]
-fn raw_aligned_boundary_endpoint_by_size_keeps_both_ends_in_the_aligned_bin_with_right_clipping()
+fn include_at_aligned_boundary_endpoint_by_size_keeps_both_ends_in_the_aligned_bin_with_right_clipping()
 -> Result<()> {
     // Arrange:
     // - unpaired 10M10S at pos 10 keeps aligned endpoint positions 10 and 19
     // - fixed-size windows of 10 bp therefore keep both endpoints in [10,20)
     let bam = single_read_bam(
-        "ends_raw_aligned_by_size_right",
+        "ends_include_at_aligned_boundary_by_size_right",
         10,
         vec![('M', 10), ('S', 10)],
         b"AAAAAAAAAAAAAAAAAAAA",
@@ -6072,7 +6081,7 @@ fn raw_aligned_boundary_endpoint_by_size_keeps_both_ends_in_the_aligned_bin_with
     cfg.set_unpaired(UnpairedArgs {
         reads_are_fragments: true,
     });
-    cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+    cfg.clip.clip_strategy = ClipStrategy::IncludeAtAlignedBoundary;
     cfg.source_inside = KmerSource::Read;
     cfg.all_motifs = true;
     cfg.tile_size = 10;
@@ -6101,7 +6110,8 @@ fn raw_aligned_boundary_endpoint_by_size_keeps_both_ends_in_the_aligned_bin_with
 }
 
 #[test]
-fn raw_shifted_boundary_endpoint_by_size_keeps_exact_half_open_boundary_bins_zero() -> Result<()> {
+fn include_at_shifted_boundary_endpoint_by_size_keeps_exact_half_open_boundary_bins_zero()
+-> Result<()> {
     // Arrange:
     // - 2S10M at pos 10 has raw left endpoint 8, so [7,8) must stay zero while [8,9) counts
     // - 10M10S at pos 10 has raw right endpoint 29, so [30,31) must stay zero while [29,30) counts
@@ -6125,7 +6135,7 @@ fn raw_shifted_boundary_endpoint_by_size_keeps_exact_half_open_boundary_bins_zer
         cfg.set_unpaired(UnpairedArgs {
             reads_are_fragments: true,
         });
-        cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+        cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = 10;
@@ -6159,7 +6169,7 @@ fn raw_shifted_boundary_endpoint_by_size_keeps_exact_half_open_boundary_bins_zer
 }
 
 #[test]
-fn raw_shifted_boundary_endpoint_by_size_output_is_tile_size_invariant() -> Result<()> {
+fn include_at_shifted_boundary_endpoint_by_size_output_is_tile_size_invariant() -> Result<()> {
     // Arrange:
     // - fixed-size windows are 10 bp bins
     // - changing tile_size must not change the final by-size endpoint rows
@@ -6178,7 +6188,7 @@ fn raw_shifted_boundary_endpoint_by_size_output_is_tile_size_invariant() -> Resu
         cfg.set_unpaired(UnpairedArgs {
             reads_are_fragments: true,
         });
-        cfg.clip.clip_strategy = ClipStrategy::RawShiftedBoundary;
+        cfg.clip.clip_strategy = ClipStrategy::IncludeAtShiftedBoundary;
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;
@@ -6208,12 +6218,12 @@ fn raw_shifted_boundary_endpoint_by_size_output_is_tile_size_invariant() -> Resu
 }
 
 #[test]
-fn raw_aligned_boundary_endpoint_by_size_output_is_tile_size_invariant() -> Result<()> {
+fn include_at_aligned_boundary_endpoint_by_size_output_is_tile_size_invariant() -> Result<()> {
     // Arrange:
     // - unpaired 10M10S at pos 10 keeps aligned endpoint positions [10,19]
     // - with 10 bp bins, both endpoints therefore stay in row 1 regardless of tile size
     let bam = single_read_bam(
-        "ends_raw_aligned_by_size_tile_invariance",
+        "ends_include_at_aligned_boundary_by_size_tile_invariance",
         10,
         vec![('M', 10), ('S', 10)],
         b"AAAAAAAAAAAAAAAAAAAA",
@@ -6227,7 +6237,7 @@ fn raw_aligned_boundary_endpoint_by_size_output_is_tile_size_invariant() -> Resu
         cfg.set_unpaired(UnpairedArgs {
             reads_are_fragments: true,
         });
-        cfg.clip.clip_strategy = ClipStrategy::RawAlignedBoundary;
+        cfg.clip.clip_strategy = ClipStrategy::IncludeAtAlignedBoundary;
         cfg.source_inside = KmerSource::Read;
         cfg.all_motifs = true;
         cfg.tile_size = tile_size;

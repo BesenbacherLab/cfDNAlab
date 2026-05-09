@@ -471,7 +471,7 @@ pub fn run(opt: &GCConfig) -> Result<()> {
         avg_gc_counts.smooth_length_rows_in_place(
             reference_metadata.smoothing_sigma,
             reference_metadata.smoothing_radius,
-        );
+        )?;
     }
 
     // Convert GC counts to grid with lengths x GC percentage bins

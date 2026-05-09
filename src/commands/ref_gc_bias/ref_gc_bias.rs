@@ -296,7 +296,7 @@ pub fn run(opt: &RefGCBiasConfig) -> Result<()> {
     // Convert counts to Array2 and interpolate zero-counts (single global grid)
     let mut global_counts = total_counts;
     if !opt.skip_smoothing {
-        global_counts.smooth_length_rows_in_place(opt.smoothing_sigma, opt.smoothing_radius);
+        global_counts.smooth_length_rows_in_place(opt.smoothing_sigma, opt.smoothing_radius)?;
     }
     let mut global_grid = global_counts.to_gc_percent_grid(0, 100)?;
     apply_gc_percent_width_correction(&mut global_grid, &gc_percent_widths)?;

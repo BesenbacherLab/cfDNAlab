@@ -9,7 +9,7 @@ fn outside_kmer_clip_strategy_warning_skips_zero_outside_bases() {
         None
     );
     assert_eq!(
-        outside_kmer_clip_strategy_warning(0, ClipStrategy::RawShiftedBoundary),
+        outside_kmer_clip_strategy_warning(0, ClipStrategy::IncludeAtShiftedBoundary),
         None
     );
 }
@@ -27,20 +27,20 @@ fn outside_kmer_clip_strategy_warning_mentions_each_non_skip_strategy() {
     // should emit the same warning with their CLI-visible strategy name.
     let aligned_warning = outside_kmer_clip_strategy_warning(2, ClipStrategy::Aligned)
         .expect("aligned should warn when outside bases are requested");
-    let raw_aligned_warning =
-        outside_kmer_clip_strategy_warning(2, ClipStrategy::RawAlignedBoundary)
-            .expect("raw-aligned-boundary should warn when outside bases are requested");
-    let raw_shifted_warning =
-        outside_kmer_clip_strategy_warning(2, ClipStrategy::RawShiftedBoundary)
-            .expect("raw-shifted-boundary should warn when outside bases are requested");
+    let include_at_aligned_boundary_warning =
+        outside_kmer_clip_strategy_warning(2, ClipStrategy::IncludeAtAlignedBoundary)
+            .expect("include-at-aligned-boundary should warn when outside bases are requested");
+    let include_at_shifted_boundary_warning =
+        outside_kmer_clip_strategy_warning(2, ClipStrategy::IncludeAtShiftedBoundary)
+            .expect("include-at-shifted-boundary should warn when outside bases are requested");
 
     // Assert
     assert!(aligned_warning.contains("`--clip-strategy aligned`"));
-    assert!(raw_aligned_warning.contains("`--clip-strategy raw-aligned-boundary`"));
-    assert!(raw_shifted_warning.contains("`--clip-strategy raw-shifted-boundary`"));
+    assert!(include_at_aligned_boundary_warning.contains("`--clip-strategy include-at-aligned-boundary`"));
+    assert!(include_at_shifted_boundary_warning.contains("`--clip-strategy include-at-shifted-boundary`"));
     assert!(aligned_warning.contains("more noise than signal"));
-    assert!(raw_aligned_warning.contains("outside motif actually lies on the reference"));
-    assert!(raw_shifted_warning.contains("Prefer `--clip-strategy skip`"));
+    assert!(include_at_aligned_boundary_warning.contains("outside motif actually lies on the reference"));
+    assert!(include_at_shifted_boundary_warning.contains("Prefer `--clip-strategy skip`"));
 }
 
 #[test]

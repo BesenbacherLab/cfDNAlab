@@ -791,7 +791,7 @@ mod test_fragment_with_ends {
         let fragment = collect_pair(
             &forward,
             &reverse,
-            ClipStrategy::RawShiftedBoundary,
+            ClipStrategy::IncludeAtShiftedBoundary,
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
@@ -858,7 +858,7 @@ mod test_fragment_with_ends {
     }
 
     #[test]
-    fn raw_kept_ends_store_raw_shifted_boundary_positions() {
+    fn raw_kept_ends_store_include_at_shifted_boundary_positions() {
         let forward = make_record(
             b"pair_raw_boundary",
             0,
@@ -881,7 +881,7 @@ mod test_fragment_with_ends {
         let fragment = collect_pair(
             &forward,
             &reverse,
-            ClipStrategy::RawShiftedBoundary,
+            ClipStrategy::IncludeAtShiftedBoundary,
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
@@ -901,9 +901,9 @@ mod test_fragment_with_ends {
     }
 
     #[test]
-    fn raw_aligned_boundary_keeps_aligned_positions_but_uses_raw_inside_bases() {
+    fn include_at_aligned_boundary_keeps_aligned_positions_but_uses_raw_inside_bases() {
         let forward = make_record(
-            b"pair_raw_aligned_boundary",
+            b"pair_include_at_aligned_boundary",
             0,
             100,
             false,
@@ -912,7 +912,7 @@ mod test_fragment_with_ends {
             None,
         );
         let reverse = make_record(
-            b"pair_raw_aligned_boundary",
+            b"pair_include_at_aligned_boundary",
             0,
             110,
             true,
@@ -924,7 +924,7 @@ mod test_fragment_with_ends {
         let fragment = collect_pair(
             &forward,
             &reverse,
-            ClipStrategy::RawAlignedBoundary,
+            ClipStrategy::IncludeAtAlignedBoundary,
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
@@ -1052,7 +1052,7 @@ mod test_fragment_with_ends {
         let fragment = collect_pair(
             &forward,
             &reverse,
-            ClipStrategy::RawShiftedBoundary,
+            ClipStrategy::IncludeAtShiftedBoundary,
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
@@ -1203,12 +1203,14 @@ mod test_fragment_with_ends {
         );
 
         let aligned_info = end_info(&record, ClipStrategy::Aligned, 4, None);
-        let raw_aligned_info = end_info(&record, ClipStrategy::RawAlignedBoundary, 4, None);
-        let raw_shifted_info = end_info(&record, ClipStrategy::RawShiftedBoundary, 4, None);
+        let include_at_aligned_boundary_info =
+            end_info(&record, ClipStrategy::IncludeAtAlignedBoundary, 4, None);
+        let include_at_shifted_boundary_info =
+            end_info(&record, ClipStrategy::IncludeAtShiftedBoundary, 4, None);
 
         assert!(aligned_info.left_motif_has_indels);
-        assert!(!raw_aligned_info.left_motif_has_indels);
-        assert!(!raw_shifted_info.left_motif_has_indels);
+        assert!(!include_at_aligned_boundary_info.left_motif_has_indels);
+        assert!(!include_at_shifted_boundary_info.left_motif_has_indels);
     }
 
     #[test]
@@ -1309,7 +1311,7 @@ mod test_fragment_with_ends {
         let fragment = collect_pair(
             &forward,
             &reverse,
-            ClipStrategy::RawShiftedBoundary,
+            ClipStrategy::IncludeAtShiftedBoundary,
             KmerSource::Read,
             IndelMotifFilterPolicy::SkipAffectedEnd,
             4,
@@ -1348,7 +1350,7 @@ mod test_fragment_with_ends {
         let fragment = collect_pair(
             &forward,
             &reverse,
-            ClipStrategy::RawShiftedBoundary,
+            ClipStrategy::IncludeAtShiftedBoundary,
             KmerSource::Reference,
             IndelMotifFilterPolicy::Auto,
             4,
@@ -1461,7 +1463,7 @@ mod test_fragment_with_ends {
         let fragment = collect_pair(
             &forward,
             &reverse,
-            ClipStrategy::RawShiftedBoundary,
+            ClipStrategy::IncludeAtShiftedBoundary,
             KmerSource::Reference,
             IndelMotifFilterPolicy::SkipAffectedEnd,
             4,
@@ -1525,7 +1527,7 @@ mod test_fragment_with_ends {
 
         let fragment = collect_single(
             &record,
-            ClipStrategy::RawShiftedBoundary,
+            ClipStrategy::IncludeAtShiftedBoundary,
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,
@@ -1549,9 +1551,9 @@ mod test_fragment_with_ends {
     }
 
     #[test]
-    fn unpaired_raw_aligned_boundary_keeps_assignment_interval_aligned() {
+    fn unpaired_include_at_aligned_boundary_keeps_assignment_interval_aligned() {
         let record = make_record(
-            b"single_raw_aligned_boundary",
+            b"single_include_at_aligned_boundary",
             0,
             100,
             false,
@@ -1562,7 +1564,7 @@ mod test_fragment_with_ends {
 
         let fragment = collect_single(
             &record,
-            ClipStrategy::RawAlignedBoundary,
+            ClipStrategy::IncludeAtAlignedBoundary,
             KmerSource::Read,
             IndelMotifFilterPolicy::Auto,
             4,

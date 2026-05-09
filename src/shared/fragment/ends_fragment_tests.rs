@@ -354,7 +354,7 @@ fn extract_inside_qualities_respects_clip_strategy_for_k_inside_gt_one() {
         extract_inside_qualities(
             &read,
             FragmentEndSide::Left,
-            ClipStrategy::RawAlignedBoundary,
+            ClipStrategy::IncludeAtAlignedBoundary,
             3
         ),
         Some(vec![10, 20, 30])
@@ -363,7 +363,7 @@ fn extract_inside_qualities_respects_clip_strategy_for_k_inside_gt_one() {
         extract_inside_qualities(
             &read,
             FragmentEndSide::Right,
-            ClipStrategy::RawAlignedBoundary,
+            ClipStrategy::IncludeAtAlignedBoundary,
             3
         ),
         Some(vec![120, 130, 140])
@@ -372,7 +372,7 @@ fn extract_inside_qualities_respects_clip_strategy_for_k_inside_gt_one() {
         extract_inside_qualities(
             &read,
             FragmentEndSide::Left,
-            ClipStrategy::RawShiftedBoundary,
+            ClipStrategy::IncludeAtShiftedBoundary,
             3
         ),
         Some(vec![10, 20, 30])
@@ -381,7 +381,7 @@ fn extract_inside_qualities_respects_clip_strategy_for_k_inside_gt_one() {
         extract_inside_qualities(
             &read,
             FragmentEndSide::Right,
-            ClipStrategy::RawShiftedBoundary,
+            ClipStrategy::IncludeAtShiftedBoundary,
             3
         ),
         Some(vec![120, 130, 140])
@@ -395,8 +395,8 @@ fn inside_slice_bounds_return_the_expected_indices_for_each_strategy_and_side() 
     // Mental derivation for k_inside=3:
     // - aligned/skip left starts after the left clips -> [2, 5)
     // - aligned/skip right ends before the right clips -> [8, 11)
-    // - raw-aligned/raw-shifted left starts at the raw read edge -> [0, 3)
-    // - raw-aligned/raw-shifted right ends at the raw read edge -> [11, 14)
+    // - include-at-aligned-boundary/include-at-shifted-boundary left starts at the raw read edge -> [0, 3)
+    // - include-at-aligned-boundary/include-at-shifted-boundary right ends at the raw read edge -> [11, 14)
     let len = 14;
     let left_soft_clip_bp = 2;
     let right_soft_clip_bp = 3;
@@ -453,7 +453,7 @@ fn inside_slice_bounds_return_the_expected_indices_for_each_strategy_and_side() 
             left_soft_clip_bp,
             right_soft_clip_bp,
             FragmentEndSide::Left,
-            ClipStrategy::RawAlignedBoundary,
+            ClipStrategy::IncludeAtAlignedBoundary,
             k_inside
         ),
         Some((0, 3))
@@ -464,7 +464,7 @@ fn inside_slice_bounds_return_the_expected_indices_for_each_strategy_and_side() 
             left_soft_clip_bp,
             right_soft_clip_bp,
             FragmentEndSide::Right,
-            ClipStrategy::RawAlignedBoundary,
+            ClipStrategy::IncludeAtAlignedBoundary,
             k_inside
         ),
         Some((11, 14))
@@ -475,7 +475,7 @@ fn inside_slice_bounds_return_the_expected_indices_for_each_strategy_and_side() 
             left_soft_clip_bp,
             right_soft_clip_bp,
             FragmentEndSide::Left,
-            ClipStrategy::RawShiftedBoundary,
+            ClipStrategy::IncludeAtShiftedBoundary,
             k_inside
         ),
         Some((0, 3))
@@ -486,7 +486,7 @@ fn inside_slice_bounds_return_the_expected_indices_for_each_strategy_and_side() 
             left_soft_clip_bp,
             right_soft_clip_bp,
             FragmentEndSide::Right,
-            ClipStrategy::RawShiftedBoundary,
+            ClipStrategy::IncludeAtShiftedBoundary,
             k_inside
         ),
         Some((11, 14))
@@ -530,7 +530,7 @@ fn inside_slice_bounds_return_zero_width_slices_when_k_inside_is_zero() {
             left_soft_clip_bp,
             right_soft_clip_bp,
             FragmentEndSide::Left,
-            ClipStrategy::RawShiftedBoundary,
+            ClipStrategy::IncludeAtShiftedBoundary,
             0
         ),
         Some((0, 0))
@@ -541,7 +541,7 @@ fn inside_slice_bounds_return_zero_width_slices_when_k_inside_is_zero() {
             left_soft_clip_bp,
             right_soft_clip_bp,
             FragmentEndSide::Right,
-            ClipStrategy::RawShiftedBoundary,
+            ClipStrategy::IncludeAtShiftedBoundary,
             0
         ),
         Some((14, 14))
@@ -570,7 +570,7 @@ fn inside_slice_bounds_return_none_when_the_requested_inside_span_does_not_fit()
             0,
             0,
             FragmentEndSide::Left,
-            ClipStrategy::RawAlignedBoundary,
+            ClipStrategy::IncludeAtAlignedBoundary,
             3
         ),
         None
@@ -581,7 +581,7 @@ fn inside_slice_bounds_return_none_when_the_requested_inside_span_does_not_fit()
             0,
             0,
             FragmentEndSide::Right,
-            ClipStrategy::RawShiftedBoundary,
+            ClipStrategy::IncludeAtShiftedBoundary,
             3
         ),
         None

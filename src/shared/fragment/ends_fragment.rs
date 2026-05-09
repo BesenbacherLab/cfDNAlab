@@ -34,7 +34,7 @@ pub struct ResolvedFragmentEnd {
     /// Number of leading inside bases that still have concrete reference positions next to
     /// `boundary_pos`.
     ///
-    /// This matters for `RawAlignedBoundary`: the clipped-only prefix/suffix is kept in
+    /// This matters for `IncludeAtAlignedBoundary`: the clipped-only prefix/suffix is kept in
     /// `inside_bases`, but those bases lie outside the aligned reference span and therefore cannot
     /// be blacklist-validated against genomic coordinates.
     pub inside_reference_validation_bp: usize,
@@ -378,7 +378,7 @@ fn motif_has_indels(
 ) -> bool {
     let aligned_bases_in_motif = match clip_strategy {
         ClipStrategy::Aligned | ClipStrategy::Skip => k_inside,
-        ClipStrategy::RawAlignedBoundary | ClipStrategy::RawShiftedBoundary => {
+        ClipStrategy::IncludeAtAlignedBoundary | ClipStrategy::IncludeAtShiftedBoundary => {
             k_inside.saturating_sub(soft_clip_bp as usize)
         }
     };
@@ -499,7 +499,7 @@ fn resolve_fragment_end(
                 None => ResolvedEndOutcome::SkipEndDropAssignmentBoundary,
             }
         }
-        ClipStrategy::RawAlignedBoundary | ClipStrategy::RawShiftedBoundary => {
+        ClipStrategy::IncludeAtAlignedBoundary | ClipStrategy::IncludeAtShiftedBoundary => {
             let assignment_boundary_pos = match end_side {
                 FragmentEndSide::Left if clip_strategy.uses_shifted_boundary() => {
                     aligned_boundary_pos.saturating_sub(soft_clip_bp)
@@ -684,7 +684,7 @@ fn aggregate_base_qualities(qualities: &[u8], aggregation: BaseQualityAggregatio
 /// genomic positions.
 ///
 /// Most clip strategies keep the motif boundary aligned with the genomic start/end they use for
-/// validation, so all `k_inside` bases remain reference-addressable. `RawAlignedBoundary` is the
+/// validation, so all `k_inside` bases remain reference-addressable. `IncludeAtAlignedBoundary` is the
 /// exception: it keeps the aligned genomic boundary but prepends/appends clipped read bases to the
 /// inside motif. Those clipped-only bases do not correspond to reference positions and must be
 /// excluded from blacklist validation.
@@ -695,8 +695,10 @@ fn inside_reference_validation_bp(
     k_inside: usize,
 ) -> usize {
     match clip_strategy {
-        ClipStrategy::Aligned | ClipStrategy::Skip | ClipStrategy::RawShiftedBoundary => k_inside,
-        ClipStrategy::RawAlignedBoundary => {
+        ClipStrategy::Aligned | ClipStrategy::Skip | ClipStrategy::IncludeAtShiftedBoundary => {
+            k_inside
+        }
+        ClipStrategy::IncludeAtAlignedBoundary => {
             let soft_clip_bp = match end_side {
                 FragmentEndSide::Left => read.left_soft_clip_bp,
                 FragmentEndSide::Right => read.right_soft_clip_bp,
@@ -781,7 +783,9 @@ fn inside_slice_bounds(
         FragmentEndSide::Left => {
             let start_idx = match clip_strategy {
                 ClipStrategy::Aligned | ClipStrategy::Skip => left_soft_clip_bp as usize,
-                ClipStrategy::RawAlignedBoundary | ClipStrategy::RawShiftedBoundary => 0,
+                ClipStrategy::IncludeAtAlignedBoundary | ClipStrategy::IncludeAtShiftedBoundary => {
+                    0
+                }
             };
             let end_idx = start_idx.checked_add(k_inside)?;
             (end_idx <= len).then_some((start_idx, end_idx))
@@ -791,7 +795,9 @@ fn inside_slice_bounds(
                 ClipStrategy::Aligned | ClipStrategy::Skip => {
                     len.checked_sub(right_soft_clip_bp as usize)?
                 }
-                ClipStrategy::RawAlignedBoundary | ClipStrategy::RawShiftedBoundary => len,
+                ClipStrategy::IncludeAtAlignedBoundary | ClipStrategy::IncludeAtShiftedBoundary => {
+                    len
+                }
             };
             let start_idx = end_idx.checked_sub(k_inside)?;
             Some((start_idx, end_idx))

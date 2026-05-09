@@ -465,20 +465,20 @@ impl GCConfig {
                 OutlierRule::Quantile { lower, upper }
             }
             OutlierMethodArg::Iqr => {
-                if self.outlier_k <= 0.0 {
-                    return Err(anyhow!("outlier-k must be > 0 for IQR"));
+                if !self.outlier_k.is_finite() || self.outlier_k <= 0.0 {
+                    return Err(anyhow!("outlier-k must be finite and > 0 for IQR"));
                 }
                 OutlierRule::TukeyIqr { k: self.outlier_k }
             }
             OutlierMethodArg::Stddev => {
-                if self.outlier_k <= 0.0 {
-                    return Err(anyhow!("outlier-k must be > 0 for stddev"));
+                if !self.outlier_k.is_finite() || self.outlier_k <= 0.0 {
+                    return Err(anyhow!("outlier-k must be finite and > 0 for stddev"));
                 }
                 OutlierRule::StdDev { k: self.outlier_k }
             }
             OutlierMethodArg::Mad => {
-                if self.outlier_k <= 0.0 {
-                    return Err(anyhow!("outlier-k must be > 0 for mad"));
+                if !self.outlier_k.is_finite() || self.outlier_k <= 0.0 {
+                    return Err(anyhow!("outlier-k must be finite and > 0 for mad"));
                 }
                 OutlierRule::Mad { k: self.outlier_k }
             }

@@ -150,7 +150,7 @@ pub(crate) fn motif_extraction_ref_2bit_requirement_message() -> &'static str {
 ///
 /// BAM fetch narrowing is independent of motif reference preload. For motif
 /// lookups, `ends` needs the full tile fetch band plus any extra sequence that
-/// raw clipping and outside-of-fragment k-mers may inspect beyond that band.
+/// shifted clipping boundaries and outside-of-fragment k-mers may inspect beyond that band.
 pub(crate) fn motif_reference_span_for_tile(
     tile: &Tile,
     chrom_len: u64,
@@ -158,12 +158,12 @@ pub(crate) fn motif_reference_span_for_tile(
     max_soft_clips: u16,
     k_outside: usize,
 ) -> Result<Interval<u64>> {
-    let raw_extra = if clip_strategy.uses_shifted_boundary() {
+    let shifted_boundary_extra = if clip_strategy.uses_shifted_boundary() {
         u64::from(max_soft_clips)
     } else {
         0
     };
-    let pad = raw_extra.saturating_add(k_outside as u64);
+    let pad = shifted_boundary_extra.saturating_add(k_outside as u64);
     let reference_start = (tile.fetch_start() as u64).saturating_sub(pad);
     let reference_end = (tile.fetch_end() as u64).saturating_add(pad).min(chrom_len);
     Interval::new(reference_start, reference_end).map_err(Into::into)
@@ -210,11 +210,13 @@ pub(crate) fn build_tile_motif_context<'a>(
     let inside_spec = inside_spec.cloned();
     let outside_spec = outside_spec.cloned();
 
-    if matches!(opt.clip.clip_strategy, ClipStrategy::RawAlignedBoundary)
-        && matches!(opt.source_inside, KmerSource::Reference)
+    if matches!(
+        opt.clip.clip_strategy,
+        ClipStrategy::IncludeAtAlignedBoundary
+    ) && matches!(opt.source_inside, KmerSource::Reference)
     {
         anyhow::bail!(
-            "`--clip-strategy raw-aligned-boundary` cannot be combined with `--source-inside reference`"
+            "`--clip-strategy include-at-aligned-boundary` cannot be combined with `--source-inside reference`"
         );
     }
 
@@ -528,7 +530,7 @@ fn encode_inside_code(
 /// This is only used for `source_inside=read`, where the emitted inside code still comes from the
 /// read but blacklist filtering must remain genomic. `inside_reference_validation_bp` tells us how
 /// much of `inside_bases` still maps to concrete reference positions; in
-/// `raw-aligned-boundary`, clipped-only inside bases are intentionally ignored here because they
+/// `include-at-aligned-boundary`, clipped-only inside bases are intentionally ignored here because they
 /// lie outside the aligned reference span.
 ///
 /// Parameters
